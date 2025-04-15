@@ -44,11 +44,11 @@ function_mapping = {
 # === Clients Setup ===
 logger = get_logger()
 az_openai_client = AzureOpenAI(
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2023-05-15"),
+    api_version="2025-02-01-preview",
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     api_key=os.getenv("AZURE_OPENAI_KEY"),
 )
-az_speech_recognizer_client = StreamingSpeechRecognizer(vad_silence_timeout_ms=1400)
+az_speech_recognizer_client = StreamingSpeechRecognizer(vad_silence_timeout_ms=3000)
 az_speech_synthesizer_client = SpeechSynthesizer()
 
 SPEECH_KEY = os.getenv("SPEECH_KEY")
@@ -98,6 +98,7 @@ def handle_speech_recognition() -> str:
 
 async def main() -> None:
     try:
+        time.sleep(1)
         az_speech_synthesizer_client.start_speaking_text(
             "Hello from XMYX Healthcare Company! We are here to assist you. How can I help you today?"
         )
@@ -112,10 +113,7 @@ async def main() -> None:
 
         while True:
             prompt = handle_speech_recognition()
-
             if prompt.strip():
-                last_speech_time = time.time()
-                consecutive_silences = 0
                 logger.info(f"User said: {prompt}")
 
                 if check_for_stopwords(prompt):
@@ -128,12 +126,13 @@ async def main() -> None:
 
                 conversation_history.append({"role": "user", "content": prompt})
 
-                collected_messages: List[str] = []
-                function_call_name = None
+                tool_name = None
                 function_call_arguments = ""
-                tool_call_id = None
+                tool_id = None
+                last_tts_request = None
+                collected_messages: List[str] = []
 
-                # FIRST GPT CALL
+                # 🔁 FIRST STREAMING RESPONSE (may include tool call)
                 response = az_openai_client.chat.completions.create(
                     stream=True,
                     messages=conversation_history,
@@ -146,43 +145,44 @@ async def main() -> None:
                 )
 
                 for chunk in response:
-                        if chunk.choices:
-                            delta = chunk.choices[0].delta
-
-                            # Capture tool call information
-                            if hasattr(delta, "tool_calls") and delta.tool_calls:
-                                for tool_call in delta.tool_calls:
-                                    if tool_call.function:
-                                        function_call_name = tool_call.function.name
-                                        function_call_arguments += tool_call.function.arguments or ""
-                                        tool_call_id = tool_call.id
-
-                            # If no tool call, collect text and optionally synthesize
-                            elif hasattr(delta, "content") and delta.content:
-                                chunk_message = delta.content
-                                collected_messages.append(chunk_message)
-                                if chunk_message.strip() in tts_sentence_end:
-                                    text = ''.join(collected_messages).strip()
-                                    if text:
-                                        print(f"🗣 Synthesizing: {text}")
-                                        az_speech_synthesizer_client.start_speaking_text(text)
-                                        collected_messages.clear()
+                    if chunk.choices:
+                        delta = chunk.choices[0].delta
+                        if delta.tool_calls:
+                            if(delta.tool_calls[0].function.name):
+                                tool_name = chunk.choices[0].delta.tool_calls[0].function.name
+                                tool_id = chunk.choices[0].delta.tool_calls[0].id
+                                conversation_history.append(delta)
+                            
+                            if(chunk.choices[0].delta.tool_calls[0].function.arguments):    
+                                function_call_arguments+=delta.tool_calls[0].function.arguments
+                        
+                        elif delta.content:
+                            chunk_text = chunk.choices[0].delta.content
+                            if chunk_text:
+                                collected_messages.append(chunk_text)
+                                if chunk_text in tts_sentence_end:
+                                    text = "".join(collected_messages).strip()
+                                    last_tts_request = az_speech_synthesizer_client.start_speaking_text(text)
+                                    collected_messages.clear()
 
                 # 🧠 If tool call was detected, execute it
-                if function_call_name:
+                if tool_name:
+                    logger.info(f"tool_name:{tool_name}")   
+                    logger.info(f"tool_id:{tool_id}")    
+                    logger.info(f"function_call_arguments:{function_call_arguments}")  
                     try:
                         parsed_args = json.loads(function_call_arguments.strip())
-                        function_to_call = function_mapping.get(function_call_name)
+                        function_to_call = function_mapping.get(tool_name)
 
                         if function_to_call:
                             result = await function_to_call(parsed_args)
 
-                            print(f"✅ Function `{function_call_name}` executed. Result: {result}")
+                            logger.info(f"✅ Function `{tool_name}` executed. Result: {result}")
 
                             conversation_history.append({
-                                "tool_call_id": tool_call_id,
+                                "tool_call_id": tool_id,
                                 "role": "tool",
-                                "name": function_call_name,
+                                "name": tool_name,
                                 "content": result,
                             })
 
@@ -207,7 +207,6 @@ async def main() -> None:
                                         if chunk_message.strip() in tts_sentence_end:
                                             text = ''.join(collected_messages).strip()
                                             if text:
-                                                print(f"🗣 Synthesizing (follow-up): {text}")
                                                 az_speech_synthesizer_client.start_speaking_text(text)
                                                 collected_messages.clear()
 
@@ -224,22 +223,6 @@ async def main() -> None:
                     if final_text:
                         conversation_history.append({"role": "assistant", "content": final_text})
                         print(f"✅ Final assistant message: {final_text}")
-
-            # elif (time.time() - last_speech_time) > SILENCE_THRESHOLD:
-            #     consecutive_silences += 1
-            #     if consecutive_silences >= 3:
-            #         az_speech_synthesizer_client.start_speaking_text(
-            #             "I'm sorry, I couldn't hear you. It seems we've been disconnected. Please feel free to call again anytime. Goodbye."
-            #         )
-            #         time.sleep(11)
-            #         break
-            #     else:
-            #         az_speech_synthesizer_client.start_speaking_text(
-            #             "I'm sorry, I couldn't hear you. Are you still there?"
-            #         )
-            #         time.sleep(4)
-            #         last_speech_time = time.time()
-
     except Exception as e:
         logger.exception("An error occurred in main().")
 
