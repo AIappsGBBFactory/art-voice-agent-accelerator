@@ -1,6 +1,4 @@
-# client.py orchestrates the RealtimeClient and RealtimeAPI classes
-# and handles the connection to the Realtime API, session management, and event handling.
-
+# ⚡ streamlined to match your working style
 import asyncio
 import json
 import logging
@@ -9,27 +7,19 @@ import yaml
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Awaitable, Any
 
+import backoff
+
 from src.realtime_client.api import RealtimeAPI
 from src.realtime_client.conversation import RealtimeConversation
 from src.realtime_client.event_handler import RealtimeEventHandler
 from src.realtime_client.utils import array_buffer_to_base64
 
-import backoff
-
 logger = logging.getLogger(__name__)
-
 MAX_BUFFER_SIZE = 5 * 1024 * 1024  # 5MB
 
-class RealtimeClient(RealtimeEventHandler):
-    """
-    Client orchestrator that manages RealtimeAPI, conversation tracking,
-    session configuration, and user interactions.
-    """
 
+class RealtimeClient(RealtimeEventHandler):
     def dispatch(self, event_name: str, event_data: dict) -> None:
-        """
-        Dispatches an event to be handled.
-        """
         logger.info(f"Dispatching event: {event_name} with data: {event_data}")
 
     def __init__(self, system_prompt: str, session_config_path: Optional[str] = None) -> None:
@@ -37,6 +27,7 @@ class RealtimeClient(RealtimeEventHandler):
         self.system_prompt = system_prompt
         self.realtime = RealtimeAPI()
         self.conversation = RealtimeConversation()
+        self.session_created = False
 
         self.default_session_config = {
             "modalities": ["text", "audio"],
@@ -75,20 +66,18 @@ class RealtimeClient(RealtimeEventHandler):
     def _load_session_config_from_yaml(self, path: str) -> None:
         try:
             with open(path, 'r') as f:
-                config_from_yaml = yaml.safe_load(f)
-                if isinstance(config_from_yaml, dict):
-                    logger.info(f"Loading session config from {path}")
-                    merged_config = self.default_session_config.copy()
-                    merged_config.update(config_from_yaml)
-                    if "turn_detection" in config_from_yaml:
-                        merged_turn_detection = self.default_session_config["turn_detection"].copy()
-                        merged_turn_detection.update(config_from_yaml["turn_detection"])
-                        merged_config["turn_detection"] = merged_turn_detection
-                    self.session_config = merged_config
-                else:
-                    logger.warning(f"Session config YAML is not a dict, ignoring: {path}")
+                config = yaml.safe_load(f)
+                if isinstance(config, dict):
+                    logger.info(f"Loaded session config from {path}")
+                    merged = self.default_session_config.copy()
+                    merged.update(config)
+                    if "turn_detection" in config:
+                        merged_turn = self.default_session_config["turn_detection"].copy()
+                        merged_turn.update(config["turn_detection"])
+                        merged["turn_detection"] = merged_turn
+                    self.session_config = merged
         except Exception as e:
-            logger.error(f"Error loading session config from {path}: {e}")
+            logger.error(f"Error loading session config: {e}")
 
     def _add_api_event_handlers(self) -> None:
         self.realtime.on("client.*", self._log_event)
@@ -99,9 +88,6 @@ class RealtimeClient(RealtimeEventHandler):
         self.realtime.on("server.input_audio_buffer.speech_started", self._on_speech_started)
         self.realtime.on("server.input_audio_buffer.speech_stopped", self._on_speech_stopped)
         self.realtime.on("server.conversation.item.created", self._on_item_created)
-        self.realtime.on("server.conversation.item.truncated", self._process_event)
-        self.realtime.on("server.conversation.item.deleted", self._process_event)
-        self.realtime.on("server.conversation.item.input_audio_transcription.completed", self._process_event)
         self.realtime.on("server.response.audio_transcript.delta", self._process_event)
         self.realtime.on("server.response.audio.delta", self._process_event)
         self.realtime.on("server.response.text.delta", self._process_event)
@@ -109,12 +95,11 @@ class RealtimeClient(RealtimeEventHandler):
         self.realtime.on("server.response.output_item.done", self._on_output_item_done)
 
     def _log_event(self, event: dict) -> None:
-        realtime_event = {
+        self.dispatch("realtime.event", {
             "time": datetime.utcnow().isoformat(),
-            "source": "client" if event.get("type", "").startswith("client.") else "server",
+            "source": "client" if event["type"].startswith("client.") else "server",
             "event": event,
-        }
-        self.dispatch("realtime.event", realtime_event)
+        })
 
     def _process_event(self, event: dict, *args) -> Optional[tuple]:
         item, delta = self.conversation.process_event(event, *args)
@@ -146,26 +131,17 @@ class RealtimeClient(RealtimeEventHandler):
 
     async def _call_tool(self, tool: dict) -> None:
         try:
-            logger.info(f"Calling tool {tool['name']} with arguments: {tool['arguments']}")
             json_arguments = json.loads(tool["arguments"])
             tool_config = self.tools.get(tool["name"])
-
             if not tool_config:
-                raise Exception(f"Tool '{tool['name']}' not registered.")
-
+                raise Exception(f"Tool {tool['name']} not found")
             result = await tool_config["handler"](**json_arguments)
-            response = {"output": json.dumps(result)}
+            output = {"output": json.dumps(result)}
         except Exception as e:
             logger.error(traceback.format_exc())
-            response = {"error": str(e)}
-            self.dispatch("conversation.tool_call.error", {"error": str(e), "tool": tool.get("name")})
-
+            output = {"error": str(e)}
         await self.safe_send("conversation.item.create", {
-            "item": {
-                "type": "function_call_output",
-                "call_id": tool["call_id"],
-                **response
-            }
+            "item": {"type": "function_call_output", "call_id": tool["call_id"], **output}
         })
         await self.create_response()
 
@@ -180,22 +156,14 @@ class RealtimeClient(RealtimeEventHandler):
         return True
 
     async def connect(self) -> bool:
-        if self.is_connected():
-            raise Exception("Already connected, use disconnect() first")
-        
-        await self.realtime.connect()      # Already waits for session.created inside
-        await self.update_session()        # Only after connect is successful
+        await self.realtime.connect()
+        await self.update_session()
         return True
-
-    async def disconnect(self) -> None:
-        self.conversation.clear()
-        if self.realtime.is_connected():
-            await self.realtime.disconnect()
-
-    def get_turn_detection_type(self) -> Optional[str]:
-        return self.session_config.get("turn_detection", {}).get("type")
-
+    
     async def add_tool(self, definition: dict, handler: Callable[..., Awaitable[dict]]) -> dict:
+        """
+        Register a new tool that the model can call.
+        """
         if not definition.get("name"):
             raise Exception("Tool definition must have a 'name'.")
         name = definition["name"]
@@ -208,47 +176,41 @@ class RealtimeClient(RealtimeEventHandler):
         return self.tools[name]
 
     def remove_tool(self, name: str) -> bool:
+        """
+        Remove a previously registered tool.
+        """
         if name not in self.tools:
             raise Exception(f"Tool '{name}' does not exist.")
         del self.tools[name]
         return True
 
+    async def disconnect(self) -> None:
+        if self.realtime.is_connected():
+            await self.realtime.disconnect()
+        self.conversation.clear()
+
     async def update_session(self, **kwargs) -> bool:
         self.session_config.update(kwargs)
-        tool_definitions = [
-            {**definition, "type": "function"} for definition in self.session_config.get("tools", [])
-        ] + [{**tool["definition"], "type": "function"} for tool in self.tools.values()]
-        session_update = {**self.session_config, "tools": tool_definitions}
+        tool_defs = [{**tool["definition"], "type": "function"} for tool in self.tools.values()]
+        session = {**self.session_config, "tools": tool_defs}
         if self.realtime.is_connected():
-            await self.safe_send("session.update", {"session": session_update})
+            await self.safe_send("session.update", {"session": session})
         return True
 
     @backoff.on_exception(backoff.expo, Exception, max_tries=3)
     async def safe_send(self, event_name: str, data: Optional[dict] = None) -> None:
         await self.realtime.send(event_name, data)
 
-    async def send_user_message_content(self, content: List[dict]) -> bool:
-        if content:
-            for c in content:
-                if c.get("type") == "input_audio" and isinstance(c.get("audio"), (bytes, bytearray)):
-                    c["audio"] = array_buffer_to_base64(c["audio"])
-            await self.safe_send("conversation.item.create", {
-                "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": content,
-                }
-            })
-        await self.create_response()
-        return True
-
     async def create_response(self) -> bool:
-        if self.get_turn_detection_type() is None and len(self.input_audio_buffer) > 0:
+        if not self.get_turn_detection_type() and len(self.input_audio_buffer) > 0:
             await self.safe_send("input_audio_buffer.commit")
             self.conversation.queue_input_audio(self.input_audio_buffer)
             self.input_audio_buffer.clear()
         await self.safe_send("response.create")
         return True
+
+    def get_turn_detection_type(self) -> Optional[str]:
+        return self.session_config.get("turn_detection", {}).get("type")
 
     async def append_input_audio(self, array_buffer: bytes) -> bool:
         if len(array_buffer) > 0:
@@ -256,21 +218,4 @@ class RealtimeClient(RealtimeEventHandler):
                 "audio": array_buffer_to_base64(array_buffer),
             })
             self.input_audio_buffer.extend(array_buffer)
-            if len(self.input_audio_buffer) > MAX_BUFFER_SIZE:
-                logger.warning("Input audio buffer size exceeded threshold, flushing early.")
-                await self.create_response()
         return True
-
-    async def wait_for_next_item(self, timeout: float = 10.0) -> dict:
-        event = await asyncio.wait_for(self.wait_for_next("conversation.item.appended"), timeout=timeout)
-        return {"item": event["item"]}
-
-    async def wait_for_next_completed_item(self, timeout: float = 10.0) -> dict:
-        event = await asyncio.wait_for(self.wait_for_next("conversation.item.completed"), timeout=timeout)
-        return {"item": event["item"]}
-
-    async def cancel_response(self) -> None:
-        if self.realtime.is_connected():
-            logger.info("Cancelling current server response...")
-            await self.safe_send("response.cancel")
-

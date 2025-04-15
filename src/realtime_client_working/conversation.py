@@ -1,13 +1,13 @@
-# conversation.py RealtimeConversation class for managing conversation state and events
-
 import logging
-import numpy as np
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 
 from src.realtime_client.utils import base64_to_array_buffer
 
 logger = logging.getLogger(__name__)
+
 
 class RealtimeConversation:
     """
@@ -38,9 +38,7 @@ class RealtimeConversation:
         self.clear()
 
     def clear(self) -> None:
-        """
-        Reset all internal state for a new conversation.
-        """
+        """Reset all internal state for a new conversation."""
         self.item_lookup: Dict[str, dict] = {}
         self.items: List[dict] = []
         self.response_lookup: Dict[str, dict] = {}
@@ -50,74 +48,65 @@ class RealtimeConversation:
         self.queued_input_audio: Optional[bytes] = None
 
     def queue_input_audio(self, input_audio: bytes) -> None:
-        """
-        Queue input audio for later association with a message.
-        """
         self.queued_input_audio = input_audio
 
     def process_event(self, event: dict, *args: Optional[np.ndarray]) -> Tuple[Optional[dict], Optional[dict]]:
-        """
-        Process an incoming Realtime event.
-        """
-        event_processor = self.EventProcessors.get(event['type'])
-        if not event_processor:
-            raise Exception(f"Missing conversation event processor for {event['type']}")
-        return event_processor(self, event, *args)
+        """Process an incoming Realtime event."""
+        processor = self.EventProcessors.get(event['type'])
+        if not processor:
+            raise Exception(f"Missing processor for event type: {event['type']}")
+        return processor(self, event, *args)
 
     def get_item(self, item_id: str) -> Optional[dict]:
         return self.item_lookup.get(item_id)
 
     def get_items(self) -> List[dict]:
-        return self.items[:]
+        return self.items.copy()
 
     def _process_item_created(self, event: dict) -> Tuple[Optional[dict], None]:
         item = event['item']
-        new_item = item.copy()
+        item_copy = item.copy()
 
-        if new_item['id'] not in self.item_lookup:
-            self.item_lookup[new_item['id']] = new_item
-            self.items.append(new_item)
+        if item_copy['id'] not in self.item_lookup:
+            self.item_lookup[item_copy['id']] = item_copy
+            self.items.append(item_copy)
 
-        new_item['formatted'] = {
-            'audio': bytearray(),  # Use bytearray for audio streaming
-            'text': '',
-            'transcript': ''
-        }
+        item_copy['formatted'] = {'audio': bytearray(), 'text': '', 'transcript': ''}
 
-        if new_item['id'] in self.queued_speech_items:
-            new_item['formatted']['audio'] = self.queued_speech_items[new_item['id']]['audio']
-            del self.queued_speech_items[new_item['id']]
+        # Attach any queued speech or transcript
+        if item_copy['id'] in self.queued_speech_items:
+            item_copy['formatted']['audio'] = self.queued_speech_items.pop(item_copy['id'])['audio']
 
-        if 'content' in new_item:
-            for content in new_item['content']:
-                if content['type'] in ['text', 'input_text']:
-                    new_item['formatted']['text'] += content.get('text', '')
+        if 'content' in item_copy:
+            for c in item_copy['content']:
+                if c.get('type') in ['text', 'input_text']:
+                    item_copy['formatted']['text'] += c.get('text', '')
 
-        if new_item['id'] in self.queued_transcript_items:
-            new_item['formatted']['transcript'] = self.queued_transcript_items[new_item['id']]['transcript']
-            del self.queued_transcript_items[new_item['id']]
+        if item_copy['id'] in self.queued_transcript_items:
+            item_copy['formatted']['transcript'] = self.queued_transcript_items.pop(item_copy['id'])['transcript']
 
-        if new_item['type'] == 'message':
-            if new_item['role'] == 'user':
-                new_item['status'] = 'completed'
+        # Set status
+        if item_copy['type'] == 'message':
+            if item_copy.get('role') == 'user':
+                item_copy['status'] = 'completed'
                 if self.queued_input_audio:
-                    new_item['formatted']['audio'] = self.queued_input_audio
+                    item_copy['formatted']['audio'] = self.queued_input_audio
                     self.queued_input_audio = None
             else:
-                new_item['status'] = 'in_progress'
-        elif new_item['type'] == 'function_call':
-            new_item['formatted']['tool'] = {
+                item_copy['status'] = 'in_progress'
+        elif item_copy['type'] == 'function_call':
+            item_copy['formatted']['tool'] = {
                 'type': 'function',
-                'name': new_item.get('name'),
-                'call_id': new_item.get('call_id'),
+                'name': item_copy.get('name', ''),
+                'call_id': item_copy.get('call_id', ''),
                 'arguments': ''
             }
-            new_item['status'] = 'in_progress'
-        elif new_item['type'] == 'function_call_output':
-            new_item['status'] = 'completed'
-            new_item['formatted']['output'] = new_item.get('output')
+            item_copy['status'] = 'in_progress'
+        elif item_copy['type'] == 'function_call_output':
+            item_copy['status'] = 'completed'
+            item_copy['formatted']['output'] = item_copy.get('output', '')
 
-        return new_item, None
+        return item_copy, None
 
     def _process_item_truncated(self, event: dict) -> Tuple[Optional[dict], None]:
         item_id = event['item_id']
@@ -125,7 +114,7 @@ class RealtimeConversation:
 
         item = self.item_lookup.get(item_id)
         if not item:
-            raise Exception(f'Item "{item_id}" not found for truncation.')
+            raise Exception(f"Truncated: Item '{item_id}' not found")
 
         end_index = (audio_end_ms * self.default_frequency) // 1000
         item['formatted']['audio'] = item['formatted']['audio'][:end_index]
@@ -136,17 +125,14 @@ class RealtimeConversation:
     def _process_item_deleted(self, event: dict) -> Tuple[Optional[dict], None]:
         item_id = event['item_id']
         item = self.item_lookup.pop(item_id, None)
-
-        if not item:
-            raise Exception(f'Item "{item_id}" not found for deletion.')
-
-        self.items = [i for i in self.items if i['id'] != item_id]
+        if item:
+            self.items = [i for i in self.items if i['id'] != item_id]
         return item, None
 
     def _process_input_audio_transcription_completed(self, event: dict) -> Tuple[Optional[dict], Optional[dict]]:
         item_id = event['item_id']
         content_index = event['content_index']
-        transcript = event['transcript'] or ' '
+        transcript = event.get('transcript', ' ')
 
         item = self.item_lookup.get(item_id)
         if not item:
@@ -160,9 +146,7 @@ class RealtimeConversation:
 
     def _process_speech_started(self, event: dict) -> Tuple[None, None]:
         item_id = event['item_id']
-        self.queued_speech_items[item_id] = {
-            'audio_start_ms': event['audio_start_ms']
-        }
+        self.queued_speech_items[item_id] = {'audio_start_ms': event['audio_start_ms']}
         return None, None
 
     def _process_speech_stopped(self, event: dict, input_audio_buffer: Optional[np.ndarray]) -> Tuple[None, None]:
@@ -171,25 +155,22 @@ class RealtimeConversation:
 
         speech = self.queued_speech_items.get(item_id)
         if not speech:
-            logger.warning(f"Speech stopped received but no matching speech started for item {item_id}")
             return None, None
 
         speech['audio_end_ms'] = audio_end_ms
 
         if input_audio_buffer is not None:
-            start_index = (speech['audio_start_ms'] * self.default_frequency) // 1000
-            end_index = (audio_end_ms * self.default_frequency) // 1000
-            speech['audio'] = input_audio_buffer[start_index:end_index]
+            start_idx = (speech['audio_start_ms'] * self.default_frequency) // 1000
+            end_idx = (audio_end_ms * self.default_frequency) // 1000
+            speech['audio'] = input_audio_buffer[start_idx:end_idx]
 
         return None, None
 
     def _process_response_created(self, event: dict) -> Tuple[None, None]:
         response = event['response']
-
         if response['id'] not in self.response_lookup:
             self.response_lookup[response['id']] = response
             self.responses.append(response)
-
         return None, None
 
     def _process_output_item_added(self, event: dict) -> Tuple[None, None]:
@@ -197,23 +178,20 @@ class RealtimeConversation:
         item = event['item']
 
         response = self.response_lookup.get(response_id)
-        if not response:
-            raise Exception(f'Response "{response_id}" not found for adding output item.')
+        if response:
+            response.setdefault('output', []).append(item['id'])
 
-        response.setdefault('output', []).append(item['id'])
         return None, None
 
     def _process_output_item_done(self, event: dict) -> Tuple[Optional[dict], None]:
         item = event.get('item')
-
         if not item:
-            raise Exception('Missing item in output_item.done event.')
+            raise Exception("output_item.done: Missing item.")
 
         found_item = self.item_lookup.get(item['id'])
-        if not found_item:
-            raise Exception(f'Item "{item["id"]}" not found for output_item.done.')
+        if found_item:
+            found_item['status'] = item['status']
 
-        found_item['status'] = item['status']
         return found_item, None
 
     def _process_content_part_added(self, event: dict) -> Tuple[Optional[dict], None]:
@@ -221,10 +199,9 @@ class RealtimeConversation:
         part = event['part']
 
         item = self.item_lookup.get(item_id)
-        if not item:
-            raise Exception(f'Item "{item_id}" not found for content_part.added.')
+        if item:
+            item.setdefault('content', []).append(part)
 
-        item.setdefault('content', []).append(part)
         return item, None
 
     def _process_audio_transcript_delta(self, event: dict) -> Tuple[Optional[dict], Optional[dict]]:
@@ -233,11 +210,9 @@ class RealtimeConversation:
         delta = event['delta']
 
         item = self.item_lookup.get(item_id)
-        if not item:
-            raise Exception(f'Item "{item_id}" not found for audio_transcript.delta.')
-
-        item['content'][content_index]['transcript'] += delta
-        item['formatted']['transcript'] += delta
+        if item:
+            item['content'][content_index]['transcript'] += delta
+            item['formatted']['transcript'] += delta
 
         return item, {'transcript': delta}
 
@@ -247,14 +222,9 @@ class RealtimeConversation:
 
         item = self.item_lookup.get(item_id)
         if not item:
-            logger.debug(f'Audio delta received for unknown item "{item_id}". Skipping.')
             return None, None
 
         audio_data = base64_to_array_buffer(delta).tobytes()
-
-        if not isinstance(item['formatted'].get('audio'), (bytearray, bytes)):
-            item['formatted']['audio'] = bytearray()
-
         item['formatted']['audio'] += audio_data
 
         return item, {'audio': audio_data}
@@ -265,11 +235,9 @@ class RealtimeConversation:
         delta = event['delta']
 
         item = self.item_lookup.get(item_id)
-        if not item:
-            raise Exception(f'Item "{item_id}" not found for text.delta.')
-
-        item['content'][content_index]['text'] += delta
-        item['formatted']['text'] += delta
+        if item:
+            item['content'][content_index]['text'] += delta
+            item['formatted']['text'] += delta
 
         return item, {'text': delta}
 
@@ -279,15 +247,16 @@ class RealtimeConversation:
 
         item = self.item_lookup.get(item_id)
         if not item:
-            raise Exception(f'Item "{item_id}" not found for function_call_arguments.delta.')
+            return None, None
 
         if 'arguments' not in item:
             item['arguments'] = ''
 
+        item['arguments'] += delta
+
         if 'formatted' not in item or 'tool' not in item['formatted']:
             item['formatted']['tool'] = {'arguments': ''}
 
-        item['arguments'] += delta
         item['formatted']['tool']['arguments'] += delta
 
         return item, {'arguments': delta}

@@ -96,8 +96,35 @@ run_clinicalExtractor_evals:
 run_test_app:
 	$(PYTHON_INTERPRETER) src/app/test_app_2.py
 
-run_test_app_2:
-	$(PYTHON_INTERPRETER) test_app_2.py
+run_test_pc_voiceagent:
+	$(PYTHON_INTERPRETER) voiceagents/testagent/pcvoiceagent.py
+
+run_fast_api:
+	uvicorn src.api.fastapi:app --host 0.0.0.0 --port 8010 --reload
+
+run_test_pc_voiceagent_v2:
+	$(PYTHON_INTERPRETER) voiceagents/testagent/pcvoiceagent_v2.py
+
+run_chainlit_agents:
+	chainlit run voiceagents/testagent/chainlitapp.py
+
+run_chainlit_agents:
+	chainlit run voiceagents/testagent/chainlitapp.py
+
+run_uv: 
+	python src/openai_test/push_to_talk.py
+
+stt_aoai: 
+	python src/openai_test/stt_aoai.py
+
+stt_aoai_2: 
+	python src/quickstart.py
+
+stt_aoai_3: 
+	python app/backend/app2.py
+
+stt_aoai_4: 
+	python app/backend/app2.py
 
 run_pylint:
 	@echo "Running linter"
