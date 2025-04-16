@@ -3,6 +3,7 @@ import time
 import json
 from typing import List, Dict
 import asyncio
+import contextlib
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -25,9 +26,26 @@ from utils.ml_logging import get_logger
 
 app = FastAPI()
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # or ["*"] for testing
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Mount static files from the frontend folder (adjust if needed)
 app.mount("/static", StaticFiles(directory="app/frontend"), name="static")
 
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        data = await websocket.receive_text()
+        print(f"Received message: {data}")
+        await websocket.send_text(f"Message received: {data}")
+        
 # Serve the HTML page at the root route.
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
@@ -131,145 +149,176 @@ async def receive_prompt(websocket: WebSocket) -> str:
 # --- Main Conversation Loop Wrapped for WebSocket ---
 async def main_conversation(websocket: WebSocket) -> None:
     try:
-        # Send an initial greeting (status) to the client.
         greeting = "Hello from XMYX Healthcare Company! We are here to assist you. How can I help you today?"
         await websocket.send_text(json.dumps({"type": "status", "message": greeting}))
         az_speech_synthesizer_client.start_speaking_text(greeting)
-        await asyncio.sleep(10)
+        await asyncio.sleep(2)
 
         conversation_history: List[Dict[str, str]] = [
             {"role": "system", "content": system_prompt}
         ]
+        processing_task = None
+        last_cancelled_tokens = None
 
         while True:
             # Receive a prompt from the WebSocket client.
-            prompt = await receive_prompt(websocket)
-            if prompt.strip():
-                logger.info(f"User said: {prompt}")
+            prompt_raw = await receive_prompt(websocket)
+            try:
+                prompt_json = json.loads(prompt_raw)
+                prompt = prompt_json.get("text", prompt_raw)
+            except Exception:
+                prompt = prompt_raw
 
-                if check_for_stopwords(prompt):
-                    logger.info("Detected stop word, exiting...")
-                    exit_text = "Thank you for using our service. Have a great day! Goodbye."
-                    az_speech_synthesizer_client.start_speaking_text(exit_text)
-                    await websocket.send_text(json.dumps({"type": "exit", "message": exit_text}))
-                    await asyncio.sleep(8)
-                    break
+            prompt = prompt.strip()
+            if not prompt:
+                continue
 
-                conversation_history.append({"role": "user", "content": prompt})
+            # Cancel any ongoing TTS and processing
+            az_speech_synthesizer_client.stop_speaking()
+            if processing_task and not processing_task.done():
+                processing_task.cancel()
+                logger.info(f"🛑 Cancelled ongoing processing due to new input: '{prompt[:40]}'")
+                if last_cancelled_tokens:
+                    logger.info(f"🛑 Last cancelled tokens: {last_cancelled_tokens}")
+                with contextlib.suppress(asyncio.CancelledError):
+                    await processing_task
 
+            logger.info(f"User said: {prompt}")
+
+            if check_for_stopwords(prompt):
+                logger.info("Detected stop word, exiting...")
+                exit_text = "Thank you for using our service. Have a great day! Goodbye."
+                az_speech_synthesizer_client.start_speaking_text(exit_text)
+                await websocket.send_text(json.dumps({"type": "exit", "message": exit_text}))
+                await asyncio.sleep(2)
+                break
+
+            conversation_history.append({"role": "user", "content": prompt})
+
+            async def process_response(history_snapshot, user_prompt):
+                nonlocal last_cancelled_tokens
                 tool_name = None
                 function_call_arguments = ""
                 tool_id = None
                 collected_messages: List[str] = []
+                cancelled_tokens = []
 
-                # FIRST STREAMING RESPONSE (may include tool call)
-                response = az_openai_client.chat.completions.create(
-                    stream=True,
-                    messages=conversation_history,
-                    tools=available_tools,
-                    tool_choice="auto",
-                    max_tokens=4096,
-                    temperature=0.5,
-                    top_p=1.0,
-                    model=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID"),
-                )
+                try:
+                    response = az_openai_client.chat.completions.create(
+                        stream=True,
+                        messages=history_snapshot,
+                        tools=available_tools,
+                        tool_choice="auto",
+                        max_tokens=4096,
+                        temperature=0.5,
+                        top_p=1.0,
+                        model=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID"),
+                    )
 
-                for chunk in response:
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        if delta.tool_calls:
-                            if delta.tool_calls[0].function.name:
-                                tool_name = delta.tool_calls[0].function.name
-                                tool_id = delta.tool_calls[0].id
-                                conversation_history.append(delta)
-                            if delta.tool_calls[0].function.arguments:
-                                function_call_arguments += delta.tool_calls[0].function.arguments
-                        elif delta.content:
-                            chunk_text = delta.content
-                            if chunk_text:
-                                collected_messages.append(chunk_text)
-                                if chunk_text in tts_sentence_end:
-                                    text = "".join(collected_messages).strip()
-                                    # Perform TTS and send the assistant's response via WebSocket.
-                                    az_speech_synthesizer_client.start_speaking_text(text)
-                                    await websocket.send_text(json.dumps({
-                                        "type": "assistant",
-                                        "content": text
-                                    }))
-                                    collected_messages.clear()
+                    for chunk in response:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta
+                            if delta.tool_calls:
+                                if delta.tool_calls[0].function.name:
+                                    tool_name = delta.tool_calls[0].function.name
+                                    tool_id = delta.tool_calls[0].id
+                                    history_snapshot.append(delta)
+                                if delta.tool_calls[0].function.arguments:
+                                    function_call_arguments += delta.tool_calls[0].function.arguments
+                            elif delta.content:
+                                chunk_text = delta.content
+                                if chunk_text:
+                                    collected_messages.append(chunk_text)
+                                    cancelled_tokens.append(chunk_text)
+                                    if chunk_text in tts_sentence_end:
+                                        text = "".join(collected_messages).strip()
+                                        az_speech_synthesizer_client.start_speaking_text(text)
+                                        await websocket.send_text(json.dumps({
+                                            "type": "assistant",
+                                            "content": text
+                                        }))
+                                        collected_messages.clear()
+                    last_cancelled_tokens = cancelled_tokens
 
-                # If a tool call was detected, execute it.
-                if tool_name:
-                    logger.info(f"tool_name: {tool_name}")
-                    logger.info(f"tool_id: {tool_id}")
-                    logger.info(f"function_call_arguments: {function_call_arguments}")
-                    try:
-                        parsed_args = json.loads(function_call_arguments.strip())
-                        function_to_call = function_mapping.get(tool_name)
+                    # If a tool call was detected, execute it.
+                    if tool_name:
+                        logger.info(f"tool_name: {tool_name}")
+                        logger.info(f"tool_id: {tool_id}")
+                        logger.info(f"function_call_arguments: {function_call_arguments}")
+                        try:
+                            parsed_args = json.loads(function_call_arguments.strip())
+                            function_to_call = function_mapping.get(tool_name)
 
-                        if function_to_call:
-                            result = await function_to_call(parsed_args)
-                            logger.info(f"✅ Function `{tool_name}` executed. Result: {result}")
+                            if function_to_call:
+                                result = await function_to_call(parsed_args)
+                                logger.info(f"✅ Function `{tool_name}` executed. Result: {result}")
 
-                            conversation_history.append({
-                                "tool_call_id": tool_id,
-                                "role": "tool",
-                                "name": tool_name,
-                                "content": result,
-                            })
+                                history_snapshot.append({
+                                    "tool_call_id": tool_id,
+                                    "role": "tool",
+                                    "name": tool_name,
+                                    "content": result,
+                                })
 
-                            # SECOND STREAMING RESPONSE AFTER TOOL EXECUTION
-                            second_response = az_openai_client.chat.completions.create(
-                                stream=True,
-                                messages=conversation_history,
-                                temperature=0.5,
-                                top_p=1.0,
-                                max_tokens=4096,
-                                model=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID"),
-                            )
+                                # SECOND STREAMING RESPONSE AFTER TOOL EXECUTION
+                                second_response = az_openai_client.chat.completions.create(
+                                    stream=True,
+                                    messages=history_snapshot,
+                                    temperature=0.5,
+                                    top_p=1.0,
+                                    max_tokens=4096,
+                                    model=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID"),
+                                )
 
-                            collected_messages = []
+                                collected_messages = []
+                                cancelled_tokens = []
 
-                            for chunk in second_response:
-                                if chunk.choices:
-                                    delta = chunk.choices[0].delta
-                                    if hasattr(delta, "content") and delta.content:
-                                        chunk_message = delta.content
-                                        collected_messages.append(chunk_message)
-                                        if chunk_message.strip() in tts_sentence_end:
-                                            text = ''.join(collected_messages).strip()
-                                            if text:
-                                                az_speech_synthesizer_client.start_speaking_text(text)
-                                                await websocket.send_text(json.dumps({
-                                                    "type": "assistant",
-                                                    "content": text
-                                                }))
-                                                collected_messages.clear()
+                                for chunk in second_response:
+                                    if chunk.choices:
+                                        delta = chunk.choices[0].delta
+                                        if hasattr(delta, "content") and delta.content:
+                                            chunk_message = delta.content
+                                            collected_messages.append(chunk_message)
+                                            cancelled_tokens.append(chunk_message)
+                                            if chunk_message.strip() in tts_sentence_end:
+                                                text = ''.join(collected_messages).strip()
+                                                if text:
+                                                    az_speech_synthesizer_client.start_speaking_text(text)
+                                                    await websocket.send_text(json.dumps({
+                                                        "type": "assistant",
+                                                        "content": text
+                                                    }))
+                                                    collected_messages.clear()
+                                last_cancelled_tokens = cancelled_tokens
 
-                            final_text = ''.join(collected_messages).strip()
-                            if final_text:
-                                conversation_history.append({"role": "assistant", "content": final_text})
+                                final_text = ''.join(collected_messages).strip()
+                                if final_text:
+                                    history_snapshot.append({"role": "assistant", "content": final_text})
 
-                    except json.JSONDecodeError as e:
-                        logger.error(f"❌ Error parsing function arguments: {e}")
+                        except json.JSONDecodeError as e:
+                            logger.error(f"❌ Error parsing function arguments: {e}")
 
-                else:
-                    # Append the assistant message if no tool call was made.
-                    final_text = ''.join(collected_messages).strip()
-                    if final_text:
-                        conversation_history.append({"role": "assistant", "content": final_text})
-                        logger.info(f"✅ Final assistant message: {final_text}")
-                        await websocket.send_text(json.dumps({
-                            "type": "assistant",
-                            "content": final_text
-                        }))
+                    else:
+                        # Append the assistant message if no tool call was made.
+                        final_text = ''.join(collected_messages).strip()
+                        if final_text:
+                            history_snapshot.append({"role": "assistant", "content": final_text})
+                            logger.info(f"✅ Final assistant message: {final_text}")
+                            await websocket.send_text(json.dumps({
+                                "type": "assistant",
+                                "content": final_text
+                            }))
+                except asyncio.CancelledError:
+                    logger.info(f"🛑 process_response cancelled for input: '{user_prompt[:40]}'")
+                    raise
+
+            # Start processing the new input
+            processing_task = asyncio.create_task(process_response(conversation_history.copy(), prompt))
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
     except Exception as e:
         logger.exception("An error occurred in main_conversation()")
-
-
 @app.websocket("/realtime")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
