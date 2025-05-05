@@ -362,7 +362,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:  # noqa: D401
         cm = ConversationManager(auth=False)
         await main_conversation(websocket, cm)
 
-
 async def authentication_conversation(
     websocket: WebSocket, cm: ConversationManager
 ) -> Optional[Dict[str, Any]]:
@@ -379,23 +378,6 @@ async def authentication_conversation(
         raw = await receive_and_filter(websocket)
         if raw is None:
             continue
-        try:
-            # <-- receive one frame raw
-            prompt_raw = await websocket.receive_text()
-        except WebSocketDisconnect:
-            return
-
-        # <-- interrupt filter
-        try:
-            msg = json.loads(prompt_raw)
-            if msg.get("type") == "interrupt":
-                logger.info("🛑 Interrupt received; stopping TTS and skipping GPT")
-                app.state.tts_client.stop_speaking()
-                continue
-        except json.JSONDecodeError:
-            pass
-
-        # <-- now parse true user text
         try:
             prompt = json.loads(raw).get("text", raw)
         except json.JSONDecodeError:
@@ -416,6 +398,7 @@ async def authentication_conversation(
         )
         if result and result.get("authenticated"):
             return result
+
 
 
 # --- API Endpoint to Initiate Call ---
@@ -854,7 +837,6 @@ async def process_gpt_response(
                 if delta.content in TTS_END:
                     text_streaming = _add_space("".join(collected).strip())
                     if is_acs:
-
                         # Send TTS audio to ACS WebSocket
                         send_response_to_acs(websocket, text_streaming)
                     else:
