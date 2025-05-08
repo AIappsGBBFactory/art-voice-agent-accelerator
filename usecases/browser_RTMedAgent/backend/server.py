@@ -54,6 +54,33 @@ ACS_CALLBACK_PATH = "/api/acs/callback"
 ACS_WEBSOCKET_PATH = "/realtime-acs" 
 ACS_CALL_PATH = "/api/call"
 
+# ----- websocket relay testintg ----
+from fastapi import WebSocket, WebSocketDisconnect
+from typing import List
+
+# List to store connected WebSocket clients
+connected_clients: List[WebSocket] = []
+
+import asyncio
+
+async def broadcast_message(message: str, sender: str = "system"):
+    """
+    Send a message to all connected WebSocket clients without duplicates.
+
+    Parameters:
+    - message (str): The message to broadcast.
+    - sender (str): Indicates the sender of the message. Can be 'agent', 'user', or 'system'.
+    """
+    sent_clients = set()  # Track clients that have already received the message
+    payload = {"message": message, "sender": sender}  # Include sender in the payload
+    for client in connected_clients:
+        if client not in sent_clients:
+            try:
+                await client.send_text(json.dumps(payload))
+                sent_clients.add(client)  # Mark client as sent
+            except Exception as e:
+                logger.error(f"Failed to send message to a client: {e}")
+
 # ----------------------------- App & Middleware -----------------------------
 # --- Lifespan Management for Startup/Shutdown ---
 @asynccontextmanager
@@ -352,6 +379,22 @@ def _add_space(text: str) -> str:
 # --------------------------------------------------------------------------- #
 #  WebSocket entry points
 # --------------------------------------------------------------------------- #
+
+# Standalone WebSocket endpoint
+@app.websocket("/relay")
+async def relay_websocket(websocket: WebSocket):
+    if websocket not in connected_clients:
+        await websocket.accept()
+        connected_clients.append(websocket)
+        # logger.info("WebSocket connected to relay.")
+    try:
+        while True:
+            # Keep the connection alive
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        connected_clients.remove(websocket)
+        logger.info("WebSocket disconnected from relay.")
+
 @app.websocket("/realtime")
 async def websocket_endpoint(websocket: WebSocket) -> None:  # noqa: D401
     """Handle authentication flow, then main conversation."""
@@ -401,7 +444,7 @@ async def authentication_conversation(
 
 
 
-# --- API Endpoint to Initiate Call ---
+# --- API Endpoint to Initiate Call ---\napp.post(ACS_CALL_PATH)(initiate_acs_phone_call)\napp.post(ACS_CALLBACK_PATH)(handle_acs_callbacks)
 class CallRequest(BaseModel):
     target_number: str # Define expected request body
     
@@ -446,6 +489,7 @@ from azure.core.messaging import CloudEvent
 # --- ACS Callback Handler ---
 @app.post(ACS_CALLBACK_PATH)
 async def handle_acs_callbacks(request: Request):
+
     acs_caller_instance = request.app.state.acs_caller
     if not acs_caller_instance:
         logger.error("ACS Caller not initialized, cannot handle callback.")
@@ -461,57 +505,30 @@ async def handle_acs_callbacks(request: Request):
                     continue
 
                 call_connection_id = event.data['callConnectionId']
-                logger.info(f"Processing event type: {event.type} for call connection id: {call_connection_id}")
 
-                # Existing event handling logic (logging)
+                logger.info(f"Processing event type: {event.type} for call connection id: {call_connection_id}")
+                # Updated event handling logic with broadcasting and emojis
                 if event.type == "Microsoft.Communication.CallConnected":
-                    logger.info(f"Call connected event received for call connection id: {call_connection_id}")
-                    # asyncio.create_task(manager.broadcast({
-                    #     "channel":"acs",
-                    #     "type":"logs",
-                    #     "text": "Call connected",
-                    # }))
+                    logger.info(f"📞 Call connected event received for call connection id: {call_connection_id}")
+                    await broadcast_message("📞 Call connected")
                 elif event.type == "Microsoft.Communication.ParticipantsUpdated":
-                    logger.info(f"Participants updated event received for call connection id: {call_connection_id}")
-                    # asyncio.create_task(manager.broadcast({
-                    #     "channel":"acs",
-                    #     "type":"logs",
-                    #     "text": "Participants Updated",
-                    # }))
+                    logger.info(f"👥 Participants updated event received for call connection id: {call_connection_id}")
+                    await broadcast_message("👥 Participants updated")
                 elif event.type == "Microsoft.Communication.CallDisconnected":
-                    logger.info(f"Call disconnect event received for call connection id: {call_connection_id}")
-                    # asyncio.create_task(manager.broadcast({
-                    #     "channel":"acs",
-                    #     "type":"logs",
-                    #     "text": "Call Disconnected",
-                    # }))
-                    # await acs_caller.disconnect_call(call_connection_id)
+                    logger.info(f"❌ Call disconnect event received for call connection id: {call_connection_id}")
+                    await broadcast_message("❌ Call disconnected")
                 elif event.type == "Microsoft.Communication.MediaStreamingStarted":
-                    logger.info(f"Media streaming started for call connection id: {call_connection_id}")
-                    # Notify the frontend about the media streaming start
-                    # asyncio.create_task(manager.broadcast({
-                    #     "channel": "acs",
-                    #     "type": "logs",
-                    #     "text": "Media streaming started",
-                    # }))
+                    logger.info(f"🎙️ Media streaming started for call connection id: {call_connection_id}")
+                    await broadcast_message("🎙️ Media streaming started")
                 elif event.type == "Microsoft.Communication.MediaStreamingStopped":
-                    logger.info(f"Media streaming stopped for call connection id: {call_connection_id}")
-                    # Notify the frontend about the media streaming stop
-                    # asyncio.create_task(manager.broadcast({
-                    #     "channel": "acs",
-                    #     "type": "logs",
-                    #     "text": "Media streaming stopped",
-                    # }))
+                    logger.info(f"🛑 Media streaming stopped for call connection id: {call_connection_id}")
+                    await broadcast_message("🛑 Media streaming stopped")
                 elif event.type == "Microsoft.Communication.MediaStreamingFailed":
-                    logger.error(f"Media streaming failed for call connection id: {call_connection_id}. Details: {event.data}")
-                    # Notify the frontend about the failure
-                    # asyncio.create_task(manager.broadcast({
-                    #     "channel": "acs",
-                    #     "type": "logs",
-                    #     "text": "Media streaming failed",
-                    # }))
+                    logger.error(f"⚠️ Media streaming failed for call connection id: {call_connection_id}. Details: {event.data}")
+                    await broadcast_message("⚠️ Media streaming failed")
                 else:
-                    logger.info(f"Unhandled event type: {event.type} for call connection id: {call_connection_id}")
+                    logger.info(f"ℹ️ Unhandled event type: {event.type} for call connection id: {call_connection_id}")
+                    await broadcast_message(f"ℹ️ Unhandled event type: {event.type}")
 
             except Exception as e:
                 logger.error(f"Error processing event: {event_dict}. Error: {e}", exc_info=True)
@@ -579,6 +596,7 @@ async def acs_websocket_endpoint(websocket: WebSocket):
             logger.info(f"Playing initial greeting for call {call_connection_id}")
             # Don't await here, let it play while listening starts
             # Use the instance from app.state
+            await broadcast_message(initial_greeting, "Assistant")
             await send_response_to_acs(websocket, initial_greeting)
 
             cm.hist.append({"role": "assistant", "content": initial_greeting})
@@ -597,9 +615,13 @@ async def acs_websocket_endpoint(websocket: WebSocket):
                     recognized_text = None
                 if recognized_text:
                     logger.info(f"Processing recognized text for call {call_connection_id}: {recognized_text}")
+                    await broadcast_message(recognized_text, "User")
+
                     if check_for_stopwords(recognized_text):
                         logger.info(f"Stop word detected in call {call_connection_id}. Ending conversation.")
                         # Optionally play a goodbye message
+                        await broadcast_message("Goodbye!", "Assistant")
+
                         await send_response_to_acs(websocket, "Goodbye!")
                         await asyncio.sleep(1) # Allow time for TTS to potentially start
 
@@ -838,6 +860,7 @@ async def process_gpt_response(
                     text_streaming = _add_space("".join(collected).strip())
                     if is_acs:
                         # Send TTS audio to ACS WebSocket
+                        await broadcast_message(text_streaming, "Assistant")
                         send_response_to_acs(websocket, text_streaming)
                     else:
                         await send_tts_audio(text_streaming, websocket)
@@ -857,6 +880,7 @@ async def process_gpt_response(
             pending = "".join(collected).strip()
             if is_acs:
                 # Send TTS audio to ACS WebSocket
+                await broadcast_message(text_streaming, "Assistant")
                 send_response_to_acs(websocket, pending)
             else:
                 await send_tts_audio(pending, websocket)
@@ -1074,6 +1098,8 @@ async def process_tool_followup(
             pending = "".join(collected).strip()
             if is_acs:
                 # Send TTS audio to ACS WebSocket
+                await broadcast_message(pending, "Assistant")
+
                 send_response_to_acs(websocket, pending)
             else:
                 await send_tts_audio(pending, websocket)
