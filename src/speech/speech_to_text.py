@@ -11,13 +11,13 @@ import numpy as np
 from azure.cognitiveservices.speech import AudioConfig, SpeechConfig
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
+import asyncio
 
 from utils.ml_logging import get_logger
 
 load_dotenv()
 
 logger = get_logger()
-
 
 # Callback methods
 def conversation_transcriber_transcribed_cb(evt: speechsdk.SpeechRecognitionEventArgs):
@@ -54,8 +54,8 @@ class SpeechCoreTranslator:
     """
 
     def __init__(self):
-        self.speech_key = os.getenv("SPEECH_KEY")
-        self.speech_region = os.getenv("SPEECH_REGION")
+        self.speech_key = os.getenv("AZURE_SPEECH_KEY")
+        self.speech_region = os.getenv("AZURE_SPEECH_REGION")
         self.connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
         self.speech_config = speechsdk.SpeechConfig(
             subscription=self.speech_key, region=self.speech_region
@@ -77,6 +77,63 @@ class SpeechCoreTranslator:
         """
         self.supported_languages.append(language)
 
+    def create_realtime_recognizer(self, push_stream: speechsdk.audio.PushAudioInputStream, loop: asyncio.AbstractEventLoop, message_queue: asyncio.Queue, language: str = "en-US"):
+        """
+        Creates and configures a SpeechRecognizer for real-time continuous recognition
+        using a PushAudioInputStream and sets up callbacks to use an asyncio Queue.
+
+        Args:
+            push_stream: The PushAudioInputStream to use for audio input.
+            loop: The asyncio event loop for scheduling callbacks.
+            message_queue: The asyncio Queue to put recognized text onto.
+            language: The language code for recognition (e.g., "en-US").
+
+        Returns:
+            A configured speechsdk.SpeechRecognizer instance.
+        """
+        audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
+
+        # Use the instance's speech_config
+        recognizer = speechsdk.SpeechRecognizer(
+            speech_config=self.speech_config,
+            audio_config=audio_config,
+            language=language
+        )
+
+        # --- Define Callbacks ---
+        def recognizing_cb(evt: speechsdk.SpeechRecognitionEventArgs):
+            if evt.result.reason == speechsdk.ResultReason.RecognizingSpeech:
+                logger.info(f"PARTIAL → {evt.result.text}")
+
+        def recognized_cb(evt: speechsdk.SpeechRecognitionEventArgs):
+            if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                logger.info(f"FINAL   → {evt.result.text}")
+                # Put the final recognized text onto the queue for processing
+                if evt.result.text: # Avoid putting empty strings on the queue
+                    asyncio.run_coroutine_threadsafe(message_queue.put(evt.result.text), loop)
+            elif evt.result.reason == speechsdk.ResultReason.NoMatch:
+                logger.info("NOMATCH: Speech could not be recognized.")
+
+        def session_stopped_cb(evt: speechsdk.SessionEventArgs):
+            logger.info(f"Session stopped: {evt}")
+            # You might want to signal the end of the stream or handle cleanup here
+            # Example: asyncio.run_coroutine_threadsafe(message_queue.put(None), loop)
+
+        def canceled_cb(evt: speechsdk.SpeechRecognitionCanceledEventArgs):
+            logger.error(f"Recognition Canceled: {evt.reason}")
+            if evt.reason == speechsdk.CancellationReason.Error:
+                logger.error(f"Canceled details: {evt.error_details}")
+            # Signal the end or error state
+            # Example: asyncio.run_coroutine_threadsafe(message_queue.put(None), loop)
+
+        # Connect callbacks
+        recognizer.recognizing.connect(recognizing_cb)
+        recognizer.recognized.connect(recognized_cb)
+        recognizer.session_stopped.connect(session_stopped_cb)
+        recognizer.canceled.connect(canceled_cb)
+
+        logger.info(f"Realtime recognizer created for language: {language}")
+        return recognizer
     def get_blob_client_from_url(self, blob_url: str):
         """
         Retrieves a BlobClient object for the specified blob URL.

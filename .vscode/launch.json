@@ -5,13 +5,37 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch Chrome",
-            "request": "launch",
-            "type": "chrome",
-            "url": "http://localhost:5173",
-            "webRoot": "${workspaceFolder}/app/frontend-jin/realtime-voice-client",
+            "name": "Attach",
+            "port": 5173,
+            "request": "attach",
+            "skipFiles": [
+            ],
+            "type": "node"
         },
 
+        {
+            "name": "Launch edge",
+            "request": "launch",
+            "type": "msedge",
+            "url": "http://localhost:5173",
+            "webRoot": "${workspaceFolder}/usecases/browser_RTMedAgent",
+        },
+
+        { // Added React Debug Configuration
+            "name": "React App: Browser Debug",
+            "type": "msedge", // or "chrome"
+            "request": "launch",
+            "url": "http://localhost:5173", // Ensure this matches your Vite dev server port
+            "webRoot": "${workspaceFolder}/usecases/browser_RTMedAgent/frontend",
+            "sourceMaps": true,
+            "sourceMapPathOverrides": {
+                "webpack:///./src/*": "${webRoot}/src/*",
+                "webpack:///src/*": "${webRoot}/src/*",
+                "webpack:///*": "*",
+                "webpack:///./*": "${webRoot}/*",
+                "meteor://app/*": "${webRoot}/*"
+            }
+        },
 
         {
             "name": "Python Debugger: FastAPI",
@@ -19,7 +43,7 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "app.backend.server:app",
+                "usecases.browser_RTMedAgent.backend.server:app",
                 "--reload",
                 "--port",
                 "8010"
@@ -35,7 +59,7 @@
     "compounds": [
         {
             "name": "Full Stack: Backend + Frontend",
-            "configurations": ["Python Debugger: FastAPI", "React App: Browser"]
+            "configurations": ["Python Debugger: FastAPI", "React App: Browser Debug"]
         }
     ]
 }

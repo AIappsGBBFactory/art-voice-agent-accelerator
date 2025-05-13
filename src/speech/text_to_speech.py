@@ -2,7 +2,8 @@ import os
 import azure.cognitiveservices.speech as speechsdk
 from dotenv import load_dotenv
 from utils.ml_logging import get_logger
-
+import base64
+from azure.cognitiveservices.speech.audio import AudioOutputConfig, AudioStreamFormat, PushAudioOutputStream
 # Load environment variables from a .env file if present
 load_dotenv()
 
@@ -101,3 +102,61 @@ class SpeechSynthesizer:
             logger.error(f"Error synthesizing speech: {e}")
             return b""
 
+    def synthesize_to_base64_frames(
+        self,
+        text: str,
+        sample_rate: int = 16000
+    ) -> list[str]:
+        """
+        Synthesize `text` via Azure TTS into raw 16-bit PCM mono at either 16 kHz or 24 kHz,
+        then split into 20 ms frames (50 fps), returning each frame as a base64 string.
+
+        - sample_rate: 16000 or 24000
+        - frame_size:  0.02s * sample_rate * 2 bytes/sample
+                    =  640 bytes @16 kHz, 960 bytes @24 kHz
+        """
+        # Select SDK output format and packet size
+        fmt_map = {
+            16000: speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm,
+            24000: speechsdk.SpeechSynthesisOutputFormat.Raw24Khz16BitMonoPcm
+        }
+        sdk_format = fmt_map.get(sample_rate)
+        if not sdk_format:
+            raise ValueError("sample_rate must be 16000 or 24000")
+
+
+        # 1) Configure Speech SDK using class attributes
+        speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+        speech_config.speech_synthesis_language = self.language
+        speech_config.speech_synthesis_voice_name = self.voice
+        speech_config.set_speech_synthesis_output_format(sdk_format)
+
+        # 2) Synthesize to memory (audio_config=None)
+        synth = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
+
+        # 3) Build an SSML envelope with reduced rate (80%)
+        ##  If you would like to speed up the speech, you can increase the `prosody rate`% accordingly.
+        ssml = f"""
+        <speak version="1.0" xml:lang="en-US">
+        <voice name="{speech_config.speech_synthesis_voice_name}">
+            <prosody rate="30%"> 
+            {text}
+            </prosody>
+        </voice>
+        </speak>
+        """
+
+        # 4) Synthesize
+        result = synth.speak_ssml_async(ssml).get()
+        if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
+            error_details = result.cancellation_details
+            logger.error(f"TTS failed: {result.reason}")
+            if error_details:
+                logger.error(f"Error details: {error_details.error_details}")
+                logger.error(f"Error code: {error_details.error_code}")
+            raise RuntimeError(f"TTS failed: {result.reason}")
+
+        # 5) Get raw PCM bytes from the result
+        pcm_bytes = result.audio_data # Access audio data directly from the result
+
+        return bytes(pcm_bytes) # Ensure it's bytes type
