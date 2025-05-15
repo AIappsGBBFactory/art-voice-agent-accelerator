@@ -139,7 +139,7 @@ class SpeechSynthesizer:
         ssml = f"""
         <speak version="1.0" xml:lang="en-US">
         <voice name="{speech_config.speech_synthesis_voice_name}">
-            <prosody rate="30%"> 
+            <prosody rate="10%"> 
             {text}
             </prosody>
         </voice>
