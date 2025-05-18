@@ -4,9 +4,14 @@
 #   1) Auth prompt  -> voice_agent_authentication.jinja
 #   2) Main prompt  -> voice_agent_system.jinja   (after auth or emergency)
 
-import asyncio, json, os, re, uuid, datetime as _dt
+import asyncio
+import datetime as _dt
+import json
+import os
+import re
+import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import dateparser
 from dotenv import load_dotenv
@@ -15,45 +20,47 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import AzureOpenAI
 from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings
-
 from src.speech.text_to_speech import SpeechSynthesizer
-from usecases.browser_RTMedAgent.backend.prompt_manager import PromptManager
 from usecases.browser_RTMedAgent.backend.functions import (
-    authenticate_user, schedule_appointment, refill_prescription,
-    lookup_medication_info, evaluate_prior_authorization, escalate_emergency,
-)
+    authenticate_user, escalate_emergency, evaluate_prior_authorization,
+    lookup_medication_info, refill_prescription, schedule_appointment)
+from usecases.browser_RTMedAgent.backend.prompt_manager import PromptManager
 from usecases.browser_RTMedAgent.backend.tools import available_tools
 from utils.ml_logging import get_logger
 
 load_dotenv()
 logger = get_logger()
 
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 class Settings(BaseSettings):
     azure_openai_endpoint: HttpUrl = Field(..., env="AZURE_OPENAI_ENDPOINT")
-    azure_openai_key: str          = Field(..., env="AZURE_OPENAI_KEY")
+    azure_openai_key: str = Field(..., env="AZURE_OPENAI_KEY")
     allowed_origins: List[HttpUrl] = Field(
-        default_factory=lambda: ["http://localhost:5173"],
-        env="ALLOWED_ORIGINS"
+        default_factory=lambda: ["http://localhost:5173"], env="ALLOWED_ORIGINS"
     )
 
+
 settings = Settings()
+
 
 # ---------------------------------------------------------------------------
 # Caller profile & helpers
 # ---------------------------------------------------------------------------
 @dataclass
 class CallerProfile:
-    full_name:    Optional[str] = None
-    dob:          Optional[str] = None
-    phone:        Optional[str] = None
-    patient_id:   Optional[str] = None
-    authenticated: bool        = False
-    emergency:     bool        = False
+    full_name: Optional[str] = None
+    dob: Optional[str] = None
+    phone: Optional[str] = None
+    patient_id: Optional[str] = None
+    authenticated: bool = False
+    emergency: bool = False
+
 
 PHONE_RE = re.compile(r"(\d{3})[- ]?(\d{3})[- ]?(\d{4})")
+
 
 def harvest_profile(txt: str, p: CallerProfile) -> None:
     """Lightweight extraction of profile clues from the user utterance."""
@@ -68,27 +75,31 @@ def harvest_profile(txt: str, p: CallerProfile) -> None:
     if not p.full_name and txt.istitle() and len(txt.split()) >= 2:
         p.full_name = txt.strip()
 
+
 # ---------------------------------------------------------------------------
 # Conversation Manager
 # ---------------------------------------------------------------------------
 class ConversationManager:
     STOP_WORDS = {"goodbye", "exit", "bye", "see you later"}
-    SENT_END   = {".", "!", "?", "；", "。", "！", "？", "\n"}
+    SENT_END = {".", "!", "?", "；", "。", "！", "？", "\n"}
 
-    def __init__(self, ws: WebSocket, pm: PromptManager,
-                 oa: AzureOpenAI, tts: SpeechSynthesizer):
+    def __init__(
+        self, ws: WebSocket, pm: PromptManager, oa: AzureOpenAI, tts: SpeechSynthesizer
+    ):
         self.ws, self.pm, self.oa, self.tts = ws, pm, oa, tts
         self.profile = CallerProfile()
-        self.auth_prompt_mode = True          # 🔐 start in auth layer
+        self.auth_prompt_mode = True  # 🔐 start in auth layer
         self.cid = str(uuid.uuid4())[:8]
 
         # history starts with authentication system prompt
-        self.hist: List[Dict[str, Any]] = [{
-            "role": "system",
-            "content": self.pm.get_prompt("voice_agent_authentication.jinja")
-        }]
+        self.hist: List[Dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": self.pm.get_prompt("voice_agent_authentication.jinja"),
+            }
+        ]
 
-        self._buf  = ""
+        self._buf = ""
         self._task: Optional[asyncio.Task] = None
 
     # ---------------- main loop ----------------
@@ -132,8 +143,8 @@ class ConversationManager:
         self.hist.append({"role": "user", "content": user})
 
         pending_name = pending_id = None
-        args_accum   = ""
-        assistant_buf = ""                     # <‑‑ collect streamed assistant text
+        args_accum = ""
+        assistant_buf = ""  # <‑‑ collect streamed assistant text
 
         async for chunk in self._stream_chat_async(self.hist):
             if not chunk.choices:
@@ -145,7 +156,7 @@ class ConversationManager:
                 pending_name, pending_id = tc.function.name, tc.id
                 if tc.function.arguments:
                     args_accum += tc.function.arguments
-            elif (content := getattr(delta, "content", None)):
+            elif content := getattr(delta, "content", None):
                 assistant_buf += content
                 await self._buffer_send(content)
 
@@ -158,23 +169,27 @@ class ConversationManager:
 
     # ---------------- tool handling ----------------
     async def _invoke_tool(self, name: str, arg_json: str, tool_id: str) -> None:
-        self.hist.append({
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [{
-                "id": tool_id,
-                "type": "function",
-                "function": {"name": name, "arguments": arg_json}
-            }]
-        })
+        self.hist.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": arg_json},
+                    }
+                ],
+            }
+        )
 
         fn_map = {
-            "schedule_appointment":        schedule_appointment,
-            "refill_prescription":         refill_prescription,
-            "lookup_medication_info":      lookup_medication_info,
-            "evaluate_prior_authorization":evaluate_prior_authorization,
-            "authenticate_user":           authenticate_user,
-            "escalate_emergency":          escalate_emergency,
+            "schedule_appointment": schedule_appointment,
+            "refill_prescription": refill_prescription,
+            "lookup_medication_info": lookup_medication_info,
+            "evaluate_prior_authorization": evaluate_prior_authorization,
+            "authenticate_user": authenticate_user,
+            "escalate_emergency": escalate_emergency,
         }
         fn = fn_map[name]
 
@@ -191,7 +206,7 @@ class ConversationManager:
             payload = json.loads(result)
             if name == "authenticate_user" and payload.get("ok"):
                 self.profile.authenticated = True
-                self.profile.patient_id    = payload["data"].get("patient_id")
+                self.profile.patient_id = payload["data"].get("patient_id")
                 self._switch_to_main_prompt()
             if name == "escalate_emergency" and payload.get("ok"):
                 self.profile.emergency = True
@@ -199,17 +214,16 @@ class ConversationManager:
         except Exception:
             pass
 
-        self.hist.append({
-            "tool_call_id": tool_id,
-            "role": "tool",
-            "name": name,
-            "content": result
-        })
+        self.hist.append(
+            {"tool_call_id": tool_id, "role": "tool", "name": name, "content": result}
+        )
 
         # stream follow‑up assistant response
         assistant_buf = ""
         async for chunk in self._stream_chat_async(self.hist):
-            if chunk.choices and (c := getattr(chunk.choices[0].delta, "content", None)):
+            if chunk.choices and (
+                c := getattr(chunk.choices[0].delta, "content", None)
+            ):
                 assistant_buf += c
                 await self._buffer_send(c)
 
@@ -222,13 +236,16 @@ class ConversationManager:
             return
         self.auth_prompt_mode = False
         # flush auth conversation
-        self.hist = [{
-            "role": "system",
-            "content": self.pm.get_prompt("voice_agent_system.jinja")
-        }, {
-            "role": "assistant",
-            "content": "Thank you for verifying your information. How can I help you today?"
-        }]
+        self.hist = [
+            {
+                "role": "system",
+                "content": self.pm.get_prompt("voice_agent_system.jinja"),
+            },
+            {
+                "role": "assistant",
+                "content": "Thank you for verifying your information. How can I help you today?",
+            },
+        ]
 
     # ---------------- helpers ----------------
     def _stream_chat(self, msgs):
@@ -260,6 +277,7 @@ class ConversationManager:
         await self.ws.send_text(json.dumps({"type": typ, "content": text}))
         await asyncio.to_thread(self.tts.start_speaking_text, text)
 
+
 # ---------------------------------------------------------------------------
 # FastAPI wiring
 # ---------------------------------------------------------------------------
@@ -272,7 +290,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pm  = PromptManager()
+pm = PromptManager()
 tts = SpeechSynthesizer()
 openai_client = AzureOpenAI(
     api_version="2025-02-01-preview",
@@ -280,15 +298,19 @@ openai_client = AzureOpenAI(
     api_key=settings.azure_openai_key,
 )
 
+
 @app.websocket("/realtime")
 async def realtime(ws: WebSocket):
     await ws.accept()
     await ConversationManager(ws, pm, openai_client, tts).run()
 
+
 @app.get("/health")
 async def health():
     return {"message": "Server is running"}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8010)

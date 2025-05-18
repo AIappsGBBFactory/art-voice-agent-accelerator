@@ -20,15 +20,27 @@ schedule_appointment_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "patient_name": {"type": "string", "description": "Full name of the patient."},
+            "patient_name": {
+                "type": "string",
+                "description": "Full name of the patient.",
+            },
             "dob": {"type": "string", "description": "Date of birth (YYYY-MM-DD)."},
-            "appointment_type": {"type": "string", "description": "Type of appointment (consultation, follow-up, etc.)."},
-            "preferred_date": {"type": "string", "description": "Preferred appointment date (YYYY-MM-DD)."},
-            "preferred_time": {"type": "string", "description": "Preferred appointment time (e.g., '10:00 AM')."}
+            "appointment_type": {
+                "type": "string",
+                "description": "Type of appointment (consultation, follow-up, etc.).",
+            },
+            "preferred_date": {
+                "type": "string",
+                "description": "Preferred appointment date (YYYY-MM-DD).",
+            },
+            "preferred_time": {
+                "type": "string",
+                "description": "Preferred appointment time (e.g., '10:00 AM').",
+            },
         },
         "required": ["patient_name", "dob", "appointment_type"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 refill_prescription_schema: Dict[str, Any] = {
@@ -37,13 +49,22 @@ refill_prescription_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "patient_name": {"type": "string", "description": "Full name of the patient."},
-            "medication_name": {"type": "string", "description": "Name of the medication to refill."},
-            "pharmacy": {"type": "string", "description": "Preferred pharmacy name or location (optional)."}
+            "patient_name": {
+                "type": "string",
+                "description": "Full name of the patient.",
+            },
+            "medication_name": {
+                "type": "string",
+                "description": "Name of the medication to refill.",
+            },
+            "pharmacy": {
+                "type": "string",
+                "description": "Preferred pharmacy name or location (optional).",
+            },
         },
         "required": ["patient_name", "medication_name"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 lookup_medication_info_schema: Dict[str, Any] = {
@@ -52,11 +73,14 @@ lookup_medication_info_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "medication_name": {"type": "string", "description": "Medication name to look up."}
+            "medication_name": {
+                "type": "string",
+                "description": "Medication name to look up.",
+            }
         },
         "required": ["medication_name"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 evaluate_prior_authorization_schema: Dict[str, Any] = {
@@ -65,15 +89,36 @@ evaluate_prior_authorization_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "patient_info": {"type": "object", "description": "Patient demographics and identifiers."},
-            "physician_info": {"type": "object", "description": "Physician specialty and contact details."},
-            "clinical_info": {"type": "object", "description": "Clinical diagnosis, lab results, prior treatments."},
-            "treatment_plan": {"type": "object", "description": "Requested treatment or medication plan."},
-            "policy_text": {"type": "string", "description": "Insurance or payer policy text to evaluate against."}
+            "patient_info": {
+                "type": "object",
+                "description": "Patient demographics and identifiers.",
+            },
+            "physician_info": {
+                "type": "object",
+                "description": "Physician specialty and contact details.",
+            },
+            "clinical_info": {
+                "type": "object",
+                "description": "Clinical diagnosis, lab results, prior treatments.",
+            },
+            "treatment_plan": {
+                "type": "object",
+                "description": "Requested treatment or medication plan.",
+            },
+            "policy_text": {
+                "type": "string",
+                "description": "Insurance or payer policy text to evaluate against.",
+            },
         },
-        "required": ["patient_info", "physician_info", "clinical_info", "treatment_plan", "policy_text"],
-        "additionalProperties": False
-    }
+        "required": [
+            "patient_info",
+            "physician_info",
+            "clinical_info",
+            "treatment_plan",
+            "policy_text",
+        ],
+        "additionalProperties": False,
+    },
 }
 
 escalate_emergency_schema: Dict[str, Any] = {
@@ -82,11 +127,14 @@ escalate_emergency_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "reason": {"type": "string", "description": "Reason for the escalation (e.g., chest pain, severe symptoms)."}
+            "reason": {
+                "type": "string",
+                "description": "Reason for the escalation (e.g., chest pain, severe symptoms).",
+            }
         },
         "required": ["reason"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 authentication_schema: Dict[str, Any] = {
@@ -97,11 +145,14 @@ authentication_schema: Dict[str, Any] = {
         "properties": {
             "first_name": {"type": "string", "description": "User's first name."},
             "last_name": {"type": "string", "description": "User's last name."},
-            "phone_number": {"type": "string", "description": "User's phone number (digits only, no spaces)."}
+            "phone_number": {
+                "type": "string",
+                "description": "User's phone number (digits only, no spaces).",
+            },
         },
         "required": ["first_name", "last_name", "phone_number"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 # -------------------------------------------------------
@@ -114,5 +165,5 @@ available_tools = [
     {"type": "function", "function": lookup_medication_info_schema},
     {"type": "function", "function": evaluate_prior_authorization_schema},
     {"type": "function", "function": escalate_emergency_schema},
-    {"type": "function", "function": authentication_schema}
+    {"type": "function", "function": authentication_schema},
 ]

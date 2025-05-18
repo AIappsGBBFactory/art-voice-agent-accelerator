@@ -3,9 +3,10 @@ import asyncio
 import inspect
 import logging
 from collections import defaultdict
-from typing import Callable, Any, Awaitable
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
 
 class RealtimeEventHandler:
     """

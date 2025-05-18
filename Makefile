@@ -79,6 +79,9 @@ remove_conda_env:
 stt_aoai_tts_server: 
 	python usecases/browser_RTMedAgent/backend/server.py
 
+stt_aoai_tts_server_test: 
+	python usecases/browser_RTMedAgent/backend/server-gpt4o-transcribe.py
+
 stt_aoai_tts_browser: 
 	cd usecases/browser_RTMedAgent/frontend && npm install && npm run dev
 
@@ -114,7 +117,6 @@ login-acr:
 	az login
 	@echo "Logging in to Azure Container Registry..."
 	az acr login --name containerregistrygbbai
-
 
 # Target to create a container app in Azure, depending on setup-env to load .env variables
 create-container-app: setup-env

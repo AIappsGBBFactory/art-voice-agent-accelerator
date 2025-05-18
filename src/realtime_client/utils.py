@@ -1,17 +1,20 @@
 # utils.py Utility functions for audio processing and data conversion
 
-import numpy as np
 import base64
 import logging
 from typing import Union
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
+
 
 def float_to_16bit_pcm(float32_array: np.ndarray) -> np.ndarray:
     if float32_array.dtype != np.float32:
         raise ValueError("Input array must be float32 dtype")
     int16_array = np.clip(float32_array, -1.0, 1.0) * 32767
     return int16_array.astype(np.int16)
+
 
 def array_buffer_to_base64(array_buffer: Union[bytes, np.ndarray]) -> str:
     """
@@ -24,17 +27,20 @@ def array_buffer_to_base64(array_buffer: Union[bytes, np.ndarray]) -> str:
         str: Base64 encoded string.
     """
     if isinstance(array_buffer, bytes):
-        return base64.b64encode(array_buffer).decode('utf-8')
+        return base64.b64encode(array_buffer).decode("utf-8")
     elif isinstance(array_buffer, np.ndarray):
         if array_buffer.dtype == np.float32:
             array_buffer = float_to_16bit_pcm(array_buffer)
         elif array_buffer.dtype not in (np.int16, np.uint8):
             raise ValueError(f"Unsupported array_buffer dtype: {array_buffer.dtype}")
-        return base64.b64encode(array_buffer.tobytes()).decode('utf-8')
+        return base64.b64encode(array_buffer.tobytes()).decode("utf-8")
     else:
         raise TypeError(f"Unsupported type for array_buffer: {type(array_buffer)}")
 
-def base64_to_array_buffer(base64_string: str, dtype: np.dtype = np.uint8) -> np.ndarray:
+
+def base64_to_array_buffer(
+    base64_string: str, dtype: np.dtype = np.uint8
+) -> np.ndarray:
     """
     Converts a base64 encoded string to a numpy array buffer.
 
@@ -47,6 +53,7 @@ def base64_to_array_buffer(base64_string: str, dtype: np.dtype = np.uint8) -> np
     """
     binary_data = base64.b64decode(base64_string)
     return np.frombuffer(binary_data, dtype=dtype)
+
 
 def merge_int16_arrays(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     """

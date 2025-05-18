@@ -9,11 +9,9 @@ import mimetypes
 import os
 import time
 import traceback
-from io import BytesIO
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import openai
-import requests
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 from openai import AzureOpenAI
@@ -338,20 +336,20 @@ class AzureOpenAIManager:
             return None
 
     async def generate_chat_response_no_history(
-            self,
-            query: str,
-            system_message_content: str = "You are an AI assistant that helps people find information. Please be precise, polite, and concise.",
-            temperature: float = 0.7,
-            max_tokens: int = 150,
-            seed: int = 42,
-            top_p: float = 1.0,
-            stream: bool = False,
-            tools: Optional[List[Dict[str, Any]]] = None,
-            tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-            response_format: Union[str, Dict[str, Any]] = "text",
-            image_paths: Optional[List[str]] = None,
-            image_bytes: Optional[List[bytes]] = None,
-            **kwargs,
+        self,
+        query: str,
+        system_message_content: str = "You are an AI assistant that helps people find information. Please be precise, polite, and concise.",
+        temperature: float = 0.7,
+        max_tokens: int = 150,
+        seed: int = 42,
+        top_p: float = 1.0,
+        stream: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        response_format: Union[str, Dict[str, Any]] = "text",
+        image_paths: Optional[List[str]] = None,
+        image_bytes: Optional[List[bytes]] = None,
+        **kwargs,
     ) -> Optional[Union[str, Dict[str, Any]]]:
         """
         Generates a chat response using Azure OpenAI without retaining any conversation history.
@@ -388,27 +386,33 @@ class AzureOpenAIManager:
             if image_bytes:
                 for image in image_bytes:
                     encoded_image = base64.b64encode(image).decode("utf-8")
-                    user_message["content"].append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{encoded_image}",
-                        },
-                    })
+                    user_message["content"].append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{encoded_image}",
+                            },
+                        }
+                    )
             elif image_paths:
                 if isinstance(image_paths, str):
                     image_paths = [image_paths]
                 for image_path in image_paths:
                     try:
                         with open(image_path, "rb") as image_file:
-                            encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
+                            encoded_image = base64.b64encode(image_file.read()).decode(
+                                "utf-8"
+                            )
                             mime_type, _ = mimetypes.guess_type(image_path)
                             mime_type = mime_type or "application/octet-stream"
-                            user_message["content"].append({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{encoded_image}",
-                                },
-                            })
+                            user_message["content"].append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{mime_type};base64,{encoded_image}",
+                                    },
+                                }
+                            )
                     except Exception as e:
                         logger.error(f"Error processing image {image_path}: {e}")
 
@@ -431,7 +435,9 @@ class AzureOpenAIManager:
                             )
                 response_format_param = response_format
             else:
-                raise ValueError("Invalid response_format. Must be a string or a dictionary.")
+                raise ValueError(
+                    "Invalid response_format. Must be a string or a dictionary."
+                )
 
             # Call the Azure OpenAI client.
             response = self.openai_client.chat.completions.create(
@@ -481,7 +487,9 @@ class AzureOpenAIManager:
         except Exception as e:
             error_message = str(e)
             if "maximum context length" in error_message:
-                logger.warning("Context length exceeded. Consider reducing the input size.")
+                logger.warning(
+                    "Context length exceeded. Consider reducing the input size."
+                )
                 return "maximum context length"
             logger.error("Unexpected error occurred during response generation.")
             logger.error(f"Error details: {e}")

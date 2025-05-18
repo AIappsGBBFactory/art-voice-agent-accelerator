@@ -8,7 +8,7 @@ validates inputs, retrieves matching records, and returns appropriate responses.
 The structure is designed for easy replacement with real databases or services in the future.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 # ------------------------------------------
 # Simulated Internal Data ("Databases")
@@ -30,16 +30,39 @@ patients_db: Dict[str, Dict[str, str]] = {
 
 # Patient medications and refill info
 prescriptions_db: Dict[str, Dict[str, Dict[str, str]]] = {
-    "Alice Brown": {"Metformin": {"last_refill": "2024-03-01", "pharmacy": "City Pharmacy"}},
-    "Bob Johnson": {"Atorvastatin": {"last_refill": "2024-02-20", "pharmacy": "Town Pharmacy"}},
-    "Charlie Davis": {"Lisinopril": {"last_refill": "2024-01-15", "pharmacy": "Central Pharmacy"}},
-    "Diana Evans": {"Omeprazole": {"last_refill": "2024-03-05", "pharmacy": "East Pharmacy"}},
-    "Ethan Foster": {"Amlodipine": {"last_refill": "2024-02-28", "pharmacy": "West Pharmacy"}},
-    "Fiona Green": {"Levothyroxine": {"last_refill": "2024-03-10", "pharmacy": "North Pharmacy"}},
-    "George Harris": {"Simvastatin": {"last_refill": "2024-01-25", "pharmacy": "South Pharmacy"}},
-    "Hannah Irving": {"Losartan": {"last_refill": "2024-02-15", "pharmacy": "Downtown Pharmacy"}},
-    "Ian Jackson": {"Hydrochlorothiazide": {"last_refill": "2024-03-12", "pharmacy": "Uptown Pharmacy"}},
-    "Julia King": {"Gabapentin": {"last_refill": "2024-03-08", "pharmacy": "Suburban Pharmacy"}},
+    "Alice Brown": {
+        "Metformin": {"last_refill": "2024-03-01", "pharmacy": "City Pharmacy"}
+    },
+    "Bob Johnson": {
+        "Atorvastatin": {"last_refill": "2024-02-20", "pharmacy": "Town Pharmacy"}
+    },
+    "Charlie Davis": {
+        "Lisinopril": {"last_refill": "2024-01-15", "pharmacy": "Central Pharmacy"}
+    },
+    "Diana Evans": {
+        "Omeprazole": {"last_refill": "2024-03-05", "pharmacy": "East Pharmacy"}
+    },
+    "Ethan Foster": {
+        "Amlodipine": {"last_refill": "2024-02-28", "pharmacy": "West Pharmacy"}
+    },
+    "Fiona Green": {
+        "Levothyroxine": {"last_refill": "2024-03-10", "pharmacy": "North Pharmacy"}
+    },
+    "George Harris": {
+        "Simvastatin": {"last_refill": "2024-01-25", "pharmacy": "South Pharmacy"}
+    },
+    "Hannah Irving": {
+        "Losartan": {"last_refill": "2024-02-15", "pharmacy": "Downtown Pharmacy"}
+    },
+    "Ian Jackson": {
+        "Hydrochlorothiazide": {
+            "last_refill": "2024-03-12",
+            "pharmacy": "Uptown Pharmacy",
+        }
+    },
+    "Julia King": {
+        "Gabapentin": {"last_refill": "2024-03-08", "pharmacy": "Suburban Pharmacy"}
+    },
 }
 
 # Medication information
@@ -74,6 +97,7 @@ _fake_user_database = [
 # New: User Authentication Tool
 # ----------------------------------------
 
+
 async def authenticate_user(args: Dict[str, Any]) -> str:
     """
     Authenticates a user by matching first name, last name, and phone number.
@@ -87,9 +111,11 @@ async def authenticate_user(args: Dict[str, Any]) -> str:
 
     # Simulate database search
     for record in _fake_user_database:
-        if (record["first_name"].lower() == first_name and
-            record["last_name"].lower() == last_name and
-            record["phone_number"] == phone_number):
+        if (
+            record["first_name"].lower() == first_name
+            and record["last_name"].lower() == last_name
+            and record["phone_number"] == phone_number
+        ):
             return f"✅ Authentication successful for {record['first_name']} {record['last_name']}."
 
     return "❌ Authentication failed: user not found."
@@ -206,7 +232,9 @@ async def evaluate_prior_authorization(args: Dict[str, Any]) -> str:
     treatment_plan = args.get("treatment_plan", {})
 
     patient_name = patient_info.get("patient_name", "Unknown Patient")
-    requested_medication = treatment_plan.get("requested_medication", "unknown medication")
+    requested_medication = treatment_plan.get(
+        "requested_medication", "unknown medication"
+    )
 
     if not patient_name or not requested_medication:
         return "❌ Missing critical information for prior authorization evaluation."

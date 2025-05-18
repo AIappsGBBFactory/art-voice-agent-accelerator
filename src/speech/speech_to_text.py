@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import os
 import tempfile
 import time
@@ -11,13 +12,13 @@ import numpy as np
 from azure.cognitiveservices.speech import AudioConfig, SpeechConfig
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
-import asyncio
 
 from utils.ml_logging import get_logger
 
 load_dotenv()
 
 logger = get_logger()
+
 
 # Callback methods
 def conversation_transcriber_transcribed_cb(evt: speechsdk.SpeechRecognitionEventArgs):
@@ -77,7 +78,13 @@ class SpeechCoreTranslator:
         """
         self.supported_languages.append(language)
 
-    def create_realtime_recognizer(self, push_stream: speechsdk.audio.PushAudioInputStream, loop: asyncio.AbstractEventLoop, message_queue: asyncio.Queue, language: str = "en-US"):
+    def create_realtime_recognizer(
+        self,
+        push_stream: speechsdk.audio.PushAudioInputStream,
+        loop: asyncio.AbstractEventLoop,
+        message_queue: asyncio.Queue,
+        language: str = "en-US",
+    ):
         """
         Creates and configures a SpeechRecognizer for real-time continuous recognition
         using a PushAudioInputStream and sets up callbacks to use an asyncio Queue.
@@ -97,7 +104,7 @@ class SpeechCoreTranslator:
         recognizer = speechsdk.SpeechRecognizer(
             speech_config=self.speech_config,
             audio_config=audio_config,
-            language=language
+            language=language,
         )
 
         # --- Define Callbacks ---
@@ -109,8 +116,10 @@ class SpeechCoreTranslator:
             if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
                 logger.info(f"FINAL   → {evt.result.text}")
                 # Put the final recognized text onto the queue for processing
-                if evt.result.text: # Avoid putting empty strings on the queue
-                    asyncio.run_coroutine_threadsafe(message_queue.put(evt.result.text), loop)
+                if evt.result.text:  # Avoid putting empty strings on the queue
+                    asyncio.run_coroutine_threadsafe(
+                        message_queue.put(evt.result.text), loop
+                    )
             elif evt.result.reason == speechsdk.ResultReason.NoMatch:
                 logger.info("NOMATCH: Speech could not be recognized.")
 
@@ -134,6 +143,7 @@ class SpeechCoreTranslator:
 
         logger.info(f"Realtime recognizer created for language: {language}")
         return recognizer
+
     def get_blob_client_from_url(self, blob_url: str):
         """
         Retrieves a BlobClient object for the specified blob URL.

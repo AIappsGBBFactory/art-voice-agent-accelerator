@@ -1,12 +1,13 @@
 # api.py RealtimeAPI class for WebSocket connection to Azure OpenAI Realtime API
 
-import os
-import json
 import asyncio
+import json
 import logging
-import websockets
+import os
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+import websockets
 
 from src.realtime_client.event_handler import RealtimeEventHandler
 
@@ -20,7 +21,7 @@ class RealtimeAPI(RealtimeEventHandler):
 
     def __init__(self) -> None:
         super().__init__()
-        self.default_url = 'wss://api.openai.com/v1/realtime'
+        self.default_url = "wss://api.openai.com/v1/realtime"
         self.url = os.getenv("AZURE_OPENAI_ENDPOINT", self.default_url)
         self.api_key = os.getenv("AZURE_OPENAI_API_KEY")
         self.api_version = "2024-10-01-preview"
@@ -83,7 +84,10 @@ class RealtimeAPI(RealtimeEventHandler):
 
                     # Fulfill session_created_future if session.created arrives
                     if event.get("type") == "session.created":
-                        if self.session_created_future and not self.session_created_future.done():
+                        if (
+                            self.session_created_future
+                            and not self.session_created_future.done()
+                        ):
                             self.session_created_future.set_result(True)
                 except json.JSONDecodeError:
                     logger.warning("Received non-JSON message, ignoring.")
@@ -96,7 +100,9 @@ class RealtimeAPI(RealtimeEventHandler):
             logger.error(f"Error in WebSocket receive loop: {e}")
             await self._handle_reconnect()
 
-    async def send(self, event_name: str, data: Optional[Dict[str, Any]] = None) -> None:
+    async def send(
+        self, event_name: str, data: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Send an event over the WebSocket connection.
         """
@@ -107,11 +113,7 @@ class RealtimeAPI(RealtimeEventHandler):
         if not isinstance(data, dict):
             raise ValueError("Data must be a dictionary")
 
-        event = {
-            "event_id": self._generate_id("evt_"),
-            "type": event_name,
-            **data
-        }
+        event = {"event_id": self._generate_id("evt_"), "type": event_name, **data}
 
         self.dispatch(f"client.{event_name}", event)
         self.dispatch("client.*", event)
@@ -143,7 +145,7 @@ class RealtimeAPI(RealtimeEventHandler):
             except Exception as e:
                 logger.error(f"Error during disconnect: {e}")
                 raise
-            
+
     async def _handle_reconnect(self) -> None:
         """
         Try to reconnect after disconnection.

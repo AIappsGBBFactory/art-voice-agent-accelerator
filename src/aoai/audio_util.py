@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import io
-import base64
 import asyncio
+import base64
+import io
 import threading
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable
 
 import numpy as np
 import pyaudio
 import sounddevice as sd
-from pydub import AudioSegment
-
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
+from pydub import AudioSegment
 
 CHUNK_LENGTH_S = 0.05  # 100ms
 SAMPLE_RATE = 24000
@@ -20,12 +19,20 @@ CHANNELS = 1
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
+
 def audio_to_pcm16_base64(audio_bytes: bytes) -> bytes:
     # load the audio file from the byte stream
     audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
-    print(f"Loaded audio: {audio.frame_rate=} {audio.channels=} {audio.sample_width=} {audio.frame_width=}")
+    print(
+        f"Loaded audio: {audio.frame_rate=} {audio.channels=} {audio.sample_width=} {audio.frame_width=}"
+    )
     # resample to 24kHz mono pcm16
-    pcm_audio = audio.set_frame_rate(SAMPLE_RATE).set_channels(CHANNELS).set_sample_width(2).raw_data
+    pcm_audio = (
+        audio.set_frame_rate(SAMPLE_RATE)
+        .set_channels(CHANNELS)
+        .set_sample_width(2)
+        .raw_data
+    )
     return pcm_audio
 
 
@@ -59,7 +66,9 @@ class AudioPlayerAsync:
 
             # fill the rest of the frames with zeros if there is no more data
             if len(data) < frames:
-                data = np.concatenate((data, np.zeros(frames - len(data), dtype=np.int16)))
+                data = np.concatenate(
+                    (data, np.zeros(frames - len(data), dtype=np.int16))
+                )
 
         outdata[:] = data.reshape(-1, 1)
 
@@ -122,7 +131,10 @@ async def send_audio_worker_sounddevice(
                 if not sent_audio and start_send:
                     await start_send()
                 await connection.send(
-                    {"type": "input_audio_buffer.append", "audio": base64.b64encode(data).decode("utf-8")}
+                    {
+                        "type": "input_audio_buffer.append",
+                        "audio": base64.b64encode(data).decode("utf-8"),
+                    }
                 )
                 sent_audio = True
 

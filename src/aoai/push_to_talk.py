@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import base64
 import asyncio
+import base64
 import json
 import os
 from typing import Any, cast
-from typing_extensions import override
-
-from dotenv import load_dotenv
-from textual import events
-from textual.app import App, ComposeResult
-from textual.widgets import Button, Static, RichLog
-from textual.reactive import reactive
-from textual.containers import Container
 
 from audio_util import CHANNELS, SAMPLE_RATE, AudioPlayerAsync
+from dotenv import load_dotenv
 from openai import AsyncAzureOpenAI
-from openai.types.beta.realtime.session import Session
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
+from openai.types.beta.realtime.session import Session
+from textual import events
+from textual.app import App, ComposeResult
+from textual.containers import Container
+from textual.reactive import reactive
+from textual.widgets import RichLog, Static
+from typing_extensions import override
 
 load_dotenv()
+
 
 class SessionDisplay(Static):
     session_id = reactive("")
@@ -29,12 +29,18 @@ class SessionDisplay(Static):
     def render(self) -> str:
         return f"Session ID: {self.session_id}" if self.session_id else "Connecting..."
 
+
 class AudioStatusIndicator(Static):
     is_recording = reactive(False)
 
     @override
     def render(self) -> str:
-        return "🔴 Recording... (Press K to stop)" if self.is_recording else "⚪ Press K to start recording (Q to quit)"
+        return (
+            "🔴 Recording... (Press K to stop)"
+            if self.is_recording
+            else "⚪ Press K to start recording (Q to quit)"
+        )
+
 
 class RealtimeApp(App[None]):
     CSS = """
@@ -87,23 +93,25 @@ class RealtimeApp(App[None]):
             self.connection = conn
             self.connected.set()
 
-            await conn.session.update(session={
-                "modalities": ["text", "audio"],
-                "instructions": (
-                    "You are a pharmacy assistant named PharmaHero. "
-                    "Greet the user warmly. Assist with appointments, prescriptions, and medication advice. "
-                    "Listen carefully, avoid interrupting your own speech. Be concise, empathetic, and helpful."
-                ),
-                "temperature": 1,
-                "input_audio_transcription": {"model": "whisper-1"},
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.2,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 1200,  # Slightly more forgiving for natural conversations
-                    "create_response": True,
-                },
-            })
+            await conn.session.update(
+                session={
+                    "modalities": ["text", "audio"],
+                    "instructions": (
+                        "You are a pharmacy assistant named PharmaHero. "
+                        "Greet the user warmly. Assist with appointments, prescriptions, and medication advice. "
+                        "Listen carefully, avoid interrupting your own speech. Be concise, empathetic, and helpful."
+                    ),
+                    "temperature": 1,
+                    "input_audio_transcription": {"model": "whisper-1"},
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.2,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 1200,  # Slightly more forgiving for natural conversations
+                        "create_response": True,
+                    },
+                }
+            )
 
             acc_items: dict[str, Any] = {}
 
@@ -146,7 +154,9 @@ class RealtimeApp(App[None]):
                         acc_items[event.item_id] = text + event.delta
 
                     if event.delta.strip().endswith((".", "!", "?")):
-                        self.conversation_log.append(("Assistant", acc_items[event.item_id]))
+                        self.conversation_log.append(
+                            ("Assistant", acc_items[event.item_id])
+                        )
                         self._refresh_log(bottom_pane)
                     continue
 
@@ -161,7 +171,9 @@ class RealtimeApp(App[None]):
     def _refresh_log(self, pane: RichLog) -> None:
         pane.clear()
         for who, msg in self.conversation_log:
-            color = "cyan" if who == "User" else "green" if who == "Assistant" else "yellow"
+            color = (
+                "cyan" if who == "User" else "green" if who == "Assistant" else "yellow"
+            )
             pane.write(f"[b {color}]{who}:[/b {color}] {msg}")
 
     async def _get_connection(self) -> AsyncRealtimeConnection:
@@ -174,7 +186,9 @@ class RealtimeApp(App[None]):
 
         sent_audio = False
         read_size = int(SAMPLE_RATE * 0.02)
-        stream = sd.InputStream(channels=CHANNELS, samplerate=SAMPLE_RATE, dtype="int16")
+        stream = sd.InputStream(
+            channels=CHANNELS, samplerate=SAMPLE_RATE, dtype="int16"
+        )
         stream.start()
 
         status_indicator = self.query_one(AudioStatusIndicator)
@@ -220,6 +234,7 @@ class RealtimeApp(App[None]):
             else:
                 self.should_send_audio.set()
                 status_indicator.is_recording = True
+
 
 if __name__ == "__main__":
     app = RealtimeApp()

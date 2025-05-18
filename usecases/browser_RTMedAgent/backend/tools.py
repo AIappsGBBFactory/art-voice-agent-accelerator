@@ -15,8 +15,7 @@ Tools:
 - get_current_prescriptions
 - check_drug_interactions
 """
-
-from typing import Any, Dict, TypedDict, List
+from typing import Any, Dict, List
 
 schedule_appointment_schema: Dict[str, Any] = {
     "name": "schedule_appointment",
@@ -24,15 +23,27 @@ schedule_appointment_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "patient_name": {"type": "string", "description": "Full name of the patient."},
+            "patient_name": {
+                "type": "string",
+                "description": "Full name of the patient.",
+            },
             "dob": {"type": "string", "description": "Date of birth (YYYY-MM-DD)."},
-            "appointment_type": {"type": "string", "description": "Type of appointment (consultation, follow-up, etc.)."},
-            "preferred_date": {"type": "string", "description": "Preferred appointment date (YYYY-MM-DD)."},
-            "preferred_time": {"type": "string", "description": "Preferred appointment time (e.g., '10:00 AM')."}
+            "appointment_type": {
+                "type": "string",
+                "description": "Type of appointment (consultation, follow-up, etc.).",
+            },
+            "preferred_date": {
+                "type": "string",
+                "description": "Preferred appointment date (YYYY-MM-DD).",
+            },
+            "preferred_time": {
+                "type": "string",
+                "description": "Preferred appointment time (e.g., '10:00 AM').",
+            },
         },
         "required": ["patient_name", "dob", "appointment_type"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 refill_prescription_schema: Dict[str, Any] = {
@@ -41,13 +52,22 @@ refill_prescription_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "patient_name": {"type": "string", "description": "Full name of the patient."},
-            "medication_name": {"type": "string", "description": "Name of the medication to refill."},
-            "pharmacy": {"type": "string", "description": "Preferred pharmacy name or location (optional)."}
+            "patient_name": {
+                "type": "string",
+                "description": "Full name of the patient.",
+            },
+            "medication_name": {
+                "type": "string",
+                "description": "Name of the medication to refill.",
+            },
+            "pharmacy": {
+                "type": "string",
+                "description": "Preferred pharmacy name or location (optional).",
+            },
         },
         "required": ["patient_name", "medication_name"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 lookup_medication_info_schema: Dict[str, Any] = {
@@ -56,11 +76,14 @@ lookup_medication_info_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "medication_name": {"type": "string", "description": "Medication name to look up."}
+            "medication_name": {
+                "type": "string",
+                "description": "Medication name to look up.",
+            }
         },
         "required": ["medication_name"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 evaluate_prior_authorization_schema: Dict[str, Any] = {
@@ -69,15 +92,36 @@ evaluate_prior_authorization_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "patient_info": {"type": "object", "description": "Patient demographics and identifiers."},
-            "physician_info": {"type": "object", "description": "Physician specialty and contact details."},
-            "clinical_info": {"type": "object", "description": "Clinical diagnosis, lab results, prior treatments."},
-            "treatment_plan": {"type": "object", "description": "Requested treatment or medication plan."},
-            "policy_text": {"type": "string", "description": "Insurance or payer policy text to evaluate against."}
+            "patient_info": {
+                "type": "object",
+                "description": "Patient demographics and identifiers.",
+            },
+            "physician_info": {
+                "type": "object",
+                "description": "Physician specialty and contact details.",
+            },
+            "clinical_info": {
+                "type": "object",
+                "description": "Clinical diagnosis, lab results, prior treatments.",
+            },
+            "treatment_plan": {
+                "type": "object",
+                "description": "Requested treatment or medication plan.",
+            },
+            "policy_text": {
+                "type": "string",
+                "description": "Insurance or payer policy text to evaluate against.",
+            },
         },
-        "required": ["patient_info", "physician_info", "clinical_info", "treatment_plan", "policy_text"],
-        "additionalProperties": False
-    }
+        "required": [
+            "patient_info",
+            "physician_info",
+            "clinical_info",
+            "treatment_plan",
+            "policy_text",
+        ],
+        "additionalProperties": False,
+    },
 }
 
 escalate_emergency_schema: Dict[str, Any] = {
@@ -86,11 +130,14 @@ escalate_emergency_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "reason": {"type": "string", "description": "Reason for the escalation (e.g., chest pain, severe symptoms)."}
+            "reason": {
+                "type": "string",
+                "description": "Reason for the escalation (e.g., chest pain, severe symptoms).",
+            }
         },
         "required": ["reason"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 authentication_schema: Dict[str, Any] = {
@@ -101,26 +148,19 @@ authentication_schema: Dict[str, Any] = {
         "properties": {
             "first_name": {"type": "string", "description": "User's first name."},
             "last_name": {"type": "string", "description": "User's last name."},
-            "phone_number": {"type": "string", "description": "User's phone number (digits only, no spaces)."}
+            "phone_number": {
+                "type": "string",
+                "description": "User's phone number (digits only, no spaces).",
+            },
         },
         "required": ["first_name", "last_name", "phone_number"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 # -------------------------------------------------------
 # Assemble all tools wrapped as GPT-4o-compatible entries
 # -------------------------------------------------------
-
-available_tools = [
-    {"type": "function", "function": schedule_appointment_schema},
-    {"type": "function", "function": refill_prescription_schema},
-    {"type": "function", "function": lookup_medication_info_schema},
-    {"type": "function", "function": evaluate_prior_authorization_schema},
-    {"type": "function", "function": escalate_emergency_schema},
-    {"type": "function", "function": authentication_schema}
-]
-
 
 fill_new_prescription_schema: Dict[str, Any] = {
     "name": "fill_new_prescription",
@@ -128,14 +168,26 @@ fill_new_prescription_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "patient_name": {"type": "string", "description": "Full name of the patient."},
-            "medication_name": {"type": "string", "description": "Name of the new medication to add."},
-            "dosage": {"type": "string", "description": "Dosage information (e.g., '500 mg twice daily')."},
-            "pharmacy": {"type": "string", "description": "Pharmacy where medication will be filled."}
+            "patient_name": {
+                "type": "string",
+                "description": "Full name of the patient.",
+            },
+            "medication_name": {
+                "type": "string",
+                "description": "Name of the new medication to add.",
+            },
+            "dosage": {
+                "type": "string",
+                "description": "Dosage information (e.g., '500 mg twice daily').",
+            },
+            "pharmacy": {
+                "type": "string",
+                "description": "Pharmacy where medication will be filled.",
+            },
         },
         "required": ["patient_name", "medication_name", "dosage", "pharmacy"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 lookup_side_effects_schema: Dict[str, Any] = {
@@ -144,11 +196,14 @@ lookup_side_effects_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "medication_name": {"type": "string", "description": "Name of medication to query."}
+            "medication_name": {
+                "type": "string",
+                "description": "Name of medication to query.",
+            }
         },
         "required": ["medication_name"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 get_current_prescriptions_schema: Dict[str, Any] = {
@@ -157,11 +212,14 @@ get_current_prescriptions_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "patient_name": {"type": "string", "description": "Full name of the patient."}
+            "patient_name": {
+                "type": "string",
+                "description": "Full name of the patient.",
+            }
         },
         "required": ["patient_name"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 check_drug_interactions_schema: Dict[str, Any] = {
@@ -170,12 +228,19 @@ check_drug_interactions_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "new_medication": {"type": "string", "description": "Name of the new medication."},
-            "current_medications": {"type": "array", "items": {"type": "string"}, "description": "List of patient's current medication names."}
+            "new_medication": {
+                "type": "string",
+                "description": "Name of the new medication.",
+            },
+            "current_medications": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of patient's current medication names.",
+            },
         },
         "required": ["new_medication", "current_medications"],
-        "additionalProperties": False
-    }
+        "additionalProperties": False,
+    },
 }
 
 # -------------------------------------------------------

@@ -1,21 +1,18 @@
+import json
 import os
 import time
-import json
-from typing import List, Dict
+from typing import Dict, List
 
+from app.backend.functions import (authenticate_user, escalate_emergency,
+                                   evaluate_prior_authorization,
+                                   lookup_medication_info, refill_prescription,
+                                   schedule_appointment)
+from app.backend.prompt_manager import PromptManager
+from app.backend.tools import available_tools
 from openai import AzureOpenAI
+
 from src.speech.speech_recognizer import StreamingSpeechRecognizer
 from src.speech.text_to_speech import SpeechSynthesizer
-from app.backend.tools import available_tools
-from app.backend.functions import (
-    schedule_appointment,
-    refill_prescription,
-    lookup_medication_info,
-    evaluate_prior_authorization,
-    escalate_emergency,
-    authenticate_user
-)
-from app.backend.prompt_manager import PromptManager
 from utils.ml_logging import get_logger
 
 # === Conversation Settings ===
@@ -53,8 +50,10 @@ az_speech_synthesizer_client = SpeechSynthesizer()
 
 tts_sentence_end = [".", "!", "?", ";", "。", "！", "？", "；", "\n"]
 
+
 def check_for_stopwords(prompt: str) -> bool:
     return any(stop_word in prompt.lower() for stop_word in STOP_WORDS)
+
 
 def handle_speech_recognition() -> str:
     global all_text_live, final_transcripts, last_final_text
@@ -92,6 +91,7 @@ def handle_speech_recognition() -> str:
     logger.info("🛑 Recognition stopped.")
 
     return " ".join(final_transcripts) + " " + all_text_live
+
 
 async def main() -> None:
     try:
@@ -145,28 +145,34 @@ async def main() -> None:
                     if chunk.choices:
                         delta = chunk.choices[0].delta
                         if delta.tool_calls:
-                            if(delta.tool_calls[0].function.name):
-                                tool_name = chunk.choices[0].delta.tool_calls[0].function.name
+                            if delta.tool_calls[0].function.name:
+                                tool_name = (
+                                    chunk.choices[0].delta.tool_calls[0].function.name
+                                )
                                 tool_id = chunk.choices[0].delta.tool_calls[0].id
                                 conversation_history.append(delta)
-                            
-                            if(chunk.choices[0].delta.tool_calls[0].function.arguments):    
-                                function_call_arguments+=delta.tool_calls[0].function.arguments
-                        
+
+                            if chunk.choices[0].delta.tool_calls[0].function.arguments:
+                                function_call_arguments += delta.tool_calls[
+                                    0
+                                ].function.arguments
+
                         elif delta.content:
                             chunk_text = chunk.choices[0].delta.content
                             if chunk_text:
                                 collected_messages.append(chunk_text)
                                 if chunk_text in tts_sentence_end:
                                     text = "".join(collected_messages).strip()
-                                    last_tts_request = az_speech_synthesizer_client.start_speaking_text(text)
+                                    last_tts_request = az_speech_synthesizer_client.start_speaking_text(
+                                        text
+                                    )
                                     collected_messages.clear()
 
                 # 🧠 If tool call was detected, execute it
                 if tool_name:
-                    logger.info(f"tool_name:{tool_name}")   
-                    logger.info(f"tool_id:{tool_id}")    
-                    logger.info(f"function_call_arguments:{function_call_arguments}")  
+                    logger.info(f"tool_name:{tool_name}")
+                    logger.info(f"tool_id:{tool_id}")
+                    logger.info(f"function_call_arguments:{function_call_arguments}")
                     try:
                         parsed_args = json.loads(function_call_arguments.strip())
                         function_to_call = function_mapping.get(tool_name)
@@ -174,14 +180,18 @@ async def main() -> None:
                         if function_to_call:
                             result = await function_to_call(parsed_args)
 
-                            logger.info(f"✅ Function {tool_name} executed. Result: {result}")
+                            logger.info(
+                                f"✅ Function {tool_name} executed. Result: {result}"
+                            )
 
-                            conversation_history.append({
-                                "tool_call_id": tool_id,
-                                "role": "tool",
-                                "name": tool_name,
-                                "content": result,
-                            })
+                            conversation_history.append(
+                                {
+                                    "tool_call_id": tool_id,
+                                    "role": "tool",
+                                    "name": tool_name,
+                                    "content": result,
+                                }
+                            )
 
                             # 🧠 SECOND STREAMING CALL AFTER TOOL EXECUTION
                             second_response = az_openai_client.chat.completions.create(
@@ -202,27 +212,35 @@ async def main() -> None:
                                         chunk_message = delta.content
                                         collected_messages.append(chunk_message)
                                         if chunk_message.strip() in tts_sentence_end:
-                                            text = ''.join(collected_messages).strip()
+                                            text = "".join(collected_messages).strip()
                                             if text:
-                                                az_speech_synthesizer_client.start_speaking_text(text)
+                                                az_speech_synthesizer_client.start_speaking_text(
+                                                    text
+                                                )
                                                 collected_messages.clear()
 
-                            final_text = ''.join(collected_messages).strip()
+                            final_text = "".join(collected_messages).strip()
                             if final_text:
-                                conversation_history.append({"role": "assistant", "content": final_text})
+                                conversation_history.append(
+                                    {"role": "assistant", "content": final_text}
+                                )
 
                     except json.JSONDecodeError as e:
                         print(f"❌ Error parsing function arguments: {e}")
 
                 else:
                     # Append the assistant message if no function call was made
-                    final_text = ''.join(collected_messages).strip()
+                    final_text = "".join(collected_messages).strip()
                     if final_text:
-                        conversation_history.append({"role": "assistant", "content": final_text})
+                        conversation_history.append(
+                            {"role": "assistant", "content": final_text}
+                        )
                         print(f"✅ Final assistant message: {final_text}")
-    except Exception as e:
+    except Exception:
         logger.exception("An error occurred in main().")
+
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

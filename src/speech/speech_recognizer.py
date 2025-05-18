@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Tuple, Callable
+from typing import Callable, Optional, Tuple
 
 import azure.cognitiveservices.speech as speechsdk
 from azure.cognitiveservices.speech import SpeechRecognitionResult
@@ -76,28 +76,30 @@ class SpeechRecognizer:
         # Return the recognized text and the result object
         return speech_recognition_result.text, speech_recognition_result
 
+
 class StreamingSpeechRecognizer:
     """
     A class for continuously recognizing speech from the microphone using Azure Cognitive Services Speech SDK,
     optimized for reduced latency. This implementation applies the following improvements:
-    
+
     - Uses asynchronous start/stop methods (start_continuous_recognition_async / stop_continuous_recognition_async)
       to prevent blocking and reduce initialization latency.
     - Sets the default recognition language immediately to avoid time overhead from language detection.
     - Configures a server-side VAD (Voice Activity Detection) using a silence timeout.
     - Attaches callback functions to relay partial and final results in real time.
     - Provides enhanced error handling via logging on cancellation and session stop events.
-    
+
     Environment Variables (if not provided in __init__):
     - AZURE_SPEECH_KEY:     Your Azure Cognitive Services Speech key
     - AZURE_SPEECH_REGION:  Your Azure Cognitive Services Speech region
     """
+
     def __init__(
         self,
         key: Optional[str] = None,
         region: Optional[str] = None,
         language: str = "en-US",
-        vad_silence_timeout_ms: int = 1200
+        vad_silence_timeout_ms: int = 1200,
     ):
         self.key = key or os.getenv("AZURE_SPEECH_KEY")
         self.region = region or os.getenv("AZURE_SPEECH_REGION")
@@ -131,27 +133,35 @@ class StreamingSpeechRecognizer:
         This method sets up the speech configuration, attaches event handlers,
         and initializes asynchronous recognition.
         """
-        logger.info("Starting continuous speech recognition with VAD using asynchronous call...")
+        logger.info(
+            "Starting continuous speech recognition with VAD using asynchronous call..."
+        )
         logger.debug(
             "Configuration: key=%s, region=%s, language=%s, VAD timeout=%d ms",
-            self.key, self.region, self.language, self.vad_silence_timeout_ms
+            self.key,
+            self.region,
+            self.language,
+            self.vad_silence_timeout_ms,
         )
 
         # Set up the Speech SDK configuration with the default recognition language.
-        speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+        speech_config = speechsdk.SpeechConfig(
+            subscription=self.key, region=self.region
+        )
         speech_config.speech_recognition_language = self.language
 
         # Use the default microphone as audio input.
         audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
 
         # Initialize the SpeechRecognizer.
-        self.speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config,
-                                                            audio_config=audio_config)
+        self.speech_recognizer = speechsdk.SpeechRecognizer(
+            speech_config=speech_config, audio_config=audio_config
+        )
 
         # Configure server-side Voice Activity Detection (silence timeout).
         self.speech_recognizer.properties.set_property(
             speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
-            str(self.vad_silence_timeout_ms)
+            str(self.vad_silence_timeout_ms),
         )
 
         # Attach event handlers if callbacks have been set.
@@ -174,7 +184,9 @@ class StreamingSpeechRecognizer:
         Stop the continuous speech recognition asynchronously.
         """
         if self.speech_recognizer:
-            logger.info("Stopping continuous speech recognition using asynchronous call...")
+            logger.info(
+                "Stopping continuous speech recognition using asynchronous call..."
+            )
             stop_future = self.speech_recognizer.stop_continuous_recognition_async()
             stop_future.get()  # Blocks until the recognition process has fully stopped.
             logger.info("Continuous speech recognition stopped.")

@@ -1,12 +1,20 @@
+"""
+prompt_manager.py
+
+This module provides the PromptManager class for managing and rendering Jinja2 templates
+used to generate prompts for the backend of the browser_RTMedAgent application.
+It supports loading templates from a specified directory and rendering them with
+dynamic context, such as patient information.
+
+"""
+
 import os
-from typing import Any, Dict, List
 
 from jinja2 import Environment, FileSystemLoader
-from pydantic import BaseModel
-
 from utils.ml_logging import get_logger
 
 logger = get_logger()
+
 
 class PromptManager:
     def __init__(self, template_dir: str = "templates"):
