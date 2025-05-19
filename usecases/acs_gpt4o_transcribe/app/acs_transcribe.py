@@ -13,7 +13,7 @@ import uuid
 from base64 import b64decode
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
-from usecases.acs_gpt4o_transcribe.transcribe_ws.translator import AudioTranscriber
+from src.aoai.aoai_transcribe import AudioTranscriber
 import base64
 
 from azure.core.messaging import CloudEvent
@@ -45,8 +45,6 @@ connected_clients: List[WebSocket] = []
 
 from typing import Dict
 
-from azure.cognitiveservices.speech.audio import (AudioStreamFormat,
-                                                  PushAudioInputStream)
 from azure.core.exceptions import HttpResponseError
 # --- ACS Integration ---
 from pydantic import BaseModel  # For request body validation
@@ -609,6 +607,10 @@ async def acs_websocket_endpoint(websocket: WebSocket):
     RATE = 16000
     CHANNELS = 1
     FORMAT = 16  # PCM16
+    OUTPUT_FORMAT = "labs/recordings/test/acs_output.wav"  
+    THRESHOLD = 0.5 # VAD threshold
+    PREFIX_PADDING_MS = 300 # VAD prefix padding
+    SILENCE_DURATION_MS = 1000  # VAD silence duration
 
     audio_queue = asyncio.Queue()
 
@@ -621,7 +623,7 @@ async def acs_websocket_endpoint(websocket: WebSocket):
         await process_gpt_response(cm, transcript, websocket, is_acs=True)
 
     # --- Open WAV file for writing ---
-    wav_filename = f"acs_audio_{call_connection_id}.wav"
+    wav_filename = OUTPUT_FORMAT
     wav_file = wave.open(wav_filename, "wb")
     wav_file.setnchannels(CHANNELS)
     wav_file.setsampwidth(2)  # 16-bit PCM = 2 bytes
@@ -647,12 +649,13 @@ async def acs_websocket_endpoint(websocket: WebSocket):
             noise_reduction="near_field",
             vad_type="server_vad",
             vad_config={
-                "threshold": 0.5,
-                "prefix_padding_ms": 300,
-                "silence_duration_ms": 2000,
+                "threshold": THRESHOLD,
+                "prefix_padding_ms": PREFIX_PADDING_MS,
+                "silence_duration_ms": SILENCE_DURATION_MS,
             },
             on_delta=lambda delta: asyncio.create_task(on_delta(delta)),
             on_transcript=lambda t: asyncio.create_task(on_transcript(t)),
+            output_wav_file=OUTPUT_FORMAT
         )
     )
 

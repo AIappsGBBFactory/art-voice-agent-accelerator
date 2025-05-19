@@ -2,7 +2,8 @@ import wave
 import pyaudio
 import asyncio
 from typing import Optional
-from usecases.acs_gpt4o_transcribe.app.utils_transcribe import choose_default_audio_device
+from usecases.acs_gpt4o_transcribe.app.utils_transcribe import choose_audio_device
+import os
 
 class AudioRecorder:
     """
@@ -23,7 +24,7 @@ class AudioRecorder:
         self.format = format_
         self.chunk = chunk
         self.device_index = (
-            device_index if device_index is not None else choose_default_audio_device()
+            device_index if device_index is not None else choose_audio_device()
         )
         self.p = pyaudio.PyAudio()
         self.stream = None
@@ -67,7 +68,15 @@ class AudioRecorder:
     def save_wav(self, filename: str) -> None:
         """
         Save the recorded audio to a .wav file.
+        Ensures there is audio data before saving.
+        Creates the output directory if it does not exist.
         """
+        if not self.frames:
+            print("⚠️ No audio recorded. Nothing to save.")
+            return
+        directory = os.path.dirname(filename)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
         wf = wave.open(filename, "wb")
         wf.setnchannels(self.channels)
         wf.setsampwidth(self.p.get_sample_size(self.format))

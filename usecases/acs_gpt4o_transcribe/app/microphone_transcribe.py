@@ -20,7 +20,7 @@ import asyncio
 import pyaudio
 from dotenv import load_dotenv
 from typing import Optional
-from usecases.acs_gpt4o_transcribe.app.utils_transcribe import choose_default_audio_device
+from usecases.acs_gpt4o_transcribe.app.utils_transcribe import choose_audio_device
 from usecases.acs_gpt4o_transcribe.transcribe_ws.translator import AudioTranscriber
 
 # Audio configuration constants
@@ -51,7 +51,7 @@ async def main() -> None:
 
     url = f"{AZURE_OPENAI_ENDPOINT.replace('https', 'wss')}/openai/realtime?api-version=2025-04-01-preview&intent=transcription"
     headers = {"api-key": OPENAI_API_KEY}
-    device_index = choose_default_audio_device()
+    device_index = choose_audio_device()
 
     transcriber = AudioTranscriber(
         url=url,

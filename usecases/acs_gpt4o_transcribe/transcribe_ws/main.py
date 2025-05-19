@@ -8,7 +8,6 @@ import websockets
 from datetime import datetime
 
 # ---------- CONFIGURATION ----------
-
 from usecases.acs_gpt4o_transcribe.transcribe_ws.settings import (
     AZURE_WS_URL,
     AZURE_HEADERS,
@@ -27,7 +26,6 @@ logging.basicConfig(
 routes = web.RouteTableDef()
 
 # ---------- UTILITIES ----------
-
 def log_audio_frame(b64_data: str, client_id: str):
     if not LOG_AUDIO:
         return
@@ -41,7 +39,6 @@ def generate_client_id():
     return f"client_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}"
 
 # ---------- ROUTES ----------
-
 @routes.get("/health")
 async def health(request):
     return web.json_response({"status": "ok"})
@@ -118,7 +115,6 @@ async def transcribe_ws(request):
 
 
 # --------- APP SETUP ---------
-
 app = web.Application()
 app.add_routes(routes)
 app.router.add_route("OPTIONS", "/{tail:.*}", lambda req: web.Response())
