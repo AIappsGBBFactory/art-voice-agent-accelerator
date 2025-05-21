@@ -4,16 +4,21 @@ import json
 import os
 from typing import Dict, List
 
-from app.backend.functions import (authenticate_user, escalate_emergency,
-                                   evaluate_prior_authorization,
-                                   lookup_medication_info, refill_prescription,
-                                   schedule_appointment)
+from app.backend.functions import (
+    authenticate_user,
+    escalate_emergency,
+    evaluate_prior_authorization,
+    lookup_medication_info,
+    refill_prescription,
+    schedule_appointment,
+)
 from app.backend.prompt_manager import PromptManager
 from app.backend.tools import available_tools
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+
 # GPT, TTS, tools
 from openai import AzureOpenAI
 

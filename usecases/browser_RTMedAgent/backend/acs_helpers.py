@@ -12,16 +12,16 @@ from typing import List, Optional
 from fastapi import WebSocket
 from src.acs.acs_helper import AcsCaller
 from usecases.browser_RTMedAgent.backend.settings import (
-    ACS_CALLBACK_PATH, ACS_CONNECTION_STRING, ACS_SOURCE_PHONE_NUMBER,
-    ACS_WEBSOCKET_PATH, BASE_URL)
+    ACS_CALLBACK_PATH,
+    ACS_CONNECTION_STRING,
+    ACS_SOURCE_PHONE_NUMBER,
+    ACS_WEBSOCKET_PATH,
+    BASE_URL,
+)
 from utils.ml_logging import get_logger
 
 # --- Init Logger ---
 logger = get_logger()
-
-# List to store connected WebSocket clients
-connected_clients: List[WebSocket] = []
-
 
 # --- Helper Functions for Initialization ---
 def construct_websocket_url(base_url: str, path: str) -> Optional[str]:
@@ -150,7 +150,7 @@ def initialize_acs_caller_instance() -> Optional[AcsCaller]:
         return None
 
 
-async def broadcast_message(message: str, sender: str = "system"):
+async def broadcast_message(connected_clients: List[WebSocket], message: str, sender: str = "system"):
     """
     Send a message to all connected WebSocket clients without duplicates.
 
@@ -180,9 +180,6 @@ async def send_pcm_frames(ws: WebSocket, pcm_bytes: bytes, sample_rate: int):
 
         payload = {"kind": "AudioData", "audioData": {"data": b64}, "stopAudio": None}
         await ws.send_text(json.dumps(payload))
-
-        # **This 20 ms delay makes it “real-time” instead of instant-playback**
-        # await asyncio.sleep(0.02)
 
 
 async def send_data(websocket, buffer):

@@ -5,13 +5,15 @@ import os
 from typing import Optional
 
 import websockets
-from azure.communication.callautomation import (AudioFormat,
-                                                CallAutomationClient,
-                                                MediaStreamingAudioChannelType,
-                                                MediaStreamingContentType,
-                                                MediaStreamingOptions,
-                                                MediaStreamingTransportType,
-                                                PhoneNumberIdentifier)
+from azure.communication.callautomation import (
+    AudioFormat,
+    CallAutomationClient,
+    MediaStreamingAudioChannelType,
+    MediaStreamingContentType,
+    MediaStreamingOptions,
+    MediaStreamingTransportType,
+    PhoneNumberIdentifier,
+)
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 

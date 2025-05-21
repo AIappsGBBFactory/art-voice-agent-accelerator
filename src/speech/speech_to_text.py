@@ -64,6 +64,7 @@ class SpeechCoreTranslator:
         self.speech_config.set_property(
             speechsdk.PropertyId.SpeechServiceConnection_EnableAudioLogging, "true"
         )
+
         self.supported_languages = [
             "en-US",  # English (United States)
             "es-ES",  # Spanish (Spain)
@@ -84,6 +85,7 @@ class SpeechCoreTranslator:
         loop: asyncio.AbstractEventLoop,
         message_queue: asyncio.Queue,
         language: str = "en-US",
+        vad_silence_timeout_ms: int = 800,
     ):
         """
         Creates and configures a SpeechRecognizer for real-time continuous recognition
@@ -99,6 +101,9 @@ class SpeechCoreTranslator:
             A configured speechsdk.SpeechRecognizer instance.
         """
         audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
+        self.speech_config.set_property(
+            speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, str(vad_silence_timeout_ms)
+        )
 
         # Use the instance's speech_config
         recognizer = speechsdk.SpeechRecognizer(

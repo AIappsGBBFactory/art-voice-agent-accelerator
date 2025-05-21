@@ -2,15 +2,18 @@ import asyncio
 import logging
 
 from aiohttp import web
-from azure.communication.callautomation import (AudioFormat,
-                                                CallAutomationClient,
-                                                CallInvite,
-                                                MediaStreamingAudioChannelType,
-                                                MediaStreamingContentType,
-                                                MediaStreamingOptions,
-                                                MediaStreamingTransportType,
-                                                PhoneNumberIdentifier,
-                                                SsmlSource, TextSource)
+from azure.communication.callautomation import (
+    AudioFormat,
+    CallAutomationClient,
+    CallInvite,
+    MediaStreamingAudioChannelType,
+    MediaStreamingContentType,
+    MediaStreamingOptions,
+    MediaStreamingTransportType,
+    PhoneNumberIdentifier,
+    SsmlSource,
+    TextSource,
+)
 from azure.core.exceptions import HttpResponseError
 from azure.core.messaging import CloudEvent
 

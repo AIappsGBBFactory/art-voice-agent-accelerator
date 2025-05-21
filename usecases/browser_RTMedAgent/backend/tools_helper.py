@@ -11,10 +11,18 @@ from typing import Any, Callable, Dict
 
 from fastapi import WebSocket
 from usecases.browser_RTMedAgent.backend.functions import (
-    authenticate_user, check_drug_interactions, escalate_emergency,
-    evaluate_prior_authorization, fill_new_prescription,
-    get_current_prescriptions, lookup_medication_info, lookup_side_effects,
-    refill_prescription, schedule_appointment)
+    authenticate_user,
+    check_drug_interactions,
+    escalate_emergency,
+    evaluate_prior_authorization,
+    fill_new_prescription,
+    get_current_prescriptions,
+    lookup_medication_info,
+    lookup_side_effects,
+    refill_prescription,
+    schedule_appointment,
+)
+
 # --- Init Logger ---
 from utils.ml_logging import get_logger
 

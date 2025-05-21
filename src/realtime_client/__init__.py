@@ -13,8 +13,12 @@ from .api import RealtimeAPI
 from .client import RealtimeClient
 from .conversation import RealtimeConversation
 from .event_handler import RealtimeEventHandler
-from .utils import (array_buffer_to_base64, base64_to_array_buffer,
-                    float_to_16bit_pcm, merge_int16_arrays)
+from .utils import (
+    array_buffer_to_base64,
+    base64_to_array_buffer,
+    float_to_16bit_pcm,
+    merge_int16_arrays,
+)
 
 __all__ = [
     "RealtimeClient",

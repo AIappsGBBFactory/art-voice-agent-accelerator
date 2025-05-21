@@ -14,13 +14,17 @@ from openai import AzureOpenAI
 from src.speech.text_to_speech import SpeechSynthesizer
 from src.speech.speech_to_text import SpeechCoreTranslator
 from usecases.browser_RTMedAgent.backend.acs_helpers import (
-    broadcast_message, initialize_acs_caller_instance, send_pcm_frames
+    broadcast_message,
+    initialize_acs_caller_instance,
+    send_pcm_frames,
 )
 from usecases.browser_RTMedAgent.backend.conversation_state import ConversationManager
 from usecases.browser_RTMedAgent.backend.helpers import add_space, check_for_stopwords
 from usecases.browser_RTMedAgent.backend.settings import ACS_WEBSOCKET_PATH, TTS_END
 from usecases.browser_RTMedAgent.backend.tools_helper import (
-    function_mapping, push_tool_start, push_tool_end
+    function_mapping,
+    push_tool_start,
+    push_tool_end,
 )
 from usecases.browser_RTMedAgent.backend.tools import available_tools
 
@@ -36,6 +40,7 @@ acs_caller = initialize_acs_caller_instance()
 greeted_call_ids: set = set()
 call_user_raw_ids: Dict[str, str] = {}
 
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 async def send_tts_audio(text: str) -> None:
     try:
@@ -43,9 +48,11 @@ async def send_tts_audio(text: str) -> None:
     except Exception:
         pass
 
+
 async def send_response_to_acs(ws: web.WebSocketResponse, response: str) -> None:
     pcm = tts.synthesize_to_base64_frames(text=response, sample_rate=16000)
     await send_pcm_frames(ws, pcm_bytes=pcm, sample_rate=16000)
+
 
 async def process_gpt_response(
     cm: ConversationManager,
@@ -88,10 +95,11 @@ async def process_gpt_response(
                     await send_response_to_acs(ws, text_stream)
                 else:
                     await send_tts_audio(text_stream)
-                    await ws.send_str(json.dumps({
-                        "type": "assistant_streaming",
-                        "content": text_stream
-                    }))
+                    await ws.send_str(
+                        json.dumps(
+                            {"type": "assistant_streaming", "content": text_stream}
+                        )
+                    )
                 final_collected.append(text_stream)
                 collected.clear()
 
@@ -102,10 +110,9 @@ async def process_gpt_response(
             await send_response_to_acs(ws, pending)
         else:
             await send_tts_audio(pending)
-            await ws.send_str(json.dumps({
-                "type": "assistant_streaming",
-                "content": pending
-            }))
+            await ws.send_str(
+                json.dumps({"type": "assistant_streaming", "content": pending})
+            )
         final_collected.append(pending)
 
     full = "".join(final_collected).strip()
@@ -117,19 +124,26 @@ async def process_gpt_response(
             await ws.send_str(json.dumps({"type": "assistant", "content": full}))
 
     if tool_started:
-        cm.hist.append({
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [{
-                "id": tool_id,
-                "type": "function",
-                "function": {"name": tool_name, "arguments": args}
-            }]
-        })
+        cm.hist.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": args},
+                    }
+                ],
+            }
+        )
         return await handle_tool_call(tool_name, tool_id, args, cm, ws, is_acs)
     return None
 
-async def process_tool_followup(cm: ConversationManager, ws: web.WebSocketResponse, is_acs: bool):
+
+async def process_tool_followup(
+    cm: ConversationManager, ws: web.WebSocketResponse, is_acs: bool
+):
     response = az_openai.chat.completions.create(
         stream=True,
         messages=cm.hist,
@@ -146,10 +160,9 @@ async def process_tool_followup(cm: ConversationManager, ws: web.WebSocketRespon
             if delta.content in TTS_END:
                 text_stream = add_space("".join(collected).strip())
                 await send_tts_audio(text_stream)
-                await ws.send_str(json.dumps({
-                    "type": "assistant_streaming",
-                    "content": text_stream
-                }))
+                await ws.send_str(
+                    json.dumps({"type": "assistant_streaming", "content": text_stream})
+                )
                 collected.clear()
     if collected:
         pending = "".join(collected).strip()
@@ -158,10 +171,10 @@ async def process_tool_followup(cm: ConversationManager, ws: web.WebSocketRespon
             await send_response_to_acs(ws, pending)
         else:
             await send_tts_audio(pending)
-            await ws.send_str(json.dumps({
-                "type": "assistant_streaming",
-                "content": pending
-            }))
+            await ws.send_str(
+                json.dumps({"type": "assistant_streaming", "content": pending})
+            )
+
 
 async def handle_tool_call(
     tool_name: str,
@@ -178,22 +191,25 @@ async def handle_tool_call(
     result_json = await function_mapping[tool_name](params)
     elapsed = (time.perf_counter() - t0) * 1000
     result = json.loads(result_json) if isinstance(result_json, str) else result_json
-    cm.hist.append({
-        "tool_call_id": tool_id,
-        "role": "tool",
-        "name": tool_name,
-        "content": json.dumps(result)
-    })
+    cm.hist.append(
+        {
+            "tool_call_id": tool_id,
+            "role": "tool",
+            "name": tool_name,
+            "content": json.dumps(result),
+        }
+    )
     await push_tool_end(ws, call_id, tool_name, "success", elapsed, result=result)
     await process_tool_followup(cm, ws, is_acs)
     return result
 
+
 # ── Authentication & main loops ─────────────────────────────────────────────
 async def authentication_conversation(ws, cm):
     greeting = "👋 Welcome! Please verify your identity."
-    await ws.send_str(json.dumps({"type":"status","message":greeting}))
+    await ws.send_str(json.dumps({"type": "status", "message": greeting}))
     await send_tts_audio(greeting)
-    cm.hist.append({"role":"assistant","content":greeting})
+    cm.hist.append({"role": "assistant", "content": greeting})
     while True:
         msg = await ws.receive()
         if msg.type != WSMsgType.TEXT:
@@ -204,12 +220,13 @@ async def authentication_conversation(ws, cm):
             prompt = msg.data.strip()
         if check_for_stopwords(prompt):
             bye = "Goodbye!"
-            await ws.send_str(json.dumps({"type":"exit","message":bye}))
+            await ws.send_str(json.dumps({"type": "exit", "message": bye}))
             await send_tts_audio(bye)
             return None
         res = await process_gpt_response(cm, prompt, ws)
         if res and res.get("authenticated"):
             return res
+
 
 async def main_conversation(ws, cm):
     while True:
@@ -222,10 +239,11 @@ async def main_conversation(ws, cm):
             prompt = msg.data.strip()
         if check_for_stopwords(prompt):
             bye = "Thank you! Goodbye."
-            await ws.send_str(json.dumps({"type":"exit","message":bye}))
+            await ws.send_str(json.dumps({"type": "exit", "message": bye}))
             await send_tts_audio(bye)
             return
         await process_gpt_response(cm, prompt, ws)
+
 
 # ── WebSocket handlers ──────────────────────────────────────────────────────
 async def realtime_ws(request):
@@ -236,6 +254,7 @@ async def realtime_ws(request):
         cm = ConversationManager(auth=False)
         await main_conversation(ws, cm)
     return ws
+
 
 async def acs_ws(request):
     ws = web.WebSocketResponse()
@@ -252,7 +271,7 @@ async def acs_ws(request):
         push_stream=push_stream,
         loop=loop,
         message_queue=message_queue,
-        language="en-US"
+        language="en-US",
     )
     recognizer.start_continuous_recognition_async()
 
@@ -260,7 +279,7 @@ async def acs_ws(request):
         greeting = "📞 Call connected. Hello from XMYX Healthcare!"
         await broadcast_message(greeting, "Assistant")
         await send_response_to_acs(ws, greeting)
-        cm.hist.append({"role":"assistant","content":greeting})
+        cm.hist.append({"role": "assistant", "content": greeting})
         greeted_call_ids.add(call_id)
 
     try:
@@ -274,7 +293,7 @@ async def acs_ws(request):
                 await broadcast_message(recognized, "User")
                 if check_for_stopwords(recognized):
                     bye = "Goodbye!"
-                    await broadcast_message(bye,"Assistant")
+                    await broadcast_message(bye, "Assistant")
                     await send_response_to_acs(ws, bye)
                     await acs_caller.disconnect_call(call_id)
                     break
@@ -300,7 +319,7 @@ async def acs_ws(request):
         try:
             await asyncio.wait_for(
                 asyncio.to_thread(recognizer.stop_continuous_recognition_async),
-                timeout=5.0
+                timeout=5.0,
             )
         except:
             pass
@@ -308,10 +327,11 @@ async def acs_ws(request):
         await ws.close()
         call_user_raw_ids.pop(call_id, None)
 
+
 # ── App setup ───────────────────────────────────────────────────────────────
 app = web.Application()
-app.router.add_get('/realtime', realtime_ws)
+app.router.add_get("/realtime", realtime_ws)
 app.router.add_get(ACS_WEBSOCKET_PATH, acs_ws)
 
-if __name__ == '__main__':
-    web.run_app(app, host='0.0.0.0', port=8080)
+if __name__ == "__main__":
+    web.run_app(app, host="0.0.0.0", port=8080)

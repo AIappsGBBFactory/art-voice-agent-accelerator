@@ -279,6 +279,9 @@ async def authenticate_user(args: AuthenticateArgs) -> Dict[str, Any]:
             "authenticated": True,
             "message": f"Authenticated {full}.",
             "patient_id": rec["patient_id"],
+            "first_name": first,
+            "last_name": last,
+            "phone_number": phone,
         }
     else:
         logger.warning(

@@ -22,8 +22,13 @@ from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings
 from src.speech.text_to_speech import SpeechSynthesizer
 from usecases.browser_RTMedAgent.backend.functions import (
-    authenticate_user, escalate_emergency, evaluate_prior_authorization,
-    lookup_medication_info, refill_prescription, schedule_appointment)
+    authenticate_user,
+    escalate_emergency,
+    evaluate_prior_authorization,
+    lookup_medication_info,
+    refill_prescription,
+    schedule_appointment,
+)
 from usecases.browser_RTMedAgent.backend.prompt_manager import PromptManager
 from usecases.browser_RTMedAgent.backend.tools import available_tools
 from utils.ml_logging import get_logger

@@ -3,10 +3,14 @@ import os
 import time
 from typing import Dict, List
 
-from app.backend.functions import (authenticate_user, escalate_emergency,
-                                   evaluate_prior_authorization,
-                                   lookup_medication_info, refill_prescription,
-                                   schedule_appointment)
+from app.backend.functions import (
+    authenticate_user,
+    escalate_emergency,
+    evaluate_prior_authorization,
+    lookup_medication_info,
+    refill_prescription,
+    schedule_appointment,
+)
 from app.backend.prompt_manager import PromptManager
 from app.backend.tools import available_tools
 from openai import AzureOpenAI

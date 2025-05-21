@@ -6,6 +6,7 @@ gradio
 uvicorn
 pydantic-settings
 starlette
+redis
 
 # AI and OpenAI integration
 openai
