@@ -43,7 +43,7 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "usecases.browser_RTMedAgent.backend.server:app",
+                "usecases.RTMedAgent.backend.server:app",
                 "--reload",
                 "--port",
                 "8010"
