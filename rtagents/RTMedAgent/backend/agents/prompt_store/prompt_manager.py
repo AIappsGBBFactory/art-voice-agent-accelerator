@@ -53,6 +53,7 @@ class PromptManager:
 
     def create_prompt_system_main(
         self,
+        prompt_path: str,
         patient_phone_number: str = "5552971078",
         patient_name: str = "Alice Brown",
         patient_dob: str = "1987-04-12",
@@ -73,7 +74,7 @@ class PromptManager:
             str: Rendered prompt string.
         """
         return self.get_prompt(
-            "voice_agent_system.jinja",
+            prompt_path,
             patient_phone_number=patient_phone_number,
             patient_name=patient_name,
             patient_dob=patient_dob,

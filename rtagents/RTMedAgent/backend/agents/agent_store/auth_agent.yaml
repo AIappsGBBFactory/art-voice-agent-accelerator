@@ -20,3 +20,4 @@ prompts:
 
 tools:
   - authenticate_user
+  - escalate_emergency

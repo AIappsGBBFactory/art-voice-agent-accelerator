@@ -39,12 +39,12 @@ from rtagents.RTMedAgent.backend.shared_ws import (
 
 logger = get_logger("gpt_flow")
 
-
 async def process_gpt_response(
     cm,                       # ConversationManager
     user_prompt: str,
     ws: WebSocket,
     *,
+    agent_name: str,
     is_acs: bool = False,
     model_id: str = AZURE_OPENAI_CHAT_DEPLOYMENT_ID,
     temperature: float = 0.5,
@@ -54,19 +54,18 @@ async def process_gpt_response(
 ) -> Optional[Dict[str, Any]]:
     """
     Stream a chat completion, emit TTS, handle tool calls.
-
     All sampling / model / tool parameters are injected by RTAgent and
     forwarded untouched through any follow-up calls.
     """
-    # ------------------------------------------------------------------#
-    cm.hist.append({"role": "user", "content": user_prompt})
+    agent_history = cm.get_history(agent_name)
+    agent_history.append({"role": "user", "content": user_prompt})
 
     if available_tools is None:
         available_tools = DEFAULT_TOOLS
 
     chat_kwargs = dict(
         stream=True,
-        messages=cm.hist,
+        messages=agent_history,
         model=model_id,
         max_tokens=max_tokens,
         temperature=temperature,
@@ -103,6 +102,7 @@ async def process_gpt_response(
                 streaming = add_space("".join(collected).strip())
                 await _emit_streaming_text(streaming, ws, is_acs)
                 final_chunks.append(streaming)
+                agent_history.append({"role": "assistant", "content": streaming})
                 collected.clear()
 
     # ---- flush tail ---------------------------------------------------
@@ -113,12 +113,12 @@ async def process_gpt_response(
 
     full_text = "".join(final_chunks).strip()
     if full_text:
-        cm.hist.append({"role": "assistant", "content": full_text})
+        agent_history.append({"role": "assistant", "content": full_text})
         await push_final(ws, "assistant", full_text, is_acs=is_acs)
 
     # ---- follow-up tool call -----------------------------------------
     if tool_started:
-        cm.hist.append(
+        agent_history.append(
             {
                 "role": "assistant",
                 "content": None,
@@ -131,12 +131,14 @@ async def process_gpt_response(
                 ],
             }
         )
-        return await _handle_tool_call(
+        # Run tool, persist results and slots in ConversationManager
+        tool_result = await _handle_tool_call(
             tool_name,
             tool_id,
             args,
             cm,
             ws,
+            agent_name,
             is_acs,
             model_id,
             temperature,
@@ -144,9 +146,13 @@ async def process_gpt_response(
             max_tokens,
             available_tools,
         )
-
-    return None
-
+        if tool_result:
+            cm.persist_tool_output(tool_name, tool_result)
+            if isinstance(tool_result, dict) and "slots" in tool_result:
+                cm.update_slots(tool_result["slots"])
+        return tool_result  # return result for visibility/debug
+    
+    return None 
 
 # ======================================================================#
 #  Helper routines                                                      #
@@ -160,13 +166,13 @@ async def _emit_streaming_text(text: str, ws: WebSocket, is_acs: bool) -> None:
         await send_tts_audio(text, ws, latency_tool=ws.state.lt)
         await ws.send_text(json.dumps({"type": "assistant_streaming", "content": text}))
 
-
 async def _handle_tool_call(
     tool_name: str,
     tool_id: str,
     args: str,
     cm,
     ws: WebSocket,
+    agent_name: str,
     is_acs: bool,
     model_id: str,
     temperature: float,
@@ -188,7 +194,8 @@ async def _handle_tool_call(
     elapsed = (time.perf_counter() - t0) * 1000
     result = json.loads(result) if isinstance(result, str) else result
 
-    cm.hist.append(
+    agent_history = cm.get_history(agent_name)
+    agent_history.append(
         {
             "tool_call_id": tool_id,
             "role": "tool",
@@ -207,6 +214,7 @@ async def _handle_tool_call(
     await _process_tool_followup(
         cm,
         ws,
+        agent_name,
         is_acs,
         model_id,
         temperature,
@@ -216,10 +224,10 @@ async def _handle_tool_call(
     )
     return result
 
-
 async def _process_tool_followup(
     cm,
     ws: WebSocket,
+    agent_name: str,
     is_acs: bool,
     model_id: str,
     temperature: float,
@@ -232,6 +240,7 @@ async def _process_tool_followup(
         cm,
         "",
         ws,
+        agent_name=agent_name,
         is_acs=is_acs,
         model_id=model_id,
         temperature=temperature,

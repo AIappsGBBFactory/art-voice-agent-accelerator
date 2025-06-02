@@ -12,18 +12,37 @@ from typing import Any, Callable, Dict
 from fastapi import WebSocket
 
 from utils.ml_logging import get_logger
-from rtagents.RTMedAgent.backend.agents.tool_store.functions import (
-    authenticate_user,
+from rtagents.RTMedAgent.backend.agents.tool_store.medications import (
     check_drug_interactions,
-    escalate_emergency,
-    evaluate_prior_authorization,
     fill_new_prescription,
     get_current_prescriptions,
     lookup_medication_info,
     lookup_side_effects,
     refill_prescription,
-    schedule_appointment,
 )
+from rtagents.RTMedAgent.backend.agents.tool_store.emergency import escalate_emergency
+from rtagents.RTMedAgent.backend.agents.tool_store.auth import (
+    authenticate_user,  
+)
+from rtagents.RTMedAgent.backend.agents.tool_store.general_health import (
+    general_health_question)
+
+from rtagents.RTMedAgent.backend.agents.tool_store.billing import (
+    insurance_billing_question)
+
+from rtagents.RTMedAgent.backend.agents.tool_store.referrals import (
+ request_referral,
+ get_specialist_list,
+ check_referral_status
+)
+
+from rtagents.RTMedAgent.backend.agents.tool_store.scheduling import (
+    schedule_appointment,
+    change_appointment,
+    cancel_appointment,
+    get_upcoming_appointments)
+
+from rtagents.RTMedAgent.backend.agents.tool_store.handoff import handoff_agent   
 
 log = get_logger("tools_helper")
 
@@ -32,17 +51,36 @@ log = get_logger("tools_helper")
 # --------------------------------------------------------------------------- #
 function_mapping: Dict[str, Callable[..., Any]] = {
     "schedule_appointment": schedule_appointment,
+    "change_appointment": change_appointment,
+    "cancel_appointment": cancel_appointment,
+    "get_upcoming_appointments": get_upcoming_appointments,
     "refill_prescription": refill_prescription,
+    "fill_new_prescription": fill_new_prescription,
+    "get_current_prescriptions": get_current_prescriptions,
     "lookup_medication_info": lookup_medication_info,
-    "evaluate_prior_authorization": evaluate_prior_authorization,
+    "lookup_side_effects": lookup_side_effects,
+    "check_drug_interactions": check_drug_interactions,
     "escalate_emergency": escalate_emergency,
     "authenticate_user": authenticate_user,
-    "fill_new_prescription": fill_new_prescription,
-    "lookup_side_effects": lookup_side_effects,
-    "get_current_prescriptions": get_current_prescriptions,
-    "check_drug_interactions": check_drug_interactions,
+    "general_health_question": general_health_question,
+    "insurance_billing_question": insurance_billing_question,
+    "request_referral": request_referral,
+    "get_specialist_list": get_specialist_list,
+    "check_referral_status": check_referral_status,
+    "handoff_agent": handoff_agent,
 }
 
+async def call_agent_tool(tool_name: str, args: dict) -> Any:
+    fn = function_mapping.get(tool_name)
+    if fn is None:
+        log.error(f"No function mapped for tool '{tool_name}'")
+        return {"ok": False, "message": f"Tool '{tool_name}' not supported."}
+    try:
+        result = await fn(args)
+        return result
+    except Exception as e:
+        log.exception(f"Error running tool '{tool_name}'")
+        return {"ok": False, "message": str(e)}
 
 async def _emit(ws: WebSocket, payload: dict, *, is_acs: bool) -> None:
     """

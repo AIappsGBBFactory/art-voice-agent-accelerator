@@ -14,7 +14,7 @@ def build_and_flush(cm: ConversationManager, cosmos: CosmosDBMongoCoreManager):
     (MongoDB API, _id = session_id).
     """
     session_id = cm.session_id
-    history = cm.hist
+    histories = cm.histories
     context = cm.context.copy()
     raw_lat = context.pop("latency_roundtrip", {})
 
@@ -32,11 +32,11 @@ def build_and_flush(cm: ConversationManager, cosmos: CosmosDBMongoCoreManager):
     doc = {
         "_id": session_id,
         "session_id": session_id,
-        "timestamp": datetime.datetime.utcnow().replace(microsecond=0).isoformat()
-        + "Z",
-        "history": history,
+        "timestamp": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "histories": histories,
         "context": context,
         "latency_summary": summary,
+        "agents": list(histories.keys()),
     }
 
     try:

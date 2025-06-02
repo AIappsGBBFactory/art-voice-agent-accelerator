@@ -393,6 +393,7 @@ export default function RealTimeVoiceApp() {
     /* Speech recognizer */
     const cfg = SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_REGION);
     cfg.speechRecognitionLanguage = "en-US";
+    //cfg.speechRecognitionLanguage = "es-ES";
 
     const rec = new SpeechRecognizer(
       cfg,
@@ -715,10 +716,8 @@ export default function RealTimeVoiceApp() {
       </div>
 
       {/* ------- AVATAR + MIND MAP ------- */}
-      <div style={styles.secondRow}>
-        <div style={styles.card}>Avatar Placeholder</div>
-
-        <div style={{ ...styles.card, padding:20 }}>
+      <div style={{ width: "100%", maxWidth: 1080, marginTop: 0 }}>
+        <div style={{ ...styles.card, padding: 20, height: 300 }}>
           <ReactFlowProvider>
             <ReactFlow
               nodes={nodes}
@@ -726,14 +725,14 @@ export default function RealTimeVoiceApp() {
               fitView
               panOnScroll
               zoomOnScroll
-              defaultEdgeOptions={{ markerEnd:{type:"arrowclosed", width:12, height:12} }}
-              style={{ width:"100%", height:"100%", background:"transparent" }}
+              defaultEdgeOptions={{ markerEnd: { type: "arrowclosed", width: 12, height: 12 } }}
+              style={{ width: "100%", height: "100%", background: "transparent" }}
             >
-              <MiniMap nodeColor={(n)=>
-                n.id==="user-root"      ? "#0F766E" :
-                n.id==="assistant-root" ? "#4338CA" :
+              <MiniMap nodeColor={(n) =>
+                n.id === "user-root"      ? "#0F766E" :
+                n.id === "assistant-root" ? "#4338CA" :
                 n.style?.background || "#334155"
-              }/>
+              } />
               <Controls />
             </ReactFlow>
           </ReactFlowProvider>
