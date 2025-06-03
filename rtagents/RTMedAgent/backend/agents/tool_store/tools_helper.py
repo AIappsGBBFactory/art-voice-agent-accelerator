@@ -22,27 +22,30 @@ from rtagents.RTMedAgent.backend.agents.tool_store.medications import (
 )
 from rtagents.RTMedAgent.backend.agents.tool_store.emergency import escalate_emergency
 from rtagents.RTMedAgent.backend.agents.tool_store.auth import (
-    authenticate_user,  
+    authenticate_user,
 )
 from rtagents.RTMedAgent.backend.agents.tool_store.general_health import (
-    general_health_question)
+    general_health_question,
+)
 
 from rtagents.RTMedAgent.backend.agents.tool_store.billing import (
-    insurance_billing_question)
+    insurance_billing_question,
+)
 
 from rtagents.RTMedAgent.backend.agents.tool_store.referrals import (
- request_referral,
- get_specialist_list,
- check_referral_status
+    request_referral,
+    get_specialist_list,
+    check_referral_status,
 )
 
 from rtagents.RTMedAgent.backend.agents.tool_store.scheduling import (
     schedule_appointment,
     change_appointment,
     cancel_appointment,
-    get_upcoming_appointments)
+    get_upcoming_appointments,
+)
 
-from rtagents.RTMedAgent.backend.agents.tool_store.handoff import handoff_agent   
+from rtagents.RTMedAgent.backend.agents.tool_store.handoff import handoff_agent
 
 log = get_logger("tools_helper")
 
@@ -70,6 +73,7 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "handoff_agent": handoff_agent,
 }
 
+
 async def call_agent_tool(tool_name: str, args: dict) -> Any:
     fn = function_mapping.get(tool_name)
     if fn is None:
@@ -81,6 +85,7 @@ async def call_agent_tool(tool_name: str, args: dict) -> Any:
     except Exception as e:
         log.exception(f"Error running tool '{tool_name}'")
         return {"ok": False, "message": str(e)}
+
 
 async def _emit(ws: WebSocket, payload: dict, *, is_acs: bool) -> None:
     """

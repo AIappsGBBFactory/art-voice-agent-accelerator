@@ -3,7 +3,6 @@ from typing import Dict, List, Any, TypedDict
 from rtagents.RTMedAgent.backend.agents.tool_store.functions_helper import _json
 
 
-
 # Patient medications and refill info
 prescriptions_db: Dict[str, Dict[str, Dict[str, str]]] = {
     "Alice Brown": {
@@ -134,6 +133,7 @@ interactions_db: Dict[frozenset, str] = {
     ): "Additive CNS depression; monitor for sedation.",
 }
 
+
 class RefillPrescriptionArgs(TypedDict, total=False):
     patient_name: str
     medication_name: str
@@ -142,7 +142,6 @@ class RefillPrescriptionArgs(TypedDict, total=False):
 
 class LookupMedicationArgs(TypedDict):
     medication_name: str
-
 
 
 class EscalateEmergencyArgs(TypedDict):
@@ -217,6 +216,7 @@ async def fill_new_prescription(args: FillNewPrescriptionArgs) -> str:
         dosage=dose,
         pharmacy=pharm,
     )
+
 
 async def lookup_side_effects(args: SideEffectsArgs) -> str:
     med = args["medication_name"].strip().title()

@@ -1,5 +1,6 @@
 import json
 from utils.ml_logging import get_logger
+
 logger = get_logger()
 
 billing_db = [
@@ -32,6 +33,7 @@ billing_db = [
     },
 ]
 
+
 async def insurance_billing_question(args: dict) -> str:
     """
     Simulates answering a billing or insurance question.
@@ -53,64 +55,76 @@ async def insurance_billing_question(args: dict) -> str:
     # Filter by patient
     patient_claims = [b for b in billing_db if b["patient_id"] == patient_id]
     if not patient_claims:
-        return json.dumps({
-            "ok": False,
-            "message": f"No billing records found for patient_id {patient_id}.",
-            "data": None
-        })
+        return json.dumps(
+            {
+                "ok": False,
+                "message": f"No billing records found for patient_id {patient_id}.",
+                "data": None,
+            }
+        )
 
     if claim_number:
         for record in patient_claims:
             if record["claim_number"] == claim_number:
-                return json.dumps({
-                    "ok": True,
-                    "message": f"Claim {claim_number} status: {record['status']}.",
-                    "data": record
-                })
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "message": f"Claim {claim_number} status: {record['status']}.",
+                        "data": record,
+                    }
+                )
 
     if invoice_date:
         for record in patient_claims:
             if record["invoice_date"] == invoice_date:
-                return json.dumps({
-                    "ok": True,
-                    "message": f"Invoice on {invoice_date}: amount due ${record['amount_due']}.",
-                    "data": record
-                })
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "message": f"Invoice on {invoice_date}: amount due ${record['amount_due']}.",
+                        "data": record,
+                    }
+                )
 
     if "denied" in summary:
         denied_claims = [r for r in patient_claims if r["status"] == "Denied"]
         if denied_claims:
             record = denied_claims[0]
-            return json.dumps({
-                "ok": True,
-                "message": f"Your claim {record['claim_number']} was denied: {record['reason']}.",
-                "data": record
-            })
+            return json.dumps(
+                {
+                    "ok": True,
+                    "message": f"Your claim {record['claim_number']} was denied: {record['reason']}.",
+                    "data": record,
+                }
+            )
         else:
-            return json.dumps({
-                "ok": True,
-                "message": "No denied claims found.",
-                "data": None
-            })
+            return json.dumps(
+                {"ok": True, "message": "No denied claims found.", "data": None}
+            )
 
     if "balance" in summary or "owe" in summary:
         outstanding = [r for r in patient_claims if float(r["amount_due"]) > 0]
         if outstanding:
             due = outstanding[0]
-            return json.dumps({
-                "ok": True,
-                "message": f"Your current balance is ${due['amount_due']} for invoice dated {due['invoice_date']}.",
-                "data": due
-            })
+            return json.dumps(
+                {
+                    "ok": True,
+                    "message": f"Your current balance is ${due['amount_due']} for invoice dated {due['invoice_date']}.",
+                    "data": due,
+                }
+            )
         else:
-            return json.dumps({
-                "ok": True,
-                "message": "You have no outstanding balances.",
-                "data": None
-            })
+            return json.dumps(
+                {
+                    "ok": True,
+                    "message": "You have no outstanding balances.",
+                    "data": None,
+                }
+            )
 
-    return json.dumps({
-        "ok": False,
-        "message": "Sorry, I couldn't find billing details for your request.",
-        "data": None
-    })
+    return json.dumps(
+        {
+            "ok": False,
+            "message": "Sorry, I couldn't find billing details for your request.",
+            "data": None,
+        }
+    )

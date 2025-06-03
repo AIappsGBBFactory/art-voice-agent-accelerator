@@ -14,7 +14,7 @@ referrals_db: Dict[str, List[Dict[str, Any]]] = {
             "status": "pending",
             "reason": "Rash evaluation",
             "insurance_details": "Blue Cross PPO",
-            "urgency": "routine"
+            "urgency": "routine",
         }
     ],
     "Bob Johnson": [
@@ -27,7 +27,7 @@ referrals_db: Dict[str, List[Dict[str, Any]]] = {
             "status": "approved",
             "reason": "Heart murmur",
             "insurance_details": "Aetna",
-            "urgency": "urgent"
+            "urgency": "urgent",
         }
     ],
     "Charlie Davis": [
@@ -40,9 +40,9 @@ referrals_db: Dict[str, List[Dict[str, Any]]] = {
             "status": "scheduled",
             "reason": "Knee pain",
             "insurance_details": "United Healthcare",
-            "urgency": "routine"
+            "urgency": "routine",
         }
-    ]
+    ],
 }
 
 specialist_directory: List[Dict[str, Any]] = [
@@ -50,28 +50,27 @@ specialist_directory: List[Dict[str, Any]] = [
         "specialty": "Dermatology",
         "provider": "Dr. Kelly",
         "location": "Downtown Clinic",
-        "accepting_new_patients": True
+        "accepting_new_patients": True,
     },
     {
         "specialty": "Cardiology",
         "provider": "Dr. Lee",
         "location": "Cardio Center",
-        "accepting_new_patients": False
+        "accepting_new_patients": False,
     },
     {
         "specialty": "Orthopedics",
         "provider": "Dr. Patel",
         "location": "West Side Ortho",
-        "accepting_new_patients": True
+        "accepting_new_patients": True,
     },
     {
         "specialty": "Endocrinology",
         "provider": "Dr. Smith",
         "location": "North Clinic",
-        "accepting_new_patients": True
-    }
+        "accepting_new_patients": True,
+    },
 ]
-
 
 
 class RequestReferralArgs(TypedDict, total=False):
@@ -83,13 +82,16 @@ class RequestReferralArgs(TypedDict, total=False):
     urgency: Optional[str]
     insurance_details: Optional[str]
 
+
 class CheckReferralStatusArgs(TypedDict):
     patient_name: str
     status_query: str  # referral ID, specialty, or provider
 
+
 class GetSpecialistListArgs(TypedDict, total=False):
     specialty: Optional[str]
     location: Optional[str]
+
 
 class EscalateEmergencyArgs(TypedDict):
     reason: str
@@ -108,33 +110,42 @@ async def request_referral(args: RequestReferralArgs) -> str:
         "status": "pending",
         "reason": args.get("reason_for_referral"),
         "insurance_details": args.get("insurance_details"),
-        "urgency": args.get("urgency", "routine")
+        "urgency": args.get("urgency", "routine"),
     }
     referrals_db.setdefault(patient, []).append(record)
     return _json(
         True,
         f"Referral to {record['specialty']} created with ID {referral_id}.",
-        referral=record
+        referral=record,
     )
+
 
 async def get_specialist_list(args: GetSpecialistListArgs) -> str:
     results = [
-        s for s in specialist_directory
-        if (not args.get("specialty") or s["specialty"].lower() == args["specialty"].lower())
-        and (not args.get("location") or s["location"].lower() == args["location"].lower())
+        s
+        for s in specialist_directory
+        if (
+            not args.get("specialty")
+            or s["specialty"].lower() == args["specialty"].lower()
+        )
+        and (
+            not args.get("location")
+            or s["location"].lower() == args["location"].lower()
+        )
     ]
     if not results:
         return _json(False, "No matching specialists found.")
     return _json(True, "Specialist(s) found.", specialists=results)
+
 
 async def check_referral_status(args: CheckReferralStatusArgs) -> str:
     patient = args["patient_name"]
     query = args["status_query"].lower()
     for ref in referrals_db.get(patient, []):
         if (
-            query in ref.get("referral_id", "").lower() or
-            query in ref.get("specialty", "").lower() or
-            query in ref.get("provider", "").lower()
+            query in ref.get("referral_id", "").lower()
+            or query in ref.get("specialty", "").lower()
+            or query in ref.get("provider", "").lower()
         ):
             return _json(True, "Referral status found.", referral=ref)
     return _json(False, "No matching referral found.")

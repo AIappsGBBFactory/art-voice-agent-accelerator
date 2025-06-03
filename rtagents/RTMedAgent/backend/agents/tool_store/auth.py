@@ -33,10 +33,12 @@ patients_db: Dict[str, Dict[str, str]] = {
     "Julia King": {"dob": "1986-08-14", "patient_id": "P66778", "phone": "5559643430"},
 }
 
+
 class AuthenticateArgs(TypedDict):
     first_name: str
     last_name: str
     phone_number: str
+
 
 async def authenticate_user(args: AuthenticateArgs) -> Dict[str, Any]:
     first = args["first_name"].strip().title()
@@ -80,4 +82,3 @@ async def authenticate_user(args: AuthenticateArgs) -> Dict[str, Any]:
             "message": "Authentication failed – name or phone mismatch.",
             "patient_id": None,
         }
-

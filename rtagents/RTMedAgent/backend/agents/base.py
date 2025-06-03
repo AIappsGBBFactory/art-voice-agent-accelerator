@@ -76,7 +76,6 @@ class RTAgent:
         *,
         is_acs: bool = False,
     ) -> Any:
-
         # For context-rich prompting
         cm.ensure_system_prompt(
             self.name,

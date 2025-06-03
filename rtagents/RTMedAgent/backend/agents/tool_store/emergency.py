@@ -8,6 +8,7 @@ logger = get_logger()
 class EscalateEmergencyArgs(TypedDict):
     reason: str
 
+
 async def escalate_emergency(args: EscalateEmergencyArgs) -> str:
     reason = args["reason"].strip()
     if not reason:

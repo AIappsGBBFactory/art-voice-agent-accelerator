@@ -39,8 +39,9 @@ from rtagents.RTMedAgent.backend.shared_ws import (
 
 logger = get_logger("gpt_flow")
 
+
 async def process_gpt_response(
-    cm,                       # ConversationManager
+    cm,  # ConversationManager
     user_prompt: str,
     ws: WebSocket,
     *,
@@ -151,8 +152,9 @@ async def process_gpt_response(
             if isinstance(tool_result, dict) and "slots" in tool_result:
                 cm.update_slots(tool_result["slots"])
         return tool_result  # return result for visibility/debug
-    
-    return None 
+
+    return None
+
 
 # ======================================================================#
 #  Helper routines                                                      #
@@ -165,6 +167,7 @@ async def _emit_streaming_text(text: str, ws: WebSocket, is_acs: bool) -> None:
     else:
         await send_tts_audio(text, ws, latency_tool=ws.state.lt)
         await ws.send_text(json.dumps({"type": "assistant_streaming", "content": text}))
+
 
 async def _handle_tool_call(
     tool_name: str,
@@ -223,6 +226,7 @@ async def _handle_tool_call(
         available_tools,
     )
     return result
+
 
 async def _process_tool_followup(
     cm,

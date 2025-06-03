@@ -9,11 +9,20 @@ from src.redis.manager import AzureRedisManager
 
 logger = get_logger()
 
+
 class ConversationManager:
-    def __init__(self, auth: bool = False, session_id: Optional[str] = None, active_agent: str = None) -> None:
+    def __init__(
+        self,
+        auth: bool = False,
+        session_id: Optional[str] = None,
+        active_agent: str = None,
+    ) -> None:
         self.session_id: str = session_id or str(uuid.uuid4())[:8]
         self.histories: Dict[str, List[Dict[str, Any]]] = {}
-        self.context: Dict[str, Any] = {"authenticated": auth, "active_agent": active_agent}
+        self.context: Dict[str, Any] = {
+            "authenticated": auth,
+            "active_agent": active_agent,
+        }
 
     @staticmethod
     def build_redis_key(session_id: str) -> str:
@@ -127,14 +136,16 @@ class ConversationManager:
 
     def get_context(self, key: str, default: Any = None) -> Any:
         return self.context.get(key, default)
-    
+
     def update_context(self, key: str, value: Any) -> None:
         self.context[key] = value
 
     def _build_full_name(self) -> str:
         return f"{self.get_context('first_name', 'Alice')} {self.get_context('last_name', 'Brown')}"
 
-    def ensure_system_prompt(self, agent_name: str, prompt_manager: PromptManager, prompt_path: str) -> None:
+    def ensure_system_prompt(
+        self, agent_name: str, prompt_manager: PromptManager, prompt_path: str
+    ) -> None:
         """
         Ensures the system prompt is at the start of the agent's history.
         Should be called after authentication or context update.

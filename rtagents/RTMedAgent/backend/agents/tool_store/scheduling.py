@@ -1,4 +1,3 @@
-
 from typing import Dict, List, Any, TypedDict
 from datetime import date as _date, timedelta as _timedelta
 from typing import Optional
@@ -43,7 +42,7 @@ appointments_db: Dict[str, List[Dict[str, Any]]] = {
             "time": "09:30",
             "type": "annual_physical",
             "provider": "Dr. Smith",
-            "status": "confirmed"
+            "status": "confirmed",
         },
         {
             "appt_id": "A002",
@@ -51,8 +50,8 @@ appointments_db: Dict[str, List[Dict[str, Any]]] = {
             "time": "15:00",
             "type": "follow_up",
             "provider": "Dr. Smith",
-            "status": "confirmed"
-        }
+            "status": "confirmed",
+        },
     ],
     "Bob Johnson": [
         {
@@ -61,7 +60,7 @@ appointments_db: Dict[str, List[Dict[str, Any]]] = {
             "time": "14:30",
             "type": "specialist_consult",
             "provider": "Dr. Patel",
-            "status": "confirmed"
+            "status": "confirmed",
         },
         {
             "appt_id": "B101",
@@ -69,8 +68,8 @@ appointments_db: Dict[str, List[Dict[str, Any]]] = {
             "time": "11:00",
             "type": "lab_results_review",
             "provider": "Dr. Lee",
-            "status": "completed"
-        }
+            "status": "completed",
+        },
     ],
     "Charlie Davis": [
         {
@@ -79,7 +78,7 @@ appointments_db: Dict[str, List[Dict[str, Any]]] = {
             "time": "08:00",
             "type": "annual_physical",
             "provider": "Dr. Smith",
-            "status": "cancelled"
+            "status": "cancelled",
         },
         {
             "appt_id": "C201",
@@ -87,8 +86,8 @@ appointments_db: Dict[str, List[Dict[str, Any]]] = {
             "time": "10:15",
             "type": "immunization",
             "provider": "Nurse Williams",
-            "status": "confirmed"
-        }
+            "status": "confirmed",
+        },
     ],
     "Diana Evans": [
         {
@@ -97,18 +96,20 @@ appointments_db: Dict[str, List[Dict[str, Any]]] = {
             "time": "16:00",
             "type": "telemedicine",
             "provider": "Dr. Nguyen",
-            "status": "rescheduled"
+            "status": "rescheduled",
         }
-    ]
+    ],
 }
+
 
 class ScheduleAppointmentArgs(TypedDict, total=False):
     patient_name: str
-    dob: str                 # YYYY-MM-DD
-    appointment_type: str    # e.g. check-up, follow-up, annual physical, etc.
-    preferred_date: str      # YYYY-MM-DD
-    preferred_time: str      # HH:MM
+    dob: str  # YYYY-MM-DD
+    appointment_type: str  # e.g. check-up, follow-up, annual physical, etc.
+    preferred_date: str  # YYYY-MM-DD
+    preferred_time: str  # HH:MM
     provider: Optional[str]
+
 
 class ChangeAppointmentArgs(TypedDict, total=False):
     patient_name: str
@@ -116,18 +117,20 @@ class ChangeAppointmentArgs(TypedDict, total=False):
     new_date: str
     new_time: str
 
+
 class CancelAppointmentArgs(TypedDict, total=False):
     patient_name: str
     appt_id: str
+
 
 class GetUpcomingAppointmentsArgs(TypedDict):
     patient_name: str
 
 
-
 def _generate_appt_id() -> str:
     # Simple appointment ID generator
     return "A" + str(random.randint(100, 999))
+
 
 async def schedule_appointment(args: ScheduleAppointmentArgs) -> str:
     name = args.get("patient_name", "")
@@ -150,7 +153,7 @@ async def schedule_appointment(args: ScheduleAppointmentArgs) -> str:
         "time": time_str,
         "type": appt_type,
         "provider": provider,
-        "status": "confirmed"
+        "status": "confirmed",
     }
     appointments_db.setdefault(name, []).append(entry)
     return _json(
@@ -162,6 +165,7 @@ async def schedule_appointment(args: ScheduleAppointmentArgs) -> str:
         provider=provider,
         appointment_type=appt_type,
     )
+
 
 async def change_appointment(args: ChangeAppointmentArgs) -> str:
     name = args.get("patient_name", "")
@@ -189,6 +193,7 @@ async def change_appointment(args: ChangeAppointmentArgs) -> str:
         appointment_type=appt.get("type"),
     )
 
+
 async def cancel_appointment(args: CancelAppointmentArgs) -> str:
     name = args.get("patient_name", "")
     appt_id = args.get("appt_id", "")
@@ -205,11 +210,12 @@ async def cancel_appointment(args: CancelAppointmentArgs) -> str:
         True,
         f"Appointment {appt_id} with {cancelled['provider']} on {cancelled['date']} at {cancelled['time']} cancelled.",
         appt_id=appt_id,
-        date=cancelled['date'],
-        time=cancelled['time'],
-        provider=cancelled['provider'],
-        appointment_type=cancelled['type'],
+        date=cancelled["date"],
+        time=cancelled["time"],
+        provider=cancelled["provider"],
+        appointment_type=cancelled["type"],
     )
+
 
 async def get_upcoming_appointments(args: GetUpcomingAppointmentsArgs) -> str:
     name = args.get("patient_name", "")
@@ -220,4 +226,3 @@ async def get_upcoming_appointments(args: GetUpcomingAppointmentsArgs) -> str:
         return _json(False, f"No upcoming appointments found for {name}.")
     upcoming = [a for a in appts if a["status"] in ("confirmed", "rescheduled")]
     return _json(True, f"Upcoming appointments for {name}.", appointments=upcoming)
-

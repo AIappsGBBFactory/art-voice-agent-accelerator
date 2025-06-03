@@ -394,9 +394,15 @@ change_appointment_schema: Dict[str, Any] = {
         "properties": {
             "patient_name": {"type": "string", "description": "Patient's full name."},
             "appt_id": {"type": "string", "description": "Appointment ID to change."},
-            "new_date": {"type": "string", "description": "New appointment date (YYYY-MM-DD)."},
+            "new_date": {
+                "type": "string",
+                "description": "New appointment date (YYYY-MM-DD).",
+            },
             "new_time": {"type": "string", "description": "New appointment time."},
-            "provider": {"type": "string", "description": "Provider name, if changing."},
+            "provider": {
+                "type": "string",
+                "description": "Provider name, if changing.",
+            },
         },
         "required": ["patient_name", "appt_id"],
         "additionalProperties": False,

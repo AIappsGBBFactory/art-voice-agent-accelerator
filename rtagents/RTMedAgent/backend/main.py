@@ -44,7 +44,8 @@ from rtagents.RTMedAgent.backend.services.acs.acs_caller import (
 from routers import router as api_router
 from rtagents.RTMedAgent.backend.agents.base import RTAgent
 from rtagents.RTMedAgent.backend.services.openai_services import (
-    client as azure_openai_client)
+    client as azure_openai_client,
+)
 from rtagents.RTMedAgent.backend.agents.prompt_store.prompt_manager import PromptManager
 
 logger = get_logger("main")
@@ -64,6 +65,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ---------------- Startup / Shutdown ---------------------------------------
 @app.on_event("startup")
@@ -109,14 +111,30 @@ async def on_startup() -> None:
     app.state.auth_agent = RTAgent(
         config_path="rtagents/RTMedAgent/backend/agents/agent_store/auth_agent.yaml"
     )
-    app.state.auth_agent = RTAgent(config_path="rtagents/RTMedAgent/backend/agents/agent_store/auth_agent.yaml")
-    app.state.intent_classifier_agent = RTAgent(config_path="rtagents/RTMedAgent/backend/agents/agent_store/intent_classifier_agent.yaml")
-    app.state.MedicationAgent = RTAgent(config_path="rtagents/RTMedAgent/backend/agents/agent_store/medication_agent.yaml")
-    app.state.BillingAgent = RTAgent(config_path="rtagents/RTMedAgent/backend/agents/agent_store/billing_agent.yaml")
-    app.state.ReferralsAgent = RTAgent(config_path="rtagents/RTMedAgent/backend/agents/agent_store/referrals_agent.yaml")
-    app.state.GeneralHealthcareAgent = RTAgent(config_path="rtagents/RTMedAgent/backend/agents/agent_store/general_healthcare_agent.yaml")
-    app.state.NonHealthcareAgent = RTAgent(config_path="rtagents/RTMedAgent/backend/agents/agent_store/non_healthcare_agent.yaml")
-    app.state.SchedulingAgent = RTAgent(config_path="rtagents/RTMedAgent/backend/agents/agent_store/scheduling_agent.yaml")
+    app.state.auth_agent = RTAgent(
+        config_path="rtagents/RTMedAgent/backend/agents/agent_store/auth_agent.yaml"
+    )
+    app.state.intent_classifier_agent = RTAgent(
+        config_path="rtagents/RTMedAgent/backend/agents/agent_store/intent_classifier_agent.yaml"
+    )
+    app.state.MedicationAgent = RTAgent(
+        config_path="rtagents/RTMedAgent/backend/agents/agent_store/medication_agent.yaml"
+    )
+    app.state.BillingAgent = RTAgent(
+        config_path="rtagents/RTMedAgent/backend/agents/agent_store/billing_agent.yaml"
+    )
+    app.state.ReferralsAgent = RTAgent(
+        config_path="rtagents/RTMedAgent/backend/agents/agent_store/referrals_agent.yaml"
+    )
+    app.state.GeneralHealthcareAgent = RTAgent(
+        config_path="rtagents/RTMedAgent/backend/agents/agent_store/general_healthcare_agent.yaml"
+    )
+    app.state.NonHealthcareAgent = RTAgent(
+        config_path="rtagents/RTMedAgent/backend/agents/agent_store/non_healthcare_agent.yaml"
+    )
+    app.state.SchedulingAgent = RTAgent(
+        config_path="rtagents/RTMedAgent/backend/agents/agent_store/scheduling_agent.yaml"
+    )
     logger.info("startup complete")
 
 
@@ -124,6 +142,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     logger.info("🛑 shutdown…")
     # (Close Redis, ACS sessions, etc. if your helpers expose close() methods)
+
 
 # ---------------- Routers ---------------------------------------------------
 app.include_router(api_router)

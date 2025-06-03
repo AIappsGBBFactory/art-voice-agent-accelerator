@@ -41,7 +41,7 @@ logger = get_logger("gpt_flow")
 
 
 async def process_gpt_response(
-    cm,                       # ConversationManager
+    cm,  # ConversationManager
     user_prompt: str,
     ws: WebSocket,
     *,

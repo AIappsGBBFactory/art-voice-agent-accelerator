@@ -26,6 +26,7 @@ INTENT_TO_AGENT = {
     "Scheduling": "SchedulingAgent",
 }
 
+
 async def route_turn(cm, transcript: str, ws: WebSocket, *, is_acs: bool) -> None:
     """
     Orchestrates a user utterance: authentication, intent classification,
@@ -47,7 +48,9 @@ async def route_turn(cm, transcript: str, ws: WebSocket, *, is_acs: bool) -> Non
             patient_id = result.get("patient_id")
             first_name = result.get("first_name")
             last_name = result.get("last_name")
-            patient_name = f"{first_name} {last_name}" if first_name and last_name else None
+            patient_name = (
+                f"{first_name} {last_name}" if first_name and last_name else None
+            )
             cm.update_context("phone_number", phone_number)
             cm.update_context("patient_dob", patient_dob)
             cm.update_context("patient_id", patient_id)
@@ -58,18 +61,23 @@ async def route_turn(cm, transcript: str, ws: WebSocket, *, is_acs: bool) -> Non
     elif not cm.get_context("active_agent"):
         intent_classifier_agent = getattr(ws.app.state, "intent_classifier_agent", None)
         messages = [
-            {"role": "system", "content": intent_classifier_agent.pm.get_prompt("intent_classifier_agent.jinja")},
-            {"role": "user", "content": transcript}
+            {
+                "role": "system",
+                "content": intent_classifier_agent.pm.get_prompt(
+                    "intent_classifier_agent.jinja"
+                ),
+            },
+            {"role": "user", "content": transcript},
         ]
         latency_tool.start("processing_intent")
         response = ws.app.state.azureopenai_client.chat.completions.create(
-        messages = messages,
-        max_completion_tokens=intent_classifier_agent.max_tokens,
-        temperature=intent_classifier_agent.temperature,
-        top_p=intent_classifier_agent.top_p,
-        frequency_penalty=0.0,
-        presence_penalty=0.0,
-        model=intent_classifier_agent.model_id
+            messages=messages,
+            max_completion_tokens=intent_classifier_agent.max_tokens,
+            temperature=intent_classifier_agent.temperature,
+            top_p=intent_classifier_agent.top_p,
+            frequency_penalty=0.0,
+            presence_penalty=0.0,
+            model=intent_classifier_agent.model_id,
         )
         intent_result = response.choices[0].message.content.strip()
         try:
@@ -90,7 +98,9 @@ async def route_turn(cm, transcript: str, ws: WebSocket, *, is_acs: bool) -> Non
         agent_key = INTENT_TO_AGENT.get(intent_category)
         agent = getattr(ws.app.state, agent_key, None)
         if not agent:
-            logger.error(f"Agent '{agent_key}' not found! Fallback to NonHealthcareAgent.")
+            logger.error(
+                f"Agent '{agent_key}' not found! Fallback to NonHealthcareAgent."
+            )
             agent = getattr(ws.app.state, "NonHealthcareAgent", None)
         cm.update_context("active_agent", agent_key)
 
@@ -112,21 +122,25 @@ async def route_turn(cm, transcript: str, ws: WebSocket, *, is_acs: bool) -> Non
         agent_key = cm.get_context("active_agent")
         agent = getattr(ws.app.state, agent_key, None)
         if not agent:
-            logger.error(f"Agent '{agent_key}' not found! Fallback to NonHealthcareAgent.")
+            logger.error(
+                f"Agent '{agent_key}' not found! Fallback to NonHealthcareAgent."
+            )
             agent = getattr(ws.app.state, "NonHealthcareAgent", None)
         latency_tool.start(f"processing_{agent_key}")
         # Run the agent turn (may call backend tools, produce outputs)
         result = await agent.respond(cm, transcript, ws, is_acs=is_acs)
         latency_tool.stop(f"processing_{agent_key}", redis_mgr)
-        
+
         if isinstance(result, dict) and result.get("finalize", True):
             cm.update_context("active_agent", None)
             handoffs = cm.get_context("handoff_history", [])
-            handoffs.append({
-                "from_agent": agent_key,
-                "at": time.time(),
-                "reason": result.get("handoff_reason", "unspecified")
-            })
+            handoffs.append(
+                {
+                    "from_agent": agent_key,
+                    "at": time.time(),
+                    "reason": result.get("handoff_reason", "unspecified"),
+                }
+            )
             cm.update_context("handoff_history", handoffs)
             logger.info(f"Agent '{agent_key}' finalized session, rerouting next turn.")
 
@@ -135,8 +149,6 @@ async def route_turn(cm, transcript: str, ws: WebSocket, *, is_acs: bool) -> Non
             tool_output = result.get("tool_output")
             if tool_name and tool_output:
                 cm.persist_tool_output(tool_name, tool_output)
-
-        
 
     # Always persist conversation state to Redis after each turn
     cm.persist_to_redis(redis_mgr)
