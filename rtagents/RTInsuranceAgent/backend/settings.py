@@ -72,7 +72,7 @@ VOICE_TTS = "en-US-JennyMultilingualNeural"
 # ------------------------------------------------------------------------------
 STOP_WORDS: List[str] = ["goodbye", "exit", "see you later", "bye"]
 # Character(s) that mark a chunk boundary for TTS streaming:
-TTS_END: set[str] = {".", "!", "?", ";"}
+TTS_END: set[str] = { ";" }
 
 # Allowed CORS origins for the FastAPI app:
 ALLOWED_ORIGINS: list[str] = [
