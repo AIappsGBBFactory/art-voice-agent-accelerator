@@ -16,7 +16,7 @@ model:
   max_tokens: 1024
 
 prompts:
-  path: voice_agent_authentication.jinja
+  path: voice_agent_authetication.jinja
 
 tools:
   - authenticate_caller

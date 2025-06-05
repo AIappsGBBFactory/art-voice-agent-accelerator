@@ -17,11 +17,14 @@ from rtagents.RTInsuranceAgent.backend.agents.tool_store.fnol import (
     escalate_emergency
 )
 
+from rtagents.RTInsuranceAgent.backend.agents.tool_store.auth import authenticate_caller
+
 log = get_logger("tools_helper")
 
 function_mapping: Dict[str, Callable[..., Any]] = {
     "record_fnol": record_fnol,
     "escalate_emergency": escalate_emergency,
+    "authenticate_caller": authenticate_caller,
 }
 
 async def call_agent_tool(tool_name: str, args: dict) -> Any:

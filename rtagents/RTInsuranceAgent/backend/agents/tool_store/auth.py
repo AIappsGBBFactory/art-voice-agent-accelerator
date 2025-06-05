@@ -4,8 +4,8 @@ from utils.ml_logging import get_logger
 logger = get_logger("acme_auth")
 
 policyholders_db: Dict[str, Dict[str, str]] = {
-    "Johnathan Smith": {
-        "zip":  "98109",
+    "Alice Brown": {
+        "zip":  "60601",
         "ssn4": "1234",
         "policy4": "4321",
         "claim4": "9876",
@@ -65,31 +65,25 @@ async def authenticate_caller(args: AuthenticateArgs) -> Dict[str, Any]:
             "caller_name": None,
         }
 
-    # ZIP must match exactly
-    if rec["zip"] != zip_code:
-        logger.warning(f"❌ ZIP mismatch for {full_name}: expected {rec['zip']}, got {zip_code}")
-        return {
-            "authenticated": False,
-            "message": "Authentication failed – ZIP code mismatch.",
-            "policy_id": None,
-            "caller_name": None,
-        }
-
     # last-4 may match ANY of the stored identifiers
     last4_fields: List[str] = ["ssn4", "policy4", "claim4", "phone4"]
-    if last4 not in [rec[f] for f in last4_fields]:
-        logger.warning(f"❌ last-4 mismatch for {full_name}")
+    last4_match = last4 in [rec[f] for f in last4_fields]
+    zip_match = rec["zip"] == zip_code
+
+    # Approve if either (name + zip) or (name + last-4) matches
+    if zip_match or last4_match:
+        logger.info(f"✅ Authentication succeeded for {full_name}")
+        return {
+            "authenticated": True,
+            "message": f"Authenticated {full_name}.",
+            "policy_id": rec["policy_id"],
+            "caller_name": full_name,
+        }
+    else:
+        logger.warning(f"❌ Neither ZIP nor last-4 matched for {full_name}")
         return {
             "authenticated": False,
-            "message": "Authentication failed – last-4 digits mismatch.",
+            "message": "Authentication failed – neither ZIP nor last-4 digits matched.",
             "policy_id": None,
             "caller_name": None,
         }
-
-    logger.info(f"✅ Authentication succeeded for {full_name}")
-    return {
-        "authenticated": True,
-        "message": f"Authenticated {full_name}.",
-        "policy_id": rec["policy_id"],
-        "caller_name": full_name,
-    }

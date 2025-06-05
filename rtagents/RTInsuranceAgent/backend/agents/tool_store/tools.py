@@ -4,7 +4,8 @@ tools.py
 This module defines the available function-calling tools for the Insurance Voice Agent.
 
 Tools:
-- lrecord_fnol_schema
+- record_fnol_schema
+- authenticate_caller
 - escalate_emergency
 """
 
@@ -90,7 +91,7 @@ authenticate_caller_schema: Dict[str, Any] = {
         "properties": {
             "full_name": {
                 "type": "string",
-                "description": "Caller’s full name, e.g., 'Johnathan Smith'."
+                "description": "Caller’s full name, e.g., 'Alice Brown'."
             },
             "zip_code": {
                 "type": "string",

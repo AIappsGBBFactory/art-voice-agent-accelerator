@@ -11,7 +11,7 @@ from rtagents.RTInsuranceAgent.backend.agents.tool_store.functions_helper import
 log = get_logger("fnol_tools_min")
 
 policyholders_db: Dict[str, Dict[str, str]] = {
-    "Johnathan Smith": {"policy_id": "POL-A10001", "zip": "98109"},
+    "Alice Brown": {"policy_id": "POL-A10001", "zip": "60601"},
     "Amelia Johnson":  {"policy_id": "POL-B20417", "zip": "60601"},
     "Carlos Rivera":   {"policy_id": "POL-C88230", "zip": "77002"},
 }
