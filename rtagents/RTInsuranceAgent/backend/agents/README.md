@@ -1,4 +1,4 @@
-# RTMedAgent – Agent Architecture & Orchestration
+# RTInsuranceAgent – Agent Architecture & Orchestration
 
 ## 🧭 Agent Initialization Flow
 
@@ -33,7 +33,7 @@ flowchart TD
 
 ## 🚀 How to Create a Single Agent
 
-To add a new domain agent in RTMedAgent, follow these steps:
+To add a new domain agent in RTInsuranceAgent, follow these steps:
 
 ### 1. Define Agent Configuration
 Create a YAML config file (e.g., `agent.yaml`) specifying:

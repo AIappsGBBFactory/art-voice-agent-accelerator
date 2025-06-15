@@ -5,13 +5,11 @@
   - Role assignments for APIM to access AI services
 */
 
-import { ModelDeployment, BackendConfigItem } from './modules/types.bicep'
+import { BackendConfigItem } from './modules/types.bicep'
 
 // Parameters
 @description('The name of the deployment or resource.')
 param name string
-
-param privateDNSZoneResourceId string = ''
 
 @description('The location where the resources will be deployed. Defaults to the resource group location.')
 param location string = resourceGroup().location
@@ -37,10 +35,38 @@ param apimPublisherEmail string = 'noreply@microsoft.com'
 @description('The name of the API Management publisher.')
 param apimPublisherName string = 'Microsoft'
 
+
+@description('Subnet resource ID for API Management virtual network integration')
+param apimSubnetResourceId string = ''
+
+// Get reference to existing subnet for APIM delegation
+resource existingSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' existing = if (!empty(apimSubnetResourceId)) {
+  name: '${split(apimSubnetResourceId, '/')[8]}/${last(split(apimSubnetResourceId, '/'))}'
+}
+
+// Update subnet with API Management delegation
+resource apimSubnetDelegation 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' = if (!empty(apimSubnetResourceId)) {
+  name: '${split(apimSubnetResourceId, '/')[8]}/${last(split(apimSubnetResourceId, '/'))}'
+  properties: {
+    addressPrefix: existingSubnet.properties.addressPrefix
+    delegations: [
+      {
+        name: 'Microsoft.Web/serverFarms'
+        properties: {
+          serviceName: 'Microsoft.Web/serverFarms'
+        }
+      }
+    ]
+    serviceEndpoints: existingSubnet.properties.?serviceEndpoints ?? []
+  }
+}
+
 @description('Flag to enable API Management for AI Services')
 param enableAPIManagement bool = false
 
-param openAIAPISpecURL string = 'https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/cognitiveservices/data-plane/AzureOpenAI/inference/stable/2024-02-01/inference.json'
+// public spec not valid per 3.0.1 OpenAI specification requirements
+// param openAIAPISpecURL string = 'https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/cognitiveservices/data-plane/AzureOpenAI/inference/stable/2024-10-21/inference.json'
+param openAIAPISpec string = loadTextContent('./modules/apim/specs/azure-openai-2024-10-21.yaml')
 
 @allowed(['S0'])
 param aiSvcSku string = 'S0'
@@ -63,18 +89,29 @@ var resourceSuffix = uniqueString(subscription().id, resourceGroup().id)
 // Backend Configuration with new structure
 @description('Array of backend configurations for the AI services.')
 param backendConfig BackendConfigItem[]
-param aiServiceKind string = 'OpenAI' // Kind of AI service, default is OpenAI
+
+param oaiBackendPoolName string = 'openai-backend-pool' // Name of the backend pool for OpenAI
+
+param audience string
+param entraGroupId string
+
+// param apimDnsZoneId string = '' // Optional DNS zone ID for APIM, can be used for private endpoints
+param aoaiDnsZoneId string = '' // Optional DNS zone ID for Azure OpenAI, can be used for private endpoints
+// param cosmosDnsZoneId string = '' // Optional DNS zone ID for Cosmos DB, can be used for private endpoints
+param privateEndpointSubnetId string = '' // Subnet ID for private endpoints, if applicable
 
 param disableLocalAuth bool = true // Keep enabled for now, can be disabled in prod
+// param vnetIntegrationSubnetId string = ''
+// param privateEndpoints array = []
 
-param privateEndpoints array = []
-// AI Services Deployment with updated model structure
+// AzureOpenAI Services Deployment with updated model structure
 @batchSize(1)
 module aiSvc 'br/public:avm/res/cognitive-services/account:0.11.0' = [for (backend, i) in backendConfig: {
   name: 'aiServices-${i}-${resourceSuffix}-${backend.location}'
   params: {
     // Required parameters
-    kind: aiServiceKind
+    kind: 'OpenAI'
+    sku: aiSvcSku
     name: 'aisvc-${i}-${resourceSuffix}-${backend.location}'
     // Non-required parameters
     disableLocalAuth: disableLocalAuth
@@ -97,46 +134,33 @@ module aiSvc 'br/public:avm/res/cognitive-services/account:0.11.0' = [for (backe
       }
     ]
     customSubDomainName: 'aisvc-${i}-${resourceSuffix}-${backend.location}'
-    privateEndpoints:privateEndpoints
+    privateEndpoints: [
+      {
+        privateDnsZoneGroup: {
+          privateDnsZoneGroupConfigs: [
+            {
+              privateDnsZoneResourceId: aoaiDnsZoneId
+            }
+          ]
+        }
+        subnetResourceId: privateEndpointSubnetId
+      }
+    ]
     publicNetworkAccess: 'Disabled'
 
     diagnosticSettings: diagnosticSettings
+    tags: tags
   }
-  
 }]
-
-
-
-// module aiSvc './modules/ai/ai-services-enhanced.bicep' = [for (backend, i) in backendConfig: {
-//   name: 'aigw-ai-services-${i}-${backend.location}'
-//   params: {
-//     name: '${backend.name}-${resourceSuffix}'
-//     location: backend.location
-//     sku: backend.?sku ?? aiSvcSku
-//     tags: tags
-//     // Pass the models array directly from the backend config
-//     models: backend.models
-//     // Private networking configuration
-//     servicesSubnetResourceId: servicesSubnetResourceId
-//     enablePrivateEndpoint: backend.?enablePrivateEndpoint ?? false
-//     customSubdomainName: backend.?customDomain
-//     networkAcls: backend.?networkAcls ?? {
-//       defaultAction: 'Allow'
-//       ipRules: []
-//       virtualNetworkRules: []
-//     }
-//     // Monitoring
-//     diagnosticSettings: diagnosticSettings
-//     // Key Vault
-//     keyVaultResourceId: keyVaultResourceId
-//   }
-// }]
 
 var formattedApimName = length('apim-${name}-${resourceSuffix}') <= 50
       ? 'apim-${name}-${resourceSuffix}'
       : 'apim-${substring(name, 0, 50 - length('apim--${resourceSuffix}'))}-${resourceSuffix}'
 
 
+param loggers array = []
+
+param virtualNetworkType string
 // API Management Deployment
 module apim 'br/public:avm/res/api-management/service:0.9.1' = if (enableAPIManagement) {
   name: formattedApimName
@@ -152,28 +176,16 @@ module apim 'br/public:avm/res/api-management/service:0.9.1' = if (enableAPIMana
       systemAssigned: enableSystemAssignedIdentity
       userAssignedResourceIds: userAssignedResourceIds
     }
+
+    loggers: loggers
+
+    subnetResourceId: apimSubnetDelegation.id
+    // subnetResourceId: apimSubnetResourceId
+    
     diagnosticSettings: diagnosticSettings
     tags: tags
 
-    apis: [
-      {
-        apiVersionSetName: 'openai-version-set'
-        displayName: 'OpenAI API'
-        name: 'openai'
-        path: 'openai'
-        protocols: [
-          'http'
-          'https'
-        ]
-        subscriptionRequired: true
-        subscriptionKeyParameterNames: {
-          header: 'api-key'
-          query: 'api-key'
-        }
-        type: 'http'
-        value: openAIAPISpecURL
-      }
-    ]
+    apis: []
     
     backends: [
       for (backend, i) in backendConfig: {
@@ -182,28 +194,48 @@ module apim 'br/public:avm/res/api-management/service:0.9.1' = if (enableAPIMana
           validateCertificateChain: true
           validateCertificateName: false
         }
-        url: aiSvc[i].outputs.endpoint
+        url: '${aiSvc[i].outputs.endpoint}openai'
       }
     ]
 
-    apiDiagnostics: [
-      {
-        apiName: 'openai'
-        loggerName: 'oaiLogger'
-        metrics: true
-        name: 'applicationinsights'
-      }
-    ]
-
-
+    // Global Policies go here
     policies: [
-      {
-        format: 'xml'
-        value: loadTextContent('./modules/apim/policies/openAI/inbound.xml')
-      }
+
     ]
+    virtualNetworkType: virtualNetworkType
+
   }
 }
+
+
+// module apimPrivateEndpoint 'br/public:avm/res/network/private-endpoint:0.7.1' = {
+//   name: 'apim-pe-${name}-${resourceSuffix}'
+//   params: {
+//     name: 'apim-pe-${name}-${resourceSuffix}'
+//     location: location
+//     subnetResourceId: privateEndpointSubnetId
+//     privateLinkServiceConnections: [
+//       {
+//         name: 'apim-pls-${name}-${resourceSuffix}'
+//         properties: {
+//           privateLinkServiceId: apim.outputs.resourceId
+//           groupIds: [
+//             'hostnameConfigurations'
+//           ]
+//         }
+//       }
+//     ]
+//     privateDnsZoneGroup: {
+//       privateDnsZoneGroupConfigs: [
+//         {
+//           name: 'apim-dns-zone'
+//           privateDnsZoneResourceId: apimDnsZoneId
+//         }
+//       ]
+//     }
+//   }
+// }
+
 
 resource _apim 'Microsoft.ApiManagement/service@2024-05-01' existing = if (enableAPIManagement) {
   name: apim.name
@@ -212,8 +244,9 @@ resource _apim 'Microsoft.ApiManagement/service@2024-05-01' existing = if (enabl
 
 // Create the backend pool
 resource backendPool 'Microsoft.ApiManagement/service/backends@2023-09-01-preview' = {
-  name: 'openai-backend-pool'
+  name: oaiBackendPoolName
   parent: _apim
+  #disable-next-line BCP035
   properties: {
     description: 'Backend pool for Azure OpenAI'
     type: 'Pool'
@@ -228,6 +261,77 @@ resource backendPool 'Microsoft.ApiManagement/service/backends@2023-09-01-previe
   dependsOn: [apim]
 }
 
+// API creation
+resource api 'Microsoft.ApiManagement/service/apis@2022-08-01' = {
+  name: 'openai'
+  parent: _apim
+  properties: {
+    apiVersionSetId: 'openai-version-set'
+    displayName: 'OpenAI API'
+    format: 'openapi+json'
+    path: 'openai'
+    protocols: [
+      'http'
+      'https'
+    ]
+    serviceUrl: '${_apim.properties.gatewayUrl}/openai'
+    subscriptionRequired: false
+    subscriptionKeyParameterNames: {
+      header: 'api-key'
+      query: 'api-key'
+    }
+    type: 'http'
+    value: openAIAPISpec
+  }
+}
+
+resource aoaiSubscription 'Microsoft.ApiManagement/service/subscriptions@2024-06-01-preview' = {
+  name: 'openai-apim-subscription'
+  parent: _apim
+  properties: {
+    allowTracing: true
+    displayName: 'OpenAI API Subscription'
+    scope: '/apis/${api.id}'
+    state: 'active'
+  }
+}
+
+// // Store APIM subscription key in Key Vault
+// resource aoaiSubscriptionSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (enableAPIManagement) {
+//   name: '${last(split(keyVaultResourceId, '/'))}/openai-apim-subscription-key'
+//   properties: {
+//     value: aoaiSubscription.listSecrets().primaryKey
+//   }
+// }
+
+
+var aoaiInboundXml = replace(
+  replace(
+    replace(
+      replace(
+        loadTextContent('./modules/apim/policies/openAI/inbound.xml'), 
+        '{tenant-id}', 
+        tenant().tenantId
+      ), 
+      '{backend-id}', 
+      oaiBackendPoolName
+    ),
+    '{audience}',
+    audience
+  ),
+  '{entra-group-id}',
+  entraGroupId
+)
+
+// API Policy
+resource aoaiInboundPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-09-01-preview' = {
+  name: 'policy'
+  parent: api
+  properties: {
+    format: 'rawxml'
+    value: aoaiInboundXml
+  }
+}
 
 // Role Assignments for APIM
 resource apimSystemMIDRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableAPIManagement && enableSystemAssignedIdentity) {
@@ -240,88 +344,6 @@ resource apimSystemMIDRoleAssignment 'Microsoft.Authorization/roleAssignments@20
   }
   dependsOn: [aiSvc]
 }
-
-// Backend Pools with updated structure
-module openAIBackendPool './modules/apim/backend.bicep' = if (enableAPIManagement) {
-  name: 'module-api-backend-oai-${resourceSuffix}'
-  params: {
-    apimName: _apim.name
-    backendInstances: [for (backend, i) in backendConfig: {
-      name: 'oai-${backend.name}'
-      priority: backend.priority
-      url: aiSvc[i].outputs.endpoint
-      description: '${backend.name} OpenAI endpoint with priority ${backend.priority} in ${backend.location}'
-      weight: backend.?weight ?? 10
-    }]
-    backendPoolName: 'openai-backend-pool'
-  }
-}
-
-
-
-// resource apimDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' existing = {
-//   name: '${apim.name}.azure-api.net'
-// }
-
-
-// resource gatewayRecord 'Microsoft.Network/privateDnsZones/A@2024-06-01' = {
-//   parent: apimDnsZone
-//   name: '@'
-//   dependsOn: [
-//     apim
-//   ]
-//   properties: {
-//     aRecords: [
-//       {
-//         ipv4Address: _apim.properties.privateIPAddresses[0]
-//       }
-//     ]
-//     ttl: 36000
-//   }
-// }
-
-// resource developerRecord 'Microsoft.Network/privateDnsZones/A@2024-06-01' = {
-//   parent: apimDnsZone
-//   name: 'developer'
-//   dependsOn: [
-//     apim
-//   ]
-//   properties: {
-//     aRecords: [
-//       {
-//         ipv4Address: _apim.properties.privateIPAddresses[0]
-//       }
-//     ]
-//     ttl: 36000
-//   }
-// }
-// APIs
-// module openAiApi './modules/apim/api.bicep' = if (enableAPIManagement) {
-//   name: 'api-openai-${resourceSuffix}'
-//   params: {
-//     apimName: _apim.name
-//     name: 'api-openai-${name}-${resourceSuffix}'
-//     apiPath: 'openai'
-//     apiDescription: 'Azure OpenAI API'
-//     apiDisplayName: 'Auto Auth OpenAI API'
-//     apiSpecURL: openAIAPISpecURL
-//     policyContent: loadTextContent('./modules/apim/policies/openAI/inbound.xml')
-//     apiSubscriptionName: 'openai-subscription'
-//     apiSubscriptionDescription: 'AutoAuth OpenAI Subscription'
-//   }
-// }
-
-// // User Assigned Identity Role Assignments
-// resource uaiAIServiceRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (id, i) in (userAssignedResourceIds ?? []): {
-//   name: guid(resourceGroup().id, id, 'Azure-AI-Developer')
-//   scope: resourceGroup()
-//   properties: {
-//     principalId: id
-//     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee')
-//     principalType: 'ServicePrincipal'
-//   }
-//   dependsOn: [aiSvc]
-// }]
 
 // ========== Outputs ==========
 @description('API Management service details')
@@ -340,6 +362,7 @@ output apim object = enableAPIManagement ? {
 output endpoints object = {
   openAI: enableAPIManagement 
     ? '${_apim.properties.gatewayUrl}/openai'
+    #disable-next-line BCP187
     : length(backendConfig) > 0 ? aiSvc[0].outputs.endpoints['OpenAI Language Model Instance API'] : ''
 }
 
@@ -365,3 +388,6 @@ output aiGatewayEndpoints array = [for (item, i) in backendConfig: aiSvc[i].outp
 @description('AI Gateway service IDs')
 output aiGatewayServiceIds array = [for (item, i) in backendConfig: aiSvc[i].outputs.resourceId]
 
+// output apimPrivateIpAddress string = enableAPIManagement ? _apim.properties.?privateIPAddresses[0] : ''
+#disable-next-line outputs-should-not-contain-secrets
+output oaiSubscriptionKey string = enableAPIManagement ? aoaiSubscription.listSecrets().primaryKey : ''

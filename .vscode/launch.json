@@ -4,98 +4,99 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-    { // Added React Debug Configuration
-        "name": "[RT Agent] React App: Browser Debug",
-        "type": "msedge", // or "chrome"
-        "request": "launch",
-        "url": "http://localhost:5173", // Ensure this matches your Vite dev server port
-        "webRoot": "${workspaceFolder}/rtagents/RTAgent/frontend",
-        "sourceMaps": true,
-        "sourceMapPathOverrides": {
-        "webpack:///src/*": "${webRoot}/src/*",
-        "webpack:///*": "${webRoot}/*"
-        }
-    },
-
-    {
-        "name": "[RT Agent] Python Debugger: FastAPI",
-        "type": "debugpy",
-        "request": "launch",
-        "module": "uvicorn",
-        "args": [
-        "rtagents.RTAgent.backend.main:app",
-        "--reload",
-        "--port",
-        "8010"
-        ],
-        "jinja": true,
-        "env": {
-        "PYTHONPATH": "${workspaceFolder}"
+        { // Added React Debug Configuration
+            "name": "[RT Agent] React App: Browser Debug",
+            "type": "msedge", // or "chrome"
+            "request": "launch",
+            "url": "http://localhost:5173", // Ensure this matches your Vite dev server port
+            "webRoot": "${workspaceFolder}/rtagents/RTAgent/frontend",
+            "sourceMaps": true,
+            "sourceMapPathOverrides": {
+            "webpack:///src/*": "${webRoot}/src/*",
+            "webpack:///*": "${webRoot}/*"
+            }
         },
-        "envFile": "${workspaceFolder}/.env"
-    },
 
-    // --- RTMedAgent ---
-    {
-        "name": "[RTMedAgent] React App: Browser Debug",
-        "type": "msedge", // or "chrome"
-        "request": "launch",
-        "url": "http://localhost:5173",
-        "webRoot": "${workspaceFolder}/rtagents/RTMedAgent/frontend",
-        "sourceMaps": true,
-        "sourceMapPathOverrides": {
-        "webpack:///src/*": "${webRoot}/src/*",
-        "webpack:///*": "${webRoot}/*"
-        }
-    },
-
-    {
-        "name": "[RTMedAgent] Python Debugger: FastAPI",
-        "type": "debugpy",
-        "request": "launch",
-        "module": "uvicorn",
-        "args": [
-        "rtagents.RTMedAgent.backend.main:app",
-        "--reload",
-        "--port",
-        "8010"
-        ],
-        "jinja": true,
-        "env": {
-        "PYTHONPATH": "${workspaceFolder}"
+        {
+            "name": "[RT Agent] Python Debugger: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+            "rtagents.RTAgent.backend.main:app",
+            "--reload",
+            "--port",
+            "8010"
+            ],
+            "jinja": true,
+            "env": {
+            "PYTHONPATH": "${workspaceFolder}"
+            },
+            "envFile": "${workspaceFolder}/.env"
         },
-        "envFile": "${workspaceFolder}/.env"
-    },
 
-    // --- RTInsuranceAgent ---
-    {
-        "name": "[RTInsuranceAgent] React App: Browser Debug",
-        "type": "msedge", // or "chrome"
-        "request": "launch",
-        "url": "http://localhost:5173",
-        "webRoot": "${workspaceFolder}/rtagents/RTInsuranceAgent/frontend",
-        "sourceMaps": true,
-        "sourceMapPathOverrides": {
-        "webpack:///src/*": "${webRoot}/src/*",
-        "webpack:///*": "${webRoot}/*"
-        }
-    },
-
-    {
-        "name": "[RTInsuranceAgent] Python Debugger: FastAPI",
-        "type": "debugpy",
-        "request": "launch",
-        "module": "uvicorn",
-        "args": [
-        "rtagents.RTInsuranceAgent.backend.main:app",
-        "--reload",
-        "--port",
-        "8010"
-        ],
-        "jinja": true,
-        "env": {
-        "PYTHONPATH": "${workspaceFolder}"
+        // --- RTMedAgent ---
+        {
+            "name": "[RTMedAgent] React App: Browser Debug",
+            "type": "msedge", // or "chrome"
+            "request": "launch",
+            "url": "http://localhost:5173",
+            "webRoot": "${workspaceFolder}/rtagents/RTMedAgent/frontend",
+            "sourceMaps": true,
+            "sourceMapPathOverrides": {
+            "webpack:///src/*": "${webRoot}/src/*",
+            "webpack:///*": "${webRoot}/*"
+            }
         },
-        "envFile": "${workspaceFolder}/.env"
-    }
+
+        {
+            "name": "[RTMedAgent] Python Debugger: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+            "rtagents.RTMedAgent.backend.main:app",
+            "--reload",
+            "--port",
+            "8010"
+            ],
+            "jinja": true,
+            "env": {
+            "PYTHONPATH": "${workspaceFolder}"
+            },
+            "envFile": "${workspaceFolder}/.env"
+        },
+
+        // --- RTInsuranceAgent ---
+        {
+            "name": "[RTInsuranceAgent] React App: Browser Debug",
+            "type": "msedge", // or "chrome"
+            "request": "launch",
+            "url": "http://localhost:5173",
+            "webRoot": "${workspaceFolder}/rtagents/RTInsuranceAgent/frontend",
+            "sourceMaps": true,
+            "sourceMapPathOverrides": {
+            "webpack:///src/*": "${webRoot}/src/*",
+            "webpack:///*": "${webRoot}/*"
+            }
+        },
+
+        {
+            "name": "[RTInsuranceAgent] Python Debugger: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+            "rtagents.RTInsuranceAgent.backend.main:app",
+            "--reload",
+            "--port",
+            "8010"
+            ],
+            "jinja": true,
+            "env": {
+            "PYTHONPATH": "${workspaceFolder}"
+            },
+            "envFile": "${workspaceFolder}/.env"
+        }
+    ]
 }

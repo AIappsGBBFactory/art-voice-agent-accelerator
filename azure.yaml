@@ -3,8 +3,8 @@ name: gbb-ai-audio-agent
 metadata:
   template: azd-init@1.15.1
 services:
-  gbb-ai-audio-agent:
-    project: usecases/browser_RTMedAgent/frontend
+  rtaudio-client:
+    project: rtagents/RTInsuranceAgent/frontend
     host: containerapp
     language: js
     docker:
@@ -12,8 +12,8 @@ services:
       context: .
       platform: linux/amd64
       
-  gbb-ai-audio-agent-backend:
-    project: usecases/browser_RTMedAgent/backend
+  rtaudio-server:
+    project: rtagents/RTInsuranceAgent/backend
     host: containerapp
     language: python
     docker:

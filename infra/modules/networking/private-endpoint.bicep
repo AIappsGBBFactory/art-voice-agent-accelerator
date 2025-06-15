@@ -1,68 +1,44 @@
-/*
-  Private Endpoint Module
-  
-  This module creates a private endpoint with DNS integration
-*/
-
-@description('Name of the private endpoint')
-param name string
-
-@description('Location for the private endpoint')
 param location string
-
-@description('Tags to apply to resources')
+param name string
 param tags object = {}
+param serviceId string
+param subnetId string
+param groupIds array = []
+param dnsZoneId string
 
-@description('Resource ID of the private link service')
-param privateLinkServiceId string
-
-@description('Group IDs for the private endpoint')
-param groupIds array
-
-@description('Subnet resource ID for the private endpoint')
-param subnetResourceId string
-
-@description('Private DNS zone name')
-param privateDnsZoneName string
-
-// Private Endpoint
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+resource privateEndpoint 'Microsoft.Network/privateEndpoints@2021-02-01' = {
   name: name
   location: location
-  tags: tags
+  tags: tags  
   properties: {
     subnet: {
-      id: subnetResourceId
+      id: subnetId
     }
     privateLinkServiceConnections: [
       {
-        name: '${name}-connection'
+        name: 'privatelinkServiceonnection'
         properties: {
-          privateLinkServiceId: privateLinkServiceId
+          privateLinkServiceId: serviceId
           groupIds: groupIds
         }
       }
-    ]
+    ]    
   }
 }
 
-// Private DNS Zone Group
-resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2020-06-01' = {
   parent: privateEndpoint
-  name: 'default'
-  properties: {
-    privateDnsZoneConfigs: [
+  name: '${name}-group'
+  properties:{
+    privateDnsZoneConfigs:[
       {
-        name: replace(privateDnsZoneName, '.', '-')
-        properties: {
-          privateDnsZoneId: resourceId('Microsoft.Network/privateDnsZones', privateDnsZoneName)
+        name:'config1'
+        properties:{
+          privateDnsZoneId: dnsZoneId
         }
       }
     ]
   }
 }
 
-// Outputs
-output privateEndpointId string = privateEndpoint.id
-output privateEndpointName string = privateEndpoint.name
-output privateIpAddress string = privateEndpoint.properties.customDnsConfigs[0].ipAddresses[0]
+output name string = privateEndpoint.name

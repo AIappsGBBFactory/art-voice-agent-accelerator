@@ -1,27 +1,32 @@
-// Corrected types.bicep without @allowed decorators in type definitions
-
 @export()
-@description('Configuration for a specific AI model deployment')
-type ModelConfig = {
-  @description('SKU name for the model (Standard, GlobalStandard, or ProvisionedThroughput)')
+@description('Model deployment configuration')
+type ModelDeployment = {
+  @description('SKU name for the model')
   sku: ('Standard' | 'GlobalStandard' | 'ProvisionedThroughput')
-
+  
   @description('Capacity for the model deployment')
   @minValue(1)
   @maxValue(1000)
   capacity: int
+  
+  @description('Model deployment name')
+  name: string
+  
+  @description('Model version')
+  version: string
+}
 
-  @description('Name of the AI model')
+@export()
+@description('Container app KV Secret reference configuration')
+type ContainerAppKvSecret = {
+  @description('Key Vault secret name')
   name: string
 
-  @description('Version of the AI model')
-  version: string
+  @description('Key Vault resource Url')
+  keyVaultUrl: string
 
-  @description('Content filter configuration (optional)')
-  contentFilter: string?
-
-  @description('Rate limit tier (optional)')
-  rateLimitTier: string?
+  @description('Identity to retrieve the secret')
+  identity: string
 }
 
 @export()
@@ -153,23 +158,6 @@ type AzureBuiltInRole = {
   Contributor: 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 }
 
-@export()
-@description('Model deployment configuration')
-type ModelDeployment = {
-  @description('SKU name for the model')
-  sku: ('Standard' | 'GlobalStandard' | 'ProvisionedThroughput')
-  
-  @description('Capacity for the model deployment')
-  @minValue(1)
-  @maxValue(1000)
-  capacity: int
-  
-  @description('Model deployment name')
-  name: string
-  
-  @description('Model version')
-  version: string
-}
 
 @export()
 @description('Configuration for an AI backend deployment - Updated structure')
@@ -213,9 +201,32 @@ type BackendConfigItem = {
   }?
 }
 
+
+
 @export()
 @description('Configuration for a subnet in a virtual network')
 type SubnetConfig = {
   name: string
   addressPrefix: string
+  serviceEndpoints: []? // Optional service endpoints for the subnet
+  delegations: SubnetDelegation[]?
+  securityRules: []?
+}
+
+@export()
+@description('Configuration for subnet delegation')
+type SubnetDelegation = {
+  @description('Delegation ID')
+  id: string?
+  
+  @description('Delegation name')
+  name: string
+  @description('Delegation properties')
+  properties: {
+    @description('Service name for the delegation (e.g., Microsoft.Web/serverFarms)')
+    serviceName: string
+  }
+  
+  @description('Delegation type')
+  type: string?
 }

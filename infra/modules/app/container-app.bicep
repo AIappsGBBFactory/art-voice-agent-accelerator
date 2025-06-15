@@ -4,6 +4,8 @@ param name string
 @description('Ingress target port for the container app')
 param ingressTargetPort int
 
+param ingressExposedPort int = ingressTargetPort
+
 @description('Minimum number of replicas')
 param scaleMinReplicas int = 1
 
@@ -66,6 +68,8 @@ type SecretEnvVarType = {
   secretRef: string
 }
 
+param corsPolicy object = {}
+
 resource userAssignedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2018-11-30' existing = if (!empty(userAssignedResourceId)) {
   scope: resourceGroup()
   name: last(split(userAssignedResourceId, '/'))
@@ -102,10 +106,18 @@ module containerApp 'br/public:avm/res/app/container-app:0.16.0' = {
         secretEnvRefs
       )
     }]
+    additionalPortMappings:[
+      {
+        external: publicAccessAllowed
+        exposedPort: ingressExposedPort
+        targetPort: ingressTargetPort
+      }
+    ]
     scaleSettings: {
       minReplicas: scaleMinReplicas
       maxReplicas: scaleMaxReplicas
     }
+    corsPolicy: corsPolicy
     ingressExternal: publicAccessAllowed
     ingressTargetPort: ingressTargetPort
     stickySessionsAffinity: stickySessionsAffinity
@@ -117,7 +129,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.16.0' = {
 // ----------------------------------------------------------------------------------------
 // Enabling EasyAuth for the ContainerApp (if enabled via param)
 // ----------------------------------------------------------------------------------------
-module easyAuthAppReg '../security/appregistration.bicep' = if (enableEasyAuth) {
+module easyAuthAppReg '../identity/appregistration.bicep' = if (enableEasyAuth) {
   name: 'easyauth-reg'
   params: {
     clientAppName: '${name}-easyauth-client-app'
@@ -130,7 +142,7 @@ module easyAuthAppReg '../security/appregistration.bicep' = if (enableEasyAuth) 
   }
 }
 
-module containerAppUpdate '../security/appupdate.bicep' = if (enableEasyAuth) {
+module containerAppUpdate '../identity/appupdate.bicep' = if (enableEasyAuth) {
   name: 'easyauth-${name}-appupdate'
   params: {
     containerAppName: containerApp.outputs.name

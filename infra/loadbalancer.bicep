@@ -1,54 +1,154 @@
 
 targetScope = 'resourceGroup'
 
-// Core Parameters
-@description('Enable Application Gateway deployment')
-param enableAppGateway bool = true
+// ==========================================
+// LOAD BALANCER MODULE WRAPPER
+// ==========================================
+// This module provides a simplified interface for deploying 
+// Application Gateway with the Real-Time Audio Agent infrastructure
 
-@description('Location for Application Gateway')
+@description('Name prefix for the load balancer resources')
+param name string
+
+@description('Location for all resources')
 param location string = resourceGroup().location
-
-@description('Application Gateway name')
-param appGatewayName string
-
-@description('Subnet resource ID for Application Gateway')
-param subnetResourceId string
 
 @description('Tags to apply to all resources')
 param tags object = {}
 
+@description('Enable Application Gateway deployment')
+param enableLoadBalancer bool = true
 
-
-// SKU and Capacity Parameters
-@description('Application Gateway SKU')
-@allowed([
-  'Standard_v2'
-  'WAF_v2'
-])
-param appGatewaySku string = 'WAF_v2'
-
-@description('Application Gateway tier')
-@allowed([
-  'Standard_v2'
-  'WAF_v2'
-])
-param appGatewayTier string = 'WAF_v2'
-
-@description('Application Gateway capacity configuration')
-param capacity object = {
-  minCapacity: 1
-  maxCapacity: 10
+@description('Network configuration')
+param networkConfig object = {
+  subnetResourceId: ''
+  publicIpResourceId: ''
 }
 
-@description('Availability zones for Application Gateway')
-param availabilityZones array = ['1', '2', '3']
+@description('Container app configuration from app module outputs')
+param containerApps object = {
+  frontend: {
+    fqdn: ''
+    name: ''
+  }
+  backend: {
+    fqdn: ''
+    name: ''
+  }
+}
 
-// Frontend Configuration
-@description('Public IP resource ID for frontend')
-param publicIpResourceId string
+@description('SSL certificate configuration')
+param sslConfig object = {
+  enabled: false
+  certificateName: ''
+  keyVaultSecretId: ''
+}
 
-@description('Private IP address for private frontend (optional)')
-param privateFrontendIP string = ''
+@description('Application Gateway SKU configuration')
+param skuConfig object = {
+  name: 'WAF_v2'
+  tier: 'WAF_v2'
+  capacity: {
+    minCapacity: 0
+    maxCapacity: 10
+  }
+}
+
+@description('Web Application Firewall configuration')
+param wafConfig object = {
+  enabled: true
+  firewallMode: 'Prevention'
+  ruleSetType: 'OWASP'
+  ruleSetVersion: '3.0'
+}
+
+// ==========================================
+// VARIABLES
+// ==========================================
+
+var resourceToken = uniqueString(resourceGroup().id, name, location)
+var appGatewayName = '${name}-appgw-${resourceToken}'
+
+// ==========================================
+// APPLICATION GATEWAY DEPLOYMENT
+// ==========================================
+
+module applicationGateway 'loadbalancer-fixed.bicep' = if (enableLoadBalancer) {
+  name: 'application-gateway'
+  params: {
+    enableAppGateway: enableLoadBalancer
+    location: location
+    tags: tags
+    
+    // Basic configuration
+    appGatewayName: appGatewayName
+    subnetResourceId: networkConfig.subnetResourceId
+    publicIpResourceId: networkConfig.publicIpResourceId
+    
+    // SKU and capacity
+    appGatewaySku: skuConfig.name
+    appGatewayTier: skuConfig.tier
+    capacity: skuConfig.capacity
+    
+    // WAF configuration
+    wafConfiguration: wafConfig
+    
+    // Container app integration
+    containerAppConfig: {
+      frontend: {
+        fqdn: containerApps.frontend.fqdn
+        name: containerApps.frontend.name
+        healthPath: '/health'
+      }
+      backend: {
+        fqdn: containerApps.backend.fqdn
+        name: containerApps.backend.name
+        healthPath: '/healthz'
+      }
+    }
+    
+    // SSL configuration
+    certificateConfig: sslConfig
+    
+    // Dynamic backend configuration (will be overridden by containerAppConfig)
+    frontendAppFqdn: containerApps.frontend.fqdn
+    backendAppFqdn: containerApps.backend.fqdn
+  }
+}
+
+// ==========================================
+// OUTPUTS
+// ==========================================
+
+@description('Application Gateway resource ID')
+output appGatewayId string = enableLoadBalancer ? applicationGateway.outputs.appGatewayId : ''
+
+@description('Application Gateway name')
+output appGatewayName string = enableLoadBalancer ? applicationGateway.outputs.appGatewayName : ''
+
+@description('Frontend application URL')
+output frontendUrl string = enableLoadBalancer ? applicationGateway.outputs.frontendUrl : ''
+
+@description('WebSocket endpoints for real-time communication')
+output webSocketEndpoints object = enableLoadBalancer ? applicationGateway.outputs.webSocketEndpoints : {}
+
+@description('API endpoints configuration')
+output apiEndpoints object = enableLoadBalancer ? applicationGateway.outputs.apiEndpoints : {}
+
+@description('Health check endpoints')
+output healthCheckEndpoints array = enableLoadBalancer ? applicationGateway.outputs.healthCheckEndpoints : []
+
+@description('Configuration summary')
+output configurationSummary object = enableLoadBalancer ? applicationGateway.outputs.configurationSummary : {}
+
+@description('Backend pool summary')
+output backendPoolSummary array = enableLoadBalancer ? applicationGateway.outputs.backendPoolSummary : []
+
+@description('HTTP listener summary')
+output httpListenerSummary array = enableLoadBalancer ? applicationGateway.outputs.httpListenerSummary : []
+
+@description('Application Gateway operational state')
+output operationalState string = enableLoadBalancer ? applicationGateway.outputs.operationalState : 'Disabled'
 
 @description('Enable private frontend IP configuration')
 param enablePrivateFrontend bool = false

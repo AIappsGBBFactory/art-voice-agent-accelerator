@@ -7,16 +7,29 @@ import-time.
 """
 
 from openai import AzureOpenAI
-from rtagents.RTMedAgent.backend.settings import (
+from azure.identity import DefaultAzureCredential
+from azure.identity import get_bearer_token_provider
+from rtagents.RTInsuranceAgent.backend.settings import (
     AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_KEY,
 )
 
-client = AzureOpenAI(
-    # api_version="2025-02-01-preview",
-    api_version="2025-01-01-preview",
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    api_key=AZURE_OPENAI_KEY,
-)
+# Use DefaultAzureCredential when API key is not provided
+if AZURE_OPENAI_KEY:
+    client = AzureOpenAI(
+        api_version="2025-01-01-preview",
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        api_key=AZURE_OPENAI_KEY,
+    )
+else:
+    credential = DefaultAzureCredential()
+    azure_ad_token_provider = get_bearer_token_provider(
+        credential, "https://cognitiveservices.azure.com/.default"
+    )
+    client = AzureOpenAI(
+        api_version="2025-01-01-preview",
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        azure_ad_token_provider=azure_ad_token_provider,
+    )
 
 __all__ = ["client"]

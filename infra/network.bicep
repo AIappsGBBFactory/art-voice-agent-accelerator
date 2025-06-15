@@ -15,18 +15,11 @@ param subnets SubnetConfig[]
 @description('Tags to apply to all resources')
 param tags object = {}
 
-@description('Enable creation of Private DNS Zone')
-param enablePrivateDnsZone bool = false
-
-@description('Private DNS Zone name')
-param privateDnsZoneName string = 'privatelink.openai.azure.com'
-
-@description('Domain label for the public IP address (<domainlabel>.<location>.cloudapp.azure.com)')
-param pipDomainLabel string = toLower('rtaudio-pip-${uniqueString(resourceGroup().id, vnetName)}')
 @description('Resource ID of the Log Analytics workspace for diagnostics')
 param workspaceResourceId string
 
-resource vnet 'Microsoft.Network/virtualNetworks@2023-02-01' = {
+
+resource vnet 'Microsoft.Network/virtualNetworks@2024-07-01' = {
   name: vnetName
   location: location
   tags: tags
@@ -40,27 +33,63 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-02-01' = {
       name: subnet.name
       properties: {
         addressPrefix: subnet.addressPrefix
+        // Fix the delegation syntax
+        delegations: subnet.?delegations ?? []
+        // Add service endpoints if they exist
+        serviceEndpoints: subnet.?serviceEndpoints ?? []
+        // // Ensure private endpoint policies are disabled for delegation compatibility
+        // privateEndpointNetworkPolicies: 'Disabled'
+        // privateLinkServiceNetworkPolicies: 'Disabled'  
       }
     }]
   }
 }
-
-var subnetResourceIds = [for subnet in subnets: resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnet.name)]
-
-resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = {
-  name: 'pip-${vnetName}'
+@batchSize(1)
+// Network Security Groups for each subnet
+resource nsg 'Microsoft.Network/networkSecurityGroups@2024-07-01' = [for subnet in subnets: {
+  name: 'nsg-${subnet.name}'
   location: location
   tags: tags
-  sku: {
-    name: 'Standard'
-  }
   properties: {
-    publicIPAllocationMethod: 'Static'
-    dnsSettings: {
-      domainNameLabel: pipDomainLabel
+    securityRules: subnet.?securityRules ?? []
+  }
+  dependsOn: [
+    vnet
+  ]
+}]
+
+@batchSize(1)
+// Associate NSGs with subnets
+resource subnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2024-07-01' = [for (subnet, i) in subnets: {
+  name: subnet.name
+  parent: vnet
+  properties: {
+    addressPrefix: subnet.addressPrefix
+    networkSecurityGroup: {
+      id: nsg[i].id
     }
   }
-}
+  dependsOn: [
+    nsg[i]
+  ]
+}]
+
+@batchSize(1)
+// Diagnostic settings for NSGs
+resource nsgDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = [for (subnet, i) in subnets: {
+  name: 'diag-${nsg[i].name}'
+  scope: nsg[i]
+  properties: {
+    workspaceId: workspaceResourceId
+    logs: [
+      {
+        categoryGroup: 'allLogs'
+        enabled: true
+      }
+    ]
+  }
+}]
+// var subnetResourceIds = [for subnet in subnets: resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnet.name)]
 
 // Diagnostic settings for VNet
 resource vnetDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
@@ -82,61 +111,42 @@ resource vnetDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previ
     ]
   }
 }
+// // Create private dns zone in the hub network, if enabled
+// resource privateDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' = if (enablePrivateDnsZone && role == 'hub') {
+//   name: privateDnsZoneName
+//   location: 'global'
+//   tags: tags
+// }
 
-// Diagnostic settings for Public IP
-resource publicIpDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diag-${publicIp.name}'
-  scope: publicIp
-  properties: {
-    workspaceId: workspaceResourceId
-    logs: [
-      {
-        categoryGroup: 'allLogs'
-        enabled: true
-      }
-    ]
-    metrics: [
-      {
-        category: 'AllMetrics'
-        enabled: true
-      }
-    ]
-  }
-}
+// // Reference existing private DNS zone when role is spoke
+// param privateDnsZoneId string = ''
+// resource existingPrivateDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' existing = if (role == 'spoke' && !empty(privateDnsZoneId)) {
+//   name: last(split(privateDnsZoneId, '/'))
+//   scope: resourceGroup(split(privateDnsZoneId, '/')[2], split(privateDnsZoneId, '/')[4])
+// }
 
-// Output the FQDN and IP address of the public IP for downstream consumption
-// Output the FQDN, IP address, and resource ID of the public IP for downstream consumption
-output publicIpFqdn string = publicIp.properties.dnsSettings.fqdn
-output publicIpAddress string = publicIp.properties.ipAddress
-output publicIpResourceId string = publicIp.id
-
-
-resource privateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (enablePrivateDnsZone) {
-  name: privateDnsZoneName
-  location: 'global'
-  tags: tags
-}
-
-resource vnetLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
-  name: vnet.name
-  parent: privateDnsZone
-  location: 'global'
-  properties: {
-    virtualNetwork: {
-      id: vnet.id
-    }
-    registrationEnabled: false
-  }
-}
+// // Create a VNet link from spoke to hub only.
+// resource vnetLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (role == 'spoke') {
+//   name: vnet.name
+//   parent: privateDnsZone
+//   location: 'global'
+//   properties: {
+//     virtualNetwork: {
+//       id: vnet.id
+//     }
+//     registrationEnabled: false
+//   }
+// }
 
 
 // Output VNet and subnet details for downstream modules
 output vnetId string = vnet.id
 output vnetName string = vnet.name
-output subnetResourceIds array = subnetResourceIds
+// output subnetResourceIds array = subnetResourceIds
 output subnetNames array = [for subnet in subnets: subnet.name]
 output subnets object = toObject(subnets, subnet => subnet.name, subnet => resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnet.name))
 
-output privateDnsZoneId string = enablePrivateDnsZone ? privateDnsZone.id : ''
-output privateDnsZoneName string = privateDnsZone.name
-output vnetLinksLink string = vnetLinks.id
+// output privateDnsZoneId string = enablePrivateDnsZone && role == 'hub' ? privateDnsZone.id : ''
+// output privateDnsZoneName string = enablePrivateDnsZone && role == 'hub' ? privateDnsZone.name : ''
+// output vnetLinksLink string = role == 'spoke' ? vnetLinks.id : ''
+output resourceGroupName string = resourceGroup().name

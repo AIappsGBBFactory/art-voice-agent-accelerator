@@ -7,12 +7,17 @@ param tags object = {}
 @description('Name of the environment that can be used as part of naming resource convention')
 param name string
 
+import { ContainerAppKvSecret } from './modules/types.bicep'
+
 // AZD managed variables
-param gbbAiAudioAgentExists bool
-param gbbAiAudioAgentBackendExists bool
+param rtaudioClientExists bool
+param rtaudioServerExists bool
 param acsSourcePhoneNumber string = ''
 
+// Required parameters for the app environment (app config values, secrets, etc.)
+@description('Enable EasyAuth for the frontend internet facing container app')
 param enableEasyAuth bool = true
+
 param appInsightsConnectionString string = 'InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://dc.services.visualstudio.com/v2/track'
 param logAnalyticsWorkspaceResourceId string = '00000000-0000-0000-0000-000000000000'
 
@@ -26,14 +31,105 @@ param appSubnetResourceId string
 
 @description('Id of the user or app to assign application roles')
 param principalId string
+param principalType string
 
 // App Dependencies
 param aoai_endpoint string
 param aoai_chat_deployment_id string
+param acsResourceId string = ''
 
 
 var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = uniqueString(subscription().id, resourceGroup().id, location)
+
+
+param apimDnsZoneId string = '' // Optional DNS zone ID for APIM, can be used for private endpoints
+param aoaiDnsZoneId string = '' // Optional DNS zone ID for Azure OpenAI, can be used for private endpoints
+param cosmosDnsZoneId string = '' // Optional DNS zone ID for Cosmos DB, can be used for private endpoints
+param privateEndpointSubnetId string = '' // Subnet ID for private endpoints, if applicable
+
+param disableLocalAuth bool = true // Keep enabled for now, can be disabled in prod
+param vnetIntegrationSubnetId string = ''
+param privateEndpoints array = []
+
+
+
+// Cosmos DB MongoDB Cluster
+resource mongoCluster 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
+  name: 'mongo-${name}-${resourceToken}'
+  location: location
+  tags: tags
+  kind: 'MongoDB'
+  properties: {
+    disableLocalAuth: disableLocalAuth
+    databaseAccountOfferType: 'Standard'
+    locations: [
+      {
+        locationName: location
+        failoverPriority: 0
+      }
+    ]
+    // administrator: {
+    //   userName: cosmosAdministratorUsername
+    //   password: cosmosAdministratorPassword
+    // }
+    apiProperties: {
+      serverVersion: '7.0'
+    }
+
+    capabilities: [
+      {
+        name: 'EnableMongo'
+      }
+    ]
+    consistencyPolicy: {
+      defaultConsistencyLevel: 'Session'
+    }
+    publicNetworkAccess: 'Enabled'
+
+  }
+}
+
+
+
+module mongoPrivateEndpoint 'br/public:avm/res/network/private-endpoint:0.7.1' = {
+  name: 'mongo-pe-${name}-${resourceToken}'
+  params: {
+    name: 'mongo-pe-${name}-${resourceToken}'
+    location: location
+    subnetResourceId: privateEndpointSubnetId
+    privateLinkServiceConnections: [
+      {
+        name: 'mongo-pls-${name}-${resourceToken}'
+        properties: {
+          privateLinkServiceId: mongoCluster.id
+          groupIds: [
+            'MongoDB'
+          ]
+        }
+      }
+    ]
+    privateDnsZoneGroup: {
+      privateDnsZoneGroupConfigs: [
+        {
+          name: 'default'
+          privateDnsZoneResourceId: cosmosDnsZoneId
+        }
+      ]
+    }
+  }
+}
+
+// Store MongoDB connection string in Key Vault if local auth is enabled
+resource mongoConnectionString 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!disableLocalAuth) {
+  name: '${last(split(keyVaultResourceId, '/'))}/mongo-connection-string'
+  properties: {
+    value: mongoCluster.listConnectionStrings().connectionStrings[0].connectionString
+  }
+}
+
+
+
 
 // Container registry
 module containerRegistry 'br/public:avm/res/container-registry/registry:0.1.1' = {
@@ -75,15 +171,61 @@ module containerAppsEnvironment 'br/public:avm/res/app/managed-environment:0.11.
     infrastructureSubnetResourceId: appSubnetResourceId // Enables private networking in the specified subnet
     internal: appSubnetResourceId != '' ? true : false
     tags: tags
-    // Note: Refer to the deployment README for more details on how to configure certificates for your application.
-    // certificate: {
-    //   certificateKeyVaultProperties: {
-    //     identityResourceId: '<identityResourceId>'
-    //     keyVaultUrl: '<keyVaultUrl>'
-    //   }
-    //   name: 'dep-cert-amemax'
-    // }
-    // certificatePassword: 
+  }
+}
+
+param storageSkuName string = 'Standard_LRS'
+param storageContainerName string = 'audioagent'
+
+
+module storage 'br/public:avm/res/storage/storage-account:0.9.1' = {
+  name: 'storage'
+  params: {
+    name: '${abbrs.storageStorageAccounts}${resourceToken}'
+    location: location
+    tags: tags
+    kind: 'StorageV2'
+    skuName: storageSkuName
+    publicNetworkAccess: 'Enabled' // Necessary for uploading documents to storage container
+    networkAcls: {
+      defaultAction: 'Allow'
+      bypass: 'AzureServices'
+    }
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: true
+    blobServices: {
+      deleteRetentionPolicyDays: 2
+      deleteRetentionPolicyEnabled: true
+      containers: [
+        {
+          name: storageContainerName
+          publicAccess: 'None'
+        }
+        {
+          name: 'prompt'
+          publicAccess: 'None'
+        }
+      ]
+    }
+    roleAssignments: [
+      {
+        roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+        principalId: backendUserAssignedIdentity.outputs.principalId
+        principalType: 'ServicePrincipal'
+      }
+      // {
+      //   roleDefinitionIdOrName: 'Storage Blob Data Reader'
+      //   principalId: principalId
+      //   // principalType: 'User'  
+      //   principalType: principalType
+      // } 
+      // {
+      //   roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+      //   principalId: principalId
+      //   // principalType: 'User'
+      //   principalType: principalType
+      // }      
+    ]
   }
 }
 
@@ -102,31 +244,20 @@ module backendUserAssignedIdentity 'br/public:avm/res/managed-identity/user-assi
   }
 }
 
-// Azure Communication Services resource (placed in servicesSubnet if supported)
-resource communicationServices 'Microsoft.Communication/communicationServices@2023-04-01-preview' = {
-  name: '${name}acs${resourceToken}'
-  location: 'global'
-  tags: tags
-  properties: {
-    dataLocation: 'UnitedStates' // Change as needed for your compliance requirements
-    
-  }
-}
-
 var beContainerName =  toLower(substring('rtagent-server-${resourceToken}', 0, 22))
 var feContainerName =  toLower(substring('rtagent-client-${resourceToken}', 0, 22))
 
 module fetchFrontendLatestImage './modules/app/fetch-container-image.bicep' = {
   name: 'gbbAiAudioAgent-fetch-image'
   params: {
-    exists: gbbAiAudioAgentExists
+    exists: rtaudioClientExists
     name: feContainerName
   }
 }
 module fetchBackendLatestImage './modules/app/fetch-container-image.bicep' = {
   name: 'gbbAiAudioAgentBackend-fetch-image'
   params: {
-    exists: gbbAiAudioAgentBackendExists
+    exists: rtaudioServerExists
     name: beContainerName
   }
 }
@@ -136,7 +267,18 @@ module frontendAudioAgent 'modules/app/container-app.bicep' = {
   params: {
     name: feContainerName
     enableEasyAuth: enableEasyAuth
+    corsPolicy: {
+      allowedOrigins: [
+        'http://localhost:5173'
+        'http://localhost:3000'
+      ]
+      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+      allowedHeaders: ['*']
+      allowCredentials: true
+    }
     publicAccessAllowed: true
+
+    ingressExposedPort: 8080
     ingressTargetPort: 5173
     scaleMinReplicas: 1
     scaleMaxReplicas: 10
@@ -162,10 +304,10 @@ module frontendAudioAgent 'modules/app/container-app.bicep' = {
             name: 'PORT'
             value: '5173'
           }
-          {
-            name: 'VITE_BACKEND_BASE_URL'
-            value: 'https://${existingAppGatewayPublicIp.properties.dnsSettings.fqdn}'
-          }
+          // {
+          //   name: 'VITE_BACKEND_BASE_URL'
+          //   value: 'https://${existingAppGatewayPublicIp.properties.dnsSettings.fqdn}'
+          // }
         ]
       }
     ]
@@ -176,9 +318,10 @@ module frontendAudioAgent 'modules/app/container-app.bicep' = {
         identity: frontendUserAssignedIdentity.outputs.resourceId
       }
     ]
+    
     environmentResourceId: containerAppsEnvironment.outputs.resourceId
     location: location
-    tags: union(tags, { 'azd-service-name': 'gbb-ai-audio-agent-client' })
+    tags: union(tags, { 'azd-service-name': 'rtaudio-client' })
   }
 }
 
@@ -191,47 +334,36 @@ param existingAppGatewayResourceGroupName string = 'ai-realtime-sandbox'
 //   name: existingAppGatewayResourceName
 // }
 
-@description('Name of the existing public IP address associated with the Application Gateway')
-param existingAppGatewayPublicIpName string = 'ai-realtime-sandbox-appgw-pip'
+// @description('Name of the existing public IP address associated with the Application Gateway')
+// param existingAppGatewayPublicIpName string = 'ai-realtime-sandbox-appgw-pip'
 
-resource existingAppGatewayPublicIp 'Microsoft.Network/publicIPAddresses@2022-05-01' existing = if (!empty(existingAppGatewayPublicIpName)) {
-  scope: resourceGroup(existingAppGatewayResourceGroupName)
-  name: existingAppGatewayPublicIpName
-}
-
-
-module redis './modules/app/redis.bicep' = {
-  name: 'gbbAiAudioAgentRedis'
-  params: {
-    redisCacheName: '${name}${abbrs.cacheRedis}${resourceToken}'
-    location: location
-    tags: tags
-    sku: {
-      name: 'Standard'
-      family: 'C'
-      capacity: 1
-    }
-    redisVersion: 'latest'
-    enableNonSslPort: false
-    minimumTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
-  }
-}
+// resource existingAppGatewayPublicIp 'Microsoft.Network/publicIPAddresses@2022-05-01' existing = if (!empty(existingAppGatewayPublicIpName)) {
+//   scope: resourceGroup(existingAppGatewayResourceGroupName)
+//   name: existingAppGatewayPublicIpName
+// }
 
 
 
-// Redis variables for backend container app
-var redis_host = redis.outputs.hostName
-var redis_port = '6380'
+// param backendSecrets ContainerAppKvSecret[] 
 
 module backendAudioAgent './modules/app/container-app.bicep' = {
-  name: 'gbbAiAudioAgentBackendApp'
+  name: 'backend-audio-agent'
   params: {
     name: beContainerName
     ingressTargetPort: 8010
     scaleMinReplicas: 1
     scaleMaxReplicas: 10
-    secrets: []
+    corsPolicy: {
+      allowedOrigins: [
+      'https://${frontendAudioAgent.outputs.containerAppFqdn}'
+      // 'https://${existingAppGatewayPublicIp.properties.dnsSettings.fqdn}'
+      // 'https://${existingAppGatewayPublicIp.properties.ipAddress}'
+      'http://localhost:5173'
+      ]
+      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+      allowedHeaders: ['*']
+      allowCredentials: true
+    }
     containers: [
       {
         image: fetchBackendLatestImage.outputs.?containers[?0].?image ?? 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -240,6 +372,8 @@ module backendAudioAgent './modules/app/container-app.bicep' = {
           cpu: json('1.0')
           memory: '2.0Gi'
         }
+        // secrets: backendSecrets
+
         env: [
           {
             name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
@@ -265,22 +399,22 @@ module backendAudioAgent './modules/app/container-app.bicep' = {
           //   name: 'AZURE_SPEECH_RESOURCE_ID'
           //   value: aiGateway.outputs.aiServicesIds[0]
           // }
-          {
-            name: 'REDIS_HOST'
-            value: redis_host
-          }
-          {
-            name: 'REDIS_PORT'
-            value: redis_port
-          }
+          // {
+          //   name: 'REDIS_HOST'
+          //   value: redis_host
+          // }
+          // {
+          //   name: 'REDIS_PORT'
+          //   value: redis_port
+          // }
           {
             name: 'AZURE_SPEECH_REGION'
             value: location
           }
-          {
-            name: 'BASE_URL'
-            value: 'https://${existingAppGatewayPublicIp.properties.ipAddress}'
-          }
+          // {
+          //   name: 'BASE_URL'
+          //   value: 'https://${existingAppGatewayPublicIp.properties.ipAddress}'
+          // }
           {
             name: 'ACS_SOURCE_PHONE_NUMBER'
             value: acsSourcePhoneNumber
@@ -305,7 +439,7 @@ module backendAudioAgent './modules/app/container-app.bicep' = {
     ]
     environmentResourceId: containerAppsEnvironment.outputs.resourceId
     location: location
-    tags: union(tags, { 'azd-service-name': 'gbb-ai-audio-agent-server' })
+    tags: union(tags, { 'azd-service-name': 'rtaudio-server' })
   }
 }
 
@@ -345,9 +479,9 @@ output frontendUserAssignedIdentityResourceId string = frontendUserAssignedIdent
 output backendUserAssignedIdentityClientId string = backendUserAssignedIdentity.outputs.clientId
 output backendUserAssignedIdentityResourceId string = backendUserAssignedIdentity.outputs.resourceId
 
-// Communication Services
-output communicationServicesResourceId string = communicationServices.id
-output communicationServicesEndpoint string = communicationServices.properties.hostName
+// // Communication Services
+// output communicationServicesResourceId string = communicationServices.id
+// output communicationServicesEndpoint string = communicationServices.properties.hostName
 
 // Container Apps
 output frontendContainerAppResourceId string = frontendAudioAgent.outputs.containerAppResourceId
@@ -356,8 +490,8 @@ output frontendAppName string = feContainerName
 output backendAppName string = beContainerName
 
 // Application Gateway Integration
-output frontendBaseUrl string = 'https://${existingAppGatewayPublicIp.properties.dnsSettings.fqdn}'
-output backendBaseUrl string = 'https://${existingAppGatewayPublicIp.properties.ipAddress}'
+// output frontendBaseUrl string = 'https://${existingAppGatewayPublicIp.properties.dnsSettings.fqdn}'
+// output backendBaseUrl string = 'https://${existingAppGatewayPublicIp.properties.ipAddress}'
 
 
 
