@@ -184,6 +184,26 @@ module containerRegistry 'br/public:avm/res/container-registry/registry:0.1.1' =
   }
 }
 
+param frontendExternalAccessEnabled bool = true
+// Container apps environment (deployed into appSubnet)
+module externalContainerAppsEnvironment 'br/public:avm/res/app/managed-environment:0.11.2' = if (frontendExternalAccessEnabled){
+  name: 'external-container-apps-environment'
+  params: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: reference(logAnalyticsWorkspaceResourceId, '2022-10-01').customerId
+        sharedKey: listKeys(logAnalyticsWorkspaceResourceId, '2022-10-01').primarySharedKey
+      }
+    }
+    name: 'ext-${name}${abbrs.appManagedEnvironments}${resourceToken}'
+    location: location
+    zoneRedundant: false
+    // infrastructureSubnetResourceId: appSubnetResourceId // Enables private networking in the specified subnet
+    internal: false
+    tags: tags
+  }
+}
 // Container apps environment (deployed into appSubnet)
 module containerAppsEnvironment 'br/public:avm/res/app/managed-environment:0.11.2' = {
   name: 'container-apps-environment'
@@ -333,7 +353,8 @@ module frontendAudioAgent 'modules/app/container-app.bicep' = {
       }
     ]
     
-    environmentResourceId: containerAppsEnvironment.outputs.resourceId
+    environmentResourceId: frontendExternalAccessEnabled ? externalContainerAppsEnvironment.outputs.resourceId : containerAppsEnvironment.outputs.resourceId
+    // environmentResourceId: containerAppsEnvironment.outputs.resourceId
     location: location
     tags: union(tags, { 'azd-service-name': 'rtaudio-client' })
   }

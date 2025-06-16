@@ -1,83 +1,241 @@
+// ============================================================================
+// DEPLOYMENT METADATA & SCOPE
+// ============================================================================
+
 targetScope = 'subscription'
+
+// ============================================================================
+// CORE PARAMETERS
+// ============================================================================
 
 @minLength(1)
 @maxLength(64)
 @description('Name of the environment that can be used as part of naming resource convention')
 param environmentName string
 
-param name string = 'rtaudioagent'
-
 @minLength(1)
-@description('Azure AD application/client ID')
-param appClientId string
+@maxLength(20)
+@description('Base name for the real-time audio agent application')
+param name string = 'rtaudioagent'
 
 @minLength(1)
 @description('Primary location for all resources')
 param location string
 
-import { ContainerAppKvSecret, SubnetConfig, BackendConfigItem } from './modules/types.bicep'
+// ============================================================================
+// TYPE IMPORTS
+// ============================================================================
 
+import { SubnetConfig, BackendConfigItem } from './modules/types.bicep'
+
+// ============================================================================
+// APPLICATION CONFIGURATION
+// ============================================================================
+
+@description('Flag indicating if the real-time audio client application exists and should be deployed')
 param rtaudioClientExists bool
+
+@description('Flag indicating if the real-time audio server application exists and should be deployed')
 param rtaudioServerExists bool
 
-@description('Flag to enable/disable the use of APIM for OpenAI loadbalancing')
+@description('Enable API Management for OpenAI load balancing and gateway functionality')
 param enableAPIManagement bool = true
 
-@description('Id of the user or app to assign application roles')
-param principalId string
-
-// param acsSourcePhoneNumber string
-@description('[Required when enableAPIManagement is true] Array of backend configurations for the AI services.')
+@description('Array of backend configurations for Azure OpenAI services when API Management is enabled')
 param azureOpenAIBackendConfig BackendConfigItem[]
 
+@description('SKU for Azure Managed Redis')
+param redisSku string = 'MemoryOptimized_M10' 
 
-// @secure()
-// @description('Base64-encoded Root SSL certificate (.cer) for Application Gateway')
-// param rootCertificateBase64Value string
+@allowed(['United States', 'Europe', 'Asia Pacific', 'Australia', 'Brazil', 'Canada', 'France', 'Germany', 'India', 'Japan', 'Korea', 'Norway', 'Switzerland', 'UAE', 'UK'])
+@description('Data location for Azure Communication Services')
+param acsDataLocation string = 'United States'
 
-var abbrs = loadJsonContent('./abbreviations.json')
-var resourceToken = uniqueString(subscription().id, environmentName, location)
+// ============================================================================
+// SECURITY & IDENTITY
+// ============================================================================
 
-param principalType string = 'User' // or 'ServicePrincipal' based on your requirements
-param vaultSku string = 'standard' // or 'premium' based on your requirements
+@description('Principal ID of the user or service principal to assign application roles')
+param principalId string
 
+@allowed(['User', 'ServicePrincipal'])
+@description('Type of principal (User or ServicePrincipal)')
+param principalType string = 'User'
 
-// Network Config
-// -----------------------------------------------------------
+@description('Disable local authentication and use Azure AD/managed identity only')
+param disableLocalAuth bool = true
+
+@allowed(['standard', 'premium'])
+@description('SKU for Azure Key Vault (standard or premium)')
+param vaultSku string = 'standard'
+// API Management authentication parameters
+// These parameters configure APIM policies for JWT validation and authorization
+
+// The expected audience claim value in JWT tokens for API access validation
+// This should match the audience configured in your identity provider
+@description('The JWT audience claim value used for token validation in APIM policies')
+param jwtAudience string
+
+// The Azure Entra ID group object ID that grants access to the API
+// Users must be members of this group to access protected endpoints
+@description('Azure Entra ID group object ID for user authorization in APIM policies')
+param entraGroupId string
+
+// ============================================================================
+// NETWORK CONFIGURATION
+// ============================================================================
+
+@description('Name of the hub virtual network')
 param hubVNetName string = 'vnet-hub-${name}-${environmentName}'
-param spokeVNetName string = 'vnet-spoke-${name}-${environmentName}'
-param hubVNetAddressPrefix string = '10.0.0.0/16'
-param spokeVNetAddressPrefix string = '10.1.0.0/16'
-param apimSubnetConfig SubnetConfig = {
-  name: 'apim'
-  addressPrefix: '10.0.1.0/27'
-  securityRules: [
-    
-  ]
-}
 
+@description('Name of the spoke virtual network')
+param spokeVNetName string = 'vnet-spoke-${name}-${environmentName}'
+
+@description('Address prefix for the hub virtual network (CIDR notation)')
+param hubVNetAddressPrefix string = '10.0.0.0/16'
+
+@description('Address prefix for the spoke virtual network (CIDR notation)')
+param spokeVNetAddressPrefix string = '10.1.0.0/16'
+
+// ============================================================================
+// CONSTANTS & COMPUTED VALUES
+// ============================================================================
+
+// Load Azure naming abbreviations for consistent resource naming
+var abbrs = loadJsonContent('./abbreviations.json')
+
+// Generate unique resource token based on subscription, environment, and location
+var resourceToken = uniqueString(subscription().id, environmentName, location)
 param hubSubnets SubnetConfig[] = [
   {
     name: 'loadBalancer'          // App Gateway or L4 LB
     addressPrefix: '10.0.0.0/27'
   }
-  // {
-  //   name: 'apim'                  // Internal APIM instance
-  //   addressPrefix: '10.0.1.0/27'
-  //   delegations: [
-  //     {
-  //       name: 'apimDelegation'
-  //       properties: {
-  //         serviceName: 'Microsoft.Web/serverfarms'
-  //         // serviceName: 'Microsoft.ApiManagement/service'
-  //       }
-  //     }
-
-  //   ]  
-  // }
   {
     name: 'services'          // Shared services like monitor, orchestrators (if colocated)
     addressPrefix: '10.0.0.64/26'
+  }
+  {
+    name: 'jumpbox'               // Optional, minimal size
+    addressPrefix: '10.0.10.0/27'
+  }
+  {
+    name: 'apim'
+    addressPrefix: '10.0.1.0/27'
+    delegations: [
+      {
+        name: 'Microsoft.Web/serverFarms'
+        properties: {
+          serviceName: 'Microsoft.Web/serverFarms'
+        }
+      }
+    ]
+    securityRules: [
+      {
+        name: 'AllowHTTPS'
+        properties: {
+          priority: 1000
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: 'Internet'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '443'
+        }
+      }
+      {
+        name: 'AllowHTTP'
+        properties: {
+          priority: 1010
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: 'Internet'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '80'
+        }
+      }
+      {
+        name: 'AllowAPIMManagement'
+        properties: {
+          priority: 1020
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: 'ApiManagement'
+          sourcePortRange: '*'
+          destinationAddressPrefix: 'VirtualNetwork'
+          destinationPortRange: '3443'
+        }
+      }
+      {
+        name: 'AllowLoadBalancer'
+        properties: {
+          priority: 1030
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: 'AzureLoadBalancer'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '6390'
+        }
+      }
+      {
+        name: 'AllowOutboundHTTPS'
+        properties: {
+          priority: 1000
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Outbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: 'Internet'
+          destinationPortRange: '443'
+        }
+      }
+      {
+        name: 'AllowOutboundHTTP'
+        properties: {
+          priority: 1010
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Outbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: 'Internet'
+          destinationPortRange: '80'
+        }
+      }
+      {
+        name: 'AllowOutboundSQL'
+        properties: {
+          priority: 1020
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Outbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: 'Sql'
+          destinationPortRange: '1433'
+        }
+      }
+      {
+        name: 'AllowOutboundStorage'
+        properties: {
+          priority: 1030
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Outbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: 'Storage'
+          destinationPortRange: '443'
+        }
+      }
+    ]
   }
 ]
 param spokeSubnets SubnetConfig[] = [
@@ -93,22 +251,6 @@ param spokeSubnets SubnetConfig[] = [
     name: 'cache'                 // Redis workers (can be merged into `app` if simple)
     addressPrefix: '10.1.2.0/26'
   }
-  {
-    name: 'jumpbox'               // Optional, minimal size
-    addressPrefix: '10.1.3.0/26'
-  }
-  // {
-  //   name: 'apimOutbound'
-  //   addressPrefix: '10.1.0.224/27'
-  //   delegations: [
-  //     {
-  //       name: 'Microsoft.Web/serverfarms'
-  //       properties: {
-  //         serviceName: 'Microsoft.Web/serverFarms'
-  //       }
-  //     }
-  //   ]
-  // }
 ]
 // Tags that should be applied to all resources.
 // 
@@ -133,8 +275,10 @@ resource spokeRg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
   location: location
   tags: tags
 }
+// ============================================================================
+// MONITORING & OBSERVABILITY
+// ============================================================================
 
-// Monitor application with Azure Monitor
 module monitoring 'br/public:avm/ptn/azd/monitoring:0.1.0' = {
   name: 'monitoring'
   scope: hubRg
@@ -147,10 +291,31 @@ module monitoring 'br/public:avm/ptn/azd/monitoring:0.1.0' = {
   }
 }
 
-// Hub and Spoke VNets + Private DNS Zones
-// ============================================
+// ============================================================================
+// JUMPHOST (OPTIONAL - ONLY WHEN NETWORK ISOLATION ENABLED)
+// ============================================================================
+
+module winJumphost 'modules/jumphost/windows-vm.bicep' = if (networkIsolation) {
+  name: 'win-jumphost'
+  scope: hubRg
+  params: {
+    vmName: 'jumphost-${name}-${environmentName}'
+    location: location
+    adminUsername: 'azureuser'
+    adminPassword: 'P@ssw0rd!' // TODO: Replace with Key Vault reference
+    vmSize: 'Standard_B2s'
+    subnetId: hubNetwork.outputs.subnets.jumpbox
+    tags: tags
+  }
+}
+
+// ============================================================================
+// VIRTUAL NETWORKS (HUB & SPOKE TOPOLOGY)
+// ============================================================================
+
+// Hub VNet - Contains shared services, monitoring, and network appliances
 module hubNetwork 'network.bicep' = {
-scope: hubRg
+  scope: hubRg
   name: hubVNetName
   params: {
     vnetName: hubVNetName
@@ -159,11 +324,10 @@ scope: hubRg
     subnets: hubSubnets
     workspaceResourceId: monitoring.outputs.logAnalyticsWorkspaceResourceId
     tags: tags
-    // Optionally, you can pass custom subnet configs or domain label here if needed
   }
 }
 
-
+// Spoke VNet - Contains application workloads and private endpoints
 module spokeNetwork 'network.bicep' = {
   scope: spokeRg
   name: spokeVNetName
@@ -174,124 +338,143 @@ module spokeNetwork 'network.bicep' = {
     subnets: spokeSubnets
     workspaceResourceId: monitoring.outputs.logAnalyticsWorkspaceResourceId
     tags: tags
-    // Optionally, you can pass custom subnet configs or domain label here if needed
   }
 }
 
-// Private DNS Zones for various Azure services
+// ============================================================================
+// PRIVATE DNS ZONES FOR AZURE SERVICES
+// ============================================================================
+
+// Storage Account (Blob) private DNS zone
 module blobDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
-  name: 'blob-dnzones'
+  name: 'blob-dns-zone'
   scope: hubRg
   params: {
     #disable-next-line no-hardcoded-env-urls
-    dnsZoneName: 'privatelink.blob.core.windows.net' 
+    dnsZoneName: 'privatelink.blob.core.windows.net'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
+
+// API Management private DNS zone
 module apimDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
-  name: 'apim-dnzones'
+  name: 'apim-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.azure-api.net' 
+    dnsZoneName: 'privatelink.azure-api.net'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
+// Cosmos DB (MongoDB API) private DNS zone
 module cosmosMongoDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
-  name: 'cosmos-dnzones'
+  name: 'cosmos-mongo-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.mongo.cosmos.azure.com' 
+    dnsZoneName: 'privatelink.mongo.cosmos.azure.com'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
+// Cosmos DB (Core/SQL API) private DNS zone
 module documentsDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
-  name: 'documents-dnzones'
+  name: 'cosmos-documents-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.documents.azure.com' 
+    dnsZoneName: 'privatelink.documents.azure.com'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
+// Key Vault private DNS zone
 module vaultDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
-  name: 'vault-dnzones'
+  name: 'keyvault-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.vaultcore.azure.net' 
+    dnsZoneName: 'privatelink.vaultcore.azure.net'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
-module containerAppsDnsZone './modules/networking/private-dns-zone.bicep' =if (networkIsolation) {
-  name: 'aca-dnzones'
+// Container Apps private DNS zone
+module containerAppsDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
+  name: 'container-apps-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.${location}.azurecontainerapps.io' 
+    dnsZoneName: 'privatelink.${location}.azurecontainerapps.io'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
-  }
-}
-module acrDnsZone './modules/networking/private-dns-zone.bicep' =if (networkIsolation) {
-  name: 'acr-dnzones'
-  scope: hubRg
-  params: {
-    dnsZoneName: 'privatelink.${location}.azurecr.io' 
-    tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
-module aiservicesDnsZone './modules/networking/private-dns-zone.bicep' =if (networkIsolation) {
-  name: 'aiservices-dnzones'
+// Azure Container Registry private DNS zone
+module acrDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
+  name: 'acr-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.cognitiveservices.azure.com' 
+    dnsZoneName: 'privatelink.${location}.azurecr.io'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
-module openaiDnsZone './modules/networking/private-dns-zone.bicep' =if (networkIsolation) {
-  name: 'openai-dnzones'
+// Cognitive Services private DNS zone
+module aiservicesDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
+  name: 'cognitive-services-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.openai.azure.com' 
+    dnsZoneName: 'privatelink.cognitiveservices.azure.com'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
-module searchDnsZone './modules/networking/private-dns-zone.bicep' =if (networkIsolation) {
-  name: 'searchs-dnzones'
+// Azure OpenAI private DNS zone
+module openaiDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
+  name: 'openai-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.search.windows.net' 
+    dnsZoneName: 'privatelink.openai.azure.com'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
-module redisDnsZone './modules/networking/private-dns-zone.bicep' =if (networkIsolation) {
-  name: 'redis-azure-managed-dnzones'
+// Azure Cognitive Search private DNS zone
+module searchDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
+  name: 'search-dns-zone'
   scope: hubRg
   params: {
-    dnsZoneName: 'privatelink.redis.azure.net' 
+    dnsZoneName: 'privatelink.search.windows.net'
     tags: tags
-    virtualNetworkName: networkIsolation ? hubNetwork.outputs.vnetName : ''
+    virtualNetworkName: hubNetwork.outputs.vnetName
   }
 }
 
-// VNet Peering
+// Azure Cache for Redis Enterprise private DNS zone
+module redisDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
+  name: 'redis-enterprise-dns-zone'
+  scope: hubRg
+  params: {
+    dnsZoneName: 'privatelink.redis.azure.net'
+    tags: tags
+    virtualNetworkName: hubNetwork.outputs.vnetName
+  }
+}
+
+// ============================================================================
+// VNET PEERING (HUB-SPOKE CONNECTIVITY)
+// ============================================================================
+
+// Hub to Spoke peering
 module peerHubToSpoke './modules/networking/peer-virtual-networks.bicep' = {
   scope: hubRg
-  name: 'peer-hub-to-spoke-vnets'
+  name: 'peer-hub-to-spoke'
   params: {
     localVnetName: hubNetwork.outputs.vnetName
     remoteVnetId: spokeNetwork.outputs.vnetId
@@ -299,9 +482,10 @@ module peerHubToSpoke './modules/networking/peer-virtual-networks.bicep' = {
   }
 }
 
+// Spoke to Hub peering
 module peerSpokeToHub './modules/networking/peer-virtual-networks.bicep' = {
   scope: spokeRg
-  name: 'peer-spoke-to-hub-vnets'
+  name: 'peer-spoke-to-hub'
   params: {
     localVnetName: spokeNetwork.outputs.vnetName
     remoteVnetId: hubNetwork.outputs.vnetId
@@ -312,43 +496,48 @@ module peerSpokeToHub './modules/networking/peer-virtual-networks.bicep' = {
   ]
 }
 
-param acsDataLocation string = 'UnitedStates'
+// ============================================================================
+// APPLICATION MANAGED IDENTITIES
+// ============================================================================
 
-// Application Identities
-// ============================================
+// User-assigned managed identity for backend services
 module uaiAudioAgentBackendIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.2.1' = {
-  name: 'uaiAudioAgentBackend'
+  name: 'backend-managed-identity'
   scope: spokeRg
   params: {
-    name: '${name}${abbrs.managedIdentityUserAssignedIdentities}uaiAudioAgentBackend-${resourceToken}'
+    name: '${name}${abbrs.managedIdentityUserAssignedIdentities}backend-${resourceToken}'
     location: location
+    tags: tags
   }
 }
 
-
+// User-assigned managed identity for frontend services
 module uaiAudioAgentFrontendIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.2.1' = {
-  name: 'uaiAudioAgentFrontend'
+  name: 'frontend-managed-identity'
   scope: spokeRg
   params: {
-    name: '${name}${abbrs.managedIdentityUserAssignedIdentities}uaiAudioAgentFrontend-${resourceToken}'
+    name: '${name}${abbrs.managedIdentityUserAssignedIdentities}frontend-${resourceToken}'
     location: location
+    tags: tags
   }
 }
 
-// Key Vault 
-// ============================================
+// ============================================================================
+// KEY VAULT FOR SECRETS MANAGEMENT
+// ============================================================================
+
 module keyVault 'br/public:avm/res/key-vault/vault:0.12.1' = {
-  name: 'kv-${name}-${environmentName}-${resourceToken}'
+  name: 'key-vault'
   scope: spokeRg
   params: {
     name: '${abbrs.keyVaultVaults}${resourceToken}'
     location: location
-    sku:  vaultSku
+    sku: vaultSku
     tags: tags
     enableRbacAuthorization: true
     publicNetworkAccess: 'Enabled'
     networkAcls: {
-      defaultAction: 'Allow' // Change to 'Deny' if you want to restrict public access
+      defaultAction: 'Allow' // TODO: Change to 'Deny' for production with proper firewall rules
       bypass: 'AzureServices'
     }
     roleAssignments: [
@@ -360,7 +549,7 @@ module keyVault 'br/public:avm/res/key-vault/vault:0.12.1' = {
       {
         principalId: uaiAudioAgentBackendIdentity.outputs.principalId
         principalType: 'ServicePrincipal'
-        roleDefinitionIdOrName: 'Key Vault Secrets User' 
+        roleDefinitionIdOrName: 'Key Vault Secrets User'
       }
     ]
     privateEndpoints: [
@@ -396,41 +585,44 @@ module keyVault 'br/public:avm/res/key-vault/vault:0.12.1' = {
   }
 }
 
-param disableLocalAuth bool = true // Set to true to disable local authentication
+// ============================================================================
+// AZURE SPEECH SERVICES
+// ============================================================================
 
 module speechService 'br/public:avm/res/cognitive-services/account:0.11.0' = {
-  name: 'speech-${name}-${environmentName}-${resourceToken}'
+  name: 'speech-service'
   scope: hubRg
   params: {
-    // Required parameters
     kind: 'SpeechServices'
     sku: 'S0'
     name: 'speech-${environmentName}-${resourceToken}'
-    tags: tags
-    // Non-required parameters
     customSubDomainName: 'speech-${environmentName}-${resourceToken}'
-
-    disableLocalAuth: disableLocalAuth
     location: location
+    tags: tags
+    disableLocalAuth: disableLocalAuth
+    
+    // Store access keys in Key Vault if local auth is enabled
     secretsExportConfiguration: disableLocalAuth ? null : {
       accessKey1Name: 'speech-${environmentName}-${resourceToken}-accessKey1'
       keyVaultResourceId: keyVault.outputs.resourceId
     }
 
+    // Grant access to ACS and Frontend identity
     roleAssignments: [
       {
         principalId: acs.outputs.managedIdentityPrincipalId
         principalType: 'ServicePrincipal'
-        roleDefinitionIdOrName: 'Cognitive Services User' // Role for accessing Speech services
+        roleDefinitionIdOrName: 'Cognitive Services User'
       }
       {
         principalId: uaiAudioAgentFrontendIdentity.outputs.principalId
         principalType: 'ServicePrincipal'
-        roleDefinitionIdOrName: 'Cognitive Services User' // Role for accessing Speech services
+        roleDefinitionIdOrName: 'Cognitive Services User'
       }
     ]
-    publicNetworkAccess: 'Enabled' // Required to integrate with ACS
-
+    
+    publicNetworkAccess: 'Enabled' // Required for ACS integration
+    
     diagnosticSettings: [
       {
         name: 'default'
@@ -452,74 +644,78 @@ module speechService 'br/public:avm/res/cognitive-services/account:0.11.0' = {
   }
 }
 
+// ============================================================================
+// AZURE COMMUNICATION SERVICES
+// ============================================================================
 
-
+// Communication Service for real-time voice and messaging
+// NOTE: Phone number provisioning must be done manually after deployment
 module acs 'modules/communication/communication-services.bicep' = {
-  name: 'acs'
-  scope: spokeRg
+  name: 'communication-services'
+  scope: hubRg
   params: {
     communicationServiceName: 'acs-${name}-${environmentName}-${resourceToken}'
-    keyVaultResourceId: keyVault.outputs.resourceId
     dataLocation: acsDataLocation
     diagnosticSettings: {
       workspaceResourceId: monitoring.outputs.logAnalyticsWorkspaceResourceId
     }
+    tags: tags
   }
 }
 
-param jwtAudience string
-param entraGroupId string
+// Store ACS connection string in Key Vault
+module acsConnectionStringSecret 'modules/vault/secret.bicep' = {
+  name: 'acs-connection-string-secret'
+  scope: spokeRg
+  params: {
+    keyVaultName: keyVault.outputs.name
+    secretName: '${acs.outputs.communicationServiceName}-connection-string'
+    secretValue: acs.outputs.connectionString
+    tags: tags
+  }
+}
 
+// Store ACS primary key in Key Vault
+module acsPrimaryKeySecret 'modules/vault/secret.bicep' = {
+  name: 'acs-primary-key-secret'
+  scope: spokeRg
+  params: {
+    keyVaultName: keyVault.outputs.name
+    secretName: 'acs-primary-key'
+    secretValue: acs.outputs.primaryKey
+    tags: tags
+  }
+}
 
-// module appgwModule 'modules/gateway/appgw.bicep' = {
-//   name: 'appgwDeploy'
-//   scope: resourceGroup(networkingRG.name)
-//   dependsOn: [
-//     apimModule
-//   ]
-//   params: {
-//     appGatewayName: appGatewayName
-//     appGatewayFQDN: appGatewayFqdn
-//     location: location
-//     appGatewaySubnetId: networking.outputs.appGatewaySubnetid
-//     primaryBackendEndFQDN: '${apimName}.azure-api.net'
-//     keyVaultName: shared.outputs.keyVaultName
-//     keyVaultResourceGroupName: sharedRG.name
-//     appGatewayCertType: appGatewayCertType
-//     certKey: certKey
-//     certData: certData
-//     appGatewayPublicIpName: networking.outputs.appGatewayPublicIpName
-//     deploymentIdentityName: shared.outputs.deploymentIdentityName
-//     deploymentSubnetId: networking.outputs.deploymentSubnetId
-//     deploymentStorageName: shared.outputs.deploymentStorageName
-//   }
-// }
-
+// ============================================================================
+// AI GATEWAY (API MANAGEMENT + AZURE OPENAI)
+// ============================================================================
 
 module aiGateway 'ai-gateway.bicep' = {
   scope: hubRg
   name: 'ai-gateway'
   params: {
     name: name
-    audience: jwtAudience
-    entraGroupId: entraGroupId
-    enableAPIManagement: enableAPIManagement
     location: location
     tags: tags
+    
+    // JWT and security configuration
+    audience: jwtAudience
+    entraGroupId: entraGroupId
+    
+    // APIM configuration
+    enableAPIManagement: enableAPIManagement
     apimSku: 'StandardV2'
     virtualNetworkType: 'External'
     backendConfig: azureOpenAIBackendConfig
-    apimSubnetConfig: apimSubnetConfig
-    apimIntegrationVnetName: hubNetwork.outputs.vnetName
-    // apimSubnetResourceId: hubNetwork.outputs.subnets.apim
-
-    // apimDnsZoneId: networkIsolation ? apimDnsZone.outputs.id : ''
+    apimSubnetResourceId: hubNetwork.outputs.subnets.apim
+    
+    // Private DNS and networking
     aoaiDnsZoneId: networkIsolation ? openaiDnsZone.outputs.id : ''
-    // cosmosDnsZoneId: networkIsolation ? cosmosMongoDnsZone.outputs.id : ''
-
-    // vnetIntegrationSubnetId: spokeNetwork.outputs.subnets.apimOutbound
     privateEndpointSubnetId: spokeNetwork.outputs.subnets.privateEndpoint
     keyVaultResourceId: keyVault.outputs.resourceId
+    
+    // Application Insights logging
     loggers: [
       {
         credentials: {
@@ -532,19 +728,8 @@ module aiGateway 'ai-gateway.bicep' = {
         resourceId: monitoring.outputs.applicationInsightsResourceId
       }
     ]
-    // privateEndpoints: [
-    //   {
-    //     privateDnsZoneGroup: {
-    //       privateDnsZoneGroupConfigs: [
-    //         {
-    //           privateDnsZoneResourceId: apimDnsZone.outputs.id
-    //         }
-    //       ]
-    //     }
-    //     subnetResourceId: spokeNetwork.outputs.subnets.privateEndpoint
-    //   }
-    // ]
-    // Pass monitoring config from monitoring module
+    
+    // Diagnostic settings
     diagnosticSettings: [
       {
         name: 'default'
@@ -566,33 +751,37 @@ module aiGateway 'ai-gateway.bicep' = {
   }
 }
 
-
-// Store APIM subscription key in Key Vault when API Management is enabled
+// Store APIM subscription key in Key Vault
 module apimSubscriptionKeySecret 'modules/vault/secret.bicep' = if (enableAPIManagement) {
-  name: 'openai-apim-subscription-key'
+  name: 'apim-subscription-key-secret'
   scope: spokeRg
   params: {
     keyVaultName: keyVault.outputs.name
     secretName: 'openai-apim-subscription-key'
-    secretValue: aiGateway.outputs.oaiSubscriptionKey
+    secretValue: aiGateway.outputs.openAiSubscriptionKey
     tags: tags
   }
 }
 
-param redisSku string = 'MemoryOptimized_M10' 
+// ============================================================================
+// REDIS ENTERPRISE CACHE
+// ============================================================================
 
 module redisEnterprise 'br/public:avm/res/cache/redis-enterprise:0.1.1' = {
-  name: 'rtaudio-azureManagedRedis'
+  name: 'redis-enterprise'
   scope: spokeRg
   params: {
-    name: 'rtaudio-redis-${resourceToken}'
+    name: 'redis-${name}-${resourceToken}'
+    location: location
+    tags: tags
     skuName: redisSku
-  
+    
+    // Database configuration with RBAC authentication
     database: {
-      accessKeysAuthentication: 'Disabled'
+      accessKeysAuthentication: 'Disabled' // Use RBAC instead of access keys
       accessPolicyAssignments: [
         {
-          name: 'assign1'
+          name: 'backend-access'
           userObjectId: uaiAudioAgentBackendIdentity.outputs.principalId
         }
       ]
@@ -604,11 +793,13 @@ module redisEnterprise 'br/public:avm/res/cache/redis-enterprise:0.1.1' = {
               enabled: true
             }
           ]
-          name: 'defaultDBLogs'
+          name: 'redis-database-logs'
           workspaceResourceId: monitoring.outputs.logAnalyticsWorkspaceResourceId
         }
       ]
     }
+    
+    // Cluster-level diagnostics
     diagnosticSettings: [
       {
         metricCategories: [
@@ -616,10 +807,12 @@ module redisEnterprise 'br/public:avm/res/cache/redis-enterprise:0.1.1' = {
             category: 'AllMetrics'
           }
         ]
-        name: 'defaultClusterMetrics'
+        name: 'redis-cluster-metrics'
         workspaceResourceId: monitoring.outputs.logAnalyticsWorkspaceResourceId
       }
     ]
+    
+    // Private endpoint configuration
     privateEndpoints: [
       {
         privateDnsZoneGroup: {
@@ -632,205 +825,50 @@ module redisEnterprise 'br/public:avm/res/cache/redis-enterprise:0.1.1' = {
         subnetResourceId: spokeNetwork.outputs.subnets.privateEndpoint
       }
     ]
-    location: location
-    tags: tags
   }
 }
 
+// ============================================================================
+// APPLICATION SERVICES (CONTAINER APPS)
+// ============================================================================
 
-
-// Secrets needed for the application:
-// var backendSecrets ContainerAppKvSecret[] = [
-//   {
-//     name: 'acs-connection-string'
-//     keyVaultUrl: acs.outputs.connectionStringSecretUri
-//     identity: uaiAudioAgentBackendIdentity.outputs.principalId
-//   }
-// ]
-
-
-// Backend:
-// AZURE_COSMOS_CONNECTION_STRING
-// ACS_CONNECTION_STRING
-// AZURE_OPENAI_KEY 
-
-
-// module loadbalancer 'loadbalancer.bicep' = {
-//   scope: rg
-//   name: 'loadbalancer'
-//   params: {
-//     location: location
-//     tags: tags
-//     vnetName: network.outputs.vnetName
-//     subnetResourceIds: network.outputs.subnetResourceIds
-//     enableAppGateway: false // Set to true if you want to enable Application Gateway
-//     appGatewaySku: 'Standard_v2'
-//     backendFqdn: app.outputs.backendBaseUrl
-//     publicIpResourceId: network.outputs.publicIpResourceId
-//     sslCertBase64: rootCertificateBase64Value
-//   }
-// }
 module app 'app.bicep' = {
   scope: spokeRg
-  name: 'app'
+  name: 'application-services'
   params: {
     name: name
     location: location
     tags: tags
-
+    
+    // Key Vault for secrets
     keyVaultResourceId: keyVault.outputs.resourceId
-
+    
+    // Azure OpenAI configuration
     aoai_endpoint: aiGateway.outputs.endpoints.openAI
     aoai_chat_deployment_id: 'gpt-4o'
     
-    // Monitoring
+    // Monitoring configuration
     appInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
     logAnalyticsWorkspaceResourceId: monitoring.outputs.logAnalyticsWorkspaceResourceId
+    
+    // RBAC configuration
     principalId: principalId
     principalType: principalType
-
-    // Managed by AZD to deploy code to container apps
-    // acsSourcePhoneNumber: acsSourcePhoneNumber
+    
+    // Application deployment flags
     rtaudioClientExists: rtaudioClientExists
     rtaudioServerExists: rtaudioServerExists
-
-    // Network configuration from network module
-    // vnetName: spokeNetwork.outputs.vnetName
-    // appgwSubnetResourceId: hubNetwork.outputs.subnets.loadBalancer
+    
+    // Network configuration
     appSubnetResourceId: spokeNetwork.outputs.subnets.app
     privateEndpointSubnetId: spokeNetwork.outputs.subnets.privateEndpoint
-
     cosmosDnsZoneId: cosmosMongoDnsZone.outputs.id
   }
 }
 
+// ============================================================================
+// OUTPUTS FOR AZD INTEGRATION
+// ============================================================================
 
-// resource aiDeveloperRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-//   name: guid(app.outputs.backendAppName, 'AI Developer')
-//   scope: resourceGroup()
-//   properties: {
-//     principalId: backendUserAssignedIdentity.outputs.principalId
-//     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee') // AI Developer
-//     principalType: 'ServicePrincipal'
-//   }
-// }
-
-// resource cognitiveServicesContributorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-//   name: guid(backendUserAssignedIdentity.name, 'Cognitive Services Contributor')
-//   scope: resourceGroup()
-//   properties: {
-//     principalId: backendUserAssignedIdentity.outputs.principalId
-//     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68') // Cognitive Services Contributor
-//     principalType: 'ServicePrincipal'
-//   }
-// }
-
-
-// module loadbalancer 'loadbalancer.bicep' = {
-//   scope: rg
-//   name: 'loadbalancer'
-//   params: {
-//     location: location
-//     tags: tags
-//     vnetName: network.outputs.vnetName
-//     subnetResourceIds: network.outputs.subnetResourceIds
-//     enableAppGateway: false // Set to true if you want to enable Application Gateway
-//     appGatewaySku: 'Standard_v2'
-//     backendFqdn: app.outputs.backendBaseUrl
-//     publicIpResourceId: network.outputs.publicIpResourceId
-//     sslCertBase64: rootCertificateBase64Value
-//   }
-// }
-
-// Downstream dependencies for AZD app deployments
-// ===========================================
 output AZURE_RESOURCE_GROUP string = spokeRg.name
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = app.outputs.containerRegistryEndpoint
-
-// output containerRegistryEndpoint string = app.outputs.containerRegistryEndpoint
-// output containerRegistryResourceId string = app.outputs.containerRegistryResourceId
-// output containerAppsEnvironmentId string = app.outputs.containerAppsEnvironmentId
-// output frontendUserAssignedIdentityClientId string = app.outputs.frontendUserAssignedIdentityClientId
-// output frontendUserAssignedIdentityResourceId string = app.outputs.frontendUserAssignedIdentityResourceId
-// output backendUserAssignedIdentityClientId string = app.outputs.backendUserAssignedIdentityClientId
-// output backendUserAssignedIdentityResourceId string = app.outputs.backendUserAssignedIdentityResourceId
-// output communicationServicesResourceId string = app.outputs.communicationServicesResourceId
-// output communicationServicesEndpoint string = app.outputs.communicationServicesEndpoint
-// output aiGatewayEndpoints array = aiGateway.outputs.aiGatewayEndpoints
-// output aiGatewayServiceIds array = aiGateway.outputs.aiGatewayServiceIds
-// output frontendContainerAppResourceId string = app.outputs.frontendContainerAppResourceId
-// output backendContainerAppResourceId string = app.outputs.backendContainerAppResourceId
-// output frontendAppName string = app.outputs.frontendAppName
-// output backendAppName string = app.outputs.backendAppName
-// output frontendBaseUrl string = app.outputs.frontendBaseUrl
-// output backendBaseUrl string = app.outputs.backendBaseUrl
-
-// ==========================================
-// EXAMPLE: LOAD BALANCER INTEGRATION
-// ==========================================
-// Uncomment and configure this section to add Application Gateway
-
-/*
-module loadBalancer 'loadbalancer-wrapper.bicep' = {
-  scope: hubRg
-  name: 'load-balancer'
-  params: {
-    name: name
-    location: location
-    tags: tags
-    enableLoadBalancer: true
-    
-    // Network configuration from hub VNet
-    networkConfig: {
-      subnetResourceId: hubNetwork.outputs.subnets.loadBalancer
-      publicIpResourceId: '' // Add public IP resource reference here
-    }
-    
-    // Container app FQDNs from app module
-    containerApps: {
-      frontend: {
-        fqdn: app.outputs.frontendContainerAppFqdn
-        name: app.outputs.frontendAppName
-      }
-      backend: {
-        fqdn: app.outputs.backendContainerAppFqdn  
-        name: app.outputs.backendAppName
-      }
-    }
-    
-    // SSL configuration (optional)
-    sslConfig: {
-      enabled: false
-      certificateName: 'ssl-cert'
-      keyVaultSecretId: '${keyVault.outputs.uri}secrets/ssl-certificate'
-    }
-    
-    // Application Gateway configuration
-    skuConfig: {
-      name: 'WAF_v2'
-      tier: 'WAF_v2'
-      capacity: {
-        minCapacity: 1
-        maxCapacity: 3
-      }
-    }
-    
-    // WAF settings
-    wafConfig: {
-      enabled: true
-      firewallMode: 'Prevention'
-      ruleSetType: 'OWASP'
-      ruleSetVersion: '3.2'
-    }
-  }
-  dependsOn: [
-    app
-    hubNetwork
-  ]
-}
-
-// Load balancer outputs
-output loadBalancerEndpoints object = loadBalancer.outputs.webSocketEndpoints
-output frontendPublicUrl string = loadBalancer.outputs.frontendUrl
-*/
-

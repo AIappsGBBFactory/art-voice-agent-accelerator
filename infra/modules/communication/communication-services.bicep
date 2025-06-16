@@ -1,16 +1,42 @@
+@description('The name of the Communication Service resource')
 param communicationServiceName string
-param keyVaultResourceId string
-param dataLocation string = 'United States' // Default data location, can be overridden
-param connectionStringSecretName string = 'acs-connection-string'
-param primaryKeySecretName string = 'acs-primary-key'
 
-// Add diagnostic settings parameter
-@description('Diagnostic settings for the Communication Service')
+@description('The data location for the Communication Service')
+@allowed([
+  'Africa'
+  'Asia Pacific'
+  'Australia'
+  'Brazil'
+  'Canada'
+  'Europe'
+  'France'
+  'Germany'
+  'India'
+  'Japan'
+  'Korea'
+  'Norway'
+  'Switzerland'
+  'UAE'
+  'UK'
+  'United States'
+])
+param dataLocation string = 'United States'
+
+@description('Diagnostic settings configuration for the Communication Service')
 param diagnosticSettings object = {}
 
+@description('Tags to apply to the Communication Service resource')
+param tags object = {}
+
+// ============================================================================
+// COMMUNICATION SERVICE
+// ============================================================================
+
+@description('Azure Communication Services resource')
 resource communicationService 'Microsoft.Communication/CommunicationServices@2023-04-01-preview' = {
   name: communicationServiceName
-  location: 'global'
+  location: 'global' // Communication Services is always deployed globally
+  tags: tags
   identity: {
     type: 'SystemAssigned'
   }
@@ -19,10 +45,13 @@ resource communicationService 'Microsoft.Communication/CommunicationServices@202
   }
 }
 
+// ============================================================================
+// DIAGNOSTIC SETTINGS
+// ============================================================================
 
-// Add diagnostic settings resource
+@description('Diagnostic settings for the Communication Service')
 resource communicationServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(diagnosticSettings)) {
-  name: 'diagnostics'
+  name: 'default'
   scope: communicationService
   properties: {
     workspaceId: diagnosticSettings.?workspaceResourceId
@@ -52,39 +81,29 @@ resource communicationServiceDiagnostics 'Microsoft.Insights/diagnosticSettings@
   }
 }
 
+// ============================================================================
+// OUTPUTS
+// ============================================================================
 
-
-// Reference existing Key Vault
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
-  name: last(split(keyVaultResourceId, '/'))
-}
-
-// Store connection string in Key Vault
-resource connectionStringSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: connectionStringSecretName
-  properties: {
-    value: communicationService.listKeys().primaryConnectionString
-  }
-}
-
-// Store primary key in Key Vault
-resource primaryKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: primaryKeySecretName
-  properties: {
-    value: communicationService.listKeys().primaryKey
-  }
-}
-
+@description('The endpoint URL of the Communication Service')
 output endpoint string = 'https://${communicationService.properties.hostName}'
-output communicationServiceName string = communicationServiceName
-output location string = communicationService.location
-output connectionStringSecretName string = connectionStringSecretName
-output primaryKeySecretName string = primaryKeySecretName
-output keyVaultUri string = keyVault.properties.vaultUri
 
-output primaryKeySecretUri string = primaryKeySecret.properties.secretUriWithVersion
-output connectionStringSecretUri string = connectionStringSecret.properties.secretUriWithVersion
+@description('The name of the Communication Service resource')
+output communicationServiceName string = communicationService.name
+
+@description('The location where the Communication Service is deployed')
+output location string = communicationService.location
+
+@description('The primary key for the Communication Service')
+#disable-next-line outputs-should-not-contain-secrets
+output primaryKey string = communicationService.listKeys().primaryKey
+
+@description('The primary connection string for the Communication Service')
+#disable-next-line outputs-should-not-contain-secrets
+output connectionString string = communicationService.listKeys().primaryConnectionString
+
+@description('The principal ID of the system-assigned managed identity')
 output managedIdentityPrincipalId string = communicationService.identity.principalId
+
+@description('The client ID of the system-assigned managed identity')
 output managedIdentityClientId string = communicationService.identity.tenantId

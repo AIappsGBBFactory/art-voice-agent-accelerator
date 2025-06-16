@@ -119,7 +119,7 @@ module easyAuthAppReg '../identity/appregistration.bicep' = if (enableEasyAuth) 
     webAppEndpoint: 'https://${containerApp.outputs.fqdn}'
     webAppIdentityId: empty(userAssignedResourceId) 
       ? (containerApp.outputs.?systemAssignedMIPrincipalId ?? '') 
-      : userAssignedResourceId
+      : userAssignedIdentity.properties.clientId
     issuer: issuer
   }
 }

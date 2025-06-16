@@ -210,7 +210,41 @@ type SubnetConfig = {
   addressPrefix: string
   serviceEndpoints: []? // Optional service endpoints for the subnet
   delegations: SubnetDelegation[]?
-  securityRules: []?
+  securityRules: SecurityRule[]?
+}
+
+@export()
+@description('Network security rule configuration')
+type SecurityRule = {
+  @description('Security rule name')
+  name: string
+  
+  @description('Security rule properties')
+  properties: {
+    @description('Rule priority')
+    priority: int
+    
+    @description('Protocol')
+    protocol: ('Tcp' | 'Udp' | 'Icmp' | '*')
+    
+    @description('Access type')
+    access: ('Allow' | 'Deny')
+    
+    @description('Direction')
+    direction: ('Inbound' | 'Outbound')
+    
+    @description('Source address prefix')
+    sourceAddressPrefix: string
+    
+    @description('Source port range')
+    sourcePortRange: string
+    
+    @description('Destination address prefix')
+    destinationAddressPrefix: string
+    
+    @description('Destination port range')
+    destinationPortRange: string
+  }
 }
 
 @export()
