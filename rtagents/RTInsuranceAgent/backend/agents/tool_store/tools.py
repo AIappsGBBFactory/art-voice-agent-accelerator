@@ -43,7 +43,6 @@ record_fnol_schema: Dict[str, Any] = {
             "collision":          {"type": "boolean", "description": "Was the vehicle moving when damage occurred?"},
             "bodily_injury":      {"type": "boolean", "description": "Were any injuries sustained?"},
             "property_damage":    {"type": "boolean", "description": "Any property damage beyond the insured vehicle?"},
-            "glass_damage":       {"type": "boolean", "description": "Was any glass broken?"},
             "comprehensive_loss": {"type": "boolean", "description": "Non-collision or parked-vehicle loss?"},
             "narrative":          {
                 "type": "string",

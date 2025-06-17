@@ -1,11 +1,12 @@
 import os
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, List
 
 import azure.cognitiveservices.speech as speechsdk
 from azure.cognitiveservices.speech import SpeechRecognitionResult
 from dotenv import load_dotenv
 
 from utils.ml_logging import get_logger
+import json
 
 # Set up logger
 logger = get_logger()
@@ -96,131 +97,126 @@ class StreamingSpeechRecognizer:
 
     def __init__(
         self,
+        *,
         key: Optional[str] = None,
         region: Optional[str] = None,
+        candidate_languages: Optional[List[str]] = None,
         language: str = "en-US",
         vad_silence_timeout_ms: int = 1200,
     ):
         self.key = key or os.getenv("AZURE_SPEECH_KEY")
         self.region = region or os.getenv("AZURE_SPEECH_REGION")
+
         self.language = language
+        self.candidate_languages = candidate_languages or ["en-US", "es-ES", "fr-FR"]
         self.vad_silence_timeout_ms = vad_silence_timeout_ms
 
-        # These callbacks can be set by the user of this class
-        self.partial_callback: Optional[Callable[[str], None]] = None
-        self.final_callback: Optional[Callable[[str], None]] = None
+        # user callbacks → (text:str, lang_code:str)
+        self.partial_callback: Optional[Callable[[str, str], None]] = None
+        self.final_callback: Optional[Callable[[str, str], None]] = None
 
-        # This will hold the actual SpeechRecognizer instance
         self.speech_recognizer: Optional[speechsdk.SpeechRecognizer] = None
 
-    def set_partial_result_callback(self, callback: Callable[[str], None]) -> None:
-        """
-        Set a callback function to handle partial (in-progress) recognized text.
-        The callback should accept a single string argument.
-        """
+    def set_partial_result_callback(
+        self, callback: Callable[[str, str], None]
+    ) -> None:
+        """Set callback invoked on every partial hypothesis."""
         self.partial_callback = callback
 
-    def set_final_result_callback(self, callback: Callable[[str], None]) -> None:
-        """
-        Set a callback function to handle finalized recognized text.
-        The callback should accept a single string argument.
-        """
+    def set_final_result_callback(
+        self, callback: Callable[[str, str], None]
+    ) -> None:
+        """Set callback invoked on every finalized utterance."""
         self.final_callback = callback
 
     def start(self) -> None:
-        """
-        Start continuous speech recognition using asynchronous methods to reduce latency.
-        This method sets up the speech configuration, attaches event handlers,
-        and initializes asynchronous recognition.
-        """
-        logger.info(
-            "Starting continuous speech recognition with VAD using asynchronous call..."
-        )
-        logger.debug(
-            "Configuration: key=%s, region=%s, language=%s, VAD timeout=%d ms",
-            self.key,
-            self.region,
-            self.language,
-            self.vad_silence_timeout_ms,
+        """Start continuous recognition with continuous language-ID."""
+        logger.info("Starting continuous recognition …")
+
+        speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+
+        # switch to continuous LID mode
+        speech_config.set_property(
+            speechsdk.PropertyId.SpeechServiceConnection_LanguageIdMode, "Continuous"
         )
 
-        # Set up the Speech SDK configuration with the default recognition language.
-        speech_config = speechsdk.SpeechConfig(
-            subscription=self.key, region=self.region
+        audio_cfg = speechsdk.audio.AudioConfig(use_default_microphone=True)
+
+        lid_cfg = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
+            languages=self.candidate_languages
         )
-        speech_config.speech_recognition_language = self.language
 
-        # Use the default microphone as audio input.
-        audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
-
-        # Initialize the SpeechRecognizer.
         self.speech_recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config, audio_config=audio_config
+            speech_config=speech_config,
+            auto_detect_source_language_config=lid_cfg,
+            audio_config=audio_cfg,
         )
 
-        # Configure server-side Voice Activity Detection (silence timeout).
+        # server-side VAD
         self.speech_recognizer.properties.set_property(
             speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
             str(self.vad_silence_timeout_ms),
         )
 
-        # Attach event handlers if callbacks have been set.
+        # attach events
         if self.partial_callback:
             self.speech_recognizer.recognizing.connect(self._on_recognizing)
         if self.final_callback:
             self.speech_recognizer.recognized.connect(self._on_recognized)
 
-        # Attach additional handlers for cancellation and session stop events.
         self.speech_recognizer.canceled.connect(self._on_canceled)
         self.speech_recognizer.session_stopped.connect(self._on_session_stopped)
 
-        # Start the continuous recognition asynchronously and wait for initialization.
-        start_future = self.speech_recognizer.start_continuous_recognition_async()
-        start_future.get()  # Blocks until the asynchronous initialization completes.
-        logger.info("Continuous speech recognition started.")
+        self.speech_recognizer.start_continuous_recognition_async().get()
+        logger.info(
+            "Recognition started with languages=%s (fallback=%s)",
+            self.candidate_languages,
+            self.language,
+        )
 
     def stop(self) -> None:
-        """
-        Stop the continuous speech recognition asynchronously.
-        """
+        """Gracefully stop recognition."""
         if self.speech_recognizer:
-            logger.info(
-                "Stopping continuous speech recognition using asynchronous call..."
-            )
-            stop_future = self.speech_recognizer.stop_continuous_recognition_async()
-            stop_future.get()  # Blocks until the recognition process has fully stopped.
-            logger.info("Continuous speech recognition stopped.")
+            logger.info("Stopping recognition …")
+            self.speech_recognizer.stop_continuous_recognition_async().get()
+            logger.info("Recognition stopped.")
 
+    @staticmethod
+    def _extract_lang(evt) -> str:
+        """
+        Return detected language code regardless of LID mode.
+
+        Priority:
+        1. evt.result.language   (direct field, works in Continuous)
+        2. AutoDetectSourceLanguageResult property
+        3. fallback ''  (caller will switch to default)
+        """
+        if getattr(evt.result, "language", None):
+            return evt.result.language
+
+        prop = evt.result.properties.get(
+            speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult,
+            "")
+        if prop:
+            return prop
+
+        return ""
+
+    # callbacks → wrap user callbacks
     def _on_recognizing(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
-        """
-        Internal handler for partial recognition events. Forwards the partial text
-        to the user-provided partial callback.
-        """
-        text = evt.result.text
-        if text and self.partial_callback:
-            logger.debug("Partial recognized text: %s", text)
-            self.partial_callback(text)
+        txt = evt.result.text
+        if txt and self.partial_callback:
+            lang = self._extract_lang(evt) or self.language
+            self.partial_callback(txt, lang)
 
     def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
-        """
-        Internal handler for final recognition events. Forwards the final text
-        to the user-provided final callback.
-        """
-        text = evt.result.text
-        if text and self.final_callback:
-            logger.debug("Final recognized text: %s", text)
-            self.final_callback(text)
+        txt = evt.result.text
+        if txt and self.final_callback:
+            lang = self._extract_lang(evt) or self.language
+            self.final_callback(txt, lang)
 
     def _on_canceled(self, evt: speechsdk.SessionEventArgs) -> None:
-        logger.warning("Speech recognition canceled: %s", evt)
-        if evt.result is not None and evt.result.cancellation_details is not None:
-            details = evt.result.cancellation_details
-            logger.warning(f"Cancellation reason: {details.reason}")
-            logger.warning(f"Cancellation error code: {details.error_code}")
-            logger.warning(f"Cancellation message: {details.error_details}")
+        logger.warning("Recognition canceled: %s", evt)
 
     def _on_session_stopped(self, evt: speechsdk.SessionEventArgs) -> None:
-        """
-        Internal handler for session-stopped events, indicating the end of a recognition session.
-        """
-        logger.info("Speech recognition session stopped: %s", evt)
+        logger.info("Session stopped: %s", evt)

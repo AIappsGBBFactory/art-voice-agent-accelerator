@@ -39,15 +39,7 @@ class AuthenticateArgs(TypedDict):
 async def authenticate_caller(args: AuthenticateArgs) -> Dict[str, Any]:
     """
     Validates caller using (name, zip, last-4 of SSN / policy / claim / phone).
-
-    Returns
-    -------
-    {
-        "authenticated": bool,
-        "message": str,
-        "policy_id": str | None,
-        "caller_name": str | None
-    }
+    Provides specific feedback if authentication fails.
     """
     full_name = args["full_name"].strip().title()
     zip_code  = args["zip_code"].strip()
@@ -65,12 +57,10 @@ async def authenticate_caller(args: AuthenticateArgs) -> Dict[str, Any]:
             "caller_name": None,
         }
 
-    # last-4 may match ANY of the stored identifiers
     last4_fields: List[str] = ["ssn4", "policy4", "claim4", "phone4"]
     last4_match = last4 in [rec[f] for f in last4_fields]
     zip_match = rec["zip"] == zip_code
 
-    # Approve if either (name + zip) or (name + last-4) matches
     if zip_match or last4_match:
         logger.info(f"✅ Authentication succeeded for {full_name}")
         return {
@@ -79,11 +69,18 @@ async def authenticate_caller(args: AuthenticateArgs) -> Dict[str, Any]:
             "policy_id": rec["policy_id"],
             "caller_name": full_name,
         }
+
+    if not zip_match and not last4_match:
+        failure_reason = f"ZIP '{zip_code}' and last-4 '{last4}' did not match our records for {full_name}."
+    elif not zip_match:
+        failure_reason = f"ZIP '{zip_code}' did not match our records for {full_name}."
     else:
-        logger.warning(f"❌ Neither ZIP nor last-4 matched for {full_name}")
-        return {
-            "authenticated": False,
-            "message": "Authentication failed – neither ZIP nor last-4 digits matched.",
-            "policy_id": None,
-            "caller_name": None,
-        }
+        failure_reason = f"Last-4 '{last4}' did not match any valid IDs for {full_name}."
+
+    logger.warning(f"❌ {failure_reason}")
+    return {
+        "authenticated": False,
+        "message": f"Authentication failed – {failure_reason}",
+        "policy_id": None,
+        "caller_name": None,
+    }

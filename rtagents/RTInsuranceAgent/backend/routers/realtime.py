@@ -23,6 +23,7 @@ from rtagents.RTInsuranceAgent.backend.latency.latency_tool import LatencyTool
 from helpers import check_for_stopwords, receive_and_filter
 from rtagents.RTInsuranceAgent.backend.orchestration.orchestrator import route_turn
 from shared_ws import send_tts_audio, broadcast_message
+from rtagents.RTInsuranceAgent.backend.settings import GREETING
 from rtagents.RTInsuranceAgent.backend.postcall.push import build_and_flush
 from utils.ml_logging import get_logger
 
@@ -68,11 +69,7 @@ async def realtime_ws(ws: WebSocket):
         ws.state.cm = cm
         ws.state.session_id = session_id
         ws.state.lt = LatencyTool(cm)
-        greeting = (
-            "Hello from XYMZ Insurance! Before I can assist you, "
-            "I need to verify your identity. "
-            "Could you please provide your full name, and either the last 4 digits of your Social Security Number or your ZIP code?"
-        )
+        greeting = GREETING
         await ws.send_text(json.dumps({"type": "status", "message": greeting}))
         await send_tts_audio(greeting, ws, latency_tool=ws.state.lt)
         await broadcast_message(ws.app.state.clients, greeting, "Assistant")

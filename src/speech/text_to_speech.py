@@ -4,6 +4,10 @@ import azure.cognitiveservices.speech as speechsdk
 from dotenv import load_dotenv
 
 from utils.ml_logging import get_logger
+from typing import Optional, Dict, List, Callable
+import html 
+from langdetect import detect, LangDetectException
+import re
 
 # Load environment variables from a .env file if present
 load_dotenv()
@@ -11,6 +15,65 @@ load_dotenv()
 # Initialize logger
 logger = get_logger()
 
+_SENTENCE_END = re.compile(r"([.!?；？！。]+|\n)")
+
+def split_sentences(text: str) -> List[str]:
+    """Very small sentence splitter that keeps delimiters."""
+    parts, buf = [], []
+    for ch in text:
+        buf.append(ch)
+        if _SENTENCE_END.match(ch):
+            parts.append("".join(buf).strip())
+            buf.clear()
+    if buf:
+        parts.append("".join(buf).strip())
+    return parts
+
+def auto_style(lang_code: str) -> Dict[str, str]:
+    """Return style / rate tweaks per language family."""
+    if lang_code.startswith(("es", "fr", "it")):
+        return {"style": "chat", "rate": "-10%"}
+    if lang_code.startswith("en"):
+        return {"style": "chat"}
+    return {}
+
+def ssml_voice_wrap(voice: str,
+                    default_lang: str,
+                    sentences: List[str],
+                    sanitizer: Callable[[str], str]) -> str:
+    """Build one SSML doc with a single <voice> tag for efficiency."""
+    body = []
+    for seg in sentences:
+        try:
+            lang = detect(seg)
+        except LangDetectException:
+            lang = default_lang
+        attrs = auto_style(lang)
+        inner  = sanitizer(seg)
+
+        # optional prosody
+        if rate := attrs.get("rate"):
+            inner = f'<prosody rate="{rate}">{inner}</prosody>'
+
+        # optional style
+        if style := attrs.get("style"):
+            inner = f'<mstts:express-as style="{style}">{inner}</mstts:express-as>'
+
+        # optional language switch
+        if lang != default_lang:
+            inner = f'<lang xml:lang="{lang}">{inner}</lang>'
+
+        body.append(inner)
+
+    joined = "".join(body)
+    return (
+        '<speak version="1.0" '
+        'xmlns="http://www.w3.org/2001/10/synthesis" '
+        'xmlns:mstts="https://www.w3.org/2001/mstts" '
+        f'xml:lang="{default_lang}">'
+        f'<voice name="{voice}">{joined}</voice>'
+        '</speak>'
+    )
 
 class SpeechSynthesizer:
     def __init__(
@@ -19,15 +82,18 @@ class SpeechSynthesizer:
         region: str = None,
         language: str = "en-US",
         voice: str = "en-US-JennyMultilingualNeural",
+        format: speechsdk.SpeechSynthesisOutputFormat = speechsdk.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm,
+
     ):
         # Retrieve Azure Speech credentials from parameters or environment variables
         self.key = key or os.getenv("AZURE_SPEECH_KEY")
         self.region = region or os.getenv("AZURE_SPEECH_REGION")
-        self.language = language
+        self.default_lang  = language
         self.voice = voice
+        self.format = format
 
         # Initialize the speech synthesizer for speaker playback
-        self.speaker_synthesizer = self._create_speaker_synthesizer()
+        self._speaker = self._create_synth()
 
     def _create_speech_config(self):
         """
@@ -36,7 +102,6 @@ class SpeechSynthesizer:
         speech_config = speechsdk.SpeechConfig(
             subscription=self.key, region=self.region
         )
-        speech_config.speech_synthesis_language = self.language
         speech_config.speech_synthesis_voice_name = self.voice
         # Set the output format to 24kHz 16-bit mono PCM WAV
         speech_config.set_speech_synthesis_output_format(
@@ -53,26 +118,58 @@ class SpeechSynthesizer:
         return speechsdk.SpeechSynthesizer(
             speech_config=speech_config, audio_config=audio_config
         )
+    
+    @staticmethod
+    def _sanitize(text: str) -> str:
+        """
+        Escape XML-significant characters (&, <, >, ", ') so the text
+        can be inserted inside an SSML <prosody> block safely.
+        """
+        return html.escape(text, quote=True)
 
     def start_speaking_text(self, text: str) -> None:
         """
-        Asynchronously play synthesized speech through the server's default speaker.
+        Queue `text` for playback on the server speaker.
+
+        • If ≤100 chars AND same language as default → quick plain mode
+        • Otherwise → build multi-sentence SSML with per-sentence lang/style
         """
         try:
-            logger.info(f"[🔊] Speaking text (server speaker): {text[:30]}...")
-            self.speaker_synthesizer.start_speaking_text_async(text)
-        except Exception as e:
-            logger.error(f"[❗] Error starting speech synthesis: {e}")
+            text = text.strip()
+            if not text:
+                return
+
+            if (len(text) <= 100 and
+                detect(text).startswith(self.default_lang[:2])):
+                self._speaker.start_speaking_text_async(text)
+                logger.debug("Quick TTS (plain) – %d chars", len(text))
+                return
+
+            # SSML path
+            sentences = split_sentences(text)
+            ssml = ssml_voice_wrap(self.voice, self.default_lang,
+                                   sentences, self._sanitize)
+            self._speaker.start_speaking_ssml_async(ssml)
+            logger.debug("SSML TTS – %d sentences", len(sentences))
+
+        except Exception as exc:
+            logger.error("TTS failed: %s", exc, exc_info=False)
 
     def stop_speaking(self) -> None:
-        """
-        Stop any ongoing speech synthesis playback on the server's speaker.
-        """
+        """Stop current playback (if any)."""
         try:
-            logger.info("[🛑] Stopping speech synthesis on server speaker...")
-            self.speaker_synthesizer.stop_speaking_async()
-        except Exception as e:
-            logger.error(f"[❗] Error stopping speech synthesis: {e}")
+            self._speaker.stop_speaking_async()
+        except Exception as exc:
+            logger.error("stop_speaking error: %s", exc, exc_info=False)
+
+    def _create_synth(self):
+        cfg = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+        cfg.speech_synthesis_voice_name = self.voice
+        cfg.speech_synthesis_language = self.default_lang
+        cfg.set_speech_synthesis_output_format(self.format)
+
+        audio_cfg = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
+        return speechsdk.SpeechSynthesizer(cfg, audio_cfg)
 
     def synthesize_speech(self, text: str) -> bytes:
         """
@@ -97,10 +194,10 @@ class SpeechSynthesizer:
 
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
                 audio_data_stream = speechsdk.AudioDataStream(result)
-                wav_bytes = audio_data_stream.read_data()  # ✅ USE read_data()
+                wav_bytes = audio_data_stream.read_data()
                 return bytes(
                     wav_bytes
-                )  # ✅ Ensure it's converted from bytearray to bytes
+                ) 
             else:
                 logger.error(f"Speech synthesis failed: {result.reason}")
                 return b""

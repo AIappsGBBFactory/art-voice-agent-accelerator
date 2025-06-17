@@ -31,6 +31,7 @@ from rtagents.RTInsuranceAgent.backend.orchestration.conversation_state import (
 from src.aoai.manager_transcribe import AudioTranscriber
 from helpers import check_for_stopwords
 from rtagents.RTInsuranceAgent.backend.latency.latency_tool import LatencyTool
+from rtagents.RTInsuranceAgent.backend.settings import GREETING
 from rtagents.RTInsuranceAgent.backend.orchestration.orchestrator import route_turn
 from shared_ws import (
     broadcast_message,
@@ -172,12 +173,7 @@ async def callbacks(request: Request):
 
                 await cm.set_live_context_value(redis_mgr, "greeted", True)
 
-                greeting = (
-                    "Hello, thank you for calling XMYX Insurance Company. "
-                    "Before I can assist you, let's verify your identity. "
-                    "How may I address you today? Please state your full name clearly after the tone, "
-                    "and let me know how I can help you with your insurance needs."
-                )
+                greeting = GREETING
                 try:
                     text_source = TextSource(
                         text=greeting,

@@ -3,12 +3,13 @@ import os
 from typing import Any, Dict, List, Optional
 
 import pymongo
+from pathlib import Path
 from dotenv import load_dotenv
+import yaml
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
 # Initialize logging
 logger = logging.getLogger(__name__)
-
 
 class CosmosDBMongoCoreManager:
     def __init__(

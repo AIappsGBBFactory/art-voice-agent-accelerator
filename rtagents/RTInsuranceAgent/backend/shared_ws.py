@@ -24,7 +24,6 @@ from rtagents.RTInsuranceAgent.backend.services.acs.acs_helpers import (
 )
 from typing import Optional, Set
 
-
 async def send_tts_audio(
     text: str, ws: WebSocket, latency_tool: Optional[LatencyTool] = None
 ) -> None:
