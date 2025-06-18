@@ -3,12 +3,12 @@ services:
   frontend:
     platform: linux/amd64
     build:
-      context: ./rtagents/RTInsuranceAgent/frontend
+      context: ./rtagents/RTAgent/frontend
       # context: ./usecases/browser_RTMedAgent/frontend
       dockerfile: Dockerfile
       
     env_file:
-      - ./rtagents/RTInsuranceAgent/frontend/.env
+      - ./rtagents/RTAgent/frontend/.env
     ports:
       - "5173:5173"
     
@@ -19,7 +19,7 @@ services:
     platform: linux/amd64
     build:
       context: ./
-      dockerfile: ./rtagents/RTInsuranceAgent/backend/Dockerfile
+      dockerfile: ./rtagents/RTAgent/backend/Dockerfile
       # dockerfile: ./usecases/browser_RTMedAgent/backend/Dockerfile
     env_file:
       - ./.env
