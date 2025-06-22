@@ -248,6 +248,7 @@ class StreamingSpeechRecognizerFromBytes:
 
         self.final_callback: Optional[Callable[[str, str], None]] = None
         self.partial_callback: Optional[Callable[[str, str], None]] = None
+        self.cancel_callback: Optional[Callable[[speechsdk.SessionEventArgs], None]] = None
 
         self.push_stream = None
         self.speech_recognizer = None
@@ -257,6 +258,33 @@ class StreamingSpeechRecognizerFromBytes:
 
     def set_final_result_callback(self, callback: Callable[[str, str], None]) -> None:
         self.final_callback = callback
+
+    def set_cancel_callback(self, callback: Callable[[speechsdk.SessionEventArgs], None]) -> None:
+        """
+        Set a callback to handle cancellation events.
+        This can be used to log or handle errors when recognition is canceled.
+        """
+        self.cancel_callback = callback
+
+    def prepare_stream(self) -> None:
+        """
+        Prepare the audio stream for recognition.
+        This method initializes the PushAudioInputStream based on the specified audio format.
+        """
+        if self.audio_format == "pcm":
+            stream_format = speechsdk.audio.AudioStreamFormat(
+                samples_per_second=16000,
+                bits_per_sample=16,
+                channels=1
+            )
+        elif self.audio_format == "any":
+            stream_format = speechsdk.audio.AudioStreamFormat(
+                compressed_stream_format=speechsdk.AudioStreamContainerFormat.ANY
+            )
+        else:
+            raise ValueError(f"Unsupported audio_format: {self.audio_format}")
+
+        self.push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
 
     def start(self) -> None:
         logger.info("Starting recognition from byte stream...")
@@ -312,12 +340,77 @@ class StreamingSpeechRecognizerFromBytes:
             self.speech_recognizer.recognizing.connect(self._on_recognizing)
         if self.final_callback:
             self.speech_recognizer.recognized.connect(self._on_recognized)
+        if self.cancel_callback:
+            self.speech_recognizer.canceled.connect(self.cancel_callback)
 
         self.speech_recognizer.canceled.connect(self._on_canceled)
         self.speech_recognizer.session_stopped.connect(self._on_session_stopped)
 
         self.speech_recognizer.start_continuous_recognition_async().get()
+        # self.speech_recognizer.start_continuous_recognition()
         logger.info("Recognition started.")
+
+    def prepare_start(self) -> None:
+        logger.info("Starting recognition from byte stream...")
+
+        speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+
+        # switch to continuous LID mode
+        speech_config.set_property(
+            speechsdk.PropertyId.SpeechServiceConnection_LanguageIdMode, "Continuous"
+        )
+        lid_cfg = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
+            languages=self.candidate_languages
+        )
+
+        speech_config.set_property(
+            speechsdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold,
+            "1"
+        )
+
+        # PCM format: for raw PCM/linear audio
+        if self.audio_format == "pcm":
+            stream_format = speechsdk.audio.AudioStreamFormat(
+                samples_per_second=16000,
+                bits_per_sample=16,
+                channels=1
+            )
+        # ANY format: for browser/native/mobile compressed formats (webm, ogg, mp3, etc)
+        elif self.audio_format == "any":
+            stream_format = speechsdk.audio.AudioStreamFormat(
+                compressed_stream_format=speechsdk.AudioStreamContainerFormat.ANY
+            )
+        else:
+            raise ValueError(f"Unsupported audio_format: {self.audio_format}")
+
+        self.push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
+        audio_config = speechsdk.audio.AudioConfig(stream=self.push_stream)
+
+        self.speech_recognizer = speechsdk.SpeechRecognizer(
+            speech_config=speech_config,
+            audio_config=audio_config,
+            auto_detect_source_language_config=lid_cfg
+        )
+
+        self.speech_recognizer.properties.set_property(
+            speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
+            str(self.vad_silence_timeout_ms)
+        )
+        # self.speech_recognizer.properties.set_property(
+        #     speechsdk.PropertyId.Speech_SegmentationStrategy, "Semantic"
+        # )
+
+        if self.partial_callback:
+            self.speech_recognizer.recognizing.connect(self._on_recognizing)
+        if self.final_callback:
+            self.speech_recognizer.recognized.connect(self._on_recognized)
+        if self.cancel_callback:
+            self.speech_recognizer.canceled.connect(self.cancel_callback)
+
+        self.speech_recognizer.canceled.connect(self._on_canceled)
+        self.speech_recognizer.session_stopped.connect(self._on_session_stopped)
+
+        logger.info("Recognition ready to start.")
 
     def write_bytes(self, audio_chunk: bytes) -> None:
         if self.push_stream:
@@ -326,6 +419,7 @@ class StreamingSpeechRecognizerFromBytes:
     def stop(self) -> None:
         if self.speech_recognizer:
             self.speech_recognizer.stop_continuous_recognition_async().get()
+            # self.speech_recognizer.stop_continuous_recognition()
             logger.info("Recognition stopped.")
 
     def close_stream(self) -> None:

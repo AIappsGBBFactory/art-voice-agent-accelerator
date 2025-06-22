@@ -312,7 +312,7 @@ class SpeechSynthesizer:
         #     </voice>
         # </speak>"""
 
-        print("TTS SSML:", ssml)
+        # print("TTS SSML:", ssml)
 
         synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
         result = synthesizer.speak_ssml_async(ssml).get()

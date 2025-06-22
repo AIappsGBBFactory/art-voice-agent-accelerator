@@ -244,6 +244,7 @@ class ACSHandler:
             f"\tParticipants updated for call {cid}: {participants_info}",
             "System",
         )
+                
 
     @staticmethod
     async def _handle_call_connected(
@@ -259,9 +260,10 @@ class ACSHandler:
         """Handle call connected event and play greeting."""
         await broadcast_message(clients, f"Call Connected: {cid}", "System")
 
-        # If using real-time bidirectional media streaming, start speech recognition
-        if stream_mode == "media":
-            stt_client.start()
+        # # If using real-time bidirectional media streaming, start speech recognition
+        # if stream_mode == "media":
+
+        #     stt_client.start()
 
         # If using real-time transcription, play greeting
         if stream_mode == "transcription":

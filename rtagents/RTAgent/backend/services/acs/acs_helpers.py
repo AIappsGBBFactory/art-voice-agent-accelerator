@@ -171,12 +171,7 @@ async def send_pcm_frames(
                 "StopAudio": None
             }
 
-            print(f"Payload size: {sys.getsizeof(json.dumps(payload))} bytes")
-            await ws.send_json({
-                "kind": "AudioData",
-                "AudioData": {"data": b64},
-                "StopAudio": None
-            })
+            await ws.send_json(payload)
             # await asyncio.sleep(0.02)
 
     except asyncio.CancelledError:

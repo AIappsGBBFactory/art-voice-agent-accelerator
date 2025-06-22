@@ -63,6 +63,7 @@ async def send_response_to_acs(
 
     if latency_tool:
         latency_tool.start("tts")
+        latency_tool.start("tts:synthesis")
     # synth: SpeechSynthesizer = ws.app.state.tts_client
     # pcm = synth.synthesize_to_base64_frames(text, sample_rate=16000)
     # coro = send_pcm_frames(ws, pcm_bytes=pcm, sample_rate=16000)
@@ -72,86 +73,93 @@ async def send_response_to_acs(
     #     if latency_tool:
     #         latency_tool.stop("tts", ws.app.state.redis)
     #     return None
-    async def stop_latency(_):
+    async def stop_latency(task):
         if latency_tool:
             latency_tool.stop("tts", ws.app.state.redis)
         ws.app.state.tts_tasks.discard(task)
 
     if stream_mode == "media":
         synth: SpeechSynthesizer = ws.app.state.tts_client
-        cm = ConversationManager.from_redis(
-            ws.headers["x-ms-call-connection-id"], 
-            ws.app.state.redis
-        )
 
-        pcm_bytes = synth.synthesize_to_pcm(text)
-        # frames = SpeechSynthesizer.split_pcm_to_base64_frames(pcm_bytes, sample_rate=16000)
+        try:
+            
+            # Add timeout and retry logic for TTS synthesis
+            pcm_bytes = synth.synthesize_to_pcm(text)
+            latency_tool.stop("tts:synthesis", ws.app.state.redis)
 
-        frame_size = 320  # 10ms @ 16kHz PCM mono for smoother streaming
 
-        for i in range(0, len(pcm_bytes), frame_size):
-            frame = pcm_bytes[i:i + frame_size]
-            if len(frame) < frame_size:
-                # Pad the last frame to maintain consistent size
-                frame = frame + b'\x00' * (frame_size - len(frame))
+        except asyncio.TimeoutError:
+            logger.error(f"TTS synthesis timed out for text: {text[:50]}...")
+            raise RuntimeError("TTS synthesis timed out")
+        except Exception as e:
+            logger.error(f"TTS synthesis failed: {e}")
+            # Try to reinitialize the synthesizer if it failed
+            # # try:
+            # #     synth = SpeechSynthesizer()
+            # #     ws.app.state.tts_client = synth
+            # #     pcm_bytes = synth.synthesize_to_pcm(text)
 
-            try:
-                if ws.client_state != WebSocketState.CONNECTED:
-                    logger.warning(f"WebSocket disconnected during TTS streaming at frame {i//frame_size}")
-                    break
-                # Check if TTS is interrupted every 8 iterations (80ms intervals)
-                # Check if TTS is interrupted every 8 iterations (80ms intervals) - non-blocking
-                if i // frame_size % 8 == 0:
-                    # Create a task to check interruption without blocking the stream
-                    interruption_task = asyncio.create_task(cm.is_tts_interrupted(ws.app.state.redis))
-                    # Check if the task completed immediately (cached result or fast Redis)
-                    if interruption_task.done():
-                        try:
-                            if interruption_task.result():
-                                logger.info("TTS interrupted, stopping media streaming.")
-                                break
-                        except Exception as e:
-                            logger.warning(f"Failed to check TTS interruption: {e}")
-                    # If not done, let it run in background and continue streaming
-                    else:
-                        # Store the task reference for cleanup if needed
-                        if not hasattr(cm, '_interruption_tasks'):
-                            cm._interruption_tasks = set()
-                        cm._interruption_tasks.add(interruption_task)
-                        interruption_task.add_done_callback(lambda t: cm._interruption_tasks.discard(t) if hasattr(cm, '_interruption_tasks') else None)
-                b64 = base64.b64encode(frame).decode("utf-8")
-                if ws.client_state != WebSocketState.CONNECTED:
-                    break
-                await ws.send_json({
-                    "kind": "AudioData",
-                    "AudioData": {"data": b64}
-                })
-                await asyncio.sleep(0.01)  # 10ms delay for smoother 16kHz audio streaming
-            except Exception as e:
-                logger.error(f"Failed to send audio frame {i//frame_size}: {e}")
-                logger.error(f"WebSocket state: {ws.client_state}")
-                if "connection" in str(e).lower() or "closed" in str(e).lower():
-                    logger.warning("WebSocket connection lost during TTS streaming")
-                    break
-                if ws.client_state != WebSocketState.CONNECTED:
-                    logger.warning("WebSocket connection lost, breaking TTS loop")
-                    break
-                if hasattr(e, 'code') and e.code == 1006:
-                    logger.warning("WebSocket closed abnormally (1006), breaking TTS loop")
-                    break
-                # Continue with next frame for other errors
-                continue
-        # try:
-        #     if ws.client_state != WebSocketState.CONNECTED:
-        #         logger.warning("WebSocket no longer connected, stopping TTS.")
-        #         return
-        #     await task
-        # except asyncio.CancelledError:
-        #     logger.info("TTS task was cancelled cleanly.")
-        # except Exception as e:
-        #     logger.warning(f"TTS task failed: {e}")
-        # pcm_bytes_array = synth.synthesize_to_base64_frames(text, sample_rate=16000)
-        # await send_pcm_frames(ws, b64_frames=pcm_bytes_array, sample_rate=16000)
+            # # except Exception as retry_error:
+            # #     logger.error(f"TTS retry also failed: {retry_error}")
+            # #     raise RuntimeError(f"TTS failed after retry: {retry_error}")
+        frames = SpeechSynthesizer.split_pcm_to_base64_frames(pcm_bytes, sample_rate=16000)
+
+        for frame in frames:
+            await ws.send_json({
+                "kind": "AudioData",
+                "AudioData": {"data": frame},
+                "StopAudio": None
+            })
+        
+        if latency_tool:
+            latency_tool.stop("tts", ws.app.state.redis)
+
+        # # frame_size = 320  # 10ms @ 16kHz PCM mono for smoother streaming
+
+        # # for i in range(0, len(pcm_bytes), frame_size):
+        # #     frame = pcm_bytes[i:i + frame_size]
+        # #     if len(frame) < frame_size:
+        # #         frame = frame + b'\x00' * (frame_size - len(frame))
+
+        # #     try:
+        # #         if ws.client_state != WebSocketState.CONNECTED or ws.application_state != WebSocketState.CONNECTED:
+        # #             logger.warning(f"WebSocket disconnected during TTS streaming at frame {i//frame_size}")
+        # #             break
+
+        # #         # Check the in-memory flag instead of querying Redis
+        # #         # interrupted = ws.state.cm.is_tts_interrupted()
+        # #         # if interrupted and interrupted != "false":  # Handle both boolean True and truthy strings
+        # #         #     logger.info("TTS interrupted, stopping media streaming.")
+        # #         #     await ws.send_json({
+        # #         #         "Kind": "StopAudio",
+        # #         #         "AudioData": None,
+        # #         #         "StopAudio": {}
+        # #         #     })
+        # #         #     break
+
+        # #         b64 = base64.b64encode(frame).decode("utf-8")
+        # #         await ws.send_json({
+        # #             "kind": "AudioData",
+        # #             "AudioData": {"data": b64}
+        # #         })
+        # #         # Small yield to allow barge-in detection and other tasks
+        # #         # await asyncio.sleep(0.005)  # 5ms - balance between streaming speed and responsiveness
+        # #     except Exception as e:
+        # #         if ws.application_state != WebSocketState.CONNECTED:
+        # #             logger.warning(f"WebSocket disconnected during TTS streaming: {e}")
+        # #             break
+        # #         continue
+        # # try:
+        # #     if ws.client_state != WebSocketState.CONNECTED:
+        # #         logger.warning("WebSocket no longer connected, stopping TTS.")
+        # #         return
+        # #     await task
+        # # except asyncio.CancelledError:
+        # #     logger.info("TTS task was cancelled cleanly.")
+        # # except Exception as e:
+        # #     logger.warning(f"TTS task failed: {e}")
+        # # pcm_bytes_array = synth.synthesize_to_base64_frames(text, sample_rate=16000)
+        # # await send_pcm_frames(ws, b64_frames=pcm_bytes_array, sample_rate=16000)
 
     if stream_mode == "transcription":
         acs_caller = ws.app.state.acs_caller
