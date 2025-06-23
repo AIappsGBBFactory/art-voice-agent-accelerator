@@ -16,7 +16,7 @@ grant_type=client_credentials
 &client_secret={{clientSecret}}
 # &scope=https://cognitiveservices.azure.com/.default # <-- Gives group membership data
 # &scope=https://graph.microsoft.com/.default 
-&scope=api://41b25440-06ef-4f40-8645-15a7b5b568c4/.default
+&scope={{$dotenv AZURE_SCOPE}}
 
 ### Store token for subsequent requests
 @token = {{$response.body.access_token}}
