@@ -1,3 +1,7 @@
+> ⚠️ **Work in Progress Notice**
+> 
+> This load testing suite is currently under active development and is **not yet in a functional state**. The test framework, scenarios, and configuration are being implemented and may not work as documented. Please check back for updates as development progresses.
+
 # RTMedAgent Load Testing Suite
 
 This directory contains comprehensive load tests for the RTMedAgent real-time voice automation system, organized by logical component groupings.
