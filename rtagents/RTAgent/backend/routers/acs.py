@@ -20,7 +20,6 @@ from azure.communication.callautomation import PhoneNumberIdentifier
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketState
-from flask import logging
 from pydantic import BaseModel
 
 from rtagents.RTAgent.backend.orchestration.conversation_state import ConversationManager

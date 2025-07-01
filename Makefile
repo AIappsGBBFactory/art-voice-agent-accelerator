@@ -77,7 +77,7 @@ remove_conda_env:
 # Target to run the Streamlit app locally
 
 stt_aoai_tts_server: 
-	python rtagents/RTInsuranceAgent/backend/main.py
+	python rtagents/rtagent/backend/main.py
 
 stt_aoai_tts_browser: 
 	cd rtagents/RTInsuranceAgent/frontend && npm install && npm run dev
