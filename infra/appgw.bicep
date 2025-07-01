@@ -71,16 +71,10 @@ param enableHttp2 bool = true
 // ============================================================================
 // SSL CERTIFICATE PARAMETERS
 // ============================================================================
+// @description('SSL certificate name')
+// param sslCertificateName string = 'ssl-certificate'
 
-@description('Enable SSL certificate from Key Vault')
-param enableSslCertificate bool = true
-
-@description('Key Vault secret ID for SSL certificate (required if enableSslCertificate is true)')
-@secure()
-param keyVaultSecretId string = ''
-
-@description('SSL certificate name')
-param sslCertificateName string = 'ssl-certificate'
+var sslCertificateName = enableSslCertificate && length(sslCertificates) > 0 ? sslCertificates[0].?name : ''
 
 @description('Resource ID of user-assigned managed identity with Key Vault access')
 param managedIdentityResourceId string = ''
@@ -185,6 +179,8 @@ param tags object = {}
 // VARIABLES
 // ============================================================================
 
+var enableSslCertificate = length(sslCertificates) > 0
+
 // WAF policy name generation
 var generatedWafPolicyName = !empty(wafPolicyName) ? wafPolicyName : '${applicationGatewayName}-waf-policy'
 
@@ -267,7 +263,7 @@ var frontendIpConfigs = concat([
 ] : [])
 
 // Build HTTP listeners with SSL support - combine base listeners with conditional HTTPS
-var allHttpFrontends = concat(httpFrontends, (enableSslCertificate && !empty(keyVaultSecretId)) ? [{
+var allHttpFrontends = concat(httpFrontends, (enableSslCertificate) ? [{
   name: 'https-listener'
   protocol: 'Https'
   frontendPort: 'port-443'
@@ -288,7 +284,7 @@ var listeners = map(allHttpFrontends, listener => {
     protocol: listener.protocol
     hostNames: !empty(listener.hostName) ? [listener.hostName] : []
     requireServerNameIndication: listener.?requireSni ?? false
-  }, (listener.protocol == 'Https' && contains(listener, 'useSslCertificate') && listener.useSslCertificate && enableSslCertificate && !empty(keyVaultSecretId)) ? {
+  }, (listener.protocol == 'Https' && contains(listener, 'useSslCertificate') && listener.useSslCertificate && enableSslCertificate) ? {
     sslCertificate: {
       id: resourceId('Microsoft.Network/applicationGateways/sslCertificates', applicationGatewayName, sslCertificateName)
     }
@@ -299,12 +295,12 @@ var listeners = map(allHttpFrontends, listener => {
 var routingRules = concat(
   // Single main routing rule for the primary backend (first container app)
   length(containerAppBackends) > 0 ? [{
-    name: (enableSslCertificate && !empty(keyVaultSecretId)) ? 'https-main-rule' : 'http-main-rule'
+    name: (enableSslCertificate) ? 'https-main-rule' : 'http-main-rule'
     properties: {
       ruleType: 'Basic'
       priority: 100
       httpListener: {
-        id: resourceId('Microsoft.Network/applicationGateways/httpListeners', applicationGatewayName, (enableSslCertificate && !empty(keyVaultSecretId)) ? 'https-listener' : 'http-listener')
+        id: resourceId('Microsoft.Network/applicationGateways/httpListeners', applicationGatewayName, (enableSslCertificate) ? 'https-listener' : 'http-listener')
       }
       backendAddressPool: {
         id: resourceId('Microsoft.Network/applicationGateways/backendAddressPools', applicationGatewayName, containerAppBackends[0].name)
@@ -315,7 +311,7 @@ var routingRules = concat(
     }
   }] : [],
   // HTTP redirect rule (only if SSL is enabled and redirect is enabled)
-  (enableHttpRedirect && enableSslCertificate && !empty(keyVaultSecretId)) ? [{
+  (enableHttpRedirect && enableSslCertificate) ? [{
     name: 'http-redirect-rule'
     properties: {
       ruleType: 'Basic'
@@ -330,15 +326,7 @@ var routingRules = concat(
   }] : []
 )
 
-// SSL certificates configuration
-var sslCertificates = enableSslCertificate && !empty(keyVaultSecretId) ? [
-  {
-    name: sslCertificateName
-    properties: {
-      keyVaultSecretId: keyVaultSecretId
-    }
-  }
-] : []
+param sslCertificates array = []
 
 // Redirect configurations (only when SSL is enabled and redirect is enabled)
 var redirectConfigurations = (enableHttpRedirect && enableSslCertificate) ? [
@@ -396,7 +384,7 @@ var actualFrontendPorts = concat([
     name: 'port-80'
     port: 80
   }
-], (enableSslCertificate && !empty(keyVaultSecretId)) ? [
+], (enableSslCertificate) ? [
   {
     name: 'port-443'
     port: 443

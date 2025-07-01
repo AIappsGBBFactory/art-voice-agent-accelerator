@@ -11,7 +11,7 @@
                 <application-id>Azure AD application/client ID</application-id>
             </client-application-ids> -->
             <audiences>
-                <audience>{audience}</audience>
+                <!-- <audience>{audience}</audience> -->
                 <!-- if there are multiple possible audiences, then add additional audience elements -->
                 <audience>https://cognitiveservices.azure.com</audience>
             </audiences>

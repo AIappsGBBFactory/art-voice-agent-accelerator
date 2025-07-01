@@ -25,8 +25,10 @@ hooks:
   preprovision:
     shell: sh
     run: ./scripts/azd-preprovision.sh
+    interactive: true
     continueOnError: false
   postprovision:
     shell: sh
     run: ./scripts/azd-postprovision.sh
+    interactive: true
     continueOnError: false

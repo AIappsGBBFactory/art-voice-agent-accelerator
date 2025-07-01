@@ -1,5 +1,12 @@
 # 🎛️ ACS Media Streaming and Barge-In Flow
 
+
+> **Note**: The realtime transcription's barge-in is handled much simpler as the ACS 
+> (Azure Communication Services) to speech service integration handles this logic 
+> automatically, eliminating the need for manual barge-in detection implementation.
+ 
+
+
 This document provides a comprehensive visual representation of how the ACS Media Handler manages real-time audio streaming, speech recognition, and intelligent barge-in functionality for seamless voice interactions.
 
 ## 🔄 Overall Communication Flow
@@ -117,7 +124,6 @@ The `route_turn_queue` ensures:
 - **Clean State Management**: Clear separation between speech input and AI processing
 
 This architecture provides **sub-50ms barge-in response time** while maintaining clean async task lifecycle management.
-
 ```mermaid
 sequenceDiagram
     participant User as 👤 User
@@ -128,38 +134,38 @@ sequenceDiagram
 
     Note over User,ACS: ⚡ Real-Time Barge-In Sequence
     
-    rect rgb(255, 235, 235)
+    rect rgba(255, 59, 48, 0.1)
     Note over User,ACS: 🎵 AI is currently playing audio response
     BG->>ACS: 🔊 Streaming TTS Audio
     end
     
-    rect rgb(255, 210, 210)
+    rect rgba(255, 149, 0, 0.15)
     Note over User,Handler: 🚨 USER INTERRUPTS WITH SPEECH
     User->>+SR: 🗣️ Speaks (Partial Audio Detected)
     SR->>Handler: ⚡ on_partial(text, lang) callback
     end
     
-    rect rgb(255, 180, 180)
+    rect rgba(255, 59, 48, 0.2)
     Note over Handler: 🛑 IMMEDIATE BARGE-IN ACTIONS
     Handler->>BG: ❌ playback_task.cancel()
     Handler->>Handler: 🔄 asyncio.create_task(handle_barge_in)
     Handler->>ACS: 🛑 Send {"Kind": "StopAudio"} command
     end
     
-    rect rgb(200, 255, 200)
+    rect rgba(52, 199, 89, 0.15)
     BG-->>Handler: ✅ Task Cancelled Successfully
     ACS-->>User: 🔇 Audio Playback Stopped
     Note right of BG: Previous AI response interrupted cleanly
     end
     
-    rect rgb(235, 235, 255)
+    rect rgba(0, 122, 255, 0.1)
     Note over User,Handler: 📝 User continues speaking...
     User->>SR: 🗣️ Continues Speaking (Final Recognition)
     SR->>Handler: 📋 on_final(text, lang) callback
     Handler->>Handler: 📋 route_turn_queue.put_nowait()
     end
     
-    rect rgb(220, 255, 220)
+    rect rgba(52, 199, 89, 0.1)
     Note over Handler,ACS: 🤖 New AI Response Generation
     Handler->>ACS: 🔊 Send New Audio Response
     ACS->>User: 🎵 Play New Response

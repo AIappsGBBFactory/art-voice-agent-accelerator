@@ -1,5 +1,7 @@
 # 🚀 Load Testing Strategy for Real-Time Call Center Automation
 
+> **WORK IN PROGRESS**
+
 ## 📋 Overview
 
 This document outlines comprehensive load testing strategies for the real-time voice agent system, focusing on Azure-native solutions and testing frameworks that can validate performance at call center scale. The system aims to handle real-time voice processing with sub-100ms latency requirements across multiple Azure services.

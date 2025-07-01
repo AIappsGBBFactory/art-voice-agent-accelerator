@@ -87,7 +87,7 @@ param loggers array = []
 // ============================================================================
 
 @description('JWT audience claim value for token validation in APIM policies')
-param audience string
+param audience string = ''
 
 @description('Azure Entra ID group object ID for user authorization')
 param entraGroupId string = ''

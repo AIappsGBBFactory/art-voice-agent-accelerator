@@ -41,6 +41,15 @@ param rtaudioServerExists bool
 
 @description('(AZD Managed) ACS phone number for real-time audio communication')
 param acsSourcePhoneNumber string =''
+
+// Managed with AZD (for non-Premium SKUs only):
+// - To disable PublicNetworkAccess, APIM requires a private endpoint resource to be attached
+// - This requires apim to be created first, then private endpoint, then disabling the network access
+// - Manage this with AZD - post provision script:
+//  - set the PublicNetworkAccess attribute to false
+//  - disable the public network access via cli
+@description('Enable public network access for API Management')
+param apimPublicNetworkAccess bool = true
 // ============================================================================
 @description('Enable API Management for OpenAI load balancing and gateway functionality')
 param enableAPIManagement bool = true
@@ -72,13 +81,15 @@ param disableLocalAuth bool = true
 @allowed(['standard', 'premium'])
 @description('SKU for Azure Key Vault (standard or premium)')
 param vaultSku string = 'standard'
+
 // API Management authentication parameters
 // These parameters configure APIM policies for JWT validation and authorization
 
+// Currently commented out of the policy to simplify initial provisioning steps
 // The expected audience claim value in JWT tokens for API access validation
 // This should match the audience configured in your identity provider
-@description('The JWT audience claim value used for token validation in APIM policies')
-param jwtAudience string
+// @description('The JWT audience claim value used for token validation in APIM policies')
+// param jwtAudience string = ''
 
 // The Azure Entra ID group object ID that grants access to the API
 // Users must be members of this group to access protected endpoints
@@ -101,6 +112,8 @@ param hubVNetAddressPrefix string = '10.0.0.0/16'
 @description('Address prefix for the spoke virtual network (CIDR notation)')
 param spokeVNetAddressPrefix string = '10.1.0.0/16'
 
+@secure()
+param jumphostVmPassword string = ''
 // ============================================================================
 // CONSTANTS & COMPUTED VALUES
 // ============================================================================
@@ -126,9 +139,11 @@ param domainFqdn string = ''
 param enableSslCertificate bool = true
 
 @description('Key Vault secret ID for SSL certificate')
-param sslCertificateKeyVaultSecretId string = 'https://kv-rtaudio-devops.vault.azure.net/secrets/rtaudio-fullchain/1e9d85a97f634239a8562418a92766d8'
+@secure()
+param sslCertificateKeyVaultSecretId string = ''
 
 @description('User identity resource ID for Key Vault secret access to be assigned to the AppGW')
+@secure()
 param keyVaultSecretUserIdentity string = ''
 
 
@@ -149,17 +164,33 @@ param applicationGatewayMinCapacity int = 2
 @maxValue(32)
 param applicationGatewayMaxCapacity int = 10
 
+
+
+@description('Enable network isolation for all applicable Azure services')
+param networkIsolation bool = true
+
 // ============================================================================
 // VARIABLES (add after existing variables section)
 // ============================================================================
-
-// Application Gateway name generation
-var generatedApplicationGatewayName = !empty(applicationGatewayName) ? applicationGatewayName : '${abbrs.networkApplicationGateways}${name}-${environmentName}'
+var tags = {
+  'azd-env-name': environmentName
+  'hidden-title': 'Real Time Audio ${environmentName}'
+}
 
 // ============================================================================
-// REPLACE the existing hubSubnets parameter (around line 109) with this corrected version:
+// RESOURCE GROUPS
 // ============================================================================
+resource hubRg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
+  name: 'rg-hub-${substring(name, 0, min(length(name), 20))}-${substring(environmentName, 0, min(length(environmentName), 10))}'
+  location: location
+  tags: tags
+}
 
+resource spokeRg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
+  name: 'rg-spoke-${substring(name, 0, min(length(name), 20))}-${substring(environmentName, 0, min(length(environmentName), 10))}'
+  location: location
+  tags: tags
+}
 
 
 param hubSubnets SubnetConfig[] = [
@@ -351,6 +382,35 @@ param hubSubnets SubnetConfig[] = [
   }
 ]
 
+param spokeSubnets SubnetConfig[] = [
+  {
+    name: 'privateEndpoint'       // PE for Redis, Cosmos, Speech, Blob
+    addressPrefix: '10.1.0.0/26'
+  }
+  {
+    name: 'app'        // Real-time agents, FastAPI, containers
+    addressPrefix: '10.1.10.0/23'
+    delegations: [
+      {
+        name: 'Microsoft.App/environments'
+        properties: {
+          serviceName: 'Microsoft.App/environments'
+        }
+      }
+    ]
+  }
+  {
+    name: 'cache'                 // Redis workers (can be merged into `app` if simple)
+    addressPrefix: '10.1.2.0/26'
+  }
+]
+
+// ============================================================================
+// APPLICATION GATEWAY
+// ============================================================================
+// Application Gateway name generation
+var generatedApplicationGatewayName = !empty(applicationGatewayName) ? applicationGatewayName : '${abbrs.networkApplicationGateways}${name}-${environmentName}'
+
 // PUBLIC IP FOR APPLICATION GATEWAY
 module applicationGatewayPublicIp 'br/public:avm/res/network/public-ip-address:0.6.0' = if (enableApplicationGateway) {
   scope: hubRg
@@ -383,35 +443,7 @@ module applicationGatewayIdentity 'br/public:avm/res/managed-identity/user-assig
   }
 }
 
-// ============================================================================
-// SSL CERTIFICATE KEY VAULT RBAC ASSIGNMENT
-// ============================================================================
-
-// // Extract Key Vault name and resource group from the SSL certificate Key Vault secret ID
-// var sslCertKeyVaultName = enableApplicationGateway && enableSslCertificate && !empty(sslCertificateKeyVaultSecretId) ? split(split(sslCertificateKeyVaultSecretId, '/')[2], '.')[0] : 'placeholder'
-
-// var sslCertKeyVaultResourceGroup = enableApplicationGateway && enableSslCertificate && !empty(sslCertificateKeyVaultSecretId) ? split(sslCertificateKeyVaultSecretId, '/')[4] : 'placeholder'
-
-// // Reference to the existing Key Vault containing the SSL certificate
-// resource sslCertKeyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (enableApplicationGateway && enableSslCertificate && !empty(sslCertificateKeyVaultSecretId)) {
-//   name: sslCertKeyVaultName
-//   scope: resourceGroup(sslCertKeyVaultResourceGroup)
-// }
-
-// // Role assignment for Application Gateway managed identity to access SSL certificate Key Vault
-// module sslCertKeyVaultRoleAssignment 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.1' = if (enableApplicationGateway && enableSslCertificate && !empty(sslCertificateKeyVaultSecretId)) {
-//   name: 'ssl-cert-keyvault-role-assignment'
-//   scope: resourceGroup(sslCertKeyVaultResourceGroup)
-//   params: {
-//     principalId: applicationGatewayIdentity.outputs.principalId
-//     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
-//     resourceId: sslCertKeyVault.id
-//   }
-// }
-
-// APPLICATION GATEWAY MODULE
-
-module applicationGateway 'appgw-avm.bicep' = if (enableApplicationGateway) {
+module applicationGateway 'appgw.bicep' = if (enableApplicationGateway) {
   scope: hubRg
   name: 'application-gateway'
   params: {
@@ -431,10 +463,19 @@ module applicationGateway 'appgw-avm.bicep' = if (enableApplicationGateway) {
     autoscaleMaxCapacity: applicationGatewayMaxCapacity
     
     // SSL configuration
-    enableSslCertificate: enableSslCertificate
-    keyVaultSecretId: sslCertificateKeyVaultSecretId
-    sslCertificateName: '${generatedApplicationGatewayName}-ssl-cert'
-    managedIdentityResourceId: enableSslCertificate ? keyVaultSecretUserIdentity : ''
+    sslCertificates: [
+      {
+        name: '${generatedApplicationGatewayName}-ssl-cert'
+        properties: {
+          keyVaultSecretId: sslCertificateKeyVaultSecretId
+          
+          // -- Can only enable either keyvaultSecretId or both data + password. --
+          // data: sslCertificateData
+          // password: sslCertificatePassword
+        } 
+      }
+    ]
+    managedIdentityResourceId: keyVaultSecretUserIdentity != '' ? keyVaultSecretUserIdentity : ''
     
     // Container App backends - use simpler FQDN construction
     containerAppBackends: [
@@ -477,50 +518,7 @@ module applicationGateway 'appgw-avm.bicep' = if (enableApplicationGateway) {
   ]
 }
 
-param spokeSubnets SubnetConfig[] = [
-  {
-    name: 'privateEndpoint'       // PE for Redis, Cosmos, Speech, Blob
-    addressPrefix: '10.1.0.0/26'
-  }
-  {
-    name: 'app'        // Real-time agents, FastAPI, containers
-    addressPrefix: '10.1.10.0/23'
-    delegations: [
-      {
-        name: 'Microsoft.App/environments'
-        properties: {
-          serviceName: 'Microsoft.App/environments'
-        }
-      }
-    ]
-  }
-  {
-    name: 'cache'                 // Redis workers (can be merged into `app` if simple)
-    addressPrefix: '10.1.2.0/26'
-  }
-]
-// Tags that should be applied to all resources.
-// 
-// Note that 'azd-service-name' tags should be applied separately to service host resources.
-// Example usage:
-//   tags: union(tags, { 'azd-service-name': <service name in azure.yaml> })
-var tags = {
-  'azd-env-name': environmentName
-  'hidden-title': 'Real Time Audio ${environmentName}'
-}
-param networkIsolation bool = true
 
-resource hubRg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
-  name: 'rg-hub-${substring(name, 0, min(length(name), 20))}-${substring(environmentName, 0, min(length(environmentName), 10))}'
-  location: location
-  tags: tags
-}
-
-resource spokeRg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
-  name: 'rg-spoke-${substring(name, 0, min(length(name), 20))}-${substring(environmentName, 0, min(length(environmentName), 10))}'
-  location: location
-  tags: tags
-}
 // ============================================================================
 // MONITORING & OBSERVABILITY
 // ============================================================================
@@ -533,24 +531,6 @@ module monitoring 'br/public:avm/ptn/azd/monitoring:0.1.0' = {
     applicationInsightsName: '${abbrs.insightsComponents}${resourceToken}'
     applicationInsightsDashboardName: '${abbrs.portalDashboards}${resourceToken}'
     location: location
-    tags: tags
-  }
-}
-
-// ============================================================================
-// JUMPHOST (OPTIONAL - ONLY WHEN NETWORK ISOLATION ENABLED)
-// ============================================================================
-
-module winJumphost 'modules/jumphost/windows-vm.bicep' = if (networkIsolation) {
-  name: 'win-jumphost'
-  scope: hubRg
-  params: {
-    vmName: 'jumphost-${name}-${environmentName}'
-    location: location
-    adminUsername: 'azureuser'
-    adminPassword: 'P@ssw0rd!' // TODO: Replace with Key Vault reference
-    vmSize: 'Standard_B2s'
-    subnetId: hubNetwork.outputs.subnets.jumpbox
     tags: tags
   }
 }
@@ -669,7 +649,7 @@ module acrDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIso
   }
 }
 
-// Cognitive Services private DNS zone
+// Cognitive Services (OpenAI) private DNS zone
 module aiservicesDnsZone './modules/networking/private-dns-zone.bicep' = if (networkIsolation) {
   name: 'cognitive-services-dns-zone'
   scope: hubRg
@@ -941,13 +921,6 @@ module acsPrimaryKeySecret 'modules/vault/secret.bicep' = {
 // ============================================================================
 // AI GATEWAY (API MANAGEMENT + AZURE OPENAI)
 // ============================================================================
-// Managed with AZD:
-// - To disable PublicNetworkAccess, APIM requires a private endpoint resource to be attached
-// - This requires apim to be created first, then private endpoint, then disabling the network access
-// - Manage this with AZD - post provision script:
-//  - set the PublicNetworkAccess attribute to false
-//  - disable the public network access via cli
-param apimPublicNetworkAccess bool = true
 module aiGateway 'ai-gateway.bicep' = {
   scope: hubRg
   name: 'ai-gateway'
@@ -957,7 +930,7 @@ module aiGateway 'ai-gateway.bicep' = {
     tags: tags
     
     // JWT and security configuration
-    audience: jwtAudience
+    // audience: jwtAudience
     entraGroupId: entraGroupId
     
     // APIM configuration
@@ -1059,6 +1032,35 @@ module apimSubscriptionKeySecret 'modules/vault/secret.bicep' = if (enableAPIMan
     keyVaultName: keyVault.outputs.name
     secretName: 'openai-apim-subscription-key'
     secretValue: aiGateway.outputs.openAiSubscriptionKey
+    tags: tags
+  }
+}
+
+
+// ============================================================================
+// JUMPHOST (OPTIONAL - ONLY WHEN NETWORK ISOLATION ENABLED)
+// ============================================================================
+module vmPasswordSecret 'modules/vault/secret.bicep' = if (networkIsolation) {
+  name: 'jumphost-admin-password'
+  scope: spokeRg
+  params: {
+    keyVaultName: keyVault.outputs.name
+    secretName: 'jumphost-admin-password'
+    secretValue: jumphostVmPassword
+    tags: tags
+  }
+}
+
+module winJumphost 'modules/jumphost/windows-vm.bicep' = if (networkIsolation) {
+  name: 'win-jumphost'
+  scope: hubRg
+  params: {
+    vmName: 'jumphost-${name}-${environmentName}'
+    location: location
+    adminUsername: 'azureuser'
+    adminPassword: jumphostVmPassword
+    vmSize: 'Standard_B2s'
+    subnetId: hubNetwork.outputs.subnets.jumpbox
     tags: tags
   }
 }
@@ -1263,8 +1265,9 @@ module app 'app.bicep' = {
 
     backendCors: {
       allowedOrigins: [
-        'https://${domainFqdn}'
-        'http://localhost:5173'
+          'https://${domainFqdn}'
+          'https://${acs.outputs.endpoint}'
+          'http://localhost:5173'
         ]
         allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
         allowedHeaders: ['*']
@@ -1408,6 +1411,7 @@ var backendEnvVars = [
     name: 'AZURE_OPENAI_ENDPOINT'
     value: aiGateway.outputs.endpoints.openAI
   }
+  // Disabled to use Entra JWT tokens to auth vs APIM policy (based on group membership)
   // {
   //   name: 'AZURE_OPENAI_KEY'
   //   secretRef: enableAPIManagement ? 'openai-apim-subscription-key' : 'openai-primary-key'

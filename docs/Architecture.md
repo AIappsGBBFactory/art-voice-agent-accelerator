@@ -158,12 +158,12 @@ flowchart TD
     Orchestrator <--> Manager
     Manager <--> Redis
 
-    %% Styling
-    classDef user fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    classDef bridge fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    classDef process fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
-    classDef agent fill:#fff8e1,stroke:#f57c00,stroke-width:2px
-    classDef infra fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    %% Styling - Compatible with dark and light backgrounds
+    classDef user fill:#4CAF50,stroke:#2E7D32,stroke-width:3px,color:#FFFFFF
+    classDef bridge fill:#2196F3,stroke:#1565C0,stroke-width:3px,color:#FFFFFF
+    classDef process fill:#FF9800,stroke:#E65100,stroke-width:3px,color:#FFFFFF
+    classDef agent fill:#9C27B0,stroke:#6A1B9A,stroke-width:3px,color:#FFFFFF
+    classDef infra fill:#F44336,stroke:#C62828,stroke-width:3px,color:#FFFFFF
 
     class Phone,WebMobile user
     class ACS,Speech bridge

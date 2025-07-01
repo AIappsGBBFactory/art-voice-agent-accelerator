@@ -147,6 +147,67 @@ flowchart TB
      class EventGrid eventStyle
 ```
 
+## Call Flow Documentation: AWS Connect to Azure Communication Services Integration
+
+This sequence diagram illustrates the complete call flow for escalating a customer interaction from an AI voice agent to a human agent across different cloud platforms.
+
+### Flow Overview
+
+The integration demonstrates a sophisticated call routing mechanism that seamlessly transitions between automated AI assistance and human agent support using multiple cloud services and telephony components.
+
+### Key Components
+
+- **AWS Connect**: Primary contact center platform handling initial customer calls and final agent queuing
+- **SIP SBC (Session Border Controller)**: Optional intermediary component for SIP protocol translation and security
+- **Azure Communication Services (ACS)**: Microsoft's communication platform hosting the AI voice agent
+- **Bot Backend**: AI engine combining FastAPI web framework, speech processing, and GPT language models
+- **AWS Connect Agent Queue**: Human agent pool for escalated interactions
+
+### Detailed Flow Steps
+
+1. **Initial Contact**: Customer initiates call to AWS Connect contact center
+2. **Transfer Decision**: AWS Connect routes call to AI agent via SIP transfer to ACS endpoint
+3. **Protocol Bridging**: SBC facilitates SIP communication between AWS and Azure ecosystems
+4. **AI Engagement**: ACS establishes real-time media streaming with bot backend for voice processing
+5. **Interactive AI Session**: Bot provides intelligent responses with interrupt handling capabilities
+6. **Escalation Trigger**: AI determines need for human intervention based on conversation context
+7. **Seamless Handoff**: ACS initiates SIP REFER/INVITE to route call back to AWS Connect
+8. **Agent Connection**: Call successfully transferred to human agent queue for resolution
+
+### Technical Benefits
+
+- **Cross-cloud integration** enables leveraging best-of-breed services from multiple providers
+- **Real-time media streaming** ensures natural conversation flow without noticeable delays
+- **Intelligent escalation** preserves conversation context during human handoff
+- **SIP protocol compatibility** ensures standard telephony interoperability
+```mermaid
+  sequenceDiagram
+    participant Caller as 👤 Caller
+    participant Connect as 🔶 AWS Connect
+    participant SBC as 🛡️ SIP Bridge
+    participant ACS as ☁️ Azure ACS
+    participant Bot as 🤖 Voice Agent
+    participant Agent as 👥 Human Agent
+
+    Note over Caller,Agent: Cross-Cloud Voice Integration
+
+    Caller->>Connect: 📞 Call
+    Connect->>SBC: 🔄 Transfer to AI
+    SBC->>ACS: 📡 Route call
+    ACS->>Bot: 🎵 Stream audio
+    
+    loop AI Conversation
+      Bot->>ACS: 🗣️ Voice response
+    end
+    
+    Bot->>ACS: 🚨 Escalate to human
+    ACS->>SBC: 🔀 Transfer back
+    SBC->>Connect: 📞 Route to agent
+    Connect->>Agent: 👨‍💼 Connect agent
+    Agent-->>Caller: 🤝 Human takeover
+```
+
+
 #### 2.2.3 Key Integration Steps
 
 **🔧 Infrastructure Setup**

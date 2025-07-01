@@ -11,11 +11,14 @@
       "sslCertificateKeyVaultSecretId": {
         "value": "${AZURE_SSL_KEY_VAULT_SECRET_ID}"
       },
+      "sslCertificatePassword": {
+        "value": "${AZURE_SSL_CERTIFICATE_PASSWORD}"
+      },
+      "jumphostVmPassword" :{
+        "value": "${AZURE_JUMPHOST_VM_PASSWORD}"
+      },
       "keyVaultSecretUserIdentity": {
         "value": "${AZURE_KEY_VAULT_SECRET_USER_IDENTITY}"
-      },
-      "jwtAudience": {
-        "value": "${AZURE_JWT_AUDIENCE}"
       },
       "entraGroupId": {
         "value": "${AZURE_ENTRA_GROUP_ID}"

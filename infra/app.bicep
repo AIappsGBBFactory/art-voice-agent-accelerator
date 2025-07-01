@@ -220,6 +220,16 @@ module frontendAudioAgent 'modules/app/container-app.bicep' = {
   ]
 }
 
+// Update backend CORS to include frontend container app origin
+var updatedBackendCors = union(backendCors, {
+  allowedOrigins: union(
+    backendCors.?allowedOrigins ?? [],
+    [
+      'https://${frontendAudioAgent.outputs.containerAppFqdn}'
+      'http://${frontendAudioAgent.outputs.containerAppFqdn}'
+    ]
+  )
+})
 
 module backendAudioAgent './modules/app/container-app.bicep' = {
   name: 'backend-audio-agent'
@@ -229,7 +239,7 @@ module backendAudioAgent './modules/app/container-app.bicep' = {
     scaleMinReplicas: 1
     scaleMaxReplicas: 10
     secrets: backendSecrets
-    corsPolicy: backendCors
+    corsPolicy: updatedBackendCors
 
     ingressExternal: true // Limit to VNet, setting to false will limit network to Container App Environment
     customDomains: [

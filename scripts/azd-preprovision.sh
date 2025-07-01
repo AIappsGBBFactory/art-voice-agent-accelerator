@@ -16,6 +16,13 @@ if [[ -n "$EXISTING_SSL_SECRET_ID" && -n "$EXISTING_USER_IDENTITY" ]]; then
     echo "✅ SSL certificate configuration already found:"
     echo "   AZURE_SSL_KEY_VAULT_SECRET_ID: $EXISTING_SSL_SECRET_ID"
     echo "   AZURE_KEY_VAULT_SECRET_USER_IDENTITY: $EXISTING_USER_IDENTITY"
+    
+    # # Check if SSL certificate password is already set
+    # EXISTING_SSL_PASSWORD=$(azd env get-values | grep AZURE_SSL_CERTIFICATE_PASSWORD | cut -d'=' -f2 | tr -d '"')
+    # if [[ -n "$EXISTING_SSL_PASSWORD" ]]; then
+    #     echo "   AZURE_SSL_CERTIFICATE_PASSWORD: ****** (configured)"
+    # fi
+    
     bring_own_cert="y"
 else
     read -p "Are you bringing your own SSL certificate? (y/n): " bring_own_cert
@@ -29,12 +36,77 @@ if [[ "$bring_own_cert" =~ ^[Yy]$ ]]; then
     echo "📝 Required environment variables:"
     echo "   - AZURE_SSL_KEY_VAULT_SECRET_ID: Secret ID (should look like 'https://<kv-name>.vault.azure.net/secrets/<secret-name>/<secret-version>')"
     echo "   - AZURE_KEY_VAULT_SECRET_USER_IDENTITY: Pre-configured Resource ID of a User Assigned Identity resource with access to the key vault secret for the app gateway"
+    echo "   - AZURE_SSL_CERTIFICATE_PASSWORD: (Optional) Password for the SSL certificate if it's password-protected"
     echo ""
+    # Prompt for SSL Key Vault Secret ID if not already set
+    if [[ -z "$EXISTING_SSL_SECRET_ID" ]]; then
+        echo "🔑 SSL Key Vault Secret ID Configuration"
+        echo "======================================="
+        echo ""
+        echo "Example format: https://my-keyvault.vault.azure.net/secrets/my-ssl-cert/abc123def456"
+        echo ""
+        read -p "Enter your SSL Key Vault Secret ID: " ssl_secret_id
+        
+        if [[ -n "$ssl_secret_id" ]]; then
+            azd env set AZURE_SSL_KEY_VAULT_SECRET_ID "$ssl_secret_id"
+            echo "✅ SSL Key Vault Secret ID has been set."
+        else
+            echo "⚠️  No SSL Key Vault Secret ID provided. You can set it later with:"
+            echo "   azd env set AZURE_SSL_KEY_VAULT_SECRET_ID '<your-ssl-secret-id>'"
+        fi
+        echo ""
+    fi
+
+    # Prompt for User Assigned Identity Resource ID if not already set
+    if [[ -z "$EXISTING_USER_IDENTITY" ]]; then
+        echo "👤 User Assigned Identity Configuration"
+        echo "======================================"
+        echo ""
+        echo "Example format: /subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/my-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/my-identity"
+        echo ""
+        read -p "Enter your User Assigned Identity Resource ID: " user_identity_id
+        
+        if [[ -n "$user_identity_id" ]]; then
+            azd env set AZURE_KEY_VAULT_SECRET_USER_IDENTITY "$user_identity_id"
+            echo "✅ User Assigned Identity Resource ID has been set."
+        else
+            echo "⚠️  No User Assigned Identity Resource ID provided. You can set it later with:"
+            echo "   azd env set AZURE_KEY_VAULT_SECRET_USER_IDENTITY '<your-user-identity-resource-id>'"
+        fi
+        echo ""
+    fi
+    # # Check if SSL certificate password is needed
+    # EXISTING_SSL_PASSWORD=$(azd env get-values | grep AZURE_SSL_CERTIFICATE_PASSWORD | cut -d'=' -f2 | tr -d '"')
+    
+    # if [[ -z "$EXISTING_SSL_PASSWORD" ]]; then
+    #     echo "🔐 SSL Certificate Password Configuration"
+    #     echo "======================================="
+    #     echo ""
+    #     read -p "Is your SSL certificate password-protected? (y/n): " has_password
+        
+    #     if [[ "$has_password" =~ ^[Yy]$ ]]; then
+    #         read -s -p "Enter the SSL certificate password: " ssl_password
+    #         echo ""
+            
+    #         if [[ -n "$ssl_password" ]]; then
+    #             azd env set AZURE_SSL_CERTIFICATE_PASSWORD "$ssl_password"
+    #             echo "✅ SSL certificate password has been set."
+    #         else
+    #             echo "⚠️  No password provided. You can set it later with:"
+    #             echo "   azd env set AZURE_SSL_CERTIFICATE_PASSWORD '<your-ssl-password>'"
+    #         fi
+    #     else
+    #         echo "✅ No password required for SSL certificate."
+    #     fi
+    # else
+    #     echo "✅ SSL certificate password already configured."
+    # fi
     
     # Check if domain FQDN is already set
     EXISTING_DOMAIN_FQDN=$(azd env get-values | grep AZURE_DOMAIN_FQDN | cut -d'=' -f2 | tr -d '"')
     
     if [[ -z "$EXISTING_DOMAIN_FQDN" ]]; then
+        echo ""
         echo "🌐 Domain Configuration"
         echo "======================"
         echo ""
@@ -67,6 +139,7 @@ else
     echo "   azd env set AZURE_SSL_KEY_VAULT_SECRET_ID '<your-keyvault-secret-id>'"
     echo "   azd env set AZURE_KEY_VAULT_SECRET_USER_IDENTITY '<your-preconfigured-user-assigned-identity-with-kv-access-resource-id>'"
     echo "   azd env set AZURE_DOMAIN_FQDN '<your-custom-domain-fqdn>'"
+    echo "   azd env set AZURE_SSL_CERTIFICATE_PASSWORD '<your-ssl-password>' # Only if certificate is password-protected"
     echo ""
     echo "⚠️  SSL configuration is recommended for production deployments."
     echo ""
@@ -180,3 +253,31 @@ else
     echo "✅ Azure Entra Group ID already configured: $EXISTING_ENTRA_GROUP_ID"
 fi
 
+echo ""
+echo "🖥️  Jumphost VM Configuration"
+echo "============================="
+echo ""
+
+# Check if AZURE_JUMPHOST_VM_PASSWORD is already set
+EXISTING_VM_PASSWORD=$(azd env get-values | grep AZURE_JUMPHOST_VM_PASSWORD | cut -d'=' -f2 | tr -d '"')
+
+if [[ -z "$EXISTING_VM_PASSWORD" ]]; then
+    echo "🔐 No jumphost VM password found in current environment."
+    echo "🔄 Generating secure password for jumphost VM..."
+    
+    # Generate a secure password with at least 12 characters including uppercase, lowercase, numbers, and symbols
+    VM_PASSWORD=$(openssl rand -base64 18 | tr -d "=+/" | cut -c1-16)
+    # Ensure password complexity by adding required character types
+    VM_PASSWORD="${VM_PASSWORD}A1!"
+    
+    # Set the environment variable
+    azd env set AZURE_JUMPHOST_VM_PASSWORD "$VM_PASSWORD"
+    echo "✅ Generated and set secure password for jumphost VM."
+    echo "📝 Password has been stored in azd environment variables."
+    echo ""
+    echo "⚠️  Important: This password will be stored in the Key Vault provisioned by this deployment."
+    echo "   Password: $VM_PASSWORD"
+    echo ""
+else
+    echo "✅ Jumphost VM password already configured."
+fi
