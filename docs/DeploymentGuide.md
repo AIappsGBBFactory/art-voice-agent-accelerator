@@ -1,110 +1,145 @@
 
-# Deployment Guide
+# 🚀 Deployment Guide
 
-## Prerequisites
+> A comprehensive guide to deploy your Real-Time Azure Voice Agentic App with secure SSL and WebSocket connectivity.
 
-- [Azure CLI](https://docs.microsoft.com/cli/azure/install-azure-cli) installed and authenticated
-- [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) installed
-- Node.js 18+ and Python 3.11+
-- An Azure subscription with appropriate permissions
-- **A publicly trusted SSL certificate** for your domain (required for Azure Communication Services WebSocket connections)
+## 📋 Table of Contents
 
-## Quick Start
+- [Prerequisites](#-prerequisites)
+- [Quick Start](#-quick-start)
+- [Detailed Deployment Steps](#-detailed-deployment-steps)
+    - [1. SSL Certificate Requirements](#1-ssl-certificate-requirements)
+    - [2. Environment Configuration](#2-environment-configuration)
+    - [3. Infrastructure Provisioning](#3-infrastructure-provisioning)
+    - [4. Application Deployment](#4-application-deployment)
+    - [5. SSL Certificate and DNS Configuration](#5-ssl-certificate-and-dns-configuration)
+    - [6. WebSocket Connectivity Testing](#6-websocket-connectivity-testing)
+- [Environment Management](#-environment-management)
+- [Certificate Management](#-certificate-management)
+- [Monitoring and Troubleshooting](#-monitoring-and-troubleshooting)
+- [Cleanup](#-cleanup)
+- [Advanced Configuration](#-advanced-configuration)
+- [Support](#-support)
 
-1. **Clone and Initialize**
-    ```bash
-    git clone <repository-url>
-    cd gbb-ai-audio-agent
-    azd auth login
-    azd init
-    ```
+---
 
-2. **Set Environment Variables**
-    ```bash
-    azd env new <environment-name>
-    azd env set LOCATION "East US"
-    azd env set ENVIRONMENT_NAME "<environment-name>"
-    ```
+## 📋 Prerequisites
 
-3. **Deploy Infrastructure and Code**
-    ```bash
-    azd up
-    ```
+Before you begin, ensure you have the following installed and configured:
 
-## Detailed Deployment Steps
+| Tool | Version | Purpose |
+|------|---------|---------|
+| [Azure CLI](https://docs.microsoft.com/cli/azure/install-azure-cli) | Latest | Azure resource management |
+| [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) | Latest | Simplified deployment |
+| Node.js | 18+ | Frontend development |
+| Python | 3.11+ | Backend development |
+
+**Additional Requirements:**
+- ✅ Azure subscription with appropriate permissions
+- ✅ **A publicly trusted SSL certificate** for your domain (required for Azure Communication Services WebSocket connections)
+
+> ⚠️ **Important**: Self-signed certificates will not work with Azure Communication Services WebSocket connections.
+
+---
+
+## ⚡ Quick Start
+
+Get up and running in 3 simple steps:
+
+### 1️⃣ Clone and Initialize
+```bash
+git clone <repository-url>
+cd gbb-ai-audio-agent
+azd auth login
+azd init
+```
+
+### 2️⃣ Set Environment Variables
+```bash
+azd env new <environment-name>
+azd env set LOCATION "East US"
+azd env set ENVIRONMENT_NAME "<environment-name>"
+```
+
+### 3️⃣ Deploy Infrastructure and Code
+```bash
+azd up
+```
+
+---
+
+## 🔧 Detailed Deployment Steps
 
 ### 1. SSL Certificate Requirements
 
-**Important**: Azure Communication Services requires a publicly trusted SSL certificate for WebSocket connections. You must bring your own certificate and store it in Key Vault before deployment.
+> 🔐 **Critical**: Azure Communication Services requires a publicly trusted SSL certificate for WebSocket connections.
 
-#### Certificate Preparation
+#### 📋 Certificate Preparation Checklist
 
-1. **Obtain a Publicly Trusted Certificate**
-   - Purchase from a certificate authority (CA) like DigiCert, Let's Encrypt, or your preferred provider
-   - Ensure the certificate covers your intended domain (e.g., `voice-agent.yourdomain.com`)
-   - The certificate must be in PFX format with a password
+- [ ] **Obtain Certificate**: Purchase from a CA (DigiCert, Let's Encrypt, etc.)
+- [ ] **Domain Coverage**: Ensure certificate covers your domain (e.g., `voice-agent.yourdomain.com`)
+- [ ] **Format**: Certificate must be in PFX format with password
+- [ ] **Trust Chain**: Include full certificate chain for proper validation
 
-2. **Store Certificate in Key Vault**
-   ```bash
-   # Import certificate to Key Vault (this will be created during deployment)
-   az keyvault certificate import \
-     --vault-name kv-voice-agent-prod \
-     --name ssl-certificate \
-     --file /path/to/your/certificate.pfx \
-     --password "your-certificate-password"
-   
-   # Set the certificate password as a secret
-   az keyvault secret set \
-     --vault-name kv-voice-agent-prod \
-     --name ssl-certificate-password \
-     --value "your-certificate-password"
-    
-   azd env set AZURE_SSL_KEY_VAULT_SECRET_ID https://kv-voice-agent-prod.vault.azure.net/secrets/ssl-certificate
-   ```
+#### 🔑 Store Certificate in Key Vault
 
-3. **Configure User-Assigned Managed Identity for Certificate Access**
+```bash
+# Import certificate to Key Vault
+az keyvault certificate import \
+    --vault-name kv-voice-agent-prod \
+    --name ssl-certificate \
+    --file /path/to/your/certificate.pfx \
+    --password "your-certificate-password"
 
-    Before deployment, you need to create a user-assigned managed identity and grant it appropriate permissions to retrieve the certificate from Key Vault.
+# Store certificate password as secret
+az keyvault secret set \
+    --vault-name kv-voice-agent-prod \
+    --name ssl-certificate-password \
+    --value "your-certificate-password"
 
-    ```bash
-    # Create user-assigned managed identity
-    az identity create \
+# Configure environment
+azd env set AZURE_SSL_KEY_VAULT_SECRET_ID https://kv-voice-agent-prod.vault.azure.net/secrets/ssl-certificate
+```
+
+#### 🆔 Configure Managed Identity
+
+```bash
+# Create user-assigned managed identity
+az identity create \
         --name id-voice-agent-cert \
         --resource-group rg-voice-agent-prod
 
-    # Get the principal ID of the managed identity
-    IDENTITY_PRINCIPAL_ID=$(az identity show \
+# Get principal ID
+IDENTITY_PRINCIPAL_ID=$(az identity show \
         --name id-voice-agent-cert \
         --resource-group rg-voice-agent-prod \
         --query principalId -o tsv)
 
-    # Grant the managed identity certificate permissions on Key Vault
-    az keyvault set-policy \
+# Grant Key Vault permissions
+az keyvault set-policy \
         --name kv-voice-agent-prod \
         --object-id $IDENTITY_PRINCIPAL_ID \
         --certificate-permissions get list \
         --secret-permissions get list
 
-    # Set the identity resource ID for deployment
-    IDENTITY_RESOURCE_ID=$(az identity show \
+# Set identity for deployment
+IDENTITY_RESOURCE_ID=$(az identity show \
         --name id-voice-agent-cert \
         --resource-group rg-voice-agent-prod \
         --query id -o tsv)
 
-    azd env set AZURE_KEY_VAULT_SECRET_USER_IDENTITY $IDENTITY_RESOURCE_ID
-    ```
-
-    **Note**: This managed identity will be assigned to the Application Gateway to retrieve the SSL certificate from Key Vault during deployment and runtime operations.
+azd env set AZURE_KEY_VAULT_SECRET_USER_IDENTITY $IDENTITY_RESOURCE_ID
+```
 
 ### 2. Environment Configuration
 
-Configure your deployment environment:
+Configure your deployment environment with the required parameters:
 
 ```bash
-# Create a new environment
+# Create production environment
 azd env new production
 
-# Set required parameters
+# Set core parameters
 azd env set LOCATION "East US"
 azd env set RESOURCE_GROUP_NAME "rg-voice-agent-prod"
 azd env set PRINCIPAL_ID $(az ad signed-in-user show --query id -o tsv)
@@ -115,207 +150,240 @@ azd env set CUSTOM_DOMAIN "voice-agent.yourdomain.com"
 
 Deploy Azure resources using Bicep templates:
 
+| Command | Purpose |
+|---------|---------|
+| `azd provision` | Deploy infrastructure only |
+| `azd deploy` | Deploy code to existing infrastructure |
+| `azd up` | Deploy both infrastructure and code |
+
 ```bash
-# Deploy infrastructure only
-azd provision
-
-# Deploy the code to already deployed infra
-azd deploy
-
-# Or deploy everything (infrastructure + code)
+# Full deployment (recommended for first deployment)
 azd up
 ```
-For a detailed overview of the infrastructure components, provisioning details, and manual setup requirements, refer to the [Infrastructure README](../infra/README.md).
 
-This will create:
+**📖 Resources Created:**
 - Azure Container Apps Environment
 - Azure OpenAI Service
 - Azure Communication Services
 - Redis Cache
 - Key Vault
-- Application Gateway (configured to use your certificate from Key Vault)
+- Application Gateway (with SSL certificate)
 - Storage Account
 - Cosmos DB
 - Private endpoints and networking
 
+> 📚 For detailed infrastructure information, see the [Infrastructure README](../infra/README.md).
+
 ### 4. Application Deployment
 
-Deploy the application code:
+Deploy your application code to the provisioned infrastructure:
 
 ```bash
-# Deploy code to existing infrastructure
+# Deploy to existing infrastructure
 azd deploy
 ```
 
 ### 5. SSL Certificate and DNS Configuration
 
-**Important**: After provisioning and importing your certificate, update your DNS records.
+#### 🌐 Get Application Gateway Public IP
 
-1. **Get Application Gateway Public IP**
-    ```bash
-    # Find your Application Gateway public IP
-    az network public-ip show \
-      --resource-group rg-voice-agent-prod \
-      --name pip-appgw-voice-agent \
-      --query ipAddress -o tsv
-    ```
+```bash
+az network public-ip show \
+    --resource-group rg-voice-agent-prod \
+    --name pip-appgw-voice-agent \
+    --query ipAddress -o tsv
+```
 
-2. **Update DNS Records**
-    - Go to your domain registrar or DNS provider
-    - Create/update an A record pointing your domain to the Application Gateway's public IP
-    - Example: `voice-agent.yourdomain.com` → `20.xx.xx.xx`
+#### 📝 Update DNS Records
 
-3. **Import Certificate (if not done during step 1)**
-    ```bash
-    # Import your certificate after Key Vault is created
-    az keyvault certificate import \
-      --vault-name kv-voice-agent-prod \
-      --name ssl-certificate \
-      --file /path/to/your/certificate.pfx \
-      --password "your-certificate-password"
-    
-    # Update Application Gateway to use the certificate
-    azd deploy
-    ```
+1. **Go to your DNS provider**
+2. **Create/update A record**: `voice-agent.yourdomain.com` → `[Application Gateway IP]`
+3. **Wait for DNS propagation** (5-30 minutes)
 
-4. **Verify SSL Certificate**
-    After DNS propagation (5-30 minutes), verify your SSL certificate is working:
-    
-    ```bash
-    # Basic health check
-    curl -I https://voice-agent.yourdomain.com/health
-    
-    # Check SSL certificate details
-    openssl s_client -connect voice-agent.yourdomain.com:443 -servername voice-agent.yourdomain.com | openssl x509 -noout -subject -ext subjectAltName
-    
-    # Verify certificate chain and expiration
-    openssl s_client -connect voice-agent.yourdomain.com:443 -servername voice-agent.yourdomain.com -showcerts </dev/null 2>/dev/null | openssl x509 -noout -dates
-    
-    # Test SSL configuration (optional - requires ssllabs-scan tool)
-    # curl -s "https://api.ssllabs.com/api/v3/analyze?host=voice-agent.yourdomain.com&publish=off"
-    ```
-    
-    Expected output should show:
-    - Valid certificate subject matching your domain
-    - Subject Alternative Names (SAN) including your domain
-    - Certificate validity dates showing future expiration
+#### ✅ Verify SSL Certificate
+
+```bash
+# Basic health check
+curl -I https://voice-agent.yourdomain.com/health
+
+# Check certificate details
+openssl s_client -connect voice-agent.yourdomain.com:443 \
+    -servername voice-agent.yourdomain.com | \
+    openssl x509 -noout -subject -ext subjectAltName
+
+# Verify certificate expiration
+openssl s_client -connect voice-agent.yourdomain.com:443 \
+    -servername voice-agent.yourdomain.com -showcerts </dev/null 2>/dev/null | \
+    openssl x509 -noout -dates
+```
+
+**✅ Expected Output:**
+- Valid certificate subject matching your domain
+- Subject Alternative Names (SAN) including your domain
+- Future expiration date
 
 ### 6. WebSocket Connectivity Testing
 
-Test WebSocket functionality using `wscat`:
+Test WebSocket functionality to ensure real-time communication works:
 
 ```bash
-# Install wscat if not already installed
+# Install wscat
 npm install -g wscat
 
-# Test WebSocket connection to your deployed backend
+# Test production WebSocket
 wscat -c wss://voice-agent.yourdomain.com/ws
 
-# Or test against local development server
+# Test local development
 wscat -c ws://localhost:8000/ws
 ```
 
-**Expected behavior:**
-- Connection should establish successfully
-- You should see a connection confirmation message
-- Type messages to test bidirectional communication
-- Use `Ctrl+C` to disconnect
+**✅ Expected Behavior:**
+- ✅ Connection establishes successfully
+- ✅ Receives connection confirmation message
+- ✅ Bidirectional communication works
+- ✅ Use `Ctrl+C` to disconnect
 
-**Troubleshooting WebSocket issues:**
-- Check backend container logs for WebSocket errors
-- Test local backend first to isolate networking issues
-- Ensure your SSL certificate is properly configured (ACS requires trusted certificates)
+**🚨 Troubleshooting WebSocket Issues:**
+- Check backend container logs
+- Test local backend first
+- Verify SSL certificate is trusted
+- Ensure DNS is properly configured
 
-## Environment Management
+---
+
+## 🔄 Environment Management
 
 ### Switch Between Environments
 
 ```bash
-# List environments
+# List all environments
 azd env list
 
-# Switch to different environment
+# Switch environment
 azd env select <environment-name>
 
-# View current environment variables
+# View current variables
 azd env get-values
 ```
 
 ### Update Configurations
 
 ```bash
-# See all environment variables
+# View all environment variables
 azd env get-values
 
-# Set new environment variable
+# Update domain configuration
 azd env set AZURE_DOMAIN_FQDN <your-domain-name>
 
 # Apply changes
 azd deploy
 ```
 
-### Certificate Management
+---
 
-**Updating SSL Certificates:**
+## 🔐 Certificate Management
+
+### 📜 Creating App Service Certificate
+
+For managed certificate creation through Azure Portal:
+
+1. **Navigate to "App Service Certificates"**
+2. **Create new certificate** for your domain
+3. **Complete domain verification**
+4. **Bind certificate** to your application
+5. **Configure custom domain** settings
+
+> 📖 **Detailed Guide**: [Secure a custom DNS name with a TLS/SSL binding in Azure App Service](https://learn.microsoft.com/en-us/azure/app-service/tutorial-secure-domain-certificate)
+
+### 🔄 Certificate Updates
 
 ```bash
-# Import new certificate to Key Vault
+# Import new certificate
 az keyvault certificate import \
-  --vault-name kv-voice-agent-prod \
-  --name ssl-certificate \
-  --file /path/to/new/certificate.pfx \
-  --password "new-certificate-password"
+        --vault-name kv-voice-agent-prod \
+        --name ssl-certificate \
+        --file /path/to/new/certificate.pfx \
+        --password "new-certificate-password"
 
-# Update the password secret
+# Update password secret
 az keyvault secret set \
-  --vault-name kv-voice-agent-prod \
-  --name ssl-certificate-password \
-  --value "new-certificate-password"
+        --vault-name kv-voice-agent-prod \
+        --name ssl-certificate-password \
+        --value "new-certificate-password"
 
-# Redeploy to apply certificate changes
+# Apply changes
 azd deploy
 ```
 
-## Monitoring and Troubleshooting
+### 🔗 Full-Chain Certificate Requirements
 
-### View Deployment Logs
+For third-party certificates (GoDaddy, etc.), create a full-chain bundle:
+
+#### Download Intermediate Bundle
 
 ```bash
-# View deployment status
-azd show
-
-# View container app logs
-az containerapp logs show \
-  --name ca-voice-agent-backend \
-  --resource-group rg-voice-agent-prod \
-  --follow
+# GoDaddy G2 bundle
+curl -o gd_bundle-g2-g1.crt https://certs.godaddy.com/repository/gd_bundle-g2-g1.crt
 ```
 
-### Common Issues
+#### Create Full-Chain PFX
 
-1. **SSL Certificate Not Working**
-    - Verify DNS A record points to Application Gateway IP
-    - Wait for DNS propagation (up to 30 minutes)
-    - Check certificate provisioning in Azure portal
-    - Ensure certificate is properly imported to Key Vault
+```bash
+# Combine certificate with intermediate bundle
+cat your-domain.crt gd_bundle-g2-g1.crt > fullchain.crt
 
-2. **ACS WebSocket Connection Fails**
-    - Verify you're using a publicly trusted SSL certificate (self-signed certificates will not work)
-    - Check that the certificate covers your domain
-    - Test SSL configuration with browser or OpenSSL
+# Convert to PFX
+openssl pkcs12 -export \
+    -out fullchain.pfx \
+    -inkey your-domain.key \
+    -in fullchain.crt \
+    -password pass:your-pfx-password
 
-3. **Container App Not Starting**
-    - Check environment variables in Key Vault
-    - Verify managed identity permissions
-    - Review container app logs
+# Import to Key Vault
+az keyvault certificate import \
+    --vault-name kv-voice-agent-prod \
+    --name ssl-certificate \
+    --file fullchain.pfx \
+    --password "your-pfx-password"
+```
 
-4. **Redis Connection Issues**
-    - Ensure private endpoint connectivity
-    - Verify Redis access keys in Key Vault
+---
 
-## Cleanup
+## 📊 Monitoring and Troubleshooting
 
-To remove all resources:
+### 🔍 Deployment Monitoring
+
+```bash
+# Check deployment status
+azd show
+
+# Real-time logs
+az containerapp logs show \
+    --name ca-voice-agent-backend \
+    --resource-group rg-voice-agent-prod \
+    --follow
+
+# Recent logs (last 100 lines)
+az containerapp logs show \
+    --name ca-voice-agent-backend \
+    --resource-group rg-voice-agent-prod \
+    --tail 100
+```
+
+### 🚨 Common Issues & Solutions
+
+| Issue | Symptoms | Solution |
+|-------|----------|----------|
+| **SSL Not Working** | HTTPS errors, certificate warnings | Verify DNS A record, wait for propagation, check certificate import |
+| **WebSocket Fails** | Connection refused, handshake errors | Ensure publicly trusted certificate, test SSL config |
+| **Container Won't Start** | App unavailable, startup errors | Check environment variables, verify managed identity permissions |
+| **Redis Connection Issues** | Cache errors, timeout issues | Verify private endpoint connectivity, check access keys |
+
+---
+
+## 🧹 Cleanup
+
+Remove all deployed resources:
 
 ```bash
 # Delete all resources
@@ -325,35 +393,42 @@ azd down
 azd env delete <environment-name>
 ```
 
-## Advanced Configuration
+---
 
-### Scaling Configuration
+## ⚙️ Advanced Configuration
+
+### 📈 Scaling Configuration
 
 Update container app scaling in `infra/modules/containerapp.bicep`:
 
 ```bicep
 scale: {
-  minReplicas: 1
-  maxReplicas: 10
-  rules: [
-     {
-        name: 'http-scaling'
-        http: {
-          metadata: {
-             concurrentRequests: '100'
-          }
+    minReplicas: 1
+    maxReplicas: 10
+    rules: [
+        {
+            name: 'http-scaling'
+            http: {
+                metadata: {
+                    concurrentRequests: '100'
+                }
+            }
         }
-     }
-  ]
+    ]
 }
 ```
 
-## Support
+---
 
-For deployment issues:
-1. Check Azure portal for resource status
-2. Review container app logs
-3. Verify network connectivity and DNS settings
-4. Ensure all required permissions are granted
-5. Verify SSL certificate is properly configured and trusted
+## 🆘 Support
+
+Having deployment issues? Follow this troubleshooting checklist:
+
+1. ✅ **Check Azure Portal** for resource status
+2. ✅ **Review container app logs** for error details
+3. ✅ **Verify network connectivity** and DNS settings
+4. ✅ **Ensure permissions** are properly granted
+5. ✅ **Verify SSL certificate** is trusted and properly configured
+
+> 💡 **Pro Tip**: Always test locally first to isolate issues before deploying to Azure.
 
