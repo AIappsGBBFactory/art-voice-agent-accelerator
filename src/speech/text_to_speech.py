@@ -4,6 +4,7 @@ import azure.cognitiveservices.speech as speechsdk
 from dotenv import load_dotenv
 
 from utils.ml_logging import get_logger
+from typing import Optional, Dict, List, Callable
 from azure.identity import DefaultAzureCredential
 from typing import Dict, List, Callable
 import html 
@@ -33,13 +34,13 @@ def split_sentences(text: str) -> List[str]:
 def auto_style(lang_code: str) -> Dict[str, str]:
     """Return style / rate tweaks per language family."""
     if lang_code.startswith(("es", "fr", "it")):
-        return {"style": "chat", "rate": "-10%"}
+        return {"style": "chat", "rate": "+3%"}
     if lang_code.startswith("en"):
-        return {"style": "chat"}
+        return {"style": "chat", "rate": "+3%"}
     return {}
 
 def ssml_voice_wrap(voice: str,
-                    default_lang: str,
+                    language: str,
                     sentences: List[str],
                     sanitizer: Callable[[str], str]) -> str:
     """Build one SSML doc with a single <voice> tag for efficiency."""
@@ -48,7 +49,7 @@ def ssml_voice_wrap(voice: str,
         try:
             lang = detect(seg)
         except LangDetectException:
-            lang = default_lang
+            lang = language
         attrs = auto_style(lang)
         inner  = sanitizer(seg)
 
@@ -61,7 +62,7 @@ def ssml_voice_wrap(voice: str,
             inner = f'<mstts:express-as style="{style}">{inner}</mstts:express-as>'
 
         # optional language switch
-        if lang != default_lang:
+        if lang != language:
             inner = f'<lang xml:lang="{lang}">{inner}</lang>'
 
         body.append(inner)
@@ -71,7 +72,7 @@ def ssml_voice_wrap(voice: str,
         '<speak version="1.0" '
         'xmlns="http://www.w3.org/2001/10/synthesis" '
         'xmlns:mstts="https://www.w3.org/2001/mstts" '
-        f'xml:lang="{default_lang}">'
+        f'xml:lang="{language}">'
         f'<voice name="{voice}">{joined}</voice>'
         '</speak>'
     )
@@ -89,7 +90,7 @@ class SpeechSynthesizer:
         # Retrieve Azure Speech credentials from parameters or environment variables
         self.key = key or os.getenv("AZURE_SPEECH_KEY")
         self.region = region or os.getenv("AZURE_SPEECH_REGION")
-        self.default_lang  = language
+        self.language  = language
         self.voice = voice
         self.format = format
 
@@ -181,14 +182,14 @@ class SpeechSynthesizer:
                 return
 
             if (len(text) <= 100 and
-                detect(text).startswith(self.default_lang[:2])):
+                detect(text).startswith(self.language[:2])):
                 self._speaker.start_speaking_text_async(text)
                 logger.debug("Quick TTS (plain) – %d chars", len(text))
                 return
 
             # SSML path
             sentences = split_sentences(text)
-            ssml = ssml_voice_wrap(self.voice, self.default_lang,
+            ssml = ssml_voice_wrap(self.voice, self.language,
                                    sentences, self._sanitize)
             self._speaker.start_speaking_ssml_async(ssml)
             logger.debug("SSML TTS – %d sentences", len(sentences))
@@ -206,7 +207,7 @@ class SpeechSynthesizer:
     def _create_synth(self):
         cfg = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
         cfg.speech_synthesis_voice_name = self.voice
-        cfg.speech_synthesis_language = self.default_lang
+        cfg.speech_synthesis_language = self.language
         cfg.set_speech_synthesis_output_format(self.format)
 
         audio_cfg = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)

@@ -37,8 +37,9 @@ BASE_URL: str = os.getenv("BASE_URL", "")
 # Blob Container URL for recording storage
 AZURE_STORAGE_CONTAINER_URL: str = os.getenv("AZURE_STORAGE_CONTAINER_URL", "")
 
+# ACS_STREAMING_MODE: StreamMode = StreamMode.MEDIA
 ACS_STREAMING_MODE: StreamMode = StreamMode.MEDIA
-# ACS_STREAMING_MODE: StreamMode = StreamMode.TRANSCRIPTION
+
 # API route fragments (keep them in one place so routers can import)
 ACS_CALL_PATH = "/api/call"
 ACS_CALLBACK_PATH: str = "/call/callbacks"
@@ -70,7 +71,7 @@ SILENCE_DURATION_MS: int = 1300  # Duration of silence to end speech detection
 # ------------------------------------------------------------------------------
 # TTS behaviour
 # ------------------------------------------------------------------------------
-VOICE_TTS = "en-US-JennyMultilingualNeural"
+VOICE_TTS = "en-US-Ava:DragonHDLatestNeural"
 
 # ------------------------------------------------------------------------------
 STOP_WORDS: List[str] = ["goodbye", "exit", "see you later", "bye"]
