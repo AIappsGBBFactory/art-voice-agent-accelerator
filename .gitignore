@@ -182,3 +182,4 @@ records/
 .DS_Store
 
 .ssl/
+rtagents/RTAgent/backend/agents/agent_store/auth_agent.yaml
