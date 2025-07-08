@@ -1,45 +1,46 @@
 <!-- markdownlint-disable MD033 -->
 
-# **🎙️ RTInsuranceAgent: Real-Time Voice Intelligence for Insurance Workflows**
+# **🎙️ RTAgent: Real-Time Voice Intelligence Framework**
 
 ## 📑 Table of Contents
 - [Overview](#overview)
 - [Solution Architecture](#solution-architecture)
+- [Extensibility and Adaptability](#extensibility-and-adaptability)
 - [Getting Started](#getting-started)
     - [Quick Start](#quick-start)
 - [Deployment](#deployment)
 
 ## **Overview**
-<img src="../../utils/images/InsuAgent.png" align="right" height="180" alt="RTInsuranceAgent Logo" />
+<img src="../../utils/images/medagent.png" align="right" height="180" alt="RTAgent Logo" />
 
-**RTInsuranceAgent** is a production-ready, natively Azure architecture that re-imagines insurance call centers and real-time claims workflows. Built exclusively on Generally Available (GA) services, it ensures sub-second latency, enterprise-grade security, and effortless horizontal scale—ready for the heaviest loss-report spikes.
+**RTAgent** is a production-ready, natively Azure architecture designed to solve real-time communication challenges across various domains. It provides a modular, extensible framework that can be adapted to specific use cases such as insurance workflows, healthcare, legal inquiries, and more. Built exclusively on Generally Available (GA) services, it ensures sub-second latency, enterprise-grade security, and effortless horizontal scale—ready for high-demand scenarios.
 
-> “Insurance carriers pour millions into claims operations, yet adjusters and FNOL agents remain buried in repetitive intake calls, long handling times, and post-call data entry.”
+> “Organizations face repetitive communication tasks, long handling times, and inefficient data entry processes, leading to operational bottlenecks and missed opportunities.”
 
-### **Why Insurance Call Centers Need AI**
+### **Why Real-Time Communication Needs AI**
 
 | **Challenge**              | **Impact**                          |
 |-----------------------------|--------------------------------------|
-| 🔄 Repetitive intake calls  | High adjuster burnout and turnover  |
+| 🔄 Repetitive communication | High employee burnout and turnover  |
 | 😫 Long handling times      | Lower customer satisfaction         |
 | 💰 Manual data entry        | Increased errors and inefficiencies |
 | 📉 Missed opportunities     | Delayed resolutions and leakage     |
 
-**RTInsuranceAgent Tackles These Pain Points**
-- Automates **First Notice of Loss (FNOL)** and routine inquiries with natural, empathetic voice AI.
-- Cuts **Average Handle Time (AHT)** so human adjusters focus on complex investigations.
+**RTAgent Tackles These Pain Points**
+- Automates routine inquiries and repetitive communication tasks with natural, empathetic voice AI.
+- Cuts **Average Handle Time (AHT)** so human agents focus on complex, high-value interactions.
 - Eliminates “recite-and-rekey” drudgery that fuels burnout and turnover.
-- Captures perfect, structured data in real time—reducing cleanup queues and leakage errors.
+- Captures perfect, structured data in real time—reducing cleanup queues and operational errors.
 
 **📊 Outcomes**
-- **Reduced adjuster churn**: AI collects clean data; humans handle higher-value work.
-- **First-call resolution climbs**: LLM agents surface correct repair options and rental coverage instantly.
-- **Future-proof foundation**: Multi-agent RAG, straight-through processing, and proactive loss-prevention outreach.
-- **Potential 30–50% lower AHT**: FNOL and status-check calls become faster and more efficient.
+- **Reduced employee churn**: AI collects clean data; humans handle higher-value work.
+- **First-call resolution climbs**: LLM agents surface correct options and answers instantly.
+- **Future-proof foundation**: Multi-agent RAG, straight-through processing, and proactive outreach.
+- **Potential 30–50% lower AHT**: Routine calls become faster and more efficient.
 
 ## **Solution Architecture**
 
-The high-level RTInsuranceAgent architecture:
+The high-level RTAgent architecture:
 
 ![Architecture Diagram](../../utils/images/arch.png)
 
@@ -92,8 +93,8 @@ flowchart TD
             TaskRouter -->|Cost Sensitive| GPT4oMini["💰 GPT-4o-mini<br/>Standard Tasks"]
         end
 
-        %% ── Subgraph: Industry-Specific Agents
-        subgraph "🏥 Industry-Specific Agents"
+        %% ── Subgraph: Customizable Agents
+        subgraph "💬 Customizable Agents"
             FNOL["📋 FNOL Agent"]
             Healthcare["🏥 Healthcare Agent"]
             Legal["⚖️ Legal Agent"]
@@ -170,19 +171,22 @@ flowchart TD
 
 Please visit 📄 **[Architecture Guide](docs/Architecture.md)** for more details.
 
-## **Deployment**
+## **Extensibility and Adaptability**
 
-A full IaC walkthrough—including networking, SSL, scalability, and CI/CD—is in 📄 **[Deployment Guide](docs/DeploymentGuide.md)**
+RTAgent is designed as a base framework that can be extended and adapted to solve domain-specific problems. The modular architecture allows developers to create custom agents and workflows tailored to their unique requirements.
 
-## **Getting Started**
+### **How to Extend RTAgent**
+1. **Custom Agents**: Add new agents by implementing the standardized agent interface. For example, create a `LegalAgent` or `HealthcareAgent` with domain-specific logic.
+2. **Tool Integration**: Extend the tool store with custom functions, external API integrations, or document fetchers.
+3. **Memory Enhancements**: Adapt the memory store to include additional context or historical data for personalized interactions.
+4. **Dynamic Routing**: Modify the task router to prioritize agents based on cost, complexity, or latency requirements.
 
-**Understanding Folder Structure**
-
-The RTInsuranceAgent project is organized into the following folders:
+### **Folder Structure for Extensions**
+The RTAgent project is organized into the following folders:
 
 ```
 rtagents/
-└─ RTInsuranceAgent/
+└─ RTAgent/
     ├─ backend/      # FastAPI WebSocket server for real-time transcription and GPT orchestration
     ├─ frontend/     # React + Vite client leveraging Azure Speech SDK for voice interactions
     ├─ test_cases_scenario/  # Optional test scripts and scenarios for validating workflows
@@ -197,9 +201,11 @@ Each folder serves a specific purpose to ensure modularity and ease of developme
 
 Refer to the folder descriptions above as you navigate the codebase.
 
+## **Getting Started**
+
 ### **Quick Start**
 
-Follow these steps to set up and run RTInsuranceAgent locally:
+Follow these steps to set up and run RTAgent locally:
 
 **Step 1: Clone the Repository**
 ```bash
@@ -209,7 +215,7 @@ cd gbb-ai-audio-agent
 
 **Step 2: Set Up the Python Backend**
 ```bash
-cd rtagents/RTInsuranceAgent/backend
+cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.sample .env   # Fill in the required keys
@@ -218,10 +224,14 @@ python server.py      # Backend will run at ws://localhost:8010/realtime
 
 **Step 3: Run the React Frontend**
 ```bash
-cd ../frontend
+cd frontend
 npm install
 npm run dev           # Frontend will run at http://localhost:5173
 ```
 
 > **Pro Tip:** For outbound PSTN calling, expose the backend using **Azure Dev Tunnels**. Update the `BASE_URL` in your environment variables and ensure the same URL is configured in your **Azure Communication Services** callback settings.
+
+## **Deployment**
+
+A full IaC walkthrough—including networking, SSL, scalability, and CI/CD—is in 📄 **[Deployment Guide](docs/DeploymentGuide.md)**
 
