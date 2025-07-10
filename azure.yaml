@@ -7,33 +7,47 @@ infra:
   provider: terraform
   path: ./infra-tf
 
-services:
-  rtaudio-client:
-    project: rtagents/RTAgent/frontend
-    host: containerapp
-    language: js
-    docker:
-      path: ./Dockerfile
-      context: .
-      platform: linux/amd64
-      
-  rtaudio-server:
-    project: rtagents/RTAgent/backend
-    host: containerapp
-    language: python
-    docker:
-      path: ./Dockerfile
-      context: ../../../
-      platform: linux/amd64
+# services:
+#   rtaudio-client:
+#     project: rtagents/RTAgent/frontend
+#     host: appservice
+#     language: js
+    
+    
+#   rtaudio-server:
+#     project: rtagents/RTAgent/backend
+#     host: appservice
+#     language: python
 
-# hooks:
-#   preprovision:
-#     shell: sh
-#     run: ./scripts/azd-preprovision.sh
-#     interactive: true
-#     continueOnError: false
-#   postprovision:
-#     shell: sh
-#     run: ./scripts/azd-postprovision.sh
-#     interactive: true
-#     continueOnError: false
+hooks:
+  preprovision:
+    shell: sh
+    run: ./scripts/azd-preprovision.sh
+    interactive: true
+    continueOnError: false
+  postprovision:
+    shell: sh
+    run: ./scripts/azd-postprovision.sh
+    interactive: true
+    continueOnError: false
+
+# For container app deploy
+# services:
+#   rtaudio-client:
+#     project: rtagents/RTAgent/frontend
+#     host: containerapp
+#     language: js
+#     docker:
+#       path: ./Dockerfile
+#       context: .
+#       platform: linux/amd64
+      
+#   rtaudio-server:
+#     project: rtagents/RTAgent/backend
+#     host: containerapp
+#     language: python
+#     docker:
+#       path: ./Dockerfile
+#       context: ../../../
+#       platform: linux/amd64
+
