@@ -48,6 +48,8 @@ async def relay_ws(ws: WebSocket):
             await ws.receive_text()  # keep ping/pong alive
     except WebSocketDisconnect:
         clients.remove(ws)
+    finally:
+        await ws.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -94,6 +96,7 @@ async def realtime_ws(ws: WebSocket):
             await route_turn(cm, prompt, ws, is_acs=False)
 
     finally:
+        await ws.close()
         try:
             cm = getattr(ws.state, "cm", None)
             cosmos = getattr(ws.app.state, "cosmos", None)

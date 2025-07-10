@@ -117,6 +117,7 @@ class AcsCaller:
             audio_channel_type=MediaStreamingAudioChannelType.UNMIXED,
             start_media_streaming=True,
             enable_bidirectional=True,
+            enable_dtmf_tones=True,
             audio_format=AudioFormat.PCM16_K_MONO  # Ensure this matches what your STT expects
         )
 

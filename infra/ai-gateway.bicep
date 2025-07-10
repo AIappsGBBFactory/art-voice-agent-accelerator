@@ -309,7 +309,7 @@ resource openAiApi 'Microsoft.ApiManagement/service/apis@2022-08-01' = if (enabl
     description: 'Azure OpenAI API for real-time voice applications'
     path: 'openai'
     protocols: ['https']
-    subscriptionRequired: true
+    subscriptionRequired: false // Use JWT instead
     subscriptionKeyParameterNames: {
       header: 'api-key'
       query: 'api-key'

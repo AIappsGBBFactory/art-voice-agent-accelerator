@@ -3,13 +3,27 @@ import os
 from typing import Any, Dict, List, Optional
 
 import pymongo
+from pymongo.auth_oidc import OIDCCallback, OIDCCallbackContext, OIDCCallbackResult
+
+from azure.identity import DefaultAzureCredential
 from pathlib import Path
 from dotenv import load_dotenv
 import yaml
 from pymongo.errors import DuplicateKeyError, PyMongoError
+import re
 
 # Initialize logging
 logger = logging.getLogger(__name__)
+
+class AzureIdentityTokenCallback(OIDCCallback):
+    def __init__(self, credential):
+        self.credential = credential
+
+    def fetch(self, context: OIDCCallbackContext) -> OIDCCallbackResult:
+        token = self.credential.get_token(
+            "https://ossrdbms-aad.database.windows.net/.default").token
+        return OIDCCallbackResult(access_token=token)
+    
 
 class CosmosDBMongoCoreManager:
     def __init__(
@@ -25,11 +39,50 @@ class CosmosDBMongoCoreManager:
         connection_string = connection_string or os.getenv(
             "AZURE_COSMOS_CONNECTION_STRING"
         )
+       
         database_name = database_name or os.getenv("AZURE_COSMOS_DATABASE_NAME")
         collection_name = collection_name or os.getenv("AZURE_COSMOS_COLLECTION_NAME")
         try:
-            # Initialize the MongoClient with the connection string
-            self.client = pymongo.MongoClient(connection_string)
+
+
+            # Check if connection string contains mongodb-oidc for Azure Entra ID authentication
+            if connection_string and "mongodb-oidc" in connection_string.lower():
+                # Extract cluster name from connection string or environment
+                cluster_name = os.getenv("AZURE_COSMOS_CLUSTER_NAME")
+                if not cluster_name:
+                    # Try to extract from connection string if not in env
+                    # Assuming format like mongodb+srv://clustername.global.mongocluster.cosmos.azure.com/
+                    match = re.search(r'mongodb\+srv://([^.]+)\.', connection_string)
+                    if match:
+                        cluster_name = match.group(1)
+                    else:
+                        raise ValueError("Could not determine cluster name for OIDC authentication")
+                
+                # Setup Azure Identity credential for OIDC
+                credential = DefaultAzureCredential()
+                auth_callback = AzureIdentityTokenCallback(credential)
+                auth_properties = {"OIDC_CALLBACK": auth_callback}
+                
+                # Override connection string for OIDC
+                connection_string = f"mongodb+srv://{cluster_name}.global.mongocluster.cosmos.azure.com/"
+                
+                logger.info(f"Using OIDC authentication for cluster: {cluster_name}")
+                clusterName = "<azure-cosmos-db-mongodb-vcore-cluster-name>"
+
+                self.client = pymongo.MongoClient(
+                    connection_string,
+                    connectTimeoutMS=120000,
+                    tls=True,
+                    retryWrites=True,
+                    authMechanism="MONGODB-OIDC",
+                    authMechanismProperties=auth_properties
+                )
+            else:
+                auth_properties = None
+                logger.info("Using standard connection string authentication")
+
+                # Initialize the MongoClient with the connection string
+                self.client = pymongo.MongoClient(connection_string)
             self.database = self.client[database_name]
             self.collection = self.database[collection_name]
             logger.info(
@@ -65,7 +118,7 @@ class CosmosDBMongoCoreManager:
         :param query: The query to find an existing document to update.
         :return: The upserted document's ID if a new document is inserted, None otherwise.
         """
-        try:
+        try:   
             # Try updating the document; insert if it doesn't exist
             result = self.collection.update_one(query, {"$set": document}, upsert=True)
             if result.upserted_id:

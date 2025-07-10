@@ -55,8 +55,8 @@ def purchase_phone_number(phone_numbers_client, args):
     """Purchase a new phone number."""
     print('Azure Communication Services - Phone Numbers Purchase')
     capabilities = PhoneNumberCapabilities(
-        calling=PhoneNumberCapabilityType.INBOUND,
-        sms=PhoneNumberCapabilityType.INBOUND_OUTBOUND
+        calling=PhoneNumberCapabilityType.INBOUND_OUTBOUND,
+        sms=PhoneNumberCapabilityType.NONE
     )
     
     phone_type = PhoneNumberType.TOLL_FREE if args.phone_number_type == 'TOLL_FREE' else PhoneNumberType.GEOGRAPHIC

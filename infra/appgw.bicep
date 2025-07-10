@@ -308,6 +308,9 @@ var routingRules = concat(
       backendHttpSettings: {
         id: resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', applicationGatewayName, '${containerAppBackends[0].name}-http-settings')
       }
+      rewriteRuleSet: {
+        id: resourceId('Microsoft.Network/applicationGateways/rewriteRuleSets', applicationGatewayName, 'websocket-rewrite-rules')
+      }
     }
   }] : [],
   // HTTP redirect rule (only if SSL is enabled and redirect is enabled)
@@ -327,6 +330,37 @@ var routingRules = concat(
 )
 
 param sslCertificates array = []
+
+// Rewrite rule sets for WebSocket path handling
+var rewriteRuleSets = [
+  {
+    name: 'websocket-rewrite-rules'
+    properties: {
+      rewriteRules: [
+        {
+          name: 'websocket-user-agent-rewrite'
+          ruleSequence: 100
+          conditions: [
+            {
+              variable: 'var_uri_path'
+              pattern: '^/(realtime|relay|call/stream)$'
+              ignoreCase: false
+              negate: false
+            }
+          ]
+          actionSet: {
+            requestHeaderConfigurations: [
+              {
+                headerName: 'User-Agent'
+                headerValue: 'RTAudioAgent/1.0 (WebSocketClient; RealTime)'
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+]
 
 // Redirect configurations (only when SSL is enabled and redirect is enabled)
 var redirectConfigurations = (enableHttpRedirect && enableSslCertificate) ? [
@@ -416,7 +450,6 @@ module publicIpAddress 'br/public:avm/res/network/public-ip-address:0.6.0' = if 
 // ============================================================================
 // WAF POLICY DEPLOYMENT (CONDITIONAL)
 // ============================================================================
-// Update the WAF policy configuration section to fix schema errors
 
 module applicationGatewayWebApplicationFirewallPolicy 'br/public:avm/res/network/application-gateway-web-application-firewall-policy:0.2.0' = if (enableWaf) {
   name: 'waf-policy-deployment'
@@ -434,7 +467,6 @@ module applicationGatewayWebApplicationFirewallPolicy 'br/public:avm/res/network
           ruleGroupOverrides: []
         }
       ]
-      // exclusions: wafRuleSetExclusions
     }
     
     // Policy settings
@@ -447,17 +479,6 @@ module applicationGatewayWebApplicationFirewallPolicy 'br/public:avm/res/network
       requestBodyInspectLimitInKB: wafMaxRequestBodySizeInKb
       requestBodyEnforcement: true
     }
-    
-    // // Custom rules (if provided) - filter out unsupported properties
-    // customRules: map(customWafRules, rule => {
-    //   name: rule.name
-    //   priority: rule.priority
-    //   ruleType: rule.ruleType
-    //   action: rule.action
-    //   matchConditions: rule.matchConditions
-    //   // Only include rate limit threshold for RateLimitRule, exclude unsupported rateLimitDurationInMinutes
-    //   rateLimitThreshold: rule.ruleType == 'RateLimitRule' ? (contains(rule, 'rateLimitThreshold') ? rule.rateLimitThreshold : 100) : null
-    // })
     
     // Tags
     tags: tags
@@ -512,6 +533,9 @@ module applicationGateway 'br/public:avm/res/network/application-gateway:0.6.0' 
     // Listener and routing configuration
     httpListeners: listeners
     requestRoutingRules: routingRules
+    
+    // Rewrite rule sets
+    rewriteRuleSets: rewriteRuleSets
     
     // SSL configuration
     sslCertificates: sslCertificates

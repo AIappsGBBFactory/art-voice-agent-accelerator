@@ -19,7 +19,14 @@ class AzureRedisManager:
     AzureRedisManager provides a simplified interface to connect, store,
     retrieve, and manage session data using Azure Cache for Redis.
     """
-
+    @property
+    def is_connected(self) -> bool:
+        """Check if Redis connection is healthy."""
+        try:
+            return self.ping()
+        except Exception as e:
+            self.logger.error("Redis connection check failed: %s", e)
+            return False
     def __init__(
         self,
         host: Optional[str] = None,

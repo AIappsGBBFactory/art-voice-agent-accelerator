@@ -242,6 +242,7 @@ async def acs_media_ws(ws: WebSocket):
             logger.error(f"Error starting recognizer: {e}", exc_info=True)
     finally:
         # Clean up resources when WebSocket connection ends
+        await ws.close()
         logger.info("WebSocket connection ended, cleaning up resources")
         if 'handler' in locals():
             try:

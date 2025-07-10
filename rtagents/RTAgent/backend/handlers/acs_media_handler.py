@@ -4,6 +4,9 @@ import threading
 from typing import Optional
 
 from fastapi import WebSocket
+from azure.communication.callautomation import DtmfTone, PhoneNumberIdentifier
+from azure.communication.callautomation import TextSource
+
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
@@ -99,6 +102,7 @@ class ACSMediaHandler:
     def play_greeting(self, greeting_text: str = "Welcome to our customer service. How can I help you today?"):
         """
         Send a greeting message to ACS using TTS.
+        For Transcription mode, the greeting is played via the CallConnected handler
         """
         try:
             logger.info(f"🎤 Playing greeting: {greeting_text}")
@@ -156,9 +160,45 @@ class ACSMediaHandler:
         """
         logger.info(f"🧾 User (final) in {lang}: {text}")
         
+
+        
+        # Check if the final text indicates a conference join prompt
+        if text and (
+            "this call will join you to a conference" in text.lower() or
+            "please say ok or press" in text.lower()):
+
+
+            logger.info("🎯 Detected conference join prompt, responding with 'ok'")
+            # Respond with "ok" instead of processing through orchestrator
+            try:
+                call_conn = self.incoming_websocket.app.state.call_conn
+                text_source = TextSource(
+                    text="ok",
+                    source_locale=lang or "en-US",
+                    )
+                result = call_conn.play_media_to_all(
+                    play_source=text_source,
+                    operation_context="conference-join-response"
+                )
+                logger.info("Played 'ok' response, result=%s", result)
+                # target_participant = self.incoming_websocket.app.state.target_participant
+                # tones = [DtmfTone.ONE]
+                # result = call_conn.send_dtmf_tones(
+                #     tones = tones,
+                #     target_participant = target_participant,
+                #     operation_context = "dtmfs-to-ivr"
+                # )
+                # logger.info("Send dtmf, result=%s", result)
+
+            except Exception as e:
+                logger.error(f"❌ Failed to send DTMF tones for conference join: {e}", exc_info=True)
+                return
+            except asyncio.QueueFull:
+                logger.warning("⚠️ Route turn queue is full, dropping conference response")
+                return
+        
         # Clear the barge-in event flag
         self._barge_in_event.clear()
-        
         # Thread-safe queue operation
         if self.main_loop and not self.main_loop.is_closed():
             try:

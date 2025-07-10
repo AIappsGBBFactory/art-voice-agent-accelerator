@@ -2,6 +2,11 @@
 name: gbb-ai-audio-agent
 metadata:
   template: azd-init@1.15.1
+
+infra:
+  provider: terraform
+  path: ./infra-tf
+
 services:
   rtaudio-client:
     project: rtagents/RTAgent/frontend
@@ -21,14 +26,14 @@ services:
       context: ../../../
       platform: linux/amd64
 
-hooks:
-  preprovision:
-    shell: sh
-    run: ./scripts/azd-preprovision.sh
-    interactive: true
-    continueOnError: false
-  postprovision:
-    shell: sh
-    run: ./scripts/azd-postprovision.sh
-    interactive: true
-    continueOnError: false
+# hooks:
+#   preprovision:
+#     shell: sh
+#     run: ./scripts/azd-preprovision.sh
+#     interactive: true
+#     continueOnError: false
+#   postprovision:
+#     shell: sh
+#     run: ./scripts/azd-postprovision.sh
+#     interactive: true
+#     continueOnError: false

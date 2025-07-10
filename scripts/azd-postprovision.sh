@@ -83,84 +83,86 @@ else
     }
 fi
 
-# ========================================================================
-# 🔐 Azure Entra Group Configuration
-# ========================================================================
-echo ""
-echo "👥 Configuring Azure Entra Group Membership"
-echo "==========================================="
-echo ""
+# # ========================================================================
+# # 🔐 Azure Entra Group Configuration
+# # ========================================================================
+# echo ""
+# echo "👥 Configuring Azure Entra Group Membership"
+# echo "==========================================="
+# echo ""
 
-# Retrieve required values from azd environment
-BACKEND_UAI_PRINCIPAL_ID="$(azd env get-value BACKEND_UAI_PRINCIPAL_ID)"
-AZURE_ENTRA_GROUP_ID="$(azd env get-value AZURE_ENTRA_GROUP_ID)"
+# # Retrieve required values from azd environment
+# BACKEND_UAI_PRINCIPAL_ID="$(azd env get-value BACKEND_UAI_PRINCIPAL_ID)"
+# AZURE_ENTRA_GROUP_ID="$(azd env get-value AZURE_ENTRA_GROUP_ID)"
 
-if [ -z "$BACKEND_UAI_PRINCIPAL_ID" ]; then
-    echo "❌ Error: BACKEND_UAI_PRINCIPAL_ID is not set in the environment."
-    exit 1
-fi
+# if [ -z "$BACKEND_UAI_PRINCIPAL_ID" ]; then
+#     echo "❌ Error: BACKEND_UAI_PRINCIPAL_ID is not set in the environment."
+#     exit 1
+# fi
 
-if [ -z "$AZURE_ENTRA_GROUP_ID" ]; then
-    echo "❌ Error: AZURE_ENTRA_GROUP_ID is not set in the environment."
-    exit 1
-fi
+# if [ -z "$AZURE_ENTRA_GROUP_ID" ]; then
+#     echo "❌ Error: AZURE_ENTRA_GROUP_ID is not set in the environment."
+#     exit 1
+# fi
 
-# Check if the member is already in the group
-echo "🔍 Checking if BACKEND_UAI_PRINCIPAL_ID is already a member of the Azure Entra group..."
-EXISTING_MEMBER=$(az rest --method get --url "https://graph.microsoft.com/v1.0/groups/$AZURE_ENTRA_GROUP_ID/members/microsoft.graph.servicePrincipal" --query "value[?id=='$BACKEND_UAI_PRINCIPAL_ID'].id" -o tsv)
+# # Check if the member is already in the group
+# echo "🔍 Checking if BACKEND_UAI_PRINCIPAL_ID is already a member of the Azure Entra group..."
+# EXISTING_MEMBER=$(az rest --method get --url "https://graph.microsoft.com/v1.0/groups/$AZURE_ENTRA_GROUP_ID/members/microsoft.graph.servicePrincipal" --query "value[?id=='$BACKEND_UAI_PRINCIPAL_ID'].id" -o tsv)
 
-if [ -n "$EXISTING_MEMBER" ]; then
-    echo "✅ BACKEND_UAI_PRINCIPAL_ID ($BACKEND_UAI_PRINCIPAL_ID) is already a member of the Azure Entra group."
-else
-    echo "➕ Adding BACKEND_UAI_PRINCIPAL_ID to Azure Entra group..."
-    if az ad group member add --group "$AZURE_ENTRA_GROUP_ID" --member-id "$BACKEND_UAI_PRINCIPAL_ID" 2>/dev/null; then
-        echo "✅ Successfully added BACKEND_UAI_PRINCIPAL_ID to Azure Entra group."
-    else
-        echo "❌ Error: Failed to add BACKEND_UAI_PRINCIPAL_ID to Azure Entra group."
-        exit 1
-    fi
-fi
+# if [ -n "$EXISTING_MEMBER" ]; then
+#     echo "✅ BACKEND_UAI_PRINCIPAL_ID ($BACKEND_UAI_PRINCIPAL_ID) is already a member of the Azure Entra group."
+# else
+#     echo "➕ Adding BACKEND_UAI_PRINCIPAL_ID to Azure Entra group..."
+#     if az ad group member add --group "$AZURE_ENTRA_GROUP_ID" --member-id "$BACKEND_UAI_PRINCIPAL_ID" 2>/dev/null; then
+#         echo "✅ Successfully added BACKEND_UAI_PRINCIPAL_ID to Azure Entra group."
+#     else
+#         echo "❌ Error: Failed to add BACKEND_UAI_PRINCIPAL_ID to Azure Entra group."
+#         exit 1
+#     fi
+# fi
 
-# ========================================================================
-# 🌐 Application Gateway DNS Configuration Info
-# ========================================================================
-echo ""
-echo "🔗 Application Gateway DNS Configuration"
-echo "======================================="
-echo ""
+# # ========================================================================
+# # 🌐 Application Gateway DNS Configuration Info
+# # ========================================================================
+# echo ""
+# echo "🔗 Application Gateway DNS Configuration"
+# echo "======================================="
+# echo ""
 
-# Retrieve Application Gateway public IP and domain information
-APP_GATEWAY_PUBLIC_IP="$(azd env get-value APPLICATION_GATEWAY_PUBLIC_IP 2>/dev/null || echo "")"
-APP_GATEWAY_FQDN="$(azd env get-value APPLICATION_GATEWAY_FQDN 2>/dev/null || echo "")"
-CUSTOM_DOMAIN="$(azd env get-value AZURE_DOMAIN_FQDN 2>/dev/null || echo "")"
+# # Retrieve Application Gateway public IP and domain information
+# APP_GATEWAY_PUBLIC_IP="$(azd env get-value APPLICATION_GATEWAY_PUBLIC_IP 2>/dev/null || echo "")"
+# APP_GATEWAY_FQDN="$(azd env get-value APPLICATION_GATEWAY_FQDN 2>/dev/null || echo "")"
+# CUSTOM_DOMAIN="$(azd env get-value AZURE_DOMAIN_FQDN 2>/dev/null || echo "")"
 
-if [ -n "$APP_GATEWAY_PUBLIC_IP" ] && [ "$APP_GATEWAY_PUBLIC_IP" != "null" ]; then
-    echo "📋 DNS Record Configuration Required:"
-    echo "======================================"
-    echo ""
-    echo "🔧 Please configure the following DNS record in your DNS provider:"
-    echo ""
-    echo "   Record Type: A"
-    echo "   Name:        ${CUSTOM_DOMAIN:-yourdomain.com}"
-    echo "   Value:       $APP_GATEWAY_PUBLIC_IP"
-    echo "   TTL:         300 (or your preferred value)"
-    echo ""
+# if [ -n "$APP_GATEWAY_PUBLIC_IP" ] && [ "$APP_GATEWAY_PUBLIC_IP" != "null" ]; then
+#     echo "📋 DNS Record Configuration Required:"
+#     echo "======================================"
+#     echo ""
+#     echo "🔧 Please configure the following DNS record in your DNS provider:"
+#     echo ""
+#     echo "   Record Type: A"
+#     echo "   Name:        ${CUSTOM_DOMAIN:-yourdomain.com}"
+#     echo "   Value:       $APP_GATEWAY_PUBLIC_IP"
+#     echo "   TTL:         300 (or your preferred value)"
+#     echo ""
     
-    if [ -n "$APP_GATEWAY_FQDN" ] && [ "$APP_GATEWAY_FQDN" != "null" ]; then
-    echo "   Alternative CNAME Record:"
-    echo "   Record Type: CNAME"
-    echo "   Name:        ${CUSTOM_DOMAIN:-yourdomain.com}"
-    echo "   Value:       $APP_GATEWAY_FQDN"
-    echo "   TTL:         300 (or your preferred value)"
-    echo ""
-    fi
+#     if [ -n "$APP_GATEWAY_FQDN" ] && [ "$APP_GATEWAY_FQDN" != "null" ]; then
+#     echo "   Alternative CNAME Record:"
+#     echo "   Record Type: CNAME"
+#     echo "   Name:        ${CUSTOM_DOMAIN:-yourdomain.com}"
+#     echo "   Value:       $APP_GATEWAY_FQDN"
+#     echo "   TTL:         300 (or your preferred value)"
+#     echo ""
+#     fi
     
-    echo "⚠️  Important Notes:"
-    echo "   • DNS propagation may take up to 48 hours"
-    echo "   • Verify the record using: nslookup ${CUSTOM_DOMAIN:-yourdomain.com}"
-    echo "   • SSL certificate will be auto-provisioned after DNS propagation"
-    echo ""
-else
-    echo "⚠️ Warning: APP_GATEWAY_PUBLIC_IP not found in environment variables."
-    echo "   Please check your Application Gateway deployment."
-fi
+#     echo "⚠️  Important Notes:"
+#     echo "   • DNS propagation may take up to 48 hours"
+#     echo "   • Verify the record using: nslookup ${CUSTOM_DOMAIN:-yourdomain.com}"
+#     echo "   • SSL certificate will be auto-provisioned after DNS propagation"
+#     echo ""
+# else
+#     echo "⚠️ Warning: APP_GATEWAY_PUBLIC_IP not found in environment variables."
+#     echo "   Please check your Application Gateway deployment."
+# fi
+
+

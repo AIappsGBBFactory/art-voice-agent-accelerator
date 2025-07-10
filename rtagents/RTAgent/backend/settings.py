@@ -22,6 +22,16 @@ load_dotenv(override=True)
 AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_KEY: str = os.getenv("AZURE_OPENAI_KEY", "")
 AZURE_OPENAI_CHAT_DEPLOYMENT_ID: str = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID", "")
+
+# ------------------------------------------------------------------------------
+# Azure Identity / Authentication
+# ------------------------------------------------------------------------------
+AZURE_CLIENT_ID: str = os.getenv("AZURE_CLIENT_ID", "")
+AZURE_TENANT_ID: str = os.getenv("AZURE_TENANT_ID", "")
+
+# ------------------------------------------------------------------------------
+# Azure Speech Services
+# ------------------------------------------------------------------------------
 AZURE_SPEECH_REGION: str = os.getenv("AZURE_SPEECH_REGION", "")
 AZURE_SPEECH_ENDPOINT: str = os.getenv("AZURE_SPEECH_ENDPOINT") or os.environ.get("AZURE_OPENAI_STT_TTS_ENDPOINT", "")
 AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY") or os.environ.get("AZURE_OPENAI_STT_TTS_KEY", "")
@@ -38,7 +48,7 @@ BASE_URL: str = os.getenv("BASE_URL", "")
 AZURE_STORAGE_CONTAINER_URL: str = os.getenv("AZURE_STORAGE_CONTAINER_URL", "")
 
 # ACS_STREAMING_MODE: StreamMode = StreamMode.MEDIA
-ACS_STREAMING_MODE: StreamMode = StreamMode.MEDIA
+ACS_STREAMING_MODE: StreamMode = StreamMode(os.getenv("ACS_STREAMING_MODE", "media").lower())
 
 # API route fragments (keep them in one place so routers can import)
 ACS_CALL_PATH = "/api/call"
@@ -47,8 +57,8 @@ ACS_WEBSOCKET_PATH: str = "/call/stream"
 
 # Cosmos DB
 AZURE_COSMOS_CONNECTION_STRING: str = os.getenv("AZURE_COSMOS_CONNECTION_STRING", "")
-AZURE_COSMOS_DB_DATABASE_NAME: str = os.getenv("AZURE_COSMOS_DB_DATABASE_NAME", "")
-AZURE_COSMOS_DB_COLLECTION_NAME: str = os.getenv("AZURE_COSMOS_DB_COLLECTION_NAME", "")
+AZURE_COSMOS_DATABASE_NAME: str = os.getenv("AZURE_COSMOS_DATABASE_NAME", "")
+AZURE_COSMOS_COLLECTION_NAME: str = os.getenv("AZURE_COSMOS_COLLECTION_NAME", "")
 
 # ------------------------------------------------------------------------------
 # SST behaviour
@@ -80,12 +90,13 @@ TTS_END: set[str] = { ";" }
 
 # Allowed CORS origins for the FastAPI app:
 ALLOWED_ORIGINS: list[str] = [
-    "http://localhost",
-    "http://127.0.0.1",
-    "https://localhost",
-    "https://127.0.0.1",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://localhost:5173",
-    "https://127.0.0.1:5173",
+    "*"
+    # "http://localhost",
+    # "http://127.0.0.1",
+    # "https://localhost",
+    # "https://127.0.0.1",
+    # "http://localhost:5173",
+    # "http://127.0.0.1:5173",
+    # "https://localhost:5173",
+    # "https://127.0.0.1:5173",
 ]

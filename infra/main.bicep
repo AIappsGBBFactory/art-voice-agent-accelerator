@@ -112,6 +112,11 @@ param hubVNetAddressPrefix string = '10.0.0.0/16'
 @description('Address prefix for the spoke virtual network (CIDR notation)')
 param spokeVNetAddressPrefix string = '10.1.0.0/16'
 
+@description('Enable network isolation for all applicable Azure services')
+param networkIsolation bool = true
+
+param enableRedisHA bool = false
+// Jumphost config
 @secure()
 param jumphostVmPassword string = ''
 // ============================================================================
@@ -165,9 +170,6 @@ param applicationGatewayMinCapacity int = 2
 param applicationGatewayMaxCapacity int = 10
 
 
-
-@description('Enable network isolation for all applicable Azure services')
-param networkIsolation bool = true
 
 // ============================================================================
 // VARIABLES (add after existing variables section)
@@ -1077,6 +1079,7 @@ module redisEnterprise 'br/public:avm/res/cache/redis-enterprise:0.1.1' = {
     location: location
     tags: tags
     skuName: redisSku
+    highAvailability: enableRedisHA == true ? 'Enabled' : 'Disabled'
     
     // Database configuration with RBAC authentication
     database: {
@@ -1084,7 +1087,7 @@ module redisEnterprise 'br/public:avm/res/cache/redis-enterprise:0.1.1' = {
       accessPolicyAssignments: [
         {
           name: 'backend-access'
-          userObjectId: uaiAudioAgentBackendIdentity.outputs.principalId
+          userObjectId: uaiAudioAgentBackendIdentity.outputs.clientId
         }
       ]
       diagnosticSettings: [

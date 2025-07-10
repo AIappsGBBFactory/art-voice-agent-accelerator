@@ -95,8 +95,23 @@ class SpeechSynthesizer:
         self.format = format
 
         # Initialize the speech synthesizer for speaker playback
-        self._speaker = self._create_synth()
+        # self._speaker = self._create_synth()
+        self.cfg = self._create_speech_config()
+        self._speaker = speechsdk.SpeechSynthesizer(
+            speech_config=self.cfg, 
+            audio_config=speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
+            )
 
+    # Duplicative, consolidating into _create_speech_config
+    # def _create_synth(self):
+    #     cfg = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+    #     cfg.speech_synthesis_voice_name = self.voice
+    #     cfg.speech_synthesis_language = self.language
+    #     cfg.set_speech_synthesis_output_format(self.format)
+
+    #     audio_cfg = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
+    #     return speechsdk.SpeechSynthesizer(cfg, audio_cfg)
+    
     def _create_speech_config(self):
         """
         Helper method to create and configure the SpeechConfig object.
@@ -126,8 +141,9 @@ class SpeechSynthesizer:
                 try:
                     logger.debug("Attempting to use DefaultAzureCredential for Azure Speech")
                     credential = DefaultAzureCredential()
+                    speech_resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
                     token = credential.get_token("https://cognitiveservices.azure.com/.default")
-                    auth_token = "aad#" + self.speech_resource_id + "#" + token.token
+                    auth_token = "aad#" + speech_resource_id + "#" + token.token
                     speech_config = speechsdk.SpeechConfig(
                         auth_token=auth_token,
                         region=self.region
@@ -141,16 +157,13 @@ class SpeechSynthesizer:
             raise RuntimeError("Failed to create speech config - no valid authentication method found")
             
         speech_config.speech_synthesis_language = self.language
-        speech_config = speechsdk.SpeechConfig(
-            subscription=self.key, region=self.region
-        )
         speech_config.speech_synthesis_voice_name = self.voice
         # Set the output format to 24kHz 16-bit mono PCM WAV
         speech_config.set_speech_synthesis_output_format(
             speechsdk.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm
         )
         return speech_config
-
+        
     def _create_speaker_synthesizer(self):
         """
         Create a SpeechSynthesizer instance for playing audio through the server's default speaker.
@@ -204,14 +217,6 @@ class SpeechSynthesizer:
         except Exception as exc:
             logger.error("stop_speaking error: %s", exc, exc_info=False)
 
-    def _create_synth(self):
-        cfg = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
-        cfg.speech_synthesis_voice_name = self.voice
-        cfg.speech_synthesis_language = self.language
-        cfg.set_speech_synthesis_output_format(self.format)
-
-        audio_cfg = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
-        return speechsdk.SpeechSynthesizer(cfg, audio_cfg)
 
     def synthesize_speech(self, text: str) -> bytes:
         """
@@ -310,7 +315,9 @@ class SpeechSynthesizer:
                         logger.error(f"Using key: {'Yes' if self.key else 'No (using DefaultAzureCredential)'}")
                         logger.error(f"Region: {self.region}")
                         
-                raise RuntimeError(f"TTS failed: {result.reason} - {error_details.error_details if error_details else 'No details'}")            # 5) Get raw PCM bytes from the result
+                raise RuntimeError(f"TTS failed: {result.reason} - {error_details.error_details if error_details else 'No details'}")
+            
+            # 5) Get raw PCM bytes from the result
             pcm_bytes = result.audio_data
             logger.debug(f"TTS synthesis completed. Audio data size: {len(pcm_bytes)} bytes")
 
