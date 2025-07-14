@@ -189,21 +189,8 @@ resource "azurerm_monitor_diagnostic_setting" "backend_app_service" {
   }
 
   enabled_log {
-    category = "AppServiceApplicationLogs"
+    category = "AppServiceAppLogs"
   }
-
-  enabled_log {
-    category = "AppServiceAccessAuditLogs"
-  }
-
-  enabled_log {
-    category = "AppServiceIPSecurityAuditLogs"
-  }
-
-  enabled_log {
-    category = "AppServiceAuthenticationLogs"
-  }
-
 }
 
 # # Diagnostic settings for frontend Static Web App
