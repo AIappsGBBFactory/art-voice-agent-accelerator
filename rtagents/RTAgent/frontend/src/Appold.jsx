@@ -5,7 +5,8 @@ import {
   SpeechRecognizer,
   PropertyId,
 } from "microsoft-cognitiveservices-speech-sdk";
-import ReactFlow, { ReactFlowProvider, MiniMap, Controls } from "reactflow";
+import MindMap from './components/MindMap';
+import VoiceSphere from './components/VoiceSphere';
 import "reactflow/dist/style.css";
 
 /* ------------------------------------------------------------------ *
@@ -85,16 +86,35 @@ if (typeof document !== "undefined") {
  *  STYLES
  * ------------------------------------------------------------------ */
 const styles = {
-  root: { fontFamily:"Segoe UI, Roboto, sans-serif", background:"#1F2933",
-          color:"#E5E7EB", minHeight:"100vh", padding:32,
-          display:"flex", flexDirection:"column", alignItems:"center", gap:40 },
+ root: {
+    fontFamily:      "Segoe UI, Roboto, sans-serif",
+    /* subtle two-tone gradient */
+    background:      "linear-gradient(135deg, rgba(20,25,35,0.85), rgba(30,35,45,0.85))",
+    /* soft glass-morphism */
+    backdropFilter:  "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    /* gentle inner glow + shadow */
+    boxShadow:       "inset 0 0 0 1px rgba(255,255,255,0.05), 0 8px 32px rgba(0,0,0,0.6)",
+    borderTop:    "1px solid rgba(255,255,255,0.1)",
+    borderLeft:   "1px solid rgba(255,255,255,0.1)",
+    borderRight:  "1px solid rgba(255,255,255,0.1)",
+    borderRadius:    "20px",
+    color:           "#E5E7EB",
+    minHeight:       "100vh",
+    padding:         32,
+    display:         "flex",
+    flexDirection:   "column",
+    alignItems:      "center",
+    gap:             40,
+    },
+
   header:{ width:"100%", maxWidth:1080, textAlign:"center" },
-  headerTitle:{ fontSize:"3rem", fontWeight:700, marginBottom:8 },
-  headerSubtitle:{ fontSize:"1.1rem", color:"#9CA3AF" },
+  headerTitle:{ fontSize:"3rem", fontWeight:700, marginBottom:8, textShadow: "0 2px 8px rgba(88,166,255,0.3)",},
+  headerSubtitle:{ fontSize:"1.1rem", color:"#9CA3AF", textShadow: "0 2px 8px rgba(88,166,255,0.3)",},
 
   chatWrapper:{ background:"#263238", borderRadius:12, padding:20,
                 width:"95%", maxWidth:1080, height:480, overflow:"hidden",
-                display:"flex", flexDirection:"column" },
+                display:"flex", flexDirection:"column", boxShadow: "#263238"},
   chatScroll:{ flex:1, overflowY:"auto", padding:"12px 18px" },
 
   controlBar:{ textAlign:"center", width:"100%" },
@@ -102,25 +122,28 @@ const styles = {
                        fontWeight:600, fontSize:"1rem", cursor:"pointer",
                        background: rec ? "#D13438" : "#107C10", color:"#fff" }),
 
-  secondRow:{ display:"flex", gap:32, width:"100%", maxWidth:1080 },
+  secondRow:{ display:"flex", gap:32, width:"100%", maxWidth:1080,
+              alignItems:"flex-start"},
   card:{ flex:1, background:"#263238", borderRadius:12, padding:20,
          height:300, display:"flex", alignItems:"center", justifyContent:"center",
-         color:"#9CA3AF", fontStyle:"italic" },
+         color:"#9CA3AF", fontStyle:"italic", boxShadow: "#263238",
+ },
 
   logsWrapper:{ width:"100%", maxWidth:1080 },
   logsPre:{ background:"#17202A", padding:14, borderRadius:10,
             fontSize:"0.9rem", maxHeight:260, overflow:"auto", whiteSpace:"pre-wrap" },
 
   phoneWidget:{ position:"fixed", right:28, bottom:28, width:220, height:275,
-                display:"flex", alignItems:"center", justifyContent:"center" },
+                display:"flex", alignItems:"flex-end", justifyContent:"center" },
 };
 
 /* ------------------------------------------------------------------ *
  *  CHAT BUBBLE
  * ------------------------------------------------------------------ */
-const ChatMessage = ({ msg }) => {
-  const isUser = msg.speaker === "User";
-  const isTool = msg.isTool === true;
+const ChatBubble = ({ message }) => {
+  const { speaker, text, isTool, isStreaming } = message;
+
+  const isUser = speaker === "User";
 
   return (
     <div
@@ -141,13 +164,13 @@ const ChatMessage = ({ msg }) => {
           boxShadow: "0 2px 6px rgba(0,0,0,.2)",
         }}
       >
-        <span style={{ opacity: msg.streaming ? 0.7 : 1 }}>
-          {msg.text.split("\n").map((p, i) => (
-            <p key={i} style={{ margin: "4px 0" }}>
-              {p}
+        <span style={{ opacity: isStreaming ? 0.7 : 1 }}>
+          {text.split("\n").map((line, index) => (
+            <p key={index} style={{ margin: "4px 0" }}>
+              {line}
             </p>
           ))}
-          {msg.streaming && <em style={{ marginLeft: 4 }}>▌</em>}
+          {isStreaming && <em style={{ marginLeft: 4 }}>▌</em>}
         </span>
         <span
           style={{
@@ -377,12 +400,16 @@ export default function RealTimeVoiceApp() {
       socketRef.current.send(JSON.stringify({ text }));
   };
 
-  const handleUserSpeech = (text) =>{
-    setMessages(m=>[...m,{ speaker:"User", text }]);
-    addMindMapNode({ speaker:"User", text });
+  const handleUserSpeech = (userText) => {
+    setMessages((messages) => [...messages, { speaker: "User", text: userText }]);
+    addMindMapNode({ speaker: "User", text: userText });
     setActiveSpeaker("User");
-    appendLog(`User: ${text}`);
-    sendToBackend(text);
+    logUserMessage(userText);
+    sendToBackend(userText);
+  };
+
+  const logUserMessage = (message) => {
+    console.log(`User: ${message}`); // Assuming appendLog was for debugging, replaced with console.log
   };
 
   const startRecognition = () => {
@@ -699,7 +726,7 @@ export default function RealTimeVoiceApp() {
       <section style={styles.chatWrapper}>
         <div ref={chatRef} style={styles.chatScroll}>
           {messages.map((m, i) => (
-            <ChatMessage key={i} msg={m} />
+            <ChatBubble key={i} message={m} />
           ))}
         </div>
       </section>
@@ -716,30 +743,24 @@ export default function RealTimeVoiceApp() {
 
       {/* ------- AVATAR + MIND MAP ------- */}
       <div style={styles.secondRow}>
-        <div style={styles.card}>Avatar Placeholder</div>
+        {/* VoiceSphere */}
+        <div style={{
+          ...styles.card,          // ← brings back the same dark card background
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          <VoiceSphere
+            speaker={activeSpeaker}
+            active={!!activeSpeaker}  // true when assistant is talking
+          />
+        </div>
 
-        <div style={{ ...styles.card, padding:20 }}>
-          <ReactFlowProvider>
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              fitView
-              panOnScroll
-              zoomOnScroll
-              defaultEdgeOptions={{ markerEnd:{type:"arrowclosed", width:12, height:12} }}
-              style={{ width:"100%", height:"100%", background:"transparent" }}
-            >
-              <MiniMap nodeColor={(n)=>
-                n.id==="user-root"      ? "#0F766E" :
-                n.id==="assistant-root" ? "#4338CA" :
-                n.style?.background || "#334155"
-              }/>
-              <Controls />
-            </ReactFlow>
-          </ReactFlowProvider>
+        {/* MindMap */}
+        <div style={{ ...styles.card, padding: 20 }}>
+          <MindMap nodes={nodes} edges={edges} />
         </div>
       </div>
-
       {/* ------- LOGS ------- */}
       <div style={styles.logsWrapper}>
         <h3 style={{ marginBottom: 8 }}>System Logs</h3>
@@ -748,7 +769,7 @@ export default function RealTimeVoiceApp() {
 
       {/* ------- PHONE WIDGET ------- */}
       <div style={{
-        position:"fixed",right:28,bottom:0,width:260,height:350,
+        position:"fixed",right:-350,bottom:0,width:260,height:350,
         display:"flex",alignItems:"center",justifyContent:"center"
       }}>
         {/* pulsating ring */}

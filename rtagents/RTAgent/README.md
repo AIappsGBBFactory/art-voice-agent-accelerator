@@ -7,8 +7,8 @@
 - [Solution Architecture](#solution-architecture)
 - [Extensibility and Adaptability](#extensibility-and-adaptability)
 - [Getting Started](#getting-started)
+    - [Prerequisites](#prerequisites)
     - [Quick Start](#quick-start)
-- [Deployment](#deployment)
 
 ## **Overview**
 <img src="../../utils/images/medagent.png" align="right" height="180" alt="RTAgent Logo" />
@@ -203,35 +203,81 @@ Refer to the folder descriptions above as you navigate the codebase.
 
 ## **Getting Started**
 
-### **Quick Start**
+### **Prerequisites**
 
-Follow these steps to set up and run RTAgent locally:
+1. Local development tools  
+    - Python 3.11+  
+    - Node.js 18+ with npm  
+    - Docker  
+    - Azure Developer CLI (azd)  
+    - Terraform  
+    - Azure CLI with Dev Tunnels extension  
+      ```bash
+      az extension add --name devtunnel
+      ```
 
-**Step 1: Clone the Repository**
-```bash
-git clone https://github.com/your-org/gbb-ai-audio-agent.git
-cd gbb-ai-audio-agent
-```
+2. Azure subscription & identity  
+    - An active Azure subscription
+    - The deploying user or service principal must have:  
+      - Subscription RBAC roles  
+         - Contributor  
+         - User Access Administrator  
+      - Microsoft Entra ID roles  
+         - Application Administrator (needed for app registrations / EasyAuth)  
 
-**Step 2: Set Up the Python Backend**
-```bash
-cd rtagents/RTAgent/backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.sample .env   # Fill in the required keys
-python server.py      # Backend will run at ws://localhost:8010/realtime
-```
+3. Provision required Infrastructure
+    - Clone and review the IaC repo (Terraform or azd):  
+      - Audio Agent Deployment (to be merged into the main branch)  
+    - Services deployed:  
+      1. Azure Communication Services  
+      2. Azure Cosmos DB (Mongo vCore)  
+      3. Azure Event Grid  
+      4. Azure Key Vault  
+      5. Azure Managed Redis Enterprise  
+      6. Azure Monitor (Log Analytics / Application Insights)  
+      7. Azure OpenAI  
+      8. Azure Speech Services  
+      9. Azure Storage Account  
+      10. User-Assigned Managed Identities  
+      11. Azure Container Apps & Azure Container Registry  
+      12. App Service Plan / Web Apps
 
-**Step 3: Run the React Frontend**
-```bash
-cd ../frontend
-npm install
-npm run dev           # Frontend will run at http://localhost:5173
-```
+A complete IaC walkthrough—including networking, SSL, scalability, and CI/CD—is available in 📄 **[Deployment Guide](../../docs/DeploymentGuide.md)**. Follow it when you are ready to move beyond local development.
 
-> **Pro Tip:** For outbound PSTN calling, expose the backend using **Azure Dev Tunnels**. Update the `BASE_URL` in your environment variables and ensure the same URL is configured in your **Azure Communication Services** callback settings.
 
-## **Deployment**
+### Quick Start (Local Run)
 
-A full IaC walkthrough—including networking, SSL, scalability, and CI/CD—is in 📄 **[Deployment Guide](docs/DeploymentGuide.md)**
+1. **Clone the repository**
+     ```bash
+     git clone https://github.com/your-org/gbb-ai-audio-agent.git
+     cd gbb-ai-audio-agent
+     ```
+
+2. **Start the FastAPI backend**
+     ```bash
+     cd rtagents/RTAgent/backend
+     python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+     pip install -r requirements.txt
+     cp .env.sample .env   # fill in required keys
+     uvicorn server:app --host 0.0.0.0 --port 8010 --reload
+     ```
+
+3. **Run the React frontend**
+     ```bash
+     cd ../frontend
+     npm install
+     npm run dev   # http://localhost:5173
+     ```
+
+4. **Expose the backend with Azure Dev Tunnels**
+     ```bash
+     az devtunnel create --allow-anonymous --port 8010 --instrumentation-type http
+     az devtunnel host --port 8010
+     ```
+     Copy the generated URL and set `BASE_URL=<public-tunnel-url>` in `backend/.env`.  
+     Use the same URL in the **ACS** voice callback settings.
+
+> Dev Tunnels forward WebSocket traffic to your local FastAPI server, enabling outbound PSTN calls and remote testing without extra firewall rules.
+
+
 

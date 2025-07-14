@@ -80,7 +80,7 @@ stt_aoai_tts_server:
 	python rtagents/rtagent/backend/main.py
 
 stt_aoai_tts_browser: 
-	cd rtagents/RTInsuranceAgent/frontend && npm install && npm run dev
+	cd rtagents/rtagent/frontend && npm install && npm run dev
 
 stt_aoai_transcribe_microphone: 
 	python rtagents/acs_gpt4o_transcribe/app/microphone_transcribe.py

@@ -172,7 +172,8 @@ azd up
 - Cosmos DB
 - Private endpoints and networking
 
-> 📚 For detailed infrastructure information, see the [Infrastructure README](../infra/README.md).
+> 📚 For detailed infrastructure information (azd up), see the [Infrastructure README](../infra/README.md).
+> 📚 For detailed infrastructure information (Terraform), see the [Infrastructure README](../infra-tf/README.md).
 
 ### 4. Application Deployment
 
