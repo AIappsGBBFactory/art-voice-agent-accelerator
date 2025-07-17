@@ -26,13 +26,16 @@ Notes:
 """
 
 
+from typing import List, Literal, Optional
+
 from pydantic import BaseModel
-from typing import List, Optional, Literal
+
 
 class TurnHistoryItem(BaseModel):
     role: str  # 'user' or 'agent'
     text: str
     timestamp: str
+
 
 class SessionState(BaseModel):
     session_id: str
@@ -43,6 +46,7 @@ class SessionState(BaseModel):
     is_muted: bool = False
     language: Optional[str] = "en-US"
 
+
 class CallAutomationEvent(BaseModel):
     session_id: str
     event_type: Literal[
@@ -50,7 +54,7 @@ class CallAutomationEvent(BaseModel):
         "call_connected",
         "recording_started",
         "recording_stopped",
-        "call_disconnected"
+        "call_disconnected",
     ]
     timestamp: str
     metadata: Optional[dict]

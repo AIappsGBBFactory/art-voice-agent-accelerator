@@ -1,24 +1,29 @@
-import os
-import time
-import threading
-import redis
 import asyncio
-from typing import Optional, Dict, Any, List
+import os
+import threading
+import time
+from typing import Any, Dict, List, Optional
+
+from azure.identity import DefaultAzureCredential
+
+import redis
 from redis.exceptions import AuthenticationError
 from utils.ml_logging import get_logger
-from azure.identity import DefaultAzureCredential
 
 try:
     import redis.asyncio as aioredis
+
     ASYNC_REDIS_AVAILABLE = True
 except ImportError:
     ASYNC_REDIS_AVAILABLE = False
+
 
 class AzureRedisManager:
     """
     AzureRedisManager provides a simplified interface to connect, store,
     retrieve, and manage session data using Azure Cache for Redis.
     """
+
     @property
     def is_connected(self) -> bool:
         """Check if Redis connection is healthy."""
@@ -27,6 +32,7 @@ class AzureRedisManager:
         except Exception as e:
             self.logger.error("Redis connection check failed: %s", e)
             return False
+
     def __init__(
         self,
         host: Optional[str] = None,
@@ -51,12 +57,16 @@ class AzureRedisManager:
         self.logger = get_logger()
         self.host = host or os.getenv("REDIS_HOST")
         self.access_key = access_key or os.getenv("REDIS_ACCESS_KEY")
-        self.port = port if isinstance(port, int) else int(os.getenv("REDIS_PORT", port))
+        self.port = (
+            port if isinstance(port, int) else int(os.getenv("REDIS_PORT", port))
+        )
         self.db = db
         self.ssl = ssl
 
         if not self.host:
-            raise ValueError("Redis host must be provided either as argument or environment variable.")
+            raise ValueError(
+                "Redis host must be provided either as argument or environment variable."
+            )
         if ":" in self.host:
             host_parts = self.host.rsplit(":", 1)
             if host_parts[1].isdigit():
@@ -65,8 +75,10 @@ class AzureRedisManager:
 
         # AAD credential details
         self.credential = credential or DefaultAzureCredential()
-        self.scope      = scope or os.getenv("REDIS_SCOPE") or "https://redis.azure.com/.default"
-        self.user_name  = user_name or os.getenv("REDIS_USER_NAME") or "user"
+        self.scope = (
+            scope or os.getenv("REDIS_SCOPE") or "https://redis.azure.com/.default"
+        )
+        self.user_name = user_name or os.getenv("REDIS_USER_NAME") or "user"
 
         # Build initial client and, if using AAD, start a refresh thread
         self._create_client()
@@ -100,7 +112,10 @@ class AzureRedisManager:
                 ssl=self.ssl,
                 decode_responses=True,
             )
-            self.logger.info("Azure Redis connection initialized with AAD token (expires at %s).", self.token_expiry)
+            self.logger.info(
+                "Azure Redis connection initialized with AAD token (expires at %s).",
+                self.token_expiry,
+            )
 
     def _refresh_loop(self):
         """Background thread: sleep until just before expiry, then refresh token."""
@@ -157,24 +172,28 @@ class AzureRedisManager:
         """List currently connected clients."""
         return self.redis_client.client_list()
 
-    # ============================================================================
-    # ASYNC METHODS - Use these in async contexts to avoid blocking the event loop
-    # ============================================================================
-
-    async def store_session_data_async(self, session_id: str, data: Dict[str, Any]) -> bool:
+    async def store_session_data_async(
+        self, session_id: str, data: Dict[str, Any]
+    ) -> bool:
         """Async version of store_session_data using thread pool executor."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.store_session_data, session_id, data)
+        return await loop.run_in_executor(
+            None, self.store_session_data, session_id, data
+        )
 
     async def get_session_data_async(self, session_id: str) -> Dict[str, str]:
         """Async version of get_session_data using thread pool executor."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.get_session_data, session_id)
 
-    async def update_session_field_async(self, session_id: str, field: str, value: str) -> bool:
+    async def update_session_field_async(
+        self, session_id: str, field: str, value: str
+    ) -> bool:
         """Async version of update_session_field using thread pool executor."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.update_session_field, session_id, field, value)
+        return await loop.run_in_executor(
+            None, self.update_session_field, session_id, field, value
+        )
 
     async def delete_session_async(self, session_id: str) -> int:
         """Async version of delete_session using thread pool executor."""
@@ -186,7 +205,9 @@ class AzureRedisManager:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.get_value, key)
 
-    async def set_value_async(self, key: str, value: str, ttl_seconds: Optional[int] = None) -> bool:
+    async def set_value_async(
+        self, key: str, value: str, ttl_seconds: Optional[int] = None
+    ) -> bool:
         """Async version of set_value using thread pool executor."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.set_value, key, value, ttl_seconds)

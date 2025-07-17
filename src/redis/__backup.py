@@ -1,7 +1,9 @@
-from typing import Optional, Dict, Any, List
 import os
+from typing import Any, Dict, List, Optional
+
 import redis.asyncio as redis
 from utils.ml_logging import get_logger
+
 
 class AzureRedisManager:
     """
@@ -28,7 +30,9 @@ class AzureRedisManager:
         self.ssl = ssl
 
         if not self.host:
-            raise ValueError("Redis host must be provided either as argument or environment variable.")
+            raise ValueError(
+                "Redis host must be provided either as argument or environment variable."
+            )
         if self.host and ":" in self.host:
             host_parts = self.host.rsplit(":", 1)
             if host_parts[1].isdigit():
@@ -36,20 +40,27 @@ class AzureRedisManager:
                 self.port = int(host_parts[1])
         if self.access_key:
             self.redis_client = redis.Redis(
-                host=self.host, port=self.port, db=self.db, password=self.access_key, ssl=self.ssl, decode_responses=True
+                host=self.host,
+                port=self.port,
+                db=self.db,
+                password=self.access_key,
+                ssl=self.ssl,
+                decode_responses=True,
             )
-            self.logger.info("Azure Redis async connection initialized with access key.")
+            self.logger.info(
+                "Azure Redis async connection initialized with access key."
+            )
         else:
             try:
                 from azure.identity import DefaultAzureCredential
             except ImportError:
-                raise ImportError("azure-identity package is required for AAD authentication.")
+                raise ImportError(
+                    "azure-identity package is required for AAD authentication."
+                )
 
             cred = credential or DefaultAzureCredential()
             scope = (
-                scope
-                or os.getenv("REDIS_SCOPE")
-                or f"https://redis.azure.com/.default"
+                scope or os.getenv("REDIS_SCOPE") or f"https://redis.azure.com/.default"
             )
             user_name = user_name or os.getenv("REDIS_USER_NAME") or "user"
             token = cred.get_token(scope)
@@ -62,7 +73,9 @@ class AzureRedisManager:
                 password=token.token,
                 decode_responses=True,
             )
-            self.logger.info("Azure Redis async connection initialized with DefaultAzureCredential.")
+            self.logger.info(
+                "Azure Redis async connection initialized with DefaultAzureCredential."
+            )
 
     async def ping(self) -> bool:
         """Check Redis connectivity."""
@@ -77,7 +90,9 @@ class AzureRedisManager:
         value = await self.redis_client.get(key)
         return value if value else None
 
-    async def store_data(self, session_id: str, data: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
+    async def store_data(
+        self, session_id: str, data: Dict[str, Any], ttl_seconds: Optional[int] = None
+    ) -> bool:
         """Store session data using a Redis hash. Optionally set TTL (in seconds)."""
         result = await self.redis_client.hset(session_id, mapping=data)
         if ttl_seconds is not None:
@@ -89,7 +104,9 @@ class AzureRedisManager:
         data = await self.redis_client.hgetall(session_id)
         return {k: v for k, v in data.items()}
 
-    async def update_session_field(self, session_id: str, field: str, value: str) -> bool:
+    async def update_session_field(
+        self, session_id: str, field: str, value: str
+    ) -> bool:
         """Update a single field in the session hash."""
         return await self.redis_client.hset(session_id, field, value)
 

@@ -9,7 +9,7 @@ infra:
 
 services:
   rtaudio-client:
-    project: rtagents/RTAgent/frontend
+    project: apps/rtagent/frontend
     host: containerapp
     language: js
     docker:
@@ -18,7 +18,7 @@ services:
       platform: linux/amd64
       
   rtaudio-server:
-    project: rtagents/RTAgent/backend
+    project: apps/rtagent/backend
     host: containerapp
     language: python
     docker:
@@ -29,11 +29,11 @@ services:
 hooks:
   preprovision:
     shell: sh
-    run: ./scripts/azd-preprovision.sh
+    run: ./devops/scripts/azd-preprovision.sh
     interactive: true
     continueOnError: false
   postprovision:
     shell: sh
-    run: ./scripts/azd-postprovision.sh
+    run: ./devops/scripts/azd-postprovision.sh
     interactive: true
     continueOnError: false

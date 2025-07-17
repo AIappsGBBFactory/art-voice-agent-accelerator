@@ -1,15 +1,16 @@
-import os
-import json
-import base64
 import asyncio
+import base64
+import json
+import os
 import wave
 from datetime import datetime
-from typing import Optional, Callable, Dict, Any
-from src.aoai.audio_util import choose_audio_device
-import pyaudio
+from typing import Any, Callable, Dict, Optional
 
+import pyaudio
 import websockets
 from dotenv import load_dotenv
+
+from src.aoai.audio_util import choose_audio_device
 
 load_dotenv()
 

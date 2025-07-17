@@ -1,19 +1,19 @@
 import logging
 import os
+import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pymongo
-from pymongo.auth_oidc import OIDCCallback, OIDCCallbackContext, OIDCCallbackResult
-
-from azure.identity import DefaultAzureCredential
-from pathlib import Path
-from dotenv import load_dotenv
 import yaml
+from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
+from pymongo.auth_oidc import OIDCCallback, OIDCCallbackContext, OIDCCallbackResult
 from pymongo.errors import DuplicateKeyError, PyMongoError
-import re
 
 # Initialize logging
 logger = logging.getLogger(__name__)
+
 
 class AzureIdentityTokenCallback(OIDCCallback):
     def __init__(self, credential):
@@ -21,9 +21,10 @@ class AzureIdentityTokenCallback(OIDCCallback):
 
     def fetch(self, context: OIDCCallbackContext) -> OIDCCallbackResult:
         token = self.credential.get_token(
-            "https://ossrdbms-aad.database.windows.net/.default").token
+            "https://ossrdbms-aad.database.windows.net/.default"
+        ).token
         return OIDCCallbackResult(access_token=token)
-    
+
 
 class CosmosDBMongoCoreManager:
     def __init__(
@@ -39,12 +40,10 @@ class CosmosDBMongoCoreManager:
         connection_string = connection_string or os.getenv(
             "AZURE_COSMOS_CONNECTION_STRING"
         )
-       
+
         database_name = database_name or os.getenv("AZURE_COSMOS_DATABASE_NAME")
         collection_name = collection_name or os.getenv("AZURE_COSMOS_COLLECTION_NAME")
         try:
-
-
             # Check if connection string contains mongodb-oidc for Azure Entra ID authentication
             if connection_string and "mongodb-oidc" in connection_string.lower():
                 # Extract cluster name from connection string or environment
@@ -52,20 +51,22 @@ class CosmosDBMongoCoreManager:
                 if not cluster_name:
                     # Try to extract from connection string if not in env
                     # Assuming format like mongodb+srv://clustername.global.mongocluster.cosmos.azure.com/
-                    match = re.search(r'mongodb\+srv://([^.]+)\.', connection_string)
+                    match = re.search(r"mongodb\+srv://([^.]+)\.", connection_string)
                     if match:
                         cluster_name = match.group(1)
                     else:
-                        raise ValueError("Could not determine cluster name for OIDC authentication")
-                
+                        raise ValueError(
+                            "Could not determine cluster name for OIDC authentication"
+                        )
+
                 # Setup Azure Identity credential for OIDC
                 credential = DefaultAzureCredential()
                 auth_callback = AzureIdentityTokenCallback(credential)
                 auth_properties = {"OIDC_CALLBACK": auth_callback}
-                
+
                 # Override connection string for OIDC
                 connection_string = f"mongodb+srv://{cluster_name}.global.mongocluster.cosmos.azure.com/"
-                
+
                 logger.info(f"Using OIDC authentication for cluster: {cluster_name}")
 
                 self.client = pymongo.MongoClient(
@@ -74,7 +75,7 @@ class CosmosDBMongoCoreManager:
                     tls=True,
                     retryWrites=True,
                     authMechanism="MONGODB-OIDC",
-                    authMechanismProperties=auth_properties
+                    authMechanismProperties=auth_properties,
                 )
             else:
                 auth_properties = None
@@ -117,7 +118,7 @@ class CosmosDBMongoCoreManager:
         :param query: The query to find an existing document to update.
         :return: The upserted document's ID if a new document is inserted, None otherwise.
         """
-        try:   
+        try:
             # Try updating the document; insert if it doesn't exist
             result = self.collection.update_one(query, {"$set": document}, upsert=True)
             if result.upserted_id:

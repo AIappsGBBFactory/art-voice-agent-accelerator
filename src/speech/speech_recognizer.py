@@ -1,5 +1,6 @@
+import json
 import os
-from typing import Callable, Optional, Tuple, List
+from typing import Callable, List, Optional, Tuple
 
 import azure.cognitiveservices.speech as speechsdk
 from azure.cognitiveservices.speech import SpeechRecognitionResult
@@ -7,13 +8,13 @@ from azure.cognitiveservices.speech.audio import AudioStreamFormat
 from dotenv import load_dotenv
 
 from utils.ml_logging import get_logger
-import json
 
 # Set up logger
 logger = get_logger()
 
 # Load environment variables from .env file
 load_dotenv()
+
 
 class StreamingSpeechRecognizerFromBytes:
     """
@@ -42,18 +43,22 @@ class StreamingSpeechRecognizerFromBytes:
 
         self.final_callback: Optional[Callable[[str, str], None]] = None
         self.partial_callback: Optional[Callable[[str, str], None]] = None
-        self.cancel_callback: Optional[Callable[[speechsdk.SessionEventArgs], None]] = None
+        self.cancel_callback: Optional[
+            Callable[[speechsdk.SessionEventArgs], None]
+        ] = None
 
         self.push_stream = None
         self.speech_recognizer = None
 
-    def set_partial_result_callback(self,  callback: Callable[[str, str], None]) -> None:
+    def set_partial_result_callback(self, callback: Callable[[str, str], None]) -> None:
         self.partial_callback = callback
 
     def set_final_result_callback(self, callback: Callable[[str, str], None]) -> None:
         self.final_callback = callback
 
-    def set_cancel_callback(self, callback: Callable[[speechsdk.SessionEventArgs], None]) -> None:
+    def set_cancel_callback(
+        self, callback: Callable[[speechsdk.SessionEventArgs], None]
+    ) -> None:
         """
         Set a callback to handle cancellation events.
         This can be used to log or handle errors when recognition is canceled.
@@ -67,9 +72,7 @@ class StreamingSpeechRecognizerFromBytes:
         """
         if self.audio_format == "pcm":
             stream_format = speechsdk.audio.AudioStreamFormat(
-                samples_per_second=16000,
-                bits_per_sample=16,
-                channels=1
+                samples_per_second=16000, bits_per_sample=16, channels=1
             )
         elif self.audio_format == "any":
             stream_format = speechsdk.audio.AudioStreamFormat(
@@ -78,12 +81,16 @@ class StreamingSpeechRecognizerFromBytes:
         else:
             raise ValueError(f"Unsupported audio_format: {self.audio_format}")
 
-        self.push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
+        self.push_stream = speechsdk.audio.PushAudioInputStream(
+            stream_format=stream_format
+        )
 
     def start(self) -> None:
         logger.info("Starting recognition from byte stream...")
 
-        speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+        speech_config = speechsdk.SpeechConfig(
+            subscription=self.key, region=self.region
+        )
 
         # switch to continuous LID mode
         speech_config.set_property(
@@ -94,16 +101,13 @@ class StreamingSpeechRecognizerFromBytes:
         )
 
         speech_config.set_property(
-            speechsdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold,
-            "1"
+            speechsdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, "1"
         )
 
         # PCM format: for raw PCM/linear audio
         if self.audio_format == "pcm":
             stream_format = speechsdk.audio.AudioStreamFormat(
-                samples_per_second=16000,
-                bits_per_sample=16,
-                channels=1
+                samples_per_second=16000, bits_per_sample=16, channels=1
             )
         # ANY format: for browser/native/mobile compressed formats (webm, ogg, mp3, etc)
         elif self.audio_format == "any":
@@ -113,18 +117,20 @@ class StreamingSpeechRecognizerFromBytes:
         else:
             raise ValueError(f"Unsupported audio_format: {self.audio_format}")
 
-        self.push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
+        self.push_stream = speechsdk.audio.PushAudioInputStream(
+            stream_format=stream_format
+        )
         audio_config = speechsdk.audio.AudioConfig(stream=self.push_stream)
 
         self.speech_recognizer = speechsdk.SpeechRecognizer(
             speech_config=speech_config,
             audio_config=audio_config,
-            auto_detect_source_language_config=lid_cfg
+            auto_detect_source_language_config=lid_cfg,
         )
 
         self.speech_recognizer.properties.set_property(
             speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
-            str(self.vad_silence_timeout_ms)
+            str(self.vad_silence_timeout_ms),
         )
         # self.speech_recognizer.properties.set_property(
         #     speechsdk.PropertyId.Speech_SegmentationStrategy, "Semantic"
@@ -147,7 +153,9 @@ class StreamingSpeechRecognizerFromBytes:
     def prepare_start(self) -> None:
         logger.info("Starting recognition from byte stream...")
 
-        speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+        speech_config = speechsdk.SpeechConfig(
+            subscription=self.key, region=self.region
+        )
 
         # switch to continuous LID mode
         speech_config.set_property(
@@ -158,16 +166,13 @@ class StreamingSpeechRecognizerFromBytes:
         )
 
         speech_config.set_property(
-            speechsdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold,
-            "1"
+            speechsdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, "1"
         )
 
         # PCM format: for raw PCM/linear audio
         if self.audio_format == "pcm":
             stream_format = speechsdk.audio.AudioStreamFormat(
-                samples_per_second=16000,
-                bits_per_sample=16,
-                channels=1
+                samples_per_second=16000, bits_per_sample=16, channels=1
             )
         # ANY format: for browser/native/mobile compressed formats (webm, ogg, mp3, etc)
         elif self.audio_format == "any":
@@ -177,18 +182,20 @@ class StreamingSpeechRecognizerFromBytes:
         else:
             raise ValueError(f"Unsupported audio_format: {self.audio_format}")
 
-        self.push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
+        self.push_stream = speechsdk.audio.PushAudioInputStream(
+            stream_format=stream_format
+        )
         audio_config = speechsdk.audio.AudioConfig(stream=self.push_stream)
 
         self.speech_recognizer = speechsdk.SpeechRecognizer(
             speech_config=speech_config,
             audio_config=audio_config,
-            auto_detect_source_language_config=lid_cfg
+            auto_detect_source_language_config=lid_cfg,
         )
 
         self.speech_recognizer.properties.set_property(
             speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
-            str(self.vad_silence_timeout_ms)
+            str(self.vad_silence_timeout_ms),
         )
         # self.speech_recognizer.properties.set_property(
         #     speechsdk.PropertyId.Speech_SegmentationStrategy, "Semantic"
@@ -235,7 +242,8 @@ class StreamingSpeechRecognizerFromBytes:
 
         prop = evt.result.properties.get(
             speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult,
-            "")
+            "",
+        )
         if prop:
             return prop
 
@@ -246,13 +254,17 @@ class StreamingSpeechRecognizerFromBytes:
         txt = evt.result.text
         if txt and self.partial_callback:
             # extract whatever lang Azure selected (or fallback to first candidate)
-            detected = speechsdk.AutoDetectSourceLanguageResult(evt.result).language \
-                       or self.candidate_languages[0]
+            detected = (
+                speechsdk.AutoDetectSourceLanguageResult(evt.result).language
+                or self.candidate_languages[0]
+            )
             self.partial_callback(txt, detected)
 
     def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
         if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
-            detected_lang = speechsdk.AutoDetectSourceLanguageResult(evt.result).language
+            detected_lang = speechsdk.AutoDetectSourceLanguageResult(
+                evt.result
+            ).language
             if self.final_callback and evt.result.text:
                 self.final_callback(evt.result.text, detected_lang)
 

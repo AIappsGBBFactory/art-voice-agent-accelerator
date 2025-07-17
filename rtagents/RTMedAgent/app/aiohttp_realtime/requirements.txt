@@ -1,6 +1,0 @@
-fastapi
-uvicorn[standard]
-openai
-azure-core
-azure-cognitiveservices-speech
-pydantic
