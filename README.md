@@ -20,70 +20,94 @@ RT Agent is a plug-and-play accelerator, voice-to-voice AI pipeline that slots i
 
 <img src="utils/images/RTAgentArch.png" alt="RTAgent Logo" />
 
-## **Getting Started**
+<br>
 
-### Local Quick-Start
+| What you get | How it helps |
+|--------------|--------------|
+| **Sub-second loop** (STT → LLM/Tools → TTS) | Conversations feel human, not robotic latency-ridden dialogs. |
+| **100 % GA Azure stack** | No private previews, no hidden SKUs—easy procurement & support. |
+| **Drop-in YAML agents** | Spin up FNOL claims bots, triage nurses, or legal intake in minutes. |
+| **Micro-service architecture** | Swap models, tune latency, or add new business logic without redeploying the whole stack. |
+
+## Getting Started
+
+### **🚀 One-Command Azure Deployment**
+
+Provision the full solution—including App Gateway, Container Apps, Cosmos DB, Redis, OpenAI, and Key Vault—with a single command:
 
 ```bash
-# 1️⃣ Backend (FastAPI + Uvicorn)
+azd auth login
+azd up   # ~15 min for complete infra and code deployment
+```
+
+**Key Features:**
+- TLS managed by Key Vault and App Gateway
+- KEDA auto-scales RT Agent workers
+- All outbound calls remain within a private VNet
+
+For a detailed deployment walkthrough, see [`docs/DeploymentGuide.md`](docs/DeploymentGuide.md).
+
+**Directory Highlights:**
+
+| Path                | Description                                 |
+|---------------------|---------------------------------------------|
+| apps/rtagent/backend| FastAPI + WebSocket voice pipeline          |
+| apps/rtagent/frontend| Vite + React demo client                   |
+| apps/rtagent/scripts| Helper launchers (backend, frontend, tunnel)|
+| infra/              | Bicep/Terraform IaC                        |
+| docs/               | Architecture, agents, tuning guides         |
+| tests/              | Pytest suite                               |
+| Makefile            | One-line dev commands                       |
+| environment.yaml    | Conda environment spec (name: audioagent)   |
+
+### *⚡ Rapid Local Run*
+
+**Prerequisites:** Infra deployed (above), Conda, Node.js ≥ 18, Azure CLI with `dev-tunnel` extension.
+
+**Backend (FastAPI + Uvicorn):**
+```bash
 git clone https://github.com/your-org/gbb-ai-audio-agent.git
 cd gbb-ai-audio-agent/rtagents/RTAgent/backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.sample .env   # add ACS, Speech, OpenAI keys
-python server.py      # ws://localhost:8010/realtime
+cp .env.sample .env   # Configure ACS, Speech, and OpenAI keys
+python server.py      # Starts backend at ws://localhost:8010/realtime
 ```
 
+**Frontend (Vite + React):**
 ```bash
-# 2️⃣ Frontend (Vite + React)
 cd ../../frontend
 npm install
-npm run dev           # http://localhost:5173
+npm run dev           # Starts frontend at http://localhost:5173
 ```
+To enable phone dial-in, expose the backend using Azure Dev Tunnels, update `BASE_URL` in both `.env` files, and configure the ACS event subscription.
 
-Dial-in from a real phone? Expose your backend with **Azure Dev Tunnels**, update `BASE_URL` in both `.env` files, and mirror the URL in the ACS event subscription.
+**You can also run these scripts in the terminal to automate the above:**
 
-## **Deployment on Azure**
+| Script                | Purpose                                           |
+|-----------------------|---------------------------------------------------|
+| apps/rtagents/scripts/start_backend.py      | Launches FastAPI pipeline, sets PYTHONPATH, checks env |
+| apps/rtagents/scripts/start_frontend.sh     | Runs Vite dev server at port 5173                   |
+| apps/rtagents/scripts/start_devtunnel_host.sh| Opens Azure Dev Tunnel on port 8010, prints public URL |
 
-```bash
-azd auth login
-azd up         # full infra + code (~15 min)
-```
+Copy the public URL from the dev tunnel into Azure Communication Services → Event Callback URL to enable real phone dial-in within minutes. 
 
-• SSL via Key Vault ‑> App Gateway  
-• Container Apps auto-scale (KEDA)  
-• Private Redis, Cosmos DB, OpenAI endpoints  
+## **Load and Chaos Testing**
 
-Step-by-step guide: `docs/DeploymentGuide.md`.
-
-## **Load & Chaos Testing**
-
-Targets: **<500 ms STT→TTS • 1k+ concurrent calls • >99.5 % success** (WIP)
+**Performance Targets:**
+- <500 ms STT→TTS
+- 1,000+ concurrent calls
+- >99.5% success rate (in progress)
 
 ```bash
 az load test run --test-plan tests/load/azure-load-test.yaml
 ```
 
-Locust & Artillery scripts: `docs/LoadTesting.md`.
-
-
-## **Repository Layout**
-```text
-gbb-ai-audio-agent/
-├── .github/          # CI / CD
-├── docs/             # Architecture, Deployment, Integration
-├── infra/            # Bicep modules & azd templates
-├── rtagents/         # Core Python package (agents, tools, router) [backend + Frontend (React + Vite frontend)]
-├── labs/             # Jupyter notebooks & PoCs
-├── src/              # source code libraries
-├── tests/            # pytest + load tests
-├── utils/            # diagrams & helper scripts
-└── Makefile, docker-compose.yml, CHANGELOG.md …
-```
+Additional load test scripts (Locust, Artillery) are available in [`docs/LoadTesting.md`](docs/LoadTesting.md).
 
 ## **Roadmap**
 - Live Agent API integration
-- Multi-modal agents (docs + images)  
+- Multi-modal agents (documents, images)
 
 ## **Contributing**
 PRs & issues welcome—see `CONTRIBUTING.md` and run `make pre-commit` before pushing.
