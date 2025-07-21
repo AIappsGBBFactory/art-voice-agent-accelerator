@@ -7,7 +7,7 @@ resource "azurerm_service_plan" "main" {
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   os_type             = "Linux"
-  sku_name            = "B1"  # Basic tier - adjust as needed
+  sku_name            = "B1" # Basic tier - adjust as needed
 
   tags = local.tags
 }
@@ -24,9 +24,9 @@ resource "azurerm_service_plan" "main" {
 # The app_settings here are available at build time and runtime
 # Generate a random password for the frontend Static Web App
 resource "random_password" "frontend_swa_password" {
-  length     = 16
-  special    = true
-  numeric    = true
+  length      = 16
+  special     = true
+  numeric     = true
   min_numeric = 1
 }
 
@@ -56,15 +56,15 @@ resource "azurerm_static_web_app" "frontend" {
 
   # Build-time environment variables for Vite
   app_settings = {
-    "VITE_AZURE_SPEECH_KEY"     = var.disable_local_auth ? "" : "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=speech-key)"
-    "VITE_AZURE_REGION"         = azurerm_cognitive_account.speech.location
-    "VITE_BACKEND_BASE_URL"     = "https://${azurerm_linux_web_app.backend.default_hostname}"
+    "VITE_AZURE_SPEECH_KEY" = var.disable_local_auth ? "" : "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=speech-key)"
+    "VITE_AZURE_REGION"     = azurerm_cognitive_account.speech.location
+    "VITE_BACKEND_BASE_URL" = "https://${azurerm_linux_web_app.backend.default_hostname}"
     # Azure Client ID for managed identity
     "AZURE_CLIENT_ID" = azurerm_user_assigned_identity.frontend.client_id
   }
   basic_auth {
     environments = "AllEnvironments"
-    password = random_password.frontend_swa_password.result
+    password     = random_password.frontend_swa_password.result
   }
 
   configuration_file_changes_enabled = true
@@ -100,9 +100,9 @@ resource "azurerm_linux_web_app" "backend" {
     application_stack {
       python_version = "3.11"
     }
-    
+
     always_on = true
-    
+
     # FastAPI startup command matching deployment script expectations
     # This will be overridden by the deployment script with agent-specific path
     app_command_line = "python -m uvicorn rtagents.RTAgent.backend.main:app --host 0.0.0.0 --port 8000"
@@ -112,46 +112,46 @@ resource "azurerm_linux_web_app" "backend" {
   app_settings = merge({
     # Secrets from Key Vault
     "ACS_CONNECTION_STRING" = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=acs-connection-string)"
-    "ACS_ENDPOINT" = "https://${azurerm_communication_service.main.hostname}"
-  }, var.disable_local_auth ? {} : {
+    "ACS_ENDPOINT"          = "https://${azurerm_communication_service.main.hostname}"
+    }, var.disable_local_auth ? {} : {
     "AZURE_SPEECH_KEY" = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=speech-key)"
     "AZURE_OPENAI_KEY" = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=openai-key)"
-  }, var.acs_source_phone_number != null && var.acs_source_phone_number != "" ? {
+    }, var.acs_source_phone_number != null && var.acs_source_phone_number != "" ? {
     "ACS_SOURCE_PHONE_NUMBER" = var.acs_source_phone_number
-  } : {}, {
-    "PORT"                                  = "8000"
+    } : {}, {
+    "PORT" = "8000"
 
     # Regular environment variables - matching container app configuration
     "AZURE_CLIENT_ID"                       = azurerm_user_assigned_identity.backend.client_id
     "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.main.connection_string
-    
+
     # Redis Configuration
     "REDIS_HOST" = data.azapi_resource.redis_enterprise_fetched.output.properties.hostName
     "REDIS_PORT" = tostring(var.redis_port)
-    
+
     # Azure Speech Services
     "AZURE_SPEECH_ENDPOINT"    = azurerm_cognitive_account.speech.endpoint
     "AZURE_SPEECH_RESOURCE_ID" = azurerm_cognitive_account.speech.id
     "AZURE_SPEECH_REGION"      = azurerm_cognitive_account.speech.location
-    
+
     # Azure Cosmos DB
-    "AZURE_COSMOS_DATABASE_NAME"    = var.mongo_database_name
-    "AZURE_COSMOS_COLLECTION_NAME"  = var.mongo_collection_name
+    "AZURE_COSMOS_DATABASE_NAME"   = var.mongo_database_name
+    "AZURE_COSMOS_COLLECTION_NAME" = var.mongo_collection_name
     "AZURE_COSMOS_CONNECTION_STRING" = replace(
       data.azapi_resource.mongo_cluster_info.output.properties.connectionString,
       "/mongodb\\+srv:\\/\\/[^@]+@([^?]+)\\?(.*)$/",
       "mongodb+srv://$1?tls=true&authMechanism=MONGODB-OIDC&retrywrites=false&maxIdleTimeMS=120000"
     )
-    
+
     # Azure OpenAI
     "AZURE_OPENAI_ENDPOINT"           = azurerm_cognitive_account.openai.endpoint
     "AZURE_OPENAI_CHAT_DEPLOYMENT_ID" = "gpt-4o"
     "AZURE_OPENAI_API_VERSION"        = "2025-01-01-preview"
-    
+
     # Python-specific settings
-    "PYTHONPATH"                    = "/home/site/wwwroot"
+    "PYTHONPATH"                     = "/home/site/wwwroot"
     "SCM_DO_BUILD_DURING_DEPLOYMENT" = "true"
-    "ENABLE_ORYX_BUILD"             = "true"
+    "ENABLE_ORYX_BUILD"              = "true"
   })
 
   # Key Vault references require the app service to have access

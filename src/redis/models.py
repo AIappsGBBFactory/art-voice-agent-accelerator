@@ -1,20 +1,20 @@
 # Note: This is not implemented, WIP to be used in the future.
 """
-This module defines Pydantic models for managing and validating data structures 
-used in Redis interactions within the application. These models are designed to 
+This module defines Pydantic models for managing and validating data structures
+used in Redis interactions within the application. These models are designed to
 ensure data consistency and provide type safety when working with Redis.
 
 Classes:
     TurnHistoryItem:
-        Represents a single turn in a conversation history, including the role 
+        Represents a single turn in a conversation history, including the role
         ('user' or 'agent'), the text of the message, and a timestamp.
 
     SessionState:
-        Represents the state of a user session, including session ID, user ID, 
+        Represents the state of a user session, including session ID, user ID,
         activity status, turn number, last input, mute status, and language preference.
 
     CallAutomationEvent:
-        Represents events related to call automation, including session ID, event type, 
+        Represents events related to call automation, including session ID, event type,
         timestamp, and optional metadata.
 
 Notes:

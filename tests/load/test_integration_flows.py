@@ -2,6 +2,7 @@
 End-to-end integration load tests
 Tests complete call flows and realistic user scenarios
 """
+
 import asyncio
 import json
 import random
@@ -408,9 +409,9 @@ class IntegratedCallFlowUser(HttpUser):
             # Start 3 concurrent call sessions
             for i in range(3):
                 call_data = TestDataGenerator.generate_call_data()
-                call_data[
-                    "patient_id"
-                ] = f"{self.patient_profile['patient_id']}-concurrent-{i}"
+                call_data["patient_id"] = (
+                    f"{self.patient_profile['patient_id']}-concurrent-{i}"
+                )
 
                 with self.client.post(
                     "/api/call", json=call_data, catch_response=True

@@ -1,6 +1,7 @@
 """
 Load test configuration and shared utilities for RTMedAgent testing
 """
+
 import json
 import os
 import random

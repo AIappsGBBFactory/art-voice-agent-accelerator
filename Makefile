@@ -99,14 +99,18 @@ remove_conda_env:
 	conda env remove --name $(CONDA_ENV)
 
 
-# Start the backend server (FastAPI/Uvicorn)
-starts_rtagent_server: 
-	python apps/rtagent/backend/main.py
+SCRIPTS_DIR := apps/rtagent/scripts
 
+.PHONY: backend frontend tunnel all
 
-# Start the frontend (Vite + React dev server)
-starts_rtagent_browser: 
-	cd apps/rtagent/frontend && npm install && npm run dev
+start_backend:
+	python $(SCRIPTS_DIR)/start_backend.py
+
+start_frontend:
+	bash $(SCRIPTS_DIR)/start_frontend.sh
+
+start_tunnel:
+	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
 
 
 # Run pylint on all Python files (excluding tests), output to report file

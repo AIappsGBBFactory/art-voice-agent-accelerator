@@ -35,6 +35,7 @@ from apps.rtagent.backend.settings import (
     AUDIO_FORMAT,
     AGENT_AUTH_CONFIG,
     AGENT_CLAIM_INTAKE_CONFIG,
+    VAD_SEMANTIC_SEGMENTATION
 )
 from apps.rtagent.backend.src.services import (
     AzureRedisManager,
@@ -63,12 +64,13 @@ async def lifespan(app: FastAPI):
     app.state.greeted_call_ids = set()  # to avoid double greetings
 
     # Speech SDK
-    app.state.tts_client = SpeechSynthesizer(voice=VOICE_TTS, 
-                                             playback="always")
+    app.state.tts_client = SpeechSynthesizer(voice=VOICE_TTS, playback="always")
     app.state.stt_client = StreamingSpeechRecognizerFromBytes(
+        use_semantic_segmentation=VAD_SEMANTIC_SEGMENTATION,
         vad_silence_timeout_ms=SILENCE_DURATION_MS,
         candidate_languages=RECOGNIZED_LANGUAGE,
         audio_format=AUDIO_FORMAT,
+   
     )
 
     # Redis connection

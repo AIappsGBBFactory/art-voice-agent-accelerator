@@ -1,4 +1,5 @@
 """XYMZ Insurance • Minimal 12-field FNOL recorder"""
+
 from __future__ import annotations
 
 import random

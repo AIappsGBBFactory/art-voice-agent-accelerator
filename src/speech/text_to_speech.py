@@ -18,6 +18,7 @@ logger = get_logger()
 
 _SENTENCE_END = re.compile(r"([.!?；？！。]+|\n)")
 
+
 def split_sentences(text: str) -> List[str]:
     """Very small sentence splitter that keeps delimiters."""
     parts, buf = [], []
@@ -77,6 +78,7 @@ def ssml_voice_wrap(
         "</speak>"
     )
 
+
 def _is_headless() -> bool:
     """
     Very light‑weight heuristics:
@@ -85,10 +87,11 @@ def _is_headless() -> bool:
     Extend if you need Windows detection (e.g. `%SESSIONNAME%`)
     """
     import sys
-    return (
-        sys.platform.startswith("linux")
-        and not os.environ.get("DISPLAY")
-    ) or bool(os.environ.get("CI"))
+
+    return (sys.platform.startswith("linux") and not os.environ.get("DISPLAY")) or bool(
+        os.environ.get("CI")
+    )
+
 
 class SpeechSynthesizer:
     def __init__(
@@ -209,10 +212,16 @@ class SpeechSynthesizer:
                 # Always create, use null sink if headless
                 if headless:
                     audio_config = speechsdk.audio.AudioOutputConfig(filename=None)
-                    logger.debug("playback='always' – headless: using null audio output")
+                    logger.debug(
+                        "playback='always' – headless: using null audio output"
+                    )
                 else:
-                    audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
-                    logger.debug("playback='always' – using default system speaker output")
+                    audio_config = speechsdk.audio.AudioOutputConfig(
+                        use_default_speaker=True
+                    )
+                    logger.debug(
+                        "playback='always' – using default system speaker output"
+                    )
                 self._speaker = speechsdk.SpeechSynthesizer(
                     speech_config=speech_config, audio_config=audio_config
                 )
@@ -222,8 +231,12 @@ class SpeechSynthesizer:
                     logger.debug("playback='auto' – headless: speaker not created")
                     self._speaker = None
                 else:
-                    audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
-                    logger.debug("playback='auto' – using default system speaker output")
+                    audio_config = speechsdk.audio.AudioOutputConfig(
+                        use_default_speaker=True
+                    )
+                    logger.debug(
+                        "playback='auto' – using default system speaker output"
+                    )
                     self._speaker = speechsdk.SpeechSynthesizer(
                         speech_config=speech_config, audio_config=audio_config
                     )
@@ -233,7 +246,6 @@ class SpeechSynthesizer:
 
         return self._speaker
 
-    
     @staticmethod
     def _sanitize(text: str) -> str:
         """

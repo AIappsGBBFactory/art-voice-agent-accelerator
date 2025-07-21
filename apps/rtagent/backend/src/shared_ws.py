@@ -45,6 +45,7 @@ async def send_tts_audio(
     if latency_tool:
         latency_tool.start("tts")
     synth: SpeechSynthesizer = ws.app.state.tts_client
+    ws.state.is_synthesizing = True  # type: ignore[attr-defined]
     synth.start_speaking_text(text)
     if latency_tool:
         latency_tool.stop("tts", ws.app.state.redis)

@@ -80,11 +80,8 @@ FORMAT: int = 16  # PCM16 format for audio
 # Chunk size for audio processing
 CHUNK: int = 1024  # Size of audio chunks to process
 # ------------------------------------------------------------------------------
-# VAD (Voice Activity Detection) settings
-VAD_THRESHOLD: float = 0.5  # Threshold for VAD to detect speech
-# Prefix padding in milliseconds to avoid cutting off speech
-PREFIX_PADDING_MS: int = 400  # Padding before speech starts
-# Silence duration in milliseconds to consider the end of speech
+GREETING: str = '''Hello from XYMZ Insurance! Before I can assist you, I need to verify your identity. Could you please provide your full name, and either the last 4 digits of your Social Security Number or your ZIP code?'''
+VAD_SEMANTIC_SEGMENTATION: bool = False  # Use semantic segmentation for VAD
 SILENCE_DURATION_MS: int = 1300  # Duration of silence to end speech detection
 RECOGNIZED_LANGUAGE: List[str] = [
     "en-US",

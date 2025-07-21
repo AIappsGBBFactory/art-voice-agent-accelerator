@@ -2,6 +2,7 @@
 Load tests for backend services
 Tests Redis, Azure Speech, OpenAI, Cosmos DB, and storage services
 """
+
 import asyncio
 import json
 import time

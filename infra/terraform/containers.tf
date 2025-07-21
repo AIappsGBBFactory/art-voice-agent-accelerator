@@ -122,7 +122,7 @@
 #   container_app_environment_id = azurerm_container_app_environment.main.id
 #   resource_group_name          = azurerm_resource_group.main.name
 #   revision_mode                = "Single"
-  
+
 #   // Image is managed outside of terraform (i.e azd deploy)
 # lifecycle {
 #     ignore_changes = [

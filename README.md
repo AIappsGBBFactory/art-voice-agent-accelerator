@@ -1,24 +1,11 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-# 🎙️ **RTAgent**  
-*Real-Time Voice Intelligence Framework on Azure*
+# 🎙️ **RTVoice Accelerator**  
+*Omni-channel, real-time voice-intelligence accelerator framework on Azure*
 
-> **RTAgent** fuses **Azure Communication Services (ACS)**, **Azure Speech**, **Azure OpenAI**, and first-class observability into a single low-latency voice stack. Plug in any YAML-defined agent—insurance FNOL, healthcare triage, legal intake—and go live **using only GA Azure services**.
+**RTAgent** is an accelerator that delivers a friction-free, AI-driven voice experience—whether callers dial a phone number, speak to an IVR, or click “Call Me” in a web app. Built entirely on generally available Azure services—Azure Communication Services, Azure AI, and Azure App Service—it provides a low-latency stack that scales on demand while keeping the AI layer fully under your control.
 
-## 📑 Table of Contents
-1. [Overview](#overview)
-2. [Key Features](#key-features)
-3. [Solution Architecture](#solution-architecture)
-4. [Latency & Barge-In Budget](#latency--barge-in-budget)
-5. [Extensibility](#extensibility)
-6. [Getting Started](#getting-started)
-    1. [Local Quick-Start](#local-quick-start)
-7. [Deployment on Azure](#deployment-on-azure)
-8. [Load & Chaos Testing](#load--chaos-testing)
-9. [Repository Layout](#repository-layout)
-10. [Roadmap](#roadmap)
-11. [Contributing](#contributing)
-12. [License & Disclaimer](#license--disclaimer)
+Design a single agent or orchestrate multiple specialist agents (claims intake, authorization triage, appointment scheduling—anything). The framework allows you to build your voice agent from scratch, incorporate long- and short-term memory, configure actions, and fine-tune your TTS and STT layers to give any workflow an intelligent voice.
 
 ## **Overview** 
 
@@ -29,179 +16,87 @@
 
 **RTAgent in a nutshell**
 
-RTAgent is a voice-to-voice AI pipeline that you can splice into any phone line, web client, or CCaaS flow. Audio enters through ACS, is transcribed on the fly, routed through your own modular agent chain, and then streamed back as TTS— all in a single sub-second loop. Every step is exposed as a micro-module so you can fine-tune latency, swap models, or inject custom business logic without touching the rest of the stack. The result: natural conversation and granular control over each hop of the call.
+RT Agent is a plug-and-play accelerator, voice-to-voice AI pipeline that slots into any phone line, web client, or CCaaS flow. Caller audio arrives through Azure Communication Services (ACS), is transcribed by a dedicated STT component, routed through your agent chain of LLMs, tool calls, and business logic, then re-synthesised by a TTS component—all in a sub-second round-trip. Because each stage runs as an independent microservice, you can swap models, fine-tune latency budgets, or inject custom logic without touching the rest of the stack. The result is natural, real-time conversation with precision control over every hop of the call.
 
-### **✨ Key Capabilities**
+<img src="utils/images/RTAgentArch.png" alt="RTAgent Logo" />
 
-- **Omni-channel** — same agent for PSTN, Teams, or web chat (see diagram below).  
-- **YAML-defined agents** — hot-swap FNOL, triage, billing, or any custom intent with **low code**.  
-- **Robust barge-in** — partial STT cancels TTS instantly; no “talk-over” frustration.  
-- **Structured output** — native JSON / function calling ready for CRM, EMR, or claims systems.  
-- **Enterprise WebSocket middleware** — unifies voice-to-voice streams, elastically multiplexes thousands of concurrent sessions, and slots cleanly into existing CX stacks for at-scale conversational routing.  
+<br>
 
-<img src="utils/images/omnichannel_rt_voice.png" align="center" alt="Omni-channel RT Voice Experience diagram" width="800
-"/>
+| What you get | How it helps |
+|--------------|--------------|
+| **Sub-second loop** (STT → LLM/Tools → TTS) | Conversations feel human, not robotic latency-ridden dialogs. |
+| **100 % GA Azure stack** | No private previews, no hidden SKUs—easy procurement & support. |
+| **Drop-in YAML agents** | Spin up FNOL claims bots, triage nurses, or legal intake in minutes. |
+| **Micro-service architecture** | Swap models, tune latency, or add new business logic without redeploying the whole stack. |
 
-*(Left: callers on web & phone → RTAgent; right: seamless CCaaS escalation when a human is truly needed)*
+## Deploy and Customize the Demo App Using the RTAgent Framework
 
-## **Key Features**
+### **🚀 One-Command Azure Deployment**
 
-| Category | Highlights |
-|----------|------------|
-| 🔄 Streaming | Bidirectional (PSTN ↔ WebSocket ↔ LLM) with < 500 ms RTT |
-| 🧠 Agents | Drop-in FNOL, Healthcare, Legal, or custom YAML agents |
-| 📊 Model Router | GPT-4o, GPT-4o-mini, phi per turn (cost/speed/quality aware) |
-| 🧰 Tools | Function-calling tool store; call external APIs in-flight |
-| 📈 Scale | Queue-backed session manager across Container Apps replicas |
-| 🛡️ Enterprise | App Gateway + WAF, private endpoints, managed identity |
-| 🧪 Testing | Azure Load Testing, Locust, Artillery scripts included |
-| 📞 CCaaS Bridge | Seamless SIP hand-off between ACS and any CCaaS (Amazon Connect, Genesys, Five9) |
-
-## **Solution Architecture**
-
-```mermaid
-flowchart LR
-  %% ─────────────── 1 · Users ─────────────────────
-  subgraph "Users"
-    PSTN["📞 PSTN / Teams"]
-    WEB["🌐 Web / Mobile"]
-  end
-
-  %% ─────────────── 2 · Telco Bridge ──────────────
-  subgraph "Telco Bridge (PSTN only)"
-    CCaaS["🏢 CCaaS / Telco"]
-    ACS["🔗 Azure Comm Svc"]
-  end
-
-  %% ─────────────── 3 · Real-Time Engine ──────────
-  subgraph "🎙️ Real-Time Engine"
-    Planner["🧭 Planner / Orchestrator"]
-    Tools["🔧 Tool Store"]
-    Memory["🗃️ Memory Store"]
-
-    %% ---- RTAgent with internal pipeline
-    subgraph RTAgent
-      STT["STT"] --> LLM["LLM"] --> TTS["TTS"]
-    end
-
-    %% LLM reaches out to stores (dashed = data look-ups)
-    LLM -.-> Tools
-    LLM -.-> Memory
-  end
-
-  %% === Inbound voice =========================================================
-  PSTN --> CCaaS -->|SIP / RTP| ACS -->|WebSocket audio| Planner
-  WEB  -->|WebSocket audio| Planner
-
-  %% === Planner → Agent =======================================================
-  Planner --> RTAgent
-  RTAgent --> Planner
-
-  %% === Outbound voice (same path back) =======================================
-  Planner -->|WebSocket audio| ACS --> CCaaS --> PSTN
-  Planner -->|WebSocket audio| WEB
-
-  %% Styling
-  classDef bridge fill:#0078D4,color:#fff,stroke-width:2px
-  classDef store  fill:#FFE082,color:#000,stroke-width:1px,stroke:#F57F17,stroke-dasharray: 5
-  class CCaaS,ACS bridge
-  class Tools,Memory store
-```
-
-Detailed flow, infra, and state diagrams live in `docs/Architecture.md`.
-
-## **Latency & Barge-In Budget**
-
-| Hop | Target | Key Tuning |
-|-----|--------|------------|
-| STT first-byte | 40–60 ms | WebSocket streaming models |
-| LLM token | 15–40 ms | GPT-4o / cost-tier routing |
-| TTS first-byte | 45–70 ms | 24 kHz output, low-latency mode |
-| Network | ~20 ms | Same-region services |
-
-**Barge-In Flow**
-
-1. Partial STT from ACS (<10 ms) triggers `on_partial`.  
-2. Current TTS stream cancelled; `StopAudio` sent to ACS.  
-3. New speech queued; playback starts immediately—no audible clip.  
-
-Full code walk-through: `docs/ACSBargeInFlow.md`.
-
-## **Extensibility**
-
-| Extension Point | How-To |
-|-----------------|--------|
-| 🧩 New Agent | Implement new agents in `rtagents/agents/` |
-| 🔧 Tool | Add a function in `tools/`, reference in YAML |
-| 🧠 Memory | Swap Redis for Cosmos DB / Vector DB |
-| 🎯 Router | Edit `router.yaml` to balance cost vs. speed |
-
-Cross-cloud and CCaaS integrations are documented in `docs/IntegrationPoints.md`.
-
-## **Getting Started**
-
-### Local Quick-Start
+Provision the full solution—including App Gateway, Container Apps, Cosmos DB, Redis, OpenAI, and Key Vault—with a single command:
 
 ```bash
-# 1️⃣ Backend (FastAPI + Uvicorn)
+azd auth login
+azd up   # ~15 min for complete infra and code deployment
+```
+
+**Key Features:**
+- TLS managed by Key Vault and App Gateway
+- KEDA auto-scales RT Agent workers
+- All outbound calls remain within a private VNet
+
+For a detailed deployment walkthrough, see [`docs/DeploymentGuide.md`](docs/DeploymentGuide.md).
+
+**Project Structure Highlights:**
+
+| Path                | Description                                 |
+|---------------------|---------------------------------------------|
+| apps/rtagent/backend| FastAPI + WebSocket voice pipeline          |
+| apps/rtagent/frontend| Vite + React demo client                   |
+| apps/rtagent/scripts| Helper launchers (backend, frontend, tunnel)|
+| infra/              | Bicep/Terraform IaC                        |
+| docs/               | Architecture, agents, tuning guides         |
+| tests/              | Pytest suite                               |
+| Makefile            | One-line dev commands                       |
+| environment.yaml    | Conda environment spec (name: audioagent)   |
+
+### *⚡ Run the app Local*
+
+**Prerequisites:** Infra deployed (above), Conda, Node.js ≥ 18, Azure CLI with `dev-tunnel` extension.
+
+**Backend (FastAPI + Uvicorn):**
+```bash
 git clone https://github.com/your-org/gbb-ai-audio-agent.git
 cd gbb-ai-audio-agent/rtagents/RTAgent/backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.sample .env   # add ACS, Speech, OpenAI keys
-python server.py      # ws://localhost:8010/realtime
+cp .env.sample .env   # Configure ACS, Speech, and OpenAI keys
+python server.py      # Starts backend at ws://localhost:8010/realtime
 ```
 
+**Frontend (Vite + React):**
 ```bash
-# 2️⃣ Frontend (Vite + React)
 cd ../../frontend
 npm install
-npm run dev           # http://localhost:5173
+npm run dev           # Starts frontend at http://localhost:5173
 ```
 
-Dial-in from a real phone? Expose your backend with **Azure Dev Tunnels**, update `BASE_URL` in both `.env` files, and mirror the URL in the ACS event subscription.
+> Need more help?
+> Refer to [`apps/README.md`](apps/README.md) for a step-by-step walkthrough of the demo app built with the RTAgent framework, along with guidance on how to customize it for your specific use case.
 
-## **Deployment on Azure**
+## **Load and Chaos Testing**
 
-```bash
-azd auth login
-azd up         # full infra + code (~15 min)
-```
-
-• SSL via Key Vault ‑> App Gateway  
-• Container Apps auto-scale (KEDA)  
-• Private Redis, Cosmos DB, OpenAI endpoints  
-
-Step-by-step guide: `docs/DeploymentGuide.md`.
-
-## **Load & Chaos Testing**
-
-Targets: **<500 ms STT→TTS • 1k+ concurrent calls • >99.5 % success** (WIP)
+Worried about the solution’s ability to scale under your application’s load? Here’s a guide to help you with horizontal scaling tests...
 
 ```bash
 az load test run --test-plan tests/load/azure-load-test.yaml
 ```
 
-Locust & Artillery scripts: `docs/LoadTesting.md`.
-
-
-## **Repository Layout**
-```text
-gbb-ai-audio-agent/
-├── .github/          # CI / CD
-├── docs/             # Architecture, Deployment, Integration
-├── infra/            # Bicep modules & azd templates
-├── rtagents/         # Core Python package (agents, tools, router) [backend + Frontend (React + Vite frontend)]
-├── labs/             # Jupyter notebooks & PoCs
-├── src/              # source code libraries
-├── tests/            # pytest + load tests
-├── utils/            # diagrams & helper scripts
-└── Makefile, docker-compose.yml, CHANGELOG.md …
-```
+Additional load test scripts (Locust, Artillery) are available in [`docs/LoadTesting.md`](docs/LoadTesting.md).
 
 ## **Roadmap**
 - Live Agent API integration
-- Multi-modal agents (docs + images)  
+- Multi-modal agents (documents, images)
 
 ## **Contributing**
 PRs & issues welcome—see `CONTRIBUTING.md` and run `make pre-commit` before pushing.

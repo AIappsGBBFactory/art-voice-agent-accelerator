@@ -1,7 +1,7 @@
 """
 Azure Blob Storage Helper Module - FastAPI & Azure Best Practices Implementation
 
-This module provides secure, efficient Azure Blob Storage operations following FastAPI 
+This module provides secure, efficient Azure Blob Storage operations following FastAPI
 and Azure best practices. Features include:
 
 - Managed Identity authentication with fallback to connection string
@@ -21,7 +21,7 @@ Environment Variables:
     AZURE_BLOB_CONTAINER: Default container name (default: "acs")
     AZURE_STORAGE_CONNECTION_STRING: Connection string (fallback auth)
     AZURE_STORAGE_ACCOUNT_KEY: Account key (fallback auth)
-    
+
 Security Note:
     This implementation prefers Managed Identity authentication over keys.
     Connection strings and account keys are used only as fallback options.

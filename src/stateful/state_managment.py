@@ -3,6 +3,7 @@ This module powers real‑time voice‑agent sessions. It extends the original
 `MemoManager` with **live‑refresh** helpers that keep local state in sync with a
 shared Redis cache and expose fine‑grained utilities for selective updates.
 """
+
 import asyncio
 import json
 import uuid
@@ -234,7 +235,7 @@ class MemoManager:
 
     # --- PROMPT INJECTION ---------------------------------------------
     # TODO this is wrong and needs to be fixed after close refactor [P.S]
-    
+
     def get_context(self, key: str, default: Any = None) -> Any:
         """
         Shorthand for self.corememory.get().
@@ -249,7 +250,6 @@ class MemoManager:
         flushed to Redis immediately.
         """
         self.corememory.set(key, value)
-
 
     def update_context(self, key: str, value: Any) -> None:
         """

@@ -10,6 +10,7 @@ applications. It exposes four public classes:
 3. **EphemeralMemoManager** – An in‑memory variant of MemoManager for App‑layer
                               components that *must not* persist to Redis.
 """
+
 import json
 from typing import Any, Dict, List, Optional
 

@@ -2,6 +2,7 @@
 Master load test runner that orchestrates all test components
 Runs coordinated tests across API endpoints, WebSockets, backend services, and integration flows
 """
+
 import argparse
 import json
 import os
@@ -398,14 +399,18 @@ class LoadTestOrchestrator:
                     1 for r in self.test_results.values() if r.get("success", False)
                 ),
                 "success_rate": (
-                    sum(
-                        1 for r in self.test_results.values() if r.get("success", False)
+                    (
+                        sum(
+                            1
+                            for r in self.test_results.values()
+                            if r.get("success", False)
+                        )
+                        / len(self.test_results)
                     )
-                    / len(self.test_results)
-                )
-                * 100
-                if self.test_results
-                else 0,
+                    * 100
+                    if self.test_results
+                    else 0
+                ),
             },
         }
 

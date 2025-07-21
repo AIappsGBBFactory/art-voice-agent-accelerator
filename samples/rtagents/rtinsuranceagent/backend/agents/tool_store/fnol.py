@@ -4,6 +4,7 @@ XYMZ Insurance • Minimal 12-field FNOL recorder  (v2 – boolean-safe)
 • Fixes: False booleans were treated as “missing”.
 • Adds: parse_yes_no() + SlotTracker for conversational agents.
 """
+
 from __future__ import annotations
 
 import json

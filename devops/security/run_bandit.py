@@ -18,30 +18,34 @@ from pathlib import Path
 
 REPORT_DIR = Path("security")
 DEFAULT_TARGET = "src"
+
+
 def utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
 def run_bandit(target: str) -> None:
     REPORT_DIR.mkdir(exist_ok=True)
     slug = "repo" if target == "." else Path(target).name.replace(" ", "_")
-    ts   = utc_stamp()
-    txt_path  = REPORT_DIR / f"bandit_{slug}_{ts}.txt"
+    ts = utc_stamp()
+    txt_path = REPORT_DIR / f"bandit_{slug}_{ts}.txt"
     json_path = REPORT_DIR / f"bandit_{slug}_{ts}.json"
     base_cmd = [
-        "bandit", "-r", target,
-        "--severity-level", "low",        # include LOW / MEDIUM / HIGH
-        "--confidence-level", "low",      # include LOW / MEDIUM / HIGH
+        "bandit",
+        "-r",
+        target,
+        "--severity-level",
+        "low",  # include LOW / MEDIUM / HIGH
+        "--confidence-level",
+        "low",  # include LOW / MEDIUM / HIGH
     ]
     try:
-        subprocess.run(
-            base_cmd + ["-f", "json", "-o", str(json_path)],
-            check=True
-        )
-        subprocess.run(
-            base_cmd + ["-f", "txt", "-o", str(txt_path)],
-            check=True
-        )
+        subprocess.run(base_cmd + ["-f", "json", "-o", str(json_path)], check=True)
+        subprocess.run(base_cmd + ["-f", "txt", "-o", str(txt_path)], check=True)
     except subprocess.CalledProcessError as e:
-        print("[WARN] Bandit exited with non-zero status (issues found or error). Reports still generated.")
+        print(
+            "[WARN] Bandit exited with non-zero status (issues found or error). Reports still generated."
+        )
     except Exception as e:
         print(f"[ERROR] Bandit failed to run: {e}")
         return
@@ -90,7 +94,9 @@ def run_bandit(target: str) -> None:
         print("+----------+----------------------------------------------+--------+")
         print("| Test ID  | Description                                  | Count  |")
         print("+----------+----------------------------------------------+--------+")
-        for (test_id, desc), cnt in sorted(issue_type_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
+        for (test_id, desc), cnt in sorted(
+            issue_type_counts.items(), key=lambda x: x[1], reverse=True
+        )[:10]:
             print(f"| {test_id:<8} | {desc[:44]:<44} | {cnt:>6} |")
         print("+----------+----------------------------------------------+--------+")
     print("\nBandit Scan Complete.")
@@ -98,13 +104,24 @@ def run_bandit(target: str) -> None:
     print(f"Timestamp   : {ts} UTC")
     print(f"TXT report  : {txt_path.resolve()}")
     print(f"JSON report : {json_path.resolve()}")
-    
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Run Bandit and store reports in ./security")
-    ap.add_argument("target", nargs="?", default=DEFAULT_TARGET,
-                    help="Folder to scan (default: ./src). Use '.' or --all for repo root.")
-    ap.add_argument("--all", action="store_true", help="Scan the entire repository ('.').")
+    ap = argparse.ArgumentParser(
+        description="Run Bandit and store reports in ./security"
+    )
+    ap.add_argument(
+        "target",
+        nargs="?",
+        default=DEFAULT_TARGET,
+        help="Folder to scan (default: ./src). Use '.' or --all for repo root.",
+    )
+    ap.add_argument(
+        "--all", action="store_true", help="Scan the entire repository ('.')."
+    )
     args = ap.parse_args()
     run_bandit("." if args.all else args.target)
+
+
 if __name__ == "__main__":
     main()

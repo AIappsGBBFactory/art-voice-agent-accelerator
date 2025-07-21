@@ -2,6 +2,7 @@
 Generate a polished FNOL report as a .docx file.
 Call generate_claim_report(claim_dict) right after record_fnol success.
 """
+
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict

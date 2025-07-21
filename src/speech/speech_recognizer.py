@@ -32,6 +32,7 @@ class StreamingSpeechRecognizerFromBytes:
         key: Optional[str] = None,
         region: Optional[str] = None,
         candidate_languages: Optional[List[str]] = None,
+        use_semantic_segmentation: bool = True,
         vad_silence_timeout_ms: int = 800,
         audio_format: str = "pcm",  # "pcm" or "any"
     ):
@@ -40,12 +41,13 @@ class StreamingSpeechRecognizerFromBytes:
         self.candidate_languages = candidate_languages or ["en-US", "es-ES", "fr-FR"]
         self.vad_silence_timeout_ms = vad_silence_timeout_ms
         self.audio_format = audio_format  # either "pcm" or "any"
+        self.use_semantic = use_semantic_segmentation
 
         self.final_callback: Optional[Callable[[str, str], None]] = None
         self.partial_callback: Optional[Callable[[str, str], None]] = None
-        self.cancel_callback: Optional[
-            Callable[[speechsdk.SessionEventArgs], None]
-        ] = None
+        self.cancel_callback: Optional[Callable[[speechsdk.SessionEventArgs], None]] = (
+            None
+        )
 
         self.push_stream = None
         self.speech_recognizer = None
@@ -91,6 +93,10 @@ class StreamingSpeechRecognizerFromBytes:
         speech_config = speechsdk.SpeechConfig(
             subscription=self.key, region=self.region
         )
+        # --- segmentation strategy -------------------------------------- #
+        if self.use_semantic:
+            speech_config.set_property(
+                speechsdk.PropertyId.Speech_SegmentationStrategy, "Semantic")
 
         # switch to continuous LID mode
         speech_config.set_property(
@@ -99,7 +105,6 @@ class StreamingSpeechRecognizerFromBytes:
         lid_cfg = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
             languages=self.candidate_languages
         )
-
         speech_config.set_property(
             speechsdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold, "1"
         )
@@ -127,15 +132,12 @@ class StreamingSpeechRecognizerFromBytes:
             audio_config=audio_config,
             auto_detect_source_language_config=lid_cfg,
         )
-
-        self.speech_recognizer.properties.set_property(
-            speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
-            str(self.vad_silence_timeout_ms),
-        )
-        # self.speech_recognizer.properties.set_property(
-        #     speechsdk.PropertyId.Speech_SegmentationStrategy, "Semantic"
-        # )
-
+        if not self.use_semantic:
+            # classic silence guard (100-5 000 ms). 800 ms default
+            self.speech_recognizer.properties.set_property(
+                speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
+                str(self.vad_silence_timeout_ms))
+            
         if self.partial_callback:
             self.speech_recognizer.recognizing.connect(self._on_recognizing)
         if self.final_callback:
@@ -156,7 +158,11 @@ class StreamingSpeechRecognizerFromBytes:
         speech_config = speechsdk.SpeechConfig(
             subscription=self.key, region=self.region
         )
-
+         # --- segmentation strategy -------------------------------------- #
+        if self.use_semantic:
+            speech_config.set_property(
+                speechsdk.PropertyId.Speech_SegmentationStrategy, "Semantic")
+            
         # switch to continuous LID mode
         speech_config.set_property(
             speechsdk.PropertyId.SpeechServiceConnection_LanguageIdMode, "Continuous"
@@ -193,13 +199,11 @@ class StreamingSpeechRecognizerFromBytes:
             auto_detect_source_language_config=lid_cfg,
         )
 
-        self.speech_recognizer.properties.set_property(
-            speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
-            str(self.vad_silence_timeout_ms),
-        )
-        # self.speech_recognizer.properties.set_property(
-        #     speechsdk.PropertyId.Speech_SegmentationStrategy, "Semantic"
-        # )
+        if not self.use_semantic:
+            # classic silence guard (100-5 000 ms). 800 ms default
+            self.speech_recognizer.properties.set_property(
+                speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
+                str(self.vad_silence_timeout_ms))
 
         if self.partial_callback:
             self.speech_recognizer.recognizing.connect(self._on_recognizing)
