@@ -169,7 +169,7 @@ class NoOpTraceContext:
     Ultra-lightweight no-operation context manager for optimal performance.
     Used when tracing is disabled to minimize overhead.
     """
-    __slots__ = ()  # Memory optimization
+    # Memory optimization removed as __slots__ is redundant for this class
     
     def __init__(self, *args, **kwargs):
         pass
