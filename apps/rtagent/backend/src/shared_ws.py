@@ -25,7 +25,7 @@ from apps.rtagent.backend.src.services.acs.acs_helpers import (
     play_response_with_queue,
 )
 from apps.rtagent.backend.src.services.speech_services import SpeechSynthesizer
-from apps.rtagent.backend.settings import ACS_STREAMING_MODE
+from apps.rtagent.backend.settings import ACS_STREAMING_MODE, VOICE_TTS
 
 from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
@@ -79,7 +79,7 @@ async def send_response_to_acs(
 
         try:
             # Add timeout and retry logic for TTS synthesis
-            pcm_bytes = synth.synthesize_to_pcm(text)
+            pcm_bytes = synth.synthesize_to_pcm(text=text, voice=VOICE_TTS, sample_rate=16000)
             latency_tool.stop("tts:synthesis", ws.app.state.redis)
 
         except asyncio.TimeoutError:
