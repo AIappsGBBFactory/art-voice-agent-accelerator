@@ -131,8 +131,8 @@ class StreamingSpeechRecognizerFromBytes:
                 speech_config.authorization_token = token_result.token
                 logger.info("Successfully configured SpeechConfig with Azure Default Credentials")
             except Exception as e:
-                logger.error(f"Failed to get Azure token: {e}")
-                raise ValueError(f"Failed to authenticate with Azure Default Credentials: {e}")
+                logger.error(f"Failed to get Azure token: {e}. Ensure that the required RBAC role, such as 'Cognitive Services User', is assigned to your identity.")
+                raise ValueError(f"Failed to authenticate with Azure Default Credentials: {e}. Ensure that the required RBAC role, such as 'Cognitive Services User', is assigned to your identity.")
 
             return speech_config
 
