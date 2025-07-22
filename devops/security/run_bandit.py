@@ -16,7 +16,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPORT_DIR = Path("security")
+REPORT_DIR = Path("devops/security/reports")
 DEFAULT_TARGET = "src"
 
 

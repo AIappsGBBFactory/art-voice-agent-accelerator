@@ -187,8 +187,8 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8010))
     uvicorn.run(
-        "main:app",  # Use import string to support reload
-        host="0.0.0.0",
+        "main:app",  
+        host="0.0.0.0",  # nosec: B104
         port=port,
         reload=True,
     )

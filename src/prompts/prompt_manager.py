@@ -29,7 +29,7 @@ class PromptManager:
         template_path = os.path.join(current_dir, template_dir)
 
         self.env = Environment(
-            loader=FileSystemLoader(searchpath=template_path), autoescape=False
+            loader=FileSystemLoader(searchpath=template_path), autoescape=True
         )
 
         templates = self.env.list_templates()

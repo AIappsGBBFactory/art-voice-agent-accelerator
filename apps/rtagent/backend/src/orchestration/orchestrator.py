@@ -44,10 +44,6 @@ def _get_correlation_context(ws: WebSocket, cm: "MemoManager") -> tuple[str, str
     return call_connection_id, session_id
 
 
-# ────────────────────────────────────────────────────────────────
-# Core‑Memory helpers
-# ────────────────────────────────────────────────────────────────
-
 def _cm_get(cm: "MemoManager", key: str, default: Any = None) -> Any:
     """Shorthand for ``cm.get_value_from_corememory`` with a default."""
     return cm.get_value_from_corememory(key, default)
@@ -79,39 +75,43 @@ async def run_auth_agent(
     """Execute the AuthAgent.  If it succeeds, prime routing metadata."""
 
     if _cm_get(cm, "authenticated", False):
-        return  # Already verified
+        return
 
-    auth_agent = ws.app.state.auth_agent  # type: ignore[attr-defined]
+    auth_agent = ws.app.state.auth_agent
     async with track_latency(ws.state.lt, "auth_agent", ws.app.state.redis):
         result: Dict[str, Any] | Any = await auth_agent.respond(cm, utterance, ws, is_acs=is_acs)
 
     if not (isinstance(result, dict) and result.get("authenticated")):
         return
 
+    # Cache values locally to avoid repeated lookups
+    caller_name = result.get("caller_name")
+    policy_id = result.get("policy_id")
+    call_reason = result.get("call_reason")
+    claim_intent = result.get("claim_intent")
+    intent = result.get("intent", "general")
+    active_agent = "Claims" if intent == "claims" else "General"
+
     _cm_set(
         cm,
         authenticated=True,
-        caller_name=result.get("caller_name"),
-        policy_id=result.get("policy_id"),
-        call_reason=result.get("call_reason"),
-        claim_intent=result.get("claim_intent"),
+        caller_name=caller_name,
+        policy_id=policy_id,
+        call_reason=call_reason,
+        claim_intent=claim_intent,
+        active_agent=active_agent,
     )
-
-    intent = result.get("intent", "general")
-    active_agent = "Claims" if intent == "claims" else "General"
-    _cm_set(cm, active_agent=active_agent)
 
     logger.info(
         "✅ Auth OK – session=%s caller=%s policy=%s → %s agent",
         cm.session_id,
-        _cm_get(cm, "caller_name"),
-        _cm_get(cm, "policy_id"),
+        caller_name,
+        policy_id,
         active_agent,
     )
 
 
 # 2.  Specialist agents 
-
 
 async def run_general_agent(
     cm: "MemoManager",
@@ -120,16 +120,19 @@ async def run_general_agent(
     *,
     is_acs: bool,
 ) -> None:
-    agent = ws.app.state.general_info_agent  # type: ignore[attr-defined]
+    agent = ws.app.state.general_info_agent
+    caller_name = _cm_get(cm, "caller_name")
+    call_reason = _cm_get(cm, "call_reason")
+    policy_id = _cm_get(cm, "policy_id")
     async with track_latency(ws.state.lt, "general_agent", ws.app.state.redis):
         resp = await agent.respond(
             cm,
             utterance,
             ws,
             is_acs=is_acs,
-            caller_name=_cm_get(cm, "caller_name"),
-            topic=_cm_get(cm, "call_reason"),  # formerly "topic"
-            policy_id=_cm_get(cm, "policy_id"),
+            caller_name=caller_name,
+            topic=call_reason,
+            policy_id=policy_id,
         )
     await _process_tool_response(cm, resp)
 
@@ -141,23 +144,21 @@ async def run_claims_agent(
     *,
     is_acs: bool,
 ) -> None:
-    agent = ws.app.state.claim_intake_agent  # type: ignore[attr-defined]
+    agent = ws.app.state.claim_intake_agent
+    caller_name = _cm_get(cm, "caller_name")
+    claim_intent = _cm_get(cm, "claim_intent")
+    policy_id = _cm_get(cm, "policy_id")
     async with track_latency(ws.state.lt, "claim_agent", ws.app.state.redis):
         resp = await agent.respond(
             cm,
             utterance,
             ws,
             is_acs=is_acs,
-            caller_name=_cm_get(cm, "caller_name"),
-            claim_intent=_cm_get(cm, "claim_intent"),
-            policy_id=_cm_get(cm, "policy_id"),
+            caller_name=caller_name,
+            claim_intent=claim_intent,
+            policy_id=policy_id,
         )
     await _process_tool_response(cm, resp)
-
-
-# ────────────────────────────────────────────────────────────────
-# 3.  Tool‑response handler
-# ────────────────────────────────────────────────────────────────
 
 
 def _get_field(resp: Dict[str, Any], key: str) -> Any:  # noqa: D401 – simple util
@@ -223,27 +224,27 @@ async def route_turn(
     """Handle a single user turn end‑to‑end."""
 
     redis_mgr = ws.app.state.redis
-
     try:
         await run_auth_agent(cm, transcript, ws, is_acs=is_acs)
 
-        if not _cm_get(cm, "authenticated", False):
+        authenticated = _cm_get(cm, "authenticated", False)
+        if not authenticated:
             return
 
-        if _cm_get(cm, "active_agent") == "HumanEscalation":
+        active_agent = _cm_get(cm, "active_agent")
+        if active_agent == "HumanEscalation":
             await ws.send_text(json.dumps({"type": "live_agent_transfer"}))
             return
 
-        active = _cm_get(cm, "active_agent", "General")
+        active = active_agent if active_agent else "General"
         handler = SPECIALIST_MAP.get(active)
         if handler:
             await handler(cm, transcript, ws, is_acs=is_acs)
         else:
             logger.warning("Unknown active_agent=%s session=%s", active, cm.session_id)
 
-    except Exception:  # pragma: no cover – handled upstream
+    except Exception:
         logger.exception("💥 route_turn crash – session=%s", cm.session_id)
         raise
-
     finally:
         cm.persist_to_redis(redis_mgr)

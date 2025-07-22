@@ -291,9 +291,14 @@ class BackendServicesUser(User):
 
             # Query document
             query_start = time.time()
-            query = f"SELECT * FROM c WHERE c.session_id = '{self.session_id}'"
+            query = "SELECT * FROM c WHERE c.session_id = @session_id"
+            parameters = [{"name": "@session_id", "value": self.session_id}]
             items = list(
-                self.container.query_items(query, enable_cross_partition_query=True)
+                self.container.query_items(
+                    query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True
+                )
             )
             query_duration = (time.time() - query_start) * 1000
 
