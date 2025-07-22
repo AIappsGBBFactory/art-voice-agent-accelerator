@@ -206,3 +206,4 @@ terraform.rc
 # Terraform backend config (contains environment-specific values)
 infra-tf/backend.tf
 main.tfvars.json
+.deploy

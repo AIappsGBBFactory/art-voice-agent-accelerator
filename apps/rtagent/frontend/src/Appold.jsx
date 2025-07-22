@@ -2,8 +2,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import VoiceSphere from './components/VoiceSphere';
 import "reactflow/dist/style.css";
-import { useHealthMonitor } from "./hooks/useHealthMonitor";
-import HealthStatusIndicator from "./components/HealthStatusIndicator";
+// import { useHealthMonitor } from "./hooks/useHealthMonitor";
+// import HealthStatusIndicator from "./components/HealthStatusIndicator";
 
 /* ------------------------------------------------------------------ *
  *  ENV VARS
@@ -109,18 +109,18 @@ export default function RealTimeVoiceApp() {
   const [callActive, setCallActive]   = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState(null);
 
-  /* ---------- health monitoring ---------- */
-  const { 
-    healthStatus = { isHealthy: null, lastChecked: null, responseTime: null, error: null },
-    readinessStatus = { status: null, timestamp: null, responseTime: null, checks: [], lastChecked: null, error: null },
-    overallStatus = { isHealthy: false, hasWarnings: false, criticalErrors: [] },
-    refresh = () => {} 
-  } = useHealthMonitor({
-    baseUrl: API_BASE_URL,
-    healthInterval: 30000,
-    readinessInterval: 15000,
-    enableAutoRefresh: true,
-  });
+  // /* ---------- health monitoring ---------- */
+  // const { 
+  //   healthStatus = { isHealthy: null, lastChecked: null, responseTime: null, error: null },
+  //   readinessStatus = { status: null, timestamp: null, responseTime: null, checks: [], lastChecked: null, error: null },
+  //   overallStatus = { isHealthy: false, hasWarnings: false, criticalErrors: [] },
+  //   refresh = () => {} 
+  // } = useHealthMonitor({
+  //   baseUrl: API_BASE_URL,
+  //   healthInterval: 30000,
+  //   readinessInterval: 15000,
+  //   enableAutoRefresh: true,
+  // });
 
 
   // Function call state (not mind-map)
@@ -435,15 +435,6 @@ export default function RealTimeVoiceApp() {
             <p style={styles.headerSubtitle}>
               Transforming patient care with real-time, intelligent voice interactions
             </p>
-          </div>
-          <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
-            <HealthStatusIndicator
-              healthStatus={healthStatus}
-              readinessStatus={readinessStatus}
-              overallStatus={overallStatus}
-              onRefresh={refresh}
-              compact={true}
-            />
           </div>
         </div>
       </header>
