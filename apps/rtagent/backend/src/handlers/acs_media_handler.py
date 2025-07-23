@@ -148,6 +148,12 @@ class ACSMediaHandler:
 
                 self.route_turn_task = asyncio.create_task(self.route_turn_loop())
                 # Fire greeting playback - it handles its own async task creation
+                logger.info(f"🎤 Playing greeting: {GREETING}")
+                await broadcast_message(
+                    connected_clients=self.incoming_websocket.app.state.clients,
+                    message=GREETING,
+                    sender="Assistant",
+                )
                 self.play_greeting()
 
             except Exception as e:
@@ -227,12 +233,7 @@ class ACSMediaHandler:
             metadata=self._get_trace_metadata("greeting_playback", greeting_length=len(greeting_text))
         ):
             try:
-                logger.info(f"🎤 Playing greeting: {greeting_text}")
-                broadcast_message(
-                    connected_clients=self.incoming_websocket.app.state.clients,
-                    message=greeting_text,
-                    sender="Assistant",
-                )
+
                 # Send the greeting text to ACS for TTS playback
                 self.playback_task = asyncio.create_task(
                     send_response_to_acs(
@@ -255,7 +256,7 @@ class ACSMediaHandler:
         logger.debug(f"🗣️ User (partial) in {lang}: {text}")
         
         # Start latency measurement for barge-in detection
-        latency_tool = self.latency_tool
+        # latency_tool = self.latency_tool
         # latency_tool.start("barge_in")
         
         # Set the barge-in event flag immediately
