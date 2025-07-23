@@ -50,7 +50,7 @@ terraform init && terraform apply
 |---------|---------|---------------|
 | **Azure OpenAI** | GPT-4o model for conversations | S0 tier, managed identity auth |
 | **Speech Services** | Real-time STT/TTS processing | S0 tier, integrated with ACS |
-| **Communication Services** | Voice calls, messaging, WebRTC | US data location, phone number ready |
+| **Communication Services** | Voice calls, messaging, WebRTC | US data location, phone number ready, cognitive services linked |
 
 ### 🗄️ Data & Storage Layer
 | Service | Purpose | Configuration |
@@ -72,6 +72,76 @@ terraform init && terraform apply
 | **Container Apps** | Serverless app hosting | Auto-scaling, Log Analytics integration |
 | **Container Registry** | Image storage | Basic tier, managed identity access |
 | **Application Insights** | Performance monitoring | Centralized telemetry |
+| **Diagnostic Settings** | Comprehensive logging | All ACS log categories enabled |
+
+### 📊 Monitoring & Diagnostics
+
+This infrastructure includes **comprehensive diagnostic settings** for Azure Communication Services, enabling:
+
+#### 📞 Call Automation & Voice Monitoring
+- **Real-time call operations**: API calls, media operations, streaming usage
+- **Call quality metrics**: Media statistics, client operations, service outcomes
+- **Call session data**: Summary logs with participant details and duration
+- **Cognitive services integration**: Managed identity-based Speech Services linkage
+
+#### 🎤 Recording & Compliance
+- **Call recording operations**: Start, stop, pause, resume recording events
+- **Recording metadata**: Duration, content type, format, end reasons
+- **Closed captions**: Accessibility and transcription logging
+
+#### 📈 Performance & Quality Assurance
+- **Quality metrics**: Aggregated calling metrics in daily bins
+- **Customer feedback**: Call survey data for experience insights
+- **Media diagnostics**: Stream-level diagnostics for troubleshooting
+
+#### 🔄 Omnichannel Communication
+- **SMS operations**: Message send, receive, delivery status
+- **Chat services**: Text-based customer interactions
+- **Email services**: Send operations, delivery status, user engagement
+
+#### 🔐 Security & Infrastructure
+- **Authentication events**: Security and access monitoring
+- **Usage analytics**: Billing and capacity planning data
+- **Routing intelligence**: Job router operations for smart call distribution
+
+All logs are centralized in **Log Analytics** for:
+- Real-time monitoring and alerting
+- Historical analysis and reporting  
+- Integration with Azure Monitor dashboards
+- Custom query capabilities for business insights
+
+### 🔗 Cognitive Services Integration
+
+This infrastructure implements **seamless integration** between Azure Communication Services and Speech Services for real-time transcription:
+
+#### 🔐 Managed Identity Authentication
+- **System-assigned managed identity** enabled on Communication Services
+- **Automatic credential management** - no API keys required
+- **Role-based access control** with "Cognitive Services User" role
+- **Production-ready security** following Azure best practices
+
+#### 🌐 Domain-Based Endpoints
+- **Custom domain endpoint** for Speech Services integration
+- **Consistent performance** across Azure regions
+- **Automatic failover support** for high availability
+- **Optimized routing** for real-time audio workloads
+
+#### 🎤 Real-Time Transcription Features
+- **Live speech-to-text** during active calls
+- **Multi-language support** for global call centers
+- **Low-latency processing** for responsive interactions
+- **Seamless integration** with Call Automation APIs
+
+#### 📋 Configuration Details
+```bash
+# Speech Service Domain Endpoint (used by ACS)
+AZURE_SPEECH_DOMAIN_ENDPOINT="https://{custom-subdomain}.cognitiveservices.azure.com/"
+
+# Traditional Regional Endpoint (for direct SDK calls)
+AZURE_SPEECH_ENDPOINT="https://{region}.api.cognitive.microsoft.com/"
+```
+
+The **domain endpoint** is specifically used for ACS integration, while the **regional endpoint** is available for direct Speech SDK operations.
 
 ## 🔐 Security & RBAC
 
@@ -231,6 +301,9 @@ az containerapp create \
 |------|-------------|
 | <a name="output_ACS_ENDPOINT"></a> [ACS\_ENDPOINT](#output\_ACS\_ENDPOINT) | Azure Communication Services endpoint |
 | <a name="output_ACS_RESOURCE_ID"></a> [ACS\_RESOURCE\_ID](#output\_ACS\_RESOURCE\_ID) | Azure Communication Services resource ID |
+| <a name="output_ACS_DIAGNOSTICS_SETTING_ID"></a> [ACS\_DIAGNOSTICS\_SETTING\_ID](#output\_ACS\_DIAGNOSTICS\_SETTING\_ID) | Azure Communication Services diagnostic setting ID |
+| <a name="output_ACS_MANAGED_IDENTITY_PRINCIPAL_ID"></a> [ACS\_MANAGED\_IDENTITY\_PRINCIPAL\_ID](#output\_ACS\_MANAGED\_IDENTITY\_PRINCIPAL\_ID) | Azure Communication Services system-assigned managed identity principal ID |
+| <a name="output_ACS_COGNITIVE_SERVICES_CONNECTION_ID"></a> [ACS\_COGNITIVE\_SERVICES\_CONNECTION\_ID](#output\_ACS\_COGNITIVE\_SERVICES\_CONNECTION\_ID) | Azure Communication Services cognitive services connection ID |
 | <a name="output_APPLICATIONINSIGHTS_CONNECTION_STRING"></a> [APPLICATIONINSIGHTS\_CONNECTION\_STRING](#output\_APPLICATIONINSIGHTS\_CONNECTION\_STRING) | Application Insights connection string |
 | <a name="output_AZURE_CONTAINER_REGISTRY_ENDPOINT"></a> [AZURE\_CONTAINER\_REGISTRY\_ENDPOINT](#output\_AZURE\_CONTAINER\_REGISTRY\_ENDPOINT) | Azure Container Registry endpoint |
 | <a name="output_AZURE_KEY_VAULT_ENDPOINT"></a> [AZURE\_KEY\_VAULT\_ENDPOINT](#output\_AZURE\_KEY\_VAULT\_ENDPOINT) | Azure Key Vault endpoint |
@@ -243,6 +316,7 @@ az containerapp create \
 | <a name="output_AZURE_RESOURCE_GROUP"></a> [AZURE\_RESOURCE\_GROUP](#output\_AZURE\_RESOURCE\_GROUP) | Azure Resource Group name |
 | <a name="output_AZURE_SPEECH_ENDPOINT"></a> [AZURE\_SPEECH\_ENDPOINT](#output\_AZURE\_SPEECH\_ENDPOINT) | Azure Speech Services endpoint |
 | <a name="output_AZURE_SPEECH_REGION"></a> [AZURE\_SPEECH\_REGION](#output\_AZURE\_SPEECH\_REGION) | Azure Speech Services region |
+| <a name="output_AZURE_SPEECH_DOMAIN_ENDPOINT"></a> [AZURE\_SPEECH\_DOMAIN\_ENDPOINT](#output\_AZURE\_SPEECH\_DOMAIN\_ENDPOINT) | Azure Speech Services domain endpoint for ACS integration |
 | <a name="output_AZURE_SPEECH_RESOURCE_ID"></a> [AZURE\_SPEECH\_RESOURCE\_ID](#output\_AZURE\_SPEECH\_RESOURCE\_ID) | Azure Speech Services resource ID |
 | <a name="output_AZURE_STORAGE_ACCOUNT_NAME"></a> [AZURE\_STORAGE\_ACCOUNT\_NAME](#output\_AZURE\_STORAGE\_ACCOUNT\_NAME) | Azure Storage Account name |
 | <a name="output_AZURE_STORAGE_BLOB_ENDPOINT"></a> [AZURE\_STORAGE\_BLOB\_ENDPOINT](#output\_AZURE\_STORAGE\_BLOB\_ENDPOINT) | Azure Storage Blob endpoint |

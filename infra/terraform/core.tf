@@ -49,3 +49,25 @@ resource "azurerm_application_insights" "main" {
   application_type    = "web"
   tags                = local.tags
 }
+
+# Assign "Application Insights Metrics Publisher" role to backend managed identity
+# Assign "Monitoring Metrics Publisher" role to backend managed identity
+resource "azurerm_role_assignment" "app_insights_metrics_backend" {
+  scope                = azurerm_application_insights.main.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_user_assigned_identity.backend.principal_id
+}
+
+# Assign "Monitoring Metrics Publisher" role to frontend managed identity
+resource "azurerm_role_assignment" "app_insights_metrics_frontend" {
+  scope                = azurerm_application_insights.main.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_user_assigned_identity.frontend.principal_id
+}
+
+# Assign "Monitoring Metrics Publisher" role to an additional principal_id if needed
+resource "azurerm_role_assignment" "app_insights_metrics_custom" {
+  scope                = azurerm_application_insights.main.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = local.principal_id
+}

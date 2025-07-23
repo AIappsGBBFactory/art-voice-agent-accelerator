@@ -17,12 +17,71 @@ from dotenv import load_dotenv
 from openai import AzureOpenAI
 
 from utils.ml_logging import get_logger
+from utils.trace_context import TraceContext
+from src.enums.monitoring import SpanAttr
+from opentelemetry import trace
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Set up logger
 logger = get_logger()
+
+# # Exports traces to local
+# span_exporter = ConsoleSpanExporter()
+# tracer_provider = TracerProvider()
+# tracer_provider.add_span_processor(SimpleSpanProcessor(span_exporter))
+# trace.set_tracer_provider(tracer_provider)
+
+# Get tracer instance
+tracer = trace.get_tracer(__name__)
+
+class NoOpTraceContext:
+    """
+    No-operation context manager that provides the same interface as TraceContext
+    but performs no actual tracing operations.
+    """
+    def __init__(self, *args, **kwargs):
+        pass
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+    
+    def set_attribute(self, key, value):
+        pass
+
+
+def _is_aoai_tracing_enabled() -> bool:
+    """Check if Azure OpenAI tracing is enabled."""
+    return os.getenv("AOAI_TRACING", os.getenv("ENABLE_TRACING", "false")).lower() == "true"
+
+
+def _create_aoai_trace_context(name: str, call_connection_id: str = None, session_id: str = None, **kwargs):
+    """
+    Create a TraceContext or NoOpTraceContext based on environment configuration.
+    
+    Args:
+        name: The name of the span
+        call_connection_id: Optional call connection ID for correlation
+        session_id: Optional session ID for correlation
+        **kwargs: Additional parameters for TraceContext
+    
+    Returns:
+        TraceContext or NoOpTraceContext instance
+    """
+    if _is_aoai_tracing_enabled():
+        return TraceContext(
+            name=name,
+            component="src.aoai.manager",
+            call_connection_id=call_connection_id,
+            session_id=session_id,
+            **kwargs
+        )
+    else:
+        return NoOpTraceContext()
 
 
 class AzureOpenAIManager:
@@ -43,6 +102,9 @@ class AzureOpenAIManager:
         embedding_model_name: Optional[str] = None,
         dalle_model_name: Optional[str] = None,
         whisper_model_name: Optional[str] = None,
+        call_connection_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        enable_tracing: Optional[bool] = None,
     ):
         """
         Initializes the Azure OpenAI Manager with necessary configurations.
@@ -54,6 +116,9 @@ class AzureOpenAIManager:
         :param chat_model_name: The Chat Model Name. If not provided, it will be fetched from the environment variable "AZURE_AOAI_CHAT_MODEL_NAME".
         :param embedding_model_name: The Embedding Model Deployment ID. If not provided, it will be fetched from the environment variable "AZURE_AOAI_EMBEDDING_DEPLOYMENT_ID".
         :param dalle_model_name: The DALL-E Model Deployment ID. If not provided, it will be fetched from the environment variable "AZURE_AOAI_DALLE_MODEL_DEPLOYMENT_ID".
+        :param call_connection_id: Call connection ID for tracing correlation
+        :param session_id: Session ID for tracing correlation  
+        :param enable_tracing: Whether to enable tracing. If None, checks environment variables
 
         """
         self.api_key = api_key or os.getenv("AZURE_OPENAI_KEY")
@@ -80,6 +145,11 @@ class AzureOpenAIManager:
             "AZURE_AOAI_WHISPER_MODEL_DEPLOYMENT_ID"
         )
 
+        # Store tracing context
+        self.call_connection_id = call_connection_id
+        self.session_id = session_id  
+        self.enable_tracing = enable_tracing if enable_tracing is not None else _is_aoai_tracing_enabled()
+
         if not self.api_key:
             token_provider = get_bearer_token_provider(
                 DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
@@ -97,6 +167,22 @@ class AzureOpenAIManager:
             )
 
         self._validate_api_configurations()
+
+    def _create_trace_context(self, name: str, **kwargs):
+        """
+        Create a TraceContext or NoOpTraceContext based on the enable_tracing setting.
+        This provides consistent tracing behavior throughout the Azure OpenAI operations.
+        """
+        if self.enable_tracing:
+            return TraceContext(
+                name=name,
+                component="src.aoai.manager",
+                call_connection_id=self.call_connection_id,
+                session_id=self.session_id,
+                **kwargs
+            )
+        else:
+            return NoOpTraceContext()
 
     def get_azure_openai_client(self):
         """
@@ -129,6 +215,7 @@ class AzureOpenAIManager:
                 "One or more OpenAI API setup variables are empty. Please review your environment variables and `SETTINGS.md`"
             )
 
+    @tracer.start_as_current_span("azure_openai.generate_text_completion")
     async def async_generate_chat_completion_response(
         self,
         conversation_history: List[Dict[str, str]],
@@ -334,7 +421,8 @@ class AzureOpenAIManager:
             logger.error(f"Error details: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return None
-
+        
+    @tracer.start_as_current_span("azure_openai.generate_chat_response_no_history")
     async def generate_chat_response_no_history(
         self,
         query: str,
@@ -368,134 +456,168 @@ class AzureOpenAIManager:
         :param image_bytes: List of bytes of images to include.
         :return: The generated response in the requested format.
         """
-        try:
-            if tools is not None and tool_choice is None:
-                tool_choice = "auto"
-            else:
-                # Log provided tools and tool choice for debugging if necessary.
-                pass
-
-            # Create the system and user messages.
-            system_message = {"role": "system", "content": system_message_content}
-            user_message = {
-                "role": "user",
-                "content": [{"type": "text", "text": query}],
+        with self._create_trace_context(
+            name="aoai.chat_completion_no_history",
+            metadata={
+                "operation_type": "chat_completion", 
+                "has_tools": tools is not None,
+                "has_images": bool(image_paths or image_bytes),
+                "stream_mode": stream,
+                "model": self.chat_model_name,
+                "max_tokens": max_tokens,
+                "temperature": temperature
             }
+        ) as trace:
+            try:
+                if hasattr(trace, 'set_attribute'):
+                    trace.set_attribute(SpanAttr.OPERATION_NAME.value, "aoai.chat_completion_no_history")
+                    trace.set_attribute("aoai.model", self.chat_model_name)
+                    trace.set_attribute("aoai.max_tokens", max_tokens)
+                    trace.set_attribute("aoai.temperature", temperature)
+                    trace.set_attribute("aoai.stream", stream)
 
-            # Optionally add images if provided.
-            if image_bytes:
-                for image in image_bytes:
-                    encoded_image = base64.b64encode(image).decode("utf-8")
-                    user_message["content"].append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{encoded_image}",
-                            },
-                        }
+                if tools is not None and tool_choice is None:
+                    tool_choice = "auto"
+                else:
+                    # Log provided tools and tool choice for debugging if necessary.
+                    pass
+
+                # Create the system and user messages.
+                system_message = {"role": "system", "content": system_message_content}
+                user_message = {
+                    "role": "user",
+                    "content": [{"type": "text", "text": query}],
+                }
+
+                # Optionally add images if provided.
+                if image_bytes:
+                    for image in image_bytes:
+                        encoded_image = base64.b64encode(image).decode("utf-8")
+                        user_message["content"].append(
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{encoded_image}",
+                                },
+                            }
+                        )
+                elif image_paths:
+                    if isinstance(image_paths, str):
+                        image_paths = [image_paths]
+                    for image_path in image_paths:
+                        try:
+                            with open(image_path, "rb") as image_file:
+                                encoded_image = base64.b64encode(image_file.read()).decode(
+                                    "utf-8"
+                                )
+                                mime_type, _ = mimetypes.guess_type(image_path)
+                                mime_type = mime_type or "application/octet-stream"
+                                user_message["content"].append(
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:{mime_type};base64,{encoded_image}",
+                                        },
+                                    }
+                                )
+                        except Exception as e:
+                            logger.error(f"Error processing image {image_path}: {e}")
+
+                # Create a fresh messages list containing only the system and user messages.
+                messages_for_api = [system_message, user_message]
+                logger.info(
+                    f"Sending request to Azure OpenAI at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+                )
+
+                # Determine response_format parameter.
+                if isinstance(response_format, str):
+                    response_format_param = {"type": response_format}
+                elif isinstance(response_format, dict):
+                    if response_format.get("type") == "json_schema":
+                        json_schema = response_format.get("json_schema", {})
+                        if json_schema.get("strict", False):
+                            if "name" not in json_schema or "schema" not in json_schema:
+                                raise ValueError(
+                                    "When 'strict' is True, 'name' and 'schema' must be provided in 'json_schema'."
+                                )
+                    response_format_param = response_format
+                else:
+                    raise ValueError(
+                        "Invalid response_format. Must be a string or a dictionary."
                     )
-            elif image_paths:
-                if isinstance(image_paths, str):
-                    image_paths = [image_paths]
-                for image_path in image_paths:
+
+                # Call the Azure OpenAI client.
+                response = self.openai_client.chat.completions.create(
+                    model=self.chat_model_name,
+                    messages=messages_for_api,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    seed=seed,
+                    top_p=top_p,
+                    stream=stream,
+                    tools=tools,
+                    response_format=response_format_param,
+                    tool_choice=tool_choice,
+                    **kwargs,
+                )
+
+                # Process the response.
+                if stream:
+                    response_content = ""
+                    for event in response:
+                        if event.choices:
+                            event_text = event.choices[0].delta
+                            if event_text is None or event_text.content is None:
+                                continue
+                            print(event_text.content, end="", flush=True)
+                            response_content += event_text.content
+                            time.sleep(0.001)  # Minimal sleep to reduce latency
+                else:
+                    response_content = response.choices[0].message.content
+
+                # Add response metrics to trace
+                if hasattr(trace, 'set_attribute'):
+                    trace.set_attribute("aoai.response_length", len(response_content))
+                    if hasattr(response, 'usage') and response.usage:
+                        trace.set_attribute("aoai.completion_tokens", response.usage.completion_tokens)
+                        trace.set_attribute("aoai.prompt_tokens", response.usage.prompt_tokens)
+                        trace.set_attribute("aoai.total_tokens", response.usage.total_tokens)
+
+                # If the desired format is a JSON object, try to parse it.
+                if isinstance(response_format, str) and response_format == "json_object":
                     try:
-                        with open(image_path, "rb") as image_file:
-                            encoded_image = base64.b64encode(image_file.read()).decode(
-                                "utf-8"
-                            )
-                            mime_type, _ = mimetypes.guess_type(image_path)
-                            mime_type = mime_type or "application/octet-stream"
-                            user_message["content"].append(
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:{mime_type};base64,{encoded_image}",
-                                    },
-                                }
-                            )
-                    except Exception as e:
-                        logger.error(f"Error processing image {image_path}: {e}")
-
-            # Create a fresh messages list containing only the system and user messages.
-            messages_for_api = [system_message, user_message]
-            logger.info(
-                f"Sending request to Azure OpenAI at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
-            )
-
-            # Determine response_format parameter.
-            if isinstance(response_format, str):
-                response_format_param = {"type": response_format}
-            elif isinstance(response_format, dict):
-                if response_format.get("type") == "json_schema":
-                    json_schema = response_format.get("json_schema", {})
-                    if json_schema.get("strict", False):
-                        if "name" not in json_schema or "schema" not in json_schema:
-                            raise ValueError(
-                                "When 'strict' is True, 'name' and 'schema' must be provided in 'json_schema'."
-                            )
-                response_format_param = response_format
-            else:
-                raise ValueError(
-                    "Invalid response_format. Must be a string or a dictionary."
-                )
-
-            # Call the Azure OpenAI client.
-            response = self.openai_client.chat.completions.create(
-                model=self.chat_model_name,
-                messages=messages_for_api,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                seed=seed,
-                top_p=top_p,
-                stream=stream,
-                tools=tools,
-                response_format=response_format_param,
-                tool_choice=tool_choice,
-                **kwargs,
-            )
-
-            # Process the response.
-            if stream:
-                response_content = ""
-                for event in response:
-                    if event.choices:
-                        event_text = event.choices[0].delta
-                        if event_text is None or event_text.content is None:
-                            continue
-                        print(event_text.content, end="", flush=True)
-                        response_content += event_text.content
-                        time.sleep(0.001)  # Minimal sleep to reduce latency
-            else:
-                response_content = response.choices[0].message.content
-
-            # If the desired format is a JSON object, try to parse it.
-            if isinstance(response_format, str) and response_format == "json_object":
-                try:
-                    parsed_response = json.loads(response_content)
-                    return {"response": parsed_response}
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse response as JSON: {e}")
+                        parsed_response = json.loads(response_content)
+                        return {"response": parsed_response}
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse response as JSON: {e}")
+                        return {"response": response_content}
+                else:
                     return {"response": response_content}
-            else:
-                return {"response": response_content}
 
-        except openai.APIConnectionError as e:
-            logger.error("API Connection Error: The server could not be reached.")
-            logger.error(f"Error details: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return None
-        except Exception as e:
-            error_message = str(e)
-            if "maximum context length" in error_message:
-                logger.warning(
-                    "Context length exceeded. Consider reducing the input size."
-                )
-                return "maximum context length"
-            logger.error("Unexpected error occurred during response generation.")
-            logger.error(f"Error details: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return None
+            except openai.APIConnectionError as e:
+                if hasattr(trace, 'set_attribute'):
+                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "api_connection_error")
+                    trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
+                logger.error("API Connection Error: The server could not be reached.")
+                logger.error(f"Error details: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return None
+            except Exception as e:
+                if hasattr(trace, 'set_attribute'):
+                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "unexpected_error")  
+                    trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
+                error_message = str(e)
+                if "maximum context length" in error_message:
+                    logger.warning(
+                        "Context length exceeded. Consider reducing the input size."
+                    )
+                    return "maximum context length"
+                logger.error("Unexpected error occurred during response generation.")
+                logger.error(f"Error details: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return None
 
+    @tracer.start_as_current_span("azure_openai.generate_chat_response")
     async def generate_chat_response(
         self,
         query: str,
@@ -538,156 +660,180 @@ class AzureOpenAIManager:
             f"Function generate_chat_response started at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
         )
 
-        try:
-            if tools is not None and tool_choice is None:
-                logger.debug(
-                    "Tools are provided but tool_choice is None. Setting tool_choice to 'auto'."
-                )
-                tool_choice = "auto"
-            else:
-                logger.debug(f"Tools: {tools}, Tool Choice: {tool_choice}")
-
-            system_message = {"role": "system", "content": system_message_content}
-            if not conversation_history or conversation_history[0] != system_message:
-                conversation_history.insert(0, system_message)
-
-            user_message = {
-                "role": "user",
-                "content": [{"type": "text", "text": query}],
+        with self._create_trace_context(
+            name="aoai.chat_completion_with_history",
+            metadata={
+                "operation_type": "chat_completion_with_history",
+                "conversation_length": len(conversation_history),
+                "has_tools": tools is not None,
+                "has_images": bool(image_paths or image_bytes),
+                "stream_mode": stream,
+                "model": self.chat_model_name,
+                "max_tokens": max_tokens,
+                "temperature": temperature
             }
+        ) as trace:
+            try:
+                if hasattr(trace, 'set_attribute'):
+                    trace.set_attribute(SpanAttr.OPERATION_NAME.value, "aoai.chat_completion_with_history")
+                    trace.set_attribute("aoai.model", self.chat_model_name)
+                    trace.set_attribute("aoai.conversation_length", len(conversation_history))
+                    trace.set_attribute("aoai.max_tokens", max_tokens)
+                    trace.set_attribute("aoai.temperature", temperature)
+                    trace.set_attribute("aoai.stream", stream)
+                    trace.set_attribute("aoai.has_tools", tools is not None)
+                    trace.set_attribute("aoai.has_images", bool(image_paths or image_bytes))
 
-            if image_bytes:
-                for image in image_bytes:
-                    encoded_image = base64.b64encode(image).decode("utf-8")
-                    user_message["content"].append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{encoded_image}",
-                            },
-                        }
+                if tools is not None and tool_choice is None:
+                    logger.debug(
+                        "Tools are provided but tool_choice is None. Setting tool_choice to 'auto'."
                     )
-            elif image_paths:
-                if isinstance(image_paths, str):
-                    image_paths = [image_paths]
-                for image_path in image_paths:
-                    try:
-                        with open(image_path, "rb") as image_file:
-                            encoded_image = base64.b64encode(image_file.read()).decode(
-                                "utf-8"
-                            )
-                            mime_type, _ = mimetypes.guess_type(image_path)
-                            logger.info(f"Image {image_path} type: {mime_type}")
-                            mime_type = mime_type or "application/octet-stream"
-                            user_message["content"].append(
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:{mime_type};base64,{encoded_image}",
-                                    },
-                                }
-                            )
-                    except Exception as e:
-                        logger.error(f"Error processing image {image_path}: {e}")
+                    tool_choice = "auto"
+                else:
+                    logger.debug(f"Tools: {tools}, Tool Choice: {tool_choice}")
 
-            messages_for_api = conversation_history + [user_message]
-            logger.info(
-                f"Sending request to Azure OpenAI at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
-            )
+                system_message = {"role": "system", "content": system_message_content}
+                if not conversation_history or conversation_history[0] != system_message:
+                    conversation_history.insert(0, system_message)
 
-            if isinstance(response_format, str):
-                response_format_param = {"type": response_format}
-            elif isinstance(response_format, dict):
-                if response_format.get("type") == "json_schema":
-                    json_schema = response_format.get("json_schema", {})
-                    if json_schema.get("strict", False):
-                        if "name" not in json_schema or "schema" not in json_schema:
-                            raise ValueError(
-                                "When 'strict' is True, 'name' and 'schema' must be provided in 'json_schema'."
-                            )
-                response_format_param = response_format
-            else:
-                raise ValueError(
-                    "Invalid response_format. Must be a string or a dictionary."
+                user_message = {
+                    "role": "user",
+                    "content": [{"type": "text", "text": query}],
+                }
+
+                if image_bytes:
+                    for image in image_bytes:
+                        encoded_image = base64.b64encode(image).decode("utf-8")
+                        user_message["content"].append(
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{encoded_image}",
+                                },
+                            }
+                        )
+                elif image_paths:
+                    if isinstance(image_paths, str):
+                        image_paths = [image_paths]
+                    for image_path in image_paths:
+                        try:
+                            with open(image_path, "rb") as image_file:
+                                encoded_image = base64.b64encode(image_file.read()).decode(
+                                    "utf-8"
+                                )
+                                mime_type, _ = mimetypes.guess_type(image_path)
+                                logger.info(f"Image {image_path} type: {mime_type}")
+                                mime_type = mime_type or "application/octet-stream"
+                                user_message["content"].append(
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:{mime_type};base64,{encoded_image}",
+                                        },
+                                    }
+                                )
+                        except Exception as e:
+                            logger.error(f"Error processing image {image_path}: {e}")
+
+                messages_for_api = conversation_history + [user_message]
+                logger.info(
+                    f"Sending request to Azure OpenAI at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
                 )
 
-            response = self.openai_client.chat.completions.create(
-                model=self.chat_model_name,
-                messages=messages_for_api,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                seed=seed,
-                top_p=top_p,
-                stream=stream,
-                tools=tools,
-                response_format=response_format_param,
-                tool_choice=tool_choice,
-                **kwargs,
-            )
+                if isinstance(response_format, str):
+                    response_format_param = {"type": response_format}
+                elif isinstance(response_format, dict):
+                    if response_format.get("type") == "json_schema":
+                        json_schema = response_format.get("json_schema", {})
+                        if json_schema.get("strict", False):
+                            if "name" not in json_schema or "schema" not in json_schema:
+                                raise ValueError(
+                                    "When 'strict' is True, 'name' and 'schema' must be provided in 'json_schema'."
+                                )
+                    response_format_param = response_format
+                else:
+                    raise ValueError(
+                        "Invalid response_format. Must be a string or a dictionary."
+                    )
 
-            if stream:
-                response_content = ""
-                for event in response:
-                    if event.choices:
-                        event_text = event.choices[0].delta
-                        if event_text is None or event_text.content is None:
-                            continue
-                        print(event_text.content, end="", flush=True)
-                        response_content += event_text.content
-                        time.sleep(0.001)  # Maintain minimal sleep to reduce latency
-            else:
-                response_content = response.choices[0].message.content
+                response = self.openai_client.chat.completions.create(
+                    model=self.chat_model_name,
+                    messages=messages_for_api,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    seed=seed,
+                    top_p=top_p,
+                    stream=stream,
+                    tools=tools,
+                    response_format=response_format_param,
+                    tool_choice=tool_choice,
+                    **kwargs,
+                )
 
-            conversation_history.append(user_message)
-            conversation_history.append(
-                {"role": "assistant", "content": response_content}
-            )
+                if stream:
+                    response_content = ""
+                    for event in response:
+                        if event.choices:
+                            event_text = event.choices[0].delta
+                            if event_text is None or event_text.content is None:
+                                continue
+                            print(event_text.content, end="", flush=True)
+                            response_content += event_text.content
+                            time.sleep(0.001)  # Maintain minimal sleep to reduce latency
+                else:
+                    response_content = response.choices[0].message.content
 
-            end_time = time.time()
-            duration = end_time - start_time
-            logger.info(
-                f"Function generate_chat_response finished at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))} (Duration: {duration:.2f} seconds)"
-            )
+                conversation_history.append(user_message)
+                conversation_history.append(
+                    {"role": "assistant", "content": response_content}
+                )
 
-            if isinstance(response_format, str) and response_format == "json_object":
-                try:
-                    parsed_response = json.loads(response_content)
-                    return {
-                        "response": parsed_response,
-                        "conversation_history": conversation_history,
-                    }
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse assistant's response as JSON: {e}")
+                end_time = time.time()
+                duration = end_time - start_time
+                logger.info(
+                    f"Function generate_chat_response finished at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))} (Duration: {duration:.2f} seconds)"
+                )
+
+                if isinstance(response_format, str) and response_format == "json_object":
+                    try:
+                        parsed_response = json.loads(response_content)
+                        return {
+                            "response": parsed_response,
+                            "conversation_history": conversation_history,
+                        }
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse assistant's response as JSON: {e}")
+                        return {
+                            "response": response_content,
+                            "conversation_history": conversation_history,
+                        }
+                else:
                     return {
                         "response": response_content,
                         "conversation_history": conversation_history,
                     }
-            else:
-                return {
-                    "response": response_content,
-                    "conversation_history": conversation_history,
-                }
 
-        except openai.APIConnectionError as e:
-            logger.error("API Connection Error: The server could not be reached.")
-            logger.error(f"Error details: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return None
-        except Exception as e:
-            error_message = str(e)
-            if "maximum context length" in error_message:
-                logger.warning(
-                    "Context length exceeded, reducing conversation history and retrying."
+            except openai.APIConnectionError as e:
+                logger.error("API Connection Error: The server could not be reached.")
+                logger.error(f"Error details: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return None
+            except Exception as e:
+                error_message = str(e)
+                if "maximum context length" in error_message:
+                    logger.warning(
+                        "Context length exceeded, reducing conversation history and retrying."
+                    )
+                    logger.warning(f"Error details: {e}")
+                    return "maximum context length"
+                logger.error(
+                    "Unexpected Error: An unexpected error occurred during contextual response generation."
                 )
-                logger.warning(f"Error details: {e}")
-                return "maximum context length"
-            logger.error(
-                "Unexpected Error: An unexpected error occurred during contextual response generation."
-            )
-            logger.error(f"Error details: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return None
+                logger.error(f"Error details: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return None
 
+    @tracer.start_as_current_span("azure_openai.generate_embedding")
     def generate_embedding(
         self, input_text: str, model_name: Optional[str] = None, **kwargs
     ) -> Optional[str]:
@@ -700,22 +846,46 @@ class AzureOpenAIManager:
         :return: The embedding as a JSON string, or None if an error occurred.
         :raises Exception: If an error occurs while making the API request.
         """
-        try:
-            response = self.openai_client.embeddings.create(
-                input=input_text,
-                model=model_name or self.embedding_model_name,
-                **kwargs,
-            )
-            return response
-        except openai.APIConnectionError as e:
-            logger.error("API Connection Error: The server could not be reached.")
-            logger.error(f"Error details: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return None, None
-        except Exception as e:
-            logger.error(
-                "Unexpected Error: An unexpected error occurred during contextual response generation."
-            )
-            logger.error(f"Error details: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return None, None
+        with self._create_trace_context(
+            name="aoai.generate_embedding",
+            metadata={
+                "operation_type": "embedding_generation",
+                "input_length": len(input_text),
+                "model": model_name or self.embedding_model_name
+            }
+        ) as trace:
+            try:
+                if hasattr(trace, 'set_attribute'):
+                    trace.set_attribute(SpanAttr.OPERATION_NAME.value, "aoai.generate_embedding")
+                    trace.set_attribute("aoai.model", model_name or self.embedding_model_name)
+                    trace.set_attribute("aoai.input_length", len(input_text))
+
+                response = self.openai_client.embeddings.create(
+                    input=input_text,
+                    model=model_name or self.embedding_model_name,
+                    **kwargs,
+                )
+
+                if hasattr(trace, 'set_attribute') and hasattr(response, 'usage') and response.usage:
+                    trace.set_attribute("aoai.prompt_tokens", response.usage.prompt_tokens)
+                    trace.set_attribute("aoai.total_tokens", response.usage.total_tokens)
+
+                return response
+            except openai.APIConnectionError as e:
+                if hasattr(trace, 'set_attribute'):
+                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "api_connection_error")
+                    trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
+                logger.error("API Connection Error: The server could not be reached.")
+                logger.error(f"Error details: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return None, None
+            except Exception as e:
+                if hasattr(trace, 'set_attribute'):
+                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "unexpected_error")
+                    trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
+                logger.error(
+                    "Unexpected Error: An unexpected error occurred during contextual response generation."
+                )
+                logger.error(f"Error details: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return None, None

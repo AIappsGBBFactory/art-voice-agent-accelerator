@@ -23,7 +23,7 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-            "rtagents.RTAgent.backend.main:app",
+            "apps.rtagent.backend.main:app",
             "--reload",
             "--port",
             "8010"

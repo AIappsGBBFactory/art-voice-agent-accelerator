@@ -195,33 +195,19 @@ async def _check_speech_services_fast(tts_client, stt_client) -> Dict:
 
 
 async def _check_acs_caller_fast(acs_caller) -> Dict:
-    """Fast ACS caller check with comprehensive phone number validation."""
+    """Fast ACS caller check with comprehensive phone number and config validation."""
     start = time.time()
 
-    # Check if ACS caller is initialized
-    if not acs_caller:
-        # Validate phone number configuration even without caller instance
-        is_valid, error_msg = _validate_phone_number(ACS_SOURCE_PHONE_NUMBER)
-        if (
-            not is_valid
-            and ACS_SOURCE_PHONE_NUMBER
-            and ACS_SOURCE_PHONE_NUMBER != "null"
-        ):
-            return {
-                "component": "acs_caller",
-                "status": "unhealthy",
-                "error": f"Invalid phone number format: {error_msg}",
-                "check_time_ms": round((time.time() - start) * 1000, 2),
-            }
-
+    # Check if ACS phone number is provided
+    if not ACS_SOURCE_PHONE_NUMBER or ACS_SOURCE_PHONE_NUMBER == "null":
         return {
             "component": "acs_caller",
-            "status": "healthy",
+            "status": "unhealthy",
+            "error": "ACS_SOURCE_PHONE_NUMBER not provided",
             "check_time_ms": round((time.time() - start) * 1000, 2),
-            "details": "ACS caller not configured (optional component)",
         }
 
-    # Validate phone number when caller exists
+    # Validate phone number format
     is_valid, error_msg = _validate_phone_number(ACS_SOURCE_PHONE_NUMBER)
     if not is_valid:
         return {
@@ -231,13 +217,24 @@ async def _check_acs_caller_fast(acs_caller) -> Dict:
             "check_time_ms": round((time.time() - start) * 1000, 2),
         }
 
-    # Validate connection string
-    if not ACS_CONNECTION_STRING:
+    # Check ACS connection string or endpoint id
+    acs_conn_missing = not ACS_CONNECTION_STRING
+    acs_endpoint_missing = not AZURE_OPENAI_ENDPOINT
+    if acs_conn_missing and acs_endpoint_missing:
         return {
             "component": "acs_caller",
             "status": "unhealthy",
-            "error": "ACS_CONNECTION_STRING not configured",
+            "error": "Neither ACS_CONNECTION_STRING nor AZURE_OPENAI_ENDPOINT is configured",
             "check_time_ms": round((time.time() - start) * 1000, 2),
+        }
+
+    # If ACS caller is not initialized, treat as optional but log config status
+    if not acs_caller:
+        return {
+            "component": "acs_caller",
+            "status": "healthy",
+            "check_time_ms": round((time.time() - start) * 1000, 2),
+            "details": "ACS caller not configured (optional component)",
         }
 
     return {
@@ -246,8 +243,6 @@ async def _check_acs_caller_fast(acs_caller) -> Dict:
         "check_time_ms": round((time.time() - start) * 1000, 2),
         "details": f"ACS caller configured with phone: {ACS_SOURCE_PHONE_NUMBER}",
     }
-
-
 async def _check_rt_agents_fast(auth_agent, claim_intake_agent) -> Dict:
     start = time.time()
     if not auth_agent or not claim_intake_agent:

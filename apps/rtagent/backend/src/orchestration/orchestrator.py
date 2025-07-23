@@ -13,15 +13,36 @@ Main orchestration loop for the XYMZ Insurance **RTAgent** real‑time voice bot
 
 from contextlib import asynccontextmanager
 import json
+import os
 from typing import Any, Callable, Dict, TYPE_CHECKING
 
 from fastapi import WebSocket
 from utils.ml_logging import get_logger
+from utils.trace_context import create_trace_context
+from src.enums.monitoring import SpanAttr
 
 if TYPE_CHECKING:  # pragma: no cover
     from src.stateful.state_managment import MemoManager  # noqa: N812 – external camel‑case
 
-logger = get_logger("rtagent_orchestrator")
+logger = get_logger(__name__)
+
+# Performance optimization: Cache tracing configuration
+_ORCHESTRATOR_TRACING = os.getenv("ORCHESTRATOR_TRACING", "true").lower() == "true"
+
+def _get_correlation_context(ws: WebSocket, cm: "MemoManager") -> tuple[str, str]:
+    """Extract correlation context from WebSocket and MemoManager."""
+    call_connection_id = (
+        getattr(ws.state, "call_connection_id", None) or
+        ws.headers.get("x-call-connection-id") or
+        cm.session_id  # fallback to session_id
+    )
+    session_id = (
+        getattr(ws.state, "session_id", None) or
+        ws.headers.get("x-session-id") or
+        cm.session_id
+    )
+    return call_connection_id, session_id
+
 
 def _cm_get(cm: "MemoManager", key: str, default: Any = None) -> Any:
     """Shorthand for ``cm.get_value_from_corememory`` with a default."""

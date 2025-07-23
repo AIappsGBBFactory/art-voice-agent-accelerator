@@ -1,6 +1,10 @@
 # ============================================================================
 # OUTPUTS FOR AZD INTEGRATION AND APPLICATION CONFIGURATION
 # ============================================================================
+output "ENVIRONMENT_NAME" {
+  description = "Deployment environment name (e.g., dev, staging, prod)"
+  value       = var.environment_name
+}
 
 output "AZURE_RESOURCE_GROUP" {
   description = "Azure Resource Group name"
@@ -19,8 +23,8 @@ output "AZURE_OPENAI_ENDPOINT" {
 }
 
 output "AZURE_OPENAI_CHAT_DEPLOYMENT_ID" {
-    description = "Azure OpenAI Chat Deployment ID"
-    value       = "gpt-4o"
+  description = "Azure OpenAI Chat Deployment ID"
+  value       = "gpt-4o"
 }
 
 output "AZURE_OPENAI_API_VERSION" {
@@ -48,16 +52,27 @@ output "AZURE_SPEECH_REGION" {
   value       = azurerm_cognitive_account.speech.location
 }
 
+output "AZURE_SPEECH_DOMAIN_ENDPOINT" {
+  description = "Azure Speech Services domain endpoint for ACS integration"
+  value       = "https://${azurerm_cognitive_account.speech.custom_subdomain_name}.cognitiveservices.azure.com/"
+}
+
 # Communication Services
 output "ACS_ENDPOINT" {
   description = "Azure Communication Services endpoint"
-  value       = azurerm_communication_service.main.hostname
+  value       = "https://${azapi_resource.acs.output.properties.hostName}"
 }
 
 output "ACS_RESOURCE_ID" {
   description = "Azure Communication Services resource ID"
-  value       = azurerm_communication_service.main.id
+  value       = azapi_resource.acs.id
 }
+
+
+# output "ACS_MANAGED_IDENTITY_PRINCIPAL_ID" {
+#   description = "Azure Communication Services system-assigned managed identity principal ID"
+#   value = data.azapi_resource.acs_identity_details.identity.principalId
+# }
 
 # Data Services
 output "AZURE_STORAGE_ACCOUNT_NAME" {
@@ -71,8 +86,8 @@ output "AZURE_STORAGE_BLOB_ENDPOINT" {
 }
 
 output "AZURE_STORAGE_CONTAINER_URL" {
-    description = "Azure Storage Container URL"
-    value       = "${azurerm_storage_account.main.primary_blob_endpoint}${azurerm_storage_container.audioagent.name}"
+  description = "Azure Storage Container URL"
+  value       = "${azurerm_storage_account.main.primary_blob_endpoint}${azurerm_storage_container.audioagent.name}"
 }
 
 output "AZURE_COSMOS_DATABASE_NAME" {

@@ -13,7 +13,11 @@ Outbound phone-call flow via Azure Communication Services.
 from __future__ import annotations
 
 import asyncio
+import sys
+import os
+from opentelemetry import trace
 
+tracer = trace.get_tracer(__name__)
 from azure.communication.callautomation import PhoneNumberIdentifier
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -24,7 +28,6 @@ from apps.rtagent.backend.src.handlers.acs_media_handler import ACSMediaHandler
 from apps.rtagent.backend.src.handlers.acs_transcript_handler import (
     TranscriptionHandler,
 )
-from apps.rtagent.backend.src.shared_ws import broadcast_message
 from apps.rtagent.backend.src.latency.latency_tool import LatencyTool
 from src.stateful.state_managment import MemoManager
 from apps.rtagent.backend.settings import (
@@ -32,14 +35,40 @@ from apps.rtagent.backend.settings import (
     ACS_CALLBACK_PATH,
     ACS_STREAMING_MODE,
     ACS_WEBSOCKET_PATH,
-    GREETING,
 )
 
 from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
 
+# Add tracing imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'src'))
+from utils.trace_context import TraceContext, NoOpTraceContext
+from src.enums.monitoring import SpanAttr
+
 logger = get_logger("routers.acs")
 router = APIRouter()
+
+
+# Tracing configuration for ACS operations
+def _is_acs_tracing_enabled() -> bool:
+    """Check if ACS tracing is enabled via environment variables."""
+    return os.getenv("ACS_TRACING", os.getenv("ENABLE_TRACING", "false")).lower() == "true"
+
+def _create_acs_trace_context(
+    name: str,
+    call_connection_id: str = None,
+    session_id: str = None,
+    metadata: dict = None
+) -> TraceContext:
+    """Create appropriate trace context for ACS operations."""
+    if _is_acs_tracing_enabled():
+        return TraceContext(
+            name=name,
+            call_connection_id=call_connection_id,
+            session_id=session_id,
+            metadata=metadata
+        )
+    return NoOpTraceContext()
 
 
 class CallRequest(BaseModel):
@@ -51,22 +80,37 @@ class CallRequest(BaseModel):
 # --------------------------------------------------------------------------- #
 @router.post(ACS_CALL_PATH)
 async def initiate_call(call: CallRequest, request: Request):
-    """Initiate an outbound call through ACS."""
-    logger.info(f"Initiating call to {call.target_number}")
+    """Initiate an outbound call through ACS as a parent span."""
+    with tracer.start_as_current_span(
+        "acs_router.initiate_call",
+        attributes={
+            "component": "acs_router",
+            "operation_Name": "initiate_call",
+            "target_number": call.target_number,
+        }
+    ) as span:
+        logger.info(f"Initiating call to {call.target_number}")
+        result = await ACSHandler.initiate_call(
+            acs_caller=request.app.state.acs_caller,
+            target_number=call.target_number,
+            redis_mgr=request.app.state.redis,
+        )
 
-    result = await ACSHandler.initiate_call(
-        acs_caller=request.app.state.acs_caller,
-        target_number=call.target_number,
-        redis_mgr=request.app.state.redis,
-    )
-    # Cache the call ID with target number for ongoing call tracking
-    if result["status"] == "success":
-        call_id = result["callId"]
-        logger.info(f"Cached ongoing call {call_id} for target {call.target_number}")
-
-        return {"message": result["message"], "callId": result["callId"]}
-    else:
-        return JSONResponse(result, status_code=400)
+        # Cache the call ID with target number for ongoing call tracking
+        if result["status"] == "success":
+            call_id = result["callId"]
+            if span and call_id:
+                span.set_attribute("call_connection_id", call_id)
+            logger.info(
+                f"Cached ongoing call {call_id} for target {call.target_number}",
+                extra={
+                    "operation_Name": "initiate_call",
+                    "session_id": call_id,
+                }
+            )
+            return {"message": result["message"], "callId": result["callId"]}
+        else:
+            return JSONResponse(result, status_code=400)
 
 
 # --------------------------------------------------------------------------- #
@@ -90,7 +134,7 @@ async def answer_call(request: Request):
 # --------------------------------------------------------------------------- #
 @router.post(ACS_CALLBACK_PATH)
 async def callbacks(request: Request):
-    """Handle ACS callback events."""
+    """Handle ACS callback events with tracing linked to parent span from initiate_call."""
     if not request.app.state.acs_caller:
         return JSONResponse({"error": "ACS not initialised"}, status_code=503)
 
@@ -99,18 +143,45 @@ async def callbacks(request: Request):
 
     try:
         events = await request.json()
-        result = await ACSHandler.process_callback_events(
-            events=events,
-            request=request,
-        )
+        # Extract call_connection_id from events or headers for span linking
+        call_connection_id = None
+        if isinstance(events, dict):
+            call_connection_id = events.get("callConnectionId") or events.get("call_connection_id")
+        if not call_connection_id:
+            call_connection_id = request.headers.get("x-ms-call-connection-id")
 
-        if "error" in result:
-            return JSONResponse(result, status_code=500)
-        return result
+        # Start a new span, link to parent span using call_connection_id
+        # Use TraceContext as a context manager if available
+        trace_context = _create_acs_trace_context(
+            name="acs_router.callbacks",
+            call_connection_id=call_connection_id,
+            metadata={"events_count": len(events) if isinstance(events, list) else 1}
+        )
+        with trace_context:
+
+            result = await ACSHandler.process_callback_events(
+                events=events,
+                request=request,
+            )
+
+            if "error" in result:
+                trace_context.set_attribute("error", True)
+                trace_context.set_attribute("error.message", result.get("error"))
+                return JSONResponse(result, status_code=500)
+            return result
 
     except Exception as exc:
         logger.error("Callback error: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        with tracer.start_as_current_span(
+            "acs_router.callbacks.error",
+            attributes={
+                "component": "acs_router",
+                "operation_Name": "callbacks",
+                "error": True,
+                "error.message": str(exc),
+            }
+        ):
+            return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 # --------------------------------------------------------------------------- #
@@ -156,9 +227,14 @@ async def acs_media_ws(ws: WebSocket):
         # Retrieve session and check call state to avoid reconnect loops
         acs = ws.app.state.acs_caller
         redis_mgr = ws.app.state.redis
-
         cid = ws.headers["x-ms-call-connection-id"]
         cm = MemoManager.from_redis(cid, redis_mgr)
+
+        # Start latency timer for "time to first byte" (TTFB) for greeting playback
+        ws.state.lt = LatencyTool(cm)
+        ws.state.lt.start("greeting_ttfb")
+        ws.state._greeting_ttfb_stopped = False  # Track if TTFB has been stopped
+
         target_phone_number = cm.get_context("target_number")
 
         if not target_phone_number:
@@ -166,84 +242,95 @@ async def acs_media_ws(ws: WebSocket):
 
         ws.app.state.target_participant = PhoneNumberIdentifier(target_phone_number)
         ws.app.state.cm = cm
-        ws.state.lt = LatencyTool(cm)  # Initialize latency tool
 
         call_conn = acs.get_call_connection(cid)
         if not call_conn:
             logger.info(f"Call connection {cid} not found, closing WebSocket")
             await ws.close(code=1000)
             return
+        
+        # Create trace context for this call
+        # Start a new span for the WebSocket, linked to the parent span from initiate_call
+        parent_trace_context = _create_acs_trace_context(
+            name="acs_router.initiate_call",
+            call_connection_id=cid,
+            session_id=cm.session_id if hasattr(cm, "session_id") else None,
+            metadata={"ws": True}
+        )
+        with tracer.start_as_current_span(
+            "acs_router.websocket_established",
+            context=parent_trace_context.get_span_context() if hasattr(parent_trace_context, "get_span_context") else None,
+            attributes={
+            "call_connection_id": cid,
+            "session_id": getattr(cm, "session_id", None),
+            "component": "acs_router",
+            "operation_Name": "websocket_established",
+            }
+        ) as ws_span:
+            ws.app.state.call_conn = call_conn  # Store call connection in WebSocket state
 
-        ws.app.state.call_conn = call_conn  # Store call connection in WebSocket state
+            ws.app.state.call_conn = call_conn  # Store call connection in WebSocket state
 
-        # Log call connection state for debugging
-        call_state = getattr(call_conn, "call_connection_state", "unknown")
-        logger.info(f"Call {cid} connection state: {call_state}")
+            # Log call connection state for debugging
+            call_state = getattr(call_conn, "call_connection_state", "unknown")
+            logger.info(f"Call {cid} connection state: {call_state}")
 
-        handler = None
+            handler = None
 
-        if ACS_STREAMING_MODE == StreamMode.MEDIA:
-            # Use transcription handler for ACS streaming mode
-            handler = ACSMediaHandler(ws, recognizer=ws.app.state.stt_client, cm=cm)
-            # Start recognizer in background, don't block WebSocket setup
-            asyncio.create_task(handler.start_recognizer())
+            if ACS_STREAMING_MODE == StreamMode.MEDIA:
+                handler = ACSMediaHandler(ws, recognizer=ws.app.state.stt_client, cm=cm)
+                # Don't start recognizer here - it will be started when first AudioMetadata is received
+                # This prevents race conditions with WebSocket setup
 
-        elif ACS_STREAMING_MODE == StreamMode.TRANSCRIPTION:
-            # Use media handler for ACS media streaming
-            handler = TranscriptionHandler(
-                ws,
-                cm=cm,
-            )
+            elif ACS_STREAMING_MODE == StreamMode.TRANSCRIPTION:
+                handler = TranscriptionHandler(
+                    ws,
+                    cm=cm,
+                )
 
-        if not handler:
-            logger.error("No handler initialized for ACS streaming mode")
-            await ws.close(code=1000)
-            return
+            if not handler:
+                logger.error("No handler initialized for ACS streaming mode")
+                await ws.close(code=1000)
+                return
 
-        greeted: set[str] = ws.app.state.greeted_call_ids
-        if cid not in greeted and ACS_STREAMING_MODE == StreamMode.MEDIA:
-            handler.play_greeting(GREETING)
-            auth_agent = ws.app.state.auth_agent
-            cm.append_to_history(auth_agent.name, "assistant", GREETING)
-            await broadcast_message(ws.app.state.clients, GREETING, "Assistant")
-            greeted.add(cid)
+            try:
+                # Fire greeting immediately when WebSocket is ready to receive audio
+                while True:
+                    # Check if WebSocket is still connected
+                    if (
+                        ws.client_state != WebSocketState.CONNECTED
+                        or ws.application_state != WebSocketState.CONNECTED
+                    ):
+                        logger.warning(
+                            "WebSocket disconnected, stopping message processing"
+                        )
+                        break
 
-        try:
-            while True:
-                # Check if WebSocket is still connected
-                if (
-                    ws.client_state != WebSocketState.CONNECTED
-                    or ws.application_state != WebSocketState.CONNECTED
-                ):
-                    logger.warning(
-                        "WebSocket disconnected, stopping message processing"
-                    )
-                    break
+                    msg = await ws.receive_text()
+                    if msg:
+                        if ACS_STREAMING_MODE == StreamMode.MEDIA:
+                            await handler.handle_media_message(msg)
+                        elif ACS_STREAMING_MODE == StreamMode.TRANSCRIPTION:
+                            await handler.handle_transcription_message(msg)
 
-                msg = await ws.receive_text()
-                if msg:
-                    if ACS_STREAMING_MODE == StreamMode.MEDIA:
-                        await handler.handle_media_message(msg)
-                    elif ACS_STREAMING_MODE == StreamMode.TRANSCRIPTION:
-                        await handler.handle_transcription_message(msg)
-
-        except WebSocketDisconnect as e:
-            # Handle normal disconnect (code 1000 is normal closure)
-            if e.code == 1000:
-                logger.info("WebSocket disconnected normally by client")
-            else:
-                logger.warning(f"WebSocket disconnected with code {e.code}: {e.reason}")
-        except asyncio.CancelledError:
-            logger.info("WebSocket message processing cancelled")
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in WebSocket message processing: {e}", exc_info=True
-            )
-        except Exception as e:
-            logger.error(f"Error starting recognizer: {e}", exc_info=True)
+            except WebSocketDisconnect as e:
+                # Handle normal disconnect (code 1000 is normal closure)
+                if e.code == 1000:
+                    logger.info("WebSocket disconnected normally by client")
+                else:
+                    logger.warning(f"WebSocket disconnected with code {e.code}: {e.reason}")
+            except asyncio.CancelledError:
+                logger.info("WebSocket message processing cancelled")
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error in WebSocket message processing: {e}", exc_info=True
+                )
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
     finally:
         # Clean up resources when WebSocket connection ends
-        await ws.close()
+        if ws.client_state == WebSocketState.CONNECTED and ws.application_state == WebSocketState.CONNECTED:
+            await ws.close()
         logger.info("WebSocket connection ended, cleaning up resources")
         if "handler" in locals():
             try:
@@ -252,10 +339,3 @@ async def acs_media_ws(ws: WebSocket):
                 logger.info("Speech recognizer stopped successfully")
             except Exception as e:
                 logger.error(f"Error stopping speech recognizer: {e}", exc_info=True)
-
-        # Close WebSocket if not already closed
-        try:
-            if ws.client_state == WebSocketState.CONNECTED:
-                await ws.close()
-        except Exception as e:
-            logger.error(f"Error closing WebSocket: {e}", exc_info=True)

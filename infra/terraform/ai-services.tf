@@ -11,7 +11,7 @@ resource "azurerm_cognitive_account" "openai" {
 
   custom_subdomain_name         = local.resource_names.openai
   public_network_access_enabled = true
-  
+
   # Use managed identity for authentication
   local_auth_enabled = !var.disable_local_auth
 
@@ -73,7 +73,7 @@ resource "azurerm_cognitive_account" "speech" {
 
   custom_subdomain_name         = local.resource_names.speech
   public_network_access_enabled = true
-  
+
   # Use managed identity for authentication
   local_auth_enabled = !var.disable_local_auth
 

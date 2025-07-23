@@ -9,7 +9,12 @@ from dotenv import load_dotenv
 from langdetect import LangDetectException, detect
 
 from utils.ml_logging import get_logger
+# OpenTelemetry imports for tracing
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
+# Import centralized span attributes enum
+from src.enums.monitoring import SpanAttr
 # Load environment variables from a .env file if present
 load_dotenv()
 
@@ -102,6 +107,8 @@ class SpeechSynthesizer:
         voice: str = "en-US-JennyMultilingualNeural",
         format: speechsdk.SpeechSynthesisOutputFormat = speechsdk.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm,
         playback: str = "auto",  # "auto" | "always" | "never"
+        call_connection_id: Optional[str] = None,
+        enable_tracing: bool = True,
     ):
         # Retrieve Azure Speech credentials from parameters or environment variables
         self.key = key or os.getenv("AZURE_SPEECH_KEY")
@@ -110,7 +117,23 @@ class SpeechSynthesizer:
         self.voice = voice
         self.format = format
         self.playback = playback
+        self.enable_tracing = enable_tracing
+        self.call_connection_id = call_connection_id or "unknown"
+        self.speech_config = None
 
+        # Initialize tracing components (matching speech_recognizer pattern)
+        self.tracer = None
+        self._session_span = None
+        
+        if self.enable_tracing:
+            try:
+                # Use same pattern as speech_recognizer
+                self.tracer = trace.get_tracer(__name__)
+                logger.info("Azure Monitor tracing initialized for speech synthesizer")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Azure Monitor tracing: {e}")
+                self.enable_tracing = False
+                
         # DON'T initialize speaker synthesizer during __init__ to avoid audio library issues
         # Only create it when actually needed for speaker playback
         self._speaker = None
@@ -123,6 +146,12 @@ class SpeechSynthesizer:
         except Exception as e:
             logger.error(f"Failed to initialize speech config: {e}")
             # Don't fail completely - allow for memory-only synthesis
+
+    def set_call_connection_id(self, call_connection_id: str) -> None:
+        """
+        Set the call connection ID for correlation in tracing and logging.
+        """
+        self.call_connection_id = call_connection_id
 
     def _create_speech_config(self):
         """
@@ -205,7 +234,7 @@ class SpeechSynthesizer:
 
         # 3. Create the speaker synthesizer according to playback mode
         try:
-            speech_config = self._create_speech_config()
+            speech_config = self._speech_config
             headless = _is_headless()
 
             if self.playback == "always":
@@ -259,13 +288,56 @@ class SpeechSynthesizer:
         Synthesize and play text through the server's speakers (if available).
         In headless environments, this will log a warning and skip playback.
         """
+        # Start session-level span for speaker synthesis if tracing is enabled
+        if self.enable_tracing and self.tracer:
+            self._session_span = self.tracer.start_span(
+                "tts_speaker_synthesis_session",
+                kind=SpanKind.CLIENT
+            )
+            
+            # Set session attributes for correlation (matching speech_recognizer pattern)
+            self._session_span.set_attribute("ai.operation.id", self.call_connection_id)
+            self._session_span.set_attribute("tts.session.id", self.call_connection_id)
+            self._session_span.set_attribute("tts.region", self.region)
+            self._session_span.set_attribute("tts.voice", self.voice)
+            self._session_span.set_attribute("tts.language", self.language)
+            self._session_span.set_attribute("tts.text_length", len(text))
+            self._session_span.set_attribute("tts.operation_type", "speaker_synthesis")
+            
+            # Set standard attributes if available
+            self._session_span.set_attribute(SpanAttr.SERVICE_NAME, "azure-speech-synthesis")
+            self._session_span.set_attribute(SpanAttr.SERVICE_VERSION, "1.0.0")
+            
+            # Make this span current for the duration
+            with trace.use_span(self._session_span):
+                self._start_speaking_text_internal(text)
+        else:
+            self._start_speaking_text_internal(text)
+
+    def _start_speaking_text_internal(self, text: str) -> None:
+        """Internal method to perform speaker synthesis with tracing events"""
         try:
+            # Add event for speaker synthesis start
+            if self._session_span:
+                self._session_span.add_event("tts_speaker_synthesis_started", {
+                    "text_length": len(text),
+                    "voice": self.voice
+                })
+            
             speaker = self._create_speaker_synthesizer()
             if speaker is None:
+                if self._session_span:
+                    self._session_span.add_event("tts_speaker_unavailable", {
+                        "reason": "headless_environment"
+                    })
+                
                 logger.warning(
                     "Speaker not available in headless environment, skipping playback"
                 )
                 return
+
+            if self._session_span:
+                self._session_span.add_event("tts_speaker_synthesizer_created")
 
             logger.info(
                 "[🔊] Starting streaming speech synthesis for text: %s",
@@ -280,9 +352,33 @@ class SpeechSynthesizer:
                         </prosody>
                     </voice>
                 </speak>"""
+            
+            if self._session_span:
+                self._session_span.add_event("tts_speaker_ssml_created")
+            
             speaker.speak_ssml_async(ssml)
+            
+            if self._session_span:
+                self._session_span.add_event("tts_speaker_synthesis_initiated")
+                self._session_span.set_status(Status(StatusCode.OK, "Speaker synthesis initiated"))
+                
         except Exception as exc:
-            logger.warning("TTS playback not available in this environment: %s", exc)
+            error_msg = f"TTS playback not available in this environment: {exc}"
+            
+            if self._session_span:
+                self._session_span.add_event("tts_speaker_synthesis_error", {
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc)
+                })
+                self._session_span.set_status(Status(StatusCode.ERROR, error_msg))
+            
+            logger.warning(error_msg)
+        
+        finally:
+            # Close session span
+            if self._session_span:
+                self._session_span.end()
+                self._session_span = None
 
     def stop_speaking(self) -> None:
         """Stop current playback (if any)."""
@@ -298,30 +394,102 @@ class SpeechSynthesizer:
         Synthesizes text to speech in memory (returning WAV bytes).
         Does NOT play audio on server speakers.
         """
+        # Start session-level span for synthesis if tracing is enabled
+        if self.enable_tracing and self.tracer:
+            self._session_span = self.tracer.start_span(
+                "tts_synthesis_session",
+                kind=SpanKind.CLIENT
+            )
+            
+            # Set session attributes for correlation (matching speech_recognizer pattern)
+            self._session_span.set_attribute("ai.operation.id", self.call_connection_id)
+            self._session_span.set_attribute("tts.session.id", self.call_connection_id)
+            self._session_span.set_attribute("tts.region", self.region)
+            self._session_span.set_attribute("tts.voice", self.voice)
+            self._session_span.set_attribute("tts.language", self.language)
+            self._session_span.set_attribute("tts.text_length", len(text))
+            
+            # Set standard attributes if available
+            self._session_span.set_attribute(SpanAttr.SERVICE_NAME, "azure-speech-synthesis")
+            self._session_span.set_attribute(SpanAttr.SERVICE_VERSION, "1.0.0")
+            
+            # Make this span current for the duration
+            with trace.use_span(self._session_span):
+                return self._synthesize_speech_internal(text)
+        else:
+            return self._synthesize_speech_internal(text)
+
+    def _synthesize_speech_internal(self, text: str) -> bytes:
+        """Internal method to perform synthesis with tracing events"""
         try:
+            # Add event for synthesis start
+            if self._session_span:
+                self._session_span.add_event("tts_synthesis_started", {
+                    "text_length": len(text),
+                    "voice": self.voice
+                })
+            
             # Create speech config for memory synthesis
-            speech_config = self._create_speech_config()
+            speech_config = self.cfg
             speech_config.speech_synthesis_language = self.language
             speech_config.speech_synthesis_voice_name = self.voice
             speech_config.set_speech_synthesis_output_format(
                 speechsdk.SpeechSynthesisOutputFormat.Riff48Khz16BitMonoPcm
             )
 
+            if self._session_span:
+                self._session_span.add_event("tts_config_created")
+
             # Use None for audio_config to synthesize to memory
             synthesizer = speechsdk.SpeechSynthesizer(
                 speech_config=speech_config, audio_config=None
             )
+            
+            if self._session_span:
+                self._session_span.add_event("tts_synthesizer_created")
+            
             result = synthesizer.speak_text_async(text).get()
 
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                if self._session_span:
+                    self._session_span.add_event("tts_synthesis_completed")
+                    
                 audio_data_stream = speechsdk.AudioDataStream(result)
                 wav_bytes = audio_data_stream.read_data()
+                
+                if self._session_span:
+                    self._session_span.add_event("tts_audio_data_extracted", {
+                        "audio_size_bytes": len(wav_bytes)
+                    })
+                    self._session_span.set_status(Status(StatusCode.OK, "Synthesis completed"))
+                    self._session_span.end()
+                    self._session_span = None
+                    
                 return bytes(wav_bytes)
             else:
-                logger.error(f"Speech synthesis failed: {result.reason}")
+                error_msg = f"Speech synthesis failed: {result.reason}"
+                logger.error(error_msg)
+                
+                if self._session_span:
+                    self._session_span.add_event("tts_synthesis_failed", {
+                        "failure_reason": str(result.reason)
+                    })
+                    self._session_span.set_status(Status(StatusCode.ERROR, error_msg))
+                    self._session_span.end()
+                    self._session_span = None
                 return b""
         except Exception as e:
-            logger.error(f"Error synthesizing speech: {e}")
+            error_msg = f"Error synthesizing speech: {e}"
+            logger.error(error_msg)
+            
+            if self._session_span:
+                self._session_span.add_event("tts_synthesis_exception", {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)
+                })
+                self._session_span.set_status(Status(StatusCode.ERROR, error_msg))
+                self._session_span.end()
+                self._session_span = None
             return b""
 
     def synthesize_to_base64_frames(
@@ -335,7 +503,43 @@ class SpeechSynthesizer:
         - frame_size:  0.02s * sample_rate * 2 bytes/sample
                     =  640 bytes @16 kHz, 960 bytes @24 kHz
         """
+        # Start session-level span for frame synthesis if tracing is enabled
+        if self.enable_tracing and self.tracer:
+            self._session_span = self.tracer.start_span(
+                "tts_frame_synthesis_session",
+                kind=SpanKind.CLIENT
+            )
+            
+            # Set session attributes for correlation (matching speech_recognizer pattern)
+            self._session_span.set_attribute("ai.operation.id", self.call_connection_id)
+            self._session_span.set_attribute("tts.session.id", self.call_connection_id)
+            self._session_span.set_attribute("tts.region", self.region)
+            self._session_span.set_attribute("tts.voice", self.voice)
+            self._session_span.set_attribute("tts.language", self.language)
+            self._session_span.set_attribute("tts.text_length", len(text))
+            self._session_span.set_attribute("tts.sample_rate", sample_rate)
+            
+            # Set standard attributes if available
+            self._session_span.set_attribute(SpanAttr.SERVICE_NAME, "azure-speech-synthesis")
+            self._session_span.set_attribute(SpanAttr.SERVICE_VERSION, "1.0.0")
+            
+            # Make this span current for the duration
+            with trace.use_span(self._session_span):
+                return self._synthesize_to_base64_frames_internal(text, sample_rate)
+        else:
+            return self._synthesize_to_base64_frames_internal(text, sample_rate)
+
+    def _synthesize_to_base64_frames_internal(self, text: str, sample_rate: int) -> list[str]:
+        """Internal method to perform frame synthesis with tracing events"""
         try:
+            # Add event for synthesis start
+            if self._session_span:
+                self._session_span.add_event("tts_frame_synthesis_started", {
+                    "text_length": len(text),
+                    "voice": self.voice,
+                    "sample_rate": sample_rate
+                })
+            
             # Select SDK output format and packet size
             fmt_map = {
                 16000: speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm,
@@ -347,102 +551,87 @@ class SpeechSynthesizer:
 
             # 1) Configure Speech SDK using class attributes with fresh auth
             logger.debug(f"Creating speech config for TTS synthesis")
-            speech_config = self._create_speech_config()
+            speech_config = self.cfg
             speech_config.speech_synthesis_language = self.language
             speech_config.speech_synthesis_voice_name = self.voice
             speech_config.set_speech_synthesis_output_format(sdk_format)
+
+            if self._session_span:
+                self._session_span.add_event("tts_frame_config_created")
 
             # 2) Synthesize to memory (audio_config=None) - NO AUDIO HARDWARE NEEDED
             synth = speechsdk.SpeechSynthesizer(
                 speech_config=speech_config, audio_config=None
             )
 
-            # 3) Build an SSML envelope with reduced rate (80%)
-            ##  If you would like to speed up the speech, you can increase the `prosody rate`% accordingly.
+            if self._session_span:
+                self._session_span.add_event("tts_frame_synthesizer_created")
 
-            ssml = f"""
-                <speak version="1.0" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">
-                    <voice name="en-US-AvaMultilingualNeural">
-                        <prosody rate="15%" pitch="default">
-                            {text}
-                        </prosody>
-                    </voice>
-                </speak>"""
+            logger.debug(f"Synthesizing text with Azure TTS: {text[:100]}...")
+            result = synth.speak_text_async(text).get()
 
-            # 4) Synthesize
-            logger.debug(f"Starting TTS synthesis for text: {text[:50]}...")
-            result = synth.speak_ssml_async(ssml).get()
+            # 3) Check result
+            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                raw_bytes = result.audio_data
+                
+                if self._session_span:
+                    self._session_span.add_event("tts_frame_synthesis_completed", {
+                        "audio_data_size": len(raw_bytes),
+                        "synthesis_success": True
+                    })
+            else:
+                error_msg = f"TTS failed. Reason: {result.reason}"
+                if result.reason == speechsdk.ResultReason.Canceled:
+                    error_msg += f" Details: {result.cancellation_details.reason}"
+                
+                if self._session_span:
+                    self._session_span.add_event("tts_frame_synthesis_failed", {
+                        "error_reason": str(result.reason),
+                        "error_details": error_msg
+                    })
+                
+                logger.error(error_msg)
+                raise Exception(error_msg)
 
-            if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
-                error_details = result.cancellation_details
-                logger.error(f"TTS failed: {result.reason}")
-                if error_details:
-                    logger.error(f"Error details: {error_details.error_details}")
-                    logger.error(f"Error code: {error_details.error_code}")
+            logger.debug(f"Got {len(raw_bytes)} bytes of raw audio data")
 
-                    # Check for specific authentication errors
-                    if "401" in str(
-                        error_details.error_details
-                    ) or "Authentication" in str(error_details.error_details):
-                        logger.error(
-                            "Authentication error detected. Please check your Azure Speech credentials."
-                        )
-                        logger.error(
-                            f"Using key: {'Yes' if self.key else 'No (using DefaultAzureCredential)'}"
-                        )
-                        logger.error(f"Region: {self.region}")
-
-                raise RuntimeError(
-                    f"TTS failed: {result.reason} - {error_details.error_details if error_details else 'No details'}"
-                )
-
-            # 5) Get raw PCM bytes from the result
-            pcm_bytes = result.audio_data
-            logger.debug(
-                f"TTS synthesis completed. Audio data size: {len(pcm_bytes)} bytes"
-            )
-
-            # 6) Split into 20ms frames and convert to base64
+            # 4) Split into frames
             import base64
+            
+            frame_size_bytes = int(0.02 * sample_rate * 2)  # 20 ms of samples
+            base64_frames = []
 
-            frame_size = int(
-                0.02 * sample_rate * 2
-            )  # 20ms * sample_rate * 2 bytes/sample
-            frames = []
+            for i in range(0, len(raw_bytes), frame_size_bytes):
+                frame = raw_bytes[i : i + frame_size_bytes]
+                if len(frame) == frame_size_bytes:
+                    b64_frame = base64.b64encode(frame).decode("utf-8")
+                    base64_frames.append(b64_frame)
 
-            for i in range(0, len(pcm_bytes), frame_size):
-                frame = pcm_bytes[i : i + frame_size]
-                if len(frame) == frame_size:  # Only include complete frames
-                    frames.append(base64.b64encode(frame).decode("utf-8"))
+            if self._session_span:
+                self._session_span.add_event("tts_frame_processing_completed", {
+                    "total_frames": len(base64_frames),
+                    "frame_size_bytes": frame_size_bytes
+                })
 
-            logger.debug(
-                f"Created {len(frames)} audio frames of {frame_size} bytes each"
-            )
-            return frames
+            logger.debug(f"Created {len(base64_frames)} base64 frames")
+            return base64_frames
+
         except Exception as e:
-            logger.error(f"Error in synthesize_to_base64_frames: {e}", exc_info=True)
-            logger.error(f"Text being synthesized: {text}")
-            logger.error(
-                f"Speech config - Key available: {'Yes' if self.key else 'No'}, Region: {self.region}"
-            )
-
-            # Check for authentication-specific errors
-            if (
-                "401" in str(e)
-                or "Authentication" in str(e)
-                or "Unauthorized" in str(e)
-            ):
-                logger.error("Authentication error detected. Troubleshooting steps:")
-                logger.error("1. Check if AZURE_SPEECH_KEY environment variable is set")
-                logger.error(
-                    "2. Check if AZURE_SPEECH_REGION environment variable is set"
-                )
-                logger.error("3. Verify the key and region are correct in Azure Portal")
-                logger.error(
-                    "4. If using managed identity, ensure proper RBAC permissions"
-                )
-
-            return []  # Return empty list on error
+            if self._session_span:
+                self._session_span.add_event("tts_frame_synthesis_error", {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)
+                })
+                self._session_span.set_status(Status(StatusCode.ERROR, str(e)))
+            
+            logger.error(f"Error in synthesize_to_base64_frames: {e}")
+            raise
+        
+        finally:
+            # Close session span
+            if self._session_span:
+                self._session_span.end()
+                self._session_span = None
 
     def validate_configuration(self) -> bool:
         """

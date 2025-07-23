@@ -65,6 +65,7 @@ async def send_response_to_acs(
     Adds latency tracking for TTS step.
     """
 
+
     if latency_tool:
         latency_tool.start("tts")
         latency_tool.start("tts:synthesis")
@@ -92,6 +93,9 @@ async def send_response_to_acs(
         )
 
         for frame in frames:
+            if hasattr(ws.state, "lt") and ws.state.lt and not getattr(ws.state, "_greeting_ttfb_stopped", False):
+                ws.state.lt.stop("greeting_ttfb", ws.app.state.redis)
+                ws.state._greeting_ttfb_stopped = True
             await ws.send_json(
                 {"kind": "AudioData", "AudioData": {"data": frame}, "StopAudio": None}
             )

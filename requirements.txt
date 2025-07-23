@@ -14,8 +14,27 @@ azure-identity>=1.15.0
 azure-storage-blob>=12.19.0
 azure-cognitiveservices-speech>=1.45.0
 azure-communication-callautomation>=1.4.0
+azure-communication-identity>=1.5.0
+
 azure-keyvault-secrets>=4.7.0
 azure-eventgrid>=4.10.0
+
+# Azure monitoring and telemetry
+azure-monitor-opentelemetry>=1.6.11
+
+opentelemetry-sdk
+opentelemetry-instrumentation
+opentelemetry-instrumentation-django
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-flask
+opentelemetry-instrumentation-psycopg2
+opentelemetry-instrumentation-requests
+opentelemetry-instrumentation-urllib
+opentelemetry-instrumentation-urllib3
+opentelemetry-instrumentation-openai-v2
+
+azure-core>=1.29.0
+colorama>=0.4.6
 
 # AI and OpenAI integration
 openai>=1.50.0
@@ -39,10 +58,3 @@ langdetect>=1.0.9
 
 # Database drivers
 pymongo>=4.6.0
-
-# Production deployment notes:
-# - Removed asyncio package (conflicts with Python 3.11 stdlib)
-# - Removed audio packages (pyaudio, sounddevice) not needed for web service
-# - Removed UI frameworks (streamlit, gradio) not needed for backend API
-# - Removed development/local packages incompatible with Linux App Service
-# - Speech SDK audio dependencies handled by deployment script system packages

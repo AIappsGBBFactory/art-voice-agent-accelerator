@@ -106,8 +106,61 @@ AGENT_GENERAL_INFO_CONFIG: str = (
 # ------------------------------------------------------------------------------
 # TTS behaviour
 # ------------------------------------------------------------------------------
-VOICE_TTS = "en-US-Ava:DragonHDLatestNeural"
+VOICE_TTS = "en-US-AvaMultilingualNeural"
+# en-US-AvaMultilingualNeural4 (Female)
+# en-US-AndrewMultilingualNeural4 (Male)
+# en-US-EmmaMultilingualNeural4 (Female)
+# en-US-AlloyTurboMultilingualNeural4 (Male)
+# en-US-EchoTurboMultilingualNeural4 (Male)
+# en-US-FableTurboMultilingualNeural4 (Neutral)
+# en-US-OnyxTurboMultilingualNeural4 (Male)
+# en-US-NovaTurboMultilingualNeural4 (Female)
+# en-US-ShimmerTurboMultilingualNeural4 (Female)
+# en-US-BrianMultilingualNeural4 (Male)
+# en-US-AvaNeural (Female)
+# en-US-AndrewNeural (Male)
+# en-US-EmmaNeural (Female)
+# ------------------------------------------------------------------------------
+# Premium Neural HD Voices:
+# - only available in Central India, East Asia, East US, Southeast Asia, and West US.
+# ============================================================================ #
+# en-US-Adam:DragonHDLatestNeural (Male)
+# en-US-Andrew:DragonHDLatestNeural (Male)
+# en-US-Andrew2:DragonHDLatestNeural (Male)
+# en-US-Ava:DragonHDLatestNeural (Female)
+# en-US-Brian:DragonHDLatestNeural (Male)
+# en-US-Davis:DragonHDLatestNeural (Male)
+# en-US-Emma:DragonHDLatestNeural (Female)
+# en-US-Emma2:DragonHDLatestNeural (Female)
+# en-US-Steffan:DragonHDLatestNeural (Male)
+# en-US-Alloy:DragonHDLatestNeural1 (Male)
+# en-US-Andrew3:DragonHDLatestNeural1 (Male)
+# en-US-Aria:DragonHDLatestNeural1 (Female)
+# en-US-Ava3:DragonHDLatestNeural1 (Female)
+# en-US-Bree:DragonHDLatestNeural1 (Female)
+# en-US-Jenny:DragonHDLatestNeural1 (Female)
+# en-US-MultiTalker-Ava-Andrew:DragonHDLatestNeural1 (Neutral)
+# en-US-MultiTalker-Ava-Steffan:DragonHDLatestNeural1 (Neutral)
+# en-US-Nova:DragonHDLatestNeural1 (Female)
+# en-US-Phoebe:DragonHDLatestNeural1 (Female)
+# en-US-Serena:DragonHDLatestNeural1 (Female)
+# -------------------------------------------------------------------------------
+# Standard Neural Voices:
+# ============================================================================= #
+# en-US-AvaMultilingualNeural (Female)
+# en-US-AndrewMultilingualNeural (Male)
+# en-US-EmmaMultilingualNeural (Female)
+# en-US-BrianMultilingualNeural (Male)
 
+# ------------------------------------------------------------------------------
+# Available OpenAI/Turbo Voices (North Central US is one of only 2 regions that support these):
+# ============================================================================= #
+# en-US-AlloyTurboMultilingualNeural (Male)
+# en-US-EchoTurboMultilingualNeural (Male)
+# en-US-FableTurboMultilingualNeural (Neutral)
+# en-US-OnyxTurboMultilingualNeural (Male)
+# en-US-NovaTurboMultilingualNeural (Female)
+# en-US-ShimmerTurboMultilingualNeural (Female)
 # ------------------------------------------------------------------------------
 STOP_WORDS: List[str] = ["goodbye", "exit", "see you later", "bye"]
 # Character(s) that mark a chunk boundary for TTS streaming:

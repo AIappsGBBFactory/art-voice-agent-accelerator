@@ -18,9 +18,11 @@ from azure.communication.callautomation import (
     TranscriptionOptions,
 )
 from azure.core.exceptions import HttpResponseError
-from azure.identity import DefaultAzureCredential
+from azure.communication.identity import CommunicationIdentityClient
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
 from src.enums.stream_modes import StreamMode
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,12 @@ class AcsCaller:
         if not (acs_connection_string or acs_endpoint):
             raise ValueError("Provide either acs_connection_string or acs_endpoint")
 
+        if not source_number:
+            raise ValueError(
+            "No source_number provided. You must purchase and configure an Azure Communication Services phone number. "
+            "Set the number in your environment as ACS_SOURCE_PHONE_NUMBER. "
+            "See: https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/telephony/get-phone-number?tabs=windows&pivots=platform-azcli"
+            )
         self.source_number = source_number
         self.callback_url = callback_url
         self.cognitive_services_endpoint = cognitive_services_endpoint
@@ -118,19 +126,53 @@ class AcsCaller:
             audio_format=AudioFormat.PCM16_K_MONO,  # Ensure this matches what your STT expects
         )
 
-        # Initialize ACS client
-        self.client = (
-            CallAutomationClient.from_connection_string(acs_connection_string)
-            if acs_connection_string
-            else CallAutomationClient(
-                endpoint=acs_endpoint, credential=DefaultAzureCredential()
-            )
-        )
+        # Initialize ACS client with proper authentication
+        try:
+            if acs_connection_string:
+                logger.info("Using ACS connection string for authentication")
+                self.client = CallAutomationClient.from_connection_string(
+                    acs_connection_string
+                )
+            else:
+                if not acs_endpoint:
+                    raise ValueError("acs_endpoint is required when not using connection string")
+                
+                logger.info("Using managed identity for ACS authentication")
+                
+                # No need to create tokens via CommunicationIdentityClient
+                if "AZURE_CLIENT_ID" in os.environ:
+                    credentials = self._create_identity_and_get_token(acs_endpoint)
+                else:
+                    # Use system-assigned managed identity
+                    credentials = DefaultAzureCredential()
+                
+                self.client = CallAutomationClient(
+                    endpoint=acs_endpoint,
+                    credential=credentials
+                )
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize ACS client: {e}")
+            if "managed identity" in str(e).lower() or "CredentialUnavailableError" in str(e):
+                logger.error("Managed identity is not available in this environment.")
+                logger.error("Either:")
+                logger.error("1. Use ACS_CONNECTION_STRING instead of managed identity")
+                logger.error("2. Ensure managed identity is enabled for this App Service")
+                logger.error("3. Set AZURE_CLIENT_ID if using user-assigned managed identity")
+            raise
 
         # Validate configuration
         self._validate_configuration(websocket_url, acs_connection_string, acs_endpoint)
         logger.info("AcsCaller initialized")
+    
+    def _create_identity_and_get_token(self, resource_endpoint):
+        client = CommunicationIdentityClient(resource_endpoint, DefaultAzureCredential())
 
+        user = client.create_user()
+        token_response = client.get_token(user, scopes=["voip"])
+
+        return token_response
+    
     def _validate_configuration(
         self, websocket_url: str, acs_connection_string: str, acs_endpoint: str
     ):

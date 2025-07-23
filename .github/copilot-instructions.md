@@ -73,27 +73,6 @@
 
 ---
 
-## Prompt Examples to Try with Copilot
-```
-## Frontend
-
-“Create a React hook that manages transcript state from a WebSocket stream”
-
-## Backend
-
-“Define an async FastAPI endpoint that uses Azure Identity to get a secret from Key Vault”
-
-## Bicep
-
-“Write a Bicep module to create a private endpoint for Azure OpenAI and link it to the private DNS zone”
-
-## Infra as Code
-
-“Create a subnet with Microsoft.Web/serverFarms delegation and minimal CIDR”
-```
-
----
-
 ## Copilot Usage Tips
 
 - Use natural language comments above functions to guide Copilot suggestions.
@@ -106,14 +85,19 @@
 ```
 /
 ├── infra/
-│   ├── main.bicep
-│   ├── modules/
-│   │   ├── apim.bicep
-│   │   ├── containerapp.bicep
-│   │   ├── private-endpoint.bicep
-│   │   └── redis.bicep
+│   ├── bicep/                  # Opinionated private deployment (WIP)
+│   │   ├── main.bicep
+│   │   └── modules/
+│   │       ├── apim.bicep
+│   │       ├── containerapp.bicep
+│   │       ├── private-endpoint.bicep
+│   │       └── redis.bicep
+│   └── terraform/              # Public-facing, simplified PoC
+│       ├── main.tf
+│       └── modules/
 │
-├── src/
+├── devops/                 # CI/CD, pipeline templates, scripts, precommit configs, etc.
+├── src/                    # Shared Python code
 │   ├── acs/
 │   ├── redis/
 │   ├── aoai/
@@ -122,8 +106,8 @@
 │   ├── eventgrid/
 │   └── speech/
 │
-├── rtagents/
-│   ├── healthclaim/
+├── apps/
+│   ├── rtagent/
 │   │   ├── frontend/       # Vite + React
 │   │   │   ├── .env        # Frontend environment variables
 │   │   │   └── App.jsx

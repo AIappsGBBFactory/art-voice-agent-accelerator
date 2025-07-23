@@ -13,42 +13,42 @@ import {
 }
 */
 resource "azapi_resource" "redisEnterprise" {
-    type      = "Microsoft.Cache/redisEnterprise@2024-09-01-preview"
-    parent_id = azurerm_resource_group.main.id
-    name      = local.resource_names.redis
-    location  = azurerm_resource_group.main.location
-    body = {
-        properties = {
-            highAvailability  = var.enable_redis_ha ? "Enabled" : "Disabled"
-            minimumTlsVersion = "1.2"
-        }
-        sku = {
-            name = var.redis_sku
-        }
+  type      = "Microsoft.Cache/redisEnterprise@2024-09-01-preview"
+  parent_id = azurerm_resource_group.main.id
+  name      = local.resource_names.redis
+  location  = azurerm_resource_group.main.location
+  body = {
+    properties = {
+      highAvailability  = var.enable_redis_ha ? "Enabled" : "Disabled"
+      minimumTlsVersion = "1.2"
     }
-    tags = local.tags
+    sku = {
+      name = var.redis_sku
+    }
+  }
+  tags = local.tags
 }
 
 # Redis Enterprise Database with RBAC authentication
 resource "azapi_resource" "redisDatabase" {
-    type      = "Microsoft.Cache/redisEnterprise/databases@2024-09-01-preview"
-    parent_id = azapi_resource.redisEnterprise.id
-    name      = "default"
-    body = {
-        properties = {
-            clientProtocol           = "Encrypted"
-            clusteringPolicy        = "OSSCluster"
-            evictionPolicy          = "VolatileLRU"
-            port                    = var.redis_port
-            accessKeysAuthentication = "Disabled"
-        }
+  type      = "Microsoft.Cache/redisEnterprise/databases@2024-09-01-preview"
+  parent_id = azapi_resource.redisEnterprise.id
+  name      = "default"
+  body = {
+    properties = {
+      clientProtocol           = "Encrypted"
+      clusteringPolicy         = "OSSCluster"
+      evictionPolicy           = "VolatileLRU"
+      port                     = var.redis_port
+      accessKeysAuthentication = "Disabled"
     }
-    depends_on = [azapi_resource.redisEnterprise]
+  }
+  depends_on = [azapi_resource.redisEnterprise]
 }
 
 resource "azapi_resource" "backendRedisUser" {
-  type = "Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments@2024-09-01-preview"
-  name = "backendaccess"
+  type      = "Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments@2024-09-01-preview"
+  name      = "backendaccess"
   parent_id = azapi_resource.redisDatabase.id
   body = {
     properties = {
@@ -61,8 +61,8 @@ resource "azapi_resource" "backendRedisUser" {
 }
 
 resource "azapi_resource" "principalRedisUser" {
-  type = "Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments@2024-09-01-preview"
-  name = "principalaccess"
+  type      = "Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments@2024-09-01-preview"
+  name      = "principalaccess"
   parent_id = azapi_resource.redisDatabase.id
   body = {
     properties = {

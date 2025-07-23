@@ -74,6 +74,8 @@ generate_environment_file() {
 # Generated automatically by generate-env.sh on $(date)
 # Environment: ${AZD_ENV_NAME}
 # =================================================================
+# Application Insights Configuration
+APPLICATIONINSIGHTS_CONNECTION_STRING=$(get_azd_value "APPLICATIONINSIGHTS_CONNECTION_STRING")
 
 # Azure OpenAI Configuration
 AZURE_OPENAI_KEY=$(get_azd_value "AZURE_OPENAI_KEY")
