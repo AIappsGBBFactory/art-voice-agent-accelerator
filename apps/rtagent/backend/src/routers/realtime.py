@@ -47,7 +47,8 @@ async def relay_ws(ws: WebSocket):
     except WebSocketDisconnect:
         clients.remove(ws)
     finally:
-        await ws.close()
+        if ws.application_state.name == "CONNECTED" and ws.client_state.name not in ("DISCONNECTED", "CLOSED"):
+            await ws.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -74,8 +75,8 @@ async def realtime_ws(ws: WebSocket):
         auth_agent = ws.app.state.auth_agent
         cm.append_to_history(auth_agent.name, "assistant", GREETING)
         await send_tts_audio(GREETING, ws, latency_tool=ws.state.lt)
-        await broadcast_message(ws.app.state.clients, GREETING, "Assistant")
-        cm.persist_to_redis(redis_mgr)
+        # await broadcast_message(ws.app.state.clients, GREETING, "Assistant")
+        await cm.persist_to_redis_async(redis_mgr)
 
         def on_partial(txt: str, lang: str):
             logger.info(f"🗣️ User (partial) in {lang}: {txt}")
@@ -107,8 +108,7 @@ async def realtime_ws(ws: WebSocket):
                 if ws.state.user_buffer.strip():
                     prompt = ws.state.user_buffer.strip()
                     ws.state.user_buffer = ""
-                    await broadcast_message(ws.app.state.clients, prompt, "User")
-
+                    
                     # Send user message to frontend immediately
                     await ws.send_text(
                         json.dumps({"sender": "User", "message": prompt})
@@ -122,6 +122,7 @@ async def realtime_ws(ws: WebSocket):
                         await send_tts_audio(goodbye, ws, latency_tool=ws.state.lt)
                         break
 
+                    # Note: broadcast_message for user input is handled in the orchestrator to avoid duplication
                     # pass to GPT orchestrator
                     await route_turn(cm, prompt, ws, is_acs=False)
                 continue
@@ -132,7 +133,11 @@ async def realtime_ws(ws: WebSocket):
 
     finally:
         ws.app.state.tts_client.stop_speaking()
-        await ws.close()
+        try:
+            if ws.application_state.name == "CONNECTED" and ws.client_state.name not in ("DISCONNECTED", "CLOSED"):
+                await ws.close()
+        except Exception as e:
+            logger.warning(f"WebSocket close error: {e}", exc_info=True)
         try:
             cm = getattr(ws.state, "cm", None)
             cosmos = getattr(ws.app.state, "cosmos", None)

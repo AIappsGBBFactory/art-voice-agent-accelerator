@@ -193,6 +193,11 @@ async def process_gpt_response(  # noqa: D401
         if full_text:
             agent_history.append({"role": "assistant", "content": full_text})
             await push_final(ws, "assistant", full_text, is_acs=is_acs)
+            # Broadcast the final assistant response to relay dashboard
+            try:
+                await broadcast_message(ws.app.state.clients, full_text, "Assistant")
+            except Exception as e:
+                logger.error(f"Failed to broadcast assistant message: {e}")
             trace_ctx.set_attribute("response.length", len(full_text))
 
         # Handle follow‑up tool call (if any)
@@ -229,9 +234,13 @@ async def process_gpt_response(  # noqa: D401
                 session_id,
             )
             if result is not None:
-                cm.persist_tool_output(tool_name, result)
-                if isinstance(result, dict) and "slots" in result:
-                    cm.update_slots(result["slots"])
+                # Persist tool output and update slots in the background to avoid blocking response flow
+                async def persist_tool_results():
+                    cm.persist_tool_output(tool_name, result)
+                    if isinstance(result, dict) and "slots" in result:
+                        cm.update_slots(result["slots"])
+
+                asyncio.create_task(persist_tool_results())
                 trace_ctx.set_attribute("tool.execution_success", True)
                 trace_ctx.add_event("tool_execution_completed", {"tool_name": tool_name})
             return result
@@ -267,7 +276,7 @@ async def _emit_streaming_text(
         
         if is_acs:
             trace_ctx.set_attribute("output_channel", "acs")
-            await broadcast_message(ws.app.state.clients, text, "Assistant")
+            # Note: broadcast_message is handled separately for final responses to avoid duplication
             await send_response_to_acs(ws, text, latency_tool=ws.state.lt)
         else:
             trace_ctx.set_attribute("output_channel", "websocket_tts")
@@ -359,8 +368,12 @@ async def _handle_tool_call(  # noqa: PLR0913
         )
         trace_ctx.add_event("tool_end_pushed", {"elapsed_ms": elapsed_ms})
 
+        # Broadcast tool completion to relay dashboard (only for ACS calls)
         if is_acs:
-            await broadcast_message(ws.app.state.clients, f"🛠️ {tool_name} ✔️", "Assistant")
+            try:
+                await broadcast_message(ws.app.state.clients, f"🛠️ {tool_name} ✔️", "Assistant")
+            except Exception as e:
+                logger.error(f"Failed to broadcast tool completion: {e}")
 
         # Handle tool follow-up with tracing
         trace_ctx.add_event("starting_tool_followup")

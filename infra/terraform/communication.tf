@@ -22,6 +22,15 @@ resource "azapi_resource" "acs" {
   }
 }
 
+# Store the ACS connection string in Azure Key Vault as a secret
+resource "azurerm_key_vault_secret" "acs_connection_string" {
+  name         = "AcsConnectionString"
+  value        = azapi_resource.acs.output.properties.primaryConnectionString
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azapi_resource.acs]
+}
+
 # Grant the Communication Service's managed identity access to Speech Services
 # This enables real-time transcription with managed identity authentication
 #

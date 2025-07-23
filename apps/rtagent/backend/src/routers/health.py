@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from src.stateful.state_managment import MemoManager
-from settings import AZURE_CLIENT_ID, AZURE_OPENAI_ENDPOINT, AZURE_TENANT_ID
+from settings import AZURE_CLIENT_ID, AZURE_OPENAI_ENDPOINT, AZURE_TENANT_ID, ACS_ENDPOINT
 
 from utils.ml_logging import get_logger
 from settings import (
@@ -219,29 +219,47 @@ async def _check_acs_caller_fast(acs_caller) -> Dict:
 
     # Check ACS connection string or endpoint id
     acs_conn_missing = not ACS_CONNECTION_STRING
-    acs_endpoint_missing = not AZURE_OPENAI_ENDPOINT
+    acs_endpoint_missing = not ACS_ENDPOINT
     if acs_conn_missing and acs_endpoint_missing:
         return {
             "component": "acs_caller",
             "status": "unhealthy",
-            "error": "Neither ACS_CONNECTION_STRING nor AZURE_OPENAI_ENDPOINT is configured",
+            "error": "Neither ACS_CONNECTION_STRING nor ACS_ENDPOINT is configured",
             "check_time_ms": round((time.time() - start) * 1000, 2),
         }
 
-    # If ACS caller is not initialized, treat as optional but log config status
     if not acs_caller:
+        # Try to diagnose why ACS caller is not configured
+        missing = []
+        if not is_valid:
+            missing.append(f"ACS_SOURCE_PHONE_NUMBER ({error_msg})")
+        if not ACS_CONNECTION_STRING:
+            missing.append("ACS_CONNECTION_STRING")
+        if not ACS_ENDPOINT:
+            missing.append("ACS_ENDPOINT")
+        details = (
+            f"ACS caller not configured. Missing: {', '.join(missing)}"
+            if missing
+            else "ACS caller not initialized for unknown reason"
+        )
         return {
             "component": "acs_caller",
-            "status": "healthy",
+            "status": "unhealthy",
             "check_time_ms": round((time.time() - start) * 1000, 2),
-            "details": "ACS caller not configured (optional component)",
+            "details": details,
         }
 
+    # Obfuscate phone number, show only last 4 digits
+    obfuscated_phone = (
+        "*" * (len(ACS_SOURCE_PHONE_NUMBER) - 4) + ACS_SOURCE_PHONE_NUMBER[-4:]
+        if len(ACS_SOURCE_PHONE_NUMBER) > 4
+        else ACS_SOURCE_PHONE_NUMBER
+    )
     return {
         "component": "acs_caller",
         "status": "healthy",
         "check_time_ms": round((time.time() - start) * 1000, 2),
-        "details": f"ACS caller configured with phone: {ACS_SOURCE_PHONE_NUMBER}",
+        "details": f"ACS caller configured with phone: {obfuscated_phone}",
     }
 async def _check_rt_agents_fast(auth_agent, claim_intake_agent) -> Dict:
     start = time.time()

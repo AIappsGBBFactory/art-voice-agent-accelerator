@@ -5,7 +5,6 @@ from typing import Any, Dict, List
 from fastapi import WebSocket
 from src.stateful.state_managment import MemoManager
 from apps.rtagent.backend.src.orchestration.orchestrator import route_turn
-from apps.rtagent.backend.src.services.acs.acs_helpers import broadcast_message
 
 from utils.ml_logging import get_logger
 
@@ -119,10 +118,8 @@ class TranscriptionHandler:
         self.cm.update_context("interrupt_count", 0)
         await self.cm.persist_to_redis_async(self.redis_mgr)
 
-        # Broadcast to connected clients
-        await broadcast_message(self.clients, text, "User")
-
-        # Route to orchestrator for AI processing
+        # Note: broadcast_message is now handled in the orchestrator to avoid duplication
+        # Route to orchestrator for AI processing (orchestrator will handle broadcasting)
         await route_turn(self.cm, text, self.websocket, is_acs=True)
 
         logger.info(

@@ -110,7 +110,22 @@ async def initiate_call(call: CallRequest, request: Request):
             )
             return {"message": result["message"], "callId": result["callId"]}
         else:
-            return JSONResponse(result, status_code=400)
+            logger.error(
+                f"Call initiation failed for {call.target_number}: {result}",
+                extra={
+                    "operation_Name": "initiate_call",
+                    "target_number": call.target_number,
+                    "result": result
+                }
+            )
+            # Return more detailed error info in the response
+            return JSONResponse(
+                {
+                    "error": "Call initiation failed",
+                    "details": result
+                },
+                status_code=400
+            )
 
 
 # --------------------------------------------------------------------------- #

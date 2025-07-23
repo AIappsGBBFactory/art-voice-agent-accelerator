@@ -17,6 +17,7 @@ import os
 from typing import Any, Callable, Dict, TYPE_CHECKING
 
 from fastapi import WebSocket
+from apps.rtagent.backend.src.shared_ws import broadcast_message
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
 from src.enums.monitoring import SpanAttr
@@ -224,6 +225,14 @@ async def route_turn(
     """Handle a single user turn end‑to‑end."""
 
     redis_mgr = ws.app.state.redis
+    
+    # Broadcast the user input to all connected clients (relay dashboard)
+    # This centralizes the broadcast to avoid duplication across different handlers
+    try:
+        await broadcast_message(ws.app.state.clients, transcript, "User")
+    except Exception as e:
+        logger.error(f"Failed to broadcast user message: {e}")
+    
     try:
         await run_auth_agent(cm, transcript, ws, is_acs=is_acs)
 
@@ -247,4 +256,4 @@ async def route_turn(
         logger.exception("💥 route_turn crash – session=%s", cm.session_id)
         raise
     finally:
-        cm.persist_to_redis(redis_mgr)
+        await cm.persist_to_redis_async(redis_mgr)

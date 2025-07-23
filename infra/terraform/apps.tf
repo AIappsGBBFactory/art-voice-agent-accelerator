@@ -34,11 +34,21 @@ variable "tenant_id" {
 }
 
 # ============================================================================
-# AZURE APP SERVICE PLAN (Shared for Frontend and Backend)
+# AZURE APP SERVICE PLANS (Separate for Frontend and Backend)
 # ============================================================================
 
-resource "azurerm_service_plan" "main" {
-  name                = local.resource_names.app_service_plan
+resource "azurerm_service_plan" "frontend" {
+  name                = "${local.resource_names.app_service_plan}-frontend"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  os_type             = "Linux"
+  sku_name            = "B1" # Basic tier - adjust as needed
+
+  tags = local.tags
+}
+
+resource "azurerm_service_plan" "backend" {
+  name                = "${local.resource_names.app_service_plan}-backend"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   os_type             = "Linux"
@@ -55,7 +65,7 @@ resource "azurerm_linux_web_app" "backend" {
   name                = "${var.name}-backend-app-${local.resource_token}"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
-  service_plan_id     = azurerm_service_plan.main.id
+  service_plan_id     = azurerm_service_plan.backend.id
 
   identity {
     type         = "UserAssigned"
@@ -210,6 +220,20 @@ resource "azurerm_linux_web_app" "backend" {
   ]
 }
 
+resource "null_resource" "update_backend_base_url" {
+  provisioner "local-exec" {
+    command = "az webapp config appsettings set --resource-group ${azurerm_resource_group.main.name} --name ${azurerm_linux_web_app.backend.name} --settings BASE_URL=https://${azurerm_linux_web_app.backend.default_hostname}"
+  }
+
+  depends_on = [
+    azurerm_linux_web_app.backend
+  ]
+
+  triggers = {
+    backend_hostname = azurerm_linux_web_app.backend.default_hostname
+  }
+}
+
 # ============================================================================
 # FRONTEND LINUX APP SERVICE
 # ============================================================================
@@ -218,7 +242,7 @@ resource "azurerm_linux_web_app" "frontend" {
   name                = "${var.name}-frontend-app-${local.resource_token}"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
-  service_plan_id     = azurerm_service_plan.main.id
+  service_plan_id     = azurerm_service_plan.frontend.id
 
   identity {
     type         = "UserAssigned"
@@ -447,9 +471,9 @@ resource "azurerm_monitor_diagnostic_setting" "backend_app_service" {
   }
 
   # Metrics for performance monitoring
-  metric {
-    category = "AllMetrics"
-  }
+  # metric {
+  #   category = "AllMetrics"
+  # }
 }
 
 # ============================================================================
@@ -487,7 +511,3 @@ output "BACKEND_APP_SERVICE_URL" {
   value       = "https://${azurerm_linux_web_app.backend.default_hostname}"
 }
 
-output "APP_SERVICE_PLAN_ID" {
-  description = "Shared App Service Plan resource ID"
-  value       = azurerm_service_plan.main.id
-}

@@ -167,10 +167,50 @@ class ACSHandler:
                         logger, logging.ERROR,
                         f"ACS error during call initiation to {target_number}: {exc}",
                         operation_name="acs_handler.initiate_call",
-                        custom_attributes={"target_number": target_number, "error_type": type(exc).__name__}
+                        custom_attributes={
+                            "target_number": target_number,
+                            "error_type": type(exc).__name__,
+                            "acs_streaming_mode": str(ACS_STREAMING_MODE),
+                            "call_id": call_id,
+                        }
                     )
                     logger.error("ACS error: %s", exc, exc_info=True)
-                    raise HTTPException(500, str(exc)) from exc
+                    # Provide more context in the HTTPException detail for easier debugging
+                    raise HTTPException(
+                        500,
+                        detail={
+                            "error": str(exc),
+                            "target_number": target_number,
+                            "call_id": call_id,
+                            "acs_streaming_mode": str(ACS_STREAMING_MODE),
+                            "exception_type": type(exc).__name__,
+                        }
+                    ) from exc
+                except Exception as exc:
+                    ctx.set_attribute("error.occurred", True)
+                    ctx.set_attribute("error.message", f"Unexpected error during call initiation: {exc}")
+                    log_with_correlation(
+                        logger, logging.ERROR,
+                        f"Unexpected error during call initiation to {target_number}: {exc}",
+                        operation_name="acs_handler.initiate_call",
+                        custom_attributes={
+                            "target_number": target_number,
+                            "error_type": type(exc).__name__,
+                            "acs_streaming_mode": str(ACS_STREAMING_MODE),
+                            "call_id": call_id,
+                        }
+                    )
+                    logger.error("Unexpected error: %s", exc, exc_info=True)
+                    raise HTTPException(
+                        400,
+                        detail={
+                            "error": str(exc),
+                            "target_number": target_number,
+                            "call_id": call_id,
+                            "acs_streaming_mode": str(ACS_STREAMING_MODE),
+                            "exception_type": type(exc).__name__,
+                        }
+                    ) from exc
 
     @staticmethod
     async def handle_inbound_call(

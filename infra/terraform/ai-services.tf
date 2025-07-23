@@ -75,7 +75,7 @@ resource "azurerm_cognitive_account" "speech" {
   public_network_access_enabled = true
 
   # Use managed identity for authentication
-  local_auth_enabled = !var.disable_local_auth
+  #local_auth_enabled = !var.disable_local_auth
 
   tags = local.tags
 }

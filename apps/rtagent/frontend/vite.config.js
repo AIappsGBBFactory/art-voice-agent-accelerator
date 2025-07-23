@@ -10,9 +10,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     preview: {
-      allowedHosts: env.VITE_ALLOWED_HOSTS
-        ? env.VITE_ALLOWED_HOSTS.split(',')
-        : []
+      // allowedHosts: env.VITE_ALLOWED_HOSTS
+      //   ? env.VITE_ALLOWED_HOSTS.split(',')
+      //   : []
     }
   }
 });

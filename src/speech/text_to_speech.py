@@ -119,7 +119,6 @@ class SpeechSynthesizer:
         self.playback = playback
         self.enable_tracing = enable_tracing
         self.call_connection_id = call_connection_id or "unknown"
-        self.speech_config = None
 
         # Initialize tracing components (matching speech_recognizer pattern)
         self.tracer = None
@@ -234,7 +233,7 @@ class SpeechSynthesizer:
 
         # 3. Create the speaker synthesizer according to playback mode
         try:
-            speech_config = self._speech_config
+            speech_config = self.cfg
             headless = _is_headless()
 
             if self.playback == "always":

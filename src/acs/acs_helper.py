@@ -211,6 +211,13 @@ class AcsCaller:
         dest = PhoneNumberIdentifier(target_number)
 
         try:
+            logger.info(f"Initiating call from {self.source_number} to {target_number}")
+            logger.debug(f"Stream mode: {stream_mode}")
+            logger.debug(f"Transcription options: {self.transcription_opts}")
+            logger.debug(f"Media streaming options: {self.media_streaming_options}")
+            logger.debug(f"Cognitive services endpoint: {self.cognitive_services_endpoint}")
+            logger.debug(f"Callback URL: {self.callback_url}")
+            
             # Determine which capabilities to enable based on stream_mode
             transcription = None
             cognitive_services_endpoint = None
