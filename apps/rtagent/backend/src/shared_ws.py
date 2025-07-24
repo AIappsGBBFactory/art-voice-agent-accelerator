@@ -58,6 +58,8 @@ async def send_tts_audio(
     try:
         synth: SpeechSynthesizer = ws.app.state.tts_client
         ws.state.is_synthesizing = True  # type: ignore[attr-defined]
+
+        synth.start_speaking_text(text)
         
         # Synthesize text to PCM bytes for browser playback
         logger.debug(f"Synthesizing text: {text[:100]}...")

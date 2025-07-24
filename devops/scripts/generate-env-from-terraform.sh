@@ -203,6 +203,8 @@ AZURE_SPEECH_KEY=
 AZURE_SPEECH_RESOURCE_ID=$(extract_output_value "${terraform_outputs}" "AZURE_SPEECH_RESOURCE_ID")
 AZURE_SPEECH_REGION=$(extract_output_value "${terraform_outputs}" "AZURE_SPEECH_REGION")
 
+# For local development, you can enable local playback of TTS audio.
+TTS_ENABLE_LOCAL_PLAYBACK=true
 EOF
 
     # Base URL Configuration

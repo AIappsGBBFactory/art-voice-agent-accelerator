@@ -130,6 +130,7 @@ resource "azurerm_linux_web_app" "backend" {
       "AZURE_SPEECH_DOMAIN_ENDPOINT" = "https://${azurerm_cognitive_account.speech.custom_subdomain_name}.cognitiveservices.azure.com/"
       "AZURE_SPEECH_RESOURCE_ID"     = azurerm_cognitive_account.speech.id
       "AZURE_SPEECH_REGION"          = azurerm_cognitive_account.speech.location
+      "TTS_ENABLE_LOCAL_PLAYBACK"    = "false"
 
       # Azure Cosmos DB
       "AZURE_COSMOS_DATABASE_NAME"   = var.mongo_database_name
