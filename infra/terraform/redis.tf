@@ -15,7 +15,7 @@ import {
 resource "azapi_resource" "redisEnterprise" {
   type      = "Microsoft.Cache/redisEnterprise@2024-09-01-preview"
   parent_id = azurerm_resource_group.main.id
-  name      = local.resource_names.redis
+  name      = replace(local.resource_names.redis, "-", "")
   location  = azurerm_resource_group.main.location
   body = {
     properties = {

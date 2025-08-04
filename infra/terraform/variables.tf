@@ -1,6 +1,15 @@
 # ============================================================================
 # VARIABLES
 # ============================================================================
+variable "backend_api_public_url" {
+  description = "Fully qualified URL to map to the backend API, requirement to allow ACS to validate and deliver webhook and WebSocket events (e.g., https://<app-name>.azurewebsites.net)."
+  default     = null
+
+  validation {
+    condition     = var.backend_api_public_url == null || var.backend_api_public_url == "" || can(regex("^https://[^/]+$", var.backend_api_public_url))
+    error_message = "Backend API public URL must start with 'https://' and must not have a trailing slash."
+  }
+}
 
 variable "environment_name" {
   description = "Name of the environment that can be used as part of naming resource convention"

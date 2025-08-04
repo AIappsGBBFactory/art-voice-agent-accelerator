@@ -105,7 +105,9 @@ resource "azurerm_linux_web_app" "backend" {
 
   app_settings = merge(
     {
+      "BASE_URL" = var.backend_api_public_url != null ? var.backend_api_public_url : "https://<REPLACE_ME>"
       # Azure Communication Services Configuration
+      "ACS_AUDIENCE"          = azapi_resource.acs.output.properties.immutableResourceId
       "ACS_CONNECTION_STRING" = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=AcsConnectionString)"
       "ACS_ENDPOINT"          = "https://${azapi_resource.acs.output.properties.hostName}"
       "ACS_STREAMING_MODE"    = "media"
@@ -224,20 +226,6 @@ resource "azurerm_linux_web_app" "backend" {
   ]
 }
 
-resource "null_resource" "update_backend_base_url" {
-  provisioner "local-exec" {
-    command = "az webapp config appsettings set --resource-group ${azurerm_resource_group.main.name} --name ${azurerm_linux_web_app.backend.name} --settings BASE_URL=https://${azurerm_linux_web_app.backend.default_hostname}"
-  }
-
-  depends_on = [
-    azurerm_linux_web_app.backend
-  ]
-
-  triggers = {
-    backend_hostname = azurerm_linux_web_app.backend.default_hostname
-  }
-}
-
 # ============================================================================
 # FRONTEND LINUX APP SERVICE
 # ============================================================================
@@ -293,7 +281,7 @@ resource "azurerm_linux_web_app" "frontend" {
   app_settings = merge({
     # Build-time environment variables for Vite
     "VITE_AZURE_REGION"     = azurerm_cognitive_account.speech.location
-    "VITE_BACKEND_BASE_URL" = "https://${azurerm_linux_web_app.backend.default_hostname}"
+    "VITE_BACKEND_BASE_URL" = var.backend_api_public_url != null ? var.backend_api_public_url : "https://${azurerm_linux_web_app.backend.default_hostname}"
     "VITE_ALLOWED_HOSTS"    = "https://${azurerm_linux_web_app.backend.default_hostname}"
 
     # Azure Client ID for managed identity authentication
@@ -533,3 +521,7 @@ output "BACKEND_APP_SERVICE_URL" {
   value       = "https://${azurerm_linux_web_app.backend.default_hostname}"
 }
 
+output "BACKEND_API_URL" {
+  description = "Backend API URL"
+  value       = var.backend_api_public_url != null ? var.backend_api_public_url : "https://${azurerm_linux_web_app.backend.default_hostname}"
+}

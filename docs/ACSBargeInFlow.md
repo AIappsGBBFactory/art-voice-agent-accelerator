@@ -1,44 +1,234 @@
-# 🎛️ ACS Media Streaming and Barge-In Flow
+# ACS Barge-In Flow
 
+This document describes the core event loop logic for handling barge-in interruptions in the ACS Media Handler.
 
-> **Note**: The realtime transcription's barge-in is handled much simpler as the ACS 
-> (Azure Communication Services) to speech service integration handles this logic 
-> automatically, eliminating the need for manual barge-in detection implementation.
- 
+## Architecture Overview
 
+The barge-in system uses three threads to maintain low-latency interruption handling:
 
-This document provides a comprehensive visual representation of how the ACS Media Handler manages real-time audio streaming, speech recognition, and intelligent barge-in functionality for seamless voice interactions.
+1. **Speech SDK Thread**: Continuous audio recognition, never blocks
+2. **Route Turn Thread**: AI processing and response generation  
+3. **Main Event Loop**: WebSocket handling and task coordination
 
-## 🔄 Overall Communication Flow
+```mermaid
+graph TB
+    subgraph SpeechSDK["Speech SDK Thread"]
+        A1["Audio Recognition"]
+        A2["on_partial → Barge-in"]
+        A3["on_final → Queue Result"]
+    end
+    
+    subgraph RouteLoop["Route Turn Thread"]
+        B1["await queue.get()"]
+        B2["AI Processing"]
+        B3["TTS Generation"]
+    end
+    
+    subgraph MainLoop["Main Event Loop"]
+        C1["WebSocket Handler"]
+        C2["Task Cancellation"]
+        C3["Stop Audio Commands"]
+    end
+    
+    %% Barge-in flag logic
+    A2 -->|"Set barge-in flag (on_partial)"| C2
+    A2 -->|"Set barge-in flag (on_partial)"| C3
+    A3 -->|"Clear barge-in flag (on_final)"| B1
+    A3 --> B1
+    B3 --> C1
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Azure Speech SDK Thread (Background)                        │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Speech Recognition Loop (SDK Internal)                  │ │
-│ │ • Processes audio continuously                          │ │
-│ │ • Fires callbacks: on_partial(), on_final()             │ │
-│ └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                               │
-                               │ Callbacks bridge to main loop
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Main Event Loop (FastAPI/uvicorn)                           │
-│                                                             │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ route_turn_loop() - The Main Processing Loop            │ │
-│ │ • Waits for speech results from queue                   │ │
-│ │ • Manages AI response playback tasks                    │ │
-│ │ • Handles cancellation and task lifecycle               │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│                                                             │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ playback_task (Created per AI response)                 │ │
-│ │ • route_and_playback() - Processes speech with AI       │ │
-│ │ • Can be cancelled by barge-in                          │ │
-│ └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+
+```mermaid
+graph TB
+    subgraph Physical["🖥️ Physical Thread Architecture"]
+        subgraph SpeechSDKThread["🧵 Azure Speech SDK Thread"]
+            direction TB
+            A1["🎯 Speech SDK Core"] 
+            A2["🔄 Continuous Recognition"]
+            A3["⚡ on_partial callback<br/><small>🚨 IMMEDIATE - No Blocking</small>"]
+            A4["✅ on_final callback<br/><small>📋 QUEUED - Non-Blocking</small>"]
+            A5["❌ on_cancel callback"]
+            
+            A1 --> A2
+            A2 --> A3
+            A2 --> A4  
+            A2 --> A5
+        end
+        
+        subgraph RouteLoopThread["🧵 Route Turn Loop Thread"]
+            direction TB
+            B1["🔄 route_turn_loop()<br/><small>Separate Thread via threading.Thread</small>"]
+            B2["await queue.get()<br/><small>🚫 BLOCKS until speech available</small>"]
+            B3["🎯 Task Creation<br/><small>asyncio.create_task(route_and_playback)</small>"]
+
+            B1 --> B2
+            B2 --> B3
+        end
+
+        subgraph MainEventLoop["🧵 Main Event Loop (FastAPI/uvicorn)"]
+            direction TB
+            C2["📡 WebSocket Media Handler"]
+            C3["🚫 _handle_barge_in_async<br/><small>⚡ Scheduled via run_coroutine_threadsafe</small>"]
+            C4["📝 _handle_final_async<br/><small>📋 Scheduled via run_coroutine_threadsafe</small>"]
+            C5["🎵 playback_task<br/><small>route_and_playback - Can be cancelled</small>"]
+            C6["🛑 send_stop_audio"]
+            
+            C2 --> C5
+        end
+    end
+    
+    subgraph Logical["🔗 Cross-Thread Communication (Non-Blocking)"]
+        direction LR
+        D1["🎤 Speech Event"] 
+        D2["🔗 run_coroutine_threadsafe<br/><small>Thread-safe async bridge</small>"]
+        D3["📋 asyncio.Queue<br/><small>Thread-safe message passing</small>"]
+        D4["⚡ Immediate Actions<br/><small>Barge-in detection</small>"]
+        
+        D1 --> D2
+        D2 --> D3
+        D2 --> D4
+    end
+    
+    %% Cross-thread connections
+    A3 -.->|"� IMMEDIATE<br/>run_coroutine_threadsafe"| C3
+    A4 -.->|"� QUEUED<br/>run_coroutine_threadsafe"| C4
+    C4 -.->|"📤 queue.put()"| B2
+    C3 --> C6
+    C3 -.->|"❌ playback_task.cancel()"| C5
+    B3 -.->|"🎵 New Task Reference"| C5
+    
+    %% Styling for clarity
+    classDef speechThread fill:#9B59B6,stroke:#6B3E99,stroke-width:3px,color:#FFFFFF
+    classDef routeThread fill:#FF6B35,stroke:#E55100,stroke-width:3px,color:#FFFFFF  
+    classDef mainThread fill:#4A90E2,stroke:#2E5C8A,stroke-width:3px,color:#FFFFFF
+    classDef communication fill:#27AE60,stroke:#1E8449,stroke-width:2px,color:#FFFFFF
+    classDef immediate fill:#E74C3C,stroke:#C0392B,stroke-width:2px,color:#FFFFFF
+    
+    class A1,A2,A3,A4,A5 speechThread
+    class B1,B2,B3 routeThread
+    class C1,C2,C3,C4,C5,C6 mainThread
+    class D1,D2,D3 communication
+    class D4 immediate
 ```
+
+---
+
+## 🔄➡️🧵 Architecture Evolution: From Parallel Overview to Thread Focus
+
+The **Parallel Thread Architecture** diagram above provides a comprehensive view of all physical threads and their interconnections. This bird's-eye view shows how three distinct threads collaborate through non-blocking communication patterns.
+
+### 🎯 Why Two Architectural Views?
+
+1. **🔄 Parallel Thread Architecture (Above)**: 
+   - **Purpose**: Complete system overview showing all thread interactions
+   - **Focus**: Physical thread boundaries and cross-thread communication mechanisms
+   - **Audience**: System architects and developers debugging complex threading issues
+
+2. **🧵 Thread Architecture (Below)**:
+   - **Purpose**: Simplified view emphasizing thread responsibilities and performance characteristics
+   - **Focus**: Core design principles and operational flow
+   - **Audience**: Developers implementing features or optimizing performance
+
+### 🌉 Bridging the Views
+
+Both diagrams represent the **same underlying system** but with different levels of detail:
+
+- **Detailed Physical View** → Shows exact callback mechanisms (`on_partial`, `on_final`) and precise communication paths
+- **Simplified Logical View** → Emphasizes thread roles, blocking behavior, and performance requirements
+
+The transition from detailed to simplified helps you understand:
+- 🔧 **How** the system works (detailed view)
+- 🎯 **Why** it's designed this way (simplified view)
+
+---
+
+## 🧵 Thread Architecture & Non-Blocking Communication
+
+### 🏗️ Three-Thread Architecture Design
+
+The ACS Media Handler employs a **three-thread architecture** designed for **maximum responsiveness** and **clean separation of concerns**. Each thread has a specific role in ensuring uninterrupted voice interactions:
+
+```mermaid
+graph TB
+    subgraph ThreadDesign["🖥️ Three-Thread Architecture"]
+        subgraph SpeechSDK["🎤 Speech SDK Thread<br/><small>❌ Never Blocks</small>"]
+            direction TB
+            S1["🔄 Continuous Audio Recognition"]
+            S2["⚡ on_partial → Immediate Barge-in"]
+            S3["✅ on_final → Queue Speech Result"]
+            
+            S1 --> S2
+            S1 --> S3
+        end
+        
+        subgraph RouteLoop["🔄 Route Turn Thread<br/><small>✅ Blocks on Queue Only</small>"]
+            direction TB
+            R1["📥 await queue.get()"]
+            R2["🤖 AI Processing (LLM + TTS)"]
+            R3["🎵 Create Playback Task (TTS through ACS)"]
+            
+            R1 --> R2 --> R3
+        end
+        
+        subgraph MainEvent["🌐 Main Event Loop<br/><small>❌ Never Blocks</small>"]
+            direction TB
+            M1["📡 WebSocket Media Handler"]
+            M2["🚫 Barge-in Response"]
+            M3["🛑 Task Cancellation"]
+            
+            M1 --> M2 --> M3
+        end
+    end
+    
+    %% Critical Communication Paths
+    S2 -.->|"⚡ < 10ms<br/>run_coroutine_threadsafe"| M2
+    S3 -.->|"📋 < 5ms<br/>queue.put()"| R1
+    R3 -.->|"🎵 Task Reference"| M1
+    M2 -.->|"❌ cancel()"| R2
+    
+    %% Performance indicators
+    S2 -.->|"🛑 Stop Audio"| M3
+    
+    classDef speechStyle fill:#9B59B6,stroke:#6B3E99,stroke-width:3px,color:#FFFFFF
+    classDef routeStyle fill:#FF6B35,stroke:#E55100,stroke-width:3px,color:#FFFFFF
+    classDef mainStyle fill:#4A90E2,stroke:#2E5C8A,stroke-width:3px,color:#FFFFFF
+    
+    class S1,S2,S3 speechStyle
+    class R1,R2,R3 routeStyle
+    class M1,M2,M3 mainStyle
+```
+
+### 🎯 Design Principles
+
+#### 🎤 **Speech Recognition Isolation**
+- **Never blocks** on AI processing or network operations
+- **Immediate response** to user voice input (< 10ms)
+- **Continuous operation** regardless of system load
+
+#### 🔄 **Dedicated AI Processing**
+- **Isolated compute thread** for LLM and TTS generation
+- **Safe cancellation** without affecting speech recognition
+- **Controlled blocking** only on queue operations
+
+#### 🌐 **WebSocket Responsiveness**
+- **Always available** for real-time commands
+- **Instant task management** for barge-in scenarios
+- **Non-blocking operations** for media streaming
+
+### 🎯 Thread Responsibility & Performance Matrix
+
+| Thread | Primary Role | Blocking? | Barge-in Role | Response Time |
+|--------|--------------|-----------|---------------|---------------|
+| **🎤 Speech SDK** | Real-time audio recognition | ❌ Never | ✅ Detection | ⚡ < 10ms |
+| **🔄 Route Turn** | AI processing & response | ✅ Queue only | ❌ None | 🎯 < 5s |
+| **🌐 Main Event** | WebSocket & cancellation | ❌ Never | ✅ Execution | ⚡ < 50ms |
+
+### 🚀 Key Non-Blocking Benefits
+
+- **🎤 Speech Recognition Isolation**: Never blocked by AI processing, enables immediate barge-in detection
+- **🔄 AI Processing Isolation**: Dedicated thread prevents blocking speech recognition or WebSocket handling  
+- **🌐 WebSocket Responsiveness**: Always available for real-time commands and task cancellation
+- **⚡ Cross-Thread Communication**: `run_coroutine_threadsafe()` and `asyncio.Queue` enable safe async bridging
 
 ## 🔄 Asynchronous Task Architecture
 
@@ -124,60 +314,212 @@ The `route_turn_queue` ensures:
 - **Clean State Management**: Clear separation between speech input and AI processing
 
 This architecture provides **sub-50ms barge-in response time** while maintaining clean async task lifecycle management.
+
+---
+
+## 🔄➡️⚙️ From Threading Model to Task Implementation
+
+The **Thread Architecture** above establishes the **foundational design principles**, while the **Asynchronous Task Architecture** below dives into the **concrete implementation details**.
+
+### 🌉 Implementation Bridge
+
+**Threading Model** focuses on:
+- 🏗️ **Structural design** → Which threads handle what responsibilities
+- ⚡ **Performance requirements** → Response time guarantees for each thread
+- 🔗 **Communication patterns** → How threads safely exchange data
+
+**Task Implementation** focuses on:
+- 🔧 **Code organization** → How async tasks are structured and managed
+- 🔄 **Lifecycle management** → Task creation, cancellation, and cleanup
+- 📋 **Queue mechanics** → How speech results flow through the system
+
+This transition helps you understand:
+- 🎯 **What** each thread should accomplish (threading model)
+- 🛠️ **How** to implement those goals in Python asyncio (task implementation)
+
+---
+## 🔄 Non-Blocking Thread Communication Sequence
+
 ```mermaid
 sequenceDiagram
-    participant User as 👤 User
-    participant SR as 🎤 Speech Recognizer
-    participant Handler as 🎛️ ACS Media Handler
-    participant BG as 🔄 Background Playback Task
+    participant SpeechSDK as 🧵 Speech SDK Thread
+    participant MainLoop as 🧵 Main Event Loop
+    participant RouteLoop as 🧵 Route Turn Thread  
     participant ACS as 🔊 Azure Communication Services
+    participant User as 👤 User
 
-    Note over User,ACS: ⚡ Real-Time Barge-In Sequence
-    
-    rect rgba(255, 59, 48, 0.1)
-    Note over User,ACS: 🎵 AI is currently playing audio response
-    BG->>ACS: 🔊 Streaming TTS Audio
-    end
+    Note over SpeechSDK,User: 🎵 AI Currently Playing Audio
+    MainLoop->>ACS: 🔊 Streaming TTS Audio Response
+    ACS->>User: 🎵 Audio Playback Active
     
     rect rgba(255, 149, 0, 0.15)
-    Note over User,Handler: 🚨 USER INTERRUPTS WITH SPEECH
-    User->>+SR: 🗣️ Speaks (Partial Audio Detected)
-    SR->>Handler: ⚡ on_partial(text, lang) callback
+    Note over SpeechSDK,User: 🚨 USER SPEAKS (BARGE-IN EVENT)
+    User->>SpeechSDK: 🗣️ Audio Input (Partial Recognition)
+    
+    Note right of SpeechSDK: ⚡ IMMEDIATE ACTION<br/>🚫 NO BLOCKING
+    SpeechSDK->>SpeechSDK: 🔍 on_partial() callback triggered
     end
     
     rect rgba(255, 59, 48, 0.2)
-    Note over Handler: 🛑 IMMEDIATE BARGE-IN ACTIONS
-    Handler->>BG: ❌ playback_task.cancel()
-    Handler->>Handler: 🔄 asyncio.create_task(handle_barge_in)
-    Handler->>ACS: 🛑 Send {"Kind": "StopAudio"} command
+    Note over SpeechSDK,MainLoop: 🔗 CROSS-THREAD COMMUNICATION
+    SpeechSDK-->>MainLoop: 🚀 run_coroutine_threadsafe(_handle_barge_in_async)
+    Note right of SpeechSDK: ✅ Speech thread continues<br/>� NOT BLOCKED
+    
+    Note over MainLoop: 🛑 BARGE-IN HANDLER EXECUTES
+    MainLoop->>MainLoop: ❌ playback_task.cancel()
+    MainLoop->>MainLoop: 🧹 Clear route_turn_queue
+    MainLoop->>ACS: 🛑 Send StopAudio command
     end
     
     rect rgba(52, 199, 89, 0.15)
-    BG-->>Handler: ✅ Task Cancelled Successfully
-    ACS-->>User: 🔇 Audio Playback Stopped
-    Note right of BG: Previous AI response interrupted cleanly
+    ACS-->>User: 🔇 Audio Playback STOPPED
+    Note right of MainLoop: ✅ Previous AI response<br/>cancelled cleanly
     end
     
     rect rgba(0, 122, 255, 0.1)
-    Note over User,Handler: 📝 User continues speaking...
-    User->>SR: 🗣️ Continues Speaking (Final Recognition)
-    SR->>Handler: 📋 on_final(text, lang) callback
-    Handler->>Handler: 📋 route_turn_queue.put_nowait()
+    Note over SpeechSDK,RouteLoop: 📝 USER CONTINUES SPEAKING
+    User->>SpeechSDK: 🗣️ Continues Speaking
+    SpeechSDK->>SpeechSDK: � on_final() callback triggered
+    
+    Note over SpeechSDK,MainLoop: 🔗 FINAL RESULT COMMUNICATION
+    SpeechSDK-->>MainLoop: � run_coroutine_threadsafe(_handle_final_async)
+    MainLoop->>MainLoop: � route_turn_queue.put(final_text)
+    Note right of SpeechSDK: ✅ Speech thread continues<br/>🚫 NOT BLOCKED
     end
     
-    rect rgba(52, 199, 89, 0.1)
-    Note over Handler,ACS: 🤖 New AI Response Generation
-    Handler->>ACS: 🔊 Send New Audio Response
-    ACS->>User: 🎵 Play New Response
+    rect rgba(102, 51, 153, 0.1)
+    Note over RouteLoop,ACS: 🤖 NEW AI PROCESSING
+    RouteLoop->>RouteLoop: 📥 queue.get() receives final_text
+    Note right of RouteLoop: ⏳ ONLY thread that blocks<br/>🎯 Dedicated AI processing
+    
+    RouteLoop->>MainLoop: 🎵 Create new playback_task
+    MainLoop->>ACS: 🔊 Send New TTS Response
+    ACS->>User: 🎵 Play New AI Response
     end
     
-    deactivate SR
+    Note over SpeechSDK,User: ✅ COMPLETE NON-BLOCKING CYCLE
 ```
 
-## 🔄 State Management and Background Task Lifecycle
+### 🚀 Critical Non-Blocking Characteristics
+
+| Event | Thread Source | Target Thread | Blocking? | Communication Method | Response Time |
+|-------|---------------|---------------|-----------|---------------------|---------------|
+| **🚨 Barge-in Detection** | Speech SDK | Main Event Loop | ❌ NO | `run_coroutine_threadsafe` | < 10ms |
+| **📋 Final Speech** | Speech SDK | Route Turn Thread | ❌ NO | `asyncio.Queue.put()` | < 5ms |
+| **🎵 AI Processing** | Route Turn | Main Event Loop | ❌ NO | `asyncio.create_task` | < 1ms |
+| **🛑 Task Cancellation** | Main Event Loop | Playback Task | ❌ NO | `task.cancel()` | < 1ms |
+
+> **🎯 Key Insight**: Only the **Route Turn Thread** blocks (on `queue.get()`), ensuring Speech SDK and Main Event Loop remain responsive for real-time barge-in detection.
+
+---
+
+## 🔧 Key Implementation Details
+
+### � Barge-In Detection
+
+```mermaid
+graph TB
+    subgraph Isolation["� Thread Isolation Design"]
+        subgraph Speech["🧵 Speech SDK Thread (Isolated)"]
+            direction TB
+            S1["🎯 Real-time Audio Processing"]
+            S2["�🔄 Continuous Recognition Loop"]
+            S3["⚡ Callback Triggers<br/><small>on_partial, on_final</small>"]
+            S4["🚀 Cross-thread Scheduling<br/><small>run_coroutine_threadsafe</small>"]
+            
+            S1 --> S2 --> S3 --> S4
+        end
+        
+        subgraph Route["🧵 Route Turn Thread (Isolated)"]
+            direction TB
+            R1["📥 Blocking Queue Operations<br/><small>await queue.get()</small>"]
+            R2["🎯 AI Agent Processing<br/><small>LLM + TTS Generation</small>"]
+            R3["🎵 Playback Task Creation<br/><small>asyncio.create_task</small>"]
+            
+            R1 --> R2 --> R3
+        end
+        
+        subgraph Main["🧵 Main Event Loop (Isolated)"]
+            direction TB
+            M1["🌐 FastAPI WebSocket Server"]
+            M2["📡 Real-time Message Handling"]
+            M3["⚡ Barge-in Response<br/><small>Task cancellation</small>"]
+            M4["🛑 ACS Stop Commands"]
+            
+            M1 --> M2 --> M3 --> M4
+        end
+    end
+    
+    subgraph Concurrent["🔄 Concurrent Operations (All Simultaneous)"]
+        direction LR
+        C1["🎤 Audio Recognition<br/><small>Never stops</small>"]
+        C2["🧠 AI Processing<br/><small>Can be cancelled</small>"]  
+        C3["📡 WebSocket Handling<br/><small>Always responsive</small>"]
+        C4["🔄 Queue Management<br/><small>Thread-safe</small>"]
+        
+        C1 -.-> C2
+        C1 -.-> C3
+        C2 -.-> C3
+        C2 -.-> C4
+        C3 -.-> C4
+    end
+    
+    %% Cross-thread communication (non-blocking)
+    S4 -.->|"🚀 Non-blocking"| M3
+    S4 -.->|"📋 Queue Put"| R1
+    R3 -.->|"🎵 Task Reference"| M2
+    M3 -.->|"❌ Task Cancel"| R2
+    
+    %% Performance indicators
+    S1 -.->|"< 10ms"| M3
+    M3 -.->|"< 1ms"| R2
+    R1 -.->|"< 50ms"| M2
+    
+    classDef speechStyle fill:#9B59B6,stroke:#6B3E99,stroke-width:3px,color:#FFFFFF
+    classDef routeStyle fill:#FF6B35,stroke:#E55100,stroke-width:3px,color:#FFFFFF
+    classDef mainStyle fill:#4A90E2,stroke:#2E5C8A,stroke-width:3px,color:#FFFFFF
+    classDef concurrentStyle fill:#27AE60,stroke:#1E8449,stroke-width:2px,color:#FFFFFF
+    
+    class S1,S2,S3,S4 speechStyle
+    class R1,R2,R3 routeStyle
+    class M1,M2,M3,M4 mainStyle
+    class C1,C2,C3,C4 concurrentStyle
+```
+
+### 🎯 Thread Responsibility Matrix
+
+| Thread | Primary Responsibility | Can Block? | Handles Barge-in? | Performance Critical? |
+|--------|------------------------|------------|-------------------|----------------------|
+| **🎤 Speech SDK** | Real-time audio recognition | ❌ Never | ✅ Detection only | ⚡ Ultra-high (< 10ms) |
+| **🔄 Route Turn** | AI processing & response generation | ✅ On queue.get() | ❌ No | 🎯 Medium (< 5s) |
+| **🌐 Main Event** | WebSocket & task management | ❌ Never | ✅ Action execution | ⚡ High (< 50ms) |
+
+### 🚀 Non-Blocking Benefits
+
+1. **🎤 Speech Recognition Isolation**
+   - Runs independently of AI processing
+   - Never blocked by slow LLM responses
+   - Immediate barge-in detection capability
+
+2. **🔄 AI Processing Isolation** 
+   - Dedicated thread for compute-heavy operations
+   - Can be safely cancelled without affecting speech
+   - Queue-based serialization prevents race conditions
+
+3. **🌐 WebSocket Responsiveness**
+   - Always available for real-time commands
+   - Immediate task cancellation capability
+   - No blocking on network or AI operations
+
+4. **⚡ Cross-Thread Communication**
+   - `run_coroutine_threadsafe()` enables safe async bridging
+   - `asyncio.Queue` provides thread-safe message passing
+   - Task cancellation works across thread boundaries
 
 
 ## 🔧 Key Implementation Details
+
+This section provides **concrete implementation specifics** for developers working with the ACS Media Handler threading architecture.
 
 ### 🚨 Barge-In Detection
 - **Trigger**: `on_partial` callback from Speech Recognizer detects user speech

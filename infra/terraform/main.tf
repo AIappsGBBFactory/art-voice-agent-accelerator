@@ -86,7 +86,7 @@ locals {
     openai             = "oai-${local.resource_token}"
     cosmos             = "cosmos-${local.resource_token}"
     storage            = "st${local.resource_token}"
-    redis              = "redis-${local.resource_token}"
+    redis              = "redis${local.resource_token}"
     acs                = "acs-${var.name}-${var.environment_name}-${local.resource_token}"
     container_registry = "cr${var.name}${local.resource_token}"
     log_analytics      = "log-${local.resource_token}"

@@ -7,6 +7,7 @@ starlette>=0.27.0
 redis>=5.0.0
 aiohttp>=3.9.0
 python-multipart>=0.0.6
+pyjwt
 
 # Azure services - Linux App Service compatible versions
 azure-cosmos>=4.5.0
@@ -58,3 +59,4 @@ langdetect>=1.0.9
 
 # Database drivers
 pymongo>=4.6.0
+
