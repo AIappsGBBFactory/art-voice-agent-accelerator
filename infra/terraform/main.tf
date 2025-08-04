@@ -76,20 +76,21 @@ locals {
     "deployment"   = "terraform"
   }
 
-  # Resource naming with abbreviations
+  # Resource naming with Azure standard abbreviations
+  # Following Azure Cloud Adoption Framework: https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-abbreviations
   resource_names = {
     resource_group     = "rg-${var.name}-${var.environment_name}"
-    app_service_plan   = "${var.name}sp${local.resource_token}"
-    key_vault          = "kv${local.resource_token}"
-    speech             = "speech-${var.environment_name}-${local.resource_token}"
-    openai             = "openai${local.resource_token}"
-    cosmos             = "cosmos${local.resource_token}"
+    app_service_plan   = "asp-${var.name}-${var.environment_name}-${local.resource_token}"
+    key_vault          = "kv-${local.resource_token}"
+    speech             = "spch-${var.environment_name}-${local.resource_token}"
+    openai             = "oai-${local.resource_token}"
+    cosmos             = "cosmos-${local.resource_token}"
     storage            = "st${local.resource_token}"
-    redis              = "redis${local.resource_token}"
+    redis              = "redis-${local.resource_token}"
     acs                = "acs-${var.name}-${var.environment_name}-${local.resource_token}"
-    container_registry = "${var.name}cr${local.resource_token}"
-    log_analytics      = "log${local.resource_token}"
-    app_insights       = "ai${local.resource_token}"
-    container_env      = "${var.name}cae${local.resource_token}"
+    container_registry = "cr${var.name}${local.resource_token}"
+    log_analytics      = "log-${local.resource_token}"
+    app_insights       = "ai-${local.resource_token}"
+    container_env      = "cae-${var.name}-${var.environment_name}-${local.resource_token}"
   }
 }
