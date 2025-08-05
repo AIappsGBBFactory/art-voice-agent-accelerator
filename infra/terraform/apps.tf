@@ -108,7 +108,7 @@ resource "azurerm_linux_web_app" "backend" {
       "BASE_URL" = var.backend_api_public_url != null ? var.backend_api_public_url : "https://<REPLACE_ME>"
       # Azure Communication Services Configuration
       "ACS_AUDIENCE"          = azapi_resource.acs.output.properties.immutableResourceId
-      "ACS_CONNECTION_STRING" = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=AcsConnectionString)"
+      "ACS_CONNECTION_STRING" = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=acs-connection-string)"
       "ACS_ENDPOINT"          = "https://${azapi_resource.acs.output.properties.hostName}"
       "ACS_STREAMING_MODE"    = "media"
       "ACS_SOURCE_PHONE_NUMBER" = (

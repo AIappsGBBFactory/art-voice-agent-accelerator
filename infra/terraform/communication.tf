@@ -42,7 +42,11 @@ resource "azurerm_key_vault_secret" "acs_connection_string" {
   key_vault_id    = azurerm_key_vault.main.id
   expiration_date = timeadd(timestamp(), "8760h") # 1 year from now
 
-  depends_on = [azapi_resource_action.acs_list_keys]
+  depends_on = [
+    azapi_resource_action.acs_list_keys,
+    azurerm_role_assignment.keyvault_backend_secrets,
+    azurerm_role_assignment.keyvault_admin
+  ]
 }
 
 # Grant the Communication Service's managed identity access to Speech Services
