@@ -13,9 +13,10 @@ from typing import Any, Dict, List, Optional
 from src.agenticmemory.playback_queue import MessageQueue
 from src.agenticmemory.types import ChatHistory, CoreMemory
 from src.agenticmemory.utils import LatencyTracker
-from src.redis.manager import AzureRedisManager
-#TODO Fix this area
+
+# TODO Fix this area
 from src.prompts.prompt_manager import PromptManager
+from src.redis.manager import AzureRedisManager
 from utils.ml_logging import get_logger
 
 logger = get_logger("src.stateful.state_managment")

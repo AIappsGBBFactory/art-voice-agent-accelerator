@@ -5,12 +5,12 @@ This module provides helper functions and utilities for integrating with Azure C
 
 """
 
-
 import asyncio
+import hashlib
 import json
 from base64 import b64encode
 from typing import List, Optional
-import hashlib
+
 
 class MediaCancelledException(Exception):
     """Exception raised when media playback is cancelled due to interrupt."""
@@ -22,6 +22,8 @@ from azure.communication.callautomation import SsmlSource, TextSource
 from azure.core.exceptions import HttpResponseError
 from fastapi import WebSocket
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
+from websockets.exceptions import ConnectionClosedError
+
 from apps.rtagent.backend.settings import (
     ACS_CALLBACK_PATH,
     ACS_CONNECTION_STRING,
@@ -32,8 +34,6 @@ from apps.rtagent.backend.settings import (
     BASE_URL,
     VOICE_TTS,
 )
-from websockets.exceptions import ConnectionClosedError
-
 from src.acs.acs_helper import AcsCaller
 from utils.ml_logging import get_logger
 
@@ -121,7 +121,7 @@ async def broadcast_message(
 ):
     """
     Send a message to all connected WebSocket clients without duplicates.
-    
+
     Uses message deduplication based on message content and sender to prevent
     the same message from being sent multiple times to the same clients.
 
@@ -132,38 +132,41 @@ async def broadcast_message(
     """
     if not connected_clients or not message.strip():
         return
-        
+
     # Create a message hash for deduplication
     message_hash = hashlib.md5(f"{sender}:{message.strip()}".encode()).hexdigest()
-    
+
     # Store recent message hashes to prevent duplicates (using a simple in-memory cache)
-    if not hasattr(broadcast_message, '_recent_messages'):
+    if not hasattr(broadcast_message, "_recent_messages"):
         broadcast_message._recent_messages = {}
-    
+
     # Clean old entries (keep only last 100 messages)
     if len(broadcast_message._recent_messages) > 100:
         # Remove oldest 50 entries
         old_keys = list(broadcast_message._recent_messages.keys())[:50]
         for key in old_keys:
             del broadcast_message._recent_messages[key]
-    
+
     # Check if this exact message was recently broadcasted
     import time
+
     current_time = time.time()
     if message_hash in broadcast_message._recent_messages:
         last_sent = broadcast_message._recent_messages[message_hash]
         # If the same message was sent within the last 2 seconds, skip it
         if current_time - last_sent < 2.0:
-            logger.debug(f"Skipping duplicate broadcast message: {sender}: {message[:50]}...")
+            logger.debug(
+                f"Skipping duplicate broadcast message: {sender}: {message[:50]}..."
+            )
             return
-    
+
     # Mark this message as sent
     broadcast_message._recent_messages[message_hash] = current_time
-    
+
     payload = {"message": message.strip(), "sender": sender}
     sent_count = 0
     failed_count = 0
-    
+
     for client in connected_clients:
         try:
             if client.client_state == WebSocketState.CONNECTED:
@@ -174,8 +177,10 @@ async def broadcast_message(
         except Exception as e:
             failed_count += 1
             logger.error(f"Failed to send broadcast message to client: {e}")
-    
-    logger.debug(f"Broadcasted message to {sent_count} clients (failed: {failed_count}): {sender}: {message[:50]}...")
+
+    logger.debug(
+        f"Broadcasted message to {sent_count} clients (failed: {failed_count}): {sender}: {message[:50]}..."
+    )
 
 
 # async def send_pcm_frames(ws: WebSocket, pcm_bytes: list, sample_rate: int):

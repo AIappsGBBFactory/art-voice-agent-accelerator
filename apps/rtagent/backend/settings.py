@@ -80,7 +80,7 @@ FORMAT: int = 16  # PCM16 format for audio
 # Chunk size for audio processing
 CHUNK: int = 1024  # Size of audio chunks to process
 # ------------------------------------------------------------------------------
-GREETING: str = '''Hi there from XYZ Insurance! What can I help you with today?'''
+GREETING: str = """Hi there from XYZ Insurance! What can I help you with today?"""
 VAD_SEMANTIC_SEGMENTATION: bool = False  # Use semantic segmentation for VAD
 SILENCE_DURATION_MS: int = 1300  # Duration of silence to end speech detection
 RECOGNIZED_LANGUAGE: List[str] = [
@@ -164,7 +164,7 @@ VOICE_TTS = "en-US-Ava:DragonHDLatestNeural"
 # ------------------------------------------------------------------------------
 STOP_WORDS: List[str] = ["goodbye", "exit", "see you later", "bye"]
 # Character(s) that mark a chunk boundary for TTS streaming:
-TTS_END: set[str] = {";", '.', '?', '!'}
+TTS_END: set[str] = {";", ".", "?", "!"}
 
 # Allowed CORS origins for the FastAPI app:
 ALLOWED_ORIGINS: list[str] = ["*"]

@@ -1,8 +1,7 @@
 import datetime
 
-from src.stateful.state_managment import MemoManager
-
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
 logger = get_logger("postcall_analytics")

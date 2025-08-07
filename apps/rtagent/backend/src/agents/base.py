@@ -11,10 +11,10 @@ from typing import Any, Dict, Optional
 
 import yaml
 from fastapi import WebSocket
+
 from apps.rtagent.backend.src.agents.prompt_store.prompt_manager import PromptManager
 from apps.rtagent.backend.src.agents.tool_store import tool_registry as tool_store
 from apps.rtagent.backend.src.orchestration.gpt_flow import process_gpt_response
-
 from utils.ml_logging import get_logger
 
 logger = get_logger("rt_agent")
@@ -76,14 +76,11 @@ class RTAgent:
         ws: WebSocket,
         *,
         is_acs: bool = False,
-        **prompt_kwargs
+        **prompt_kwargs,
     ) -> Any:
-        
+
         # For context-rich prompting
-        system_prompt = self.pm.get_prompt(
-            self.prompt_path,
-            **prompt_kwargs
-        )
+        system_prompt = self.pm.get_prompt(self.prompt_path, **prompt_kwargs)
         cm.ensure_system_prompt(
             self.name,
             system_prompt=system_prompt,

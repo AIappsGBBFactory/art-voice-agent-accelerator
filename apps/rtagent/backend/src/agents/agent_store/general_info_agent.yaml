@@ -25,3 +25,4 @@ tools:
   - handoff_claim_agent      # route to Claims-Intake AI agent
   - escalate_human           # non-emergency live-agent transfer
   - escalate_emergency       # still watch for life-threatening events
+  - find_information_for_policy

@@ -4,17 +4,17 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from src.stateful.state_managment import MemoManager
-from settings import AZURE_CLIENT_ID, AZURE_OPENAI_ENDPOINT, AZURE_TENANT_ID, ACS_ENDPOINT
-
-from utils.ml_logging import get_logger
 from settings import (
-    AZURE_CLIENT_ID,
-    AZURE_TENANT_ID,
-    AZURE_OPENAI_ENDPOINT,
-    ACS_SOURCE_PHONE_NUMBER,
     ACS_CONNECTION_STRING,
+    ACS_ENDPOINT,
+    ACS_SOURCE_PHONE_NUMBER,
+    AZURE_CLIENT_ID,
+    AZURE_OPENAI_ENDPOINT,
+    AZURE_TENANT_ID,
 )
+
+from src.stateful.state_managment import MemoManager
+from utils.ml_logging import get_logger
 
 logger = get_logger("health")
 
@@ -261,6 +261,8 @@ async def _check_acs_caller_fast(acs_caller) -> Dict:
         "check_time_ms": round((time.time() - start) * 1000, 2),
         "details": f"ACS caller configured with phone: {obfuscated_phone}",
     }
+
+
 async def _check_rt_agents_fast(auth_agent, claim_intake_agent) -> Dict:
     start = time.time()
     if not auth_agent or not claim_intake_agent:

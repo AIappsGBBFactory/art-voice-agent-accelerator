@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Caller‑authentication helper for XYMZ Insurance’s RTAgent.
 
@@ -99,7 +100,9 @@ class AuthenticateResult(TypedDict):
     claim_intent: Optional[Literal["new_claim", "existing_claim", "unknown"]]
 
 
-async def authenticate_caller(args: AuthenticateArgs) -> AuthenticateResult:  # noqa: C901
+async def authenticate_caller(
+    args: AuthenticateArgs,
+) -> AuthenticateResult:  # noqa: C901
     """Validate a caller.
 
     Parameters

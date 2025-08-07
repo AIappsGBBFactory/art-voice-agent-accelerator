@@ -18,16 +18,16 @@ from typing import Optional, Set
 
 from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
+
+from apps.rtagent.backend.settings import ACS_STREAMING_MODE, VOICE_TTS
 from apps.rtagent.backend.src.latency.latency_tool import LatencyTool
-from src.stateful.state_managment import MemoManager
 from apps.rtagent.backend.src.services.acs.acs_helpers import (
     broadcast_message,
     play_response_with_queue,
 )
 from apps.rtagent.backend.src.services.speech_services import SpeechSynthesizer
-from apps.rtagent.backend.settings import ACS_STREAMING_MODE, VOICE_TTS
-
 from src.enums.stream_modes import StreamMode
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
 logger = get_logger("shared_ws")
@@ -46,7 +46,7 @@ async def send_tts_audio(
     if ws.client_state != WebSocketState.CONNECTED:
         logger.error("WebSocket is not connected, cannot send TTS audio")
         return
-    
+
     if not text or not text.strip():
         logger.warning("Empty text provided for TTS synthesis")
         return
@@ -58,17 +58,15 @@ async def send_tts_audio(
     try:
         synth: SpeechSynthesizer = ws.app.state.tts_client
         ws.state.is_synthesizing = True  # type: ignore[attr-defined]
-
+        logger.info(f"Synthesizing text: {ws.state.is_synthesizing}...")
         synth.start_speaking_text(text)
-        
+
         # Synthesize text to PCM bytes for browser playback
         logger.debug(f"Synthesizing text: {text[:100]}...")
         pcm_bytes = synth.synthesize_to_pcm(
-            text=text, 
-            voice=VOICE_TTS, 
-            sample_rate=16000
+            text=text, voice=VOICE_TTS, sample_rate=16000
         )
-        
+
         if latency_tool:
             latency_tool.stop("tts:synthesis", ws.app.state.redis)
 
@@ -76,49 +74,46 @@ async def send_tts_audio(
         frames = SpeechSynthesizer.split_pcm_to_base64_frames(
             pcm_bytes, sample_rate=16000
         )
-        
+
         logger.debug(f"Generated {len(frames)} audio frames for WebSocket transmission")
-        
+
         # Send audio frames to React frontend
         for i, frame in enumerate(frames):
             if ws.client_state != WebSocketState.CONNECTED:
                 logger.warning("WebSocket disconnected during audio transmission")
                 break
-                
+
             try:
                 # Send audio data in format expected by React frontend
-                await ws.send_json({
-                    "type": "audio_data",
-                    "data": frame,
-                    "frame_index": i,
-                    "total_frames": len(frames),
-                    "sample_rate": 16000,
-                    "is_final": i == len(frames) - 1
-                })
+                await ws.send_json(
+                    {
+                        "type": "audio_data",
+                        "data": frame,
+                        "frame_index": i,
+                        "total_frames": len(frames),
+                        "sample_rate": 16000,
+                        "is_final": i == len(frames) - 1,
+                    }
+                )
             except Exception as e:
                 logger.error(f"Failed to send audio frame {i}: {e}")
                 break
-                
+
         logger.debug("TTS audio transmission completed successfully")
-        
+
     except Exception as e:
         logger.error(f"TTS synthesis failed: {e}")
         # Send error message to frontend
         try:
-            await ws.send_json({
-                "type": "tts_error",
-                "error": str(e),
-                "text": text[:100] + "..." if len(text) > 100 else text
-            })
+            await ws.send_json(
+                {
+                    "type": "tts_error",
+                    "error": str(e),
+                    "text": text[:100] + "..." if len(text) > 100 else text,
+                }
+            )
         except Exception as send_error:
             logger.error(f"Failed to send error message to frontend: {send_error}")
-    finally:
-        # Clean up synthesis state
-        if hasattr(ws.state, 'is_synthesizing'):
-            ws.state.is_synthesizing = False  # type: ignore[attr-defined]
-        
-        if latency_tool:
-            latency_tool.stop("tts", ws.app.state.redis)
 
 
 async def send_response_to_acs(
@@ -135,7 +130,6 @@ async def send_response_to_acs(
     Adds latency tracking for TTS step.
     """
 
-
     if latency_tool:
         latency_tool.start("tts")
         latency_tool.start("tts:synthesis")
@@ -150,20 +144,26 @@ async def send_response_to_acs(
 
         try:
             # Add timeout and retry logic for TTS synthesis
-            pcm_bytes = synth.synthesize_to_pcm(text=text, voice=VOICE_TTS, sample_rate=16000)
+            pcm_bytes = synth.synthesize_to_pcm(
+                text=text, voice=VOICE_TTS, sample_rate=16000
+            )
+            frames = SpeechSynthesizer.split_pcm_to_base64_frames(
+                pcm_bytes, sample_rate=16000
+            )
             latency_tool.stop("tts:synthesis", ws.app.state.redis)
 
         except asyncio.TimeoutError:
-            logger.error(f"TTS synthesis timed out for texphat: {text[:50]}...")
+            logger.error(f"TTS synthesis timed out for text: {text[:50]}...")
             raise RuntimeError("TTS synthesis timed out")
         except Exception as e:
             logger.error(f"TTS synthesis failed: {e}")
-        frames = SpeechSynthesizer.split_pcm_to_base64_frames(
-            pcm_bytes, sample_rate=16000
-        )
 
         for frame in frames:
-            if hasattr(ws.state, "lt") and ws.state.lt and not getattr(ws.state, "_greeting_ttfb_stopped", False):
+            if (
+                hasattr(ws.state, "lt")
+                and ws.state.lt
+                and not getattr(ws.state, "_greeting_ttfb_stopped", False)
+            ):
                 ws.state.lt.stop("greeting_ttfb", ws.app.state.redis)
                 ws.state._greeting_ttfb_stopped = True
             await ws.send_json(

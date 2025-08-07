@@ -141,7 +141,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "main:app",  # Use import string to support reload
-        host="0.0.0.0", # nosec: B104
+        host="0.0.0.0",  # nosec: B104
         port=8010,
         reload=True,
     )

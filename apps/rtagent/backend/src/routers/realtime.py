@@ -11,24 +11,25 @@ Relies on:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from apps.rtagent.backend.settings import GREETING
 from apps.rtagent.backend.src.helpers import check_for_stopwords, receive_and_filter
 from apps.rtagent.backend.src.latency.latency_tool import LatencyTool
-from src.stateful.state_managment import MemoManager
 from apps.rtagent.backend.src.orchestration.orchestrator import route_turn
-from src.postcall.push import build_and_flush
-from apps.rtagent.backend.settings import GREETING
 from apps.rtagent.backend.src.shared_ws import broadcast_message, send_tts_audio
-import asyncio
-
+from src.postcall.push import build_and_flush
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
 logger = get_logger("realtime_router")
 
 router = APIRouter()
+
 
 # --------------------------------------------------------------------------- #
 #  /relay  – simple fan-out to connected dashboards
@@ -47,7 +48,10 @@ async def relay_ws(ws: WebSocket):
     except WebSocketDisconnect:
         clients.remove(ws)
     finally:
-        if ws.application_state.name == "CONNECTED" and ws.client_state.name not in ("DISCONNECTED", "CLOSED"):
+        if ws.application_state.name == "CONNECTED" and ws.client_state.name not in (
+            "DISCONNECTED",
+            "CLOSED",
+        ):
             await ws.close()
 
 
@@ -88,7 +92,9 @@ async def realtime_ws(ws: WebSocket):
                 except Exception as e:
                     logger.error(f"Error stopping TTS: {e}", exc_info=True)
             asyncio.create_task(
-                ws.send_text(json.dumps({"type": "assistant_streaming", "content": txt}))
+                ws.send_text(
+                    json.dumps({"type": "assistant_streaming", "content": txt})
+                )
             )
 
         ws.app.state.stt_client.set_partial_result_callback(on_partial)
@@ -108,7 +114,7 @@ async def realtime_ws(ws: WebSocket):
                 if ws.state.user_buffer.strip():
                     prompt = ws.state.user_buffer.strip()
                     ws.state.user_buffer = ""
-                    
+
                     # Send user message to frontend immediately
                     await ws.send_text(
                         json.dumps({"sender": "User", "message": prompt})
@@ -134,7 +140,10 @@ async def realtime_ws(ws: WebSocket):
     finally:
         ws.app.state.tts_client.stop_speaking()
         try:
-            if ws.application_state.name == "CONNECTED" and ws.client_state.name not in ("DISCONNECTED", "CLOSED"):
+            if (
+                ws.application_state.name == "CONNECTED"
+                and ws.client_state.name not in ("DISCONNECTED", "CLOSED")
+            ):
                 await ws.close()
         except Exception as e:
             logger.warning(f"WebSocket close error: {e}", exc_info=True)

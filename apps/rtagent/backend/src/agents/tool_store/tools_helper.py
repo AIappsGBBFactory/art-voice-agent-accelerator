@@ -15,13 +15,12 @@ import uuid
 from typing import Any, Callable, Dict
 
 from fastapi import WebSocket
-from apps.rtagent.backend.src.agents.tool_store.tool_registry import (
-    function_mapping,   
-)
 
+from apps.rtagent.backend.src.agents.tool_store.tool_registry import function_mapping
 from utils.ml_logging import get_logger
 
 log = get_logger("tools_helper")
+
 
 async def call_agent_tool(tool_name: str, args: dict) -> Any:
     fn = function_mapping.get(tool_name)

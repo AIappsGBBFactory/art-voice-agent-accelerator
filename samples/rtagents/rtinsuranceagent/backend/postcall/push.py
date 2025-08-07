@@ -1,8 +1,6 @@
 import datetime
 
-from rtagents.RTInsuranceAgent.backend.src.stateful.state_managment import (
-    MemoManager,
-)
+from rtagents.RTInsuranceAgent.backend.src.stateful.state_managment import MemoManager
 
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
 from utils.ml_logging import get_logger

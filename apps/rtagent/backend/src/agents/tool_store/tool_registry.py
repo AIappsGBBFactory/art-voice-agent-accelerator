@@ -1,21 +1,29 @@
 from typing import Any, Callable, Dict, List
+
 from apps.rtagent.backend.src.agents.tool_store.auth import authenticate_caller
-from apps.rtagent.backend.src.agents.tool_store.fnol import record_fnol
 from apps.rtagent.backend.src.agents.tool_store.emergency import escalate_emergency
-from apps.rtagent.backend.src.agents.tool_store.handoffs import handoff_general_agent, escalate_human, handoff_claim_agent
+from apps.rtagent.backend.src.agents.tool_store.fnol import record_fnol
+from apps.rtagent.backend.src.agents.tool_store.handoffs import (
+    escalate_human,
+    handoff_claim_agent,
+    handoff_general_agent,
+)
+from apps.rtagent.backend.src.agents.tool_store.policies import (
+    find_information_for_policy,
+)
 from utils.ml_logging import get_logger
 
 log = get_logger("tools_helper")
 
 from apps.rtagent.backend.src.agents.tool_store.schemas import (
-    record_fnol_schema,
     authenticate_caller_schema,
     escalate_emergency_schema,
-    handoff_general_schema,
     escalate_human_schema,
+    find_information_schema,
     handoff_claim_schema,
+    handoff_general_schema,
+    record_fnol_schema,
 )
-
 
 function_mapping: Dict[str, Callable[..., Any]] = {
     "record_fnol": record_fnol,
@@ -23,7 +31,8 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "authenticate_caller": authenticate_caller,
     "handoff_general_agent": handoff_general_agent,
     "escalate_human": escalate_human,
-    "handoff_claim_agent": handoff_claim_agent
+    "handoff_claim_agent": handoff_claim_agent,
+    "find_information_for_policy": find_information_for_policy,
 }
 
 
@@ -34,6 +43,7 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": handoff_general_schema},
     {"type": "function", "function": escalate_human_schema},
     {"type": "function", "function": handoff_claim_schema},
+    {"type": "function", "function": find_information_schema},
 ]
 
 TOOL_REGISTRY: dict[str, dict] = {t["function"]["name"]: t for t in available_tools}

@@ -18,12 +18,10 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from helpers import check_for_stopwords, receive_and_filter
 from rtagents.RTInsuranceAgent.backend.latency.latency_tool import LatencyTool
-from rtagents.RTInsuranceAgent.backend.src.stateful.state_managment import (
-    MemoManager,
-)
 from rtagents.RTInsuranceAgent.backend.orchestration.orchestrator import route_turn
 from rtagents.RTInsuranceAgent.backend.postcall.push import build_and_flush
 from rtagents.RTInsuranceAgent.backend.settings import GREETING
+from rtagents.RTInsuranceAgent.backend.src.stateful.state_managment import MemoManager
 from shared_ws import broadcast_message, send_tts_audio
 
 from utils.ml_logging import get_logger

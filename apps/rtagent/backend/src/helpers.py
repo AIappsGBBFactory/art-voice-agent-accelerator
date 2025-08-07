@@ -12,8 +12,8 @@ import json
 from typing import Any, Dict, Optional
 
 from fastapi import WebSocket
-from apps.rtagent.backend.settings import STOP_WORDS
 
+from apps.rtagent.backend.settings import STOP_WORDS
 from utils.ml_logging import get_logger
 
 logger = get_logger("helpers")

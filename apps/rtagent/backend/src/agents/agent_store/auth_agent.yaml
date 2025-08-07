@@ -11,16 +11,14 @@ agent:
 
 model:
   deployment_id: gpt-4o-mini
-  temperature: 0.15
-  top_p: 0.9
-  max_tokens: 1024
+  temperature: 0.15 # Temperature setting for response variability
+  top_p: 0.9 # Top-p setting for response variability
+  max_tokens: 1024 # Maximum number of tokens in response
 
 prompts:
-  path: voice_agent_authentication.jinja
+  path: voice_agent_authentication.jinja # imput prompt
 
 tools:
   - authenticate_caller
-  - handoff_general_agent      # ← route to General-Info bot
-  - handoff_claim_agent        # ← route to Claims-Intake bot
   - escalate_emergency         # ← 911-type escalation
   - escalate_human             # ← non-emergency live-agent transfer

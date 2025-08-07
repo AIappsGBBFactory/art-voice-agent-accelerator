@@ -51,4 +51,3 @@ class PromptManager:
             return template.render(**kwargs)
         except Exception as e:
             raise ValueError(f"Error rendering template '{template_name}': {e}")
-

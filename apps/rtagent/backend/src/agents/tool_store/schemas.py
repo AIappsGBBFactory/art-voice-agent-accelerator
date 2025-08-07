@@ -8,14 +8,13 @@ Tools:
 - authenticate_caller
 - escalate_emergency
 - handoff_general_agent
-- handoff_claim_agent          
+- handoff_claim_agent
 - escalate_human
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
-
 
 record_fnol_schema: Dict[str, Any] = {
     "name": "record_fnol",
@@ -31,57 +30,78 @@ record_fnol_schema: Dict[str, Any] = {
         "properties": {
             "caller_name": {
                 "type": "string",
-                "description": "Full legal name of the caller reporting the loss."
+                "description": "Full legal name of the caller reporting the loss.",
             },
             "driver_name": {
                 "type": "string",
-                "description": "Name of the driver involved in the incident."
+                "description": "Name of the driver involved in the incident.",
             },
             "driver_relationship": {
                 "type": "string",
-                "description": "Relationship of the driver to the policyholder (e.g., self, spouse, child, other)."
+                "description": "Relationship of the driver to the policyholder (e.g., self, spouse, child, other).",
             },
             "vehicle_details": {
                 "type": "object",
                 "description": "Detailed information about the vehicle involved in the incident.",
                 "properties": {
-                    "make":      {"type": "string", "description": "Vehicle manufacturer (e.g., Toyota)."},
-                    "model":     {"type": "string", "description": "Vehicle model (e.g., Camry)."},
-                    "year":      {"type": "string", "description": "Year of manufacture (e.g., 2022)."},
-                    "policy_id": {"type": "string", "description": "Unique policy identifier for the vehicle."},
+                    "make": {
+                        "type": "string",
+                        "description": "Vehicle manufacturer (e.g., Toyota).",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Vehicle model (e.g., Camry).",
+                    },
+                    "year": {
+                        "type": "string",
+                        "description": "Year of manufacture (e.g., 2022).",
+                    },
+                    "policy_id": {
+                        "type": "string",
+                        "description": "Unique policy identifier for the vehicle.",
+                    },
                 },
                 "required": ["make", "model", "year", "policy_id"],
             },
             "number_of_vehicles_involved": {
                 "type": "integer",
-                "description": "Total number of vehicles involved in the incident (including caller's vehicle)."
+                "description": "Total number of vehicles involved in the incident (including caller's vehicle).",
             },
             "incident_description": {
                 "type": "string",
-                "description": "Brief summary of the incident (e.g., collision, theft, vandalism, fire, etc.)."
+                "description": "Brief summary of the incident (e.g., collision, theft, vandalism, fire, etc.).",
             },
             "loss_date": {
                 "type": "string",
-                "description": "Date the loss occurred in YYYY-MM-DD format."
+                "description": "Date the loss occurred in YYYY-MM-DD format.",
             },
             "loss_time": {
                 "type": "string",
-                "description": "Approximate time of loss in HH:MM (24-hour) format, or blank if unknown."
+                "description": "Approximate time of loss in HH:MM (24-hour) format, or blank if unknown.",
             },
             "loss_location": {
                 "type": "object",
                 "description": "Street-level location where the loss occurred.",
                 "properties": {
-                    "street":  {"type": "string", "description": "Street address of the incident."},
-                    "city":    {"type": "string", "description": "City where the incident occurred."},
-                    "state":   {"type": "string", "description": "State abbreviation (e.g., CA, NY)."},
+                    "street": {
+                        "type": "string",
+                        "description": "Street address of the incident.",
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "City where the incident occurred.",
+                    },
+                    "state": {
+                        "type": "string",
+                        "description": "State abbreviation (e.g., CA, NY).",
+                    },
                     "zipcode": {"type": "string", "description": "5-digit ZIP code."},
                 },
                 "required": ["street", "city", "state", "zipcode"],
             },
             "vehicle_drivable": {
                 "type": "boolean",
-                "description": "Indicates whether the vehicle was drivable after the incident."
+                "description": "Indicates whether the vehicle was drivable after the incident.",
             },
             "passenger_information": {
                 "type": ["array", "null"],
@@ -94,8 +114,14 @@ record_fnol_schema: Dict[str, Any] = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "name":         {"type": "string", "description": "Passenger's full name."},
-                        "relationship": {"type": "string", "description": "Relationship to policyholder."},
+                        "name": {
+                            "type": "string",
+                            "description": "Passenger's full name.",
+                        },
+                        "relationship": {
+                            "type": "string",
+                            "description": "Relationship to policyholder.",
+                        },
                     },
                     "required": ["name", "relationship"],
                 },
@@ -104,23 +130,29 @@ record_fnol_schema: Dict[str, Any] = {
                 "type": "object",
                 "description": "Assessment of any injuries sustained in the incident.",
                 "properties": {
-                    "injured": {"type": "boolean", "description": "Was anyone injured in the incident?"},
-                    "details": {"type": "string",  "description": "Details of injury, or 'None' if no injuries."},
+                    "injured": {
+                        "type": "boolean",
+                        "description": "Was anyone injured in the incident?",
+                    },
+                    "details": {
+                        "type": "string",
+                        "description": "Details of injury, or 'None' if no injuries.",
+                    },
                 },
                 "required": ["injured", "details"],
             },
             "trip_purpose": {
                 "type": "string",
                 "enum": ["commuting", "work", "personal", "other"],
-                "description": "Purpose of the trip at the time of the incident."
+                "description": "Purpose of the trip at the time of the incident.",
             },
             "date_reported": {
                 "type": "string",
-                "description": "Date the claim is reported (YYYY-MM-DD). Optional—auto-filled if omitted."
+                "description": "Date the claim is reported (YYYY-MM-DD). Optional—auto-filled if omitted.",
             },
             "location_description": {
                 "type": "string",
-                "description": "Optional free-text notes about the location or context."
+                "description": "Optional free-text notes about the location or context.",
             },
         },
         "required": [
@@ -209,15 +241,15 @@ escalate_emergency_schema: Dict[str, Any] = {
         "properties": {
             "reason": {
                 "type": "string",
-                "description": "Concise reason for escalation (e.g., 'injury', 'fire', 'medical emergency')."
+                "description": "Concise reason for escalation (e.g., 'injury', 'fire', 'medical emergency').",
             },
             "caller_name": {
                 "type": "string",
-                "description": "Full legal name of the caller."
+                "description": "Full legal name of the caller.",
             },
             "policy_id": {
                 "type": "string",
-                "description": "Unique policy identifier for the caller."
+                "description": "Unique policy identifier for the caller.",
             },
         },
         "required": ["reason", "caller_name", "policy_id"],
@@ -236,12 +268,12 @@ handoff_general_schema: Dict[str, Any] = {
         "properties": {
             "caller_name": {
                 "type": "string",
-                "description": "Full legal name of the caller."
+                "description": "Full legal name of the caller.",
             },
             "topic": {
                 "type": "string",
                 "description": "Short keyword describing the caller’s question "
-                               "(e.g., 'coverage', 'billing')."
+                "(e.g., 'coverage', 'billing').",
             },
         },
         "required": ["caller_name", "topic"],
@@ -260,11 +292,11 @@ handoff_claim_schema: Dict[str, Any] = {
         "properties": {
             "caller_name": {
                 "type": "string",
-                "description": "Full legal name of the caller."
+                "description": "Full legal name of the caller.",
             },
             "policy_id": {
                 "type": "string",
-                "description": "Unique policy identifier for the caller."
+                "description": "Unique policy identifier for the caller.",
             },
             "claim_intent": {
                 "type": "string",
@@ -274,6 +306,32 @@ handoff_claim_schema: Dict[str, Any] = {
             },
         },
         "required": ["caller_name", "policy_id", "claim_intent"],
+        "additionalProperties": False,
+    },
+}
+
+find_information_schema: Dict[str, Any] = {
+    "name": "find_information_for_policy",
+    "description": (
+        "Retrieve grounded, caller-specific details from a policy record. "
+        "Use this tool for any question that depends on the caller’s actual "
+        "coverage (deductible amount, roadside assistance, glass coverage, "
+        "rental reimbursement, etc.)."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "policy_id": {
+                "type": "string",
+                "description": "Unique policy identifier (e.g., 'POL-A10001').",
+            },
+            "question": {
+                "type": "string",
+                "description": "Exact caller question to ground (e.g., "
+                "'Do I have roadside assistance?').",
+            },
+        },
+        "required": ["policy_id", "question"],
         "additionalProperties": False,
     },
 }
@@ -290,19 +348,18 @@ escalate_human_schema: Dict[str, Any] = {
         "properties": {
             "route_reason": {
                 "type": "string",
-                "description": "Reason for escalation to a human adjuster (e.g., 'fraud flag', 'validation loop', 'caller request')."
+                "description": "Reason for escalation to a human adjuster (e.g., 'fraud flag', 'validation loop', 'caller request').",
             },
             "caller_name": {
                 "type": "string",
-                "description": "Full legal name of the caller."
+                "description": "Full legal name of the caller.",
             },
             "policy_id": {
                 "type": "string",
-                "description": "Unique policy identifier for the caller."
+                "description": "Unique policy identifier for the caller.",
             },
         },
         "required": ["route_reason", "caller_name", "policy_id"],
         "additionalProperties": False,
     },
 }
-

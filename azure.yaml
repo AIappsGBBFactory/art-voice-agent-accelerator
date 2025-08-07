@@ -26,44 +26,25 @@ services:
   #     platform: linux/amd64
 
 
-
 hooks:
   preprovision:
-    # Cross-platform hook - automatically selects appropriate shell and script
-    posix:
-      shell: sh
-      run: devops/scripts/azd/preprovision.sh terraform
-      interactive: true
-      continueOnError: false
-    windows:
-      shell: pwsh
-      run: devops/scripts/azd/preprovision.ps1 terraform
-      interactive: true
-      continueOnError: false
+    shell: sh
+    run: devops/scripts/azd/preprovision.sh terraform
+    interactive: true
+    continueOnError: false
+
   predeploy:
-    # Deploy the app service using the predeploy hook
-    posix:
-      shell: sh
-      run: devops/scripts/azd/helpers/appsvc-deploy.sh backend
-      interactive: true
-      continueOnError: true
-    windows:
-      shell: pwsh
-      run: devops/scripts/azd/helpers/appsvc-deploy.ps1 backend
-      interactive: false
-      continueOnError: true
+    shell: sh
+    run: devops/scripts/azd/helpers/appsvc-deploy.sh backend
+    interactive: true
+    continueOnError: true
+
   postprovision:
-    # Cross-platform hook for post-provision setup
-    posix:
-      shell: sh
-      run: devops/scripts/azd/postprovision.sh
-      interactive: true
-      continueOnError: false
-    windows:
-      shell: pwsh
-      run: devops/scripts/azd/postprovision.ps1
-      interactive: true
-      continueOnError: false
+    shell: sh
+    run: devops/scripts/azd/postprovision.sh
+    interactive: true
+    continueOnError: false
+ 
 
 # For container app deploy
 # services:

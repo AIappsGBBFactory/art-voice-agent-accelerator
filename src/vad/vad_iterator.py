@@ -1,6 +1,7 @@
 import copy
-import torch
+
 import numpy as np
+import torch
 
 
 class VADIterator:
@@ -106,7 +107,9 @@ class VADIterator:
             self.buffer.append(x)
 
         self.start_pad_buffer.append(x)
-        self.start_pad_buffer = self.start_pad_buffer[-int(self.speech_pad_samples//window_size_samples):]
+        self.start_pad_buffer = self.start_pad_buffer[
+            -int(self.speech_pad_samples // window_size_samples) :
+        ]
 
         return None
 

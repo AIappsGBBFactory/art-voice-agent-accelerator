@@ -45,9 +45,7 @@ def find_project_root() -> Path:
     for candidate in [here] + list(here.parents):
         if (candidate / "environment.yaml").exists():
             return candidate
-    raise RuntimeError(
-        "Could not find project root (environment.yaml not found)"
-    )
+    raise RuntimeError("Could not find project root (environment.yaml not found)")
 
 
 PROJECT_ROOT: Path = find_project_root()

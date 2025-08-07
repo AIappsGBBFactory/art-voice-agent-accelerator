@@ -32,7 +32,8 @@ logger = get_logger("fnol_escalations")
 # ────────────────────────────────────────────────────────────────
 class HandoffGeneralArgs(TypedDict):
     """Input schema for :pyfunc:`handoff_general_agent`."""
-    topic: str        # e.g. "coverage", "billing"
+
+    topic: str  # e.g. "coverage", "billing"
     caller_name: str
 
 
@@ -46,8 +47,9 @@ async def handoff_general_agent(args: HandoffGeneralArgs) -> Dict[str, Any]:
     if not topic or not caller_name:
         return _json(False, "Both 'topic' and 'caller_name' must be provided.")
 
-    logger.info("🤖 Hand-off to General-Info agent – topic=%s caller=%s",
-                topic, caller_name)
+    logger.info(
+        "🤖 Hand-off to General-Info agent – topic=%s caller=%s", topic, caller_name
+    )
     return _json(
         True,
         "Caller transferred to General Insurance Questions agent.",
@@ -62,6 +64,7 @@ async def handoff_general_agent(args: HandoffGeneralArgs) -> Dict[str, Any]:
 # ────────────────────────────────────────────────────────────────
 class HandoffClaimArgs(TypedDict):
     """Input schema for :pyfunc:`handoff_claim_agent`."""
+
     caller_name: str
     policy_id: str
     claim_intent: str  # e.g. "new_claim", "update_claim"
@@ -78,15 +81,20 @@ async def handoff_claim_agent(args: HandoffClaimArgs) -> Dict[str, Any]:
     claim_intent: str   (free-text hint such as "new_claim")
     """
     caller_name = args.get("caller_name", "").strip()
-    policy_id   = args.get("policy_id", "").strip()
-    intent      = args.get("claim_intent", "").strip()
+    policy_id = args.get("policy_id", "").strip()
+    intent = args.get("claim_intent", "").strip()
 
     if not caller_name or not policy_id:
-        return _json(False,
-                     "'caller_name' and 'policy_id' are required for claim hand-off.")
+        return _json(
+            False, "'caller_name' and 'policy_id' are required for claim hand-off."
+        )
 
-    logger.info("📂 Hand-off to Claims agent – %s (%s) intent=%s",
-                caller_name, policy_id, intent or "n/a")
+    logger.info(
+        "📂 Hand-off to Claims agent – %s (%s) intent=%s",
+        caller_name,
+        policy_id,
+        intent or "n/a",
+    )
 
     return _json(
         True,
@@ -103,7 +111,8 @@ async def handoff_claim_agent(args: HandoffClaimArgs) -> Dict[str, Any]:
 # ────────────────────────────────────────────────────────────────
 class EscalateHumanArgs(TypedDict):
     """Input schema for :pyfunc:`escalate_human`."""
-    route_reason: str   # e.g. "validation_loop", "backend_error", "fraud_flags"
+
+    route_reason: str  # e.g. "validation_loop", "backend_error", "fraud_flags"
     caller_name: str
     policy_id: str
 
@@ -114,16 +123,17 @@ async def escalate_human(args: EscalateHumanArgs) -> Dict[str, Any]:
     """
     try:
         route_reason = args["route_reason"].strip()
-        caller_name  = args["caller_name"].strip()
-        policy_id    = args["policy_id"].strip()
-    except KeyError as exc:   # pragma: no cover – schema validation should catch
+        caller_name = args["caller_name"].strip()
+        policy_id = args["policy_id"].strip()
+    except KeyError as exc:  # pragma: no cover – schema validation should catch
         return _json(False, f"Missing required field: {exc.args[0]}.")
 
     if not route_reason:
         return _json(False, "'route_reason' must be provided.")
 
-    logger.info("🤝 Human hand-off – %s (%s) reason=%s",
-                caller_name, policy_id, route_reason)
+    logger.info(
+        "🤝 Human hand-off – %s (%s) reason=%s", caller_name, policy_id, route_reason
+    )
     return _json(
         True,
         "Caller transferred to human insurance agent.",

@@ -15,11 +15,11 @@ import openai
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 from openai import AzureOpenAI
+from opentelemetry import trace
 
+from src.enums.monitoring import SpanAttr
 from utils.ml_logging import get_logger
 from utils.trace_context import TraceContext
-from src.enums.monitoring import SpanAttr
-from opentelemetry import trace
 
 # Load environment variables from .env file
 load_dotenv()
@@ -36,39 +36,46 @@ logger = get_logger()
 # Get tracer instance
 tracer = trace.get_tracer(__name__)
 
+
 class NoOpTraceContext:
     """
     No-operation context manager that provides the same interface as TraceContext
     but performs no actual tracing operations.
     """
+
     def __init__(self, *args, **kwargs):
         pass
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
-    
+
     def set_attribute(self, key, value):
         pass
 
 
 def _is_aoai_tracing_enabled() -> bool:
     """Check if Azure OpenAI tracing is enabled."""
-    return os.getenv("AOAI_TRACING", os.getenv("ENABLE_TRACING", "false")).lower() == "true"
+    return (
+        os.getenv("AOAI_TRACING", os.getenv("ENABLE_TRACING", "false")).lower()
+        == "true"
+    )
 
 
-def _create_aoai_trace_context(name: str, call_connection_id: str = None, session_id: str = None, **kwargs):
+def _create_aoai_trace_context(
+    name: str, call_connection_id: str = None, session_id: str = None, **kwargs
+):
     """
     Create a TraceContext or NoOpTraceContext based on environment configuration.
-    
+
     Args:
         name: The name of the span
         call_connection_id: Optional call connection ID for correlation
         session_id: Optional session ID for correlation
         **kwargs: Additional parameters for TraceContext
-    
+
     Returns:
         TraceContext or NoOpTraceContext instance
     """
@@ -78,7 +85,7 @@ def _create_aoai_trace_context(name: str, call_connection_id: str = None, sessio
             component="src.aoai.manager",
             call_connection_id=call_connection_id,
             session_id=session_id,
-            **kwargs
+            **kwargs,
         )
     else:
         return NoOpTraceContext()
@@ -117,7 +124,7 @@ class AzureOpenAIManager:
         :param embedding_model_name: The Embedding Model Deployment ID. If not provided, it will be fetched from the environment variable "AZURE_AOAI_EMBEDDING_DEPLOYMENT_ID".
         :param dalle_model_name: The DALL-E Model Deployment ID. If not provided, it will be fetched from the environment variable "AZURE_AOAI_DALLE_MODEL_DEPLOYMENT_ID".
         :param call_connection_id: Call connection ID for tracing correlation
-        :param session_id: Session ID for tracing correlation  
+        :param session_id: Session ID for tracing correlation
         :param enable_tracing: Whether to enable tracing. If None, checks environment variables
 
         """
@@ -147,8 +154,10 @@ class AzureOpenAIManager:
 
         # Store tracing context
         self.call_connection_id = call_connection_id
-        self.session_id = session_id  
-        self.enable_tracing = enable_tracing if enable_tracing is not None else _is_aoai_tracing_enabled()
+        self.session_id = session_id
+        self.enable_tracing = (
+            enable_tracing if enable_tracing is not None else _is_aoai_tracing_enabled()
+        )
 
         if not self.api_key:
             token_provider = get_bearer_token_provider(
@@ -179,7 +188,7 @@ class AzureOpenAIManager:
                 component="src.aoai.manager",
                 call_connection_id=self.call_connection_id,
                 session_id=self.session_id,
-                **kwargs
+                **kwargs,
             )
         else:
             return NoOpTraceContext()
@@ -421,7 +430,7 @@ class AzureOpenAIManager:
             logger.error(f"Error details: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return None
-        
+
     @tracer.start_as_current_span("azure_openai.generate_chat_response_no_history")
     async def generate_chat_response_no_history(
         self,
@@ -459,18 +468,20 @@ class AzureOpenAIManager:
         with self._create_trace_context(
             name="aoai.chat_completion_no_history",
             metadata={
-                "operation_type": "chat_completion", 
+                "operation_type": "chat_completion",
                 "has_tools": tools is not None,
                 "has_images": bool(image_paths or image_bytes),
                 "stream_mode": stream,
                 "model": self.chat_model_name,
                 "max_tokens": max_tokens,
-                "temperature": temperature
-            }
+                "temperature": temperature,
+            },
         ) as trace:
             try:
-                if hasattr(trace, 'set_attribute'):
-                    trace.set_attribute(SpanAttr.OPERATION_NAME.value, "aoai.chat_completion_no_history")
+                if hasattr(trace, "set_attribute"):
+                    trace.set_attribute(
+                        SpanAttr.OPERATION_NAME.value, "aoai.chat_completion_no_history"
+                    )
                     trace.set_attribute("aoai.model", self.chat_model_name)
                     trace.set_attribute("aoai.max_tokens", max_tokens)
                     trace.set_attribute("aoai.temperature", temperature)
@@ -507,9 +518,9 @@ class AzureOpenAIManager:
                     for image_path in image_paths:
                         try:
                             with open(image_path, "rb") as image_file:
-                                encoded_image = base64.b64encode(image_file.read()).decode(
-                                    "utf-8"
-                                )
+                                encoded_image = base64.b64encode(
+                                    image_file.read()
+                                ).decode("utf-8")
                                 mime_type, _ = mimetypes.guess_type(image_path)
                                 mime_type = mime_type or "application/octet-stream"
                                 user_message["content"].append(
@@ -576,15 +587,24 @@ class AzureOpenAIManager:
                     response_content = response.choices[0].message.content
 
                 # Add response metrics to trace
-                if hasattr(trace, 'set_attribute'):
+                if hasattr(trace, "set_attribute"):
                     trace.set_attribute("aoai.response_length", len(response_content))
-                    if hasattr(response, 'usage') and response.usage:
-                        trace.set_attribute("aoai.completion_tokens", response.usage.completion_tokens)
-                        trace.set_attribute("aoai.prompt_tokens", response.usage.prompt_tokens)
-                        trace.set_attribute("aoai.total_tokens", response.usage.total_tokens)
+                    if hasattr(response, "usage") and response.usage:
+                        trace.set_attribute(
+                            "aoai.completion_tokens", response.usage.completion_tokens
+                        )
+                        trace.set_attribute(
+                            "aoai.prompt_tokens", response.usage.prompt_tokens
+                        )
+                        trace.set_attribute(
+                            "aoai.total_tokens", response.usage.total_tokens
+                        )
 
                 # If the desired format is a JSON object, try to parse it.
-                if isinstance(response_format, str) and response_format == "json_object":
+                if (
+                    isinstance(response_format, str)
+                    and response_format == "json_object"
+                ):
                     try:
                         parsed_response = json.loads(response_content)
                         return {"response": parsed_response}
@@ -595,16 +615,18 @@ class AzureOpenAIManager:
                     return {"response": response_content}
 
             except openai.APIConnectionError as e:
-                if hasattr(trace, 'set_attribute'):
-                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "api_connection_error")
+                if hasattr(trace, "set_attribute"):
+                    trace.set_attribute(
+                        SpanAttr.ERROR_TYPE.value, "api_connection_error"
+                    )
                     trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
                 logger.error("API Connection Error: The server could not be reached.")
                 logger.error(f"Error details: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 return None
             except Exception as e:
-                if hasattr(trace, 'set_attribute'):
-                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "unexpected_error")  
+                if hasattr(trace, "set_attribute"):
+                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "unexpected_error")
                     trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
                 error_message = str(e)
                 if "maximum context length" in error_message:
@@ -670,19 +692,26 @@ class AzureOpenAIManager:
                 "stream_mode": stream,
                 "model": self.chat_model_name,
                 "max_tokens": max_tokens,
-                "temperature": temperature
-            }
+                "temperature": temperature,
+            },
         ) as trace:
             try:
-                if hasattr(trace, 'set_attribute'):
-                    trace.set_attribute(SpanAttr.OPERATION_NAME.value, "aoai.chat_completion_with_history")
+                if hasattr(trace, "set_attribute"):
+                    trace.set_attribute(
+                        SpanAttr.OPERATION_NAME.value,
+                        "aoai.chat_completion_with_history",
+                    )
                     trace.set_attribute("aoai.model", self.chat_model_name)
-                    trace.set_attribute("aoai.conversation_length", len(conversation_history))
+                    trace.set_attribute(
+                        "aoai.conversation_length", len(conversation_history)
+                    )
                     trace.set_attribute("aoai.max_tokens", max_tokens)
                     trace.set_attribute("aoai.temperature", temperature)
                     trace.set_attribute("aoai.stream", stream)
                     trace.set_attribute("aoai.has_tools", tools is not None)
-                    trace.set_attribute("aoai.has_images", bool(image_paths or image_bytes))
+                    trace.set_attribute(
+                        "aoai.has_images", bool(image_paths or image_bytes)
+                    )
 
                 if tools is not None and tool_choice is None:
                     logger.debug(
@@ -693,7 +722,10 @@ class AzureOpenAIManager:
                     logger.debug(f"Tools: {tools}, Tool Choice: {tool_choice}")
 
                 system_message = {"role": "system", "content": system_message_content}
-                if not conversation_history or conversation_history[0] != system_message:
+                if (
+                    not conversation_history
+                    or conversation_history[0] != system_message
+                ):
                     conversation_history.insert(0, system_message)
 
                 user_message = {
@@ -718,9 +750,9 @@ class AzureOpenAIManager:
                     for image_path in image_paths:
                         try:
                             with open(image_path, "rb") as image_file:
-                                encoded_image = base64.b64encode(image_file.read()).decode(
-                                    "utf-8"
-                                )
+                                encoded_image = base64.b64encode(
+                                    image_file.read()
+                                ).decode("utf-8")
                                 mime_type, _ = mimetypes.guess_type(image_path)
                                 logger.info(f"Image {image_path} type: {mime_type}")
                                 mime_type = mime_type or "application/octet-stream"
@@ -779,7 +811,9 @@ class AzureOpenAIManager:
                                 continue
                             print(event_text.content, end="", flush=True)
                             response_content += event_text.content
-                            time.sleep(0.001)  # Maintain minimal sleep to reduce latency
+                            time.sleep(
+                                0.001
+                            )  # Maintain minimal sleep to reduce latency
                 else:
                     response_content = response.choices[0].message.content
 
@@ -794,7 +828,10 @@ class AzureOpenAIManager:
                     f"Function generate_chat_response finished at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))} (Duration: {duration:.2f} seconds)"
                 )
 
-                if isinstance(response_format, str) and response_format == "json_object":
+                if (
+                    isinstance(response_format, str)
+                    and response_format == "json_object"
+                ):
                     try:
                         parsed_response = json.loads(response_content)
                         return {
@@ -802,7 +839,9 @@ class AzureOpenAIManager:
                             "conversation_history": conversation_history,
                         }
                     except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse assistant's response as JSON: {e}")
+                        logger.error(
+                            f"Failed to parse assistant's response as JSON: {e}"
+                        )
                         return {
                             "response": response_content,
                             "conversation_history": conversation_history,
@@ -851,13 +890,17 @@ class AzureOpenAIManager:
             metadata={
                 "operation_type": "embedding_generation",
                 "input_length": len(input_text),
-                "model": model_name or self.embedding_model_name
-            }
+                "model": model_name or self.embedding_model_name,
+            },
         ) as trace:
             try:
-                if hasattr(trace, 'set_attribute'):
-                    trace.set_attribute(SpanAttr.OPERATION_NAME.value, "aoai.generate_embedding")
-                    trace.set_attribute("aoai.model", model_name or self.embedding_model_name)
+                if hasattr(trace, "set_attribute"):
+                    trace.set_attribute(
+                        SpanAttr.OPERATION_NAME.value, "aoai.generate_embedding"
+                    )
+                    trace.set_attribute(
+                        "aoai.model", model_name or self.embedding_model_name
+                    )
                     trace.set_attribute("aoai.input_length", len(input_text))
 
                 response = self.openai_client.embeddings.create(
@@ -866,21 +909,31 @@ class AzureOpenAIManager:
                     **kwargs,
                 )
 
-                if hasattr(trace, 'set_attribute') and hasattr(response, 'usage') and response.usage:
-                    trace.set_attribute("aoai.prompt_tokens", response.usage.prompt_tokens)
-                    trace.set_attribute("aoai.total_tokens", response.usage.total_tokens)
+                if (
+                    hasattr(trace, "set_attribute")
+                    and hasattr(response, "usage")
+                    and response.usage
+                ):
+                    trace.set_attribute(
+                        "aoai.prompt_tokens", response.usage.prompt_tokens
+                    )
+                    trace.set_attribute(
+                        "aoai.total_tokens", response.usage.total_tokens
+                    )
 
                 return response
             except openai.APIConnectionError as e:
-                if hasattr(trace, 'set_attribute'):
-                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "api_connection_error")
+                if hasattr(trace, "set_attribute"):
+                    trace.set_attribute(
+                        SpanAttr.ERROR_TYPE.value, "api_connection_error"
+                    )
                     trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
                 logger.error("API Connection Error: The server could not be reached.")
                 logger.error(f"Error details: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 return None, None
             except Exception as e:
-                if hasattr(trace, 'set_attribute'):
+                if hasattr(trace, "set_attribute"):
                     trace.set_attribute(SpanAttr.ERROR_TYPE.value, "unexpected_error")
                     trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
                 logger.error(

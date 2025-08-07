@@ -99,18 +99,14 @@ remove_conda_env:
 	@echo "Removing conda environment"
 	conda env remove --name $(CONDA_ENV)
 
-
 start_backend:
 	python $(SCRIPTS_DIR)/start_backend.py
-
 
 start_frontend:
 	bash $(SCRIPTS_DIR)/start_frontend.sh
 
-
 start_tunnel:
 	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
-
 
 ############################################################
 # Azure App Service Deployment Artifacts

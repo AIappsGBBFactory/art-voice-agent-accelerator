@@ -18,7 +18,9 @@ import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import WebSocket
+from opentelemetry.trace import SpanKind
 
+from apps.rtagent.backend.settings import AZURE_OPENAI_CHAT_DEPLOYMENT_ID, TTS_END
 from apps.rtagent.backend.src.agents.tool_store.tool_registry import (
     available_tools as DEFAULT_TOOLS,
 )
@@ -28,20 +30,16 @@ from apps.rtagent.backend.src.agents.tool_store.tools_helper import (
     push_tool_start,
 )
 from apps.rtagent.backend.src.helpers import add_space
-from apps.rtagent.backend.src.services.openai_services import (
-    client as az_openai_client,
-)
-from apps.rtagent.backend.settings import AZURE_OPENAI_CHAT_DEPLOYMENT_ID, TTS_END
+from apps.rtagent.backend.src.services.openai_services import client as az_openai_client
 from apps.rtagent.backend.src.shared_ws import (
     broadcast_message,
     push_final,
     send_response_to_acs,
     send_tts_audio,
 )
+from src.enums.monitoring import SpanAttr
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
-from src.enums.monitoring import SpanAttr
-from opentelemetry.trace import SpanKind
 
 if TYPE_CHECKING:  # pragma: no cover – typing-only import
     from src.stateful.state_managment import MemoManager  # noqa: F401
@@ -50,7 +48,9 @@ logger = get_logger("gpt_flow")
 
 # Performance optimization: Cache tracing configuration
 _GPT_FLOW_TRACING = os.getenv("GPT_FLOW_TRACING", "true").lower() == "true"
-_STREAM_TRACING = os.getenv("STREAM_TRACING", "false").lower() == "true"  # High frequency ops
+_STREAM_TRACING = (
+    os.getenv("STREAM_TRACING", "false").lower() == "true"
+)  # High frequency ops
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ async def process_gpt_response(  # noqa: D401
             "prompt_length": len(user_prompt) if user_prompt else 0,
         },
     ) as trace_ctx:
-        
+
         agent_history: List[Dict[str, Any]] = cm.get_history(agent_name)
         agent_history.append({"role": "user", "content": user_prompt})
 
@@ -139,7 +139,7 @@ async def process_gpt_response(  # noqa: D401
             metadata={"model": model_id, "stream": True},
             high_frequency=_STREAM_TRACING,
         ) as stream_ctx:
-            
+
             response = az_openai_client.chat.completions.create(**chat_kwargs)
             stream_ctx.add_event("openai_stream_started")
 
@@ -166,7 +166,9 @@ async def process_gpt_response(  # noqa: D401
                     args += tc.function.arguments or ""
                     tool_started = True
                     if not tool_started:  # First tool call chunk
-                        stream_ctx.add_event("tool_call_detected", {"tool_name": tool_name})
+                        stream_ctx.add_event(
+                            "tool_call_detected", {"tool_name": tool_name}
+                        )
                     continue
 
                 if delta.content:
@@ -177,7 +179,9 @@ async def process_gpt_response(  # noqa: D401
                             "process_gpt_response – streaming text chunk: %s",
                             streaming,
                         )
-                        await _emit_streaming_text(streaming, ws, is_acs, call_connection_id, session_id)
+                        await _emit_streaming_text(
+                            streaming, ws, is_acs, call_connection_id, session_id
+                        )
                         final_chunks.append(streaming)
                         collected.clear()
 
@@ -189,7 +193,9 @@ async def process_gpt_response(  # noqa: D401
         # Handle remaining collected content
         if collected:
             pending = "".join(collected).strip()
-            await _emit_streaming_text(pending, ws, is_acs, call_connection_id, session_id)
+            await _emit_streaming_text(
+                pending, ws, is_acs, call_connection_id, session_id
+            )
             final_chunks.append(pending)
 
         full_text = "".join(final_chunks).strip()
@@ -205,8 +211,10 @@ async def process_gpt_response(  # noqa: D401
 
         # Handle follow‑up tool call (if any)
         if tool_started:
-            trace_ctx.add_event("tool_execution_starting", {"tool_name": tool_name, "tool_id": tool_id})
-            
+            trace_ctx.add_event(
+                "tool_execution_starting", {"tool_name": tool_name, "tool_id": tool_id}
+            )
+
             agent_history.append(
                 {
                     "role": "assistant",
@@ -245,7 +253,9 @@ async def process_gpt_response(  # noqa: D401
 
                 asyncio.create_task(persist_tool_results())
                 trace_ctx.set_attribute("tool.execution_success", True)
-                trace_ctx.add_event("tool_execution_completed", {"tool_name": tool_name})
+                trace_ctx.add_event(
+                    "tool_execution_completed", {"tool_name": tool_name}
+                )
             return result
 
         trace_ctx.set_attribute("completion_type", "text_only")
@@ -258,8 +268,8 @@ async def process_gpt_response(  # noqa: D401
 
 
 async def _emit_streaming_text(
-    text: str, 
-    ws: WebSocket, 
+    text: str,
+    ws: WebSocket,
     is_acs: bool,
     call_connection_id: Optional[str] = None,
     session_id: Optional[str] = None,
@@ -276,7 +286,7 @@ async def _emit_streaming_text(
         },
         high_frequency=_STREAM_TRACING,
     ) as trace_ctx:
-        
+
         if is_acs:
             trace_ctx.set_attribute("output_channel", "acs")
             # Note: broadcast_message is handled separately for final responses to avoid duplication
@@ -284,8 +294,10 @@ async def _emit_streaming_text(
         else:
             trace_ctx.set_attribute("output_channel", "websocket_tts")
             await send_tts_audio(text, ws, latency_tool=ws.state.lt)
-            await ws.send_text(json.dumps({"type": "assistant_streaming", "content": text}))
-        
+            await ws.send_text(
+                json.dumps({"type": "assistant_streaming", "content": text})
+            )
+
         trace_ctx.add_event("text_emitted", {"text_length": len(text)})
 
 
@@ -318,7 +330,7 @@ async def _handle_tool_call(  # noqa: PLR0913
             "args_length": len(args) if args else 0,
         },
     ) as trace_ctx:
-        
+
         params: Dict[str, Any] = json.loads(args or "{}")
         fn = function_mapping.get(tool_name)
         if fn is None:
@@ -328,7 +340,7 @@ async def _handle_tool_call(  # noqa: PLR0913
         trace_ctx.set_attribute("tool.parameters_count", len(params))
         call_id = uuid.uuid4().hex[:8]
         trace_ctx.set_attribute("tool.call_id", call_id)
-        
+
         await push_tool_start(ws, call_id, tool_name, params, is_acs=is_acs)
         trace_ctx.add_event("tool_start_pushed", {"call_id": call_id})
 
@@ -343,14 +355,14 @@ async def _handle_tool_call(  # noqa: PLR0913
                 "parameters": params,
             },
         ) as exec_ctx:
-            
+
             t0 = time.perf_counter()
             result_raw = await fn(params)  # Tool functions are expected to be async.
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            
+
             exec_ctx.set_attribute("execution.duration_ms", elapsed_ms)
             exec_ctx.set_attribute("execution.success", True)
-            
+
             result: Dict[str, Any] = (
                 json.loads(result_raw) if isinstance(result_raw, str) else result_raw
             )
@@ -374,7 +386,9 @@ async def _handle_tool_call(  # noqa: PLR0913
         # Broadcast tool completion to relay dashboard (only for ACS calls)
         if is_acs:
             try:
-                await broadcast_message(ws.app.state.clients, f"🛠️ {tool_name} ✔️", "Assistant")
+                await broadcast_message(
+                    ws.app.state.clients, f"🛠️ {tool_name} ✔️", "Assistant"
+                )
             except Exception as e:
                 logger.error(f"Failed to broadcast tool completion: {e}")
 
@@ -393,7 +407,7 @@ async def _handle_tool_call(  # noqa: PLR0913
             call_connection_id,
             session_id,
         )
-        
+
         trace_ctx.set_attribute("tool.execution_complete", True)
         return result
 
@@ -423,9 +437,9 @@ async def _process_tool_followup(  # noqa: PLR0913
             "followup_type": "post_tool_execution",
         },
     ) as trace_ctx:
-        
+
         trace_ctx.add_event("starting_followup_completion")
-        
+
         await process_gpt_response(
             cm,
             "",  # No new user prompt.
@@ -440,5 +454,5 @@ async def _process_tool_followup(  # noqa: PLR0913
             call_connection_id=call_connection_id,
             session_id=session_id,
         )
-        
+
         trace_ctx.add_event("followup_completion_finished")

@@ -67,7 +67,7 @@ case "$PROVIDER" in
             ACS_SOURCE_PHONE_NUMBER="$ACS_SOURCE_PHONE_NUMBER_RAW"
         fi
         # Generate tfvars.json
-        TFVARS_FILE="./infra-tf/main.tfvars.json"
+        TFVARS_FILE="./infra/terraform/main.tfvars.json"
         echo "Generating $TFVARS_FILE..."
         
         # Build JSON content dynamically

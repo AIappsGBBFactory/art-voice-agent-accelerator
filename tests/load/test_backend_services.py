@@ -295,9 +295,7 @@ class BackendServicesUser(User):
             parameters = [{"name": "@session_id", "value": self.session_id}]
             items = list(
                 self.container.query_items(
-                    query,
-                    parameters=parameters,
-                    enable_cross_partition_query=True
+                    query, parameters=parameters, enable_cross_partition_query=True
                 )
             )
             query_duration = (time.time() - query_start) * 1000

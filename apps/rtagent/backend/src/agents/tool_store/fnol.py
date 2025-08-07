@@ -14,12 +14,13 @@ log = get_logger("fnol_tools_min")
 # Mock DBs
 # ──────────────────────────────────────────────────────────────────────────────
 policyholders_db: Dict[str, Dict[str, str]] = {
-    "Alice Brown":   {"policy_id": "POL-A10001", "zip": "60601"},
+    "Alice Brown": {"policy_id": "POL-A10001", "zip": "60601"},
     "Amelia Johnson": {"policy_id": "POL-B20417", "zip": "60601"},
     "Carlos Rivera": {"policy_id": "POL-C88230", "zip": "77002"},
 }
 
-claims_db:     List[Dict[str, Any]] = []
+claims_db: List[Dict[str, Any]] = []
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TypedDict models
@@ -30,19 +31,23 @@ class LossLocation(TypedDict, total=False):
     state: str
     zipcode: str
 
+
 class PassengerInfo(TypedDict, total=False):
     name: str
     relationship: str
 
+
 class InjuryAssessment(TypedDict, total=False):
     injured: bool
     details: Optional[str]
+
 
 class VehicleDetails(TypedDict, total=False):
     make: str
     model: str
     year: str
     policy_id: str
+
 
 class ClaimIntakeFull(TypedDict, total=False):
     caller_name: str
@@ -58,13 +63,15 @@ class ClaimIntakeFull(TypedDict, total=False):
     passenger_information: Optional[List[PassengerInfo]]  # ← now Optional
     injury_assessment: InjuryAssessment
     trip_purpose: str
-    date_reported: str            # YYYY-MM-DD (auto-filled)
+    date_reported: str  # YYYY-MM-DD (auto-filled)
     location_description: Optional[str]
+
 
 class EscalateArgs(TypedDict):
     reason: str
     caller_name: str
     policy_id: str
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -72,6 +79,7 @@ class EscalateArgs(TypedDict):
 def _new_claim_id() -> str:
     rand = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
     return f"CLA-{datetime.utcnow().year}-{rand}"
+
 
 _REQUIRED_SLOTS = [
     "caller_name",
@@ -95,6 +103,7 @@ _REQUIRED_SLOTS = [
     "trip_purpose",
 ]
 
+
 def _validate(data: ClaimIntakeFull) -> tuple[bool, str]:
     """Return (ok, message).  Message lists missing fields if any."""
     missing: List[str] = []
@@ -109,7 +118,10 @@ def _validate(data: ClaimIntakeFull) -> tuple[bool, str]:
                 missing.append(field)
                 break
 
-    if "passenger_information" not in data or data["passenger_information"] in (None, []):
+    if "passenger_information" not in data or data["passenger_information"] in (
+        None,
+        [],
+    ):
         data["passenger_information"] = []
     else:
         for i, pax in enumerate(data["passenger_information"]):
@@ -120,6 +132,7 @@ def _validate(data: ClaimIntakeFull) -> tuple[bool, str]:
         return False, "Missing: " + ", ".join(sorted(set(missing)))
 
     return True, ""
+
 
 async def record_fnol(args: ClaimIntakeFull) -> Dict[str, Any]:
     """Store the claim if validation passes; else enumerate missing fields."""

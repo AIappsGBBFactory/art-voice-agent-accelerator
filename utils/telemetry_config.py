@@ -3,32 +3,37 @@
 # Licensed under the MIT License. See License in the project root for
 # license information.
 # --------------------------------------------------------------------------
-import os
 import logging
-from azure.monitor.opentelemetry import configure_azure_monitor
-from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+import os
+
 from azure.core.exceptions import HttpResponseError
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry.sdk.resources import Resource, ResourceAttributes
 from opentelemetry.sdk.trace import TracerProvider
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
+
+
 # Suppress Azure credential noise early
 def suppress_azure_credential_logs():
     """Suppress noisy Azure credential logs that occur during DefaultAzureCredential attempts."""
     azure_loggers = [
-        'azure.identity',
-        'azure.identity._credentials.managed_identity',
-        'azure.identity._credentials.app_service', 
-        'azure.identity._internal.msal_managed_identity_client',
-        'azure.core.pipeline.policies._authentication'
+        "azure.identity",
+        "azure.identity._credentials.managed_identity",
+        "azure.identity._credentials.app_service",
+        "azure.identity._internal.msal_managed_identity_client",
+        "azure.core.pipeline.policies._authentication",
     ]
-    
+
     for logger_name in azure_loggers:
         logging.getLogger(logger_name).setLevel(logging.CRITICAL)
 
+
 # Apply suppression when module is imported
 suppress_azure_credential_logs()
+
 
 def setup_azure_monitor(logger_name: str = None):
     """
@@ -38,23 +43,27 @@ def setup_azure_monitor(logger_name: str = None):
     Args:
         logger_name (str, optional): Name for the Azure Monitor logger. Defaults to environment variable or 'default'.
     """
-    connection_string = os.getenv('APPLICATIONINSIGHTS_CONNECTION_STRING')
-    logger_name = logger_name or os.getenv('AZURE_MONITOR_LOGGER_NAME', 'default')
-    
+    connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    logger_name = logger_name or os.getenv("AZURE_MONITOR_LOGGER_NAME", "default")
+
     # Check if we should disable live metrics due to permission issues
-    disable_live_metrics = os.getenv('AZURE_MONITOR_DISABLE_LIVE_METRICS', 'false').lower() == 'true'
+    disable_live_metrics = (
+        os.getenv("AZURE_MONITOR_DISABLE_LIVE_METRICS", "false").lower() == "true"
+    )
     # Build resource attributes, include environment name if present
     resource_attrs = {
         "service.name": "rtagent-api",
-        "service.namespace": "callcenter-app"
+        "service.namespace": "callcenter-app",
     }
-    env_name = os.getenv('ENVIRONMENT')
+    env_name = os.getenv("ENVIRONMENT")
     if env_name:
         resource_attrs["service.environment"] = env_name
     resource = Resource.create(resource_attrs)
-    
+
     if not connection_string:
-        logger.info("ℹ️ APPLICATIONINSIGHTS_CONNECTION_STRING not found, skipping Azure Monitor configuration")
+        logger.info(
+            "ℹ️ APPLICATIONINSIGHTS_CONNECTION_STRING not found, skipping Azure Monitor configuration"
+        )
         return
 
     logger.info(f"🔧 Setting up Azure Monitor with logger_name: {logger_name}")
@@ -64,18 +73,20 @@ def setup_azure_monitor(logger_name: str = None):
     try:
         # Try to get appropriate credential
         credential = _get_azure_credential()
-        
+
         # Configure with live metrics initially disabled if environment variable is set
         # or if we're in a development environment
-        enable_live_metrics = not disable_live_metrics 
+        enable_live_metrics = not disable_live_metrics
         # enable_live_metrics = not disable_live_metrics and _should_enable_live_metrics()
-        logger.info(f"Configuring Azure Monitor with live metrics: {enable_live_metrics}")
-        
-        logger.info(f"🔧 Configuring Azure Monitor with live metrics: {enable_live_metrics}")
-                
-        resource = Resource(
-                attributes=resource_attrs
-            )
+        logger.info(
+            f"Configuring Azure Monitor with live metrics: {enable_live_metrics}"
+        )
+
+        logger.info(
+            f"🔧 Configuring Azure Monitor with live metrics: {enable_live_metrics}"
+        )
+
+        resource = Resource(attributes=resource_attrs)
         tracer_provider = TracerProvider(resource=resource)
         configure_azure_monitor(
             resource=resource,
@@ -96,37 +107,46 @@ def setup_azure_monitor(logger_name: str = None):
                 "flask": {"enabled": True},
                 "requests": {"enabled": True},
                 "urllib3": {"enabled": True},
-            }
+            },
         )
-        
+
         status_msg = "✅ Azure Monitor configured successfully"
         if not enable_live_metrics:
             status_msg += " (live metrics disabled)"
         logger.info(status_msg)
-        
+
         # Test the configuration by creating a test trace
         from opentelemetry import trace
+
         tracer = trace.get_tracer("azure_monitor_setup_test")
         with tracer.start_as_current_span("azure_monitor_configuration_test") as span:
-            span.set_attributes({
-                "setup.success": True,
-                "setup.logger_name": logger_name,
-                "setup.live_metrics_enabled": enable_live_metrics
-            })
+            span.set_attributes(
+                {
+                    "setup.success": True,
+                    "setup.logger_name": logger_name,
+                    "setup.live_metrics_enabled": enable_live_metrics,
+                }
+            )
             logger.info("🧪 Azure Monitor configuration test trace created")
-        
+
     except ImportError:
-        logger.warning("⚠️ Azure Monitor OpenTelemetry not available. Install azure-monitor-opentelemetry package.")
+        logger.warning(
+            "⚠️ Azure Monitor OpenTelemetry not available. Install azure-monitor-opentelemetry package."
+        )
     except HttpResponseError as e:
         if "Forbidden" in str(e) or "permissions" in str(e).lower():
-            logger.warning("⚠️ Insufficient permissions for Application Insights. Retrying with live metrics disabled...")
+            logger.warning(
+                "⚠️ Insufficient permissions for Application Insights. Retrying with live metrics disabled..."
+            )
             _retry_without_live_metrics(logger_name, connection_string)
         else:
             logger.error(f"⚠️ HTTP error configuring Azure Monitor: {e}")
     except Exception as e:
         logger.error(f"⚠️ Failed to configure Azure Monitor: {e}")
         import traceback
+
         logger.error(f"⚠️ Full traceback: {traceback.format_exc()}")
+
 
 def _get_azure_credential():
     """
@@ -135,30 +155,32 @@ def _get_azure_credential():
     """
     try:
         # Try managed identity first if we're in Azure
-        if os.getenv('WEBSITE_SITE_NAME') or os.getenv('CONTAINER_APP_NAME'):
+        if os.getenv("WEBSITE_SITE_NAME") or os.getenv("CONTAINER_APP_NAME"):
             logger.debug("Using ManagedIdentityCredential for Azure-hosted environment")
             return ManagedIdentityCredential()
     except Exception as e:
         logger.debug(f"ManagedIdentityCredential not available: {e}")
-    
+
     # Fall back to DefaultAzureCredential
     logger.debug("Using DefaultAzureCredential")
     return DefaultAzureCredential()
+
 
 def _should_enable_live_metrics():
     """
     Determine if live metrics should be enabled based on environment.
     """
     # Disable in development environments by default
-    if os.getenv('ENVIRONMENT', '').lower() in ['dev', 'development', 'local']:
+    if os.getenv("ENVIRONMENT", "").lower() in ["dev", "development", "local"]:
         return False
-    
+
     # Enable in production environments
-    if os.getenv('ENVIRONMENT', '').lower() in ['prod', 'production']:
+    if os.getenv("ENVIRONMENT", "").lower() in ["prod", "production"]:
         return True
-    
+
     # For other environments, check if we're in Azure
-    return bool(os.getenv('WEBSITE_SITE_NAME') or os.getenv('CONTAINER_APP_NAME'))
+    return bool(os.getenv("WEBSITE_SITE_NAME") or os.getenv("CONTAINER_APP_NAME"))
+
 
 def _retry_without_live_metrics(logger_name: str, connection_string: str):
     """
@@ -166,7 +188,7 @@ def _retry_without_live_metrics(logger_name: str, connection_string: str):
     """
     try:
         credential = _get_azure_credential()
-        
+
         configure_azure_monitor(
             logger_name=logger_name,
             credential=credential,
@@ -182,10 +204,13 @@ def _retry_without_live_metrics(logger_name: str, connection_string: str):
                 "flask": {"enabled": True},
                 "requests": {"enabled": True},
                 "urllib3": {"enabled": True},
-            }
+            },
         )
-        logger.info("✅ Azure Monitor configured successfully (live metrics disabled due to permissions)")
-       
-        
+        logger.info(
+            "✅ Azure Monitor configured successfully (live metrics disabled due to permissions)"
+        )
+
     except Exception as e:
-        logger.error(f"⚠️ Failed to configure Azure Monitor even without live metrics: {e}")
+        logger.error(
+            f"⚠️ Failed to configure Azure Monitor even without live metrics: {e}"
+        )

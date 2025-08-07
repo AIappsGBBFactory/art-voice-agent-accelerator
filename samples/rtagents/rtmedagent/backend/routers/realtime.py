@@ -17,9 +17,9 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from helpers import check_for_stopwords, receive_and_filter
 from rtagents.RTMedAgent.backend.latency.latency_tool import LatencyTool
-from rtagents.RTMedAgent.backend.src.stateful.state_managment import MemoManager
 from rtagents.RTMedAgent.backend.orchestration.orchestrator import route_turn
 from rtagents.RTMedAgent.backend.postcall.push import build_and_flush
+from rtagents.RTMedAgent.backend.src.stateful.state_managment import MemoManager
 from shared_ws import broadcast_message, send_tts_audio
 
 from utils.ml_logging import get_logger

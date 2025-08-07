@@ -25,7 +25,6 @@ from fastapi.websockets import WebSocketState
 from helpers import check_for_stopwords
 from pydantic import BaseModel
 from rtagents.RTMedAgent.backend.latency.latency_tool import LatencyTool
-from rtagents.RTMedAgent.backend.src.stateful.state_managment import MemoManager
 from rtagents.RTMedAgent.backend.orchestration.orchestrator import route_turn
 from rtagents.RTMedAgent.backend.postcall.push import build_and_flush
 from rtagents.RTMedAgent.backend.services.acs.acs_helpers import stop_audio
@@ -34,6 +33,7 @@ from rtagents.RTMedAgent.backend.settings import (
     ACS_CALLBACK_PATH,
     ACS_WEBSOCKET_PATH,
 )
+from rtagents.RTMedAgent.backend.src.stateful.state_managment import MemoManager
 from shared_ws import broadcast_message, send_response_to_acs
 
 from src.aoai.manager_transcribe import AudioTranscriber

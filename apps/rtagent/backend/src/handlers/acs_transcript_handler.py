@@ -3,9 +3,9 @@ import json
 from typing import Any, Dict, List
 
 from fastapi import WebSocket
-from src.stateful.state_managment import MemoManager
-from apps.rtagent.backend.src.orchestration.orchestrator import route_turn
 
+from apps.rtagent.backend.src.orchestration.orchestrator import route_turn
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
 logger = get_logger("handlers.transcription_handler")

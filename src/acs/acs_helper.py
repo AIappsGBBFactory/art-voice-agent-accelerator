@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from aiohttp import web
 from azure.communication.callautomation import (
@@ -17,15 +18,72 @@ from azure.communication.callautomation import (
     StreamingTransportType,
     TranscriptionOptions,
 )
-from azure.core.exceptions import HttpResponseError
+from azure.communication.callautomation.aio import CallAutomationClient as AsyncCallAutomationClient
+
 from azure.communication.identity import CommunicationIdentityClient
+from azure.core.exceptions import HttpResponseError
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+from azure.communication.callautomation import CallConnectionProperties
+from datetime import datetime, timedelta
 
 from src.enums.stream_modes import StreamMode
-import os
+from utils.ml_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("src.acs")
 
+async def wait_for_call_connected(
+    call_conn: CallConnectionClient,
+    *,
+    timeout: float = 30.0,
+    poll_interval: float = 0.01,  # Poll every 10ms for low latency
+) -> CallConnectionProperties:
+    """
+    Block until the call reaches the **Connected** state.
+
+    Mid-call actions (DTMF, play media, recording, etc.) are only legal once the
+    call is established.  This helper polls the connection properties until
+    ``call_connection_state == 'Connected'``.
+
+    Args:
+        call_conn: Active :class:`CallConnectionClient` for the call.
+        timeout: Maximum seconds to wait before giving up.
+        poll_interval: Seconds between successive polls.
+
+    Returns:
+        The final :class:`CallConnectionProperties` when the call is connected.
+
+    Raises:
+        TimeoutError: If the call never reaches *Connected* within *timeout*.
+        HttpResponseError: Propagated SDK error while fetching properties.
+    """
+    deadline = datetime.utcnow() + timedelta(seconds=timeout)
+
+    while True:
+        time = datetime.utcnow()
+        logger.info("🕐 Waiting for call to connect...")
+        try:
+            props: CallConnectionProperties = call_conn.get_call_properties()
+            state = str(props.call_connection_state).lower()            
+
+            if state == "connected":
+                logger.info("☎️ Call %s is now connected", props.call_connection_id)
+                return props
+
+            if datetime.utcnow() >= deadline:
+                raise TimeoutError(
+                    f"Call {props.call_connection_id} not connected after {timeout}s."
+                )
+
+        except Exception as e:
+            logger.warning(f"Error getting call properties: {e}")
+            if datetime.utcnow() >= deadline:
+                raise TimeoutError(
+                    f"Call not connected after {timeout}s due to errors."
+                )
+        
+        time_end = datetime.utcnow() - time
+        logger.info(f"🕐 Waited {time_end.total_seconds()}s for call to connect...")
+        await asyncio.sleep(poll_interval)
 
 class AcsCaller:
     """
@@ -86,9 +144,9 @@ class AcsCaller:
 
         if not source_number:
             raise ValueError(
-            "No source_number provided. You must purchase and configure an Azure Communication Services phone number. "
-            "Set the number in your environment as ACS_SOURCE_PHONE_NUMBER. "
-            "See: https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/telephony/get-phone-number?tabs=windows&pivots=platform-azcli"
+                "No source_number provided. You must purchase and configure an Azure Communication Services phone number. "
+                "Set the number in your environment as ACS_SOURCE_PHONE_NUMBER. "
+                "See: https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/telephony/get-phone-number?tabs=windows&pivots=platform-azcli"
             )
         self.source_number = source_number
         self.callback_url = callback_url
@@ -135,44 +193,53 @@ class AcsCaller:
                 )
             else:
                 if not acs_endpoint:
-                    raise ValueError("acs_endpoint is required when not using connection string")
-                
+                    raise ValueError(
+                        "acs_endpoint is required when not using connection string"
+                    )
+
                 logger.info("Using managed identity for ACS authentication")
-                
+
                 # No need to create tokens via CommunicationIdentityClient
                 if "AZURE_CLIENT_ID" in os.environ:
                     credentials = self._create_identity_and_get_token(acs_endpoint)
                 else:
                     # Use system-assigned managed identity
                     credentials = DefaultAzureCredential()
-                
+
                 self.client = CallAutomationClient(
-                    endpoint=acs_endpoint,
-                    credential=credentials
+                    endpoint=acs_endpoint, credential=credentials
                 )
-                
+
         except Exception as e:
             logger.error(f"Failed to initialize ACS client: {e}")
-            if "managed identity" in str(e).lower() or "CredentialUnavailableError" in str(e):
+            if "managed identity" in str(
+                e
+            ).lower() or "CredentialUnavailableError" in str(e):
                 logger.error("Managed identity is not available in this environment.")
                 logger.error("Either:")
                 logger.error("1. Use ACS_CONNECTION_STRING instead of managed identity")
-                logger.error("2. Ensure managed identity is enabled for this App Service")
-                logger.error("3. Set AZURE_CLIENT_ID if using user-assigned managed identity")
+                logger.error(
+                    "2. Ensure managed identity is enabled for this App Service"
+                )
+                logger.error(
+                    "3. Set AZURE_CLIENT_ID if using user-assigned managed identity"
+                )
             raise
 
         # Validate configuration
         self._validate_configuration(websocket_url, acs_connection_string, acs_endpoint)
         logger.info("AcsCaller initialized")
-    
+
     def _create_identity_and_get_token(self, resource_endpoint):
-        client = CommunicationIdentityClient(resource_endpoint, DefaultAzureCredential())
+        client = CommunicationIdentityClient(
+            resource_endpoint, DefaultAzureCredential()
+        )
 
         user = client.create_user()
         token_response = client.get_token(user, scopes=["voip"])
 
         return token_response
-    
+
     def _validate_configuration(
         self, websocket_url: str, acs_connection_string: str, acs_endpoint: str
     ):
@@ -215,9 +282,11 @@ class AcsCaller:
             logger.debug(f"Stream mode: {stream_mode}")
             logger.debug(f"Transcription options: {self.transcription_opts}")
             logger.debug(f"Media streaming options: {self.media_streaming_options}")
-            logger.debug(f"Cognitive services endpoint: {self.cognitive_services_endpoint}")
+            logger.debug(
+                f"Cognitive services endpoint: {self.cognitive_services_endpoint}"
+            )
             logger.debug(f"Callback URL: {self.callback_url}")
-            
+
             # Determine which capabilities to enable based on stream_mode
             transcription = None
             cognitive_services_endpoint = None
@@ -249,6 +318,11 @@ class AcsCaller:
                 media_streaming=media_streaming,
             )
             logger.info("Call created: %s", result.call_connection_id)
+            call_conn = self.client.get_call_connection(result.call_connection_id)
+            await wait_for_call_connected(call_conn, poll_interval=0.05)  # Poll every 50ms
+            call_conn.start_continuous_dtmf_recognition(target_participant=dest,
+                                                        operation_context="ivr")
+            logger.info("📲 DTMF subscription ON for %s", result.call_connection_id)
             return {"status": "created", "call_id": result.call_connection_id}
 
         except HttpResponseError as e:
@@ -305,15 +379,17 @@ class AcsCaller:
 
             logger.info(f"Incoming call answered: {result.call_connection_id}")
 
-            # # Cache call state if Redis manager is available
-            # if redis_mgr:
-            #     await redis_mgr.set_call_state(
-            #         call_connection_id=result.call_connection_id,
-            #         state="answered",
-            #         call_id=result.call_connection_id
-            #     )
+            # Wait for call to be connected and start DTMF recognition
+            # call_conn = self.client.get_call_connection(result.call_connection_id)
+            # await wait_for_call_connected(call_conn, poll_interval=0.05)  # Poll every 50ms
+            
+            # Start continuous DTMF recognition for incoming calls
+            # TODO
+            # Note: For incoming calls, we don't have a specific target participant, so we omit it
+            # call_conn.start_continuous_dtmf_recognition(operation_context="ivr")
+            # logger.info("📲 DTMF subscription ON for incoming call %s", result.call_connection_id)
 
-            # return result
+            return result
 
         except HttpResponseError as e:
             logger.error(

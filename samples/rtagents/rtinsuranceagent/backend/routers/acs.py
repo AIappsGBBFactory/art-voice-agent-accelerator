@@ -26,9 +26,6 @@ from fastapi.websockets import WebSocketState
 from helpers import check_for_stopwords
 from pydantic import BaseModel
 from rtagents.RTInsuranceAgent.backend.latency.latency_tool import LatencyTool
-from rtagents.RTInsuranceAgent.backend.src.stateful.state_managment import (
-    MemoManager,
-)
 from rtagents.RTInsuranceAgent.backend.orchestration.orchestrator import route_turn
 from rtagents.RTInsuranceAgent.backend.postcall.push import build_and_flush
 from rtagents.RTInsuranceAgent.backend.services.acs.acs_helpers import play_response
@@ -39,6 +36,7 @@ from rtagents.RTInsuranceAgent.backend.settings import (
     BASE_URL,
     GREETING,
 )
+from rtagents.RTInsuranceAgent.backend.src.stateful.state_managment import MemoManager
 from shared_ws import broadcast_message, send_response_to_acs
 
 from src.aoai.manager_transcribe import AudioTranscriber
