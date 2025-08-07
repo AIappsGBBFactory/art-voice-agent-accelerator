@@ -448,15 +448,6 @@ class ACSHandler:
             "Microsoft.Communication.MediaStreamingStarted": ACSHandler._handle_media_streaming_started,
         }
 
-        # # Media events that update bot_speaking context
-        # media_events = {
-        #     "Microsoft.Communication.PlayStarted": True,
-        #     "Microsoft.Communication.PlayCompleted": False,
-        #     "Microsoft.Communication.PlayFailed": False,
-        #     "Microsoft.Communication.PlayCanceled": False,
-        #     "Microsoft.Communication.MediaStreamingFailed": False,
-        # }
-
         try:
             for raw in events:
                 event = CloudEvent.from_dict(raw)
@@ -480,32 +471,8 @@ class ACSHandler:
                         await handler(event, cm, redis_mgr, cid, acs_caller)
                     elif etype == "Microsoft.Communication.CallDisconnected":
                         await handler(event, cm, redis_mgr, cid)
-
-                # # Handle media events that affect bot_speaking state
-                # elif etype in media_events:
-                #     cm.update_context("bot_speaking", media_events[etype])
-                #     action = "Set" if media_events[etype] else "Set"
-                #     logger.info(
-                #         f"{etype.split('.')[-1]}: {action} bot_speaking={media_events[etype]} for call {cm.session_id}"
-                #     )
-
-                #     # Log errors for failed events
-                #     if "Failed" in etype:
-                #         reason = event.data.get("resultInformation", "Unknown reason")
-                #         logger.error(
-                #             f"⚠️ {etype.split('.')[-1]} for call {cid}: {reason}"
-                #         )
-
-                # # Handle other failed events
-                # elif "Failed" in etype:
-                #     reason = event.data.get("resultInformation", "Unknown reason")
-                #     logger.error("⚠️ %s for call %s: %s", etype, cid, reason)
-
-                # # Log unhandled events
-                # else:
-                #     logger.info("Unhandled event: %s for call %s", etype, cid)
-
-                # cm.persist_to_redis(redis_mgr)
+                    else:
+                        await handler(event, cm, redis_mgr, cid)
 
             return {"status": "callback received"}
 
@@ -532,14 +499,26 @@ class ACSHandler:
         cm.persist_to_redis(redis_mgr)
 
         logger.info(f"Target participant joined: {target_joined} for call {cid}")
-        participants_info = [
-            p.get("identifier", {}).get("rawId", "unknown") for p in participants
-        ]
-        # await broadcast_message(
-        #     clients,
-        #     f"\tParticipants updated for call {cid}: {participants_info}",
-        #     "System",
-        # )
+
+    @staticmethod
+    async def _handle_participants_updated(
+        event: CloudEvent, cm: MemoManager, redis_mgr, clients: list, cid: str
+    ) -> None:
+        """Handle participant updates in the call."""
+        participants = event.data.get("participants", [])
+        target_number = cm.get_context("target_number")
+        target_joined = (
+            any(
+                p.get("identifier", {}).get("rawId", "").endswith(target_number or "")
+                for p in participants
+            )
+            if target_number
+            else False
+        )
+        cm.update_context("target_participant_joined", target_joined)
+        cm.persist_to_redis(redis_mgr)
+
+        logger.info(f"Target participant joined: {target_joined} for call {cid}")
 
     @staticmethod
     async def _handle_call_connected(

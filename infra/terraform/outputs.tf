@@ -63,6 +63,11 @@ output "ACS_ENDPOINT" {
   value       = "https://${azapi_resource.acs.output.properties.hostName}"
 }
 
+output "ACS_IMMUTABLE_ID" {
+  description = "Azure Communication Services immutable ID"
+  value       = azapi_resource.acs.output.properties.immutableResourceId
+}
+
 output "ACS_RESOURCE_ID" {
   description = "Azure Communication Services resource ID"
   value       = azapi_resource.acs.id

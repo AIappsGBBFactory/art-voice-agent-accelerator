@@ -33,12 +33,10 @@ from apps.rtagent.backend.settings import (
 )
 from apps.rtagent.backend.src.handlers.acs_handler import ACSHandler
 from apps.rtagent.backend.src.handlers.acs_media_handler import ACSMediaHandler
-from apps.rtagent.backend.src.auth.acs_auth import (
-    ACSAuthError,
-    validate_http_auth,
-    validate_websocket_auth,
-    validate_eventgrid_auth,
-    get_easyauth_identity
+from apps.rtagent.backend.src.utils.auth import (
+    AuthError,
+    validate_acs_http_auth,
+    validate_acs_ws_auth
 )
 from apps.rtagent.backend.src.handlers.acs_transcript_handler import (
     TranscriptionHandler,
@@ -150,20 +148,6 @@ async def initiate_call(call: CallRequest, request: Request):
 async def answer_call(request: Request):
     """Handle inbound call events (Event Grid or direct ACS)."""
 
-    # if ENABLE_AUTH_VALIDATION:
-    #     try:
-    #         # Try EasyAuth identity header
-    #         principal = get_easyauth_identity(request)
-    #         logger.info(f"Authenticated via EasyAuth: {principal}")
-    #     except HTTPException:
-    #         # Try AAD validation (e.g., Event Grid client credentials token)
-    #         try:
-    #             decoded = validate_eventgrid_auth(request.headers.get("Authorization"))
-    #             logger.info(f"Authenticated via AAD: {decoded}")
-    #         except Exception as e:
-    #             logger.warning("Inbound request unauthenticated.")
-    #             raise HTTPException(401, "Unauthorized inbound request")
-
     try:
         body = await request.json()
         return await ACSHandler.handle_inbound_call(
@@ -186,14 +170,12 @@ async def callbacks(request: Request):
     if not request.app.state.stt_client:
         return JSONResponse({"error": "STT client not initialised"}, status_code=503)
     
-    # if ENABLE_AUTH_VALIDATION:
-    #     try:
-    #         decoded = validate_http_auth(
-    #             authorization_header=request.headers.get("authorization"),
-    #         )
-    #         logger.debug("JWT token validated successfully: %s", decoded)
-    #     except HTTPException as e:
-    #         return JSONResponse({"error": e.detail}, status_code=e.status_code)
+    if ENABLE_AUTH_VALIDATION:
+        try:
+            decoded = validate_acs_http_auth(request)
+            logger.debug("JWT token validated successfully: %s", decoded)
+        except HTTPException as e:
+            return JSONResponse({"error": e.detail}, status_code=e.status_code)
 
     try:
         events = await request.json()
@@ -281,16 +263,16 @@ async def acs_media_ws(ws: WebSocket):
     try:
         await ws.accept()
 
-        # try:
-        #     # Validate WebSocket authentication using the new ACS auth module
-        #     decoded = await validate_websocket_auth(ws=ws)
-            
-        #     logger.info(f"Authenticated WebSocket connection with decoded JWT payload: {decoded}")
+        if ENABLE_AUTH_VALIDATION:
+            try:
+                # Validate WebSocket authentication using the new ACS auth module
+                decoded = await validate_acs_ws_auth(ws)
+                logger.info(f"Authenticated WebSocket connection with decoded JWT payload: {decoded}")
 
-        # except ACSAuthError as e:
-        #     logger.warning(f"WebSocket authentication failed: {str(e)}")
-        #     # WebSocket is already closed by the auth module
-        #     return
+            except AuthError as e:
+                logger.warning(f"WebSocket authentication failed: {str(e)}")
+                # WebSocket is already closed by the auth module
+                return
 
         # Retrieve session and check call state to avoid reconnect loops
         acs = ws.app.state.acs_caller

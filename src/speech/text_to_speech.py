@@ -187,9 +187,16 @@ class SpeechSynthesizer:
                         "https://cognitiveservices.azure.com/.default"
                     )
                     auth_token = "aad#" + speech_resource_id + "#" + token.token
-                    speech_config = speechsdk.SpeechConfig(
-                        auth_token=auth_token, region=self.region
-                    )
+                    endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
+                    if endpoint:
+                        logger.debug("Using AZURE_SPEECH_ENDPOINT for Azure Speech authentication")
+                        speech_config = speechsdk.SpeechConfig(
+                            auth_token=auth_token, endpoint=endpoint
+                        )
+                    else:
+                        speech_config = speechsdk.SpeechConfig(
+                            auth_token=auth_token, region=self.region
+                        )
                     logger.debug(
                         "Successfully authenticated with DefaultAzureCredential"
                     )

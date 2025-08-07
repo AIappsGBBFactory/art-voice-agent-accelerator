@@ -19,18 +19,14 @@ from src.enums.stream_modes import StreamMode
 # Load environment variables from .env file
 load_dotenv(override=True)
 
+AZURE_CLIENT_ID: str = os.getenv("AZURE_CLIENT_ID", "")
+AZURE_TENANT_ID: str = os.getenv("AZURE_TENANT_ID", "")
 # ------------------------------------------------------------------------------
 # Azure OpenAI
 # ------------------------------------------------------------------------------
 AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_KEY: str = os.getenv("AZURE_OPENAI_KEY", "")
 AZURE_OPENAI_CHAT_DEPLOYMENT_ID: str = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID", "")
-
-# ------------------------------------------------------------------------------
-# Azure Identity / Authentication
-# ------------------------------------------------------------------------------
-AZURE_CLIENT_ID: str = os.getenv("AZURE_CLIENT_ID", "")
-AZURE_TENANT_ID: str = os.getenv("AZURE_TENANT_ID", "")
 
 # ------------------------------------------------------------------------------
 # Azure Speech Services
@@ -69,10 +65,32 @@ AZURE_COSMOS_CONNECTION_STRING: str = os.getenv("AZURE_COSMOS_CONNECTION_STRING"
 AZURE_COSMOS_DATABASE_NAME: str = os.getenv("AZURE_COSMOS_DATABASE_NAME", "")
 AZURE_COSMOS_COLLECTION_NAME: str = os.getenv("AZURE_COSMOS_COLLECTION_NAME", "")
 
+
+# ------------------------------------------------------------------------------
+# Azure Identity / Authentication
+# ------------------------------------------------------------------------------
+ENABLE_AUTH_VALIDATION: bool = os.getenv("ENABLE_AUTH_VALIDATION", True)
+BACKEND_AUTH_CLIENT_ID: str = os.getenv("BACKEND_AUTH_CLIENT_ID", "")
+
+ENTRA_JWKS_URL = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/discovery/v2.0/keys"
+ENTRA_ISSUER = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/v2.0"
+ENTRA_AUDIENCE = f"api://{BACKEND_AUTH_CLIENT_ID}"
+ENTRA_EXEMPT_PATHS = [
+    ACS_CALLBACK_PATH,
+    ACS_WEBSOCKET_PATH,
+    "/health",
+    "/readiness"
+]
+
 # ACS Websocket and HTTP Callback Auth Config
 ACS_JWKS_URL = "https://acscallautomation.communication.azure.com/calling/keys"
 ACS_ISSUER = "https://acscallautomation.communication.azure.com"
 ACS_AUDIENCE = os.getenv("ACS_AUDIENCE", "")  # ACS Immutable Resource ID
+
+# Allowed client IDs (GUIDs) from environment variable, comma-separated
+ALLOWED_CLIENT_IDS: List[str] = [
+    cid.strip() for cid in os.getenv("ALLOWED_CLIENT_IDS", "").split(",") if cid.strip()
+]
 
 # ------------------------------------------------------------------------------
 # SST behaviour

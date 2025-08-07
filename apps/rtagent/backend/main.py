@@ -25,10 +25,10 @@ import time
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from apps.rtagent.backend.settings import (
     AGENT_AUTH_CONFIG,
@@ -43,8 +43,11 @@ from apps.rtagent.backend.settings import (
     SILENCE_DURATION_MS,
     VAD_SEMANTIC_SEGMENTATION,
     VOICE_TTS,
+    ENTRA_EXEMPT_PATHS,
+    ENABLE_AUTH_VALIDATION
 )
 from apps.rtagent.backend.src.agents.base import RTAgent
+from apps.rtagent.backend.src.utils.auth import validate_entraid_token
 from apps.rtagent.backend.src.agents.prompt_store.prompt_manager import PromptManager
 from apps.rtagent.backend.src.routers import router as api_router
 from apps.rtagent.backend.src.services import (
@@ -161,6 +164,22 @@ app.add_middleware(
     allow_headers=["*"],
     max_age=86400,
 )
+
+# If auth validation is enabled, add auth middleware with
+# excluded paths for ACS-specific connections and health check
+if ENABLE_AUTH_VALIDATION:
+    @app.middleware("http")
+    async def entraid_auth_middleware(request: Request, call_next):
+        path = request.url.path
+        if any(path.startswith(p) for p in ENTRA_EXEMPT_PATHS):
+            return await call_next(request)
+
+        try:
+            await validate_entraid_token(request)
+        except HTTPException as e:
+            return JSONResponse(content={"error": e.detail}, status_code=e.status_code)
+
+        return await call_next(request)
 
 # ---------------- Routers ---------------------------------------------------
 app.include_router(api_router)

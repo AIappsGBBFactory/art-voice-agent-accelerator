@@ -166,7 +166,6 @@ generate_backend_deployment:
 	@echo "🏗️  Generating Backend Deployment Artifacts"
 	@echo "=============================================="
 	@echo ""
-	
 	# Clean and create deployment directory
 	@echo "🧹 Cleaning previous deployment artifacts..."
 	@rm -rf $(DEPLOY_DIR)
@@ -197,16 +196,22 @@ generate_backend_deployment:
 			exit 1; \
 		fi \
 	done
-	
-	# Copy runtime files to root for Oryx detection
+
+	# Copy runtime files to root for Oryx detection, create if missing
 	@echo "🐍 Setting up Python runtime configuration..."
 	@if [ -f ".deploy/runtime.txt" ]; then \
 		cp ".deploy/runtime.txt" "$(DEPLOY_DIR)/runtime.txt"; \
 		echo "   ✅ Copied runtime.txt to deployment root"; \
+	else \
+		echo "python-3.11" > "$(DEPLOY_DIR)/runtime.txt"; \
+		echo "   ⚠️  .deploy/runtime.txt not found, created default runtime.txt"; \
 	fi
 	@if [ -f ".deploy/.python-version" ]; then \
 		cp ".deploy/.python-version" "$(DEPLOY_DIR)/.python-version"; \
 		echo "   ✅ Copied .python-version to deployment root"; \
+	else \
+		echo "3.11" > "$(DEPLOY_DIR)/.python-version"; \
+		echo "   ⚠️  .deploy/.python-version not found, created default .python-version"; \
 	fi
 	
 	# Create deployment zip
