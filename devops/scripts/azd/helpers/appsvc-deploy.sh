@@ -1,5 +1,6 @@
 #!/bin/bash
 
+
 # ================# Helper functions
 log_info() {
     echo -e "${BLUE}ℹ️  [INFO]${NC} $*"
@@ -16,6 +17,43 @@ log_warning() {
 log_error() {
     echo -e "${RED}❌ [ERROR]${NC} $*" >&2
 }
+
+set -euo pipefail
+
+# Colors for output
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly NC='\033[0m' # No Color
+
+# Constants
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly REQUIRED_COMMANDS=("az" "azd" "rsync" "zip" "curl")
+
+# Configuration
+readonly AGENT="${1:-RTAgent}"
+readonly AGENT_BACKEND="apps/$AGENT/backend"
+readonly BACKEND_DIRS=("src" "utils")
+readonly REQUIRED_FILES=("requirements.txt")
+readonly EXCLUDE_PATTERNS=("__pycache__" "*.pyc" ".pytest_cache" "*.log" ".coverage" "htmlcov" ".DS_Store" ".git" "node_modules" "*.tmp" "*.temp")
+
+echo "🚀 Deploying $AGENT to App Service"
+
+# Get AZD variables and validate
+RG=$(azd env get-value AZURE_RESOURCE_GROUP)
+BACKEND_APP=$(azd env get-value BACKEND_APP_SERVICE_NAME)
+AZD_ENV=$(azd env get-value AZURE_ENV_NAME)
+
+[[ -z "$RG" || -z "$BACKEND_APP" || -z "$AZD_ENV" ]] && { echo "❌ Missing AZD environment variables"; exit 1; }
+
+echo "✅ Validated: $BACKEND_APP in $RG (env: $AZD_ENV)"
+
+# Prepare deployment package
+TEMP_DIR=".azure/$AZD_ENV/backend"
+echo "� Preparing deployment in: $TEMP_DIR"
+rm -rf "$TEMP_DIR" && mkdir -p "$TEMP_DIR"
+
 
 # Check if required commands exist
 check_dependencies() {
@@ -46,40 +84,6 @@ get_azd_env_value() {
     fi
 }
 
-# Validate deployment configuration
-validate_deployment_config() {
-    log_info "Validating deployment configuration..."
-    
-    local errors=()
-    
-    # Get AZD variables
-    RG=$(get_azd_env_value "AZURE_RESOURCE_GROUP")
-    BACKEND_APP=$(get_azd_env_value "BACKEND_APP_SERVICE_NAME")
-    AZD_ENV=$(get_azd_env_value "AZURE_ENV_NAME")
-    AGENT_BACKEND="rtagents/$AGENT/backend"
-    
-    # Check required AZD variables
-    [[ -z "$RG" ]] && errors+=("AZURE_RESOURCE_GROUP")
-    [[ -z "$BACKEND_APP" ]] && errors+=("BACKEND_APP_SERVICE_NAME")
-    [[ -z "$AZD_ENV" ]] && errors+=("AZURE_ENV_NAME")
-    
-    # Check agent backend directory
-    [[ ! -d "$AGENT_BACKEND" ]] && errors+=("Agent backend directory: $AGENT_BACKEND")
-    
-    if [[ ${#errors[@]} -gt 0 ]]; then
-        log_error "Configuration validation failed:"
-        for error in "${errors[@]}"; do
-            echo "   - Missing: $error"
-        done
-        exit 1
-    fi
-    
-    log_success "Configuration validated successfully"
-    echo "  Resource Group: $RG"
-    echo "  Backend App: $BACKEND_APP"
-    echo "  Agent: $AGENT"
-    echo "  AZD Environment: $AZD_ENV"
-}
 # 🚀 Azure App Service Deployment Script
 # ========================================================================
 # This script deploys backend applications to Azure App Service with
@@ -89,42 +93,6 @@ validate_deployment_config() {
 #
 # ========================================================================
 
-set -euo pipefail
-
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
-
-# Constants
-readonly SCRIPT_NAME="$(basename "$0")"
-readonly REQUIRED_COMMANDS=("az" "azd" "rsync" "zip" "curl")
-
-# Configuration
-readonly AGENT="${1:-RTAgent}"
-readonly BACKEND_DIRS=("src" "utils")
-readonly REQUIRED_FILES=("requirements.txt")
-readonly EXCLUDE_PATTERNS=("__pycache__" "*.pyc" ".pytest_cache" "*.log" ".coverage" "htmlcov" ".DS_Store" ".git" "node_modules" "*.tmp" "*.temp")
-
-echo "🚀 Deploying $AGENT to App Service"
-
-# Get AZD variables and validate
-RG=$(azd env get-value AZURE_RESOURCE_GROUP)
-BACKEND_APP=$(azd env get-value BACKEND_APP_SERVICE_NAME)
-AZD_ENV=$(azd env get-value AZURE_ENV_NAME)
-AGENT_BACKEND="rtagents/$AGENT/backend"
-
-[[ -z "$RG" || -z "$BACKEND_APP" || -z "$AZD_ENV" ]] && { echo "❌ Missing AZD environment variables"; exit 1; }
-[[ ! -d "$AGENT_BACKEND" ]] && { echo "❌ Agent backend directory not found: $AGENT_BACKEND"; exit 1; }
-
-echo "✅ Validated: $BACKEND_APP in $RG (env: $AZD_ENV)"
-
-# Prepare deployment package
-TEMP_DIR=".azure/$AZD_ENV/backend"
-echo "� Preparing deployment in: $TEMP_DIR"
-rm -rf "$TEMP_DIR" && mkdir -p "$TEMP_DIR"
 
 # Copy files with exclusions
 copy_with_excludes() {
@@ -396,9 +364,6 @@ main() {
     fi
     # Check dependencies
     check_dependencies
-    
-    # Validate configuration
-    validate_deployment_config
     
     # Set deployment directory
     local temp_dir=".azure/$AZD_ENV/backend"

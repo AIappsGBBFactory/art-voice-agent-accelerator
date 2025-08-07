@@ -35,7 +35,7 @@ hooks:
 
   predeploy:
     shell: sh
-    run: devops/scripts/azd/helpers/appsvc-deploy.sh backend
+    run: devops/scripts/azd/helpers/appsvc-deploy.sh rtagent
     interactive: true
     continueOnError: true
 
