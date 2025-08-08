@@ -4,7 +4,7 @@
 
 resource "azurerm_cognitive_account" "openai" {
   name                = local.resource_names.openai
-  location            = azurerm_resource_group.main.location
+  location            = var.openai_location != null ? var.openai_location : var.location
   resource_group_name = azurerm_resource_group.main.name
   kind                = "OpenAI"
   sku_name            = "S0"

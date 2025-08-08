@@ -325,7 +325,8 @@ main() {
     log_section "📱 Configuring ACS Phone Number"
     
     if ! check_existing_phone_number; then
-        prompt_for_phone_number
+        # Store the result but don't fail the script
+        prompt_for_phone_number || true
         local prompt_result=$?
         
         case $prompt_result in
@@ -334,8 +335,12 @@ main() {
                 log_success "Phone number configured"
                 ;;
             1)
-                # Error occurred
-                log_warning "Phone number configuration failed, continuing..."
+                # Error occurred or CI/CD mode without phone number
+                if [ "$INTERACTIVE_MODE" = "false" ]; then
+                    log_info "Phone number configuration skipped in CI/CD mode"
+                else
+                    log_warning "Phone number configuration failed, continuing..."
+                fi
                 ;;
             2)
                 # User wants to provision new number
@@ -344,8 +349,8 @@ main() {
                 }
                 ;;
             3)
-                # User chose to skip or non-interactive mode
-                log_info "Phone number configuration skipped"
+                # User chose to skip
+                log_info "Phone number configuration skipped by user choice"
                 ;;
         esac
     fi
@@ -403,6 +408,9 @@ main() {
     
     echo ""
     log_success "Post-provisioning complete!"
+    
+    # Always exit successfully - phone number is optional
+    exit 0
 }
 
 # Run main function

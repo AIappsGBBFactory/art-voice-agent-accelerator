@@ -5,7 +5,7 @@
 resource "azurerm_storage_account" "main" {
   name                = local.resource_names.storage
   resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
+  location            = var.cosmosdb_location != null ? var.cosmosdb_location : var.location
   account_tier        = "Standard"
   # Snyk ignore: poc, geo-replication not required
   account_replication_type        = "LRS"

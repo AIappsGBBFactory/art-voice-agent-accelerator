@@ -43,6 +43,18 @@ variable "location" {
   type        = string
 }
 
+variable "openai_location" {
+  description = "Optional secondary Azure OpenAI location to use if defined; will be prioritized over var.location for OpenAI resources."
+  type        = string
+  default     = null
+}
+
+variable "cosmosdb_location" {
+  description = "Optional secondary Azure Cosmos DB location to use if defined; will be prioritized over var.location for Cosmos DB resources."
+  type        = string
+  default     = null
+}
+
 variable "principal_id" {
   description = "Principal ID of the user or service principal to assign application roles"
   type        = string

@@ -109,7 +109,6 @@ case "$PROVIDER" in
         echo "Setting Terraform variables from Azure environment..."
         export TF_VAR_environment_name="$AZURE_ENV_NAME"
         export TF_VAR_location="$AZURE_LOCATION"
-
         # Validate required variables
         if [ -z "$AZURE_ENV_NAME" ]; then
             echo "Error: AZURE_ENV_NAME environment variable is not set"
@@ -120,52 +119,6 @@ case "$PROVIDER" in
             echo "Error: AZURE_LOCATION environment variable is not set"
             exit 1
         fi
-        
-        # Get optional ACS phone number from AZD environment and cleanse error output
-        ACS_SOURCE_PHONE_NUMBER_RAW=$(azd env get-value ACS_SOURCE_PHONE_NUMBER 2>&1)
-        if [[ "$ACS_SOURCE_PHONE_NUMBER_RAW" == *"not found"* || "$ACS_SOURCE_PHONE_NUMBER_RAW" == *"No value"* ]]; then
-            # In CI/CD mode, check environment variable
-            if [ "$INTERACTIVE_MODE" = "false" ] && [ -n "${ACS_SOURCE_PHONE_NUMBER:-}" ]; then
-                ACS_SOURCE_PHONE_NUMBER="$ACS_SOURCE_PHONE_NUMBER"
-                log_info "Using ACS phone number from environment variable"
-            else
-                ACS_SOURCE_PHONE_NUMBER=""
-            fi
-        else
-            ACS_SOURCE_PHONE_NUMBER="$ACS_SOURCE_PHONE_NUMBER_RAW"
-        fi
-        
-        # Generate tfvars.json
-        TFVARS_FILE="infra/terraform/main.tfvars.json"
-        echo "Generating $TFVARS_FILE..."
-        
-        # Build JSON content dynamically
-        JSON_CONTENT="{
-  \"environment_name\": \"$AZURE_ENV_NAME\",
-  \"location\": \"$AZURE_LOCATION\""
-        
-        if [ -n "$ACS_SOURCE_PHONE_NUMBER" ]; then
-            JSON_CONTENT="$JSON_CONTENT,
-  \"acs_source_phone_number\": \"$ACS_SOURCE_PHONE_NUMBER\""
-        fi
-        
-        JSON_CONTENT="$JSON_CONTENT
-}"
-        
-        # Write to file
-        echo "$JSON_CONTENT" > "$TFVARS_FILE"
-
-        # Display configuration summary
-        echo ""
-        log_success "Terraform variables configured:"
-        echo "   Environment: $AZURE_ENV_NAME"
-        echo "   Location: $AZURE_LOCATION"
-        if [ -n "$ACS_SOURCE_PHONE_NUMBER" ]; then
-            echo "   ACS Phone: $ACS_SOURCE_PHONE_NUMBER"
-        else
-            echo "   ACS Phone: null (not set)"
-        fi
-        echo "   Config file: $TFVARS_FILE"
         
         if [ "$INTERACTIVE_MODE" = "false" ]; then
             echo ""
