@@ -331,6 +331,109 @@ const styles = {
     transition: "border-color 0.2s ease",
   },
   
+
+  // Backend status indicator - enhanced for component health
+  backendIndicator: {
+    position: "absolute",
+    top: "16px",
+    right: "20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    padding: "12px 16px",
+    backgroundColor: "rgba(255, 255, 255, 0.98)",
+    border: "1px solid #e2e8f0",
+    borderRadius: "12px",
+    fontSize: "11px",
+    color: "#64748b",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+    zIndex: 10,
+    minWidth: "280px",
+    maxWidth: "320px",
+  },
+
+  backendHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    marginBottom: "4px",
+  },
+
+  backendStatus: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    backgroundColor: "#10b981",
+    animation: "pulse 2s ease-in-out infinite",
+  },
+
+  backendUrl: {
+    fontFamily: "monospace",
+    fontSize: "10px",
+    color: "#475569",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  backendLabel: {
+    fontWeight: "600",
+    color: "#334155",
+    textTransform: "uppercase",
+    letterSpacing: "0.5px",
+  },
+
+  componentGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, 1fr)",
+    gap: "6px",
+    marginTop: "8px",
+    paddingTop: "8px",
+    borderTop: "1px solid #f1f5f9",
+  },
+
+  componentItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "4px 8px",
+    backgroundColor: "#f8fafc",
+    borderRadius: "6px",
+    fontSize: "10px",
+  },
+
+  componentDot: (status) => ({
+    width: "6px",
+    height: "6px",
+    borderRadius: "50%",
+    backgroundColor: status === "healthy" ? "#10b981" : 
+                     status === "degraded" ? "#f59e0b" : 
+                     status === "unhealthy" ? "#ef4444" : "#6b7280",
+    flexShrink: 0,
+  }),
+
+  componentName: {
+    fontWeight: "500",
+    color: "#475569",
+    textTransform: "capitalize",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+
+  responseTime: {
+    fontSize: "9px",
+    color: "#94a3b8",
+    marginLeft: "auto",
+  },
+
+  errorMessage: {
+    fontSize: "10px",
+    color: "#ef4444",
+    marginTop: "4px",
+    fontStyle: "italic",
+  },
+
   phoneButton: (isActive) => ({
     padding: "12px 20px",
     background: isActive ? "#ef4444" : "#67d8ef",
@@ -343,7 +446,209 @@ const styles = {
     transition: "all 0.2s ease",
   }),
 };
+// Add keyframe animation for pulse effect
+const styleSheet = document.createElement("style");
+styleSheet.textContent = `
+  @keyframes pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+    }
+    70% {
+      box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
+  }
+`;
+document.head.appendChild(styleSheet);
 
+/* ------------------------------------------------------------------ *
+ *  BACKEND STATUS COMPONENT
+ * ------------------------------------------------------------------ */
+const BackendIndicator = ({ url }) => {
+  const [isConnected, setIsConnected] = useState(null);
+  const [displayUrl, setDisplayUrl] = useState(url);
+  const [readinessData, setReadinessData] = useState(null);
+  const [error, setError] = useState(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Check readiness endpoint
+  const checkReadiness = async () => {
+    try {
+      // Simple GET request without extra headers
+      const response = await fetch(`${url}/readiness`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Validate expected structure
+      if (data.status && data.checks && Array.isArray(data.checks)) {
+        setReadinessData(data);
+        setIsConnected(data.status === "ready");
+        setError(null);
+      } else {
+        throw new Error("Invalid response structure");
+      }
+    } catch (err) {
+      console.error("Readiness check failed:", err);
+      setIsConnected(false);
+      setError(err.message);
+      setReadinessData(null);
+    }
+  };
+
+  useEffect(() => {
+    // Parse and format the URL for display
+    try {
+      const urlObj = new URL(url);
+      const host = urlObj.hostname;
+      const protocol = urlObj.protocol.replace(':', '');
+      
+      // Shorten Azure URLs
+      if (host.includes('.azurewebsites.net')) {
+        const appName = host.split('.')[0];
+        setDisplayUrl(`${protocol}://${appName}.azure...`);
+      } else if (host === 'localhost') {
+        setDisplayUrl(`${protocol}://localhost:${urlObj.port || '8000'}`);
+      } else {
+        setDisplayUrl(`${protocol}://${host}`);
+      }
+    } catch (e) {
+      setDisplayUrl(url);
+    }
+
+    // Initial check
+    checkReadiness();
+
+    // Set up periodic checks every 30 seconds
+    const interval = setInterval(checkReadiness, 30000);
+
+    return () => clearInterval(interval);
+  }, [url]);
+
+  // Get overall health status
+  const getOverallStatus = () => {
+    if (isConnected === null) return "checking";
+    if (!isConnected) return "unhealthy";
+    if (!readinessData?.checks) return "unhealthy";
+    
+    const hasUnhealthy = readinessData.checks.some(c => c.status === "unhealthy");
+    const hasDegraded = readinessData.checks.some(c => c.status === "degraded");
+    
+    if (hasUnhealthy) return "unhealthy";
+    if (hasDegraded) return "degraded";
+    return "healthy";
+  };
+
+  const overallStatus = getOverallStatus();
+  const statusColor = overallStatus === "healthy" ? "#10b981" : 
+                     overallStatus === "degraded" ? "#f59e0b" :
+                     overallStatus === "unhealthy" ? "#ef4444" : "#6b7280";
+
+  // Component icon mapping
+  const componentIcons = {
+    redis: "💾",
+    azure_openai: "🧠",
+    speech_services: "🎙️",
+    acs_caller: "📞",
+    rt_agents: "🤖"
+  };
+
+  return (
+    <div 
+      style={{
+        ...styles.backendIndicator,
+        // Minimize when not expanded and healthy
+        minWidth: !isExpanded && overallStatus === "healthy" ? "auto" : "280px",
+        padding: !isExpanded && overallStatus === "healthy" ? "8px 12px" : "12px 16px",
+      }} 
+      title={`Backend: ${url}`}
+      onMouseEnter={() => setIsExpanded(true)}
+      onMouseLeave={() => setIsExpanded(false)}
+    >
+      <div style={styles.backendHeader}>
+        <div style={{
+          ...styles.backendStatus,
+          backgroundColor: statusColor,
+        }}></div>
+        <span style={styles.backendLabel}>API:</span>
+        <span style={styles.backendUrl}>{displayUrl}</span>
+      </div>
+
+      {/* Only show component health when expanded or when there's an issue */}
+      {isExpanded || overallStatus !== "healthy" ? (
+        <>
+          {error ? (
+            <div style={styles.errorMessage}>
+              ⚠️ Connection failed: {error}
+            </div>
+          ) : readinessData?.checks ? (
+            <>
+              <div style={styles.componentGrid}>
+                {readinessData.checks.map((check, idx) => (
+                  <div 
+                    key={idx} 
+                    style={styles.componentItem}
+                    title={check.details || `${check.component} status: ${check.status}`}
+                  >
+                    <span>{componentIcons[check.component] || "•"}</span>
+                    <div style={styles.componentDot(check.status)}></div>
+                    <span style={styles.componentName}>
+                      {check.component.replace(/_/g, ' ')}
+                    </span>
+                    {check.check_time_ms !== undefined && (
+                      <span style={styles.responseTime}>
+                        {check.check_time_ms.toFixed(0)}ms
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              
+              {/* Show component details if expanded */}
+              {isExpanded && readinessData.checks.some(c => c.details) && (
+                <div style={{
+                  marginTop: "8px",
+                  paddingTop: "8px",
+                  borderTop: "1px solid #f1f5f9",
+                  fontSize: "9px",
+                  color: "#64748b",
+                }}>
+                  {readinessData.checks
+                    .filter(c => c.details)
+                    .map((check, idx) => (
+                      <div key={idx} style={{ marginBottom: "4px" }}>
+                        <strong>{check.component.replace(/_/g, ' ')}:</strong> {check.details}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={styles.errorMessage}>
+              Checking components...
+            </div>
+          )}
+          
+          {readinessData?.response_time_ms && (
+            <div style={{
+              fontSize: "9px",
+              color: "#94a3b8",
+              marginTop: "4px",
+              textAlign: "center"
+            }}>
+              Total: {readinessData.response_time_ms.toFixed(0)}ms
+            </div>
+          )}
+        </>
+      ) : null}
+    </div>
+  );
+};
 /* ------------------------------------------------------------------ *
  *  WAVEFORM COMPONENT - SIMPLE & SMOOTH
  * ------------------------------------------------------------------ */
@@ -950,6 +1255,9 @@ export default function RealTimeVoiceApp() {
   return (
     <div style={styles.root}>
       <div style={styles.mainContainer}>
+        {/* Backend Status Indicator */}
+        <BackendIndicator url={API_BASE_URL} />
+
         {/* App Header */}
         <div style={styles.appHeader}>
           <div style={styles.appTitleContainer}>
