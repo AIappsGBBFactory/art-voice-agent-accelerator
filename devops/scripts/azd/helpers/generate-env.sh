@@ -74,6 +74,9 @@ generate_environment_file() {
 # Generated automatically by generate-env.sh on $(date)
 # Environment: ${AZD_ENV_NAME}
 # =================================================================
+AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)
+BACKEND_AUTH_CLIENT_ID=
+
 # Application Insights Configuration
 APPLICATIONINSIGHTS_CONNECTION_STRING=$(get_azd_value "APPLICATIONINSIGHTS_CONNECTION_STRING")
 
@@ -94,8 +97,7 @@ AZURE_SPEECH_REGION=$(get_azd_value "AZURE_SPEECH_REGION")
 # Base URL Configuration
 # Prompt user for BASE_URL if not set in azd env
 BASE_URL="<Your publicly routable URL for the backend app, e.g devtunnel host>"
-
-BACKEND_APP_SERVICE_URL=$(get_azd_value "BACKEND_APP_SERVICE_URL")
+TTS_ENABLE_LOCAL_PLAYBACK=true
 
 # Azure Communication Services Configuration
 ACS_CONNECTION_STRING=$(get_azd_value "ACS_CONNECTION_STRING")
@@ -130,7 +132,6 @@ ENVIRONMENT=$AZD_ENV_NAME
 
 # Logging Configuration
 LOG_LEVEL=$(get_azd_value "LOG_LEVEL" "INFO")
-ENABLE_DEBUG=$(get_azd_value "ENABLE_DEBUG" "false")
 EOF
 
     # Set appropriate permissions

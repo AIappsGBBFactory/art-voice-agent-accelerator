@@ -18,18 +18,31 @@ from azure.communication.callautomation import (
     StreamingTransportType,
     TranscriptionOptions,
 )
-from azure.communication.callautomation.aio import CallAutomationClient as AsyncCallAutomationClient
-
 from azure.communication.identity import CommunicationIdentityClient
 from azure.core.exceptions import HttpResponseError
-from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+from utils.azure_auth import get_credential, ManagedIdentityCredential
 from azure.communication.callautomation import CallConnectionProperties
 from datetime import datetime, timedelta
+
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 
 from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
 
 logger = get_logger("src.acs")
+tracer = trace.get_tracer(__name__)
+
+
+def _endpoint_host_from_client(client: CallAutomationClient) -> str:
+    try:
+        endpoint = getattr(getattr(client, "_config", None), "endpoint", None)
+        if endpoint:
+            return str(endpoint).replace("https://", "").replace("http://", "")
+    except Exception:
+        pass
+    return "acs.communication.azure.com"
+
 
 async def wait_for_call_connected(
     call_conn: CallConnectionClient,
@@ -39,22 +52,6 @@ async def wait_for_call_connected(
 ) -> CallConnectionProperties:
     """
     Block until the call reaches the **Connected** state.
-
-    Mid-call actions (DTMF, play media, recording, etc.) are only legal once the
-    call is established.  This helper polls the connection properties until
-    ``call_connection_state == 'Connected'``.
-
-    Args:
-        call_conn: Active :class:`CallConnectionClient` for the call.
-        timeout: Maximum seconds to wait before giving up.
-        poll_interval: Seconds between successive polls.
-
-    Returns:
-        The final :class:`CallConnectionProperties` when the call is connected.
-
-    Raises:
-        TimeoutError: If the call never reaches *Connected* within *timeout*.
-        HttpResponseError: Propagated SDK error while fetching properties.
     """
     deadline = datetime.utcnow() + timedelta(seconds=timeout)
 
@@ -63,7 +60,7 @@ async def wait_for_call_connected(
         logger.info("🕐 Waiting for call to connect...")
         try:
             props: CallConnectionProperties = call_conn.get_call_properties()
-            state = str(props.call_connection_state).lower()            
+            state = str(props.call_connection_state).lower()
 
             if state == "connected":
                 logger.info("☎️ Call %s is now connected", props.call_connection_id)
@@ -80,49 +77,15 @@ async def wait_for_call_connected(
                 raise TimeoutError(
                     f"Call not connected after {timeout}s due to errors."
                 )
-        
+
         time_end = datetime.utcnow() - time
         logger.info(f"🕐 Waited {time_end.total_seconds()}s for call to connect...")
         await asyncio.sleep(poll_interval)
 
+
 class AcsCaller:
     """
     Azure Communication Services call automation helper.
-
-    Manages outbound calls, live transcription, and call recording using Azure Communication Services.
-    Supports both connection string and managed identity authentication.
-
-    Args:
-        source_number: Phone number to use as caller ID (E.164 format, e.g., '+1234567890')
-        callback_url: Base URL for ACS event callbacks
-        recording_callback_url: Optional URL for recording-specific callbacks (defaults to callback_url)
-        websocket_url: Optional WebSocket URL for live transcription transport
-        acs_connection_string: Optional ACS connection string for authentication
-        acs_endpoint: Optional ACS endpoint URL (used with managed identity)
-        cognitive_services_endpoint: Optional Cognitive Services endpoint for TTS/STT
-        speech_recognition_model_endpoint_id: Optional custom speech model endpoint ID
-        recording_configuration: Optional dict with recording-specific settings
-        recording_storage_container_url: Optional Azure Blob container URL for storing recordings
-
-    Raises:
-        ValueError: If neither acs_connection_string nor acs_endpoint is provided
-
-    Example:
-        # Using connection string
-        caller = AcsCaller(
-            source_number='+1234567890',
-            callback_url='https://myapp.azurewebsites.net/api/acs-callback',
-            acs_connection_string='endpoint=https://...',
-            websocket_url='wss://myapp.azurewebsites.net/ws/transcription'
-        )
-
-        # Using ACS's managed identity (on ACS service, integrating with Azure Speech)
-        caller = AcsCaller(
-            source_number='+1234567890',
-            callback_url='https://myapp.azurewebsites.net/api/acs-callback',
-            acs_endpoint='https://myacs.communication.azure.com',
-            cognitive_services_endpoint='https://mycognitive.cognitiveservices.azure.com'
-        )
     """
 
     def __init__(
@@ -204,7 +167,7 @@ class AcsCaller:
                     credentials = self._create_identity_and_get_token(acs_endpoint)
                 else:
                     # Use system-assigned managed identity
-                    credentials = DefaultAzureCredential()
+                    credentials = get_credential()
 
                 self.client = CallAutomationClient(
                     endpoint=acs_endpoint, credential=credentials
@@ -232,7 +195,7 @@ class AcsCaller:
 
     def _create_identity_and_get_token(self, resource_endpoint):
         client = CommunicationIdentityClient(
-            resource_endpoint, DefaultAzureCredential()
+            resource_endpoint, get_credential()
         )
 
         user = client.create_user()
@@ -309,20 +272,26 @@ class AcsCaller:
             logger.debug(
                 "Creating call to %s via callback %s", target_number, self.callback_url
             )
-            result = call.create_call(
-                target_participant=dest,
-                source_caller_id_number=src,
-                callback_url=self.callback_url,
-                cognitive_services_endpoint=cognitive_services_endpoint,
-                transcription=transcription,
-                media_streaming=media_streaming,
-            )
+
+            endpoint_host = _endpoint_host_from_client(call)
+            with tracer.start_as_current_span(
+                "Azure.Communication.CallAutomation.CreateCall",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "peer.service": "azure-communication-services",
+                    "net.peer.name": endpoint_host,
+                },
+            ):
+                result = call.create_call(
+                    target_participant=dest,
+                    source_caller_id_number=src,
+                    callback_url=self.callback_url,
+                    cognitive_services_endpoint=cognitive_services_endpoint,
+                    transcription=transcription,
+                    media_streaming=media_streaming,
+                )
+
             logger.info("Call created: %s", result.call_connection_id)
-            call_conn = self.client.get_call_connection(result.call_connection_id)
-            # await wait_for_call_connected(call_conn, poll_interval=0.05)  # Poll every 50ms
-            # call_conn.start_continuous_dtmf_recognition(target_participant=dest,
-            #                                             operation_context="ivr")
-            logger.info("📲 DTMF subscription ON for %s", result.call_connection_id)
             return {"status": "created", "call_id": result.call_connection_id}
 
         except HttpResponseError as e:
@@ -340,13 +309,6 @@ class AcsCaller:
     ) -> object:
         """
         Answer an incoming call and set up live transcription.
-
-        Args:
-            incoming_call_context: The incoming call context from the event
-            redis_mgr: Optional Redis manager for caching call state
-
-        Returns:
-            Call connection result object
         """
         try:
             logger.info(f"Answering incoming call: {incoming_call_context}")
@@ -368,27 +330,24 @@ class AcsCaller:
                 )
                 transcription = self.transcription_opts
 
-            # Answer the call with transcription enabled
-            result = self.client.answer_call(
-                incoming_call_context=incoming_call_context,
-                callback_url=self.callback_url,
-                cognitive_services_endpoint=cognitive_services_endpoint,
-                transcription=transcription,
-                media_streaming=media_streaming,
-            )
+            endpoint_host = _endpoint_host_from_client(self.client)
+            with tracer.start_as_current_span(
+                "Azure.Communication.CallAutomation.AnswerCall",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "peer.service": "azure-communication-services",
+                    "net.peer.name": endpoint_host,
+                },
+            ):
+                result = self.client.answer_call(
+                    incoming_call_context=incoming_call_context,
+                    callback_url=self.callback_url,
+                    cognitive_services_endpoint=cognitive_services_endpoint,
+                    transcription=transcription,
+                    media_streaming=media_streaming,
+                )
 
             logger.info(f"Incoming call answered: {result.call_connection_id}")
-
-            # Wait for call to be connected and start DTMF recognition
-            # call_conn = self.client.get_call_connection(result.call_connection_id)
-            # await wait_for_call_connected(call_conn, poll_interval=0.05)  # Poll every 50ms
-            
-            # Start continuous DTMF recognition for incoming calls
-            # TODO
-            # Note: For incoming calls, we don't have a specific target participant, so we omit it
-            # call_conn.start_continuous_dtmf_recognition(operation_context="ivr")
-            # logger.info("📲 DTMF subscription ON for incoming call %s", result.call_connection_id)
-
             return result
 
         except HttpResponseError as e:
@@ -415,16 +374,25 @@ class AcsCaller:
         Start recording the call.
         """
         try:
-            self.client.start_recording(
-                server_call_id=server_call_id,
-                recording_state_callback_url=self.recording_callback_url,
-                recording_content_type=RecordingContent.AUDIO,
-                recording_channel_type=RecordingChannel.UNMIXED,
-                recording_format_type=RecordingFormat.WAV,
-                recording_storage=AzureBlobContainerRecordingStorage(
-                    container_url=self.recording_storage_container_url,
-                ),
-            )
+            endpoint_host = _endpoint_host_from_client(self.client)
+            with tracer.start_as_current_span(
+                "Azure.Communication.CallAutomation.StartRecording",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "peer.service": "azure-communication-services",
+                    "net.peer.name": endpoint_host,
+                },
+            ):
+                self.client.start_recording(
+                    server_call_id=server_call_id,
+                    recording_state_callback_url=self.recording_callback_url,
+                    recording_content_type=RecordingContent.AUDIO,
+                    recording_channel_type=RecordingChannel.UNMIXED,
+                    recording_format_type=RecordingFormat.WAV,
+                    recording_storage=AzureBlobContainerRecordingStorage(
+                        container_url=self.recording_storage_container_url,
+                    ),
+                )
             logger.info(f"🎤 Started recording for call {server_call_id}")
         except Exception as e:
             logger.error(f"Error starting recording for call {server_call_id}: {e}")
@@ -434,7 +402,16 @@ class AcsCaller:
         Stop recording the call.
         """
         try:
-            self.client.stop_recording(server_call_id=server_call_id)
+            endpoint_host = _endpoint_host_from_client(self.client)
+            with tracer.start_as_current_span(
+                "Azure.Communication.CallAutomation.StopRecording",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "peer.service": "azure-communication-services",
+                    "net.peer.name": endpoint_host,
+                },
+            ):
+                self.client.stop_recording(server_call_id=server_call_id)
             logger.info(f"🎤 Stopped recording for call {server_call_id}")
         except Exception as e:
             logger.error(f"Error stopping recording for call {server_call_id}: {e}")

@@ -55,10 +55,13 @@ ACS_STREAMING_MODE: StreamMode = StreamMode(
     os.getenv("ACS_STREAMING_MODE", "media").lower()
 )
 
-# API route fragments (keep them in one place so routers can import)
-ACS_CALL_PATH = "/api/call"
-ACS_CALLBACK_PATH: str = "/call/callbacks"
-ACS_WEBSOCKET_PATH: str = "/call/stream"
+# API route fragments
+ACS_CALL_OUTBOUND_PATH: str = "/api/call/initiate"
+ACS_CALL_INBOUND_PATH:  str = "/api/call/answer"
+ACS_CALL_CALLBACK_PATH: str = "/api/call/callbacks"
+
+# WSS route fragments
+ACS_WEBSOCKET_PATH:     str = "/ws/call/stream"
 
 # Cosmos DB
 AZURE_COSMOS_CONNECTION_STRING: str = os.getenv("AZURE_COSMOS_CONNECTION_STRING", "")
@@ -76,7 +79,7 @@ ENTRA_JWKS_URL = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/discovery
 ENTRA_ISSUER = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/v2.0"
 ENTRA_AUDIENCE = f"api://{BACKEND_AUTH_CLIENT_ID}"
 ENTRA_EXEMPT_PATHS = [
-    ACS_CALLBACK_PATH,
+    ACS_CALL_CALLBACK_PATH,
     ACS_WEBSOCKET_PATH,
     "/health",
     "/readiness"

@@ -166,9 +166,13 @@ async def send_response_to_acs(
             ):
                 ws.state.lt.stop("greeting_ttfb", ws.app.state.redis)
                 ws.state._greeting_ttfb_stopped = True
-            await ws.send_json(
-                {"kind": "AudioData", "AudioData": {"data": frame}, "StopAudio": None}
-            )
+            try:
+                await ws.send_json(
+                    {"kind": "AudioData", "AudioData": {"data": frame}, "StopAudio": None}
+                )
+            except Exception as e:
+                logger.error(f"Failed to send ACS audio frame: {e}")
+                break
 
         if latency_tool:
             latency_tool.stop("tts", ws.app.state.redis)

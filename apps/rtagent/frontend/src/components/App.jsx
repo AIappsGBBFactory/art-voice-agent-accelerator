@@ -1352,7 +1352,7 @@ export default function RealTimeVoiceApp() {
       return;
     }
     try {
-      const res = await fetch(`${API_BASE_URL}/api/call`, {
+      const res = await fetch(`${API_BASE_URL}/api/call/initiate`, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ target_number: targetPhoneNumber }),
@@ -1370,7 +1370,7 @@ export default function RealTimeVoiceApp() {
       appendLog("📞 Call initiated");
 
       // relay WS
-      const relay = new WebSocket(`${WS_URL}/relay`);
+      const relay = new WebSocket(`${WS_URL}/ws/relay`);
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({data}) => {
         try {

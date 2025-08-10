@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Optional
 
 from apps.rtagent.backend.settings import (
-    ACS_CALLBACK_PATH,
+    ACS_CALL_CALLBACK_PATH,
     ACS_CONNECTION_STRING,
     ACS_ENDPOINT,
     ACS_SOURCE_PHONE_NUMBER,
@@ -40,7 +40,7 @@ def initialize_acs_caller_instance() -> Optional[AcsCaller]:
         logger.warning("ACS env vars not fully configured – outbound calling disabled")
         return None
 
-    callback_url = f"{BASE_URL.rstrip('/')}{ACS_CALLBACK_PATH}"
+    callback_url = f"{BASE_URL.rstrip('/')}{ACS_CALL_CALLBACK_PATH}"
     ws_url = construct_websocket_url(BASE_URL, ACS_WEBSOCKET_PATH)
     if not ws_url:
         logger.error(

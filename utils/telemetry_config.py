@@ -7,7 +7,7 @@ import logging
 import os
 
 from azure.core.exceptions import HttpResponseError
-from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+from utils.azure_auth import get_credential, ManagedIdentityCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry.sdk.resources import Resource, ResourceAttributes
 from opentelemetry.sdk.trace import TracerProvider
@@ -163,7 +163,7 @@ def _get_azure_credential():
 
     # Fall back to DefaultAzureCredential
     logger.debug("Using DefaultAzureCredential")
-    return DefaultAzureCredential()
+    return get_credential()
 
 
 def _should_enable_live_metrics():
