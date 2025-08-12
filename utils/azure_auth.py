@@ -5,9 +5,15 @@ from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 
+
 def _using_managed_identity() -> bool:
     # Container Apps / Functions / App Service MI signals
-    return bool(os.getenv("AZURE_CLIENT_ID") or os.getenv("MSI_ENDPOINT") or os.getenv("IDENTITY_ENDPOINT"))
+    return bool(
+        os.getenv("AZURE_CLIENT_ID")
+        or os.getenv("MSI_ENDPOINT")
+        or os.getenv("IDENTITY_ENDPOINT")
+    )
+
 
 @lru_cache(maxsize=1)
 def get_credential():
