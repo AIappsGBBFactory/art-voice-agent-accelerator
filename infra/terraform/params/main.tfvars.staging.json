@@ -1,6 +1,4 @@
 {
-  "environment_name": "staging",
-  "name": "rtaudioagent",
   "location": "eastus",
   "openai_location": "eastus",
   "cosmosdb_location": null,
@@ -8,6 +6,7 @@
   "acs_source_phone_number": null,
   "principal_id": null,
   "principal_type": "ServicePrincipal",
+  "prevent_cosmos_role_destroy": true,
   "acs_data_location": "United States",
   "disable_local_auth": true,
   "enable_redis_ha": false,

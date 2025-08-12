@@ -72,6 +72,12 @@ variable "principal_type" {
   }
 }
 
+variable "prevent_cosmos_role_destroy" {
+  description = "Prevent destruction of Cosmos DB role assignments to avoid long-running delete operations. Set to false only when you need to actually remove role assignments."
+  type        = bool
+  default     = true
+}
+
 variable "acs_data_location" {
   description = "Data location for Azure Communication Services"
   type        = string

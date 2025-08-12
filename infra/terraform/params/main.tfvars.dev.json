@@ -1,11 +1,11 @@
 {
-  "environment_name": "gha-dev",
   "name": "rtaudioagent",
   "location": "centralus",
   "openai_location": "northcentralus",
   "cosmosdb_location": null,
   "backend_api_public_url": null,
   "acs_source_phone_number": null,
+  "prevent_cosmos_role_destroy": true,
   "acs_data_location": "United States",
   "disable_local_auth": true,
   "enable_redis_ha": false,
