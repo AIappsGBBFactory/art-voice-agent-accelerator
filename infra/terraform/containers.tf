@@ -19,12 +19,14 @@ resource "azurerm_role_assignment" "acr_principal_pull" {
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPull"
   principal_id         = local.principal_id
+  principal_type       = local.principal_type
 }
 
 resource "azurerm_role_assignment" "acr_principal_push" {
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPush"
   principal_id         = local.principal_id
+  principal_type       = local.principal_type
 }
 
 resource "azurerm_role_assignment" "acr_frontend_pull" {

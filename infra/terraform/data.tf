@@ -48,12 +48,14 @@ resource "azurerm_role_assignment" "storage_principal_reader" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Blob Data Reader"
   principal_id         = local.principal_id
+  principal_type       = local.principal_type
 }
 
 resource "azurerm_role_assignment" "storage_principal_contributor" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = local.principal_id
+  principal_type       = local.principal_type
 }
 
 # ============================================================================

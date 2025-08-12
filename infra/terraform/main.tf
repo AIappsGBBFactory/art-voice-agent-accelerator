@@ -63,7 +63,8 @@ resource "random_string" "resource_token" {
 # ============================================================================
 
 locals {
-  principal_id = var.principal_id != null ? var.principal_id : data.azuread_client_config.current.object_id
+  principal_id   = var.principal_id != null ? var.principal_id : data.azuread_client_config.current.object_id
+  principal_type = var.principal_type
   # Generate a unique resource token
   resource_token = random_string.resource_token.result
 

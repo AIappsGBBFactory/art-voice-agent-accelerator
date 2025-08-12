@@ -69,10 +69,15 @@ jobs:
           echo "Setting up dev environment parameters for Terraform..."
           cp infra/terraform/params/main.tfvars.dev.json infra/terraform/main.tfvars.json
           
+          # Get the Object ID (Principal ID) from the Client ID
+          echo "🔍 Getting principal Object ID from Client ID..."
+          PRINCIPAL_OBJECT_ID=$(az ad sp show --id "${{ env.AZURE_CLIENT_ID }}" --query objectId --output tsv)
+          echo "✅ Principal Object ID: $PRINCIPAL_OBJECT_ID"
+          
           # Update the JSON file with principal configuration
           echo "🔧 Adding principal configuration to main.tfvars.json..."
-          jq --arg principal_id "${{ env.AZURE_CLIENT_ID }}" \
-             --arg principal_type "User" \
+          jq --arg principal_id "$PRINCIPAL_OBJECT_ID" \
+             --arg principal_type "ServicePrincipal" \
              '. + {principal_id: $principal_id, principal_type: $principal_type}' \
              infra/terraform/main.tfvars.json > infra/terraform/main.tfvars.json.tmp
           
