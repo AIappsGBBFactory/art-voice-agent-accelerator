@@ -114,7 +114,7 @@ jobs:
       - name: ⚙️ Setup Terraform Parameters
         run: |
           echo "Setting up dev environment parameters for Terraform..."
-          cp infra/terraform/params/main.tfvars.dev.json infra/terraform/main.tfvars.json
+          cp infra/terraform/params/main.tfvars.${{ inputs.environment }}.json infra/terraform/main.tfvars.json
           
           # Get the Object ID (Principal ID) from the Client ID
           echo "🔍 Getting principal Object ID from Client ID..."
@@ -154,61 +154,6 @@ jobs:
           ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
-          
-      - name: 🏁 Initialize AZD Environment
-        run: |
-          # Create a temporary environment for planning
-          echo "🔍 Creating temporary azd environment for PR preview..."
-          
-          # Ensure we're authenticated
-          az account show --query "name" -o tsv || {
-            echo "❌ Azure authentication failed"
-            exit 1
-          }
-          
-          # Prioritize location from main.tfvars.json if available
-          TFVARS_LOCATION=$(jq -r '.location // empty' infra/terraform/main.tfvars.json)
-          if [ -n "$TFVARS_LOCATION" ] && [ "$TFVARS_LOCATION" != "null" ]; then
-            DEPLOY_LOCATION="$TFVARS_LOCATION"
-            echo "✅ Using location from main.tfvars.json: $TFVARS_LOCATION"
-          else
-            DEPLOY_LOCATION="${{ env.AZURE_LOCATION }}"
-            echo "✅ Using location from environment variable: ${{ env.AZURE_LOCATION }}"
-          fi
-          
-          # Create the environment
-          azd env new pr-preview --subscription ${{ env.AZURE_SUBSCRIPTION_ID }} --location "$DEPLOY_LOCATION" || {
-            echo "❌ Failed to create azd environment"
-            echo "🔍 Available environments:"
-            azd env list || echo "No environments found"
-            exit 1
-          }
-          
-          echo "✅ Environment 'pr-preview' created successfully"
-          
-          # Set required environment variables
-          azd env set AZURE_ENV_NAME pr-preview
-          azd env set AZURE_LOCATION "$DEPLOY_LOCATION"
-          azd env set AZURE_SUBSCRIPTION_ID ${{ env.AZURE_SUBSCRIPTION_ID }}
-          
-          # Set Terraform principal configuration
-          azd env set PRINCIPAL_ID "${{ env.AZURE_CLIENT_ID }}"
-          azd env set PRINCIPAL_TYPE "User"
-          echo "✅ Set AZURE_PRINCIPAL_ID to client ID"
-          echo "✅ Set AZURE_PRINCIPAL_TYPE to User"
-          
-          # Set optional variables if available
-          if [ -n "${{ secrets.ACS_SOURCE_PHONE_NUMBER }}" ]; then
-            azd env set ACS_SOURCE_PHONE_NUMBER "${{ secrets.ACS_SOURCE_PHONE_NUMBER }}"
-            echo "✅ Set ACS_SOURCE_PHONE_NUMBER"
-          fi
-          
-          # Set Terraform backend configuration
-          azd env set RS_RESOURCE_GROUP "${{ env.RS_RESOURCE_GROUP }}"
-          azd env set RS_STORAGE_ACCOUNT "${{ env.RS_STORAGE_ACCOUNT }}"
-          azd env set RS_CONTAINER_NAME "${{ env.RS_CONTAINER_NAME }}"
-          
-          echo "🎯 Environment variables configured successfully"
           
       - name: 📋 Run Terraform Plan via AZD
         id: plan
@@ -374,78 +319,6 @@ jobs:
           ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
-          
-      - name: 🏁 Initialize AZD Environment
-        run: |
-          # Ensure we're authenticated
-          echo "🔍 Verifying Azure authentication..."
-          az account show --query "name" -o tsv || {
-            echo "❌ Azure authentication failed"
-            exit 1
-          }
-          
-          # Prioritize location from main.tfvars.json if available
-          TFVARS_LOCATION=$(jq -r '.location // empty' infra/terraform/main.tfvars.json)
-          if [ -n "$TFVARS_LOCATION" ] && [ "$TFVARS_LOCATION" != "null" ]; then
-            DEPLOY_LOCATION="$TFVARS_LOCATION"
-            echo "✅ Using location from main.tfvars.json: $TFVARS_LOCATION"
-          else
-            DEPLOY_LOCATION="${{ env.AZURE_LOCATION }}"
-            echo "✅ Using location from environment variable: ${{ env.AZURE_LOCATION }}"
-          fi
-          
-          # Check if environment exists, create if not
-          echo "🔍 Checking for existing azd environment: ${{ matrix.environment }}"
-          if ! azd env list 2>/dev/null | grep -q "${{ matrix.environment }}"; then
-            echo "Creating new azd environment: ${{ matrix.environment }}"
-            azd env new ${{ matrix.environment }} --subscription ${{ env.AZURE_SUBSCRIPTION_ID }} --location "$DEPLOY_LOCATION" || {
-              echo "❌ Failed to create azd environment"
-              echo "🔍 Available environments:"
-              azd env list || echo "No environments found"
-              exit 1
-            }
-            echo "✅ Environment '${{ matrix.environment }}' created successfully"
-          else
-            echo "Using existing azd environment: ${{ matrix.environment }}"
-            azd env select ${{ matrix.environment }} || {
-              echo "❌ Failed to select environment"
-              exit 1
-            }
-            echo "✅ Environment '${{ matrix.environment }}' selected successfully"
-          fi
-          
-          # Set required environment variables
-          echo "🔧 Configuring environment variables..."
-          azd env set AZURE_ENV_NAME ${{ matrix.environment }}
-          azd env set AZURE_LOCATION "$DEPLOY_LOCATION"
-          azd env set AZURE_SUBSCRIPTION_ID ${{ env.AZURE_SUBSCRIPTION_ID }}
-          
-          # Get the Object ID (Principal ID) from the Client ID for azd environment
-          echo "🔍 Getting principal Object ID for azd environment..."
-          PRINCIPAL_OBJECT_ID=$(az ad sp show --id "${{ env.AZURE_CLIENT_ID }}" --query objectId --output tsv)
-          
-          # Set Terraform principal configuration
-          azd env set AZURE_PRINCIPAL_ID "$PRINCIPAL_OBJECT_ID"
-          azd env set AZURE_PRINCIPAL_TYPE "ServicePrincipal"
-          echo "✅ Set AZURE_PRINCIPAL_ID to Object ID: $PRINCIPAL_OBJECT_ID"
-          echo "✅ Set AZURE_PRINCIPAL_TYPE to ServicePrincipal"
-          
-          # Set optional variables if available
-          if [ -n "${{ secrets.ACS_SOURCE_PHONE_NUMBER }}" ]; then
-            azd env set ACS_SOURCE_PHONE_NUMBER "${{ secrets.ACS_SOURCE_PHONE_NUMBER }}"
-            echo "✅ Set ACS_SOURCE_PHONE_NUMBER"
-          fi
-          
-          # Set Terraform backend configuration
-          azd env set TF_STATE_RESOURCE_GROUP "${{ env.RS_RESOURCE_GROUP }}"
-          azd env set TF_STATE_STORAGE_ACCOUNT "${{ env.RS_STORAGE_ACCOUNT }}"
-          azd env set TF_STATE_CONTAINER_NAME "${{ env.RS_CONTAINER_NAME }}"
-          
-          echo "🎯 Environment variables configured successfully"
-          
-          # Show current environment status
-          echo "📊 Current azd environment status:"
-          azd env list
           
       - name: 🚀 Execute AZD Command
         run: |
