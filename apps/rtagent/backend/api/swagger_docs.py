@@ -32,6 +32,10 @@ class DynamicDocsManager:
                 "description": "V1 API - Event processing and webhook management"
             },
             {
+                "name": "Real-time Communication", 
+                "description": "V1 API - Real-time audio streaming and processing"
+            },
+            {
                 "name": "Media Session",
                 "description": "V1 API - Media streaming and session management"
             },

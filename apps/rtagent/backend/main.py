@@ -73,10 +73,6 @@ from apps.rtagent.backend.src.services.openai_services import (
 )
 from apps.rtagent.backend.api.v1.events.registration import register_default_handlers
 
-# from apps.rtagent.backend.src.handlers.call_event_registration import initialize_call_event_registry
-# from apps.rtagent.backend.src.handlers.media_event_registration import initialize_media_event_registry
-# from apps.rtagent.backend.src.events.initialization import initialize_v1_event_handler
-
 # --------------------------------------------------------------------------- #
 #  Lifecycle Management
 # --------------------------------------------------------------------------- #
