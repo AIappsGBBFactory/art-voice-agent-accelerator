@@ -33,9 +33,6 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       action: ${{ inputs.action }}
-      # Use repository variables for Terraform remote state storage configuration
-      # Configure these in: Settings > Secrets and variables > Actions > Variables
-      # See docs/GITHUB_REPOSITORY_VARIABLES.md for setup instructions
       rs_resource_group: ${{ vars.RS_RESOURCE_GROUP }}
       rs_storage_account: ${{ vars.RS_STORAGE_ACCOUNT }}
       rs_container_name: ${{ vars.RS_CONTAINER_NAME }}
