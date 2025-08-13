@@ -18,12 +18,12 @@ services:
       platform: linux/amd64
       
   rtaudio-server:
-    project: apps/RTAgent/backend
+    project: .
     host: containerapp
-    language: python
+    language: docker
     docker:
-      path: ./Dockerfile
-      context: ../../../
+      path: ./apps/rtagent/backend/Dockerfile
+      context: .
       platform: linux/amd64
 
 hooks:
