@@ -1,0 +1,700 @@
+"""
+V1 ACS Media Handler
+===========================================================
+
+Key Design Principles:
+- Separation of concerns across focused classes
+- Preserves the three-thread architecture for optimal performance  
+- Clean event loop handling for barge-in interruptions
+- Simplified tracing with consistent patterns
+- Maintainable async task lifecycle management
+"""
+
+import asyncio
+import json
+import threading
+import time
+from typing import Optional, Callable, Any
+from dataclasses import dataclass
+
+from azure.communication.callautomation import TextSource
+from fastapi import WebSocket
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
+
+from apps.rtagent.backend.settings import GREETING
+from apps.rtagent.backend.src.shared_ws import send_response_to_acs
+from apps.rtagent.backend.src.utils.tracing import trace_acs_operation, trace_acs_dependency
+from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
+from src.stateful.state_managment import MemoManager
+from utils.ml_logging import get_logger
+
+logger = get_logger("v1.handlers.acs_media_handler_refactored")
+tracer = trace.get_tracer(__name__)
+
+
+def get_current_time() -> float:
+    """Get current time for consistent timing measurements."""
+    return time.time()
+
+
+def safe_set_span_attributes(span_context, attributes: dict):
+    """Safely set span attributes without accessing private attributes."""
+    try:
+        current_span = trace.get_current_span()
+        if current_span and current_span.is_recording():
+            current_span.set_attributes(attributes)
+    except Exception as e:
+        logger.debug(f"Failed to set span attributes: {e}")
+
+
+@dataclass
+class BargeInState:
+    """Simple state management for barge-in detection."""
+    
+    event: threading.Event
+    
+    def __post_init__(self):
+        self.event = threading.Event()
+    
+    def trigger(self) -> bool:
+        """Trigger barge-in if not already active. Returns True if newly triggered."""
+        if self.event.is_set():
+            return False
+        self.event.set()
+        return True
+    
+    def clear(self):
+        """Clear barge-in state for new speech processing."""
+        self.event.clear()
+    
+    def is_active(self) -> bool:
+        """Check if barge-in is currently active."""
+        return self.event.is_set()
+
+
+class SpeechCallbacks:
+    """
+    Speech recognition callbacks that bridge to the main event loop.
+    
+    This class encapsulates the critical cross-thread communication
+    required for real-time barge-in detection and speech processing.
+    """
+    
+    def __init__(
+        self,
+        main_loop: asyncio.AbstractEventLoop,
+        barge_in_state: BargeInState,
+        speech_queue: asyncio.Queue,
+        stop_playback_callback: Callable,
+    ):
+        self.main_loop = main_loop
+        self.barge_in_state = barge_in_state
+        self.speech_queue = speech_queue
+        self.stop_playback_callback = stop_playback_callback
+    
+    def on_partial(self, text: str, lang: str, speaker_id: Optional[str] = None):
+        """Handle partial speech recognition - IMMEDIATE barge-in trigger."""
+        speaker_info = f" (Speaker: {speaker_id})" if speaker_id else ""
+        logger.info(f"🗣️ User (partial) in {lang}: {text}{speaker_info}")
+        
+        # Only trigger barge-in if not already active
+        if self.barge_in_state.trigger():
+            logger.info("🚨 Barge-in detected - stopping current playback")
+            
+            # Schedule immediate playback cancellation on main loop
+            if self.main_loop and not self.main_loop.is_closed():
+                try:
+                    # Add minimal tracing for barge-in latency measurement
+                    with tracer.start_as_current_span(
+                        "speech.barge_in_detected",
+                        kind=SpanKind.INTERNAL,
+                        attributes={
+                            "speech.partial_text": text[:100],  # Truncate for privacy
+                            "speech.language": lang,
+                            "speech.speaker_id": speaker_id,
+                            "barge_in.trigger_time": get_current_time(),
+                        }
+                    ):
+                        asyncio.run_coroutine_threadsafe(
+                            self.stop_playback_callback(), 
+                            self.main_loop
+                        )
+                        logger.info("✅ Barge-in handling scheduled successfully")
+                except Exception as e:
+                    logger.error(f"❌ Failed to schedule barge-in handling: {e}")
+    
+    def on_final(self, text: str, lang: str, speaker_id: Optional[str] = None):
+        """Handle final speech recognition - queue for AI processing."""
+        speaker_info = f" (Speaker: {speaker_id})" if speaker_id else ""
+        logger.info(f"🧾 User (final) in {lang}: {text}{speaker_info}")
+        
+        # Clear barge-in state for new processing
+        self.barge_in_state.clear()
+        
+        # Queue final speech for AI processing
+        if self.main_loop and not self.main_loop.is_closed():
+            try:
+                # Add tracing for final speech processing
+                with tracer.start_as_current_span(
+                    "speech.final_recognized",
+                    kind=SpanKind.INTERNAL,
+                    attributes={
+                        "speech.text_length": len(text),
+                        "speech.language": lang,
+                        "speech.speaker_id": speaker_id,
+                        "speech.final_time": get_current_time(),
+                    }
+                ):
+                    asyncio.run_coroutine_threadsafe(
+                        self.speech_queue.put(("final", text)),
+                        self.main_loop
+                    )
+                    logger.info("📋 Final speech queued for processing")
+            except Exception as e:
+                logger.error(f"❌ Failed to queue final speech: {e}")
+    
+    def on_cancel(self, event):
+        """Handle speech recognition cancellation."""
+        logger.warning(f"🚫 Recognition canceled: {event}")
+
+
+class TurnProcessor:
+    """
+    Handles the conversation turn processing loop.
+    
+    This class manages the route_turn_loop that processes final speech
+    results and coordinates with the AI orchestrator.
+    """
+    
+    def __init__(
+        self,
+        orchestrator_func: Callable,
+        websocket: WebSocket,
+        memory_manager: MemoManager,
+        call_connection_id: str,
+        session_id: str,
+    ):
+        self.orchestrator_func = orchestrator_func
+        self.websocket = websocket
+        self.memory_manager = memory_manager
+        self.call_connection_id = call_connection_id
+        self.session_id = session_id
+        
+        self.speech_queue: asyncio.Queue = asyncio.Queue()
+        self.playback_task: Optional[asyncio.Task] = None
+        self.processing_task: Optional[asyncio.Task] = None
+        self.stopped = False
+    
+    async def start_processing_loop(self):
+        """Start the main conversation turn processing loop."""
+        self.processing_task = asyncio.create_task(self._processing_loop())
+        logger.info("✅ Turn processing loop started")
+    
+    async def _processing_loop(self):
+        """Main processing loop for conversation turns."""
+        with trace_acs_operation(
+            tracer, logger, "turn_processing_loop",
+            call_connection_id=self.call_connection_id
+        ) as op:
+            op.log_info("Turn processing loop started")
+            
+            try:
+                while not self.stopped:
+                    try:
+                        # Wait for speech input with short timeout for responsiveness
+                        kind, text = await asyncio.wait_for(
+                            self.speech_queue.get(), timeout=0.1
+                        )
+                        
+                        op.log_info(f"Processing {kind} turn: {text[:50]}...")
+                        
+                        # Cancel any existing playback
+                        await self._cancel_current_playback()
+                        
+                        # Start new AI processing
+                        self.playback_task = asyncio.create_task(
+                            self._route_and_playback(kind, text)
+                        )
+                        
+                        # Mark queue task as done
+                        self.speech_queue.task_done()
+                        
+                    except asyncio.TimeoutError:
+                        # Short sleep to prevent tight loop
+                        await asyncio.sleep(0.01)
+                        continue
+                    except Exception as e:
+                        op.log_error(f"Error in processing loop: {e}")
+                        await asyncio.sleep(0.1)
+                        
+            except Exception as e:
+                op.set_error(f"Turn processing loop failed: {e}")
+            finally:
+                op.log_info("Turn processing loop ended")
+    
+    async def _cancel_current_playback(self):
+        """Cancel any currently running playback task."""
+        if self.playback_task and not self.playback_task.done():
+            logger.info("🛑 Cancelling current playback task")
+            self.playback_task.cancel()
+            try:
+                await asyncio.wait_for(self.playback_task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            finally:
+                self.playback_task = None
+    
+    async def _route_and_playback(self, kind: str, text: str):
+        """Route conversation turn to orchestrator and handle playback."""
+        with tracer.start_as_current_span(
+            "orchestration.route_turn",
+            kind=SpanKind.CLIENT,
+            attributes={
+                "orchestration.turn_kind": kind,
+                "orchestration.text_length": len(text),
+                "orchestration.start_time": get_current_time(),
+            }
+        ) as span:
+            try:
+                logger.info(f"🎭 Routing {kind} turn to orchestrator")
+                
+                processing_start = time.time()
+                
+                # Call the orchestrator function
+                await asyncio.wait_for(
+                    self.orchestrator_func(
+                        cm=self.memory_manager,
+                        transcript=text,
+                        ws=self.websocket,
+                        caller=kind,
+                    ),
+                    timeout=30.0,
+                )
+                
+                processing_duration = time.time() - processing_start
+                safe_set_span_attributes(span, {
+                    "orchestration.duration_ms": processing_duration * 1000,
+                    "orchestration.success": True,
+                    "orchestration.completed_time": get_current_time(),
+                })
+                
+                span.set_status(Status(StatusCode.OK, "Orchestration completed successfully"))
+                logger.info(f"✅ Orchestration completed in {processing_duration:.3f}s")
+                
+            except asyncio.CancelledError:
+                safe_set_span_attributes(span, {
+                    "orchestration.cancelled": True,
+                    "orchestration.cancel_reason": "barge_in",
+                })
+                span.set_status(Status(StatusCode.ERROR, "Orchestration cancelled (barge-in)"))
+                logger.info("🛑 Orchestration cancelled (barge-in)")
+                raise
+            except asyncio.TimeoutError:
+                safe_set_span_attributes(span, {
+                    "orchestration.timeout": True,
+                    "orchestration.timeout_duration_s": 30.0,
+                })
+                span.set_status(Status(StatusCode.ERROR, "Orchestration timed out"))
+                logger.error("❌ Orchestration timed out after 30 seconds")
+                raise
+            except Exception as e:
+                safe_set_span_attributes(span, {
+                    "orchestration.error": str(e),
+                    "orchestration.success": False,
+                })
+                span.set_status(Status(StatusCode.ERROR, f"Orchestration failed: {e}"))
+                logger.error(f"❌ Orchestration failed: {e}")
+                raise
+    
+    async def stop_playback_immediately(self):
+        """Immediately stop current playback (called by barge-in)."""
+        await self._cancel_current_playback()
+        
+        # Clear any pending speech in the queue
+        while not self.speech_queue.empty():
+            try:
+                self.speech_queue.get_nowait()
+                self.speech_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+        
+        logger.info("🧹 Playback stopped and queue cleared")
+    
+    async def stop(self):
+        """Stop the turn processor and clean up."""
+        logger.info("Stopping turn processor")
+        self.stopped = True
+        
+        if self.processing_task:
+            self.processing_task.cancel()
+            try:
+                await self.processing_task
+            except asyncio.CancelledError:
+                pass
+        
+        await self._cancel_current_playback()
+        logger.info("✅ Turn processor stopped")
+
+
+class MediaProcessor:
+    """
+    Handles WebSocket media message processing and audio streaming.
+    
+    This class focuses specifically on ACS media protocol handling
+    and audio data flow to the speech recognizer.
+    """
+    
+    def __init__(
+        self,
+        recognizer: StreamingSpeechRecognizerFromBytes,
+        websocket: WebSocket,
+        call_connection_id: str,
+    ):
+        self.recognizer = recognizer
+        self.websocket = websocket
+        self.call_connection_id = call_connection_id
+        self.recognizer_started = False
+    
+    async def handle_media_message(self, stream_data: str):
+        """Process incoming WebSocket message from ACS."""
+        try:
+            data = json.loads(stream_data)
+            kind = data.get("kind")
+            
+            if kind == "AudioMetadata":
+                await self._handle_audio_metadata()
+            elif kind == "AudioData":
+                await self._handle_audio_data(data)
+                
+        except Exception as e:
+            logger.error(f"Error processing media message: {e}")
+    
+    async def _handle_audio_metadata(self):
+        """Handle AudioMetadata message - ACS is ready for streaming."""
+        with tracer.start_as_current_span(
+            "media.audio_metadata_received",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "media.event_type": "AudioMetadata",
+                "media.timestamp": get_current_time(),
+                "media.recognizer_started": self.recognizer_started,
+            }
+        ) as span:
+            logger.info("📡 Received AudioMetadata - ACS ready for audio streaming")
+            
+            if not self.recognizer_started:
+                logger.info("🎤 Starting speech recognizer on first AudioMetadata")
+                try:
+                    self.recognizer.start()
+                    self.recognizer_started = True
+                    logger.info("✅ Speech recognizer started successfully on AudioMetadata")
+                    safe_set_span_attributes(span, {
+                        "media.recognizer_start_triggered": True,
+                        "media.recognizer_start_successful": True,
+                    })
+                    
+                    # Now play the greeting after recognizer is ready
+                    try:
+                        await self._play_greeting()
+                        safe_set_span_attributes(span, {
+                            "media.greeting_played": True,
+                        })
+                    except Exception as greeting_error:
+                        logger.warning(f"⚠️ Failed to play greeting: {greeting_error}")
+                        safe_set_span_attributes(span, {
+                            "media.greeting_played": False,
+                            "media.greeting_error": str(greeting_error),
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"❌ Failed to start speech recognizer: {e}")
+                    safe_set_span_attributes(span, {
+                        "media.recognizer_start_triggered": True,
+                        "media.recognizer_start_successful": False,
+                        "media.recognizer_start_error": str(e),
+                    })
+                    span.set_status(Status(StatusCode.ERROR, f"Failed to start recognizer: {e}"))
+                    return
+                
+            span.set_status(Status(StatusCode.OK, "AudioMetadata processed successfully"))
+    
+    async def _handle_audio_data(self, data: dict):
+        """Handle AudioData message - process incoming audio."""
+        audio_data_section = data.get("audioData", {})
+        
+        # Skip silent audio frames
+        if audio_data_section.get("silent", True):
+            return
+        
+        # Process audio bytes (minimal tracing due to high frequency)
+        audio_bytes = audio_data_section.get("data")
+        if audio_bytes:
+            try:
+                if isinstance(audio_bytes, str):
+                    import base64
+                    audio_bytes = base64.b64decode(audio_bytes)
+                
+                # Send audio to speech recognizer
+                self.recognizer.write_bytes(audio_bytes)
+                
+            except Exception as e:
+                # Only log errors for audio processing failures
+                logger.error(f"❌ Audio data processing failed: {e}")
+                # Don't raise - continue processing other audio frames
+    
+    async def send_stop_audio_command(self):
+        """Send stop audio command to ACS."""
+        with tracer.start_as_current_span(
+            "acs.stop_audio_command",
+            kind=SpanKind.CLIENT,
+            attributes={
+                "acs.command_type": "StopAudio",
+                "acs.call_connection_id": self.call_connection_id,
+            }
+        ) as span:
+            try:
+                stop_audio_data = {
+                    "Kind": "StopAudio",
+                    "AudioData": None,
+                    "StopAudio": {},
+                }
+                await self.websocket.send_text(json.dumps(stop_audio_data))
+                
+                span.set_status(Status(StatusCode.OK, "Stop audio command sent successfully"))
+                logger.info("🛑 Stop audio command sent to ACS")
+                
+            except Exception as e:
+                safe_set_span_attributes(span, {
+                    "acs.error": str(e),
+                })
+                span.set_status(Status(StatusCode.ERROR, f"Failed to send stop audio command: {e}"))
+                logger.warning(f"❌ Failed to send stop audio command: {e}")
+
+
+class V1ACSMediaHandler:
+    """
+    Simplified ACS Media Handler with clean separation of concerns.
+    
+    This handler maintains the critical three-thread architecture while
+    breaking down responsibilities into focused, maintainable components:
+    
+    - SpeechCallbacks: Cross-thread communication for barge-in
+    - TurnProcessor: Conversation turn processing and AI orchestration  
+    - MediaProcessor: WebSocket media protocol and audio streaming
+    - BargeInState: Simple state management for interruptions
+    
+    Key preserved features:
+    - Sub-50ms barge-in response time
+    - Clean async task lifecycle management
+    - Thread-safe speech processing queue
+    - Comprehensive tracing and logging
+    """
+    
+    def __init__(
+        self,
+        websocket: WebSocket,
+        orchestrator_func: Callable,
+        call_connection_id: str,
+        recognizer: Optional[StreamingSpeechRecognizerFromBytes] = None,
+        memory_manager: Optional[MemoManager] = None,
+        session_id: Optional[str] = None,
+        greeting_text: str = GREETING,
+    ):
+        """Initialize the simplified ACS media handler."""
+        
+        # Core dependencies
+        self.websocket = websocket
+        self.orchestrator_func = orchestrator_func
+        self.call_connection_id = call_connection_id
+        self.session_id = session_id or call_connection_id
+        self.memory_manager = memory_manager
+        self.greeting_text = greeting_text
+        
+        # Initialize speech recognizer
+        self.recognizer = recognizer or StreamingSpeechRecognizerFromBytes(
+            candidate_languages=["en-US", "fr-FR", "de-DE", "es-ES", "it-IT"],
+            vad_silence_timeout_ms=800,
+            audio_format="pcm",
+        )
+        
+        # State management
+        self.barge_in_state = BargeInState()
+        self.main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.stopped = False
+        
+        # Component initialization
+        self.turn_processor = TurnProcessor(
+            orchestrator_func=orchestrator_func,
+            websocket=websocket,
+            memory_manager=memory_manager,
+            call_connection_id=call_connection_id,
+            session_id=self.session_id,
+        )
+        
+        self.media_processor = MediaProcessor(
+            recognizer=self.recognizer,
+            websocket=websocket,
+            call_connection_id=call_connection_id,
+        )
+        
+        # Speech callbacks will be initialized when we have the main loop
+        self.speech_callbacks: Optional[SpeechCallbacks] = None
+        
+        logger.info(
+            f"✅ Simplified ACS Media Handler initialized - "
+            f"call_id: {self.call_connection_id}, session_id: {self.session_id}"
+        )
+    
+    async def start(self):
+        """Start the media handler and all its components."""
+        with trace_acs_operation(
+            tracer, logger, "start_media_handler",
+            call_connection_id=self.call_connection_id
+        ) as op:
+            op.log_info("Starting ACS Media Handler")
+            
+            # Capture the main event loop
+            self.main_loop = asyncio.get_running_loop()
+            
+            # Initialize speech callbacks with the main loop
+            self.speech_callbacks = SpeechCallbacks(
+                main_loop=self.main_loop,
+                barge_in_state=self.barge_in_state,
+                speech_queue=self.turn_processor.speech_queue,
+                stop_playback_callback=self._handle_barge_in,
+            )
+            
+            # Configure speech recognizer callbacks
+            self.recognizer.set_partial_result_callback(self.speech_callbacks.on_partial)
+            self.recognizer.set_final_result_callback(self.speech_callbacks.on_final)
+            self.recognizer.set_cancel_callback(self.speech_callbacks.on_cancel)
+            
+            # Don't start recognizer yet - wait for AudioMetadata
+            op.log_info("Speech recognizer configured, waiting for AudioMetadata")
+            
+            # Start conversation processing loop
+            await self.turn_processor.start_processing_loop()
+            
+            # Don't play greeting here - wait for AudioMetadata
+            op.log_info("ACS Media Handler started successfully, waiting for audio stream")
+    
+    async def handle_media_message(self, stream_data: str):
+        """Handle incoming WebSocket media messages."""
+        await self.media_processor.handle_media_message(stream_data)
+    
+    async def _handle_barge_in(self):
+        """Handle barge-in events - stop current playback immediately."""
+        with tracer.start_as_current_span(
+            "barge_in.handle",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "barge_in.start_time": get_current_time(),
+                "barge_in.call_connection_id": self.call_connection_id,
+            }
+        ) as span:
+            try:
+                logger.info("🚨 Handling barge-in - stopping playback")
+                
+                handling_start = time.time()
+                
+                # Stop current playback and clear queue
+                await self.turn_processor.stop_playback_immediately()
+                
+                # Send stop audio command to ACS
+                await self.media_processor.send_stop_audio_command()
+                
+                handling_duration = time.time() - handling_start
+                safe_set_span_attributes(span, {
+                    "barge_in.handling_duration_ms": handling_duration * 1000,
+                    "barge_in.success": True,
+                    "barge_in.completed_time": get_current_time(),
+                })
+                
+                span.set_status(Status(StatusCode.OK, "Barge-in handled successfully"))
+                logger.info(f"✅ Barge-in handled successfully in {handling_duration:.3f}s")
+                
+            except Exception as e:
+                safe_set_span_attributes(span, {
+                    "barge_in.error": str(e),
+                    "barge_in.success": False,
+                })
+                span.set_status(Status(StatusCode.ERROR, f"Barge-in handling failed: {e}"))
+                logger.error(f"❌ Barge-in handling failed: {e}")
+                raise
+    
+    async def _play_greeting(self):
+        """Play the initial greeting message."""
+        with tracer.start_as_current_span(
+            "greeting.play",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "greeting.text": self.greeting_text,
+                "greeting.voice": "en-US-EmmaNeural",
+                "greeting.start_time": get_current_time(),
+            }
+        ) as span:
+            try:
+                greeting_start = time.time()
+                
+                text_source = TextSource(
+                    text=self.greeting_text, 
+                    voice_name="en-US-EmmaNeural"
+                )
+                
+                # Add timeout to prevent hanging
+                await asyncio.wait_for(
+                    send_response_to_acs(self.websocket, text_source),
+                    timeout=5.0  # 5 second timeout for greeting
+                )
+                
+                greeting_duration = time.time() - greeting_start
+                safe_set_span_attributes(span, {
+                    "greeting.duration_ms": greeting_duration * 1000,
+                    "greeting.success": True,
+                    "greeting.completed_time": get_current_time(),
+                })
+                
+                span.set_status(Status(StatusCode.OK, "Greeting played successfully"))
+                logger.info(f"🎵 Greeting played successfully in {greeting_duration:.3f}s: {self.greeting_text}")
+                
+            except asyncio.TimeoutError:
+                safe_set_span_attributes(span, {
+                    "greeting.timeout": True,
+                    "greeting.success": False,
+                })
+                span.set_status(Status(StatusCode.ERROR, "Greeting playback timed out"))
+                logger.error("❌ Greeting playback timed out after 5 seconds")
+                
+            except Exception as e:
+                safe_set_span_attributes(span, {
+                    "greeting.error": str(e),
+                    "greeting.success": False,
+                })
+                span.set_status(Status(StatusCode.ERROR, f"Greeting playback failed: {e}"))
+                logger.error(f"❌ Greeting playback failed: {e}")
+                raise
+    
+    async def stop(self):
+        """Stop the handler and clean up all resources."""
+        with trace_acs_operation(
+            tracer, logger, "stop_media_handler",
+            call_connection_id=self.call_connection_id
+        ) as op:
+            op.log_info("Stopping ACS Media Handler")
+            
+            self.stopped = True
+            
+            # Stop speech recognizer
+            if self.recognizer:
+                self.recognizer.stop()
+                op.log_info("Speech recognizer stopped")
+            
+            # Stop turn processor
+            await self.turn_processor.stop()
+            
+            op.log_info("ACS Media Handler stopped successfully")
+
+
+# Backward compatibility alias
+ACSMediaHandler = V1ACSMediaHandler

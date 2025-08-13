@@ -2,7 +2,7 @@ import wave
 
 from utils.ml_logging import get_logger
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 def check_audio_file(file_path: str) -> bool:

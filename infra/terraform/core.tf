@@ -70,4 +70,5 @@ resource "azurerm_role_assignment" "app_insights_metrics_custom" {
   scope                = azurerm_application_insights.main.id
   role_definition_name = "Monitoring Metrics Publisher"
   principal_id         = local.principal_id
+  principal_type       = local.principal_type
 }

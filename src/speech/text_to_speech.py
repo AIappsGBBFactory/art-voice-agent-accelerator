@@ -1,10 +1,12 @@
 import html
 import os
 import re
+import asyncio
+import time
 from typing import Callable, Dict, List, Optional
 
 import azure.cognitiveservices.speech as speechsdk
-from azure.identity import DefaultAzureCredential
+from utils.azure_auth import get_credential
 from dotenv import load_dotenv
 from langdetect import LangDetectException, detect
 
@@ -20,7 +22,7 @@ from utils.ml_logging import get_logger
 load_dotenv()
 
 # Initialize logger
-logger = get_logger()
+logger = get_logger(__name__)
 
 _SENTENCE_END = re.compile(r"([.!?；？！。]+|\n)")
 
@@ -100,6 +102,8 @@ def _is_headless() -> bool:
 
 
 class SpeechSynthesizer:
+    # Limit concurrent server-side TTS synth requests to avoid SDK/service hiccups
+    _synth_semaphore = asyncio.Semaphore(4)
     def __init__(
         self,
         key: str = None,
@@ -133,6 +137,8 @@ class SpeechSynthesizer:
             except Exception as e:
                 logger.warning(f"Failed to initialize Azure Monitor tracing: {e}")
                 self.enable_tracing = False
+                # Temporarily disable to avoid startup errors
+                logger.info("Continuing without Azure Monitor tracing")
 
         # DON'T initialize speaker synthesizer during __init__ to avoid audio library issues
         # Only create it when actually needed for speaker playback
@@ -171,7 +177,7 @@ class SpeechSynthesizer:
                 )
 
             endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
-            credential = DefaultAzureCredential()
+            credential = get_credential()
 
             # Use default Azure credential for authentication
             # Get a fresh token each time to handle token expiration
@@ -179,7 +185,7 @@ class SpeechSynthesizer:
                 logger.debug(
                     "Attempting to use DefaultAzureCredential for Azure Speech"
                 )
-                credential = DefaultAzureCredential()
+                credential = get_credential()
                 speech_resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
                 token = credential.get_token(
                     "https://cognitiveservices.azure.com/.default"
@@ -300,14 +306,34 @@ class SpeechSynthesizer:
                 "tts_speaker_synthesis_session", kind=SpanKind.CLIENT
             )
 
-            # Set session attributes for correlation (matching speech_recognizer pattern)
-            self._session_span.set_attribute("ai.operation.id", self.call_connection_id)
-            self._session_span.set_attribute("tts.session.id", self.call_connection_id)
+            # Correlation keys
+            self._session_span.set_attribute("rt.call.connection_id", self.call_connection_id)
+            self._session_span.set_attribute("rt.session.id", self.call_connection_id)
+
+            # Service specific attributes
             self._session_span.set_attribute("tts.region", self.region)
             self._session_span.set_attribute("tts.voice", self.voice)
             self._session_span.set_attribute("tts.language", self.language)
             self._session_span.set_attribute("tts.text_length", len(text))
             self._session_span.set_attribute("tts.operation_type", "speaker_synthesis")
+            self._session_span.set_attribute("server.address", f"{self.region}.tts.speech.microsoft.com")
+            self._session_span.set_attribute("server.port", 443)
+            self._session_span.set_attribute("http.method", "POST")
+            # Use endpoint if set, otherwise default to region-based URL
+            endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
+            if endpoint:
+                self._session_span.set_attribute(
+                    "http.url",
+                    f"{endpoint}/cognitiveservices/v1"
+                )
+            else:
+                self._session_span.set_attribute(
+                    "http.url",
+                    f"https://{self.region}.tts.speech.microsoft.com/cognitiveservices/v1"
+                )
+            # External dependency identification for App Map
+            self._session_span.set_attribute("peer.service", "azure-cognitive-speech")
+            self._session_span.set_attribute("net.peer.name", f"{self.region}.tts.speech.microsoft.com")
 
             # Set standard attributes if available
             self._session_span.set_attribute(
@@ -673,7 +699,7 @@ class SpeechSynthesizer:
             if not self.key:
                 # Test DefaultAzureCredential
                 try:
-                    credential = DefaultAzureCredential()
+                    credential = get_credential()
                     token = credential.get_token(
                         "https://cognitiveservices.azure.com/.default"
                     )

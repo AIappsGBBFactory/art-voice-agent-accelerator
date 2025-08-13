@@ -1,0 +1,157 @@
+# Run when commits are pushed to cleanup/deployment
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+  push:
+    # Run when commits are pushed to mainline branch (main or master)
+    # Set this to the mainline branch you are using
+    branches:
+      - cleanup/deployment
+
+# Set up permissions for deploying with secretless Azure federated credentials
+# https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure?tabs=azure-portal%2Clinux#set-up-azure-login-with-openid-connect-authentication
+permissions:
+  id-token: write
+  contents: read
+
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_ENV_NAME: ${{ github.event.inputs.environment || 'dev' }}
+      RS_RESOURCE_GROUP: ${{ vars.RS_RESOURCE_GROUP }}
+      RS_STORAGE_ACCOUNT: ${{ vars.RS_STORAGE_ACCOUNT }}
+      RS_CONTAINER_NAME: ${{ vars.RS_CONTAINER_NAME }}
+      # RS_RESOURCE_GROUP: 'Default-ActivityLogAlerts'
+      # RS_STORAGE_ACCOUNT: 'rtagent'
+      # RS_CONTAINER_NAME: 'tfstate'
+      ARM_USE_OIDC: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install azd
+        uses: Azure/setup-azd@v2
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+          
+      - name: Azure CLI Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in with Azure Developer CLI (OIDC)
+        run: |
+          azd auth login `
+            --client-id "$Env:AZURE_CLIENT_ID" `
+            --federated-credential-provider "github" `
+            --tenant-id "$Env:AZURE_TENANT_ID"
+        shell: pwsh
+
+      - name: Whitelist GitHub Runner IP
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            set -eu
+            agentIP=$(curl -s https://api.ipify.org/)
+            az storage account network-rule add \
+              --resource-group "${{ env.RS_RESOURCE_GROUP }}" \
+              --account-name "${{ env.RS_STORAGE_ACCOUNT }}" \
+              --ip-address $agentIP
+            # sleep 300
+
+      - name: Configure Terraform Backend
+        run: |
+          echo "🔧 Configuring Terraform backend..."
+          echo "Backend: ${{ env.RS_STORAGE_ACCOUNT }}/${{ env.RS_CONTAINER_NAME }}/azd/${{ env.AZURE_ENV_NAME }}.tfstate"
+          
+          cat > infra/terraform/backend.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ env.RS_RESOURCE_GROUP }}"
+              storage_account_name = "${{ env.RS_STORAGE_ACCOUNT }}"
+              container_name       = "${{ env.RS_CONTAINER_NAME }}"
+              key                  = "${{ env.AZURE_ENV_NAME }}.tfstate"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+          echo "✅ Backend configured"
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Setup Terraform Parameters
+        run: |
+          echo "🔧 Setting up Terraform parameters..."
+          
+          # Base parameters from environment tfvars
+          BASE_PARAMS=$(cat infra/terraform/params/main.tfvars.${{ github.event.inputs.environment || 'dev' }}.json)
+          echo "Base: $(echo "$BASE_PARAMS" | jq -c .)"
+            
+            # Add dynamic parameters
+            FINAL_PARAMS=$(echo "$BASE_PARAMS" | jq \
+            --arg env "${{ env.AZURE_ENV_NAME }}" \
+            --arg principal_type "ServicePrincipal" \
+            '. + {
+              environment_name: $env,
+              principal_type: $principal_type
+            }')
+            
+            echo "$FINAL_PARAMS" > infra/terraform/main.tfvars.json
+            echo "✅ Parameters configured for environment: ${{ env.AZURE_ENV_NAME }}"
+          
+      - name: Provision Infrastructure
+        run: |
+          echo "🚀 Provisioning infrastructure..."
+          echo "Environment: ${{ env.AZURE_ENV_NAME }}"
+          azd provision --no-prompt
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Deploy Application
+        run: azd deploy --no-prompt
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+        
+      - name: Remove GitHub Runner IP from Whitelist
+        if: always()
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            set -eu
+            agentIP=$(curl -s https://api.ipify.org/)
+            az storage account network-rule remove  \
+              --resource-group "${{ env.RS_RESOURCE_GROUP }}" \
+              --account-name "${{ env.RS_STORAGE_ACCOUNT }}" \
+              --ip-address $agentIP
+
+      - name: logout
+        if: always()
+        run: |
+          az logout

@@ -3,6 +3,8 @@
 
 """
 
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 import base64
 import json
 import mimetypes
@@ -12,7 +14,7 @@ import traceback
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import openai
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from utils.azure_auth import get_credential, get_bearer_token_provider
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from opentelemetry import trace
@@ -25,7 +27,7 @@ from utils.trace_context import TraceContext
 load_dotenv()
 
 # Set up logger
-logger = get_logger()
+logger = get_logger(__name__)
 
 # # Exports traces to local
 # span_exporter = ConsoleSpanExporter()
@@ -161,7 +163,7 @@ class AzureOpenAIManager:
 
         if not self.api_key:
             token_provider = get_bearer_token_provider(
-                DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+                get_credential(), "https://cognitiveservices.azure.com/.default"
             )
             self.openai_client = AzureOpenAI(
                 api_version=self.api_version,
@@ -259,22 +261,37 @@ class AzureOpenAIManager:
 
         response = None
         try:
-            response = self.openai_client.chat.completions.create(
-                model=deployment_name or self.chat_model_name,
-                messages=messages_for_api,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                seed=seed,
-                top_p=top_p,
-                **kwargs,
-            )
-            # Process and output the completion text
-            for event in response:
-                if event.choices:
-                    event_text = event.choices[0].delta
-                    if event_text:
-                        print(event_text.content, end="", flush=True)
-                        time.sleep(0.01)  # Maintain minimal sleep to reduce latency
+            # Trace AOAI dependency as a CLIENT span so App Map shows an external node
+            endpoint_host = (self.azure_endpoint or "").replace("https://","").replace("http://","")
+            with tracer.start_as_current_span(
+                "Azure.OpenAI.ChatCompletion",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "peer.service": "azure-openai",
+                    "net.peer.name": endpoint_host,
+                    "server.address": endpoint_host,
+                    "server.port": 443,
+                    "http.method": "POST",
+                    "http.url": f"https://{endpoint_host}/openai/deployments/{deployment_name}/chat/completions",
+                    "rt.call.connection_id": self.call_connection_id or "unknown",
+                },
+            ):
+                response = self.openai_client.chat.completions.create(
+                    model=deployment_name or self.chat_model_name,
+                    messages=messages_for_api,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    seed=seed,
+                    top_p=top_p,
+                    **kwargs,
+                )
+                # Process and output the completion text
+                for event in response:
+                    if event.choices:
+                        event_text = event.choices[0].delta
+                        if event_text:
+                            print(event_text.content, end="", flush=True)
+                            time.sleep(0.01)  # Maintain minimal sleep to reduce latency
         except Exception as e:
             print(f"An error occurred: {str(e)}")
 
@@ -313,21 +330,30 @@ class AzureOpenAIManager:
             Transcription object with the audio transcription.
         """
         try:
-            # Create the transcription request
-            result = self.openai_client.audio.transcriptions.create(
-                file=open(audio_file_path, "rb"),
-                model=self.whisper_model_name,
-                language=language,
-                prompt=prompt,
-                response_format=response_format,
-                temperature=temperature,
-                timestamp_granularities=timestamp_granularities,
-                extra_headers=extra_headers,
-                extra_query=extra_query,
-                extra_body=extra_body,
-                timeout=timeout,
-            )
-            return result
+          endpoint_host = (self.azure_endpoint or "").replace("https://", "").replace("http://", "")
+          with tracer.start_as_current_span(
+              "Azure.OpenAI.WhisperTranscription",
+              kind=SpanKind.CLIENT,
+              attributes={
+                  "peer.service": "azure-openai",
+                  "net.peer.name": endpoint_host,
+                  "rt.call.connection_id": self.call_connection_id or "unknown",
+              },
+          ):
+              result = self.openai_client.audio.transcriptions.create(
+                  file=open(audio_file_path, "rb"),
+                  model=self.whisper_model_name,
+                  language=language,
+                  prompt=prompt,
+                  response_format=response_format,
+                  temperature=temperature,
+                  timestamp_granularities=timestamp_granularities,
+                  extra_headers=extra_headers,
+                  extra_query=extra_query,
+                  extra_body=extra_body,
+                  timeout=timeout,
+              )
+              return result
         except openai.APIConnectionError as e:
             logger.error("API Connection Error: The server could not be reached.")
             logger.error(f"Error details: {e}")

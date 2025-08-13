@@ -22,4 +22,16 @@ function start_frontend() {
     npm run dev
 }
 
+function start_frontend_preview() {
+    if [[ ! -d "$FRONTEND_DIR" ]]; then
+        echo "Error: Frontend directory not found at $FRONTEND_DIR"
+        exit 1
+    fi
+
+    echo "Starting frontend in production mode in $FRONTEND_DIR"
+    cd "$FRONTEND_DIR"
+    npm run build
+    npm run start
+}
+
 start_frontend

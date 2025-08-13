@@ -22,7 +22,7 @@ from src.acs.acs_helper import AcsCaller
 from utils.ml_logging import get_logger
 
 # --- Init Logger ---
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 # --- Helper Functions for Initialization ---

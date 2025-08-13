@@ -140,7 +140,7 @@ class AzureBlobHelper:
         try:
             # Prefer Managed Identity (secure, Azure-native)
             if not self.connection_string:
-                credential = DefaultAzureCredential()
+                credential = get_credential()
                 logger.info("Using Managed Identity authentication")
                 return credential
             else:

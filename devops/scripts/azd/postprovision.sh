@@ -189,7 +189,11 @@ prompt_for_phone_number() {
             fi
             ;;
         2)
-            return 2  # Signal to provision new number
+            # User wants to provision new number
+            provision_new_phone_number || {
+                log_warning "Phone number provisioning failed, continuing with other tasks..."
+                return 1
+            }
             ;;
         3)
             log_info "Skipping phone number configuration"
@@ -326,33 +330,15 @@ main() {
     
     if ! check_existing_phone_number; then
         # Store the result but don't fail the script
-        prompt_for_phone_number || true
-        local prompt_result=$?
-        
-        case $prompt_result in
-            0)
-                # Phone number was set successfully
-                log_success "Phone number configured"
-                ;;
-            1)
-                # Error occurred or CI/CD mode without phone number
-                if [ "$INTERACTIVE_MODE" = "false" ]; then
-                    log_info "Phone number configuration skipped in CI/CD mode"
-                else
-                    log_warning "Phone number configuration failed, continuing..."
-                fi
-                ;;
-            2)
-                # User wants to provision new number
-                provision_new_phone_number || {
-                    log_warning "Phone number provisioning failed, continuing with other tasks..."
-                }
-                ;;
-            3)
-                # User chose to skip
-                log_info "Phone number configuration skipped by user choice"
-                ;;
-        esac
+        if prompt_for_phone_number; then
+            log_success "Phone number configured"
+        else
+            if [ "$INTERACTIVE_MODE" = "false" ]; then
+                log_info "Phone number configuration skipped in CI/CD mode"
+            else
+                log_warning "Phone number configuration failed, continuing..."
+            fi
+        fi
     fi
     
     # Step 2: Generate environment files (always runs)

@@ -1,0 +1,36 @@
+{
+  "location": "eastus",
+  "openai_location": "eastus",
+  "cosmosdb_location": null,
+  "backend_api_public_url": null,
+  "acs_source_phone_number": null,
+  "principal_id": null,
+  "principal_type": "ServicePrincipal",
+  "acs_data_location": "United States",
+  "disable_local_auth": true,
+  "enable_redis_ha": false,
+  "redis_sku": "MemoryOptimized_M10",
+  "redis_port": 10000,
+  "openai_models": [
+    {
+      "name": "gpt-4o",
+      "version": "2024-11-20",
+      "sku_name": "DataZoneStandard",
+      "capacity": 50
+    },
+    {
+      "name": "gpt-4o-mini",
+      "version": "2024-07-18",
+      "sku_name": "DataZoneStandard",
+      "capacity": 50
+    },
+    {
+      "name": "gpt-4.1-mini",
+      "version": "2025-04-14",
+      "sku_name": "DataZoneStandard",
+      "capacity": 30
+    }
+  ],
+  "mongo_database_name": "audioagentdb-staging",
+  "mongo_collection_name": "audioagentcollection"
+}

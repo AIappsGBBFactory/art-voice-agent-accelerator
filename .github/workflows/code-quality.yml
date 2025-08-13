@@ -1,0 +1,235 @@
+name: Code Quality
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - '**.py'
+      - 'requirements*.txt'
+      - '.github/workflows/code-quality.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - '**.py'
+      - 'requirements*.txt'
+      - '.github/workflows/code-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write  # To comment on PRs
+  security-events: write  # To upload SARIF results
+
+jobs:
+  code-quality:
+    name: Code Quality Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit[toml] ruff black isort
+
+      - name: Create reports directory
+        run: mkdir -p devops/security/reports
+
+      - name: Run Bandit Security Scan
+        id: bandit
+        run: |
+          echo "Running Bandit security scan..."
+          
+          # Run bandit scan (may fail if no Python files found)
+          python devops/security/run_bandit.py src || true
+          
+          # Get the latest JSON report
+          LATEST_JSON=$(ls -t devops/security/reports/bandit_src_*.json 2>/dev/null | head -1 || echo "")
+          
+          # Extract summary for PR comment
+          if [ -n "$LATEST_JSON" ] && [ -f "$LATEST_JSON" ]; then
+            echo "Found Bandit report: $LATEST_JSON"
+            HIGH_COUNT=$(jq '[.results[] | select(.issue_severity == "HIGH")] | length' "$LATEST_JSON" 2>/dev/null || echo "0")
+            MEDIUM_COUNT=$(jq '[.results[] | select(.issue_severity == "MEDIUM")] | length' "$LATEST_JSON" 2>/dev/null || echo "0")
+            LOW_COUNT=$(jq '[.results[] | select(.issue_severity == "LOW")] | length' "$LATEST_JSON" 2>/dev/null || echo "0")
+            TOTAL_COUNT=$(jq '.results | length' "$LATEST_JSON" 2>/dev/null || echo "0")
+            
+            echo "high_issues=$HIGH_COUNT" >> $GITHUB_OUTPUT
+            echo "medium_issues=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+            echo "low_issues=$LOW_COUNT" >> $GITHUB_OUTPUT
+            echo "total_issues=$TOTAL_COUNT" >> $GITHUB_OUTPUT
+            echo "json_report=$LATEST_JSON" >> $GITHUB_OUTPUT
+          else
+            echo "No Bandit JSON report found (likely no Python files to scan)"
+            echo "high_issues=0" >> $GITHUB_OUTPUT
+            echo "medium_issues=0" >> $GITHUB_OUTPUT
+            echo "low_issues=0" >> $GITHUB_OUTPUT
+            echo "total_issues=0" >> $GITHUB_OUTPUT
+            echo "json_report=" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      - name: Run Ruff Linting
+        id: ruff
+        run: |
+          echo "Running Ruff linting..."
+          ruff check src/ --output-format=json > ruff-report.json || true
+          ruff check src/ --output-format=text > ruff-report.txt || true
+          
+          RUFF_ISSUES=$(jq length ruff-report.json)
+          echo "ruff_issues=$RUFF_ISSUES" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Run Black Format Check
+        id: black
+        run: |
+          echo "Checking code formatting with Black..."
+          black --check --diff src/ > black-report.txt || echo "formatting_issues=true" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Run Import Sorting Check
+        id: isort
+        run: |
+          echo "Checking import sorting with isort..."
+          isort --check-only --diff src/ > isort-report.txt || echo "import_issues=true" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Convert Bandit Report to SARIF
+        if: always()
+        run: |
+          echo "Converting Bandit JSON to SARIF format..."
+          
+          # Check if Bandit generated a JSON report
+          LATEST_JSON="${{ steps.bandit.outputs.json_report }}"
+          
+          if [ -n "$LATEST_JSON" ] && [ -f "$LATEST_JSON" ]; then
+            echo "Found Bandit JSON report: $LATEST_JSON"
+            python devops/security/bandit_to_sarif.py "$LATEST_JSON" bandit-report.sarif
+          else
+            echo "No Bandit JSON report found, creating empty SARIF..."
+            # Create a minimal empty JSON file and convert it
+            echo '{"results": []}' > empty-bandit.json
+            python devops/security/bandit_to_sarif.py empty-bandit.json bandit-report.sarif
+          fi
+          
+          echo "sarif_file=bandit-report.sarif" >> $GITHUB_OUTPUT
+        id: sarif_convert
+
+      - name: Upload Bandit SARIF Report
+        if: always() && steps.sarif_convert.outputs.sarif_file
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.sarif_convert.outputs.sarif_file }}
+        continue-on-error: true
+
+      - name: Comment PR with Results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            // Bandit results
+            const highIssues = '${{ steps.bandit.outputs.high_issues }}' || '0';
+            const mediumIssues = '${{ steps.bandit.outputs.medium_issues }}' || '0';
+            const lowIssues = '${{ steps.bandit.outputs.low_issues }}' || '0';
+            const totalIssues = '${{ steps.bandit.outputs.total_issues }}' || '0';
+            
+            // Ruff results
+            const ruffIssues = '${{ steps.ruff.outputs.ruff_issues }}' || '0';
+            
+            // Format and import issues
+            const hasFormatIssues = '${{ steps.black.outputs.formatting_issues }}' === 'true';
+            const hasImportIssues = '${{ steps.isort.outputs.import_issues }}' === 'true';
+            
+            let status = '✅ PASSED';
+            let statusColor = '🟢';
+            
+            // Fail if high severity security issues or many medium issues
+            if (parseInt(highIssues) > 0 || parseInt(mediumIssues) > 5) {
+              status = '❌ FAILED';
+              statusColor = '🔴';
+            } else if (parseInt(mediumIssues) > 0 || parseInt(ruffIssues) > 10 || hasFormatIssues || hasImportIssues) {
+              status = '⚠️ WARNING';
+              statusColor = '🟡';
+            }
+            
+            const comment = `## ${statusColor} Code Quality Report ${status}
+            
+            ### 🔒 Security Scan (Bandit)
+            | Severity | Count |
+            |----------|-------|
+            | High     | ${highIssues} |
+            | Medium   | ${mediumIssues} |
+            | Low      | ${lowIssues} |
+            | **Total** | **${totalIssues}** |
+            
+            ### 🔧 Code Quality
+            | Tool | Issues |
+            |------|--------|
+            | Ruff Linting | ${ruffIssues} |
+            | Black Formatting | ${hasFormatIssues ? '❌ Needs formatting' : '✅ Properly formatted'} |
+            | Import Sorting | ${hasImportIssues ? '❌ Needs sorting' : '✅ Properly sorted'} |
+            
+            ### 📋 Quality Gate Rules
+            - ❌ **FAIL**: High security issues OR >5 medium security issues
+            - ⚠️ **WARN**: Any medium security issues OR >10 linting issues OR formatting issues
+            - ✅ **PASS**: All checks within acceptable limits
+            
+            ### 🔍 Next Steps
+            ${parseInt(highIssues) > 0 ? '- 🚨 **Critical**: Fix high severity security issues immediately\n' : ''}
+            ${parseInt(mediumIssues) > 5 ? '- ⚠️ Review and fix medium severity security issues\n' : ''}
+            ${hasFormatIssues ? '- 🎨 Run `black src/` to fix formatting\n' : ''}
+            ${hasImportIssues ? '- 📦 Run `isort src/` to fix import sorting\n' : ''}
+            ${parseInt(ruffIssues) > 10 ? '- 🔧 Review and fix linting issues with `ruff check src/`\n' : ''}
+            
+            ---
+            *Generated by Code Quality workflow*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Fail on Critical Issues
+        if: always()
+        run: |
+          HIGH_ISSUES=${{ steps.bandit.outputs.high_issues }}
+          MEDIUM_ISSUES=${{ steps.bandit.outputs.medium_issues }}
+          
+          echo "Security scan results:"
+          echo "- High severity issues: $HIGH_ISSUES"
+          echo "- Medium severity issues: $MEDIUM_ISSUES"
+          
+          # Fail the workflow for critical security issues
+          if [ "$HIGH_ISSUES" -gt 0 ]; then
+            echo "❌ CRITICAL: High severity security issues found!"
+            exit 1
+          elif [ "$MEDIUM_ISSUES" -gt 5 ]; then
+            echo "❌ CRITICAL: Too many medium severity security issues ($MEDIUM_ISSUES > 5)!"
+            exit 1
+          else
+            echo "✅ Security check passed"
+          fi
+
+      - name: Upload Reports as Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-quality-reports
+          path: |
+            devops/security/reports/
+            ruff-report.*
+            black-report.txt
+            isort-report.txt
+          retention-days: 30

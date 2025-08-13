@@ -1,127 +1,81 @@
-# GitHub Copilot Instructions for Real-Time Azure Voice Agentic App
-
-## General Development Philosophy
-- Prioritize readability and simplicity over cleverness.
-- Follow the principle of "less is more"—avoid unnecessary abstraction.
-- Write modular code with clear separation between infrastructure, backend logic, and frontend UX.
+# 🧠 Copilot Instructions for Real-Time Voice App (Python 3.11, FastAPI, Azure)
 
 ---
 
-## FastAPI + Uvicorn Backend (Python 3.11)
+## 🚀 Overview
 
-### Patterns to Encourage
-- Use `async def` endpoints and WebSocket handlers.
-- Use `pydantic.BaseModel` for all request and response schemas.
-- Use dependency injection (`Depends`) for session, auth, or Redis clients.
-- Use environment variables or `.env` for all secrets and config.
-- Log structured JSON with correlation ID, callConnectionId, etc.
+You are generating Python 3.11 code for a **low-latency, real-time voice app** using:
 
-### Patterns to Avoid
-- No blocking I/O (e.g., `requests` or `open()`).
-- Avoid long chains of decorators or dynamic magic.
-- No large global state—use scoped dependency containers (e.g., Redis, session store).
+- **FastAPI**
+- **Azure Communication Services** (Call Automation + Media Streaming)
+- **Azure Speech** (STT/TTS)
+- **Azure OpenAI**
 
 ---
 
-## Vite + React Frontend
+## 📐 General Principles
 
-### Patterns to Encourage
-- Use hooks like `useEffect`, `useState`, and `useRef` to manage live transcript state.
-- Use TailwindCSS for styling—keep styles inline or colocated with components.
-- Use SWR or native `fetch` for calling backend APIs—keep it simple.
-- Prefer pure functional components over class components.
-- Stream transcript and audio via WebSocket. Maintain `connectionId` per session.
-
-### Patterns to Avoid
-- No Redux or global state management unless truly necessary.
-- No jQuery or low-level DOM mutation.
-- Avoid over-styling or deeply nested component trees.
+- **Readability & Simplicity:** Favor clear, direct code.
+- **Modular Design:** Separate infrastructure, backend logic, and frontend UX.
+- **Async Endpoints:** Use `async` for HTTP and WebSocket handlers.
+- **Schemas:** All request/response models use `pydantic.BaseModel`.
+- **Dependency Injection:** Use FastAPI `Depends` for session/auth/Redis clients.
+- **Configuration:** Use environment variables or `.env` for secrets/config.
+- **Structured Logging:** Emit JSON logs with `correlation ID`, `callConnectionId`, etc.
+- **No Blocking I/O:** Avoid global state; use scoped containers.
 
 ---
 
-## Azure Bicep IaC
+## 🔎 Tracing & App Map
 
-### Patterns to Encourage
-- Use parameterized modules for reusable infrastructure (e.g., `privateEndpoint.bicep`, `redis.bicep`).
-- Store secrets in Key Vault and access via managed identity only.
-- Define subnets with explicit delegation and minimal address ranges.
-- Set `dependsOn` explicitly when deploying resources with known sequence dependencies.
-- Use `azd` conventions for directory structure and naming (`infra/`, `src/`, etc.).
-
-### Patterns to Avoid
-- Avoid massive monolithic Bicep files.
-- Avoid hardcoding values—use `param` with defaults or environment overrides.
-
----
-
-## Deployment & azd
-
-- Always use `azd up` to ensure full end-to-end provisioning (infra + code).
-- Use `azd env` for managing environment-specific secrets.
-- Enable diagnostics and log analytics on all services.
-- Configure minimal CORS: allow origin of frontend, `allowCredentials: true`, `maxAge: 86400`.
+- **OpenTelemetry:** Always instrument with OTEL.
+    - Set `service.name` and `service.instance.id` on `TracerProvider Resource`.
+- **SpanKind:**
+    - `SERVER` for inbound HTTP/WS
+    - `CLIENT` for outbound calls
+    - `INTERNAL` for internal steps
+- **Context Propagation:** Use W3C `traceparent` over HTTP/WS. Use span links for cross-process work.
+- **Root Trace:** One per `callConnectionId`. Add `rt.call.connection_id` and `rt.session.id` attributes.
+- **Span Volume:** Reasonable; one session span for STT (+ events), optional VAD segment spans. **Never per-frame.**
+- **Semantic Attributes:** Use keys like `peer.service`, `net.peer.name`, `http.request.method`, `server.address`, `network.protocol.name="websocket"`.
+- **Error Handling:** On errors, set span status to `ERROR` and add event with `error.type` and `error.message`.
 
 ---
 
-## Real-Time Communication / Voice Agent Context
+## 🏗️ Structure & Dependency Injection
 
-- For ACS + WebSocket, ensure low-latency STT/TTS loop is preserved.
-- Use Redis for ephemeral state (session, transcript, interruptions).
-- Segment logic for `eventgrid`, `speech`, `llm`, `tts`, and `logger` into micromodules.
-- Use fallback defaults for TTS/STT in case of partial outage.
-- Retry gracefully on STT or transcription errors.
+- **No Client Stashing:** Do not stash clients on `Request`/`WebSocket`.
+- **Typed AppContainer:** Create protocols for Redis, Speech, AOAI. Attach to `app.state`, expose via FastAPI dependencies.
+- **WebSocket Handlers:** Accept dependencies via `container_from_ws(ws)`; avoid direct `ws.app.state.*` access.
 
 ---
 
-## Copilot Usage Tips
+## 📞 Azure Communication Services (ACS) Specifics
 
-- Use natural language comments above functions to guide Copilot suggestions.
-- Name functions and variables with intent (`handleTranscriptChunk`, `saveToBlob`, `generateTTS`).
-- Break large files into folders like `/handlers`, `/models`, `/infra/modules`.
+- **callConnectionId:** Treat as correlation token, not secret. Prefer headers/message body.
+- **Media Spans:** 
+    - `SERVER` span for WS accept
+    - `CLIENT` spans for ACS control ops (answer, play, stop, hangup)
 
 ---
 
-## Folder Conventions (suggested)
-```
-/
-├── infra/
-│   ├── bicep/                  # Opinionated private deployment (WIP)
-│   │   ├── main.bicep
-│   │   └── modules/
-│   │       ├── apim.bicep
-│   │       ├── containerapp.bicep
-│   │       ├── private-endpoint.bicep
-│   │       └── redis.bicep
-│   └── terraform/              # Public-facing, simplified PoC
-│       ├── main.tf
-│       └── modules/
-│
-├── devops/                 # CI/CD, pipeline templates, scripts, precommit configs, etc.
-├── src/                    # Shared Python code
-│   ├── acs/
-│   ├── redis/
-│   ├── aoai/
-│   ├── blob/
-│   ├── cosmosdb/
-│   ├── eventgrid/
-│   └── speech/
-│
-├── apps/
-│   ├── rtagent/
-│   │   ├── frontend/       # Vite + React
-│   │   │   ├── .env        # Frontend environment variables
-│   │   │   └── App.jsx
-│   │   └── backend/        # FastAPI + Uvicorn
-│   │       ├── main.py
-│   │       ├── routers/
-│   │       └── utils/
-│   ├── benefitslookup/
-│   │   ├── frontend/
-│   │   └── backend/
-│   └── billinginquiry/
-│       ├── frontend/
-│       └── backend/
-│
-├── .env                     # Backend environment variables
-└── azure.yaml
-```
+## ✨ Style Guide
+
+- **Small, Focused Functions:** Explicit timeouts on awaits; no blocking calls in event loop.
+- **Background Work:** Use `asyncio.create_task` and track task lifecycles.
+- **Docstrings:** Include inputs/outputs and latency considerations.
+- **Unit-Testable:** Allow fakes for Redis/Speech/AOAI via Protocols.
+
+---
+
+## 🚫 Do NOT
+
+- Add per-audio-chunk spans
+- Use global singletons
+- Add span attributes for `service.name`/`span.kind`
+
+---
+
+> **Tip:** Use code blocks, lists, and semantic section headers to clarify intent and structure for inferencing engines.
+
+---

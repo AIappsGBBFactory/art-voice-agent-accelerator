@@ -418,3 +418,11 @@ terraform.rc
 infra-tf/backend.tf
 main.tfvars.json
 .deploy
+
+new_acs
+_back
+
+# GitHub Actions local testing
+.secrets
+.env.test
+.gitignore

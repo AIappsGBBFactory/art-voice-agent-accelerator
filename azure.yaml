@@ -18,12 +18,12 @@ services:
       platform: linux/amd64
       
   rtaudio-server:
-    project: apps/RTAgent/backend
+    project: .
     host: containerapp
-    language: python
+    language: docker
     docker:
-      path: ./Dockerfile
-      context: ../../../
+      path: ./apps/rtagent/backend/Dockerfile
+      context: .
       platform: linux/amd64
 
 hooks:
@@ -33,36 +33,8 @@ hooks:
     interactive: true
     continueOnError: false
 
-  predeploy:
-    shell: sh
-    run: devops/scripts/azd/helpers/appsvc-deploy.sh rtagent
-    interactive: true
-    continueOnError: true
-
   postprovision:
     shell: sh
     run: devops/scripts/azd/postprovision.sh
     interactive: true
     continueOnError: false
- 
-
-# For container app deploy
-# services:
-#   rtaudio-client:
-#     project: rtagents/RTAgent/frontend
-#     host: containerapp
-#     language: js
-#     docker:
-#       path: ./Dockerfile
-#       context: .
-#       platform: linux/amd64
-      
-#   rtaudio-server:
-#     project: rtagents/RTAgent/backend
-#     host: containerapp
-#     language: python
-#     docker:
-#       path: ./Dockerfile
-#       context: ../../../
-#       platform: linux/amd64
-

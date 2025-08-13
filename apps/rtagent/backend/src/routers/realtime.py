@@ -34,7 +34,7 @@ router = APIRouter()
 # --------------------------------------------------------------------------- #
 #  /relay  – simple fan-out to connected dashboards
 # --------------------------------------------------------------------------- #
-@router.websocket("/relay")
+@router.websocket("/ws/relay")
 async def relay_ws(ws: WebSocket):
     """Dashboards connect here to receive broadcasted text."""
     clients: set[WebSocket] = ws.app.state.clients

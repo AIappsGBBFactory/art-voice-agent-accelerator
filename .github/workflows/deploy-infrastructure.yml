@@ -1,0 +1,552 @@
+name: 🏗️ Deploy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      destroy:
+        description: 'Destroy infrastructure instead of creating it'
+        required: false
+        default: false
+        type: boolean
+      location:
+        description: 'Primary Azure region'
+        required: false
+        default: 'eastus'
+        type: choice
+        options:
+          - eastus
+          - eastus2
+          - westus
+          - westus2
+          - centralus
+          - northcentralus
+          - southcentralus
+          - westeurope
+          - northeurope
+      openai_location:
+        description: 'Azure OpenAI region (if different from primary)'
+        required: false
+        default: 'same-as-primary'
+        type: choice
+        options:
+          - same-as-primary
+          - eastus
+          - eastus2
+          - westus
+          - westus2
+          - centralus
+          - northcentralus
+          - southcentralus
+          - westeurope
+          - northeurope
+          - swedencentral
+      backend_api_url:
+        description: 'Backend API public URL (https://your-app.azurewebsites.net)'
+        required: false
+        default: 'auto-generated'
+        type: string
+      acs_phone_number:
+        description: 'ACS phone number for outbound calls (E.164 format)'
+        required: false
+        default: 'none'
+        type: string
+      redis_sku:
+        description: 'Redis SKU for the deployment'
+        required: false
+        default: 'MemoryOptimized_M10'
+        type: choice
+        options:
+          - MemoryOptimized_M10
+          - MemoryOptimized_M20
+          - MemoryOptimized_M50
+          - MemoryOptimized_M100
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: string
+      destroy:
+        description: 'Destroy infrastructure instead of creating it'
+        required: false
+        default: false
+        type: boolean
+      location:
+        description: 'Primary Azure region'
+        required: false
+        default: 'eastus'
+        type: string
+      openai_location:
+        description: 'Azure OpenAI region'
+        required: false
+        default: 'same-as-primary'
+        type: string
+      backend_api_url:
+        description: 'Backend API public URL'
+        required: false
+        default: 'auto-generated'
+        type: string
+      acs_phone_number:
+        description: 'ACS phone number'
+        required: false
+        default: 'none'
+        type: string
+      redis_sku:
+        description: 'Redis SKU'
+        required: false
+        default: 'MemoryOptimized_M10'
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/deploy-infrastructure.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/deploy-infrastructure.yml'
+
+env:
+  # Azure environment configuration
+  AZURE_LOCATION: eastus
+  TF_VERSION: 1.9.8
+  # CI/CD mode configuration
+  AZD_SKIP_INTERACTIVE: true
+  CI: true
+
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required to checkout repository
+  pull-requests: write  # Required to comment on PRs
+
+jobs:
+  # ============================================================================
+  # TERRAFORM PLAN (for PRs and manual validation)
+  # ============================================================================
+  terraform-plan:
+    name: 📋 Terraform Plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.destroy)
+    
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', inputs.environment)) || fromJson('["dev"]') }}
+    
+    environment: ${{ matrix.environment }}
+    
+    outputs:
+      plan-exists: ${{ steps.plan.outputs.plan-exists }}
+      
+    steps:
+      - name: 🛒 Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: 🔐 Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: 📝 Configure Terraform Variables
+        working-directory: infra/terraform
+        run: |
+          # Determine the effective values based on inputs
+          ENVIRONMENT="${{ matrix.environment }}"
+          LOCATION="${{ inputs.location || env.AZURE_LOCATION }}"
+          OPENAI_LOCATION="${{ inputs.openai_location }}"
+          BACKEND_API_URL="${{ inputs.backend_api_url }}"
+          ACS_PHONE_NUMBER="${{ inputs.acs_phone_number }}"
+          REDIS_SKU="${{ inputs.redis_sku || 'MemoryOptimized_M10' }}"
+          
+          # Handle special cases for optional values
+          if [ "$OPENAI_LOCATION" = "same-as-primary" ] || [ -z "$OPENAI_LOCATION" ]; then
+            OPENAI_LOCATION="$LOCATION"
+          fi
+          
+          if [ "$BACKEND_API_URL" = "auto-generated" ] || [ -z "$BACKEND_API_URL" ]; then
+            BACKEND_API_URL="null"
+          else
+            BACKEND_API_URL="\"$BACKEND_API_URL\""
+          fi
+          
+          if [ "$ACS_PHONE_NUMBER" = "none" ] || [ -z "$ACS_PHONE_NUMBER" ]; then
+            ACS_PHONE_NUMBER="null"
+          else
+            ACS_PHONE_NUMBER="\"$ACS_PHONE_NUMBER\""
+          fi
+          
+          # Start with environment-specific template if it exists
+          if [ -f "main.tfvars.${ENVIRONMENT}.json" ]; then
+            echo "Using environment-specific template: main.tfvars.${ENVIRONMENT}.json"
+            cp "main.tfvars.${ENVIRONMENT}.json" main.tfvars.json
+          else
+            echo "Using default template: main.tfvars.json"
+          fi
+          
+          # Override specific values based on workflow inputs
+          echo "Updating configuration with workflow inputs..."
+          
+          # Use jq to update the JSON file with input values
+          jq --arg env "$ENVIRONMENT" \
+             --arg loc "$LOCATION" \
+             --arg oai_loc "$OPENAI_LOCATION" \
+             --argjson backend_url "$BACKEND_API_URL" \
+             --argjson phone "$ACS_PHONE_NUMBER" \
+             --arg redis_sku "$REDIS_SKU" \
+             --arg principal_id "${{ secrets.AZURE_PRINCIPAL_ID }}" \
+             '.environment_name = $env |
+              .location = $loc |
+              .openai_location = $oai_loc |
+              .backend_api_public_url = $backend_url |
+              .acs_source_phone_number = $phone |
+              .redis_sku = $redis_sku |
+              .principal_id = (if $principal_id != "" then $principal_id else null end)' \
+             main.tfvars.json > main.tfvars.json.tmp && mv main.tfvars.json.tmp main.tfvars.json
+          
+          # Display the final configuration (masking sensitive values)
+          echo "📋 Final Terraform configuration:"
+          jq --arg principal_id "***REDACTED***" '.principal_id = (if .principal_id != null then $principal_id else null end)' main.tfvars.json
+          
+      - name: 🔧 Configure Terraform Backend
+        working-directory: infra/terraform
+        run: |
+          # Create backend configuration from secrets
+          cat > backend.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+              container_name       = "${{ secrets.TF_STATE_CONTAINER_NAME }}"
+              key                  = "${{ matrix.environment }}/terraform.tfstate"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+          
+      - name: 🏁 Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+        
+      - name: ✅ Terraform Validate
+        working-directory: infra/terraform
+        run: terraform validate
+        
+      - name: 📋 Terraform Plan
+        id: plan
+        working-directory: infra/terraform
+        run: |
+          # Run terraform plan with the configured tfvars file
+          terraform plan -var-file="main.tfvars.json" -out=plan.out -detailed-exitcode
+          
+      - name: 💬 Comment PR with Plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('infra/terraform/tfplan.txt', 'utf8');
+            const maxLength = 65000; // GitHub comment limit
+            const truncatedPlan = plan.length > maxLength ? 
+              plan.substring(0, maxLength) + '\n... (plan truncated)' : plan;
+            
+            const output = `## 🏗️ Terraform Plan for \`${{ matrix.environment }}\`
+            
+            <details><summary>📋 Plan Output</summary>
+            
+            \`\`\`terraform
+            ${truncatedPlan}
+            \`\`\`
+            
+            </details>
+            
+            **Plan Status:** ${steps.plan.outputs['plan-exists'] === 'true' ? '⚠️ Changes detected' : '✅ No changes'}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ============================================================================
+  # TERRAFORM APPLY/DESTROY
+  # ============================================================================
+  terraform-apply:
+    name: 🚀 Deploy Infrastructure
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && !inputs.destroy)
+    
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', inputs.environment)) || fromJson('["dev"]') }}
+    
+    environment: ${{ matrix.environment }}
+    
+    outputs:
+      resource-group: ${{ steps.outputs.outputs.resource-group }}
+      acs-endpoint: ${{ steps.outputs.outputs.acs-endpoint }}
+      container-registry: ${{ steps.outputs.outputs.container-registry }}
+      
+    steps:
+      - name: 🛒 Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: 🔐 Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: 📝 Configure Terraform Variables
+        working-directory: infra/terraform
+        run: |
+          # Determine the effective values based on inputs
+          ENVIRONMENT="${{ matrix.environment }}"
+          LOCATION="${{ inputs.location || env.AZURE_LOCATION }}"
+          OPENAI_LOCATION="${{ inputs.openai_location }}"
+          BACKEND_API_URL="${{ inputs.backend_api_url }}"
+          ACS_PHONE_NUMBER="${{ inputs.acs_phone_number }}"
+          REDIS_SKU="${{ inputs.redis_sku || 'MemoryOptimized_M10' }}"
+          
+          # Handle special cases for optional values
+          if [ "$OPENAI_LOCATION" = "same-as-primary" ] || [ -z "$OPENAI_LOCATION" ]; then
+            OPENAI_LOCATION="$LOCATION"
+          fi
+          
+          if [ "$BACKEND_API_URL" = "auto-generated" ] || [ -z "$BACKEND_API_URL" ]; then
+            BACKEND_API_URL="null"
+          else
+            BACKEND_API_URL="\"$BACKEND_API_URL\""
+          fi
+          
+          if [ "$ACS_PHONE_NUMBER" = "none" ] || [ -z "$ACS_PHONE_NUMBER" ]; then
+            ACS_PHONE_NUMBER="null"
+          else
+            ACS_PHONE_NUMBER="\"$ACS_PHONE_NUMBER\""
+          fi
+          
+          # Start with environment-specific template if it exists
+          if [ -f "main.tfvars.${ENVIRONMENT}.json" ]; then
+            echo "Using environment-specific template: main.tfvars.${ENVIRONMENT}.json"
+            cp "main.tfvars.${ENVIRONMENT}.json" main.tfvars.json
+          else
+            echo "Using default template: main.tfvars.json"
+          fi
+          
+          # Override specific values based on workflow inputs
+          echo "Updating configuration with workflow inputs..."
+          
+          # Use jq to update the JSON file with input values
+          jq --arg env "$ENVIRONMENT" \
+             --arg loc "$LOCATION" \
+             --arg oai_loc "$OPENAI_LOCATION" \
+             --argjson backend_url "$BACKEND_API_URL" \
+             --argjson phone "$ACS_PHONE_NUMBER" \
+             --arg redis_sku "$REDIS_SKU" \
+             --arg principal_id "${{ secrets.AZURE_PRINCIPAL_ID }}" \
+             '.environment_name = $env |
+              .location = $loc |
+              .openai_location = $oai_loc |
+              .backend_api_public_url = $backend_url |
+              .acs_source_phone_number = $phone |
+              .redis_sku = $redis_sku |
+              .principal_id = (if $principal_id != "" then $principal_id else null end)' \
+             main.tfvars.json > main.tfvars.json.tmp && mv main.tfvars.json.tmp main.tfvars.json
+          
+          # Display the final configuration (masking sensitive values)
+          echo "📋 Final Terraform configuration:"
+          jq --arg principal_id "***REDACTED***" '.principal_id = (if .principal_id != null then $principal_id else null end)' main.tfvars.json
+          
+      - name: 🔧 Configure Terraform Backend
+        working-directory: infra/terraform
+        run: |
+          # Create backend configuration from secrets
+          cat > backend.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+              container_name       = "${{ secrets.TF_STATE_CONTAINER_NAME }}"
+              key                  = "${{ matrix.environment }}/terraform.tfstate"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+          
+      - name: 🏁 Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+        
+      - name: 🚀 Terraform Apply
+        working-directory: infra/terraform
+        run: |
+          terraform apply -var-file="main.tfvars.json" -auto-approve -input=false
+          
+      - name: 📤 Export Terraform Outputs
+        id: outputs
+        working-directory: infra/terraform
+        run: |
+          # Export key outputs for the deployment workflow
+          echo "resource-group=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
+          echo "acs-endpoint=$(terraform output -raw acs_endpoint)" >> $GITHUB_OUTPUT
+          echo "container-registry=$(terraform output -raw container_registry_login_server)" >> $GITHUB_OUTPUT
+          
+      - name: 📋 Infrastructure Summary
+        run: |
+          echo "## 🏗️ Infrastructure Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ matrix.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | \`${{ steps.outputs.outputs.resource-group }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ACS Endpoint | \`${{ steps.outputs.outputs.acs-endpoint }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container Registry | \`${{ steps.outputs.outputs.container-registry }}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # TERRAFORM DESTROY (manual only)
+  # ============================================================================
+  terraform-destroy:
+    name: 💥 Destroy Infrastructure
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.destroy
+    
+    environment: 
+      name: ${{ inputs.environment }}-destroy
+      
+    steps:
+      - name: 🛒 Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: 🔐 Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: � Configure Terraform Variables
+        working-directory: infra/terraform
+        run: |
+          # Determine the effective values based on inputs
+          ENVIRONMENT="${{ inputs.environment }}"
+          LOCATION="${{ inputs.location || env.AZURE_LOCATION }}"
+          OPENAI_LOCATION="${{ inputs.openai_location }}"
+          BACKEND_API_URL="${{ inputs.backend_api_url }}"
+          ACS_PHONE_NUMBER="${{ inputs.acs_phone_number }}"
+          REDIS_SKU="${{ inputs.redis_sku || 'MemoryOptimized_M10' }}"
+          
+          # Handle special cases for optional values
+          if [ "$OPENAI_LOCATION" = "same-as-primary" ] || [ -z "$OPENAI_LOCATION" ]; then
+            OPENAI_LOCATION="$LOCATION"
+          fi
+          
+          if [ "$BACKEND_API_URL" = "auto-generated" ] || [ -z "$BACKEND_API_URL" ]; then
+            BACKEND_API_URL="null"
+          else
+            BACKEND_API_URL="\"$BACKEND_API_URL\""
+          fi
+          
+          if [ "$ACS_PHONE_NUMBER" = "none" ] || [ -z "$ACS_PHONE_NUMBER" ]; then
+            ACS_PHONE_NUMBER="null"
+          else
+            ACS_PHONE_NUMBER="\"$ACS_PHONE_NUMBER\""
+          fi
+          
+          # Start with environment-specific template if it exists
+          if [ -f "main.tfvars.${ENVIRONMENT}.json" ]; then
+            echo "Using environment-specific template: main.tfvars.${ENVIRONMENT}.json"
+            cp "main.tfvars.${ENVIRONMENT}.json" main.tfvars.json
+          else
+            echo "Using default template: main.tfvars.json"
+          fi
+          
+          # Override specific values based on workflow inputs
+          echo "Updating configuration with workflow inputs..."
+          
+          # Use jq to update the JSON file with input values
+          jq --arg env "$ENVIRONMENT" \
+             --arg loc "$LOCATION" \
+             --arg oai_loc "$OPENAI_LOCATION" \
+             --argjson backend_url "$BACKEND_API_URL" \
+             --argjson phone "$ACS_PHONE_NUMBER" \
+             --arg redis_sku "$REDIS_SKU" \
+             --arg principal_id "${{ secrets.AZURE_PRINCIPAL_ID }}" \
+             '.environment_name = $env |
+              .location = $loc |
+              .openai_location = $oai_loc |
+              .backend_api_public_url = $backend_url |
+              .acs_source_phone_number = $phone |
+              .redis_sku = $redis_sku |
+              .principal_id = (if $principal_id != "" then $principal_id else null end)' \
+             main.tfvars.json > main.tfvars.json.tmp && mv main.tfvars.json.tmp main.tfvars.json
+          
+          # Display the final configuration (masking sensitive values)
+          echo "📋 Final Terraform configuration:"
+          jq --arg principal_id "***REDACTED***" '.principal_id = (if .principal_id != null then $principal_id else null end)' main.tfvars.json
+          
+      - name: �🔧 Configure Terraform Backend
+        working-directory: infra/terraform
+        run: |
+          # Create backend configuration from secrets
+          cat > backend.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+              container_name       = "${{ secrets.TF_STATE_CONTAINER_NAME }}"
+              key                  = "${{ inputs.environment }}/terraform.tfstate"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+          
+      - name: 🏁 Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+        
+      - name: 💥 Terraform Destroy
+        working-directory: infra/terraform
+        run: |
+          terraform destroy -var-file="main.tfvars.json" -auto-approve -input=false
+          
+      - name: 📋 Destruction Summary
+        run: |
+          echo "## 💥 Infrastructure Destruction Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Environment \`${{ inputs.environment }}\` has been destroyed." >> $GITHUB_STEP_SUMMARY

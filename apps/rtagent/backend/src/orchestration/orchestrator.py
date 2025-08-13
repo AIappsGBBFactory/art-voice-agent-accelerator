@@ -12,11 +12,13 @@ specialist agent.  Specialists can still trigger hand‑offs via
 """
 
 from contextlib import asynccontextmanager
+from apps.rtagent.backend.src.services.acs.session_terminator import terminate_session, TerminationReason
 from typing import TYPE_CHECKING, Any, Callable, Dict, Tuple
 import json
 import os
 
 from fastapi import WebSocket
+from opentelemetry import trace
 
 from apps.rtagent.backend.src.shared_ws import (
     broadcast_message,
@@ -25,11 +27,19 @@ from apps.rtagent.backend.src.shared_ws import (
 from src.enums.monitoring import SpanAttr  # noqa: F401 – imported for side‑effects
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context  # noqa: F401 – may be used elsewhere
+from apps.rtagent.backend.src.utils.tracing_utils import (
+    create_service_handler_attrs,
+    create_service_dependency_attrs,
+    log_with_context,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from src.stateful.state_managment import MemoManager  # noqa: N812 – external naming
 
 logger = get_logger(__name__)
+
+# Get OpenTelemetry tracer for Application Map
+tracer = trace.get_tracer(__name__)
 
 # -------------------------------------------------------------
 # Configuration
@@ -155,43 +165,58 @@ async def run_auth_agent(
     *,
     is_acs: bool,
 ) -> None:
-    """Execute the *AuthAgent* and, on success, prime routing metadata."""
+    """
+    Run *AuthAgent* once per session.
 
+    • On **emergency escalation**, set `escalated=True`, store reason, and return.  
+    • On **successful auth**, cache caller info & chosen specialist.
+    """
     auth_agent = ws.app.state.auth_agent
 
     async with track_latency(ws.state.lt, "auth_agent", ws.app.state.redis):
         result: Dict[str, Any] | Any = await auth_agent.respond(
             cm, utterance, ws, is_acs=is_acs
         )
+        logger.info("🚨 Auth result: %s", result)
 
-    if not (isinstance(result, dict) and result.get("authenticated")):
-        return
+    if isinstance(result, dict) and result.get("handoff") == "human_agent":
+        reason = result.get("reason") or result.get("escalation_reason")
+        _cm_set(
+            cm,
+            escalated=True,
+            escalation_reason=reason,
+            active_agent="HumanEscalation",
+        )
+        logger.warning(
+            "🚨 Escalation during auth – session=%s reason=%s", cm.session_id, reason
+        )
+        return  # session termination handled upstream
+    
+    if result is not None: 
+        caller_name: str | None = result.get("caller_name")
+        policy_id: str | None = result.get("policy_id")
+        claim_intent: str | None = result.get("claim_intent")
+        topic: str | None = result.get("topic")
+        intent: str = result.get("intent", "general")
+        active_agent: str = "Claims" if intent == "claims" else "General"
 
-    # Cache values locally to avoid repeated look‑ups.
-    caller_name: str | None = result.get("caller_name")
-    policy_id: str | None = result.get("policy_id")
-    claim_intent: str | None = result.get("claim_intent")
-    topic: str | None = result.get("topic")
-    intent: str = result.get("intent", "general")
-    active_agent: str = "Claims" if intent == "claims" else "General"
+        _cm_set(
+            cm,
+            authenticated=True,
+            caller_name=caller_name,
+            policy_id=policy_id,
+            claim_intent=claim_intent,
+            topic=topic,
+            active_agent=active_agent,
+        )
 
-    _cm_set(
-        cm,
-        authenticated=True,
-        caller_name=caller_name,
-        policy_id=policy_id,
-        claim_intent=claim_intent,
-        topic=topic,
-        active_agent=active_agent,
-    )
-
-    logger.info(
-        "✅ Auth OK – session=%s caller=%s policy=%s → %s agent",
-        cm.session_id,
-        caller_name,
-        policy_id,
-        active_agent,
-    )
+        logger.info(
+            "✅ Auth OK – session=%s caller=%s policy=%s → %s agent",
+            cm.session_id,
+            caller_name,
+            policy_id,
+            active_agent,
+        )
 
 # -------------------------------------------------------------
 # 2.  Specialist agents
@@ -340,7 +365,6 @@ SPECIALIST_MAP: Dict[str, Callable[..., Any]] = {
 # -------------------------------------------------------------
 # 4. Public entry‑point (per user turn)
 # -------------------------------------------------------------
-
 async def route_turn(
     cm: "MemoManager",
     transcript: str,
@@ -360,46 +384,89 @@ async def route_turn(
     * Detecting when a live human transfer is required.
     * Persisting conversation state to Redis for resilience.
     """
-
-    redis_mgr = ws.app.state.redis
-
-    # ------------------------------------------------------------------
-    # Send the raw user transcript to connected dashboards.
-    # ------------------------------------------------------------------
-    try:
-        await broadcast_message(ws.app.state.clients, transcript, "User")
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.error("Broadcast failure: %s", exc)
-
-    try:
-        # ------------------------------------------------------------------
-        # 1) Authentication (single‑shot per session)
-        # ------------------------------------------------------------------
-        if not _cm_get(cm, "authenticated", False):
-            await run_auth_agent(cm, transcript, ws, is_acs=is_acs)
-            return
-
-        # ------------------------------------------------------------------
-        # 2) Human escalation short‑circuit
-        # ------------------------------------------------------------------
-        if _cm_get(cm, "active_agent") == "HumanEscalation":
-            await ws.send_text(json.dumps({"type": "live_agent_transfer"}))
-            return
+    
+    # Extract correlation context
+    call_connection_id, session_id = _get_correlation_context(ws, cm)
+    
+    # Create handler span for orchestrator service
+    span_attrs = create_service_handler_attrs(
+        service_name="orchestrator",
+        call_connection_id=call_connection_id,
+        session_id=session_id,
+        operation="route_turn",
+        transcript_length=len(transcript),
+        is_acs=is_acs,
+        authenticated=_cm_get(cm, "authenticated", False),
+        active_agent=_cm_get(cm, "active_agent", "none"),
+    )
+    
+    with tracer.start_as_current_span("orchestrator.route_turn", attributes=span_attrs) as span:
+        redis_mgr = ws.app.state.redis
 
         # ------------------------------------------------------------------
-        # 3) Dispatch to specialist agent
+        # Send the raw user transcript to connected dashboards.
         # ------------------------------------------------------------------
-        active: str = _cm_get(cm, "active_agent") or "General"
-        handler = SPECIALIST_MAP.get(active)
-        if handler is None:
-            logger.warning("Unknown active_agent=%s session=%s", active, cm.session_id)
-            return
+        try:
+            await broadcast_message(ws.app.state.clients, transcript, "User")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error("Broadcast failure: %s", exc)
 
-        await handler(cm, transcript, ws, is_acs=is_acs)
+        try:
+            # ------------------------------------------------------------------
+            # 1) Authentication (single‑shot per session)
+            # ------------------------------------------------------------------
+            if not _cm_get(cm, "authenticated", False):
+                span.set_attribute("orchestrator.stage", "authentication")
+                await run_auth_agent(cm, transcript, ws, is_acs=is_acs)
+                if _cm_get(cm, "escalated", False):
+                    call_connection_id, _ = _get_correlation_context(ws, cm)
+                    await terminate_session(
+                        ws,
+                        is_acs=is_acs,
+                        call_connection_id=call_connection_id,
+                        reason=TerminationReason.HUMAN_HANDOFF,
+                    )
+                    return
+                return
 
-    except Exception:  # pylint: disable=broad-exception-caught
-        logger.exception("💥 route_turn crash – session=%s", cm.session_id)
-        raise
-    finally:
-        # Ensure core‑memory is persisted even if a downstream component failed.
-        await cm.persist_to_redis_async(redis_mgr)
+            # ------------------------------------------------------------------
+            # 2) Human escalation short‑circuit
+            # ------------------------------------------------------------------
+            if _cm_get(cm, "active_agent") == "HumanEscalation":
+                span.set_attribute("orchestrator.stage", "human_escalation")
+                await ws.send_text(json.dumps({"type": "live_agent_transfer"}))
+                return
+
+            # ------------------------------------------------------------------
+            # 3) Dispatch to specialist agent
+            # ------------------------------------------------------------------
+            active: str = _cm_get(cm, "active_agent") or "General"
+            span.set_attribute("orchestrator.stage", "specialist_dispatch")
+            span.set_attribute("orchestrator.target_agent", active)
+            
+            handler = SPECIALIST_MAP.get(active)
+            if handler is None:
+                logger.warning("Unknown active_agent=%s session=%s", active, cm.session_id)
+                span.set_attribute("orchestrator.error", "unknown_agent")
+                return
+
+            # Create dependency span for calling specialist agent
+            agent_attrs = create_service_dependency_attrs(
+                source_service="orchestrator",
+                target_service=active.lower() + "_agent",
+                call_connection_id=call_connection_id,
+                session_id=session_id,
+                operation="process_turn",
+                transcript_length=len(transcript),
+            )
+            
+            with tracer.start_as_current_span(f"orchestrator.call_{active.lower()}_agent", attributes=agent_attrs):
+                await handler(cm, transcript, ws, is_acs=is_acs)
+
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("💥 route_turn crash – session=%s", cm.session_id)
+            span.set_attribute("orchestrator.error", "exception")
+            raise
+        finally:
+            # Ensure core‑memory is persisted even if a downstream component failed.
+            await cm.persist_to_redis_async(redis_mgr)

@@ -25,7 +25,7 @@ from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from websockets.exceptions import ConnectionClosedError
 
 from apps.rtagent.backend.settings import (
-    ACS_CALLBACK_PATH,
+    ACS_CALL_CALLBACK_PATH,
     ACS_CONNECTION_STRING,
     ACS_SOURCE_PHONE_NUMBER,
     ACS_WEBSOCKET_PATH,
@@ -86,7 +86,7 @@ def initialize_acs_caller_instance() -> Optional[AcsCaller]:
         )
         return None
 
-    acs_callback_url = f"{BASE_URL.strip('/')}{ACS_CALLBACK_PATH}"
+    acs_callback_url = f"{BASE_URL.strip('/')}{ACS_CALL_CALLBACK_PATH}"
     acs_websocket_url = construct_websocket_url(BASE_URL, ACS_WEBSOCKET_PATH)
 
     if not acs_websocket_url:

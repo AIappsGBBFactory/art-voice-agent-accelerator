@@ -1,101 +1,179 @@
-# Environment Generation Scripts
+# 🔧 DevOps Scripts for RTVoice Accelerator
 
-This directory contains scripts for generating environment files from Terraform remote state.
+This directory contains automation scripts for setting up and managing the Azure deployment pipeline for the RTVoice Accelerator project.
 
-## Scripts
+## 🚀 Quick Start - CI/CD Setup
 
-### Bash Script: `generate-env-from-terraform.sh`
+### New to the project? Start here:
 
-Cross-platform bash script that works on macOS, Linux, and Windows (with WSL or Git Bash).
-
-**Usage:**
 ```bash
-# Generate environment file
-./devops/scripts/generate-env-from-terraform.sh [environment_name] [subscription_id] [action]
-
-# Examples
-./devops/scripts/generate-env-from-terraform.sh dev
-./devops/scripts/generate-env-from-terraform.sh prod $AZURE_SUBSCRIPTION_ID
-./devops/scripts/generate-env-from-terraform.sh dev $AZURE_SUBSCRIPTION_ID update-secrets
+# Setup CI/CD configuration for azd deployment
+./setup-gha-config.sh --interactive
 ```
 
-**Actions:**
-- `generate` - Generate .env file from Terraform state (default)
-- `update-secrets` - Update .env file with Key Vault secrets  
-- `show` - Show current .env file information
+This will:
+1. ✅ Create Azure App Registration for OIDC authentication
+2. ✅ Configure GitHub Actions federated credentials
+3. ✅ Set up Azure permissions and Terraform state storage
+4. ✅ Optionally configure GitHub secrets/variables automatically
 
-### PowerShell Script: `Generate-EnvFromTerraform.ps1`
+## 📁 Script Directory
 
-Native PowerShell script for Windows environments.
+### 🎯 **CI/CD Setup (Recommended)**
+- **[`setup-gha-config.sh`](./setup-gha-config.sh)** - **START HERE** - Complete CI/CD setup for azd deployment
 
-**Usage:**
-```powershell
-# Generate environment file
-.\devops\scripts\Generate-EnvFromTerraform.ps1 [-EnvironmentName <string>] [-SubscriptionId <string>] [-Action <string>]
+### 🏗️ **Azure Developer CLI (AZD) Helpers**
+- **[`azd/`](./azd/)** - AZD lifecycle hooks and helper scripts
+  - [`postprovision.sh`](./azd/postprovision.sh) - Post-deployment configuration
+  - [`preprovision.sh`](./azd/preprovision.sh) - Pre-deployment setup
+  - [`helpers/`](./azd/helpers/) - Utility scripts for AZD workflows
 
-# Examples
-.\devops\scripts\Generate-EnvFromTerraform.ps1 -EnvironmentName dev
-.\devops\scripts\Generate-EnvFromTerraform.ps1 -EnvironmentName prod -SubscriptionId $env:AZURE_SUBSCRIPTION_ID
-.\devops\scripts\Generate-EnvFromTerraform.ps1 -Action update-secrets
-```
+### 🗄️ **Terraform & Infrastructure**
+- **[`generate-env-from-terraform.sh`](./generate-env-from-terraform.sh)** - Generate .env from Terraform outputs
+- **[`Generate-EnvFromTerraform.ps1`](./Generate-EnvFromTerraform.ps1)** - PowerShell version
+- **[`validate-terraform-backend.sh`](./validate-terraform-backend.sh)** - Validate Terraform backend configuration
 
-**Parameters:**
-- `-EnvironmentName` - Environment name (default: dev)
-- `-SubscriptionId` - Azure subscription ID (auto-detected if not provided)
-- `-Action` - Action to perform: generate, update-secrets, show (default: generate)
+### 🔗 **Integration & Configuration**
+- **[`eventgrid-appconfig.sh`](./eventgrid-appconfig.sh)** - Event Grid integration setup
+- **[`EventGrid-AppConfig.ps1`](./eventgrid-appconfig.ps1)** - PowerShell version
+- **[`webapp-deploy.sh`](./webapp-deploy.sh)** - Direct webapp deployment
 
-## Makefile Integration
+## 📋 Prerequisites
 
-Both scripts are integrated into the Makefile for easy access:
+Before running any scripts, ensure you have:
 
-**Bash (recommended for macOS/Linux):**
+### Required Tools
+- **Azure CLI** (`az`) - [Install Guide](https://docs.microsoft.com/cli/azure/install-azure-cli)
+- **Azure Developer CLI** (`azd`) - [Install Guide](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd)
+- **jq** - JSON processor
+- **OpenSSL** - For generating random values
+
+### Optional Tools
+- **GitHub CLI** (`gh`) - For automatic secret configuration
+- **Terraform** - If using direct Terraform deployment
+
+### Permissions
+- **Azure**: Contributor + User Access Administrator on target subscription
+- **GitHub**: Admin access to repository for secrets/variables configuration
+
+## 🔐 Authentication Setup
+
+### Azure Authentication
 ```bash
-make generate_env_from_terraform
-make show_env_file
-make update_env_with_secrets
+# Login to Azure
+az login
+
+# Set default subscription (if needed)
+az account set --subscription "your-subscription-id"
 ```
 
-**PowerShell (for Windows):**
+### GitHub Authentication (Optional)
 ```bash
-make generate_env_from_terraform_ps
-make show_env_file_ps
-make update_env_with_secrets_ps
+# Login to GitHub CLI (for automatic secret setup)
+gh auth login
 ```
 
-## Requirements
+## 🎯 Usage Examples
 
-- Terraform CLI installed and configured
-- Azure CLI installed and authenticated (`az login`)
-- Terraform state properly initialized with remote backend
-- Appropriate permissions to read from Key Vault (for secret updates)
+### Interactive Setup (Recommended for first-time users)
+```bash
+./setup-gha-config.sh --interactive
+```
 
-## Environment Variables
+### Automated Setup with Environment Variables
+```bash
+export GITHUB_ORG="your-org"
+export GITHUB_REPO="your-repo"
+export AZURE_LOCATION="eastus"
+export AZURE_ENV_NAME="dev"
 
-The scripts use these environment variables with fallback defaults:
+./setup-gha-config.sh
+```
 
-- `AZURE_ENV_NAME` - Environment name (default: "dev")
-- `AZURE_SUBSCRIPTION_ID` - Azure subscription ID (auto-detected from Azure CLI)
+### Production Environment Setup
+```bash
+AZURE_ENV_NAME=prod AZURE_LOCATION=westus2 ./setup-gha-config.sh
+```
 
-## Generated Environment File
+## 📤 Output
 
-The scripts generate a `.env.{environment}` file with the following sections:
+After running the setup script, you'll get:
 
-- Application Insights Configuration
-- Azure OpenAI Configuration  
-- Azure Speech Services Configuration
-- Base URL Configuration
-- Azure Communication Services Configuration
-- Redis Configuration
-- Azure Storage Configuration
-- Azure Cosmos DB Configuration
-- Azure Identity Configuration
-- Azure Resource Configuration
-- Application Configuration
-- Logging Configuration
+### 1. **Azure Resources Created**
+- App Registration for OIDC authentication
+- Service Principal with proper permissions
+- Terraform remote state storage account
+- Federated credentials for GitHub Actions
 
-## Security Notes
+### 2. **GitHub Configuration**
+- Repository secrets for Azure authentication
+- Repository variables for deployment configuration
+- Ready-to-use workflows in `.github/workflows/`
 
-- Sensitive values (keys, connection strings) are initially empty
-- Use the `update-secrets` action to populate from Azure Key Vault
-- Never commit environment files containing secrets to version control
-- Consider using `.env.*` in your `.gitignore` file
+### 3. **Configuration Summary**
+- Saved to `.azd-cicd-config.txt` in project root
+- Contains all IDs, names, and next steps
+
+## 🔍 Troubleshooting
+
+### Common Issues
+
+**Permission Denied Errors:**
+```bash
+# Check your Azure permissions
+az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) --output table
+```
+
+**GitHub CLI Not Authenticated:**
+```bash
+# Re-authenticate to GitHub
+gh auth login --git-protocol https
+```
+
+**Storage Account Access Issues:**
+```bash
+# Test storage access
+az storage container list --account-name YOUR_STORAGE_ACCOUNT --auth-mode login
+```
+
+### Debug Mode
+```bash
+# Run with debug output
+bash -x ./setup-gha-config.sh --interactive
+```
+
+## 🔄 Updating Configuration
+
+To update existing configuration:
+
+1. **Add new environments**: Run script with `AZURE_ENV_NAME=newenv`
+2. **Update permissions**: Re-run the script (it's idempotent)
+3. **Rotate credentials**: Delete app registration and re-run
+
+## 📚 Related Documentation
+
+- [GitHub Secrets Configuration Guide](../../.github/SECRETS.md)
+- [Azure Developer CLI Deployment](../../docs/AZD-DEPLOYMENT.md)
+- [CI/CD Pipeline Guide](../../docs/CICDGuide.md)
+- [Microsoft Docs: Container Apps GitHub Actions](https://learn.microsoft.com/azure/container-apps/github-actions-cli)
+
+## 💡 Best Practices
+
+1. **Start with dev environment** - Test thoroughly before production
+2. **Use environment-specific configurations** - Separate dev/staging/prod
+3. **Review permissions regularly** - Follow principle of least privilege
+4. **Monitor deployment logs** - Use Azure Monitor and GitHub Actions logs
+5. **Keep secrets up to date** - Rotate credentials periodically
+
+## 🆘 Support
+
+Need help? Check these resources:
+
+1. **Script help**: `./setup-gha-config.sh --help`
+2. **Project documentation**: Check `docs/` directory
+3. **Azure support**: [Azure Portal Support](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade)
+4. **GitHub support**: [GitHub Actions documentation](https://docs.github.com/actions)
+
+---
+
+**Happy Deploying! 🚀**

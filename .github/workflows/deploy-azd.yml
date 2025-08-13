@@ -1,0 +1,426 @@
+name: 🏗️ Deploy with Azure Developer CLI
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'up'
+        type: choice
+        options:
+          - provision  # Infrastructure only
+          - deploy     # Application only (requires existing infrastructure)
+          - up         # Both infrastructure and application
+          - down       # Destroy everything
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: string
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'up'
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/terraform/**'
+      - 'src/**'
+      - 'apps/**'
+      - 'azure.yaml'
+      - '.github/workflows/deploy-azd.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'infra/terraform/**'
+      - 'azure.yaml'
+      - '.github/workflows/deploy-azd.yml'
+
+env:
+  # Azure environment configuration
+  AZURE_LOCATION: eastus
+  # CI/CD mode configuration
+  AZD_SKIP_INTERACTIVE: true
+  CI: true
+  GITHUB_ACTIONS: true
+
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required to checkout repository
+  pull-requests: write  # Required to comment on PRs
+
+jobs:
+  # ============================================================================
+  # TERRAFORM PLAN (for PRs only)
+  # ============================================================================
+  terraform-plan:
+    name: 📋 Preview Changes (Terraform Plan)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_ENV_NAME: 'dev'
+      RS_RESOURCE_GROUP: ${{ vars.RS_RESOURCE_GROUP }}
+      RS_STORAGE_ACCOUNT: ${{ vars.RS_STORAGE_ACCOUNT }}
+      RS_CONTAINER_NAME: ${{ vars.RS_CONTAINER_NAME }}
+      ARM_USE_OIDC: "true"
+    
+    steps:
+      - name: 🛒 Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: 🔐 Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: ⚙️ Setup Azure Developer CLI
+        uses: Azure/setup-azd@v2
+        
+      - name: 🔧 Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: 🔐 Log in with Azure Developer CLI (OIDC)
+        run: |
+          azd auth login `
+            --client-id "$Env:AZURE_CLIENT_ID" `
+            --federated-credential-provider "github" `
+            --tenant-id "$Env:AZURE_TENANT_ID"
+        shell: pwsh
+
+      - name: ⚙️ Setup Terraform Parameters
+        run: |
+          echo "🔧 Setting up Terraform parameters..."
+          
+          # Base parameters from environment tfvars (use dev for PR previews)
+          BASE_PARAMS=$(cat infra/terraform/params/main.tfvars.dev.json)
+          echo "Base: $(echo "$BASE_PARAMS" | jq -c .)"
+          
+          # Add dynamic parameters
+          FINAL_PARAMS=$(echo "$BASE_PARAMS" | jq \
+            --arg env "dev" \
+            --arg principal_type "ServicePrincipal" \
+            '. + {
+              environment_name: $env,
+              principal_type: $principal_type
+            }')
+          
+          echo "$FINAL_PARAMS" > infra/terraform/main.tfvars.json
+          echo "✅ Parameters configured for environment: dev"
+
+      - name: 🔧 Configure Terraform Backend
+        run: |
+          echo "🔧 Configuring Terraform backend..."
+          echo "Backend: ${{ env.RS_STORAGE_ACCOUNT }}/${{ env.RS_CONTAINER_NAME }}/dev.tfstate"
+          
+          cat > infra/terraform/backend.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ env.RS_RESOURCE_GROUP }}"
+              storage_account_name = "${{ env.RS_STORAGE_ACCOUNT }}"
+              container_name       = "${{ env.RS_CONTAINER_NAME }}"
+              key                  = "dev.tfstate"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+          echo "✅ Backend configured"
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+          
+      - name: 📋 Run Terraform Plan via AZD
+        id: plan
+        run: |
+          # Use azd to run terraform plan
+          echo "🔍 Running infrastructure preview..."
+          
+          # Run azd provision with --preview flag if available, otherwise show what would be deployed
+          azd provision --no-prompt --preview || azd provision --no-prompt --help | grep -i preview || echo "⚠️ Plan preview not available, would provision infrastructure"
+          echo "plan-available=true" >> $GITHUB_OUTPUT
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+          
+          
+      - name: 💬 Comment PR with Plan Summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `## 🏗️ Azure Developer CLI Deployment Preview
+            
+            **Environment:** \`pr-preview\` (temporary)
+            **Action:** Infrastructure provision preview
+            **Provider:** Terraform via Azure Developer CLI
+            
+            ### 📋 Changes Summary
+            - 🏗️ Infrastructure changes will be applied via \`azd provision\`
+            - 🚀 Application changes will be deployed via \`azd deploy\`
+            - 📦 Full deployment available via \`azd up\`
+            
+            ### 🔗 Resources
+            - [Azure Developer CLI Documentation](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/)
+            - [Project Configuration](./azure.yaml)
+            
+            **Note:** This is a preview - no actual resources will be created until merged to main.
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ============================================================================
+  # AZURE DEVELOPER CLI DEPLOYMENT
+  # ============================================================================
+  azd-deployment:
+    name: 🚀 Deploy with AZD
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call'
+    
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', inputs.environment)) || github.event_name == 'workflow_call' && fromJson(format('["{0}"]', inputs.environment)) || fromJson('["dev"]') }}
+    
+    environment: ${{ matrix.environment }}
+    
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_ENV_NAME: ${{ matrix.environment }}
+      RS_RESOURCE_GROUP: ${{ vars.RS_RESOURCE_GROUP }}
+      RS_STORAGE_ACCOUNT: ${{ vars.RS_STORAGE_ACCOUNT }}
+      RS_CONTAINER_NAME: ${{ vars.RS_CONTAINER_NAME }}
+      ARM_USE_OIDC: "true"
+    
+    outputs:
+      resource_group: ${{ steps.outputs.outputs.resource_group }}
+      frontend_url: ${{ steps.outputs.outputs.frontend_url }}
+      backend_url: ${{ steps.outputs.outputs.backend_url }}
+      
+    steps:
+      - name: 🛒 Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: 🔐 Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: ⚙️ Setup Azure Developer CLI
+        uses: Azure/setup-azd@v2
+        
+      - name: 🔧 Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: 🔐 Log in with Azure Developer CLI (OIDC)
+        run: |
+          azd auth login `
+            --client-id "$Env:AZURE_CLIENT_ID" `
+            --federated-credential-provider "github" `
+            --tenant-id "$Env:AZURE_TENANT_ID"
+        shell: pwsh
+
+      - name: 🔒 Whitelist GitHub Runner IP
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            set -eu
+            agentIP=$(curl -s https://api.ipify.org/)
+            az storage account network-rule add \
+              --resource-group "${{ env.RS_RESOURCE_GROUP }}" \
+              --account-name "${{ env.RS_STORAGE_ACCOUNT }}" \
+              --ip-address $agentIP
+
+      - name: ⚙️ Setup Terraform Parameters
+        run: |
+          echo "🔧 Setting up Terraform parameters..."
+          
+          # Base parameters from environment tfvars
+          BASE_PARAMS=$(cat infra/terraform/params/main.tfvars.${{ matrix.environment }}.json)
+          echo "Base: $(echo "$BASE_PARAMS" | jq -c .)"
+          
+          # Add dynamic parameters
+          FINAL_PARAMS=$(echo "$BASE_PARAMS" | jq \
+            --arg env "${{ matrix.environment }}" \
+            --arg principal_type "ServicePrincipal" \
+            '. + {
+              environment_name: $env,
+              principal_type: $principal_type
+            }')
+          
+          echo "$FINAL_PARAMS" > infra/terraform/main.tfvars.json
+          echo "✅ Parameters configured for environment: ${{ matrix.environment }}"
+
+      - name: 🔧 Configure Terraform Backend
+        run: |
+          echo "🔧 Configuring Terraform backend..."
+          echo "Backend: ${{ env.RS_STORAGE_ACCOUNT }}/${{ env.RS_CONTAINER_NAME }}/${{ matrix.environment }}.tfstate"
+          
+          cat > infra/terraform/backend.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ env.RS_RESOURCE_GROUP }}"
+              storage_account_name = "${{ env.RS_STORAGE_ACCOUNT }}"
+              container_name       = "${{ env.RS_CONTAINER_NAME }}"
+              key                  = "${{ matrix.environment }}.tfstate"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+          echo "✅ Backend configured"
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+          
+      - name: 🚀 Execute AZD Command
+        run: |
+          ACTION="${{ inputs.action || 'up' }}"
+          
+          case "$ACTION" in
+            "provision")
+              echo "🏗️ Provisioning infrastructure only..."
+              azd provision --no-prompt
+              ;;
+            "deploy")
+              echo "📦 Deploying application only..."
+              azd deploy --no-prompt
+              ;;
+            "up")
+              echo "🚀 Provisioning infrastructure and deploying application..."
+              azd up --no-prompt
+              ;;
+            "down")
+              echo "💥 Destroying all resources..."
+              azd down --force --purge --no-prompt
+              ;;
+            *)
+              echo "❌ Unknown action: $ACTION"
+              exit 1
+              ;;
+          esac
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
+          
+      - name: 📤 Extract Deployment Outputs
+        id: outputs
+        if: inputs.action != 'down'
+        run: |
+          # Get azd environment values
+          echo "🔍 Extracting deployment information..."
+          
+          # Try to get outputs from azd
+          if azd env get-values > /tmp/azd-values.env 2>/dev/null; then
+            source /tmp/azd-values.env
+            
+            # Extract common outputs
+            echo "resource_group=${AZURE_RESOURCE_GROUP:-unknown}" >> $GITHUB_OUTPUT
+            
+            # Try to get service endpoints
+            FRONTEND_URL=$(azd show --output json 2>/dev/null | jq -r '.services."rtaudio-client".endpoint // empty' || echo "")
+            BACKEND_URL=$(azd show --output json 2>/dev/null | jq -r '.services."rtaudio-server".endpoint // empty' || echo "")
+            
+            echo "frontend_url=${FRONTEND_URL}" >> $GITHUB_OUTPUT
+            echo "backend_url=${BACKEND_URL}" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Could not extract azd outputs"
+            echo "resource_group=unknown" >> $GITHUB_OUTPUT
+            echo "frontend_url=" >> $GITHUB_OUTPUT
+            echo "backend_url=" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: 🔍 Show Deployment Status
+        if: inputs.action != 'down'
+        run: |
+          echo "📊 Deployment Status:"
+          azd show --output table || echo "⚠️ Could not show deployment status"
+          
+      - name: 🔓 Remove GitHub Runner IP from Whitelist
+        if: always()
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            set -eu
+            agentIP=$(curl -s https://api.ipify.org/)
+            az storage account network-rule remove \
+              --resource-group "${{ env.RS_RESOURCE_GROUP }}" \
+              --account-name "${{ env.RS_STORAGE_ACCOUNT }}" \
+              --ip-address $agentIP
+
+      - name: 🚪 Logout
+        if: always()
+        run: |
+          az logout
+          
+      - name: 📋 Deployment Summary
+        run: |
+          ACTION="${{ inputs.action || 'up' }}"
+          
+          if [ "$ACTION" = "down" ]; then
+            echo "## 💥 Resources Destroyed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Environment \`${{ matrix.environment }}\` has been destroyed using Azure Developer CLI." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## 🚀 Deployment Complete" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Component | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Environment | \`${{ matrix.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Action | \`$ACTION\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Resource Group | \`${{ steps.outputs.outputs.resource_group }}\` |" >> $GITHUB_STEP_SUMMARY
+            
+            if [ -n "${{ steps.outputs.outputs.frontend_url }}" ]; then
+              echo "| Frontend URL | [${{ steps.outputs.outputs.frontend_url }}](${{ steps.outputs.outputs.frontend_url }}) |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ -n "${{ steps.outputs.outputs.backend_url }}" ]; then
+              echo "| Backend URL | [${{ steps.outputs.outputs.backend_url }}](${{ steps.outputs.outputs.backend_url }}) |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "- Test your application using the URLs above" >> $GITHUB_STEP_SUMMARY
+            echo "- Monitor resources in the [Azure Portal](https://portal.azure.com)" >> $GITHUB_STEP_SUMMARY
+            echo "- Check logs with \`azd monitor\`" >> $GITHUB_STEP_SUMMARY
+          fi

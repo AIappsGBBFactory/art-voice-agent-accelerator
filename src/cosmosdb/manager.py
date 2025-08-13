@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import pymongo
 import yaml
-from azure.identity import DefaultAzureCredential
+from utils.azure_auth import get_credential
 from dotenv import load_dotenv
 from pymongo.auth_oidc import OIDCCallback, OIDCCallbackContext, OIDCCallbackResult
 from pymongo.errors import DuplicateKeyError, PyMongoError
@@ -60,7 +60,7 @@ class CosmosDBMongoCoreManager:
                         )
 
                 # Setup Azure Identity credential for OIDC
-                credential = DefaultAzureCredential()
+                credential = get_credential()
                 auth_callback = AzureIdentityTokenCallback(credential)
                 auth_properties = {"OIDC_CALLBACK": auth_callback}
 

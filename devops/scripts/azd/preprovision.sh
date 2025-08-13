@@ -93,16 +93,16 @@ case "$PROVIDER" in
         echo "Terraform deployment detected"
         echo "Running Terraform Remote State initialization..."
         
-        # Call tf-init.sh from helpers directory
-        TF_INIT_SCRIPT="$SCRIPT_DIR/helpers/tf-init.sh"
+        # Call initialize-terraform.sh from helpers directory
+        TF_INIT_SCRIPT="$SCRIPT_DIR/helpers/initialize-terraform.sh"
         if [ -f "$TF_INIT_SCRIPT" ]; then
-            # Pass CI/CD mode flag to tf-init.sh
+            # Pass CI/CD mode flag to initialize-terraform.sh
             if [ "$INTERACTIVE_MODE" = "false" ]; then
                 export TF_INIT_SKIP_INTERACTIVE=true
             fi
             bash "$TF_INIT_SCRIPT"
         else
-            log_warning "tf-init.sh not found at $TF_INIT_SCRIPT"
+            log_warning "initialize-terraform.sh not found at $TF_INIT_SCRIPT"
         fi
         
         # Set terraform variables through environment exports and tfvars file

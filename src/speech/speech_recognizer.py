@@ -3,7 +3,7 @@ import os
 from typing import Callable, List, Optional, Final
 
 import azure.cognitiveservices.speech as speechsdk
-from azure.identity import DefaultAzureCredential
+from utils.azure_auth import get_credential
 from dotenv import load_dotenv
 
 # OpenTelemetry imports for tracing
@@ -15,7 +15,7 @@ from src.enums.monitoring import SpanAttr
 from utils.ml_logging import get_logger
 
 # Set up logger
-logger = get_logger()
+logger = get_logger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -138,7 +138,7 @@ class StreamingSpeechRecognizerFromBytes:
                 )
 
             endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
-            credential = DefaultAzureCredential()
+            credential = get_credential()
 
             if endpoint:
                 # Use endpoint if provided
@@ -210,11 +210,32 @@ class StreamingSpeechRecognizerFromBytes:
             )
 
             # Set session attributes for correlation
+            self._session_span.set_attribute("rt.call.connection_id", self.call_connection_id)
+            self._session_span.set_attribute("rt.session.id", self.call_connection_id)
             self._session_span.set_attribute("ai.operation.id", self.call_connection_id)
-            self._session_span.set_attribute(
-                "speech.session.id", self.call_connection_id
-            )
             self._session_span.set_attribute("speech.region", self.region)
+
+            # Help App Map recognize this as an external service dependency
+            self._session_span.set_attribute("peer.service", "azure-cognitive-speech")
+            self._session_span.set_attribute("net.peer.name", f"{self.region}.stt.speech.microsoft.com")
+            # Make it look like an HTTP/WebSocket dependency
+            self._session_span.set_attribute("server.address", f"{self.region}.stt.speech.microsoft.com")
+            self._session_span.set_attribute("server.port", 443)
+            self._session_span.set_attribute("network.protocol.name", "websocket")
+            # Let the exporter classify as HTTP if it prefers http.* (belt & suspenders)
+            self._session_span.set_attribute("http.method", "POST")
+            # Set http.url using endpoint if provided, else construct from region
+            endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
+            if endpoint:
+                self._session_span.set_attribute(
+                    "http.url",
+                    f"{endpoint.rstrip('/')}/speech/recognition/conversation/cognitiveservices/v1"
+                )
+            else:
+                self._session_span.set_attribute(
+                    "http.url",
+                    f"https://{self.region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1"
+                )
             self._session_span.set_attribute("speech.audio_format", self.audio_format)
             self._session_span.set_attribute(
                 "speech.candidate_languages", ",".join(self.candidate_languages)
@@ -334,12 +355,17 @@ class StreamingSpeechRecognizerFromBytes:
         # ------------------------------------------------------------------ #
         # 6. Wire callbacks / health telemetry
         # ------------------------------------------------------------------ #
+        logger.debug(f"🔗 Setting up callbacks: partial={self.partial_callback is not None}, final={self.final_callback is not None}, cancel={self.cancel_callback is not None}")
+        
         if self.partial_callback:
             self.speech_recognizer.recognizing.connect(self._on_recognizing)
+            logger.debug("✅ Connected partial callback (_on_recognizing)")
         if self.final_callback:
             self.speech_recognizer.recognized.connect(self._on_recognized)
+            logger.debug("✅ Connected final callback (_on_recognized)")
         if self.cancel_callback:
             self.speech_recognizer.canceled.connect(self.cancel_callback)
+            logger.debug("✅ Connected cancel callback")
 
         self.speech_recognizer.canceled.connect(self._on_canceled)
         self.speech_recognizer.session_stopped.connect(self._on_session_stopped)
@@ -352,22 +378,20 @@ class StreamingSpeechRecognizerFromBytes:
 
 
     def write_bytes(self, audio_chunk: bytes) -> None:
-        """Write audio bytes to the stream with optional tracing"""
+        """Write audio bytes to the stream; avoid per-chunk spans to keep overhead low.
+        Emits an event on the session span instead for coarse visibility.
+        """
+        logger.debug(f"🎤 write_bytes called: {len(audio_chunk)} bytes, has_push_stream={self.push_stream is not None}")
         if self.push_stream:
-            # Add tracing for audio data flow if enabled
-            if self.enable_tracing and self.tracer:
-                with self.tracer.start_as_current_span(
-                    "speech_audio_write",
-                    kind=SpanKind.CLIENT,
-                    attributes={
-                        "speech.audio.chunk_size": len(audio_chunk),
-                        "speech.session.id": self.call_connection_id,
-                        "ai.operation.id": self.call_connection_id,
-                    },
-                ):
-                    self.push_stream.write(audio_chunk)
-            else:
-                self.push_stream.write(audio_chunk)
+            if self.enable_tracing and self._session_span:
+                try:
+                    self._session_span.add_event("audio_chunk", {"size": len(audio_chunk)})
+                except Exception:
+                    pass
+            self.push_stream.write(audio_chunk)
+            logger.debug(f"✅ Audio chunk written to push_stream")
+        else:
+            logger.warning(f"⚠️ write_bytes called but push_stream is None! {len(audio_chunk)} bytes discarded")
 
     def stop(self) -> None:
         """Stop recognition with tracing cleanup"""
@@ -376,14 +400,16 @@ class StreamingSpeechRecognizerFromBytes:
             if self._session_span:
                 self._session_span.add_event("speech_recognition_stopping")
 
-            self.speech_recognizer.stop_continuous_recognition_async().get()
+            # Stop recognition asynchronously without blocking
+            future = self.speech_recognizer.stop_continuous_recognition_async()
+            logger.debug("🛑 Speech recognition stop initiated asynchronously (non-blocking)")
             logger.info("Recognition stopped.")
 
             # Finish session span if it's still active
             if self._session_span:
                 self._session_span.add_event("speech_recognition_stopped")
                 self._session_span.set_status(
-                    Status(StatusCode.OK, "Recognition stopped")
+                    Status(StatusCode.OK)
                 )
                 self._session_span.end()
                 self._session_span = None
@@ -441,6 +467,15 @@ class StreamingSpeechRecognizerFromBytes:
         """Handle partial recognition results with tracing"""
         txt = evt.result.text
         speaker_id = self._extract_speaker_id(evt)
+        
+        # Extract language outside the tracing block to avoid scope issues
+        detected = (
+            speechsdk.AutoDetectSourceLanguageResult(evt.result).language
+            or self.candidate_languages[0]
+        )
+        
+        logger.debug(f"🔍 _on_recognizing called: text='{txt}', detected_lang='{detected}', has_callback={self.partial_callback is not None}")
+        
         if txt and self.partial_callback:
             # Create a span for partial recognition
             if self.enable_tracing and self.tracer:
@@ -450,15 +485,9 @@ class StreamingSpeechRecognizerFromBytes:
                     attributes={
                         "speech.result.type": "partial",
                         "speech.result.text_length": len(txt),
-                        "speech.session.id": self.call_connection_id,
-                        "ai.operation.id": self.call_connection_id,
+                        "rt.call.connection_id": self.call_connection_id,
                     },
                 ) as span:
-                    # extract whatever lang Azure selected (or fallback to first candidate)
-                    detected = (
-                        speechsdk.AutoDetectSourceLanguageResult(evt.result).language
-                        or self.candidate_languages[0]
-                    )
                     span.set_attribute("speech.detected_language", detected)
 
                     # Add event to session span
@@ -467,22 +496,24 @@ class StreamingSpeechRecognizerFromBytes:
                             "partial_recognition_received",
                             {"text_length": len(txt), "detected_language": detected},
                         )
-
+            
+            logger.debug(f"🔥 Calling partial_callback with: '{txt}', '{detected}', '{speaker_id}'")
             self.partial_callback(txt, detected, speaker_id)
+        elif txt:
+            logger.debug(f"⚠️ Got text but no partial_callback: '{txt}'")
         else:
-            # extract whatever lang Azure selected (or fallback to first candidate)
-            detected = (
-                speechsdk.AutoDetectSourceLanguageResult(evt.result).language
-                or self.candidate_languages[0]
-            )
-            self.partial_callback(txt, detected, speaker_id)
+            logger.debug(f"🔇 Empty text in recognizing event")
 
     def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
         """Handle final recognition results with tracing"""
+        logger.debug(f"🔍 _on_recognized called: reason={evt.result.reason}, text='{evt.result.text}', has_callback={self.final_callback is not None}")
+        
         if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
             detected_lang = speechsdk.AutoDetectSourceLanguageResult(
                 evt.result
-            ).language
+            ).language or self.candidate_languages[0]
+            
+            logger.debug(f"🔍 Recognition successful: text='{evt.result.text}', detected_lang='{detected_lang}'")
 
             if self.enable_tracing and self.tracer and evt.result.text:
                 with self.tracer.start_as_current_span(
@@ -492,8 +523,7 @@ class StreamingSpeechRecognizerFromBytes:
                         "speech.result.type": "final",
                         "speech.result.text_length": len(evt.result.text),
                         "speech.detected_language": detected_lang,
-                        "speech.session.id": self.call_connection_id,
-                        "ai.operation.id": self.call_connection_id,
+                        "rt.call.connection_id": self.call_connection_id,
                         "speech.result.reason": str(evt.result.reason),
                     },
                 ) as span:
@@ -512,10 +542,13 @@ class StreamingSpeechRecognizerFromBytes:
                             },
                         )
 
-                    if self.final_callback:
-                        self.final_callback(evt.result.text, detected_lang)
-            elif self.final_callback and evt.result.text:
+            if self.final_callback and evt.result.text:
+                logger.debug(f"🔥 Calling final_callback with: '{evt.result.text}', '{detected_lang}'")
                 self.final_callback(evt.result.text, detected_lang)
+            elif evt.result.text:
+                logger.debug(f"⚠️ Got final text but no final_callback: '{evt.result.text}'")
+        else:
+            logger.debug(f"🚫 Recognition result reason not RecognizedSpeech: {evt.result.reason}")
 
     def _on_canceled(self, evt: speechsdk.SessionEventArgs) -> None:
         """Handle cancellation events with tracing"""
@@ -552,6 +585,6 @@ class StreamingSpeechRecognizerFromBytes:
         # Add event to session span and finish it
         if self._session_span:
             self._session_span.add_event("speech_session_stopped")
-            self._session_span.set_status(Status(StatusCode.OK, "Session completed"))
+            self._session_span.set_status(Status(StatusCode.OK))
             self._session_span.end()
             self._session_span = None

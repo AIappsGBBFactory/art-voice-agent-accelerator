@@ -297,14 +297,6 @@ const styles = {
     boxShadow: isActive ? "0 4px 16px rgba(103,216,239,0.4)" : "0 2px 8px rgba(0,0,0,0.05)",
   }),
   
-  // Health indicator in top right
-  healthIndicator: {
-    position: "absolute",
-    top: "20px",
-    right: "20px",
-    zIndex: 10,
-  },
-  
   // Input section for phone calls
   phoneInputSection: {
     position: "absolute",
@@ -331,6 +323,121 @@ const styles = {
     transition: "border-color 0.2s ease",
   },
   
+
+  // Backend status indicator - enhanced for component health - relocated to bottom left
+  backendIndicator: {
+    position: "fixed",
+    bottom: "20px",
+    left: "20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    padding: "12px 16px",
+    backgroundColor: "rgba(255, 255, 255, 0.98)",
+    border: "1px solid #e2e8f0",
+    borderRadius: "12px",
+    fontSize: "11px",
+    color: "#64748b",
+    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+    zIndex: 1000,
+    minWidth: "280px",
+    maxWidth: "320px",
+    backdropFilter: "blur(8px)",
+  },
+
+  backendHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    marginBottom: "4px",
+    cursor: "pointer",
+  },
+
+  backendStatus: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    backgroundColor: "#10b981",
+    animation: "pulse 2s ease-in-out infinite",
+    flexShrink: 0,
+  },
+
+  backendUrl: {
+    fontFamily: "monospace",
+    fontSize: "10px",
+    color: "#475569",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  backendLabel: {
+    fontWeight: "600",
+    color: "#334155",
+    fontSize: "12px",
+    letterSpacing: "0.3px",
+  },
+
+  expandIcon: {
+    marginLeft: "auto",
+    fontSize: "12px",
+    color: "#94a3b8",
+    transition: "transform 0.2s ease",
+  },
+
+  componentGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    gap: "8px",
+    marginTop: "8px",
+    paddingTop: "8px",
+    borderTop: "1px solid #f1f5f9",
+  },
+
+  componentItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "6px 10px",
+    backgroundColor: "#f8fafc",
+    borderRadius: "8px",
+    fontSize: "10px",
+    border: "1px solid #f1f5f9",
+    transition: "all 0.2s ease",
+  },
+
+  componentDot: (status) => ({
+    width: "6px",
+    height: "6px",
+    borderRadius: "50%",
+    backgroundColor: status === "healthy" ? "#10b981" : 
+                     status === "degraded" ? "#f59e0b" : 
+                     status === "unhealthy" ? "#ef4444" : "#6b7280",
+    flexShrink: 0,
+  }),
+
+  componentName: {
+    fontWeight: "500",
+    color: "#475569",
+    textTransform: "capitalize",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+
+  responseTime: {
+    fontSize: "9px",
+    color: "#94a3b8",
+    marginLeft: "auto",
+  },
+
+  errorMessage: {
+    fontSize: "10px",
+    color: "#ef4444",
+    marginTop: "4px",
+    fontStyle: "italic",
+  },
+
   phoneButton: (isActive) => ({
     padding: "12px 20px",
     background: isActive ? "#ef4444" : "#67d8ef",
@@ -343,7 +450,355 @@ const styles = {
     transition: "all 0.2s ease",
   }),
 };
+// Add keyframe animation for pulse effect
+const styleSheet = document.createElement("style");
+styleSheet.textContent = `
+  @keyframes pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+    }
+    70% {
+      box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
+  }
+`;
+document.head.appendChild(styleSheet);
 
+/* ------------------------------------------------------------------ *
+ *  BACKEND STATUS COMPONENT
+ * ------------------------------------------------------------------ */
+const BackendIndicator = ({ url }) => {
+  const [isConnected, setIsConnected] = useState(null);
+  const [displayUrl, setDisplayUrl] = useState(url);
+  const [readinessData, setReadinessData] = useState(null);
+  const [error, setError] = useState(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Check readiness endpoint
+  const checkReadiness = async () => {
+    try {
+      // Simple GET request without extra headers
+      const response = await fetch(`${url}/api/v1/health/readiness`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Validate expected structure
+      if (data.status && data.checks && Array.isArray(data.checks)) {
+        setReadinessData(data);
+        setIsConnected(data.status === "ready");
+        setError(null);
+      } else {
+        throw new Error("Invalid response structure");
+      }
+    } catch (err) {
+      console.error("Readiness check failed:", err);
+      setIsConnected(false);
+      setError(err.message);
+      setReadinessData(null);
+    }
+  };
+
+  useEffect(() => {
+    // Parse and format the URL for display
+    try {
+      const urlObj = new URL(url);
+      const host = urlObj.hostname;
+      const protocol = urlObj.protocol.replace(':', '');
+      
+      // Shorten Azure URLs
+      if (host.includes('.azurewebsites.net')) {
+        const appName = host.split('.')[0];
+        setDisplayUrl(`${protocol}://${appName}.azure...`);
+      } else if (host === 'localhost') {
+        setDisplayUrl(`${protocol}://localhost:${urlObj.port || '8000'}`);
+      } else {
+        setDisplayUrl(`${protocol}://${host}`);
+      }
+    } catch (e) {
+      setDisplayUrl(url);
+    }
+
+    // Initial check
+    checkReadiness();
+
+    // Set up periodic checks every 30 seconds
+    const interval = setInterval(checkReadiness, 30000);
+
+    return () => clearInterval(interval);
+  }, [url]);
+
+  // Get overall health status
+  const getOverallStatus = () => {
+    if (isConnected === null) return "checking";
+    if (!isConnected) return "unhealthy";
+    if (!readinessData?.checks) return "unhealthy";
+    
+    const hasUnhealthy = readinessData.checks.some(c => c.status === "unhealthy");
+    const hasDegraded = readinessData.checks.some(c => c.status === "degraded");
+    
+    if (hasUnhealthy) return "unhealthy";
+    if (hasDegraded) return "degraded";
+    return "healthy";
+  };
+
+  const overallStatus = getOverallStatus();
+  const statusColor = overallStatus === "healthy" ? "#10b981" : 
+                     overallStatus === "degraded" ? "#f59e0b" :
+                     overallStatus === "unhealthy" ? "#ef4444" : "#6b7280";
+
+  // Component icon mapping with descriptions
+  const componentIcons = {
+    redis: "💾",
+    azure_openai: "🧠",
+    speech_services: "🎙️",
+    acs_caller: "📞",
+    rt_agents: "🤖"
+  };
+
+  // Component descriptions
+  const componentDescriptions = {
+    redis: "Redis Cache - Session & state management",
+    azure_openai: "Azure OpenAI - GPT models & embeddings",
+    speech_services: "Speech Services - STT/TTS processing",
+    acs_caller: "Communication Services - Voice calling",
+    rt_agents: "RT Agents - Real-time Voice Agents"
+  };
+
+  return (
+    <div 
+      style={{
+        ...styles.backendIndicator,
+        // Minimize when not expanded and healthy
+        minWidth: !isExpanded && overallStatus === "healthy" ? "200px" : "320px",
+        padding: !isExpanded && overallStatus === "healthy" ? "10px 14px" : "12px 16px",
+        transition: "all 0.3s ease",
+      }} 
+      title={`Click to expand backend status`}
+      onClick={() => setIsExpanded(!isExpanded)}
+      onMouseEnter={() => !isExpanded && setIsExpanded(true)}
+      onMouseLeave={() => setIsExpanded(false)}
+    >
+      <div style={styles.backendHeader}>
+        <div style={{
+          ...styles.backendStatus,
+          backgroundColor: statusColor,
+        }}></div>
+        <span style={styles.backendLabel}>Backend Status</span>
+        <span style={{
+          ...styles.expandIcon,
+          transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+        }}>▼</span>
+      </div>
+      
+      {/* Compact URL display when collapsed */}
+      {!isExpanded && (
+        <div style={{
+          ...styles.backendUrl,
+          fontSize: "9px",
+          opacity: 0.7,
+          marginTop: "2px",
+        }}>
+          {displayUrl}
+        </div>
+      )}
+
+      {/* Only show component health when expanded or when there's an issue */}
+      {(isExpanded || overallStatus !== "healthy") && (
+        <>
+          {/* Expanded information display */}
+          {isExpanded && (
+            <>
+              
+              {/* API Entry Point Info */}
+              <div style={{
+                padding: "8px 10px",
+                backgroundColor: "#f8fafc",
+                borderRadius: "8px",
+                marginBottom: "10px",
+                fontSize: "10px",
+                border: "1px solid #e2e8f0",
+              }}>
+                <div style={{
+                  fontWeight: "600",
+                  color: "#475569",
+                  marginBottom: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}>
+                  🌐 Backend API Entry Point
+                </div>
+                <div style={{
+                  color: "#64748b",
+                  fontSize: "9px",
+                  fontFamily: "monospace",
+                  marginBottom: "6px",
+                  padding: "3px 6px",
+                  backgroundColor: "white",
+                  borderRadius: "4px",
+                  border: "1px solid #f1f5f9",
+                }}>
+                  {url}
+                </div>
+                <div style={{
+                  color: "#64748b",
+                  fontSize: "9px",
+                  lineHeight: "1.3",
+                }}>
+                  Main FastAPI server handling WebSocket connections, voice processing, and AI agent orchestration
+                </div>
+              </div>
+
+              {/* System status summary */}
+              {readinessData && (
+                <div style={{
+                  padding: "6px 8px",
+                  backgroundColor: overallStatus === "healthy" ? "#f0fdf4" : 
+                                 overallStatus === "degraded" ? "#fffbeb" : "#fef2f2",
+                  borderRadius: "6px",
+                  marginBottom: "8px",
+                  fontSize: "10px",
+                  border: `1px solid ${overallStatus === "healthy" ? "#bbf7d0" : 
+                                      overallStatus === "degraded" ? "#fed7aa" : "#fecaca"}`,
+                }}>
+                  <div style={{
+                    fontWeight: "600",
+                    color: overallStatus === "healthy" ? "#166534" : 
+                          overallStatus === "degraded" ? "#92400e" : "#dc2626",
+                    marginBottom: "2px",
+                  }}>
+                    System Status: {overallStatus.charAt(0).toUpperCase() + overallStatus.slice(1)}
+                  </div>
+                  <div style={{
+                    color: "#64748b",
+                    fontSize: "9px",
+                  }}>
+                    {readinessData.checks.length} components monitored • 
+                    Last check: {new Date().toLocaleTimeString()}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {error ? (
+            <div style={styles.errorMessage}>
+              ⚠️ Connection failed: {error}
+            </div>
+          ) : readinessData?.checks ? (
+            <>
+              <div style={styles.componentGrid}>
+                {readinessData.checks.map((check, idx) => (
+                  <div 
+                    key={idx} 
+                    style={{
+                      ...styles.componentItem,
+                      flexDirection: "column",
+                      alignItems: "flex-start",
+                      padding: "8px 10px",
+                    }}
+                    title={check.details || `${check.component} status: ${check.status}`}
+                  >
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      width: "100%",
+                    }}>
+                      <span>{componentIcons[check.component] || "•"}</span>
+                      <div style={styles.componentDot(check.status)}></div>
+                      <span style={styles.componentName}>
+                        {check.component.replace(/_/g, ' ')}
+                      </span>
+                      {check.check_time_ms !== undefined && (
+                        <span style={styles.responseTime}>
+                          {check.check_time_ms.toFixed(0)}ms
+                        </span>
+                      )}
+                    </div>
+                    
+                    {/* Component description when expanded */}
+                    {isExpanded && (
+                      <div style={{
+                        fontSize: "9px",
+                        color: "#64748b",
+                        marginTop: "4px",
+                        lineHeight: "1.3",
+                        fontStyle: "italic",
+                      }}>
+                        {componentDescriptions[check.component] || "Backend service component"}
+                      </div>
+                    )}
+                    
+                    {/* Status details when expanded */}
+                    {isExpanded && check.details && (
+                      <div style={{
+                        fontSize: "9px",
+                        color: check.status === "healthy" ? "#10b981" : 
+                              check.status === "degraded" ? "#f59e0b" : "#ef4444",
+                        marginTop: "2px",
+                        fontWeight: "500",
+                      }}>
+                        {check.details}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              
+              {/* Show component details if expanded */}
+              {isExpanded && readinessData.checks.some(c => c.details) && (
+                <div style={{
+                  marginTop: "8px",
+                  paddingTop: "8px",
+                  borderTop: "1px solid #f1f5f9",
+                  fontSize: "9px",
+                  color: "#64748b",
+                }}>
+                  {readinessData.checks
+                    .filter(c => c.details)
+                    .map((check, idx) => (
+                      <div key={idx} style={{ marginBottom: "4px" }}>
+                        <strong>{check.component.replace(/_/g, ' ')}:</strong> {check.details}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={styles.errorMessage}>
+              Checking components...
+            </div>
+          )}
+          
+          {readinessData?.response_time_ms && isExpanded && (
+            <div style={{
+              fontSize: "9px",
+              color: "#94a3b8",
+              marginTop: "8px",
+              paddingTop: "8px",
+              borderTop: "1px solid #f1f5f9",
+              textAlign: "center",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}>
+              <span>Health check latency: {readinessData.response_time_ms.toFixed(0)}ms</span>
+              <span title="Auto-refreshes every 30 seconds">🔄</span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
 /* ------------------------------------------------------------------ *
  *  WAVEFORM COMPONENT - SIMPLE & SMOOTH
  * ------------------------------------------------------------------ */
@@ -648,7 +1103,8 @@ export default function RealTimeVoiceApp() {
       appendLog("🎤 PCM streaming started");
 
       // 1) open WS
-      const socket = new WebSocket(`${WS_URL}/realtime`);
+      const socket = new WebSocket(`${WS_URL}/api/v1/conversation`);
+      // const socket = new WebSocket(`${WS_URL}/realtime`);
       socket.binaryType = "arraybuffer";
 
       socket.onopen = () => {
@@ -897,7 +1353,7 @@ export default function RealTimeVoiceApp() {
       return;
     }
     try {
-      const res = await fetch(`${API_BASE_URL}/api/call`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/calls/initiate`, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ target_number: targetPhoneNumber }),
@@ -915,7 +1371,7 @@ export default function RealTimeVoiceApp() {
       appendLog("📞 Call initiated");
 
       // relay WS
-      const relay = new WebSocket(`${WS_URL}/relay`);
+      const relay = new WebSocket(`${WS_URL}/api/v1/dashboard/relay`);
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({data}) => {
         try {
@@ -950,6 +1406,9 @@ export default function RealTimeVoiceApp() {
   return (
     <div style={styles.root}>
       <div style={styles.mainContainer}>
+        {/* Backend Status Indicator */}
+        <BackendIndicator url={API_BASE_URL} />
+
         {/* App Header */}
         <div style={styles.appHeader}>
           <div style={styles.appTitleContainer}>

@@ -48,12 +48,14 @@ resource "azurerm_role_assignment" "storage_principal_reader" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Blob Data Reader"
   principal_id         = local.principal_id
+  principal_type       = local.principal_type
 }
 
 resource "azurerm_role_assignment" "storage_principal_contributor" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = local.principal_id
+  principal_type       = local.principal_type
 }
 
 # ============================================================================
@@ -187,8 +189,6 @@ resource "azapi_resource" "cosmos_backend_db_user" {
       ]
     }
   }
-
-  # Suppress diffs for output and principalType casing
   lifecycle {
     ignore_changes = [
       body["properties"]["identityProvider"]["properties"]["principalType"],
@@ -209,7 +209,7 @@ resource "azapi_resource" "cosmos_principal_user" {
     properties = {
       identityProvider = {
         properties = {
-          principalType = "User"
+          principalType = var.principal_type
         }
         type = "MicrosoftEntraID"
         // For remaining properties, see IdentityProvider objects
@@ -230,6 +230,7 @@ resource "azapi_resource" "cosmos_principal_user" {
       output["id"],
       output["type"]
     ]
+    prevent_destroy = true
   }
 }
 

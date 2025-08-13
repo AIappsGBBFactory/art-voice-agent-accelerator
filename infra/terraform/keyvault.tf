@@ -22,6 +22,7 @@ resource "azurerm_role_assignment" "keyvault_admin" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Administrator"
   principal_id         = local.principal_id
+  principal_type       = local.principal_type
 }
 
 # Key Vault Secrets User role for backend identity

@@ -38,6 +38,8 @@ def run_bandit(target: str) -> None:
         "low",  # include LOW / MEDIUM / HIGH
         "--confidence-level",
         "low",  # include LOW / MEDIUM / HIGH
+        "--configfile",
+        ".bandit",  # Use project configuration
     ]
     try:
         subprocess.run(base_cmd + ["-f", "json", "-o", str(json_path)], check=True)

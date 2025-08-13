@@ -18,7 +18,9 @@ import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import WebSocket
+from opentelemetry import trace
 from opentelemetry.trace import SpanKind
+from urllib.parse import urlparse
 
 from apps.rtagent.backend.settings import AZURE_OPENAI_CHAT_DEPLOYMENT_ID, TTS_END
 from apps.rtagent.backend.src.agents.tool_store.tool_registry import (
@@ -37,14 +39,26 @@ from apps.rtagent.backend.src.shared_ws import (
     send_response_to_acs,
     send_tts_audio,
 )
+from apps.rtagent.backend.settings import (
+    AZURE_OPENAI_ENDPOINT
+)
 from src.enums.monitoring import SpanAttr
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
+from apps.rtagent.backend.src.utils.tracing_utils import (
+    create_service_handler_attrs,
+    create_service_dependency_attrs,
+    log_with_context,
+)
+
 
 if TYPE_CHECKING:  # pragma: no cover – typing-only import
     from src.stateful.state_managment import MemoManager  # noqa: F401
 
 logger = get_logger("gpt_flow")
+
+# Get OpenTelemetry tracer for Application Map
+tracer = trace.get_tracer(__name__)
 
 # Performance optimization: Cache tracing configuration
 _GPT_FLOW_TRACING = os.getenv("GPT_FLOW_TRACING", "true").lower() == "true"
@@ -94,28 +108,29 @@ async def process_gpt_response(  # noqa: D401
         Optional tool result dictionary if a tool was executed; otherwise *None*.
     """
 
-    # Create trace context for the entire GPT flow operation
-    with create_trace_context(
-        name="gpt_flow.process_response",
+    # Create handler span for GPT flow service
+    span_attrs = create_service_handler_attrs(
+        service_name="gpt_flow",
         call_connection_id=call_connection_id,
         session_id=session_id,
-        metadata={
-            "agent_name": agent_name,
-            "model_id": model_id,
-            "is_acs": is_acs,
-            "temperature": temperature,
-            "top_p": top_p,
-            "max_tokens": max_tokens,
-            "tools_available": len(available_tools or DEFAULT_TOOLS),
-            "prompt_length": len(user_prompt) if user_prompt else 0,
-        },
-    ) as trace_ctx:
+        operation="process_response",
+        agent_name=agent_name,
+        model_id=model_id,
+        is_acs=is_acs,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        tools_available=len(available_tools or DEFAULT_TOOLS),
+        prompt_length=len(user_prompt) if user_prompt else 0,
+    )
+
+    with tracer.start_as_current_span("gpt_flow.process_response", attributes=span_attrs) as span:
 
         agent_history: List[Dict[str, Any]] = cm.get_history(agent_name)
         agent_history.append({"role": "user", "content": user_prompt})
 
         tool_set = available_tools or DEFAULT_TOOLS
-        trace_ctx.set_attribute("tools.count", len(tool_set))
+        span.set_attribute("tools.count", len(tool_set))
 
         chat_kwargs: Dict[str, Any] = {
             "stream": True,
@@ -128,20 +143,37 @@ async def process_gpt_response(  # noqa: D401
             "tool_choice": "auto" if tool_set else "none",
         }
 
-        trace_ctx.set_attribute("chat.history_length", len(agent_history))
+        span.set_attribute("chat.history_length", len(agent_history))
         logger.debug("process_gpt_response – chat kwargs prepared: %s", chat_kwargs)
 
-        # Stream processing with tracing
-        with create_trace_context(
-            name="gpt_flow.stream_completion",
+        # Create dependency span for calling Azure OpenAI
+        azure_openai_attrs = create_service_dependency_attrs(
+            source_service="gpt_flow",
+            target_service="azure_openai",
             call_connection_id=call_connection_id,
             session_id=session_id,
-            metadata={"model": model_id, "stream": True},
-            high_frequency=_STREAM_TRACING,
-        ) as stream_ctx:
+            operation="stream_completion",
+            model=model_id,
+            stream=True,
+        )
+        aoai_endpoint = AZURE_OPENAI_ENDPOINT
+        host = urlparse(aoai_endpoint).netloc or "api.openai.azure.com"
 
+        with tracer.start_as_current_span(
+            "gpt_flow.stream_completion",
+            kind=SpanKind.CLIENT,
+            attributes={
+                **azure_openai_attrs,
+                "peer.service": "azure-openai",
+                "server.address": host,
+                "server.port": 443,
+                "http.method": "POST",
+                "http.url": f"https://{host}/openai/deployments/{model_id}/chat/completions",
+                "pipeline.stage": "orchestrator -> aoai",
+            },
+        ) as stream_span:
             response = az_openai_client.chat.completions.create(**chat_kwargs)
-            stream_ctx.add_event("openai_stream_started")
+            stream_span.add_event("openai_stream_started")
 
             collected: List[str] = []  # Temporary buffer for partial tokens.
             final_chunks: List[str] = []  # All streamed assistant chunks.
@@ -164,9 +196,9 @@ async def process_gpt_response(  # noqa: D401
                     tool_id = tc.id or tool_id
                     tool_name = tc.function.name or tool_name
                     args += tc.function.arguments or ""
-                    tool_started = True
                     if not tool_started:  # First tool call chunk
-                        stream_ctx.add_event(
+                        tool_started = True
+                        stream_span.add_event(
                             "tool_call_detected", {"tool_name": tool_name}
                         )
                     continue
@@ -185,10 +217,10 @@ async def process_gpt_response(  # noqa: D401
                         final_chunks.append(streaming)
                         collected.clear()
 
-            stream_ctx.set_attribute("chunks_processed", chunk_count)
-            stream_ctx.set_attribute("tool_call_detected", tool_started)
+            stream_span.set_attribute("chunks_processed", chunk_count)
+            stream_span.set_attribute("tool_call_detected", tool_started)
             if tool_started:
-                stream_ctx.set_attribute("tool_name", tool_name)
+                stream_span.set_attribute("tool_name", tool_name)
 
         # Handle remaining collected content
         if collected:
@@ -207,11 +239,11 @@ async def process_gpt_response(  # noqa: D401
                 await broadcast_message(ws.app.state.clients, full_text, "Assistant")
             except Exception as e:
                 logger.error(f"Failed to broadcast assistant message: {e}")
-            trace_ctx.set_attribute("response.length", len(full_text))
+            span.set_attribute("response.length", len(full_text))
 
         # Handle follow‑up tool call (if any)
         if tool_started:
-            trace_ctx.add_event(
+            span.add_event(
                 "tool_execution_starting", {"tool_name": tool_name, "tool_id": tool_id}
             )
 
@@ -252,13 +284,13 @@ async def process_gpt_response(  # noqa: D401
                         cm.update_slots(result["slots"])
 
                 asyncio.create_task(persist_tool_results())
-                trace_ctx.set_attribute("tool.execution_success", True)
-                trace_ctx.add_event(
+                span.set_attribute("tool.execution_success", True)
+                span.add_event(
                     "tool_execution_completed", {"tool_name": tool_name}
                 )
             return result
 
-        trace_ctx.set_attribute("completion_type", "text_only")
+        span.set_attribute("completion_type", "text_only")
         return None
 
 
@@ -275,30 +307,39 @@ async def _emit_streaming_text(
     session_id: Optional[str] = None,
 ) -> None:  # noqa: D401,E501
     """Emit one assistant text chunk via either ACS or WebSocket + TTS."""
-    with create_trace_context(
-        name="gpt_flow.emit_streaming_text",
-        call_connection_id=call_connection_id,
-        session_id=session_id,
-        metadata={
-            "text_length": len(text),
-            "is_acs": is_acs,
-            "chunk_type": "streaming_text",
-        },
-        high_frequency=_STREAM_TRACING,
-    ) as trace_ctx:
+    if _STREAM_TRACING:
+        span_attrs = create_service_handler_attrs(
+            service_name="gpt_flow",
+            call_connection_id=call_connection_id,
+            session_id=session_id,
+            operation="emit_streaming_text",
+            text_length=len(text),
+            is_acs=is_acs,
+            chunk_type="streaming_text",
+        )
+        
+        with tracer.start_as_current_span("gpt_flow.emit_streaming_text", attributes=span_attrs) as span:
+            if is_acs:
+                span.set_attribute("output_channel", "acs")
+                # Note: broadcast_message is handled separately for final responses to avoid duplication
+                await send_response_to_acs(ws, text, latency_tool=ws.state.lt)
+            else:
+                span.set_attribute("output_channel", "websocket_tts")
+                await send_tts_audio(text, ws, latency_tool=ws.state.lt)
+                await ws.send_text(
+                    json.dumps({"type": "assistant_streaming", "content": text})
+                )
 
+            span.add_event("text_emitted", {"text_length": len(text)})
+    else:
+        # Fast path when high-frequency tracing is disabled
         if is_acs:
-            trace_ctx.set_attribute("output_channel", "acs")
-            # Note: broadcast_message is handled separately for final responses to avoid duplication
             await send_response_to_acs(ws, text, latency_tool=ws.state.lt)
         else:
-            trace_ctx.set_attribute("output_channel", "websocket_tts")
             await send_tts_audio(text, ws, latency_tool=ws.state.lt)
             await ws.send_text(
                 json.dumps({"type": "assistant_streaming", "content": text})
             )
-
-        trace_ctx.add_event("text_emitted", {"text_length": len(text)})
 
 
 async def _handle_tool_call(  # noqa: PLR0913

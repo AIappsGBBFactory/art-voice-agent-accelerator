@@ -135,17 +135,25 @@ class MemoManager:
         self, redis_mgr: AzureRedisManager, ttl_seconds: Optional[int] = None
     ) -> None:
         """Async version of persist_to_redis to avoid blocking the event loop."""
-        key = self.build_redis_key(self.session_id)
-        await redis_mgr.store_session_data_async(key, self.to_redis_dict())
-        if ttl_seconds:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, redis_mgr.redis_client.expire, key, ttl_seconds
+        try:
+            key = self.build_redis_key(self.session_id)
+            await redis_mgr.store_session_data_async(key, self.to_redis_dict())
+            if ttl_seconds:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None, redis_mgr.redis_client.expire, key, ttl_seconds
+                )
+            logger.info(
+                f"Persisted session {self.session_id} async – "
+                f"histories per agent: {[f'{a}: {len(h)}' for a, h in self.histories.items()]}, ctx_keys={list(self.context.keys())}"
             )
-        logger.info(
-            f"Persisted session {self.session_id} async – "
-            f"histories per agent: {[f'{a}: {len(h)}' for a, h in self.histories.items()]}, ctx_keys={list(self.context.keys())}"
-        )
+        except asyncio.CancelledError:
+            logger.debug(f"persist_to_redis_async cancelled for session {self.session_id}")
+            # Re-raise cancellation to allow proper cleanup
+            raise
+        except Exception as e:
+            logger.error(f"Error persisting session {self.session_id} to Redis: {e}")
+            # Don't re-raise non-cancellation errors to avoid crashing the caller
 
     # --- TTS Interrupt ------------------------------------------------
     def is_tts_interrupted(self) -> bool:

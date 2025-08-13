@@ -6,7 +6,6 @@ to talk to the Chat Completion API; it will be created once at
 import-time with proper JWT token handling for APIM policy evaluation.
 """
 
-import logging
 import os
 
 from azure.identity import (
@@ -15,15 +14,15 @@ from azure.identity import (
     get_bearer_token_provider,
 )
 from openai import AzureOpenAI
-
 from apps.rtagent.backend.settings import (
     AZURE_CLIENT_ID,
     AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_KEY,
 )
+from utils.ml_logging import logging
+from utils.azure_auth import get_credential
 
 logger = logging.getLogger(__name__)
-
 
 def create_azure_openai_client():
     """Create Azure OpenAI client with proper authentication for APIM."""
@@ -51,9 +50,9 @@ def create_azure_openai_client():
             )
             credential = ManagedIdentityCredential(client_id=client_id)
         else:
-            # Use system-assigned managed identity or DefaultAzureCredential chain
+            # Use system-assigned managed identity or get_credential() chain
             logger.info("Using DefaultAzureCredential for Azure OpenAI authentication")
-            credential = DefaultAzureCredential()
+            credential = get_credential()
 
         # Create token provider with the correct scope for Azure Cognitive Services
         # This ensures the JWT token contains the proper audience claim for APIM evaluation
@@ -77,7 +76,7 @@ def create_azure_openai_client():
         logger.info("Falling back to DefaultAzureCredential")
 
         # Fallback to basic DefaultAzureCredential
-        credential = DefaultAzureCredential()
+        credential = get_credential()
         azure_ad_token_provider = get_bearer_token_provider(
             credential, "https://cognitiveservices.azure.com/.default"
         )

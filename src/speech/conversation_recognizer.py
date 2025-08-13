@@ -14,7 +14,7 @@ import json
 import os
 from typing import Callable, List, Optional, Final
 
-from azure.identity import DefaultAzureCredential
+from utils.azure_auth import get_credential
 from dotenv import load_dotenv
 
 from opentelemetry import trace
@@ -22,7 +22,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from src.enums.monitoring import SpanAttr
 from utils.ml_logging import get_logger
 
-logger = get_logger()
+logger = get_logger(__name__)
 load_dotenv()
 
 
@@ -70,7 +70,7 @@ class StreamingConversationTranscriberFromBytes:
     def _create_speech_config(self) -> SpeechConfig:
         if self.key:
             return SpeechConfig(subscription=self.key, region=self.region)
-        credential = DefaultAzureCredential()
+        credential = get_credential()
         token_result = credential.get_token("https://cognitiveservices.azure.com/.default")
         speech_config = SpeechConfig(region=self.region)
         speech_config.authorization_token = token_result.token
@@ -159,7 +159,7 @@ class StreamingConversationTranscriberFromBytes:
                 self._session_span.add_event("transcription_stopping")
             self.transcriber.stop_transcribing_async().get()
             if self._session_span:
-                self._session_span.set_status(Status(StatusCode.OK, "Stopped"))
+                self._session_span.set_status(Status(StatusCode.OK))
                 self._session_span.end()
 
     def close_stream(self) -> None:
