@@ -86,13 +86,22 @@ create_storage() {
             --min-tls-version TLS1_2 \
             --output none
             
-        # Enable versioning and change feed
-        az storage account blob-service-properties update \
+        # Enable versioning and change feed (best-effort)
+        # Some Azure CLI versions/extensions may hit InvalidApiVersionParameter; do not fail setup.
+        if ! az storage account blob-service-properties update \
             --account-name "$storage_account" \
             --resource-group "$resource_group" \
             --enable-versioning true \
             --enable-change-feed true \
-            --output none
+            --output none 2>/tmp/blob_props_err.txt; then
+            log_warning "Could not update blob service properties (versioning/change feed)."
+            if grep -q "InvalidApiVersionParameter" /tmp/blob_props_err.txt; then
+                log_warning "Azure API version not supported by your CLI for this operation. Skipping this step."
+                log_warning "You can enable Versioning and Change Feed later in the Azure Portal under Storage Account > Data management."
+            else
+                log_warning "Reason: $(tr -d '\n' < /tmp/blob_props_err.txt)"
+            fi
+        fi
     fi
     
     # Create container

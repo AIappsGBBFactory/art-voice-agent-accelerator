@@ -72,6 +72,16 @@ variable "principal_type" {
   }
 }
 
+variable "deployed_by" {
+  description = "Identifier of the deployer (e.g., 'Full Name <email@domain>' or UPN). Used to tag resources for traceability."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.deployed_by == null || length(var.deployed_by) <= 256
+    error_message = "'deployed_by' must be 256 characters or fewer."
+  }
+}
+
 variable "acs_data_location" {
   description = "Data location for Azure Communication Services"
   type        = string
