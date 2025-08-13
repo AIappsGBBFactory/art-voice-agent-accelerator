@@ -148,7 +148,9 @@ class MemoManager:
                 f"histories per agent: {[f'{a}: {len(h)}' for a, h in self.histories.items()]}, ctx_keys={list(self.context.keys())}"
             )
         except asyncio.CancelledError:
-            logger.debug(f"persist_to_redis_async cancelled for session {self.session_id}")
+            logger.debug(
+                f"persist_to_redis_async cancelled for session {self.session_id}"
+            )
             # Re-raise cancellation to allow proper cleanup
             raise
         except Exception as e:

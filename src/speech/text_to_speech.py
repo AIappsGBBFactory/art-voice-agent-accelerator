@@ -50,15 +50,15 @@ def auto_style(lang_code: str) -> Dict[str, str]:
 
 
 def ssml_voice_wrap(
-    voice: str, 
-    language: str, 
-    sentences: List[str], 
+    voice: str,
+    language: str,
+    sentences: List[str],
     sanitizer: Callable[[str], str],
     style: str = None,
-    rate: str = None
+    rate: str = None,
 ) -> str:
     """Build one SSML doc with a single <voice> tag for efficiency.
-    
+
     Args:
         voice: Voice name to use
         language: Language code
@@ -84,7 +84,9 @@ def ssml_voice_wrap(
         # Apply custom style or auto-detected style
         voice_style = style or attrs.get("style")
         if voice_style:
-            inner = f'<mstts:express-as style="{voice_style}">{inner}</mstts:express-as>'
+            inner = (
+                f'<mstts:express-as style="{voice_style}">{inner}</mstts:express-as>'
+            )
 
         # optional language switch
         if lang != language:
@@ -120,6 +122,7 @@ def _is_headless() -> bool:
 class SpeechSynthesizer:
     # Limit concurrent server-side TTS synth requests to avoid SDK/service hiccups
     _synth_semaphore = asyncio.Semaphore(4)
+
     def __init__(
         self,
         key: str = None,
@@ -183,7 +186,9 @@ class SpeechSynthesizer:
         if self.key:
             # Use API key authentication if provided
             logger.info("Creating SpeechConfig with API key authentication")
-            speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+            speech_config = speechsdk.SpeechConfig(
+                subscription=self.key, region=self.region
+            )
         else:
             # Use Azure Default Credentials (managed identity, service principal, etc.)
             logger.info("Creating SpeechConfig with Azure Default Credentials")
@@ -211,9 +216,7 @@ class SpeechSynthesizer:
                     auth_token=auth_token, region=self.region
                 )
 
-                logger.debug(
-                    "Successfully authenticated with DefaultAzureCredential"
-                )
+                logger.debug("Successfully authenticated with DefaultAzureCredential")
             except Exception as e:
                 logger.error(f"Failed to get Azure credential token: {e}")
                 raise RuntimeError(
@@ -304,11 +307,13 @@ class SpeechSynthesizer:
         """
         return html.escape(text, quote=True)
 
-    def start_speaking_text(self, text: str, voice: str = None, rate: str = "15%", style: str = None) -> None:
+    def start_speaking_text(
+        self, text: str, voice: str = None, rate: str = "15%", style: str = None
+    ) -> None:
         """
         Synthesize and play text through the server's speakers (if available).
         In headless environments, this will log a warning and skip playback.
-        
+
         Args:
             text: Text to synthesize
             voice: Voice name (defaults to self.voice)
@@ -330,7 +335,9 @@ class SpeechSynthesizer:
             )
 
             # Correlation keys
-            self._session_span.set_attribute("rt.call.connection_id", self.call_connection_id)
+            self._session_span.set_attribute(
+                "rt.call.connection_id", self.call_connection_id
+            )
             self._session_span.set_attribute("rt.session.id", self.call_connection_id)
 
             # Service specific attributes
@@ -339,24 +346,27 @@ class SpeechSynthesizer:
             self._session_span.set_attribute("tts.language", self.language)
             self._session_span.set_attribute("tts.text_length", len(text))
             self._session_span.set_attribute("tts.operation_type", "speaker_synthesis")
-            self._session_span.set_attribute("server.address", f"{self.region}.tts.speech.microsoft.com")
+            self._session_span.set_attribute(
+                "server.address", f"{self.region}.tts.speech.microsoft.com"
+            )
             self._session_span.set_attribute("server.port", 443)
             self._session_span.set_attribute("http.method", "POST")
             # Use endpoint if set, otherwise default to region-based URL
             endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
             if endpoint:
                 self._session_span.set_attribute(
-                    "http.url",
-                    f"{endpoint}/cognitiveservices/v1"
+                    "http.url", f"{endpoint}/cognitiveservices/v1"
                 )
             else:
                 self._session_span.set_attribute(
                     "http.url",
-                    f"https://{self.region}.tts.speech.microsoft.com/cognitiveservices/v1"
+                    f"https://{self.region}.tts.speech.microsoft.com/cognitiveservices/v1",
                 )
             # External dependency identification for App Map
             self._session_span.set_attribute("peer.service", "azure-cognitive-speech")
-            self._session_span.set_attribute("net.peer.name", f"{self.region}.tts.speech.microsoft.com")
+            self._session_span.set_attribute(
+                "net.peer.name", f"{self.region}.tts.speech.microsoft.com"
+            )
 
             # Set standard attributes if available
             self._session_span.set_attribute(
@@ -370,7 +380,9 @@ class SpeechSynthesizer:
         else:
             self._start_speaking_text_internal(text, voice, rate, style)
 
-    def _start_speaking_text_internal(self, text: str, voice: str = None, rate: str = "15%", style: str = None) -> None:
+    def _start_speaking_text_internal(
+        self, text: str, voice: str = None, rate: str = "15%", style: str = None
+    ) -> None:
         """Internal method to perform speaker synthesis with tracing events"""
         voice = voice or self.voice
         try:
@@ -403,8 +415,10 @@ class SpeechSynthesizer:
 
             # Build SSML with consistent voice, rate, and style support
             sanitized_text = self._sanitize(text)
-            inner_content = f'<prosody rate="{rate}" pitch="default">{sanitized_text}</prosody>'
-            
+            inner_content = (
+                f'<prosody rate="{rate}" pitch="default">{sanitized_text}</prosody>'
+            )
+
             if style:
                 inner_content = f'<mstts:express-as style="{style}">{inner_content}</mstts:express-as>'
 
@@ -451,11 +465,13 @@ class SpeechSynthesizer:
             except Exception as e:
                 logger.warning(f"Could not stop speech synthesis: {e}")
 
-    def synthesize_speech(self, text: str, voice: str = None, style: str = None, rate: str = None) -> bytes:
+    def synthesize_speech(
+        self, text: str, voice: str = None, style: str = None, rate: str = None
+    ) -> bytes:
         """
         Synthesizes text to speech in memory (returning WAV bytes).
         Does NOT play audio on server speakers.
-        
+
         Args:
             text: Text to synthesize
             voice: Voice name (defaults to self.voice)
@@ -489,7 +505,9 @@ class SpeechSynthesizer:
         else:
             return self._synthesize_speech_internal(text, voice, style, rate)
 
-    def _synthesize_speech_internal(self, text: str, voice: str = None, style: str = None, rate: str = None) -> bytes:
+    def _synthesize_speech_internal(
+        self, text: str, voice: str = None, style: str = None, rate: str = None
+    ) -> bytes:
         """Internal method to perform synthesis with tracing events"""
         voice = voice or self.voice
         try:
@@ -523,13 +541,13 @@ class SpeechSynthesizer:
             if style or rate:
                 sanitized_text = self._sanitize(text)
                 inner_content = sanitized_text
-                
+
                 if rate:
                     inner_content = f'<prosody rate="{rate}">{inner_content}</prosody>'
-                    
+
                 if style:
                     inner_content = f'<mstts:express-as style="{style}">{inner_content}</mstts:express-as>'
-                    
+
                 ssml = f"""<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
     <voice name="{voice}">
         {inner_content}
@@ -582,12 +600,12 @@ class SpeechSynthesizer:
             return b""
 
     def synthesize_to_base64_frames(
-        self, 
-        text: str, 
+        self,
+        text: str,
         sample_rate: int = 16000,
         voice: str = None,
         style: str = None,
-        rate: str = None
+        rate: str = None,
     ) -> list[str]:
         """
         Synthesize `text` via Azure TTS into raw 16-bit PCM mono at either 16 kHz or 24 kHz,
@@ -599,7 +617,7 @@ class SpeechSynthesizer:
             voice: Voice name (defaults to self.voice)
             style: Voice style
             rate: Speech rate
-        
+
         Returns:
             List of base64-encoded audio frames
         """
@@ -627,17 +645,21 @@ class SpeechSynthesizer:
 
             # Make this span current for the duration
             with trace.use_span(self._session_span):
-                return self._synthesize_to_base64_frames_internal(text, sample_rate, voice, style, rate)
+                return self._synthesize_to_base64_frames_internal(
+                    text, sample_rate, voice, style, rate
+                )
         else:
-            return self._synthesize_to_base64_frames_internal(text, sample_rate, voice, style, rate)
+            return self._synthesize_to_base64_frames_internal(
+                text, sample_rate, voice, style, rate
+            )
 
     def _synthesize_to_base64_frames_internal(
-        self, 
-        text: str, 
+        self,
+        text: str,
         sample_rate: int,
         voice: str = None,
         style: str = None,
-        rate: str = None
+        rate: str = None,
     ) -> list[str]:
         """Internal method to perform frame synthesis with tracing events"""
         voice = voice or self.voice
@@ -680,19 +702,21 @@ class SpeechSynthesizer:
             if self._session_span:
                 self._session_span.add_event("tts_frame_synthesizer_created")
 
-            logger.debug(f"Synthesizing text with Azure TTS (voice: {voice}): {text[:100]}...")
-            
+            logger.debug(
+                f"Synthesizing text with Azure TTS (voice: {voice}): {text[:100]}..."
+            )
+
             # Build SSML if style or rate are specified, otherwise use plain text
             if style or rate:
                 sanitized_text = self._sanitize(text)
                 inner_content = sanitized_text
-                
+
                 if rate:
                     inner_content = f'<prosody rate="{rate}">{inner_content}</prosody>'
-                    
+
                 if style:
                     inner_content = f'<mstts:express-as style="{style}">{inner_content}</mstts:express-as>'
-                    
+
                 ssml = f"""<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
     <voice name="{voice}">
         {inner_content}
@@ -832,7 +856,7 @@ class SpeechSynthesizer:
     ) -> bytes:
         """
         Synthesize text to PCM bytes with consistent voice parameter support.
-        
+
         Args:
             text: Text to synthesize
             voice: Voice name (defaults to self.voice)
@@ -843,7 +867,7 @@ class SpeechSynthesizer:
         voice = voice or self.voice
         style = style or "chat"
         rate = rate or "+3%"
-        
+
         speech_config = self.cfg
         speech_config.speech_synthesis_voice_name = voice
         speech_config.set_speech_synthesis_output_format(
@@ -856,14 +880,16 @@ class SpeechSynthesizer:
         # Build SSML with consistent style support
         sanitized_text = self._sanitize(text)
         inner_content = sanitized_text
-        
+
         # Apply prosody rate if specified
         if rate:
             inner_content = f'<prosody rate="{rate}">{inner_content}</prosody>'
-        
+
         # Apply style if specified
         if style:
-            inner_content = f'<mstts:express-as style="{style}">{inner_content}</mstts:express-as>'
+            inner_content = (
+                f'<mstts:express-as style="{style}">{inner_content}</mstts:express-as>'
+            )
 
         ssml = f"""<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
     <voice name="{voice}">

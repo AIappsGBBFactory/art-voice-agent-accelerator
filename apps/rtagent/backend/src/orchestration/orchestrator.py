@@ -12,7 +12,10 @@ specialist agent.  Specialists can still trigger hand‑offs via
 """
 
 from contextlib import asynccontextmanager
-from apps.rtagent.backend.src.services.acs.session_terminator import terminate_session, TerminationReason
+from apps.rtagent.backend.src.services.acs.session_terminator import (
+    terminate_session,
+    TerminationReason,
+)
 from typing import TYPE_CHECKING, Any, Callable, Dict, Tuple
 import json
 import os
@@ -26,7 +29,9 @@ from apps.rtagent.backend.src.shared_ws import (
 )
 from src.enums.monitoring import SpanAttr  # noqa: F401 – imported for side‑effects
 from utils.ml_logging import get_logger
-from utils.trace_context import create_trace_context  # noqa: F401 – may be used elsewhere
+from utils.trace_context import (
+    create_trace_context,
+)  # noqa: F401 – may be used elsewhere
 from apps.rtagent.backend.src.utils.tracing_utils import (
     create_service_handler_attrs,
     create_service_dependency_attrs,
@@ -48,11 +53,12 @@ _ORCHESTRATOR_TRACING: bool = (
     os.getenv("ORCHESTRATOR_TRACING", "true").lower() == "true"
 )
 _LAST_ANNOUNCED_KEY = "last_announced_agent"
-_APP_GREETS_ATTR = "greet_counts" 
+_APP_GREETS_ATTR = "greet_counts"
 
 # -------------------------------------------------------------
 # Utility helpers
 # -------------------------------------------------------------
+
 
 def _get_correlation_context(ws: WebSocket, cm: "MemoManager") -> Tuple[str, str]:
     """Extract correlation context from *WebSocket* and *MemoManager*.
@@ -60,7 +66,9 @@ def _get_correlation_context(ws: WebSocket, cm: "MemoManager") -> Tuple[str, str
     :returns: ``(call_connection_id, session_id)``
     """
     if cm is None:
-        logger.warning("⚠️ MemoManager is None in _get_correlation_context, using WebSocket fallbacks")
+        logger.warning(
+            "⚠️ MemoManager is None in _get_correlation_context, using WebSocket fallbacks"
+        )
         call_connection_id = (
             getattr(ws.state, "call_connection_id", None)
             or ws.headers.get("x-call-connection-id")
@@ -72,7 +80,7 @@ def _get_correlation_context(ws: WebSocket, cm: "MemoManager") -> Tuple[str, str
             or "unknown"
         )
         return call_connection_id, session_id
-    
+
     call_connection_id = (
         getattr(ws.state, "call_connection_id", None)
         or ws.headers.get("x-call-connection-id")
@@ -89,7 +97,9 @@ def _get_correlation_context(ws: WebSocket, cm: "MemoManager") -> Tuple[str, str
 def _cm_get(cm: "MemoManager", key: str, default: Any = None) -> Any:
     """Shorthand for ``cm.get_value_from_corememory`` with a default."""
     if cm is None:
-        logger.warning(f"⚠️ MemoManager is None when trying to get key '{key}', returning default: {default}")
+        logger.warning(
+            f"⚠️ MemoManager is None when trying to get key '{key}', returning default: {default}"
+        )
         return default
     return cm.get_value_from_corememory(key, default)
 
@@ -114,7 +124,9 @@ async def _send_agent_greeting(
 
     # Validate cm parameter
     if cm is None:
-        logger.error(f"❌ MemoManager is None in _send_agent_greeting for agent: {agent_name}")
+        logger.error(
+            f"❌ MemoManager is None in _send_agent_greeting for agent: {agent_name}"
+        )
         return
 
     # Prevent duplicate greeting on consecutive turns.
@@ -127,11 +139,11 @@ async def _send_agent_greeting(
         agent = ws.app.state.claim_intake_agent
     elif agent_name == "General":
         agent = ws.app.state.general_info_agent
-    
+
     # Extract voice configuration from agent
-    agent_voice = getattr(agent, 'voice_name', None) if agent else None
-    agent_voice_style = getattr(agent, 'voice_style', 'chat') if agent else 'chat'
-    agent_voice_rate = getattr(agent, 'voice_rate', '+3%') if agent else '+3%'
+    agent_voice = getattr(agent, "voice_name", None) if agent else None
+    agent_voice_style = getattr(agent, "voice_style", "chat") if agent else "chat"
+    agent_voice_rate = getattr(agent, "voice_rate", "+3%") if agent else "+3%"
 
     # ------------------------------------------------------------------
     # Fetch / update counters stored in app‑state.
@@ -141,16 +153,18 @@ async def _send_agent_greeting(
     if not hasattr(ws.app.state, _APP_GREETS_ATTR):
         ws.app.state.__setattr__(_APP_GREETS_ATTR, app_counts)  # first run
 
+    # Use the actual agent name for greeting history consistency
+    actual_agent_name = agent.name if agent else agent_name
     session_counts = app_counts.get(cm.session_id, {})
-    counter = session_counts.get(agent_name, 0)
-    session_counts[agent_name] = counter + 1
+    counter = session_counts.get(actual_agent_name, 0)
+    session_counts[actual_agent_name] = counter + 1
     app_counts[cm.session_id] = session_counts
 
     # ------------------------------------------------------------------
     # Compose greeting based on counter.
     # ------------------------------------------------------------------
     caller_name = _cm_get(cm, "caller_name")
-    #TODO: Fix logic more dynamic
+    # TODO: Fix logic more dynamic
     topic = _cm_get(cm, "topic") or _cm_get(cm, "claim_intent") or "your policy"
     if counter == 0:
         greeting = (
@@ -163,14 +177,21 @@ async def _send_agent_greeting(
             f"Let's continue with {topic}."
         )
 
-    cm.append_to_history(agent_name, "assistant", greeting)
+    # Store greeting in history using the actual agent name
+    cm.append_to_history(actual_agent_name, "assistant", greeting)
     _cm_set(cm, **{_LAST_ANNOUNCED_KEY: agent_name})
 
     # ------------------------------------------------------------------
     # Deliver greeting via correct channel with agent-specific voice.
     # ------------------------------------------------------------------
     if is_acs:
-        logger.info("🎤 ACS greeting #%s for %s (voice: %s): %s", counter + 1, agent_name, agent_voice or "default", greeting)
+        logger.info(
+            "🎤 ACS greeting #%s for %s (voice: %s): %s",
+            counter + 1,
+            agent_name,
+            agent_voice or "default",
+            greeting,
+        )
         # Use agent-specific sender name for UI display
         if agent_name == "Claims":
             agent_sender = "Claims Specialist"
@@ -185,21 +206,26 @@ async def _send_agent_greeting(
                 greeting_text=greeting,
                 voice_name=agent_voice,
                 voice_style=agent_voice_style,
-                voice_rate=agent_voice_rate
+                voice_rate=agent_voice_rate,
             )  # type: ignore[attr-defined]
         except AttributeError:
             logger.warning("Media handler lacks play_greeting(); sent text only.")
     else:
-        logger.info("💬 WS greeting #%s for %s (voice: %s)", counter + 1, agent_name, agent_voice or "default")
+        logger.info(
+            "💬 WS greeting #%s for %s (voice: %s)",
+            counter + 1,
+            agent_name,
+            agent_voice or "default",
+        )
         await ws.send_text(json.dumps({"type": "status", "message": greeting}))
         # Pass agent voice configuration to WebSocket TTS
         await send_tts_audio(
-            greeting, 
-            ws, 
+            greeting,
+            ws,
             latency_tool=ws.state.lt,
             voice_name=agent_voice,
             voice_style=agent_voice_style,
-            rate=agent_voice_rate
+            rate=agent_voice_rate,
         )
 
 
@@ -226,15 +252,15 @@ async def run_auth_agent(
     """
     Run *AuthAgent* once per session.
 
-    • On **emergency escalation**, set `escalated=True`, store reason, and return.  
+    • On **emergency escalation**, set `escalated=True`, store reason, and return.
     • On **successful auth**, cache caller info & chosen specialist.
     """
-    
+
     # Validate cm parameter
     if cm is None:
         logger.error("❌ MemoManager is None in run_auth_agent")
         raise ValueError("MemoManager (cm) parameter cannot be None in run_auth_agent")
-    
+
     auth_agent = ws.app.state.auth_agent
 
     async with track_latency(ws.state.lt, "auth_agent", ws.app.state.redis):
@@ -256,9 +282,13 @@ async def run_auth_agent(
             "🚨 Escalation during auth – session=%s reason=%s", cm.session_id, reason
         )
         return  # session termination handled upstream
-    
-    logger.info("🔍 Processing auth result - type: %s, is_dict: %s", type(result).__name__, isinstance(result, dict))
-    
+
+    logger.info(
+        "🔍 Processing auth result - type: %s, is_dict: %s",
+        type(result).__name__,
+        isinstance(result, dict),
+    )
+
     if isinstance(result, dict) and result.get("authenticated"):
         caller_name: str | None = result.get("caller_name")
         policy_id: str | None = result.get("policy_id")
@@ -266,7 +296,7 @@ async def run_auth_agent(
         topic: str | None = result.get("topic")
         intent: str = result.get("intent", "general")
         active_agent: str = "Claims" if intent == "claims" else "General"
-                
+
         _cm_set(
             cm,
             authenticated=True,
@@ -282,7 +312,7 @@ async def run_auth_agent(
             cm.session_id,
             caller_name,
             policy_id,
-            active_agent
+            active_agent,
         )
 
         # Store voice configuration for the active agent in memory
@@ -290,11 +320,11 @@ async def run_auth_agent(
             agent = ws.app.state.claim_intake_agent
         else:  # General
             agent = ws.app.state.general_info_agent
-        
-        agent_voice = getattr(agent, 'voice_name', None) if agent else None
-        agent_voice_style = getattr(agent, 'voice_style', 'chat') if agent else 'chat'
-        agent_voice_rate = getattr(agent, 'voice_rate', '+3%') if agent else '+3%'
-        
+
+        agent_voice = getattr(agent, "voice_name", None) if agent else None
+        agent_voice_style = getattr(agent, "voice_style", "chat") if agent else "chat"
+        agent_voice_rate = getattr(agent, "voice_rate", "+3%") if agent else "+3%"
+
         _cm_set(
             cm,
             current_agent_voice=agent_voice,
@@ -305,9 +335,11 @@ async def run_auth_agent(
         # Send greeting with the correct agent voice
         await _send_agent_greeting(cm, ws, active_agent, is_acs)
 
+
 # -------------------------------------------------------------
 # 2.  Specialist agents
 # -------------------------------------------------------------
+
 
 async def run_general_agent(
     cm: "MemoManager",
@@ -321,7 +353,9 @@ async def run_general_agent(
     # Validate cm parameter
     if cm is None:
         logger.error("❌ MemoManager is None in run_general_agent")
-        raise ValueError("MemoManager (cm) parameter cannot be None in run_general_agent")
+        raise ValueError(
+            "MemoManager (cm) parameter cannot be None in run_general_agent"
+        )
 
     agent = ws.app.state.general_info_agent
     caller_name = _cm_get(cm, "caller_name")
@@ -331,9 +365,9 @@ async def run_general_agent(
     # Context injection for agent awareness
     # TODO: improve logic
     cm.append_to_history(
-        agent.name, 
-        "assistant", 
-        f"Authenticated caller: {caller_name} (Policy: {policy_id}) | Topic: {topic}"
+        agent.name,
+        "assistant",
+        f"Authenticated caller: {caller_name} (Policy: {policy_id}) | Topic: {topic}",
     )
 
     async with track_latency(ws.state.lt, "general_agent", ws.app.state.redis):
@@ -362,7 +396,9 @@ async def run_claims_agent(
     # Validate cm parameter
     if cm is None:
         logger.error("❌ MemoManager is None in run_claims_agent")
-        raise ValueError("MemoManager (cm) parameter cannot be None in run_claims_agent")
+        raise ValueError(
+            "MemoManager (cm) parameter cannot be None in run_claims_agent"
+        )
 
     agent = ws.app.state.claim_intake_agent
     caller_name = _cm_get(cm, "caller_name")
@@ -372,9 +408,9 @@ async def run_claims_agent(
     # Context injection for agent awareness
     # TODO: improve logic
     cm.append_to_history(
-        agent.name, 
-        "assistant", 
-        f"Authenticated caller: {caller_name} (Policy: {policy_id}) | Claim Intent: {claim_intent}"
+        agent.name,
+        "assistant",
+        f"Authenticated caller: {caller_name} (Policy: {policy_id}) | Claim Intent: {claim_intent}",
     )
     async with track_latency(ws.state.lt, "claim_agent", ws.app.state.redis):
         resp = await agent.respond(
@@ -393,6 +429,7 @@ async def run_claims_agent(
 # -------------------------------------------------------------
 # 3. Structured tool‑response post‑processing
 # -------------------------------------------------------------
+
 
 def _get_field(resp: Dict[str, Any], key: str) -> Any:  # noqa: D401 – simple util
     """Return ``resp[key]`` or ``resp['data'][key]`` if nested."""
@@ -437,11 +474,11 @@ async def _process_tool_response(  # pylint: disable=too-complex
             agent = ws.app.state.claim_intake_agent
         else:  # General
             agent = ws.app.state.general_info_agent
-        
-        agent_voice = getattr(agent, 'voice_name', None) if agent else None
-        agent_voice_style = getattr(agent, 'voice_style', 'chat') if agent else 'chat'
-        agent_voice_rate = getattr(agent, 'voice_rate', '+3%') if agent else '+3%'
-        
+
+        agent_voice = getattr(agent, "voice_name", None) if agent else None
+        agent_voice_style = getattr(agent, "voice_style", "chat") if agent else "chat"
+        agent_voice_rate = getattr(agent, "voice_rate", "+3%") if agent else "+3%"
+
         _cm_set(
             cm,
             current_agent_voice=agent_voice,
@@ -464,19 +501,19 @@ async def _process_tool_response(  # pylint: disable=too-complex
             new_agent = "General"
             agent = ws.app.state.general_info_agent
             _cm_set(cm, active_agent=new_agent, topic=topic)
-        
+
         # Update voice configuration for the new agent
-        agent_voice = getattr(agent, 'voice_name', None) if agent else None
-        agent_voice_style = getattr(agent, 'voice_style', 'chat') if agent else 'chat'
-        agent_voice_rate = getattr(agent, 'voice_rate', '+3%') if agent else '+3%'
-        
+        agent_voice = getattr(agent, "voice_name", None) if agent else None
+        agent_voice_style = getattr(agent, "voice_style", "chat") if agent else "chat"
+        agent_voice_rate = getattr(agent, "voice_rate", "+3%") if agent else "+3%"
+
         _cm_set(
             cm,
             current_agent_voice=agent_voice,
             current_agent_voice_style=agent_voice_style,
             current_agent_voice_rate=agent_voice_rate,
         )
-        
+
         logger.info("🔀 Hand‑off → %s", new_agent)
         if new_agent != prev_agent:
             await _send_agent_greeting(cm, ws, new_agent, is_acs)
@@ -518,15 +555,15 @@ async def route_turn(
     * Detecting when a live human transfer is required.
     * Persisting conversation state to Redis for resilience.
     """
-    
+
     # Validate cm parameter to prevent NameError
     if cm is None:
         logger.error("❌ MemoManager (cm) is None - cannot process orchestration")
         raise ValueError("MemoManager (cm) parameter cannot be None")
-    
+
     # Extract correlation context
     call_connection_id, session_id = _get_correlation_context(ws, cm)
-    
+
     # Create handler span for orchestrator service
     span_attrs = create_service_handler_attrs(
         service_name="orchestrator",
@@ -538,8 +575,10 @@ async def route_turn(
         authenticated=_cm_get(cm, "authenticated", False),
         active_agent=_cm_get(cm, "active_agent", "none"),
     )
-    
-    with tracer.start_as_current_span("orchestrator.route_turn", attributes=span_attrs) as span:
+
+    with tracer.start_as_current_span(
+        "orchestrator.route_turn", attributes=span_attrs
+    ) as span:
         redis_mgr = ws.app.state.redis
 
         # ------------------------------------------------------------------
@@ -582,10 +621,12 @@ async def route_turn(
             active: str = _cm_get(cm, "active_agent") or "General"
             span.set_attribute("orchestrator.stage", "specialist_dispatch")
             span.set_attribute("orchestrator.target_agent", active)
-            
+
             handler = SPECIALIST_MAP.get(active)
             if handler is None:
-                logger.warning("Unknown active_agent=%s session=%s", active, cm.session_id)
+                logger.warning(
+                    "Unknown active_agent=%s session=%s", active, cm.session_id
+                )
                 span.set_attribute("orchestrator.error", "unknown_agent")
                 return
 
@@ -598,8 +639,10 @@ async def route_turn(
                 operation="process_turn",
                 transcript_length=len(transcript),
             )
-            
-            with tracer.start_as_current_span(f"orchestrator.call_{active.lower()}_agent", attributes=agent_attrs):
+
+            with tracer.start_as_current_span(
+                f"orchestrator.call_{active.lower()}_agent", attributes=agent_attrs
+            ):
                 await handler(cm, transcript, ws, is_acs=is_acs)
 
         except Exception:  # pylint: disable=broad-exception-caught

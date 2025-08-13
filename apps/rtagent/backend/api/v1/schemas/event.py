@@ -10,15 +10,28 @@ from pydantic import BaseModel, Field
 
 class EventMetricsResponse(BaseModel):
     """Response model for event metrics."""
-    total_events_processed: int = Field(..., description="Total number of events processed", example=1500)
-    events_by_type: Dict[str, int] = Field(..., description="Event count by type", example={
-        "Microsoft.Communication.CallConnected": 450,
-        "Microsoft.Communication.CallDisconnected": 430,
-        "Microsoft.Communication.DtmfToneReceived": 120
-    })
-    average_processing_time_ms: float = Field(..., description="Average processing time in milliseconds", example=12.5)
-    error_rate_percent: float = Field(..., description="Error rate as percentage", example=0.2)
-    active_handlers: int = Field(..., description="Number of active event handlers", example=7)
+
+    total_events_processed: int = Field(
+        ..., description="Total number of events processed", example=1500
+    )
+    events_by_type: Dict[str, int] = Field(
+        ...,
+        description="Event count by type",
+        example={
+            "Microsoft.Communication.CallConnected": 450,
+            "Microsoft.Communication.CallDisconnected": 430,
+            "Microsoft.Communication.DtmfToneReceived": 120,
+        },
+    )
+    average_processing_time_ms: float = Field(
+        ..., description="Average processing time in milliseconds", example=12.5
+    )
+    error_rate_percent: float = Field(
+        ..., description="Error rate as percentage", example=0.2
+    )
+    active_handlers: int = Field(
+        ..., description="Number of active event handlers", example=7
+    )
 
     class Config:
         json_schema_extra = {
@@ -26,20 +39,32 @@ class EventMetricsResponse(BaseModel):
                 "total_events_processed": 1500,
                 "events_by_type": {
                     "Microsoft.Communication.CallConnected": 450,
-                    "Microsoft.Communication.CallDisconnected": 430
+                    "Microsoft.Communication.CallDisconnected": 430,
                 },
                 "average_processing_time_ms": 12.5,
                 "error_rate_percent": 0.2,
-                "active_handlers": 7
+                "active_handlers": 7,
             }
         }
 
 
 class EventHandlerInfo(BaseModel):
     """Information about an event handler."""
-    name: str = Field(..., description="Handler function/class name", example="handle_call_connected")
-    event_types: List[str] = Field(..., description="Event types handled", example=["Microsoft.Communication.CallConnected"])
-    handler_type: str = Field(..., description="Handler implementation type", example="function", enum=["function", "class"])
+
+    name: str = Field(
+        ..., description="Handler function/class name", example="handle_call_connected"
+    )
+    event_types: List[str] = Field(
+        ...,
+        description="Event types handled",
+        example=["Microsoft.Communication.CallConnected"],
+    )
+    handler_type: str = Field(
+        ...,
+        description="Handler implementation type",
+        example="function",
+        enum=["function", "class"],
+    )
     domain: str = Field(..., description="Event domain", example="call_events")
     is_active: bool = Field(..., description="Whether handler is active", example=True)
 
@@ -50,17 +75,22 @@ class EventHandlerInfo(BaseModel):
                 "event_types": ["Microsoft.Communication.CallConnected"],
                 "handler_type": "function",
                 "domain": "call_events",
-                "is_active": True
+                "is_active": True,
             }
         }
 
 
 class EventSystemStatus(BaseModel):
     """Event system status response."""
+
     is_healthy: bool = Field(..., description="Overall system health", example=True)
-    registered_handlers: List[EventHandlerInfo] = Field(..., description="List of registered handlers")
+    registered_handlers: List[EventHandlerInfo] = Field(
+        ..., description="List of registered handlers"
+    )
     metrics: EventMetricsResponse = Field(..., description="Event processing metrics")
-    domains: List[str] = Field(..., description="Active event domains", example=["call_events", "media_events"])
+    domains: List[str] = Field(
+        ..., description="Active event domains", example=["call_events", "media_events"]
+    )
 
     class Config:
         json_schema_extra = {
@@ -72,7 +102,7 @@ class EventSystemStatus(BaseModel):
                         "event_types": ["Microsoft.Communication.CallConnected"],
                         "handler_type": "function",
                         "domain": "call_events",
-                        "is_active": True
+                        "is_active": True,
                     }
                 ],
                 "metrics": {
@@ -80,17 +110,18 @@ class EventSystemStatus(BaseModel):
                     "events_by_type": {},
                     "average_processing_time_ms": 12.5,
                     "error_rate_percent": 0.2,
-                    "active_handlers": 7
+                    "active_handlers": 7,
                 },
-                "domains": ["call_events", "media_events"]
+                "domains": ["call_events", "media_events"],
             }
         }
 
 
 class ProcessEventRequest(BaseModel):
     """Request model for processing events."""
+
     events: List[Dict[str, Any]] = Field(
-        ..., 
+        ...,
         description="CloudEvent data as dictionaries following CloudEvents spec",
         example=[
             {
@@ -102,10 +133,10 @@ class ProcessEventRequest(BaseModel):
                 "datacontenttype": "application/json",
                 "data": {
                     "callConnectionId": "test123",
-                    "serverCallId": "server-test-123"
-                }
+                    "serverCallId": "server-test-123",
+                },
             }
-        ]
+        ],
     )
 
     class Config:
@@ -121,8 +152,8 @@ class ProcessEventRequest(BaseModel):
                         "datacontenttype": "application/json",
                         "data": {
                             "callConnectionId": "test123",
-                            "serverCallId": "server-test-123"
-                        }
+                            "serverCallId": "server-test-123",
+                        },
                     }
                 ]
             }
@@ -131,18 +162,21 @@ class ProcessEventRequest(BaseModel):
 
 class ProcessEventResponse(BaseModel):
     """Response model for event processing."""
-    processed_count: int = Field(..., description="Number of successfully processed events", example=2)
+
+    processed_count: int = Field(
+        ..., description="Number of successfully processed events", example=2
+    )
     failed_count: int = Field(..., description="Number of failed events", example=0)
     results: List[Dict[str, Any]] = Field(
-        ..., 
+        ...,
         description="Detailed results for each event",
         example=[
             {
                 "event_id": "test-event-001",
                 "status": "success",
-                "message": "Event processed successfully"
+                "message": "Event processed successfully",
             }
-        ]
+        ],
     )
 
     class Config:
@@ -154,57 +188,59 @@ class ProcessEventResponse(BaseModel):
                     {
                         "event_id": "test-event-001",
                         "status": "success",
-                        "message": "Event processed successfully"
+                        "message": "Event processed successfully",
                     }
-                ]
+                ],
             }
         }
 
 
 class EventListRequest(BaseModel):
     """Request model for listing events with filters."""
+
     event_type: Optional[str] = Field(
-        None, 
+        None,
         description="Filter by event type",
-        example="Microsoft.Communication.CallConnected"
+        example="Microsoft.Communication.CallConnected",
     )
     start_time: Optional[str] = Field(
         None,
         description="Filter events after this timestamp (ISO 8601)",
-        example="2025-08-10T00:00:00Z"
+        example="2025-08-10T00:00:00Z",
     )
     end_time: Optional[str] = Field(
         None,
         description="Filter events before this timestamp (ISO 8601)",
-        example="2025-08-10T23:59:59Z"
+        example="2025-08-10T23:59:59Z",
     )
     status: Optional[str] = Field(
         None,
         description="Filter by processing status",
-        enum=["pending", "processing", "completed", "failed"]
+        enum=["pending", "processing", "completed", "failed"],
     )
     limit: int = Field(
-        100,
-        ge=1,
-        le=1000,
-        description="Maximum number of events to return"
+        100, ge=1, le=1000, description="Maximum number of events to return"
     )
 
 
 class EventDetail(BaseModel):
     """Detailed event information."""
+
     id: str = Field(..., description="Event ID")
     event_type: str = Field(..., description="Event type")
     source: str = Field(..., description="Event source")
     timestamp: str = Field(..., description="Event timestamp")
     status: str = Field(..., description="Processing status")
     data: Dict[str, Any] = Field(..., description="Event data")
-    processing_duration_ms: Optional[int] = Field(None, description="Processing time in milliseconds")
+    processing_duration_ms: Optional[int] = Field(
+        None, description="Processing time in milliseconds"
+    )
     error_message: Optional[str] = Field(None, description="Error message if failed")
 
 
 class EventListResponse(BaseModel):
     """Response model for listing events."""
+
     events: List[EventDetail] = Field(..., description="List of events")
     total: int = Field(..., description="Total number of events matching criteria")
     has_more: bool = Field(..., description="Whether there are more events available")
@@ -220,10 +256,10 @@ class EventListResponse(BaseModel):
                         "timestamp": "2025-08-10T13:45:00Z",
                         "status": "completed",
                         "data": {"callConnectionId": "test123"},
-                        "processing_duration_ms": 15
+                        "processing_duration_ms": 15,
                     }
                 ],
                 "total": 1,
-                "has_more": False
+                "has_more": False,
             }
         }

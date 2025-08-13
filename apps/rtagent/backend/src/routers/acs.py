@@ -45,10 +45,7 @@ from apps.rtagent.backend.src.utils.auth import (
     validate_acs_http_auth,
     validate_acs_ws_auth,
 )
-from src.enums import (
-    StreamMode,
-    SpanAttr
-)
+from src.enums import StreamMode, SpanAttr
 from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 from apps.rtagent.backend.src.utils.tracing_utils import (
@@ -56,7 +53,7 @@ from apps.rtagent.backend.src.utils.tracing_utils import (
     create_service_dependency_attrs,
     log_with_context,
     TRACING_ENABLED,
-    SERVICE_NAMES
+    SERVICE_NAMES,
 )
 
 # --------------------------------------------------------------------------- #
@@ -85,19 +82,18 @@ async def initiate_call(call: CallRequest, request: Request):
         operation="initiate_call",
         target_number=call.target_number,
         call_connection_id=None,
-        session_id=None
+        session_id=None,
     )
 
     with tracer.start_as_current_span(
         "acs_router.initiate_call", kind=SpanKind.SERVER, attributes=span_attrs
     ) as span:
-        
         log_with_context(
             logger,
             "info",
             "Initiating call",
             operation="initiate_call",
-            target_number=call.target_number
+            target_number=call.target_number,
         )
 
         # Create dependency span for calling ACS handler
@@ -105,25 +101,32 @@ async def initiate_call(call: CallRequest, request: Request):
             source_service="acs_router",
             target_service="acs_handler",
             operation="initiate_call",
-            target_number=call.target_number
+            target_number=call.target_number,
         )
-        
+
         with tracer.start_as_current_span(
-            "acs_router.call_acs_handler", kind=SpanKind.CLIENT, attributes=acs_handler_attrs
+            "acs_router.call_acs_handler",
+            kind=SpanKind.CLIENT,
+            attributes=acs_handler_attrs,
         ):
             # after: with tracer.start_as_current_span("acs_router.call_acs_handler", kind=SpanKind.CLIENT, attributes=acs_handler_attrs):
             # Determine ACS host from environment or ACS caller
             acs_host = os.getenv("ACS_ENDPOINT")
             if not acs_host:
-                acs_host = getattr(request.app.state.acs_caller, "_acs_host", None) or "acs.communication.azure.com"
+                acs_host = (
+                    getattr(request.app.state.acs_caller, "_acs_host", None)
+                    or "acs.communication.azure.com"
+                )
             span = trace.get_current_span()
             span.set_attribute("peer.service", "azure-communication-services")
             span.set_attribute("server.address", acs_host)
             span.set_attribute("server.port", 443)
             span.set_attribute("http.method", "POST")
-            span.set_attribute("http.url", f"https://{acs_host}/calling/callConnections")
+            span.set_attribute(
+                "http.url", f"https://{acs_host}/calling/callConnections"
+            )
             span.set_attribute("pipeline.stage", "router -> create_call")
-            
+
             result = await ACSHandler.initiate_call(
                 acs_caller=request.app.state.acs_caller,
                 target_number=call.target_number,
@@ -147,7 +150,9 @@ async def initiate_call(call: CallRequest, request: Request):
 
         # Error handling
         if span:
-            span.set_status(Status(StatusCode.ERROR, result.get("message", "Unknown error")))
+            span.set_status(
+                Status(StatusCode.ERROR, result.get("message", "Unknown error"))
+            )
 
         log_with_context(
             logger,
@@ -158,8 +163,7 @@ async def initiate_call(call: CallRequest, request: Request):
             error=result,
         )
         return JSONResponse(
-            {"error": "Call initiation failed", "details": result},
-            status_code=400
+            {"error": "Call initiation failed", "details": result}, status_code=400
         )
 
 
@@ -167,45 +171,47 @@ async def initiate_call(call: CallRequest, request: Request):
 async def answer_call(request: Request):
     """Handle inbound call events."""
     span_attrs = create_service_handler_attrs(
-        service_name="acs_router", 
-        operation="answer_call"
+        service_name="acs_router", operation="answer_call"
     )
-    
+
     with tracer.start_as_current_span(
         "acs_router.answer_call", kind=SpanKind.SERVER, attributes=span_attrs
     ) as span:
         try:
             body = await request.json()
             acs_caller = request.app.state.acs_caller
-            
+
             # Create dependency span for calling ACS handler
             acs_handler_attrs = create_service_dependency_attrs(
                 source_service="acs_router",
                 target_service="acs_handler",
-                operation="handle_inbound_call"
+                operation="handle_inbound_call",
             )
-            
+
             with tracer.start_as_current_span(
-                "acs_router.call_acs_handler", kind=SpanKind.CLIENT, attributes=acs_handler_attrs
+                "acs_router.call_acs_handler",
+                kind=SpanKind.CLIENT,
+                attributes=acs_handler_attrs,
             ):
                 inbound_call = await ACSHandler.handle_inbound_call(
-                    request_body=body, 
-                    acs_caller=acs_caller
+                    request_body=body, acs_caller=acs_caller
                 )
-            
-            log_with_context(logger, "info", "Inbound call handled", operation="answer_call")
+
+            log_with_context(
+                logger, "info", "Inbound call handled", operation="answer_call"
+            )
             return inbound_call
-            
+
         except Exception as exc:
             if span:
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
-            
+
             log_with_context(
                 logger,
-                "error", 
-                "Error processing inbound call", 
+                "error",
+                "Error processing inbound call",
                 operation="answer_call",
-                error=str(exc)
+                error=str(exc),
             )
             raise HTTPException(400, "Invalid request body") from exc
 
@@ -218,7 +224,7 @@ async def callbacks(request: Request):
         return JSONResponse({"error": "ACS not initialised"}, status_code=503)
     if not request.app.state.stt_client:
         return JSONResponse({"error": "STT client not initialised"}, status_code=503)
-    
+
     # Validate auth if enabled
     if ENABLE_AUTH_VALIDATION:
         try:
@@ -229,11 +235,13 @@ async def callbacks(request: Request):
 
     try:
         events = await request.json()
-        
+
         # Extract call connection ID
         call_connection_id = None
         if isinstance(events, dict):
-            call_connection_id = events.get("callConnectionId") or events.get("call_connection_id")
+            call_connection_id = events.get("callConnectionId") or events.get(
+                "call_connection_id"
+            )
         if not call_connection_id:
             call_connection_id = request.headers.get("x-ms-call-connection-id")
 
@@ -243,7 +251,7 @@ async def callbacks(request: Request):
             call_connection_id=call_connection_id,
             events_count=len(events) if isinstance(events, list) else 1,
         )
-        
+
         with tracer.start_as_current_span(
             "acs_router.callbacks", kind=SpanKind.SERVER, attributes=span_attrs
         ) as span:
@@ -252,15 +260,19 @@ async def callbacks(request: Request):
                 source_service="acs_router",
                 target_service="acs_handler",
                 operation="process_callback_events",
-                call_connection_id=call_connection_id
+                call_connection_id=call_connection_id,
             )
-            
+
             with tracer.start_as_current_span(
-                "acs_router.call_acs_handler", kind=SpanKind.CLIENT, attributes=acs_handler_attrs
+                "acs_router.call_acs_handler",
+                kind=SpanKind.CLIENT,
+                attributes=acs_handler_attrs,
             ):
                 srv_span = trace.get_current_span()
                 try:
-                    srv_span.set_attribute("server.address", request.url.hostname or "0.0.0.0")
+                    srv_span.set_attribute(
+                        "server.address", request.url.hostname or "0.0.0.0"
+                    )
                     srv_span.set_attribute("server.port", request.url.port or 443)
                     srv_span.set_attribute("http.method", request.method)
                     srv_span.set_attribute("http.target", request.url.path)
@@ -284,30 +296,35 @@ async def callbacks(request: Request):
             "error",
             "Callback processing error",
             operation="process_callbacks",
-            error=str(exc)
+            error=str(exc),
         )
         return JSONResponse({"error": str(exc)}, status_code=500)
+
 
 @router.websocket(ACS_WEBSOCKET_PATH or "/ws/call/stream")
 async def acs_media_ws(ws: WebSocket):
     """Handle WebSocket media streaming for ACS calls."""
     cid = None
     handler = None
-    
+
     try:
         # SERVER span for WS accept (draws incoming edge)
         with tracer.start_as_current_span(
             "acs_router.websocket.accept",
             kind=SpanKind.SERVER,
             attributes=create_service_handler_attrs(
-                service_name="acs_router",
-                operation="websocket_accept"
+                service_name="acs_router", operation="websocket_accept"
             ),
         ):
             await ws.accept()
             ws_span = trace.get_current_span()
             ws_span.set_attribute("network.protocol.name", "websocket")
-            ws_span.set_attribute("server.address", ws.headers.get("host", "0.0.0.0") if hasattr(ws, "headers") else "0.0.0.0")
+            ws_span.set_attribute(
+                "server.address",
+                ws.headers.get("host", "0.0.0.0")
+                if hasattr(ws, "headers")
+                else "0.0.0.0",
+            )
             ws_span.set_attribute("server.port", 443)
             ws_span.set_attribute("pipeline.stage", "acs -> websocket.accept")
             # Validate auth if enabled
@@ -333,7 +350,9 @@ async def acs_media_ws(ws: WebSocket):
             # Set up call context
             target_phone_number = cm.get_context("target_number")
             if target_phone_number:
-                ws.app.state.target_participant = PhoneNumberIdentifier(target_phone_number)
+                ws.app.state.target_participant = PhoneNumberIdentifier(
+                    target_phone_number
+                )
             ws.app.state.cm = cm
 
             # Validate call connection
@@ -350,18 +369,25 @@ async def acs_media_ws(ws: WebSocket):
                 operation="websocket_stream",
                 call_connection_id=cid,
                 session_id=cm.session_id if hasattr(cm, "session_id") else None,
-                stream_mode=ACS_STREAMING_MODE.value if hasattr(ACS_STREAMING_MODE, "value") else str(ACS_STREAMING_MODE),
+                stream_mode=ACS_STREAMING_MODE.value
+                if hasattr(ACS_STREAMING_MODE, "value")
+                else str(ACS_STREAMING_MODE),
             )
-            
+
             with tracer.start_as_current_span(
                 "acs_router.websocket", kind=SpanKind.SERVER, attributes=span_attrs
             ) as span:
                 # lightweight trace handshake you can forward to downstream roles later
-                from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+                from opentelemetry.trace.propagation.tracecontext import (
+                    TraceContextTextMapPropagator,
+                )
+
                 carrier = {}
                 try:
                     TraceContextTextMapPropagator().inject(carrier)
-                    ws.state.trace_headers = carrier  # available if you later hop to another service
+                    ws.state.trace_headers = (
+                        carrier  # available if you later hop to another service
+                    )
                 except Exception:
                     pass
                 span.set_attribute("pipeline.stage", "websocket -> media handler init")
@@ -377,17 +403,19 @@ async def acs_media_ws(ws: WebSocket):
                         session_id=cm.session_id if hasattr(cm, "session_id") else None,
                         ws=True,
                     )
-                    
+
                     with tracer.start_as_current_span(
-                        "acs_router.create_media_handler", kind=SpanKind.CLIENT, attributes=handler_attrs
+                        "acs_router.create_media_handler",
+                        kind=SpanKind.CLIENT,
+                        attributes=handler_attrs,
                     ):
                         handler = ACSMediaHandler(
-                            ws, 
-                            recognizer=ws.app.state.stt_client, 
-                            call_connection_id=cid, 
-                            cm=cm
+                            ws,
+                            recognizer=ws.app.state.stt_client,
+                            call_connection_id=cid,
+                            cm=cm,
                         )
-                        
+
                 elif ACS_STREAMING_MODE == StreamMode.TRANSCRIPTION:
                     handler_attrs = create_service_dependency_attrs(
                         source_service="acs_router",
@@ -397,9 +425,11 @@ async def acs_media_ws(ws: WebSocket):
                         session_id=cm.session_id if hasattr(cm, "session_id") else None,
                         ws=True,
                     )
-                    
+
                     with tracer.start_as_current_span(
-                        "acs_router.create_transcription_handler", kind=SpanKind.CLIENT, attributes=handler_attrs
+                        "acs_router.create_transcription_handler",
+                        kind=SpanKind.CLIENT,
+                        attributes=handler_attrs,
                     ):
                         handler = TranscriptionHandler(ws, cm=cm)
                 else:
@@ -419,19 +449,26 @@ async def acs_media_ws(ws: WebSocket):
                 )
 
                 # Process messages with dependency tracking
-                while ws.client_state == WebSocketState.CONNECTED and ws.application_state == WebSocketState.CONNECTED:
+                while (
+                    ws.client_state == WebSocketState.CONNECTED
+                    and ws.application_state == WebSocketState.CONNECTED
+                ):
                     msg = await ws.receive_text()
                     if msg:
                         msg_handler_attrs = create_service_dependency_attrs(
                             source_service="acs_router",
-                            target_service="acs_media_handler" if ACS_STREAMING_MODE == StreamMode.MEDIA else "transcription_handler",
+                            target_service="acs_media_handler"
+                            if ACS_STREAMING_MODE == StreamMode.MEDIA
+                            else "transcription_handler",
                             operation="handle_message",
                             call_connection_id=cid,
                             ws=True,
                         )
-                        
+
                         with tracer.start_as_current_span(
-                            "acs_router.handle_message", kind=SpanKind.CLIENT, attributes=msg_handler_attrs
+                            "acs_router.handle_message",
+                            kind=SpanKind.CLIENT,
+                            attributes=msg_handler_attrs,
                         ):
                             if ACS_STREAMING_MODE == StreamMode.MEDIA:
                                 await handler.handle_media_message(msg)
@@ -440,7 +477,12 @@ async def acs_media_ws(ws: WebSocket):
 
     except WebSocketDisconnect as e:
         if e.code == 1000:
-            log_with_context(logger, "info", "WebSocket disconnected normally", operation="websocket_stream")
+            log_with_context(
+                logger,
+                "info",
+                "WebSocket disconnected normally",
+                operation="websocket_stream",
+            )
         else:
             log_with_context(
                 logger,
@@ -451,7 +493,9 @@ async def acs_media_ws(ws: WebSocket):
                 reason=e.reason,
             )
     except asyncio.CancelledError:
-        log_with_context(logger, "info", "WebSocket cancelled", operation="websocket_stream")
+        log_with_context(
+            logger, "info", "WebSocket cancelled", operation="websocket_stream"
+        )
     except Exception as e:
         log_with_context(
             logger,
@@ -463,16 +507,19 @@ async def acs_media_ws(ws: WebSocket):
         )
     finally:
         # Cleanup
-        if ws.client_state == WebSocketState.CONNECTED and ws.application_state == WebSocketState.CONNECTED:
+        if (
+            ws.client_state == WebSocketState.CONNECTED
+            and ws.application_state == WebSocketState.CONNECTED
+        ):
             await ws.close()
-        
+
         if handler and ACS_STREAMING_MODE == StreamMode.MEDIA:
             try:
                 handler.recognizer.stop()
                 logger.info("Speech recognizer stopped")
             except Exception as e:
                 logger.error(f"Error stopping recognizer: {e}")
-        
+
         log_with_context(
             logger,
             "info",

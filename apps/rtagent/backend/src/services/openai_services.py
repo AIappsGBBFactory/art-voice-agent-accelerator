@@ -24,6 +24,7 @@ from utils.azure_auth import get_credential
 
 logger = logging.getLogger(__name__)
 
+
 def create_azure_openai_client():
     """Create Azure OpenAI client with proper authentication for APIM."""
 

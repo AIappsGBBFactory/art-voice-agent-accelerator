@@ -21,7 +21,7 @@ from apps.rtagent.backend.api.v1.schemas.call import (
     CallInitiateRequest,
     CallInitiateResponse,
     CallStatusResponse,
-    CallHangupResponse, 
+    CallHangupResponse,
     CallListResponse,
     CallUpdateRequest,
 )
@@ -41,15 +41,15 @@ router = APIRouter()
 def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
     """
     Create a CloudEvent for call-related operations using V1 event system.
-    
+
     Args:
         event_type: Type of the call event
         call_id: Call connection ID
         data: Event data payload
-        
+
     Returns:
         CloudEvent: Properly formatted event for V1 processor
-        
+
     Note:
         When using with CallEventProcessor.process_events(), remember to pass
         the request.app.state as the second argument for dependency injection.
@@ -57,15 +57,12 @@ def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
     return CloudEvent(
         source="api/v1/calls",
         type=event_type,
-        data={
-            "callConnectionId": call_id,
-            **data
-        }
+        data={"callConnectionId": call_id, **data},
     )
 
 
 @router.post(
-    "/initiate", 
+    "/initiate",
     response_model=CallInitiateResponse,
     summary="Initiate Outbound Call",
     description="""
@@ -89,10 +86,10 @@ def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
                         "call_id": "call_abc12345",
                         "status": "initiating",
                         "target_number": "+1234567890",
-                        "message": "Call initiation requested for +1234567890"
+                        "message": "Call initiation requested for +1234567890",
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Invalid request (e.g., malformed phone number)",
@@ -102,7 +99,7 @@ def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
                         "detail": "Invalid phone number format. Must be in E.164 format (e.g., +1234567890)"
                     }
                 }
-            }
+            },
         },
         500: {
             "description": "Internal server error during call initiation",
@@ -112,9 +109,9 @@ def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
                         "detail": "Failed to initiate call: Azure Communication Service unavailable"
                     }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def initiate_call(
     request: CallInitiateRequest,
@@ -122,25 +119,24 @@ async def initiate_call(
 ) -> CallInitiateResponse:
     """
     Initiate an outbound call through Azure Communication Services.
-    
+
     Args:
         request: Call initiation request with target phone number
         http_request: FastAPI request object for accessing app state
         orchestrator_func: Orchestrator function for conversation processing
-        
+
     Returns:
         CallInitiateResponse: Call status and tracking information
     """
     with trace_acs_operation(
-        tracer, logger, "initiate_call", 
-        session_id=None, call_connection_id=None
+        tracer, logger, "initiate_call", session_id=None, call_connection_id=None
     ) as op:
         op.log_info(f"Initiating call to {request.target_number}")
 
         try:
             # Create ACS lifecycle handler
             acs_handler = ACSLifecycleHandler()
-            
+
             with trace_acs_dependency(
                 tracer, logger, "acs_lifecycle", "start_outbound_call"
             ) as dep_op:
@@ -151,11 +147,14 @@ async def initiate_call(
                 )
                 if result.get("status") == "success":
                     call_id = result.get("callId")
-                    
+
                     # Create V1 event processor instance and emit call initiation event
                     from ..events import get_call_event_processor
-                    event_processor = get_call_event_processor()  # Use singleton with registered handlers
-                    
+
+                    event_processor = (
+                        get_call_event_processor()
+                    )  # Use singleton with registered handlers
+
                     # Create CloudEvent for call initiation using helper function
                     call_initiated_event = create_call_event(
                         event_type="CallInitiated",  # Custom event type for API calls
@@ -164,12 +163,14 @@ async def initiate_call(
                             "target_number": request.target_number,
                             "initiated_at": result.get("initiated_at"),
                             "api_version": "v1",
-                            "status": "initiating"
-                        }
+                            "status": "initiating",
+                        },
                     )
-                    
+
                     # Process through V1 event system with request state
-                    await event_processor.process_events([call_initiated_event], http_request.app.state)
+                    await event_processor.process_events(
+                        [call_initiated_event], http_request.app.state
+                    )
 
                     op.log_info(f"Call initiated successfully: {call_id}")
 
@@ -179,17 +180,14 @@ async def initiate_call(
                         target_number=request.target_number,
                         message=result.get("message", "call initiated successfully"),
                         initiated_at=result.get("initiated_at"),
-                        details={
-                            "api_version": "v1",
-                            "acs_result": result
-                        }
+                        details={"api_version": "v1", "acs_result": result},
                     )
 
             # Handle failure case
             op.set_error(result.get("message", "Unknown error"))
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Call initiation failed: {result.get('message', 'Unknown error')}"
+                detail=f"Call initiation failed: {result.get('message', 'Unknown error')}",
             )
 
         except HTTPException:
@@ -198,12 +196,12 @@ async def initiate_call(
             op.set_error(str(e))
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Internal server error: {str(e)}"
+                detail=f"Internal server error: {str(e)}",
             )
 
 
 @router.get(
-    "/", 
+    "/",
     response_model=CallListResponse,
     summary="List Calls",
     description="""
@@ -227,63 +225,72 @@ async def initiate_call(
                                 "status": "connected",
                                 "duration": 120,
                                 "participants": [],
-                                "events": []
+                                "events": [],
                             }
                         ],
                         "total": 25,
                         "page": 1,
-                        "limit": 10
+                        "limit": 10,
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Invalid pagination parameters",
             "content": {
                 "application/json": {
-                    "example": {
-                        "detail": "Page number must be positive"
-                    }
+                    "example": {"detail": "Page number must be positive"}
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def list_calls(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-based)", example=1),
-    limit: int = Query(10, ge=1, le=100, description="Number of items per page (1-100)", example=10),
+    limit: int = Query(
+        10, ge=1, le=100, description="Number of items per page (1-100)", example=10
+    ),
     status_filter: Optional[str] = Query(
-        None, 
+        None,
         description="Filter calls by status",
-        enum=["initiating", "ringing", "connected", "on_hold", "disconnected", "failed"],
-        example="connected"
-    )
+        enum=[
+            "initiating",
+            "ringing",
+            "connected",
+            "on_hold",
+            "disconnected",
+            "failed",
+        ],
+        example="connected",
+    ),
 ) -> CallListResponse:
     """List calls with pagination and filtering."""
     with trace_acs_operation(tracer, logger, "list_calls") as op:
         try:
-            op.log_info(f"Listing calls: page {page}, limit {limit}, filter: {status_filter}")
-            
+            op.log_info(
+                f"Listing calls: page {page}, limit {limit}, filter: {status_filter}"
+            )
+
             # Get cosmos DB manager from app state
             cosmos_manager = request.app.state.cosmos
-            
+
             # Build query filter
             query_filter = {}
             if status_filter:
                 query_filter["status"] = status_filter
-            
+
             # Query calls from database
             all_calls = cosmos_manager.query_documents(query_filter)
-            
+
             # Filter to only call documents (those with call_id field)
             call_docs = [doc for doc in all_calls if "call_id" in doc]
-            
+
             # Apply pagination
             start = (page - 1) * limit
             end = start + limit
             paginated_calls = call_docs[start:end]
-            
+
             # Convert database documents to response models
             calls = []
             for doc in paginated_calls:
@@ -292,12 +299,12 @@ async def list_calls(
                     status=doc.get("status", "unknown"),
                     duration=doc.get("duration", 0),
                     participants=doc.get("participants", []),
-                    events=doc.get("events", [])
+                    events=doc.get("events", []),
                 )
                 calls.append(call_response)
-            
+
             op.log_info(f"Found {len(call_docs)} total calls, returning {len(calls)}")
-            
+
             # Optional: Emit event for call list operations (for monitoring/analytics)
             if call_docs:  # Only emit if we actually found calls
                 try:
@@ -311,30 +318,29 @@ async def list_calls(
                             "page": page,
                             "limit": limit,
                             "status_filter": status_filter,
-                            "api_version": "v1"
-                        }
+                            "api_version": "v1",
+                        },
                     )
                     # Fire and forget - don't await to avoid adding latency
                     import asyncio
-                    asyncio.create_task(event_processor.process_events([list_event], request.app.state))
+
+                    asyncio.create_task(
+                        event_processor.process_events([list_event], request.app.state)
+                    )
                 except Exception as e:
                     # Log but don't fail the main operation
                     op.log_info(f"Failed to emit list event: {e}")
-            
+
             return CallListResponse(
-                calls=calls,
-                total=len(call_docs),
-                page=page,
-                limit=limit
+                calls=calls, total=len(call_docs), page=page, limit=limit
             )
-            
+
         except Exception as e:
             op.set_error(str(e))
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to list calls: {str(e)}"
+                detail=f"Failed to list calls: {str(e)}",
             )
-
 
 
 @router.post(
@@ -368,46 +374,40 @@ async def list_calls(
                         "acs_features": {
                             "orchestrator_support": True,
                             "advanced_tracing": True,
-                            "api_version": "v1"
-                        }
+                            "api_version": "v1",
+                        },
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Invalid request body",
             "content": {
                 "application/json": {
-                    "example": {
-                        "detail": "Invalid Event Grid request format"
-                    }
+                    "example": {"detail": "Invalid Event Grid request format"}
                 }
-            }
+            },
         },
         503: {
             "description": "Service dependencies not available",
             "content": {
-                "application/json": {
-                    "example": {
-                        "detail": "ACS not initialised"
-                    }
-                }
-            }
-        }
-    }
+                "application/json": {"example": {"detail": "ACS not initialised"}}
+            },
+        },
+    },
 )
 async def answer_inbound_call(
     http_request: Request,
 ) -> JSONResponse:
     """
     Answer inbound calls with orchestrator support.
-    
+
     This endpoint handles Event Grid subscription validation and
     automatic call answering with conversation routing.
-    
+
     Args:
         http_request: FastAPI request object containing Event Grid webhook payload
-        
+
     Returns:
         JSONResponse: Processing result
     """
@@ -420,10 +420,10 @@ async def answer_inbound_call(
 
         try:
             request_body = await http_request.json()
-            
+
             # Create handler with orchestrator injection
             acs_handler = ACSLifecycleHandler()
-            
+
             with trace_acs_dependency(
                 tracer, logger, "acs_lifecycle", "accept_inbound_call"
             ) as dep_op:
@@ -464,45 +464,39 @@ async def answer_inbound_call(
                     "example": {
                         "status": "success",
                         "processed_events": 1,
-                        "call_connection_id": "abc123"
+                        "call_connection_id": "abc123",
                     }
                 }
-            }
+            },
         },
         500: {
             "description": "Event processing failed",
             "content": {
                 "application/json": {
-                    "example": {
-                        "error": "Failed to process callback events"
-                    }
+                    "example": {"error": "Failed to process callback events"}
                 }
-            }
+            },
         },
         503: {
             "description": "Service dependencies not available",
             "content": {
-                "application/json": {
-                    "example": {
-                        "error": "ACS not initialised"
-                    }
-                }
-            }
-        }
-    }
+                "application/json": {"example": {"error": "ACS not initialised"}}
+            },
+        },
+    },
 )
 async def handle_acs_callbacks(
     http_request: Request,
 ):
     """
     Handle ACS callback events from Azure Communication Services.
-    
+
     This endpoint processes webhook events sent by ACS when call state changes
     occur. All processing is delegated to the V1 event system for consistency.
-    
+
     Args:
         http_request: FastAPI request object containing the ACS webhook payload
-        
+
     Returns:
         JSONResponse: Processing result
     """
@@ -512,30 +506,30 @@ async def handle_acs_callbacks(
 
     try:
         events_data = await http_request.json()
-        
+
         # Extract call connection ID for tracing
         call_connection_id = None
         if isinstance(events_data, dict):
-            event_data = events_data.get('data', {})
+            event_data = events_data.get("data", {})
             if isinstance(event_data, dict):
-                call_connection_id = event_data.get('callConnectionId')
+                call_connection_id = event_data.get("callConnectionId")
         elif isinstance(events_data, list) and events_data:
             first_event = events_data[0] if events_data else {}
             if isinstance(first_event, dict):
-                event_data = first_event.get('data', {})
+                event_data = first_event.get("data", {})
                 if isinstance(event_data, dict):
-                    call_connection_id = event_data.get('callConnectionId')
-        
+                    call_connection_id = event_data.get("callConnectionId")
+
         # Fallback to header
         if not call_connection_id:
             call_connection_id = http_request.headers.get("x-ms-call-connection-id")
 
         with trace_acs_operation(
-            tracer, logger, "process_callbacks", 
-            call_connection_id=call_connection_id
+            tracer, logger, "process_callbacks", call_connection_id=call_connection_id
         ) as op:
-            
-            op.log_info(f"Processing ACS callbacks: {len(events_data) if isinstance(events_data, list) else 1} events")
+            op.log_info(
+                f"Processing ACS callbacks: {len(events_data) if isinstance(events_data, list) else 1} events"
+            )
 
             # Import here to avoid circular imports
             from ..events import get_call_event_processor, register_default_handlers
@@ -543,41 +537,50 @@ async def handle_acs_callbacks(
 
             # Ensure handlers are registered
             register_default_handlers()
-            
+
             # Convert to CloudEvent objects
             cloud_events = []
             if isinstance(events_data, list):
                 for event_item in events_data:
                     if isinstance(event_item, dict):
-                        event_type = event_item.get("eventType") or event_item.get("type", "Unknown")
+                        event_type = event_item.get("eventType") or event_item.get(
+                            "type", "Unknown"
+                        )
                         cloud_event = CloudEvent(
                             source="azure.communication.callautomation",
                             type=event_type,
-                            data=event_item.get("data", event_item)
+                            data=event_item.get("data", event_item),
                         )
                         cloud_events.append(cloud_event)
             elif isinstance(events_data, dict):
-                event_type = events_data.get("eventType") or events_data.get("type", "Unknown")
+                event_type = events_data.get("eventType") or events_data.get(
+                    "type", "Unknown"
+                )
                 cloud_event = CloudEvent(
                     source="azure.communication.callautomation",
                     type=event_type,
-                    data=events_data.get("data", events_data)
+                    data=events_data.get("data", events_data),
                 )
                 cloud_events.append(cloud_event)
-            
+
             # Process through V1 event system
             processor = get_call_event_processor()
-            result = await processor.process_events(cloud_events, http_request.app.state)
-            
+            result = await processor.process_events(
+                cloud_events, http_request.app.state
+            )
+
             op.log_info(f"Processed {result.get('processed', 0)} events successfully")
-            
-            return JSONResponse({
-                "status": "success",
-                "processed_events": result.get('processed', 0),
-                "failed_events": result.get('failed', 0),
-                "call_connection_id": call_connection_id,
-                "processing_system": "events_v1"
-            }, status_code=200)
+
+            return JSONResponse(
+                {
+                    "status": "success",
+                    "processed_events": result.get("processed", 0),
+                    "failed_events": result.get("failed", 0),
+                    "call_connection_id": call_connection_id,
+                    "processing_system": "events_v1",
+                },
+                status_code=200,
+            )
 
     except Exception as exc:
         logger.error(f"Unexpected error processing ACS callbacks: {exc}")

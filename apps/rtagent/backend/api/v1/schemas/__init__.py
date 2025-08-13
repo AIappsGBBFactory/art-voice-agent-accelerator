@@ -56,12 +56,11 @@ from .webhook import (
 __all__ = [
     # Call schemas
     "CallInitiateRequest",
-    "CallInitiateResponse", 
+    "CallInitiateResponse",
     "CallStatusResponse",
     "CallHangupResponse",
     "CallListResponse",
     "CallUpdateRequest",
-    
     # Event schemas
     "EventMetricsResponse",
     "EventHandlerInfo",
@@ -69,12 +68,10 @@ __all__ = [
     "ProcessEventRequest",
     "ProcessEventResponse",
     "EventListResponse",
-    
     # Health schemas
     "HealthResponse",
     "ServiceCheck",
     "ReadinessResponse",
-    
     # Media schemas
     "MediaSessionRequest",
     "MediaSessionResponse",
@@ -85,14 +82,12 @@ __all__ = [
     "MediaMetricsResponse",
     "AudioConfigRequest",
     "AudioConfigResponse",
-    
     # Participant schemas
     "ParticipantResponse",
-    "ParticipantUpdateRequest", 
+    "ParticipantUpdateRequest",
     "ParticipantListResponse",
     "ParticipantInviteRequest",
     "ParticipantInviteResponse",
-    
     # Webhook schemas
     "WebhookEvent",
     "WebhookResponse",

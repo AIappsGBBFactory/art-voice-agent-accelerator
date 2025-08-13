@@ -146,9 +146,10 @@ def log_with_context(
 # High-Level Tracing Helpers - Clean & Simple
 # ============================================================================
 
+
 class TracedOperation:
     """Context manager for traced operations that handles all the boilerplate."""
-    
+
     def __init__(
         self,
         tracer,
@@ -159,7 +160,7 @@ class TracedOperation:
         span_kind: Any = SpanKind.INTERNAL,
         call_connection_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        **extra_attrs
+        **extra_attrs,
     ):
         self.tracer = tracer
         self.logger = logger
@@ -171,25 +172,23 @@ class TracedOperation:
         self.session_id = session_id
         self.extra_attrs = extra_attrs
         self.span = None
-    
+
     def __enter__(self):
         attrs = create_service_handler_attrs(
             service_name=self.service_name,
             operation=self.operation,
             call_connection_id=self.call_connection_id,
             session_id=self.session_id,
-            **self.extra_attrs
+            **self.extra_attrs,
         )
-        
+
         self.span = self.tracer.start_span(
-            self.span_name, 
-            kind=self.span_kind, 
-            attributes=attrs
+            self.span_name, kind=self.span_kind, attributes=attrs
         )
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.span and hasattr(self.span, 'set_status'):
+        if self.span and hasattr(self.span, "set_status"):
             if exc_type:
                 try:
                     self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
@@ -206,40 +205,46 @@ class TracedOperation:
                 self.span.end()
             except AttributeError:
                 pass
-    
+
     def log_info(self, message: str, **kwargs):
         """Log info with consistent context."""
         log_with_context(
-            self.logger, "info", message,
+            self.logger,
+            "info",
+            message,
             operation=self.operation,
             call_connection_id=self.call_connection_id,
             session_id=self.session_id,
-            **kwargs
+            **kwargs,
         )
-    
+
     def log_error(self, message: str, **kwargs):
         """Log error with consistent context."""
         log_with_context(
-            self.logger, "error", message,
+            self.logger,
+            "error",
+            message,
             operation=self.operation,
             call_connection_id=self.call_connection_id,
             session_id=self.session_id,
-            **kwargs
+            **kwargs,
         )
-    
+
     def log_debug(self, message: str, **kwargs):
         """Log debug with consistent context."""
         log_with_context(
-            self.logger, "debug", message,
+            self.logger,
+            "debug",
+            message,
             operation=self.operation,
             call_connection_id=self.call_connection_id,
             session_id=self.session_id,
-            **kwargs
+            **kwargs,
         )
-    
+
     def set_error(self, error_message: str):
         """Mark span as error with message."""
-        if self.span and hasattr(self.span, 'set_status'):
+        if self.span and hasattr(self.span, "set_status"):
             try:
                 self.span.set_status(Status(StatusCode.ERROR, error_message))
             except AttributeError:
@@ -254,11 +259,11 @@ def trace_acs_operation(
     call_connection_id: Optional[str] = None,
     session_id: Optional[str] = None,
     span_kind: Any = SpanKind.INTERNAL,
-    **extra_attrs
+    **extra_attrs,
 ) -> TracedOperation:
     """
     Create a traced ACS operation with consistent naming and attributes.
-    
+
     Usage:
         with trace_acs_operation(tracer, logger, "handle_call_connected", call_id) as op:
             op.log_info("Processing call connected event")
@@ -273,7 +278,7 @@ def trace_acs_operation(
         span_kind=span_kind,
         call_connection_id=call_connection_id,
         session_id=session_id,
-        **extra_attrs
+        **extra_attrs,
     )
 
 
@@ -284,11 +289,11 @@ def trace_acs_dependency(
     operation: str,
     call_connection_id: Optional[str] = None,
     session_id: Optional[str] = None,
-    **extra_attrs
+    **extra_attrs,
 ) -> TracedOperation:
     """
     Create a traced dependency call with consistent naming and attributes.
-    
+
     Usage:
         with trace_acs_dependency(tracer, logger, "azure_openai", "generate", call_id) as op:
             op.log_info("Calling Azure OpenAI")
@@ -299,9 +304,9 @@ def trace_acs_dependency(
         target_service=target_service,
         call_connection_id=call_connection_id,
         session_id=session_id,
-        **extra_attrs
+        **extra_attrs,
     )
-    
+
     return TracedOperation(
         tracer=tracer,
         logger=logger,
@@ -311,19 +316,23 @@ def trace_acs_dependency(
         span_kind=SpanKind.CLIENT,
         call_connection_id=call_connection_id,
         session_id=session_id,
-        **attrs
+        **attrs,
     )
 
 
 def get_acs_context_keys(event_context) -> Dict[str, Optional[str]]:
     """
     Extract consistent context keys from an ACS event context.
-    
+
     Returns a dict with standardized keys that can be used across
     all ACS operations for consistent correlation.
     """
     return {
-        "call_connection_id": getattr(event_context, 'call_connection_id', None),
-        "session_id": getattr(event_context.memo_manager, 'session_id', None) if hasattr(event_context, 'memo_manager') and event_context.memo_manager else None,
-        "event_type": getattr(event_context.event, 'type', None) if hasattr(event_context, 'event') else None,
+        "call_connection_id": getattr(event_context, "call_connection_id", None),
+        "session_id": getattr(event_context.memo_manager, "session_id", None)
+        if hasattr(event_context, "memo_manager") and event_context.memo_manager
+        else None,
+        "event_type": getattr(event_context.event, "type", None)
+        if hasattr(event_context, "event")
+        else None,
     }

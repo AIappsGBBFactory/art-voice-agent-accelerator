@@ -194,9 +194,7 @@ class AcsCaller:
         logger.info("AcsCaller initialized")
 
     def _create_identity_and_get_token(self, resource_endpoint):
-        client = CommunicationIdentityClient(
-            resource_endpoint, get_credential()
-        )
+        client = CommunicationIdentityClient(resource_endpoint, get_credential())
 
         user = client.create_user()
         token_response = client.get_token(user, scopes=["voip"])

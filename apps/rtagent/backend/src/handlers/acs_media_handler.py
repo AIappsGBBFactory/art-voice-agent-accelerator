@@ -59,7 +59,11 @@ class ACSMediaHandler:
         self.call_connection_id = (
             call_connection_id
             or getattr(ws.state, "call_connection_id", None)
-            or (ws.headers.get("x-ms-call-connection-id") if hasattr(ws, "headers") else None)
+            or (
+                ws.headers.get("x-ms-call-connection-id")
+                if hasattr(ws, "headers")
+                else None
+            )
         )
 
         # session_id: use argument, else fallback to call_connection_id
@@ -108,22 +112,26 @@ class ACSMediaHandler:
                 await self._start_recognizer_internal()
         except Exception as e:
             log_with_context(
-                logger, "error", "Failed to start recognizer",
+                logger,
+                "error",
+                "Failed to start recognizer",
                 operation="start_recognizer",
                 error=str(e),
-                call_connection_id=self.call_connection_id
+                call_connection_id=self.call_connection_id,
             )
             raise
 
     async def _start_recognizer_internal(self):
-        log_with_context(logger, "info", "Starting speech recognizer", operation="start_recognizer")
+        log_with_context(
+            logger, "info", "Starting speech recognizer", operation="start_recognizer"
+        )
         self.main_loop = asyncio.get_running_loop()
         log_with_context(
             logger,
             "info",
             "Captured main event-loop",
             operation="start_recognizer",
-            loop_id=id(self.main_loop)
+            loop_id=id(self.main_loop),
         )
 
         self.recognizer.set_partial_result_callback(self.on_partial)
@@ -131,7 +139,9 @@ class ACSMediaHandler:
         self.recognizer.set_cancel_callback(self.on_cancel)
 
         self.recognizer.start()
-        log_with_context(logger, "info", "Speech recognizer started", operation="start_recognizer")
+        log_with_context(
+            logger, "info", "Speech recognizer started", operation="start_recognizer"
+        )
 
         self.route_turn_task = asyncio.create_task(self.route_turn_loop())
         log_with_context(
@@ -139,7 +149,7 @@ class ACSMediaHandler:
             "info",
             "route_turn_loop task created",
             operation="start_recognizer",
-            task_id=str(self.route_turn_task)
+            task_id=str(self.route_turn_task),
         )
 
         log_with_context(
@@ -147,7 +157,7 @@ class ACSMediaHandler:
             "info",
             "Playing greeting",
             operation="start_recognizer",
-            greeting=GREETING
+            greeting=GREETING,
         )
         await broadcast_message(
             connected_clients=self.incoming_websocket.app.state.clients,
@@ -162,9 +172,13 @@ class ACSMediaHandler:
             with tracer.start_as_current_span(
                 "acs_media_handler.handle_media_message",
                 kind=SpanKind.INTERNAL,
-                attributes=self._get_trace_metadata("audio_processing", lightweight=True),
+                attributes=self._get_trace_metadata(
+                    "audio_processing", lightweight=True
+                ),
             ):
-                trace.get_current_span().set_attribute("pipeline.stage", "ws audio -> stt")
+                trace.get_current_span().set_attribute(
+                    "pipeline.stage", "ws audio -> stt"
+                )
                 await self._handle_media_message_internal(stream_data)
         else:
             await self._handle_media_message_internal(stream_data)
@@ -192,13 +206,19 @@ class ACSMediaHandler:
                         with tracer.start_as_current_span(
                             "acs_media_handler.recognizer_initialization_on_audio_metadata",
                             kind=SpanKind.INTERNAL,
-                            attributes=self._get_trace_metadata("recognizer_initialization_timing"),
+                            attributes=self._get_trace_metadata(
+                                "recognizer_initialization_timing"
+                            ),
                         ) as span:
                             try:
                                 await self.start_recognizer()
                                 self._recognizer_started = True
-                                span.set_attribute("recognizer.started_on_audio_metadata", True)
-                                span.set_attribute("recognizer.initialization_timing", "optimal")
+                                span.set_attribute(
+                                    "recognizer.started_on_audio_metadata", True
+                                )
+                                span.set_attribute(
+                                    "recognizer.initialization_timing", "optimal"
+                                )
 
                                 log_with_context(
                                     logger,
@@ -233,6 +253,7 @@ class ACSMediaHandler:
                     if audio_bytes:
                         if isinstance(audio_bytes, str):
                             import base64
+
                             audio_bytes = base64.b64decode(audio_bytes)
                         self.recognizer.write_bytes(audio_bytes)
         except Exception as e:
@@ -252,7 +273,7 @@ class ACSMediaHandler:
         voice_rate: Optional[str] = None,
     ):
         """Send a greeting message to ACS using TTS (CLIENT).
-        
+
         Args:
             greeting_text: Text to speak
             voice_name: Optional agent-specific voice name
@@ -266,12 +287,24 @@ class ACSMediaHandler:
                     "greeting_playback", greeting_length=len(greeting_text)
                 ),
             ):
-                trace.get_current_span().set_attribute("pipeline.stage", "media -> tts (greeting)")
-                self._play_greeting_internal(greeting_text, voice_name, voice_style, voice_rate)
+                trace.get_current_span().set_attribute(
+                    "pipeline.stage", "media -> tts (greeting)"
+                )
+                self._play_greeting_internal(
+                    greeting_text, voice_name, voice_style, voice_rate
+                )
         else:
-            self._play_greeting_internal(greeting_text, voice_name, voice_style, voice_rate)
+            self._play_greeting_internal(
+                greeting_text, voice_name, voice_style, voice_rate
+            )
 
-    def _play_greeting_internal(self, greeting_text: str, voice_name: Optional[str] = None, voice_style: Optional[str] = None, voice_rate: Optional[str] = None):
+    def _play_greeting_internal(
+        self,
+        greeting_text: str,
+        voice_name: Optional[str] = None,
+        voice_style: Optional[str] = None,
+        voice_rate: Optional[str] = None,
+    ):
         try:
             # Cancel any existing playback task before starting greeting
             if self.playback_task and not self.playback_task.done():
@@ -279,8 +312,10 @@ class ACSMediaHandler:
                 try:
                     self.playback_task.cancel()
                 except Exception as cancel_error:
-                    logger.warning(f"⚠️ Failed to cancel existing playback task: {cancel_error}")
-            
+                    logger.warning(
+                        f"⚠️ Failed to cancel existing playback task: {cancel_error}"
+                    )
+
             # Create new greeting playback task
             self.playback_task = asyncio.create_task(
                 send_response_to_acs(
@@ -294,7 +329,9 @@ class ACSMediaHandler:
                     rate=voice_rate,
                 )
             )
-            logger.info(f"🎤 Started greeting playback task with voice: {voice_name or 'default'}, style: {voice_style or 'chat'}, rate: {voice_rate or '+3%'}")
+            logger.info(
+                f"🎤 Started greeting playback task with voice: {voice_name or 'default'}, style: {voice_style or 'chat'}, rate: {voice_rate or '+3%'}"
+            )
         except Exception as e:
             log_with_context(
                 logger,
@@ -384,12 +421,18 @@ class ACSMediaHandler:
 
             if self.playback_task and not self.playback_task.done():
                 log_with_context(
-                    logger, "info", "Cancelling playback task due to barge-in", operation="handle_barge_in"
+                    logger,
+                    "info",
+                    "Cancelling playback task due to barge-in",
+                    operation="handle_barge_in",
                 )
                 try:
                     self.playback_task.cancel()
                     log_with_context(
-                        logger, "info", "Playback task cancellation requested", operation="handle_barge_in"
+                        logger,
+                        "info",
+                        "Playback task cancellation requested",
+                        operation="handle_barge_in",
                     )
                 except Exception as e:
                     log_with_context(
@@ -462,7 +505,9 @@ class ACSMediaHandler:
             await self._route_turn_loop_internal()
 
     async def _route_turn_loop_internal(self):
-        log_with_context(logger, "info", "Route turn loop started", operation="route_turn_loop")
+        log_with_context(
+            logger, "info", "Route turn loop started", operation="route_turn_loop"
+        )
 
         try:
             while not self.stopped:
@@ -483,7 +528,10 @@ class ACSMediaHandler:
 
                     if self.playback_task and not self.playback_task.done():
                         log_with_context(
-                            logger, "info", "Cancelling previous playback task", operation="route_turn_loop"
+                            logger,
+                            "info",
+                            "Cancelling previous playback task",
+                            operation="route_turn_loop",
                         )
                         self.playback_task.cancel()
                         try:
@@ -497,10 +545,15 @@ class ACSMediaHandler:
                             )
                         except asyncio.CancelledError:
                             log_with_context(
-                                logger, "info", "Previous playback task cancelled", operation="route_turn_loop"
+                                logger,
+                                "info",
+                                "Previous playback task cancelled",
+                                operation="route_turn_loop",
                             )
 
-                    self.playback_task = asyncio.create_task(self.route_and_playback(kind, text))
+                    self.playback_task = asyncio.create_task(
+                        self.route_and_playback(kind, text)
+                    )
                     log_with_context(
                         logger,
                         "info",
@@ -526,10 +579,16 @@ class ACSMediaHandler:
 
         except Exception as e:
             log_with_context(
-                logger, "error", "Route turn loop failed", operation="route_turn_loop", error=str(e)
+                logger,
+                "error",
+                "Route turn loop failed",
+                operation="route_turn_loop",
+                error=str(e),
             )
         finally:
-            log_with_context(logger, "info", "Route turn loop ended", operation="route_turn_loop")
+            log_with_context(
+                logger, "info", "Route turn loop ended", operation="route_turn_loop"
+            )
 
     async def route_and_playback(self, kind, text):
         if self.enable_tracing:
@@ -549,7 +608,7 @@ class ACSMediaHandler:
                     ),
                     "peer.service": "orchestration",
                     "pipeline.stage": "media -> orchestrator",
-                    "server.address": "localhost",      # replace when orchestrator becomes a service
+                    "server.address": "localhost",  # replace when orchestrator becomes a service
                     "server.port": 8000,
                     "http.method": "POST",
                     "http.url": "http://localhost:8000/route-turn",
@@ -588,14 +647,27 @@ class ACSMediaHandler:
                 ),
                 timeout=30.0,
             )
-            log_with_context(logger, "info", "Route turn completed successfully", operation="route_and_playback")
+            log_with_context(
+                logger,
+                "info",
+                "Route turn completed successfully",
+                operation="route_and_playback",
+            )
 
         except asyncio.CancelledError:
-            log_with_context(logger, "info", "Route and playback cancelled", operation="route_and_playback")
+            log_with_context(
+                logger,
+                "info",
+                "Route and playback cancelled",
+                operation="route_and_playback",
+            )
             raise
         except asyncio.TimeoutError:
             log_with_context(
-                logger, "error", "Route turn timed out after 30 seconds", operation="route_and_playback"
+                logger,
+                "error",
+                "Route turn timed out after 30 seconds",
+                operation="route_and_playback",
             )
             await broadcast_message(
                 connected_clients=self.incoming_websocket.app.state.clients,
@@ -632,7 +704,12 @@ class ACSMediaHandler:
             }
             json_data = json.dumps(stop_audio_data)
             await self.incoming_websocket.send_text(json_data)
-            log_with_context(logger, "info", "Sent stop audio command to ACS", operation="send_stop_audio")
+            log_with_context(
+                logger,
+                "info",
+                "Sent stop audio command to ACS",
+                operation="send_stop_audio",
+            )
         except Exception as e:
             log_with_context(
                 logger,
@@ -660,13 +737,17 @@ class ACSMediaHandler:
         try:
             if self.recognizer:
                 self.recognizer.stop()
-                log_with_context(logger, "info", "Speech recognizer stopped", operation="stop")
+                log_with_context(
+                    logger, "info", "Speech recognizer stopped", operation="stop"
+                )
 
             if self.playback_task and not self.playback_task.done():
                 try:
                     self.playback_task.cancel()
                     await self.playback_task
-                    log_with_context(logger, "info", "Playback task cancelled", operation="stop")
+                    log_with_context(
+                        logger, "info", "Playback task cancelled", operation="stop"
+                    )
                 except Exception:
                     pass
         finally:

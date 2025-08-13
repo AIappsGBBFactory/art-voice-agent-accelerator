@@ -21,7 +21,7 @@ from apps.rtagent.backend.settings import (
     BACKEND_AUTH_CLIENT_ID,
     AZURE_TENANT_ID,
     ALLOWED_CLIENT_IDS,
-    ENABLE_AUTH_VALIDATION
+    ENABLE_AUTH_VALIDATION,
 )
 from apps.rtagent.backend.api.v1.schemas.health import (
     HealthResponse,
@@ -65,10 +65,10 @@ def _validate_guid(guid_str: str) -> bool:
     """
     if not guid_str:
         return False
-    
+
     # GUID pattern: 8-4-4-4-12 hexadecimal digits
     guid_pattern = re.compile(
-        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
     )
     return bool(guid_pattern.match(guid_str))
 
@@ -80,37 +80,46 @@ def _validate_auth_configuration() -> tuple[bool, str]:
     """
     if not ENABLE_AUTH_VALIDATION:
         return True, "Auth validation disabled"
-    
+
     validation_errors = []
-    
+
     # Check BACKEND_AUTH_CLIENT_ID is a valid GUID
     if not BACKEND_AUTH_CLIENT_ID:
         validation_errors.append("BACKEND_AUTH_CLIENT_ID is not set")
     elif not _validate_guid(BACKEND_AUTH_CLIENT_ID):
         validation_errors.append("BACKEND_AUTH_CLIENT_ID is not a valid GUID")
-    
+
     # Check AZURE_TENANT_ID is a valid GUID
     if not AZURE_TENANT_ID:
         validation_errors.append("AZURE_TENANT_ID is not set")
     elif not _validate_guid(AZURE_TENANT_ID):
         validation_errors.append("AZURE_TENANT_ID is not a valid GUID")
-    
+
     # Check ALLOWED_CLIENT_IDS has at least one valid client ID
     if not ALLOWED_CLIENT_IDS:
-        validation_errors.append("ALLOWED_CLIENT_IDS is empty - at least one client ID required")
+        validation_errors.append(
+            "ALLOWED_CLIENT_IDS is empty - at least one client ID required"
+        )
     else:
-        invalid_client_ids = [cid for cid in ALLOWED_CLIENT_IDS if not _validate_guid(cid)]
+        invalid_client_ids = [
+            cid for cid in ALLOWED_CLIENT_IDS if not _validate_guid(cid)
+        ]
         if invalid_client_ids:
-            validation_errors.append(f"Invalid GUID format in ALLOWED_CLIENT_IDS: {invalid_client_ids}")
-    
+            validation_errors.append(
+                f"Invalid GUID format in ALLOWED_CLIENT_IDS: {invalid_client_ids}"
+            )
+
     if validation_errors:
         return False, "; ".join(validation_errors)
-    
-    return True, f"Auth validation enabled with {len(ALLOWED_CLIENT_IDS)} allowed client(s)"
+
+    return (
+        True,
+        f"Auth validation enabled with {len(ALLOWED_CLIENT_IDS)} allowed client(s)",
+    )
 
 
 @router.get(
-    "/", 
+    "/",
     response_model=HealthResponse,
     summary="Basic Health Check",
     description="Basic health check endpoint that returns 200 if the server is running. Used by load balancers for liveness checks.",
@@ -125,15 +134,12 @@ def _validate_auth_configuration() -> tuple[bool, str]:
                         "version": "1.0.0",
                         "timestamp": 1691668800.0,
                         "message": "Real-Time Audio Agent API v1 is running",
-                        "details": {
-                            "api_version": "v1",
-                            "service": "rtagent-backend"
-                        }
+                        "details": {"api_version": "v1", "service": "rtagent-backend"},
                     }
                 }
-            }
+            },
         }
-    }
+    },
 )
 async def health_check() -> HealthResponse:
     """
@@ -144,15 +150,12 @@ async def health_check() -> HealthResponse:
         status="healthy",
         timestamp=time.time(),
         message="Real-Time Audio Agent API v1 is running",
-        details={
-            "api_version": "v1",
-            "service": "rtagent-backend"
-        }
+        details={"api_version": "v1", "service": "rtagent-backend"},
     )
 
 
 @router.get(
-    "/readiness", 
+    "/readiness",
     response_model=ReadinessResponse,
     summary="Comprehensive Readiness Check",
     description="""
@@ -189,23 +192,23 @@ async def health_check() -> HealthResponse:
                                 "component": "redis",
                                 "status": "healthy",
                                 "check_time_ms": 12.5,
-                                "details": "Connected to Redis successfully"
+                                "details": "Connected to Redis successfully",
                             },
                             {
-                                "component": "auth_configuration", 
+                                "component": "auth_configuration",
                                 "status": "healthy",
                                 "check_time_ms": 1.2,
-                                "details": "Auth validation enabled with 2 allowed client(s)"
-                            }
+                                "details": "Auth validation enabled with 2 allowed client(s)",
+                            },
                         ],
                         "event_system": {
                             "is_healthy": True,
                             "handlers_count": 7,
-                            "domains_count": 2
-                        }
+                            "domains_count": 2,
+                        },
                     }
                 }
-            }
+            },
         },
         503: {
             "description": "One or more services are not ready",
@@ -220,20 +223,20 @@ async def health_check() -> HealthResponse:
                                 "component": "redis",
                                 "status": "unhealthy",
                                 "check_time_ms": 1000.0,
-                                "error": "Connection timeout"
+                                "error": "Connection timeout",
                             },
                             {
                                 "component": "auth_configuration",
-                                "status": "unhealthy", 
+                                "status": "unhealthy",
                                 "check_time_ms": 2.1,
-                                "error": "BACKEND_AUTH_CLIENT_ID is not a valid GUID"
-                            }
-                        ]
+                                "error": "BACKEND_AUTH_CLIENT_ID is not a valid GUID",
+                            },
+                        ],
                     }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def readiness_check(
     request: Request,
@@ -312,7 +315,7 @@ async def readiness_check(
         )
 
     response_time = round((time.time() - start_time) * 1000, 2)
-    
+
     response_data = ReadinessResponse(
         status=overall_status,
         timestamp=time.time(),
@@ -322,10 +325,7 @@ async def readiness_check(
 
     # Return appropriate status code
     status_code = 200 if overall_status != "unhealthy" else 503
-    return JSONResponse(
-        content=response_data.dict(), 
-        status_code=status_code
-    )
+    return JSONResponse(content=response_data.dict(), status_code=status_code)
 
 
 async def _check_redis_fast(redis_manager) -> ServiceCheck:
@@ -345,7 +345,7 @@ async def _check_redis_fast(redis_manager) -> ServiceCheck:
                 component="redis",
                 status="healthy",
                 check_time_ms=round((time.time() - start) * 1000, 2),
-                details="ping successful"
+                details="ping successful",
             )
         else:
             return ServiceCheck(
@@ -377,7 +377,7 @@ async def _check_azure_openai_fast(openai_client) -> ServiceCheck:
         component="azure_openai",
         status="healthy",
         check_time_ms=round((time.time() - start) * 1000, 2),
-        details="client initialized"
+        details="client initialized",
     )
 
 
@@ -395,7 +395,7 @@ async def _check_speech_services_fast(tts_client, stt_client) -> ServiceCheck:
         component="speech_services",
         status="healthy",
         check_time_ms=round((time.time() - start) * 1000, 2),
-        details="TTS and STT clients initialized"
+        details="TTS and STT clients initialized",
     )
 
 
@@ -483,23 +483,23 @@ async def _check_rt_agents_fast(auth_agent, claim_intake_agent) -> ServiceCheck:
         component="rt_agents",
         status="healthy",
         check_time_ms=round((time.time() - start) * 1000, 2),
-        details="auth and claim intake agents initialized"
+        details="auth and claim intake agents initialized",
     )
 
 
 async def _check_auth_configuration_fast() -> ServiceCheck:
     """Fast authentication configuration validation check."""
     start = time.time()
-    
+
     try:
         is_valid, message = _validate_auth_configuration()
-        
+
         if is_valid:
             return ServiceCheck(
                 component="auth_configuration",
                 status="healthy",
                 check_time_ms=round((time.time() - start) * 1000, 2),
-                details=message
+                details=message,
             )
         else:
             return ServiceCheck(
@@ -525,86 +525,99 @@ async def get_agents_info(request: Request):
     """
     start_time = time.time()
     agents_info = []
-    
+
     try:
         # Get agents from app state
-        auth_agent = getattr(request.app.state, 'auth_agent', None)
-        claim_intake_agent = getattr(request.app.state, 'claim_intake_agent', None)
-        general_info_agent = getattr(request.app.state, 'general_info_agent', None)
-        
+        auth_agent = getattr(request.app.state, "auth_agent", None)
+        claim_intake_agent = getattr(request.app.state, "claim_intake_agent", None)
+        general_info_agent = getattr(request.app.state, "general_info_agent", None)
+
         # Helper function to extract agent info
         def extract_agent_info(agent, config_path: str = None):
             if not agent:
                 return None
-                
+
             try:
                 # Get voice setting from agent configuration
-                agent_voice = getattr(agent, 'voice_name', None)
-                agent_voice_style = getattr(agent, 'voice_style', 'chat')
-                
+                agent_voice = getattr(agent, "voice_name", None)
+                agent_voice_style = getattr(agent, "voice_style", "chat")
+
                 # Fallback to global GREETING_VOICE_TTS if agent doesn't have voice configured
                 from settings import GREETING_VOICE_TTS
+
                 current_voice = agent_voice or GREETING_VOICE_TTS
-                
+
                 agent_info = {
-                    "name": getattr(agent, 'name', 'Unknown'),
+                    "name": getattr(agent, "name", "Unknown"),
                     "status": "loaded",
-                    "creator": getattr(agent, 'creator', 'Unknown'),
-                    "organization": getattr(agent, 'organization', 'Unknown'),
-                    "description": getattr(agent, 'description', ''),
+                    "creator": getattr(agent, "creator", "Unknown"),
+                    "organization": getattr(agent, "organization", "Unknown"),
+                    "description": getattr(agent, "description", ""),
                     "model": {
-                        "deployment_id": getattr(agent, 'model_id', 'Unknown'),
-                        "temperature": getattr(agent, 'temperature', 0.7),
-                        "top_p": getattr(agent, 'top_p', 1.0),
-                        "max_tokens": getattr(agent, 'max_tokens', 4096)
+                        "deployment_id": getattr(agent, "model_id", "Unknown"),
+                        "temperature": getattr(agent, "temperature", 0.7),
+                        "top_p": getattr(agent, "top_p", 1.0),
+                        "max_tokens": getattr(agent, "max_tokens", 4096),
                     },
                     "voice": {
                         "current_voice": current_voice,
                         "voice_style": agent_voice_style,
                         "voice_configurable": True,
-                        "is_per_agent_voice": bool(agent_voice)  # True if agent has its own voice
+                        "is_per_agent_voice": bool(
+                            agent_voice
+                        ),  # True if agent has its own voice
                     },
                     "config_path": config_path,
-                    "prompt_path": getattr(agent, 'prompt_path', 'Unknown'),
-                    "tools": [tool.get('function', {}).get('name', 'Unknown') for tool in getattr(agent, 'tools', [])],
+                    "prompt_path": getattr(agent, "prompt_path", "Unknown"),
+                    "tools": [
+                        tool.get("function", {}).get("name", "Unknown")
+                        for tool in getattr(agent, "tools", [])
+                    ],
                     "modifiable_settings": {
                         "model_deployment": True,
                         "temperature": True,
                         "voice_name": True,
                         "voice_style": True,
-                        "max_tokens": True
-                    }
+                        "max_tokens": True,
+                    },
                 }
                 return agent_info
             except Exception as e:
                 logger.warning(f"Error extracting agent info: {e}")
                 return {
-                    "name": getattr(agent, 'name', 'Unknown'),
+                    "name": getattr(agent, "name", "Unknown"),
                     "status": "error",
-                    "error": str(e)
+                    "error": str(e),
                 }
-        
+
         # Extract info for each agent
         if auth_agent:
             from settings import AGENT_AUTH_CONFIG
+
             agent_info = extract_agent_info(auth_agent, AGENT_AUTH_CONFIG)
             if agent_info:
                 agents_info.append(agent_info)
-                
+
         if claim_intake_agent:
             from settings import AGENT_CLAIM_INTAKE_CONFIG
-            agent_info = extract_agent_info(claim_intake_agent, AGENT_CLAIM_INTAKE_CONFIG)
+
+            agent_info = extract_agent_info(
+                claim_intake_agent, AGENT_CLAIM_INTAKE_CONFIG
+            )
             if agent_info:
                 agents_info.append(agent_info)
-                
+
         if general_info_agent:
             from settings import AGENT_GENERAL_INFO_CONFIG
-            agent_info = extract_agent_info(general_info_agent, AGENT_GENERAL_INFO_CONFIG)
+
+            agent_info = extract_agent_info(
+                general_info_agent, AGENT_GENERAL_INFO_CONFIG
+            )
             if agent_info:
                 agents_info.append(agent_info)
-        
+
         response_time = round((time.time() - start_time) * 1000, 2)
-        
+
         return {
             "status": "success",
             "agents_count": len(agents_info),
@@ -613,36 +626,36 @@ async def get_agents_info(request: Request):
             "available_voices": {
                 "turbo_voices": [
                     "en-US-AlloyTurboMultilingualNeural",
-                    "en-US-EchoTurboMultilingualNeural", 
+                    "en-US-EchoTurboMultilingualNeural",
                     "en-US-FableTurboMultilingualNeural",
                     "en-US-OnyxTurboMultilingualNeural",
                     "en-US-NovaTurboMultilingualNeural",
-                    "en-US-ShimmerTurboMultilingualNeural"
+                    "en-US-ShimmerTurboMultilingualNeural",
                 ],
                 "standard_voices": [
                     "en-US-AvaMultilingualNeural",
                     "en-US-AndrewMultilingualNeural",
                     "en-US-EmmaMultilingualNeural",
-                    "en-US-BrianMultilingualNeural"
+                    "en-US-BrianMultilingualNeural",
                 ],
                 "hd_voices": [
                     "en-US-Ava:DragonHDLatestNeural",
                     "en-US-Andrew:DragonHDLatestNeural",
                     "en-US-Brian:DragonHDLatestNeural",
-                    "en-US-Emma:DragonHDLatestNeural"
-                ]
-            }
+                    "en-US-Emma:DragonHDLatestNeural",
+                ],
+            },
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting agents info: {e}")
         return JSONResponse(
             content={
-                "status": "error", 
+                "status": "error",
                 "error": str(e),
-                "response_time_ms": round((time.time() - start_time) * 1000, 2)
+                "response_time_ms": round((time.time() - start_time) * 1000, 2),
             },
-            status_code=500
+            status_code=500,
         )
 
 
@@ -652,9 +665,11 @@ class AgentModelUpdate(BaseModel):
     top_p: Optional[float] = None
     max_tokens: Optional[int] = None
 
+
 class AgentVoiceUpdate(BaseModel):
     voice_name: Optional[str] = None
     voice_style: Optional[str] = None
+
 
 class AgentConfigUpdate(BaseModel):
     model: Optional[AgentModelUpdate] = None
@@ -662,81 +677,101 @@ class AgentConfigUpdate(BaseModel):
 
 
 @router.put("/agents/{agent_name}")
-async def update_agent_config(agent_name: str, config: AgentConfigUpdate, request: Request):
+async def update_agent_config(
+    agent_name: str, config: AgentConfigUpdate, request: Request
+):
     """
     Update configuration for a specific agent (model settings, voice, etc.).
     Changes are applied to the runtime instance but not persisted to YAML files.
     """
     start_time = time.time()
-    
+
     try:
         # Get the agent instance from app state
         agent = None
-        if agent_name.lower() in ['authagent', 'auth_agent', 'auth']:
-            agent = getattr(request.app.state, 'auth_agent', None)
-        elif agent_name.lower() in ['fnolintakeagent', 'claim_intake_agent', 'claim', 'fnol']:
-            agent = getattr(request.app.state, 'claim_intake_agent', None)
-        elif agent_name.lower() in ['generalinfoagent', 'general_info_agent', 'general']:
-            agent = getattr(request.app.state, 'general_info_agent', None)
-        
+        if agent_name.lower() in ["authagent", "auth_agent", "auth"]:
+            agent = getattr(request.app.state, "auth_agent", None)
+        elif agent_name.lower() in [
+            "fnolintakeagent",
+            "claim_intake_agent",
+            "claim",
+            "fnol",
+        ]:
+            agent = getattr(request.app.state, "claim_intake_agent", None)
+        elif agent_name.lower() in [
+            "generalinfoagent",
+            "general_info_agent",
+            "general",
+        ]:
+            agent = getattr(request.app.state, "general_info_agent", None)
+
         if not agent:
             raise HTTPException(
-                status_code=404, 
-                detail=f"Agent '{agent_name}' not found. Available agents: auth, claim, general"
+                status_code=404,
+                detail=f"Agent '{agent_name}' not found. Available agents: auth, claim, general",
             )
-        
+
         updated_fields = []
-        
+
         # Update model settings
         if config.model:
             if config.model.deployment_id is not None:
                 agent.model_id = config.model.deployment_id
                 updated_fields.append(f"deployment_id -> {config.model.deployment_id}")
-            
+
             if config.model.temperature is not None:
                 if 0.0 <= config.model.temperature <= 2.0:
                     agent.temperature = config.model.temperature
                     updated_fields.append(f"temperature -> {config.model.temperature}")
                 else:
-                    raise HTTPException(status_code=400, detail="Temperature must be between 0.0 and 2.0")
-            
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Temperature must be between 0.0 and 2.0",
+                    )
+
             if config.model.top_p is not None:
                 if 0.0 <= config.model.top_p <= 1.0:
                     agent.top_p = config.model.top_p
                     updated_fields.append(f"top_p -> {config.model.top_p}")
                 else:
-                    raise HTTPException(status_code=400, detail="top_p must be between 0.0 and 1.0")
-            
+                    raise HTTPException(
+                        status_code=400, detail="top_p must be between 0.0 and 1.0"
+                    )
+
             if config.model.max_tokens is not None:
                 if 1 <= config.model.max_tokens <= 16384:
                     agent.max_tokens = config.model.max_tokens
                     updated_fields.append(f"max_tokens -> {config.model.max_tokens}")
                 else:
-                    raise HTTPException(status_code=400, detail="max_tokens must be between 1 and 16384")
-        
+                    raise HTTPException(
+                        status_code=400, detail="max_tokens must be between 1 and 16384"
+                    )
+
         # Update voice settings per agent
         if config.voice:
             if config.voice.voice_name is not None:
                 agent.voice_name = config.voice.voice_name
                 updated_fields.append(f"voice_name -> {config.voice.voice_name}")
                 logger.info(f"Updated {agent.name} voice to: {config.voice.voice_name}")
-            
+
             if config.voice.voice_style is not None:
                 agent.voice_style = config.voice.voice_style
                 updated_fields.append(f"voice_style -> {config.voice.voice_style}")
-                logger.info(f"Updated {agent.name} voice style to: {config.voice.voice_style}")
-        
+                logger.info(
+                    f"Updated {agent.name} voice style to: {config.voice.voice_style}"
+                )
+
         response_time = round((time.time() - start_time) * 1000, 2)
-        
+
         return {
             "status": "success",
             "agent_name": agent.name,
             "updated_fields": updated_fields,
             "message": f"Successfully updated {len(updated_fields)} settings for {agent.name}",
             "response_time_ms": response_time,
-            "note": "Changes applied to runtime instance. Restart required for persistence."
+            "note": "Changes applied to runtime instance. Restart required for persistence.",
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -745,7 +780,7 @@ async def update_agent_config(agent_name: str, config: AgentConfigUpdate, reques
             content={
                 "status": "error",
                 "error": str(e),
-                "response_time_ms": round((time.time() - start_time) * 1000, 2)
+                "response_time_ms": round((time.time() - start_time) * 1000, 2),
             },
-            status_code=500
+            status_code=500,
         )

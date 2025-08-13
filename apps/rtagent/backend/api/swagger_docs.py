@@ -15,35 +15,36 @@ logger = get_logger("dynamic_docs")
 
 class DynamicDocsManager:
     """Simple documentation manager."""
-    
+
     def __init__(self):
         pass
-    
+
     def generate_tags(self) -> List[Dict[str, str]]:
         """Generate OpenAPI tags."""
         return [
             # V1 API Tags
             {
                 "name": "Call Management",
-                "description": "V1 API - Advanced call management with lifecycle operations"
+                "description": "V1 API - Advanced call management with lifecycle operations",
             },
             {
-                "name": "Call Events", 
-                "description": "V1 API - Event processing and webhook management"
+                "name": "Call Events",
+                "description": "V1 API - Event processing and webhook management",
             },
             {
-                "name": "Real-time Communication", 
-                "description": "V1 API - Real-time audio streaming and processing"
+                "name": "Real-time Communication",
+                "description": "V1 API - Real-time audio streaming and processing",
             },
             {
                 "name": "Media Session",
-                "description": "V1 API - Media streaming and session management"
+                "description": "V1 API - Media streaming and session management",
             },
             {
                 "name": "Health",
-                "description": "V1 API - Health monitoring and system status"
+                "description": "V1 API - Health monitoring and system status",
             },
         ]
+
     def generate_description(self) -> str:
         """
         Generate a clean, readable API description for OpenAPI docs.
@@ -69,6 +70,7 @@ class DynamicDocsManager:
             "- **Migration & Compatibility:** V1 API with enhanced features and pluggable architecture, legacy API backward compatibility, and progressive migration between API versions.\n"
         )
 
+
 # Global instance
 dynamic_docs_manager = DynamicDocsManager()
 
@@ -86,10 +88,10 @@ def get_description() -> str:
 def setup_app_documentation(app) -> bool:
     """
     Setup the FastAPI app's documentation.
-    
+
     Args:
         app: The FastAPI application instance
-        
+
     Returns:
         bool: True if setup was successful, False otherwise
     """
@@ -97,10 +99,10 @@ def setup_app_documentation(app) -> bool:
         # Set static tags and description
         app.openapi_tags = get_tags()
         app.description = get_description()
-        
+
         logger.info("Successfully setup application documentation")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to setup app documentation: {e}")
         return False

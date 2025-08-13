@@ -1650,7 +1650,7 @@ export default function RealTimeVoiceApp() {
       appendLog("🎤 PCM streaming started");
 
       // 1) open WS
-      const socket = new WebSocket(`${WS_URL}/api/v1/conversation`);
+      const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation`);
       socket.binaryType = "arraybuffer";
 
       socket.onopen = () => {
@@ -1813,12 +1813,13 @@ export default function RealTimeVoiceApp() {
 
       /* ---------- ASSISTANT STREAM ---------- */
       if (type === "assistant_streaming") {
-        setActiveSpeaker("Assistant");
+        const streamingSpeaker = speaker || "Assistant";
+        setActiveSpeaker(streamingSpeaker);
         setMessages(prev => {
           if (prev.at(-1)?.streaming) {
             return prev.map((m,i)=> i===prev.length-1 ? {...m, text:txt} : m);
           }
-          return [...prev, { speaker:"Assistant", text:txt, streaming:true }];
+          return [...prev, { speaker:streamingSpeaker, text:txt, streaming:true }];
         });
         return;
       }

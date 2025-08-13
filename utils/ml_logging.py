@@ -289,7 +289,6 @@ def log_function_call(
     def decorator_log_function_call(func):
         @functools.wraps(func)
         def wrapper_log_function_call(*args, **kwargs):
-
             from opentelemetry.trace import get_current_span
 
             span = get_current_span()

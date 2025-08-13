@@ -25,21 +25,20 @@ from apps.rtagent.backend.settings import (
 
 logger = get_logger("orchestration.acs_auth")
 
+
 class AuthError(Exception):
     """Generic authentication error."""
+
     pass
+
 
 @cache
 def get_jwks(jwks_url: str) -> list[dict]:
     resp = httpx.get(jwks_url)
     return resp.json()["keys"]
 
-def validate_jwt_token(
-    token: str,
-    jwks_url: str,
-    issuer: str,
-    audience: str
-) -> dict:
+
+def validate_jwt_token(token: str, jwks_url: str, issuer: str, audience: str) -> dict:
     """Validates JWT using provided JWKS, issuer, and audience."""
     try:
         jwks_client = jwt.PyJWKClient(jwks_url)
@@ -56,10 +55,14 @@ def validate_jwt_token(
     except Exception as e:
         raise AuthError(f"Token validation failed: {e}")
 
+
 def extract_bearer_token(authorization_header: str) -> str:
     if not authorization_header or not authorization_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
+        raise HTTPException(
+            status_code=401, detail="Missing or malformed Authorization header"
+        )
     return authorization_header.split(" ")[1]
+
 
 def get_easyauth_identity(request: Request) -> dict:
     encoded = request.headers.get("x-ms-client-principal")
@@ -72,16 +75,14 @@ def get_easyauth_identity(request: Request) -> dict:
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid EasyAuth header encoding")
 
+
 async def validate_entraid_token(request: Request) -> dict:
     """Validates bearer token for Entra ID."""
     auth_header = request.headers.get("Authorization")
     token = extract_bearer_token(auth_header)
     try:
         decoded = validate_jwt_token(
-            token,
-            jwks_url=ENTRA_JWKS_URL,
-            issuer=ENTRA_ISSUER,
-            audience=ENTRA_AUDIENCE
+            token, jwks_url=ENTRA_JWKS_URL, issuer=ENTRA_ISSUER, audience=ENTRA_AUDIENCE
         )
         client_id = decoded.get("azp") or decoded.get("appid")
         if client_id not in ALLOWED_CLIENT_IDS:
@@ -92,22 +93,21 @@ async def validate_entraid_token(request: Request) -> dict:
         logger.warning(f"🔒 EntraID validation failed: {e}")
         raise HTTPException(status_code=401, detail=str(e))
 
+
 def validate_acs_http_auth(request: Request) -> dict:
     """Validates bearer token for ACS HTTP callbacks."""
     auth_header = request.headers.get("Authorization")
     token = extract_bearer_token(auth_header)
     try:
         decoded = validate_jwt_token(
-            token,
-            jwks_url=ACS_JWKS_URL,
-            issuer=ACS_ISSUER,
-            audience=ACS_AUDIENCE
+            token, jwks_url=ACS_JWKS_URL, issuer=ACS_ISSUER, audience=ACS_AUDIENCE
         )
         logger.info("✅ ACS HTTP request authenticated")
         return decoded
     except AuthError as e:
         logger.warning(f"🔒 ACS HTTP auth failed: {e}")
         raise HTTPException(status_code=401, detail=str(e))
+
 
 async def validate_acs_ws_auth(ws: WebSocket) -> dict:
     """Validates bearer token for ACS WebSocket handshake."""
@@ -121,10 +121,7 @@ async def validate_acs_ws_auth(ws: WebSocket) -> dict:
     token = extract_bearer_token(auth_header)
     try:
         decoded = validate_jwt_token(
-            token,
-            jwks_url=ACS_JWKS_URL,
-            issuer=ACS_ISSUER,
-            audience=ACS_AUDIENCE
+            token, jwks_url=ACS_JWKS_URL, issuer=ACS_ISSUER, audience=ACS_AUDIENCE
         )
         logger.info("✅ ACS WebSocket authenticated")
         return decoded

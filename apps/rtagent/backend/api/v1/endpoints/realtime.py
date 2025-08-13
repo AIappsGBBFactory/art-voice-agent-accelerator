@@ -38,7 +38,14 @@ import uuid
 from typing import Optional, Set
 from datetime import datetime
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    WebSocket,
+    WebSocketDisconnect,
+    Depends,
+    HTTPException,
+    status,
+)
 from fastapi.websockets import WebSocketState
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
@@ -96,29 +103,29 @@ router = APIRouter()
                         "status": "available",
                         "websocket_endpoints": {
                             "dashboard_relay": "/api/v1/realtime/dashboard/relay",
-                            "conversation": "/api/v1/realtime/conversation"
+                            "conversation": "/api/v1/realtime/conversation",
                         },
                         "features": {
                             "dashboard_broadcasting": True,
                             "conversation_streaming": True,
                             "orchestrator_support": True,
-                            "session_management": True
+                            "session_management": True,
                         },
                         "active_connections": {
                             "dashboard_clients": 0,
-                            "conversation_sessions": 0
+                            "conversation_sessions": 0,
                         },
-                        "version": "v1"
+                        "version": "v1",
                     }
                 }
-            }
+            },
         }
-    }
+    },
 )
 async def get_realtime_status():
     """
     Get the current status and configuration of realtime communication services.
-    
+
     Returns:
         RealtimeStatusResponse: Current service status and configuration
     """
@@ -128,7 +135,7 @@ async def get_realtime_status():
             "dashboard_relay": "/api/v1/realtime/dashboard/relay",
             "conversation": "/api/v1/realtime/conversation",
             "legacy_relay": "/api/v1/realtime/ws/relay",
-            "legacy_conversation": "/api/v1/realtime/ws/conversation"
+            "legacy_conversation": "/api/v1/realtime/ws/conversation",
         },
         features={
             "dashboard_broadcasting": True,
@@ -136,14 +143,14 @@ async def get_realtime_status():
             "orchestrator_support": True,
             "session_management": True,
             "audio_interruption": True,
-            "legacy_compatibility": True
+            "legacy_compatibility": True,
         },
         active_connections={
             "dashboard_clients": len(_active_dashboard_clients),
-            "conversation_sessions": len(_active_conversation_sessions)
+            "conversation_sessions": len(_active_conversation_sessions),
         },
         protocols_supported=["WebSocket"],
-        version="v1"
+        version="v1",
     )
 
 
@@ -190,7 +197,7 @@ async def dashboard_relay_endpoint(websocket: WebSocket):
         # Accept connection with tracing
         await websocket.accept()
         client_id = str(uuid.uuid4())[:8]
-        
+
         with tracer.start_as_current_span(
             "api.v1.realtime.dashboard_relay_connect",
             kind=SpanKind.SERVER,
@@ -199,23 +206,26 @@ async def dashboard_relay_endpoint(websocket: WebSocket):
                 "realtime.client_id": client_id,
                 "realtime.endpoint": "dashboard_relay",
                 "network.protocol.name": "websocket",
-            }
+            },
         ) as connect_span:
-            
             # Validate dependencies
             await _validate_realtime_dependencies(websocket)
-            
+
             # Add client to global registry
             if websocket not in _active_dashboard_clients:
                 _active_dashboard_clients.add(websocket)
-                logger.info(f"Dashboard client {client_id} connected. Total clients: {len(_active_dashboard_clients)}")
-                connect_span.set_attribute("dashboard.clients.total", len(_active_dashboard_clients))
-            
+                logger.info(
+                    f"Dashboard client {client_id} connected. Total clients: {len(_active_dashboard_clients)}"
+                )
+                connect_span.set_attribute(
+                    "dashboard.clients.total", len(_active_dashboard_clients)
+                )
+
             # Store client info in app state for legacy compatibility
-            if not hasattr(websocket.app.state, 'clients'):
+            if not hasattr(websocket.app.state, "clients"):
                 websocket.app.state.clients = set()
             websocket.app.state.clients.add(websocket)
-            
+
             connect_span.set_status(Status(StatusCode.OK))
             log_with_context(
                 logger,
@@ -224,7 +234,7 @@ async def dashboard_relay_endpoint(websocket: WebSocket):
                 operation="dashboard_connect",
                 client_id=client_id,
                 total_clients=len(_active_dashboard_clients),
-                api_version="v1"
+                api_version="v1",
             )
 
         # Process dashboard messages
@@ -241,8 +251,7 @@ async def dashboard_relay_endpoint(websocket: WebSocket):
 
 @router.websocket("/conversation")
 async def browser_conversation_endpoint(
-    websocket: WebSocket,
-    orchestrator: Optional[callable] = Depends(get_orchestrator)
+    websocket: WebSocket, orchestrator: Optional[callable] = Depends(get_orchestrator)
 ):
     """
     Enhanced browser conversation WebSocket endpoint with orchestrator injection.
@@ -293,12 +302,14 @@ async def browser_conversation_endpoint(
     """
     session_id = None
     memory_manager = None
-    
+
     try:
         # Accept connection and initialize session
         await websocket.accept()
-        session_id = websocket.headers.get("x-ms-call-connection-id") or str(uuid.uuid4())[:8]
-        
+        session_id = (
+            websocket.headers.get("x-ms-call-connection-id") or str(uuid.uuid4())[:8]
+        )
+
         with tracer.start_as_current_span(
             "api.v1.realtime.conversation_connect",
             kind=SpanKind.SERVER,
@@ -307,33 +318,36 @@ async def browser_conversation_endpoint(
                 "realtime.session_id": session_id,
                 "realtime.endpoint": "conversation",
                 "network.protocol.name": "websocket",
-                "orchestrator.name": getattr(orchestrator, 'name', 'unknown') if orchestrator else 'default',
-            }
+                "orchestrator.name": getattr(orchestrator, "name", "unknown")
+                if orchestrator
+                else "default",
+            },
         ) as connect_span:
-            
             # Validate dependencies
             await _validate_realtime_dependencies(websocket)
-            
+
             # Authenticate if required
             if ENABLE_AUTH_VALIDATION:
                 await _validate_realtime_auth(websocket)
-            
+
             # Initialize conversation session
             memory_manager = await _initialize_conversation_session(
                 websocket, session_id, orchestrator
             )
-            
+
             # Register session in global registry
             _active_conversation_sessions[session_id] = {
                 "websocket": websocket,
                 "memory_manager": memory_manager,
                 "start_time": datetime.utcnow(),
-                "orchestrator": orchestrator
+                "orchestrator": orchestrator,
             }
-            
-            connect_span.set_attribute("conversation.sessions.total", len(_active_conversation_sessions))
+
+            connect_span.set_attribute(
+                "conversation.sessions.total", len(_active_conversation_sessions)
+            )
             connect_span.set_status(Status(StatusCode.OK))
-            
+
             log_with_context(
                 logger,
                 "info",
@@ -341,11 +355,13 @@ async def browser_conversation_endpoint(
                 operation="conversation_connect",
                 session_id=session_id,
                 total_sessions=len(_active_conversation_sessions),
-                api_version="v1"
+                api_version="v1",
             )
 
         # Process conversation messages
-        await _process_conversation_messages(websocket, session_id, memory_manager, orchestrator)
+        await _process_conversation_messages(
+            websocket, session_id, memory_manager, orchestrator
+        )
 
     except WebSocketDisconnect as e:
         _log_conversation_disconnect(e, session_id)
@@ -359,6 +375,7 @@ async def browser_conversation_endpoint(
 # ============================================================================
 # Legacy Compatibility Endpoints
 # ============================================================================
+
 
 @router.websocket("/ws/relay")
 async def legacy_dashboard_relay(websocket: WebSocket):
@@ -381,16 +398,17 @@ async def legacy_dashboard_relay(websocket: WebSocket):
     """
     with tracer.start_as_current_span(
         "api.v1.realtime.legacy_dashboard_relay",
-        attributes={"api.version": "v1", "endpoint.legacy": True}
+        attributes={"api.version": "v1", "endpoint.legacy": True},
     ):
-        logger.info("Legacy dashboard relay endpoint accessed - consider migrating to /api/v1/realtime/dashboard/relay")
+        logger.info(
+            "Legacy dashboard relay endpoint accessed - consider migrating to /api/v1/realtime/dashboard/relay"
+        )
         await dashboard_relay_endpoint(websocket)
 
 
 @router.websocket("/ws/conversation")
 async def legacy_browser_conversation(
-    websocket: WebSocket,
-    orchestrator: Optional[callable] = Depends(get_orchestrator)
+    websocket: WebSocket, orchestrator: Optional[callable] = Depends(get_orchestrator)
 ):
     """
     Legacy browser conversation endpoint for backward compatibility.
@@ -412,9 +430,11 @@ async def legacy_browser_conversation(
     """
     with tracer.start_as_current_span(
         "api.v1.realtime.legacy_conversation",
-        attributes={"api.version": "v1", "endpoint.legacy": True}
+        attributes={"api.version": "v1", "endpoint.legacy": True},
     ):
-        logger.info("Legacy conversation endpoint accessed - consider migrating to /api/v1/realtime/conversation")
+        logger.info(
+            "Legacy conversation endpoint accessed - consider migrating to /api/v1/realtime/conversation"
+        )
         await browser_conversation_endpoint(websocket, orchestrator)
 
 
@@ -422,22 +442,29 @@ async def legacy_browser_conversation(
 # V1 Architecture Helper Functions
 # ============================================================================
 
+
 async def _validate_realtime_dependencies(websocket: WebSocket) -> None:
     """Validate required app state dependencies for realtime endpoints."""
     # Check TTS client
-    if not hasattr(websocket.app.state, 'tts_client') or not websocket.app.state.tts_client:
+    if (
+        not hasattr(websocket.app.state, "tts_client")
+        or not websocket.app.state.tts_client
+    ):
         logger.error("TTS client not initialized")
         await websocket.close(code=1011, reason="TTS not initialized")
         raise HTTPException(503, "TTS client not initialized")
-    
+
     # Check STT client for conversation endpoints
-    if not hasattr(websocket.app.state, 'stt_client') or not websocket.app.state.stt_client:
+    if (
+        not hasattr(websocket.app.state, "stt_client")
+        or not websocket.app.state.stt_client
+    ):
         logger.error("STT client not initialized")
         await websocket.close(code=1011, reason="STT not initialized")
         raise HTTPException(503, "STT client not initialized")
-    
+
     # Check Redis for session management
-    if not hasattr(websocket.app.state, 'redis') or not websocket.app.state.redis:
+    if not hasattr(websocket.app.state, "redis") or not websocket.app.state.redis:
         logger.error("Redis client not initialized")
         await websocket.close(code=1011, reason="Redis not initialized")
         raise HTTPException(503, "Redis client not initialized")
@@ -455,34 +482,32 @@ async def _validate_realtime_auth(websocket: WebSocket) -> None:
 
 
 async def _initialize_conversation_session(
-    websocket: WebSocket, 
-    session_id: str, 
-    orchestrator: Optional[callable]
+    websocket: WebSocket, session_id: str, orchestrator: Optional[callable]
 ) -> MemoManager:
     """Initialize conversation session with proper state management."""
     redis_mgr = websocket.app.state.redis
     memory_manager = MemoManager.from_redis(session_id, redis_mgr)
-    
+
     # Set up WebSocket state
     websocket.state.cm = memory_manager
     websocket.state.session_id = session_id
     websocket.state.lt = LatencyTool(memory_manager)
     websocket.state.is_synthesizing = False
     websocket.state.user_buffer = ""
-    
+
     # Send greeting message
     await websocket.send_text(json.dumps({"type": "status", "message": GREETING}))
-    
+
     # Add greeting to conversation history
     auth_agent = websocket.app.state.auth_agent
     memory_manager.append_to_history(auth_agent.name, "assistant", GREETING)
-    
+
     # Send TTS audio greeting
     await send_tts_audio(GREETING, websocket, latency_tool=websocket.state.lt)
-    
+
     # Persist initial state to Redis
     await memory_manager.persist_to_redis_async(redis_mgr)
-    
+
     # Set up STT callbacks
     def on_partial(txt: str, lang: str):
         logger.info(f"🗣️ User (partial) in {lang}: {txt}")
@@ -506,7 +531,7 @@ async def _initialize_conversation_session(
     websocket.app.state.stt_client.set_partial_result_callback(on_partial)
     websocket.app.state.stt_client.set_final_result_callback(on_final)
     websocket.app.state.stt_client.start()
-    
+
     logger.info(f"STT recognizer started for session {session_id}")
     return memory_manager
 
@@ -515,47 +540,53 @@ async def _process_dashboard_messages(websocket: WebSocket, client_id: str) -> N
     """Process incoming dashboard relay messages."""
     with tracer.start_as_current_span(
         "api.v1.realtime.process_dashboard_messages",
-        attributes={"client_id": client_id}
+        attributes={"client_id": client_id},
     ):
         try:
-            while (websocket.client_state == WebSocketState.CONNECTED and 
-                   websocket.application_state == WebSocketState.CONNECTED):
-                
+            while (
+                websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED
+            ):
                 # Keep connection alive and process any ping/pong messages
                 await websocket.receive_text()
-                
+
         except WebSocketDisconnect:
             # Normal disconnect - handled in the calling function
             raise
         except Exception as e:
-            logger.error(f"Error processing dashboard messages for client {client_id}: {e}")
+            logger.error(
+                f"Error processing dashboard messages for client {client_id}: {e}"
+            )
             raise
 
 
 async def _process_conversation_messages(
-    websocket: WebSocket, 
-    session_id: str, 
-    memory_manager: MemoManager, 
-    orchestrator: Optional[callable]
+    websocket: WebSocket,
+    session_id: str,
+    memory_manager: MemoManager,
+    orchestrator: Optional[callable],
 ) -> None:
     """Process incoming conversation messages with enhanced error handling."""
     with tracer.start_as_current_span(
         "api.v1.realtime.process_conversation_messages",
-        attributes={"session_id": session_id}
+        attributes={"session_id": session_id},
     ) as span:
-        
         try:
             message_count = 0
-            while (websocket.client_state == WebSocketState.CONNECTED and 
-                   websocket.application_state == WebSocketState.CONNECTED):
-                
+            while (
+                websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED
+            ):
                 msg = await websocket.receive()
                 message_count += 1
-                
+
                 # Handle audio bytes
-                if msg.get("type") == "websocket.receive" and msg.get("bytes") is not None:
+                if (
+                    msg.get("type") == "websocket.receive"
+                    and msg.get("bytes") is not None
+                ):
                     websocket.app.state.stt_client.write_bytes(msg["bytes"])
-                    
+
                     # Process accumulated user buffer
                     if websocket.state.user_buffer.strip():
                         prompt = websocket.state.user_buffer.strip()
@@ -572,25 +603,31 @@ async def _process_conversation_messages(
                             await websocket.send_text(
                                 json.dumps({"type": "exit", "message": goodbye})
                             )
-                            await send_tts_audio(goodbye, websocket, latency_tool=websocket.state.lt)
+                            await send_tts_audio(
+                                goodbye, websocket, latency_tool=websocket.state.lt
+                            )
                             break
 
                         # Route through orchestrator
-                        await route_turn(memory_manager, prompt, websocket, is_acs=False)
-                
+                        await route_turn(
+                            memory_manager, prompt, websocket, is_acs=False
+                        )
+
                 # Handle disconnect
                 elif msg.get("type") == "websocket.disconnect":
                     break
-                    
+
             span.set_attribute("messages.processed", message_count)
             span.set_status(Status(StatusCode.OK))
-            
+
         except WebSocketDisconnect:
             span.set_status(Status(StatusCode.OK, "Normal disconnect"))
             raise
         except Exception as e:
             span.set_status(Status(StatusCode.ERROR, f"Message processing error: {e}"))
-            logger.error(f"Error processing conversation messages for session {session_id}: {e}")
+            logger.error(
+                f"Error processing conversation messages for session {session_id}: {e}"
+            )
             raise
 
 
@@ -598,124 +635,171 @@ def _log_dashboard_disconnect(e: WebSocketDisconnect, client_id: Optional[str]) 
     """Log dashboard client disconnection."""
     if e.code == 1000:
         log_with_context(
-            logger, "info", "Dashboard client disconnected normally",
-            operation="dashboard_disconnect", client_id=client_id,
-            disconnect_code=e.code, api_version="v1"
+            logger,
+            "info",
+            "Dashboard client disconnected normally",
+            operation="dashboard_disconnect",
+            client_id=client_id,
+            disconnect_code=e.code,
+            api_version="v1",
         )
     else:
         log_with_context(
-            logger, "warning", "Dashboard client disconnected abnormally",
-            operation="dashboard_disconnect", client_id=client_id,
-            disconnect_code=e.code, reason=e.reason, api_version="v1"
+            logger,
+            "warning",
+            "Dashboard client disconnected abnormally",
+            operation="dashboard_disconnect",
+            client_id=client_id,
+            disconnect_code=e.code,
+            reason=e.reason,
+            api_version="v1",
         )
 
 
 def _log_dashboard_error(e: Exception, client_id: Optional[str]) -> None:
     """Log dashboard client errors."""
     log_with_context(
-        logger, "error", "Dashboard client error",
-        operation="dashboard_error", client_id=client_id,
-        error=str(e), error_type=type(e).__name__, api_version="v1"
+        logger,
+        "error",
+        "Dashboard client error",
+        operation="dashboard_error",
+        client_id=client_id,
+        error=str(e),
+        error_type=type(e).__name__,
+        api_version="v1",
     )
 
 
-def _log_conversation_disconnect(e: WebSocketDisconnect, session_id: Optional[str]) -> None:
+def _log_conversation_disconnect(
+    e: WebSocketDisconnect, session_id: Optional[str]
+) -> None:
     """Log conversation session disconnection."""
     if e.code == 1000:
         log_with_context(
-            logger, "info", "Conversation session ended normally",
-            operation="conversation_disconnect", session_id=session_id,
-            disconnect_code=e.code, api_version="v1"
+            logger,
+            "info",
+            "Conversation session ended normally",
+            operation="conversation_disconnect",
+            session_id=session_id,
+            disconnect_code=e.code,
+            api_version="v1",
         )
     else:
         log_with_context(
-            logger, "warning", "Conversation session ended abnormally",
-            operation="conversation_disconnect", session_id=session_id,
-            disconnect_code=e.code, reason=e.reason, api_version="v1"
+            logger,
+            "warning",
+            "Conversation session ended abnormally",
+            operation="conversation_disconnect",
+            session_id=session_id,
+            disconnect_code=e.code,
+            reason=e.reason,
+            api_version="v1",
         )
 
 
 def _log_conversation_error(e: Exception, session_id: Optional[str]) -> None:
     """Log conversation session errors."""
     log_with_context(
-        logger, "error", "Conversation session error",
-        operation="conversation_error", session_id=session_id,
-        error=str(e), error_type=type(e).__name__, api_version="v1"
+        logger,
+        "error",
+        "Conversation session error",
+        operation="conversation_error",
+        session_id=session_id,
+        error=str(e),
+        error_type=type(e).__name__,
+        api_version="v1",
     )
 
 
-async def _cleanup_dashboard_connection(websocket: WebSocket, client_id: Optional[str]) -> None:
+async def _cleanup_dashboard_connection(
+    websocket: WebSocket, client_id: Optional[str]
+) -> None:
     """Clean up dashboard connection resources."""
     with tracer.start_as_current_span(
-        "api.v1.realtime.cleanup_dashboard",
-        attributes={"client_id": client_id}
+        "api.v1.realtime.cleanup_dashboard", attributes={"client_id": client_id}
     ) as span:
         try:
             # Remove from global registry
             if websocket in _active_dashboard_clients:
                 _active_dashboard_clients.remove(websocket)
-                logger.info(f"Dashboard client {client_id} removed. Remaining clients: {len(_active_dashboard_clients)}")
-            
+                logger.info(
+                    f"Dashboard client {client_id} removed. Remaining clients: {len(_active_dashboard_clients)}"
+                )
+
             # Remove from app state for legacy compatibility
-            if hasattr(websocket.app.state, 'clients') and websocket in websocket.app.state.clients:
+            if (
+                hasattr(websocket.app.state, "clients")
+                and websocket in websocket.app.state.clients
+            ):
                 websocket.app.state.clients.remove(websocket)
-            
+
             # Close WebSocket if still connected
-            if (websocket.client_state == WebSocketState.CONNECTED and 
-                websocket.application_state == WebSocketState.CONNECTED):
+            if (
+                websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED
+            ):
                 await websocket.close()
-            
+
             span.set_status(Status(StatusCode.OK))
             log_with_context(
-                logger, "info", "Dashboard connection cleanup complete",
-                operation="dashboard_cleanup", client_id=client_id,
-                api_version="v1"
+                logger,
+                "info",
+                "Dashboard connection cleanup complete",
+                operation="dashboard_cleanup",
+                client_id=client_id,
+                api_version="v1",
             )
-            
+
         except Exception as e:
             span.set_status(Status(StatusCode.ERROR, f"Cleanup error: {e}"))
             logger.error(f"Error during dashboard cleanup: {e}")
 
 
 async def _cleanup_conversation_session(
-    websocket: WebSocket, 
-    session_id: Optional[str], 
-    memory_manager: Optional[MemoManager]
+    websocket: WebSocket,
+    session_id: Optional[str],
+    memory_manager: Optional[MemoManager],
 ) -> None:
     """Clean up conversation session resources."""
     with tracer.start_as_current_span(
-        "api.v1.realtime.cleanup_conversation",
-        attributes={"session_id": session_id}
+        "api.v1.realtime.cleanup_conversation", attributes={"session_id": session_id}
     ) as span:
         try:
             # Stop TTS
-            if hasattr(websocket.app.state, 'tts_client'):
+            if hasattr(websocket.app.state, "tts_client"):
                 websocket.app.state.tts_client.stop_speaking()
-            
+
             # Remove from session registry
             if session_id and session_id in _active_conversation_sessions:
                 del _active_conversation_sessions[session_id]
-                logger.info(f"Conversation session {session_id} removed. Active sessions: {len(_active_conversation_sessions)}")
-            
+                logger.info(
+                    f"Conversation session {session_id} removed. Active sessions: {len(_active_conversation_sessions)}"
+                )
+
             # Close WebSocket if still connected
-            if (websocket.client_state == WebSocketState.CONNECTED and 
-                websocket.application_state == WebSocketState.CONNECTED):
+            if (
+                websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED
+            ):
                 await websocket.close()
-            
+
             # Persist analytics if possible
-            if memory_manager and hasattr(websocket.app.state, 'cosmos'):
+            if memory_manager and hasattr(websocket.app.state, "cosmos"):
                 try:
                     build_and_flush(memory_manager, websocket.app.state.cosmos)
                 except Exception as e:
                     logger.error(f"Error persisting analytics: {e}", exc_info=True)
-            
+
             span.set_status(Status(StatusCode.OK))
             log_with_context(
-                logger, "info", "Conversation session cleanup complete",
-                operation="conversation_cleanup", session_id=session_id,
-                api_version="v1"
+                logger,
+                "info",
+                "Conversation session cleanup complete",
+                operation="conversation_cleanup",
+                session_id=session_id,
+                api_version="v1",
             )
-            
+
         except Exception as e:
             span.set_status(Status(StatusCode.ERROR, f"Cleanup error: {e}"))
             logger.error(f"Error during conversation cleanup: {e}")

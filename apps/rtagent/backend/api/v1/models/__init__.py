@@ -17,7 +17,7 @@ __all__ = [
     "BaseModel",
     "TimestampedModel",
     "Call",
-    "CallParticipant", 
+    "CallParticipant",
     "Event",
     "EventHistory",
     "Participant",

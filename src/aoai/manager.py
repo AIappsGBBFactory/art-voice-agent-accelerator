@@ -262,7 +262,11 @@ class AzureOpenAIManager:
         response = None
         try:
             # Trace AOAI dependency as a CLIENT span so App Map shows an external node
-            endpoint_host = (self.azure_endpoint or "").replace("https://","").replace("http://","")
+            endpoint_host = (
+                (self.azure_endpoint or "")
+                .replace("https://", "")
+                .replace("http://", "")
+            )
             with tracer.start_as_current_span(
                 "Azure.OpenAI.ChatCompletion",
                 kind=SpanKind.CLIENT,
@@ -330,30 +334,34 @@ class AzureOpenAIManager:
             Transcription object with the audio transcription.
         """
         try:
-          endpoint_host = (self.azure_endpoint or "").replace("https://", "").replace("http://", "")
-          with tracer.start_as_current_span(
-              "Azure.OpenAI.WhisperTranscription",
-              kind=SpanKind.CLIENT,
-              attributes={
-                  "peer.service": "azure-openai",
-                  "net.peer.name": endpoint_host,
-                  "rt.call.connection_id": self.call_connection_id or "unknown",
-              },
-          ):
-              result = self.openai_client.audio.transcriptions.create(
-                  file=open(audio_file_path, "rb"),
-                  model=self.whisper_model_name,
-                  language=language,
-                  prompt=prompt,
-                  response_format=response_format,
-                  temperature=temperature,
-                  timestamp_granularities=timestamp_granularities,
-                  extra_headers=extra_headers,
-                  extra_query=extra_query,
-                  extra_body=extra_body,
-                  timeout=timeout,
-              )
-              return result
+            endpoint_host = (
+                (self.azure_endpoint or "")
+                .replace("https://", "")
+                .replace("http://", "")
+            )
+            with tracer.start_as_current_span(
+                "Azure.OpenAI.WhisperTranscription",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "peer.service": "azure-openai",
+                    "net.peer.name": endpoint_host,
+                    "rt.call.connection_id": self.call_connection_id or "unknown",
+                },
+            ):
+                result = self.openai_client.audio.transcriptions.create(
+                    file=open(audio_file_path, "rb"),
+                    model=self.whisper_model_name,
+                    language=language,
+                    prompt=prompt,
+                    response_format=response_format,
+                    temperature=temperature,
+                    timestamp_granularities=timestamp_granularities,
+                    extra_headers=extra_headers,
+                    extra_query=extra_query,
+                    extra_body=extra_body,
+                    timeout=timeout,
+                )
+                return result
         except openai.APIConnectionError as e:
             logger.error("API Connection Error: The server could not be reached.")
             logger.error(f"Error details: {e}")

@@ -84,7 +84,6 @@ class RTAgent:
         is_acs: bool = False,
         **prompt_kwargs,
     ) -> Any:
-
         # For context-rich prompting
         system_prompt = self.pm.get_prompt(self.prompt_path, **prompt_kwargs)
         cm.ensure_system_prompt(
@@ -126,7 +125,11 @@ class RTAgent:
     def _log_loaded_summary(self) -> None:
         desc_preview = shorten(self.description, width=60, placeholder="…")
         tool_names = [t["function"]["name"] for t in self.tools]
-        voice_info = f"voice={self.voice_name or 'default'}" + (f"/{self.voice_style}" if self.voice_name else "") + (f"@{self.voice_rate}" if hasattr(self, 'voice_rate') else "")
+        voice_info = (
+            f"voice={self.voice_name or 'default'}"
+            + (f"/{self.voice_style}" if self.voice_name else "")
+            + (f"@{self.voice_rate}" if hasattr(self, "voice_rate") else "")
+        )
         logger.info(
             "Loaded agent '%s' | org='%s' | desc='%s' | model=%s | %s | prompt=%s | "
             "tools=%s",

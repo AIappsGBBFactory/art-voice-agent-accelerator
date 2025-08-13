@@ -14,13 +14,11 @@ logger = get_logger("v1.simple_events")
 
 
 async def emit_call_lifecycle_event(
-    event_type: str, 
-    call_id: str, 
-    data: Optional[Dict[str, Any]] = None
+    event_type: str, call_id: str, data: Optional[Dict[str, Any]] = None
 ) -> None:
     """
     Simple call lifecycle event emission for REST API tracking.
-    
+
     Args:
         event_type: Type of event (call.initiated, call.connected, etc.)
         call_id: Call connection ID for correlation
@@ -30,23 +28,19 @@ async def emit_call_lifecycle_event(
         "event_type": event_type,
         "call_id": call_id,
         "timestamp": time.time(),
-        **(data or {})
+        **(data or {}),
     }
-    
+
     logger.info(
         f"Call Event: {event_type}",
-        extra={
-            "call_connection_id": call_id,
-            "event_type": event_type,
-            **event_data
-        }
+        extra={"call_connection_id": call_id, "event_type": event_type, **event_data},
     )
 
 
 def get_simple_health_status() -> Dict[str, Any]:
     """
     Simple health status without complex event registry overhead.
-    
+
     Returns:
         Basic health information for monitoring
     """
@@ -54,14 +48,14 @@ def get_simple_health_status() -> Dict[str, Any]:
         "status": "healthy",
         "timestamp": time.time(),
         "api_version": "v1",
-        "architecture": "three_thread"
+        "architecture": "three_thread",
     }
 
 
 def get_system_metrics() -> Dict[str, Any]:
     """
     Simple system metrics without event registry complexity.
-    
+
     Returns:
         Basic system metrics for monitoring
     """
@@ -69,5 +63,5 @@ def get_system_metrics() -> Dict[str, Any]:
         "uptime_seconds": time.time(),
         "memory_usage": "available_via_separate_monitoring",
         "active_calls": "tracked_via_call_state",
-        "api_version": "v1"
+        "api_version": "v1",
     }

@@ -23,7 +23,11 @@ from azure.core.messaging import CloudEvent
 from fastapi import HTTPException, WebSocket
 from fastapi.responses import JSONResponse
 
-from apps.rtagent.backend.settings import ACS_STREAMING_MODE, GREETING, GREETING_VOICE_TTS
+from apps.rtagent.backend.settings import (
+    ACS_STREAMING_MODE,
+    GREETING,
+    GREETING_VOICE_TTS,
+)
 from apps.rtagent.backend.src.shared_ws import broadcast_message
 from src.enums.stream_modes import StreamMode
 from src.stateful.state_managment import MemoManager
@@ -462,20 +466,26 @@ class ACSHandler:
                 if etype in event_handlers:
                     handler = event_handlers[etype]
                     if etype == "Microsoft.Communication.CallConnected":
-                        await handler(event, cm, redis_mgr, clients, cid, acs_caller, stt_client)
+                        await handler(
+                            event, cm, redis_mgr, clients, cid, acs_caller, stt_client
+                        )
                     elif etype == "Microsoft.Communication.MediaStreamingStarted":
                         await handler(event, cm, redis_mgr, cid, acs_caller)
                     elif etype in ["Microsoft.Communication.ParticipantsUpdated"]:
-                        await handler(event, cm, redis_mgr, clients, cid, acs_caller)  # pass acs_caller here
+                        await handler(
+                            event, cm, redis_mgr, clients, cid, acs_caller
+                        )  # pass acs_caller here
                     elif etype == "Microsoft.Communication.TranscriptionFailed":
                         await handler(event, cm, redis_mgr, cid, acs_caller)
                     elif etype == "Microsoft.Communication.CallDisconnected":
                         await handler(event, cm, redis_mgr, cid)
-                    elif etype == "Microsoft.Communication.ContinuousDtmfRecognitionToneReceived":
+                    elif (
+                        etype
+                        == "Microsoft.Communication.ContinuousDtmfRecognitionToneReceived"
+                    ):
                         await handler(event, cm, redis_mgr, cid)
                     else:
                         await handler(event, cm, redis_mgr, cid)
-
 
                 # # Handle media events that affect bot_speaking state
                 # elif etype in media_events:
@@ -552,6 +562,7 @@ class ACSHandler:
     @staticmethod
     def _get_participant_phone(event: CloudEvent, cm: MemoManager) -> Optional[str]:
         """Return the PSTN phone (E.164) from participants, preferring a match to target_number."""
+
         def digits_tail(s: Optional[str], n: int = 10) -> str:
             return "".join(ch for ch in (s or "") if ch.isdigit())[-n:]
 
@@ -585,7 +596,12 @@ class ACSHandler:
 
     @staticmethod
     async def _handle_participants_updated(
-        event: CloudEvent, cm: MemoManager, redis_mgr, clients: list, cid: str, acs_caller
+        event: CloudEvent,
+        cm: MemoManager,
+        redis_mgr,
+        clients: list,
+        cid: str,
+        acs_caller,
     ) -> None:
         """Enable DTMF when the PSTN participant is present."""
         # Resolve PSTN phone and use its presence as 'joined'
@@ -595,12 +611,12 @@ class ACSHandler:
         cm.update_context("target_participant_joined", target_joined)
         cm.persist_to_redis(redis_mgr)
         logger.info("Target participant joined: %s for call %s", target_joined, cid)
-        
+
         # If the PSTN participant has joined and DTMF hasn't started, kick off DTMF recognition in the background.
         if target_joined and not cm.get_context("dtmf_started"):
             cm.update_context("dtmf_sequence", "")
             cm.update_context("dtmf_validated", False)
-            
+
             async def start_dtmf():
                 try:
                     # Get call connection in the background task
@@ -608,23 +624,34 @@ class ACSHandler:
                     if not call_conn:
                         logger.error("Call connection not found for %s", cid)
                         return
-                    
+
                     # Wrap the potentially blocking call in run_in_executor
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(
                         None,  # Use default executor
                         lambda: call_conn.start_continuous_dtmf_recognition(
-                            target_participant=PhoneNumberIdentifier(value=target_phone),
+                            target_participant=PhoneNumberIdentifier(
+                                value=target_phone
+                            ),
                             operation_context="ivr",
-                        )
+                        ),
                     )
-                    
+
                     # Update state only after successful start
                     cm.update_context("dtmf_started", True)
                     cm.persist_to_redis(redis_mgr)
-                    logger.info("📲 DTMF recognition ON after participant join for %s (participant=%s)", cid, target_phone)
+                    logger.info(
+                        "📲 DTMF recognition ON after participant join for %s (participant=%s)",
+                        cid,
+                        target_phone,
+                    )
                 except Exception as e:
-                    logger.error("Failed to start DTMF recognition for call %s: %s", cid, e, exc_info=True)
+                    logger.error(
+                        "Failed to start DTMF recognition for call %s: %s",
+                        cid,
+                        e,
+                        exc_info=True,
+                    )
                     # Optionally set a flag to retry later
                     cm.update_context("dtmf_start_failed", True)
                     cm.persist_to_redis(redis_mgr)
@@ -632,8 +659,10 @@ class ACSHandler:
             # Fire and forget: don't await, so the handler returns immediately
             asyncio.create_task(start_dtmf())
         elif not target_joined:
-            logger.warning("ParticipantsUpdated: unable to resolve PSTN participant for DTMF on call %s", cid)
-
+            logger.warning(
+                "ParticipantsUpdated: unable to resolve PSTN participant for DTMF on call %s",
+                cid,
+            )
 
     @staticmethod
     async def _handle_call_connected(
@@ -653,13 +682,20 @@ class ACSHandler:
         call_conn = acs_caller.get_call_connection(cid)
         if stream_mode == StreamMode.TRANSCRIPTION:
             # Delay greeting very slightly to avoid clipping first tones
-            await ACSHandler._play_greeting(cm, redis_mgr, cid, acs_caller, stream_mode, delay_seconds=0.2)
+            await ACSHandler._play_greeting(
+                cm, redis_mgr, cid, acs_caller, stream_mode, delay_seconds=0.2
+            )
         elif stream_mode == StreamMode.MEDIA:
-            logger.info("Call connected for media streaming mode. Waiting for WebSocket connection: %s", cid)
+            logger.info(
+                "Call connected for media streaming mode. Waiting for WebSocket connection: %s",
+                cid,
+            )
 
     # New: optional readiness log for DTMF recognizer
     @staticmethod
-    async def _handle_dtmf_started(event: CloudEvent, cm: MemoManager, redis_mgr, cid: str) -> None:
+    async def _handle_dtmf_started(
+        event: CloudEvent, cm: MemoManager, redis_mgr, cid: str
+    ) -> None:
         """Handle DTMF recognition started event."""
         logger.info("✅ DTMF recognition started for call %s", cid)
         cm.update_context("dtmf_ready", True)
@@ -821,19 +857,31 @@ class ACSHandler:
         # Normalize tones from ACS/AWS (can be 'one', '1', 'pound', '#', 'star', '*')
         tone_numeric = None
         tone_map = {
-            "zero": "0", "0": "0",
-            "one": "1", "1": "1",
-            "two": "2", "2": "2",
-            "three": "3", "3": "3",
-            "four": "4", "4": "4",
-            "five": "5", "5": "5",
-            "six": "6", "6": "6",
-            "seven": "7", "7": "7",
-            "eight": "8", "8": "8",
-            "nine": "9", "9": "9",
-            "star": "*", "*": "*",
+            "zero": "0",
+            "0": "0",
+            "one": "1",
+            "1": "1",
+            "two": "2",
+            "2": "2",
+            "three": "3",
+            "3": "3",
+            "four": "4",
+            "4": "4",
+            "five": "5",
+            "5": "5",
+            "six": "6",
+            "6": "6",
+            "seven": "7",
+            "7": "7",
+            "eight": "8",
+            "8": "8",
+            "nine": "9",
+            "9": "9",
+            "star": "*",
+            "*": "*",
             "asterisk": "*",
-            "pound": "#", "#": "#",
+            "pound": "#",
+            "#": "#",
             "hash": "#",
         }
         if isinstance(tone, str):
@@ -843,7 +891,9 @@ class ACSHandler:
 
         if tone_numeric:
             # Maintain correct ordering by sequenceId if present
-            seq_index = sequence_id - 1 if isinstance(sequence_id, int) else len(dtmf_sequence)
+            seq_index = (
+                sequence_id - 1 if isinstance(sequence_id, int) else len(dtmf_sequence)
+            )
             dtmf_list = list(dtmf_sequence)
             while len(dtmf_list) <= seq_index:
                 dtmf_list.append("")
@@ -858,10 +908,16 @@ class ACSHandler:
             if len([c for c in dtmf_sequence if c]) >= 3:
                 candidate = "".join(d for d in dtmf_sequence if d)[:3]
                 if candidate == sample_value:
-                    logger.info("DTMF validated for call %s: %s (match)", cid, candidate)
+                    logger.info(
+                        "DTMF validated for call %s: %s (match)", cid, candidate
+                    )
                     cm.update_context("dtmf_validated", True)
                 else:
-                    logger.info("DTMF validation failed for call %s: %s (no match)", cid, candidate)
+                    logger.info(
+                        "DTMF validation failed for call %s: %s (no match)",
+                        cid,
+                        candidate,
+                    )
                     cm.update_context("dtmf_validated", False)
                 cm.persist_to_redis(redis_mgr)
         else:
@@ -992,11 +1048,12 @@ class ACSHandler:
         try:
             # Import here to avoid circular imports
             from fastapi import Request
+
             # Try to get WebSocket app state to set disconnect event
             # This is a bit hacky but necessary for event signaling
-            if hasattr(cm, '_ws_app_state'):  # Custom attribute we could add
+            if hasattr(cm, "_ws_app_state"):  # Custom attribute we could add
                 app_state = cm._ws_app_state
-                if hasattr(app_state, 'acs_disconnect_events'):
+                if hasattr(app_state, "acs_disconnect_events"):
                     disconnect_events = app_state.acs_disconnect_events
                     if cid in disconnect_events:
                         disconnect_events[cid].set()
@@ -1007,19 +1064,24 @@ class ACSHandler:
         # Clean up active handlers registry
         try:
             from apps.rtagent.backend.api.v1.endpoints.media import _active_handlers
+
             if cid in _active_handlers:
                 handler = _active_handlers[cid]
                 logger.info(f"Stopping media handler for disconnected call {cid}")
                 try:
-                    if hasattr(handler, 'stop') and callable(handler.stop):
+                    if hasattr(handler, "stop") and callable(handler.stop):
                         await handler.stop()
                 except Exception as handler_exc:
-                    logger.error(f"Failed to stop media handler during disconnect: {handler_exc}")
-                
+                    logger.error(
+                        f"Failed to stop media handler during disconnect: {handler_exc}"
+                    )
+
                 del _active_handlers[cid]
                 logger.info(f"Removed disconnected call {cid} from active handlers")
         except Exception as cleanup_exc:
-            logger.debug(f"Could not cleanup active handlers for call {cid}: {cleanup_exc}")
+            logger.debug(
+                f"Could not cleanup active handlers for call {cid}: {cleanup_exc}"
+            )
 
         # Clean up conversation state
         try:

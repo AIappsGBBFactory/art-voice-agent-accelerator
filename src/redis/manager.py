@@ -14,6 +14,7 @@ from utils.ml_logging import get_logger
 
 try:
     import redis.asyncio as aioredis  # reserved for future use
+
     ASYNC_REDIS_AVAILABLE = True
 except ImportError:
     ASYNC_REDIS_AVAILABLE = False
@@ -110,7 +111,7 @@ class AzureRedisManager:
                 socket_connect_timeout=0.2,
                 socket_timeout=1.0,
                 max_connections=200,
-                client_name="rtagent-api"
+                client_name="rtagent-api",
             )
             self.logger.info("Azure Redis connection initialized with access key.")
         else:
@@ -158,7 +159,9 @@ class AzureRedisManager:
             with self._redis_span("Redis.PING"):
                 return self.redis_client.ping()
 
-    def set_value(self, key: str, value: str, ttl_seconds: Optional[int] = None) -> bool:
+    def set_value(
+        self, key: str, value: str, ttl_seconds: Optional[int] = None
+    ) -> bool:
         """Set a string value in Redis (optionally with TTL)."""
         with self._redis_span("Redis.SET"):
             if ttl_seconds is not None:
@@ -207,11 +210,15 @@ class AzureRedisManager:
                 None, self.store_session_data, session_id, data
             )
         except asyncio.CancelledError:
-            self.logger.debug(f"store_session_data_async cancelled for session {session_id}")
+            self.logger.debug(
+                f"store_session_data_async cancelled for session {session_id}"
+            )
             # Don't log as warning - cancellation is normal during shutdown
             raise
         except Exception as e:
-            self.logger.error(f"Error in store_session_data_async for session {session_id}: {e}")
+            self.logger.error(
+                f"Error in store_session_data_async for session {session_id}: {e}"
+            )
             return False
 
     async def get_session_data_async(self, session_id: str) -> Dict[str, str]:
@@ -220,10 +227,14 @@ class AzureRedisManager:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self.get_session_data, session_id)
         except asyncio.CancelledError:
-            self.logger.debug(f"get_session_data_async cancelled for session {session_id}")
+            self.logger.debug(
+                f"get_session_data_async cancelled for session {session_id}"
+            )
             raise
         except Exception as e:
-            self.logger.error(f"Error in get_session_data_async for session {session_id}: {e}")
+            self.logger.error(
+                f"Error in get_session_data_async for session {session_id}: {e}"
+            )
             return {}
 
     async def update_session_field_async(
@@ -236,10 +247,14 @@ class AzureRedisManager:
                 None, self.update_session_field, session_id, field, value
             )
         except asyncio.CancelledError:
-            self.logger.debug(f"update_session_field_async cancelled for session {session_id}")
+            self.logger.debug(
+                f"update_session_field_async cancelled for session {session_id}"
+            )
             raise
         except Exception as e:
-            self.logger.error(f"Error in update_session_field_async for session {session_id}: {e}")
+            self.logger.error(
+                f"Error in update_session_field_async for session {session_id}: {e}"
+            )
             return False
 
     async def delete_session_async(self, session_id: str) -> int:
@@ -248,10 +263,14 @@ class AzureRedisManager:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self.delete_session, session_id)
         except asyncio.CancelledError:
-            self.logger.debug(f"delete_session_async cancelled for session {session_id}")
+            self.logger.debug(
+                f"delete_session_async cancelled for session {session_id}"
+            )
             raise
         except Exception as e:
-            self.logger.error(f"Error in delete_session_async for session {session_id}: {e}")
+            self.logger.error(
+                f"Error in delete_session_async for session {session_id}: {e}"
+            )
             return 0
 
     async def get_value_async(self, key: str) -> Optional[str]:
@@ -272,7 +291,9 @@ class AzureRedisManager:
         """Async version of set_value using thread pool executor."""
         try:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self.set_value, key, value, ttl_seconds)
+            return await loop.run_in_executor(
+                None, self.set_value, key, value, ttl_seconds
+            )
         except asyncio.CancelledError:
             self.logger.debug(f"set_value_async cancelled for key {key}")
             raise

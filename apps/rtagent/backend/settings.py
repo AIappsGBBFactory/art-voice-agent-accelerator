@@ -62,7 +62,7 @@ ACS_STREAMING_MODE: StreamMode = StreamMode(
 
 # V1 Endpoints
 ACS_CALL_OUTBOUND_PATH: str = "/api/v1/calls/initiate"
-ACS_CALL_INBOUND_PATH:  str = "/api/v1/calls/answer"
+ACS_CALL_INBOUND_PATH: str = "/api/v1/calls/answer"
 ACS_CALL_CALLBACK_PATH: str = "/api/v1/calls/callbacks"
 
 # V1 WebSocket Endpoints
@@ -86,17 +86,24 @@ AZURE_COSMOS_COLLECTION_NAME: str = os.getenv("AZURE_COSMOS_COLLECTION_NAME", ""
 # ------------------------------------------------------------------------------
 # Azure Identity / Authentication
 # ------------------------------------------------------------------------------
-ENABLE_AUTH_VALIDATION: bool = os.getenv("ENABLE_AUTH_VALIDATION", "false").lower() in ("true", "1", "yes", "on")
+ENABLE_AUTH_VALIDATION: bool = os.getenv("ENABLE_AUTH_VALIDATION", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+    "on",
+)
 BACKEND_AUTH_CLIENT_ID: str = os.getenv("BACKEND_AUTH_CLIENT_ID", "")
 
-ENTRA_JWKS_URL = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/discovery/v2.0/keys"
+ENTRA_JWKS_URL = (
+    f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/discovery/v2.0/keys"
+)
 ENTRA_ISSUER = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/v2.0"
 ENTRA_AUDIENCE = f"api://{BACKEND_AUTH_CLIENT_ID}"
 ENTRA_EXEMPT_PATHS = [
     ACS_CALL_CALLBACK_PATH,
     ACS_WEBSOCKET_PATH,
     "/health",
-    "/readiness"
+    "/readiness",
 ]
 
 # ACS Websocket and HTTP Callback Auth Config
@@ -149,20 +156,21 @@ AGENT_GENERAL_INFO_CONFIG: str = (
 # Cache for loaded voices to avoid repeated file reads
 _voice_cache = {}
 
+
 # Load voice from agent config YAML file
 def get_agent_voice(agent_config_path: str) -> str:
     """Extract voice from agent YAML configuration. Cached to avoid repeated file reads."""
     # Return cached voice if already loaded
     if agent_config_path in _voice_cache:
         return _voice_cache[agent_config_path]
-    
+
     try:
         logger.info(f"Loading agent voice from: {agent_config_path}")
-        with open(agent_config_path, 'r', encoding='utf-8') as file:
+        with open(agent_config_path, "r", encoding="utf-8") as file:
             agent_config = yaml.safe_load(file)
-            voice_config = agent_config.get('voice', {})
+            voice_config = agent_config.get("voice", {})
             if isinstance(voice_config, dict):
-                voice_name = voice_config.get('voice_name') or voice_config.get('name')
+                voice_name = voice_config.get("voice_name") or voice_config.get("name")
                 if voice_name:
                     _voice_cache[agent_config_path] = voice_name
                     return voice_name
@@ -180,6 +188,7 @@ def get_agent_voice(agent_config_path: str) -> str:
         logger.error(f"Failed to load voice from {agent_config_path}: {e}")
         _voice_cache[agent_config_path] = "en-US-AvaMultilingualNeural"
         return "en-US-AvaMultilingualNeural"
+
 
 # Get voice from environment variable or auth agent config
 GREETING_VOICE_TTS = get_agent_voice(AGENT_AUTH_CONFIG)

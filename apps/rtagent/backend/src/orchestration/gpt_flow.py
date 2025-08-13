@@ -39,9 +39,7 @@ from apps.rtagent.backend.src.shared_ws import (
     send_response_to_acs,
     send_tts_audio,
 )
-from apps.rtagent.backend.settings import (
-    AZURE_OPENAI_ENDPOINT
-)
+from apps.rtagent.backend.settings import AZURE_OPENAI_ENDPOINT
 from src.enums.monitoring import SpanAttr
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
@@ -67,16 +65,18 @@ _STREAM_TRACING = (
 )  # High frequency ops
 
 
-def _get_agent_voice_config(cm: "MemoManager") -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _get_agent_voice_config(
+    cm: "MemoManager",
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Extract agent voice configuration from memory manager.
-    
+
     Returns:
         Tuple of (voice_name, voice_style, voice_rate) or (None, None, None) if not available
     """
     if cm is None:
         logger.warning("MemoManager is None, using default voice configuration")
         return None, None, None
-        
+
     try:
         voice_name = cm.get_value_from_corememory("current_agent_voice")
         voice_style = cm.get_value_from_corememory("current_agent_voice_style", "chat")
@@ -144,8 +144,9 @@ async def process_gpt_response(  # noqa: D401
         prompt_length=len(user_prompt) if user_prompt else 0,
     )
 
-    with tracer.start_as_current_span("gpt_flow.process_response", attributes=span_attrs) as span:
-
+    with tracer.start_as_current_span(
+        "gpt_flow.process_response", attributes=span_attrs
+    ) as span:
         agent_history: List[Dict[str, Any]] = cm.get_history(agent_name)
         agent_history.append({"role": "user", "content": user_prompt})
 
@@ -257,9 +258,13 @@ async def process_gpt_response(  # noqa: D401
             # Broadcast the final assistant response to relay dashboard
             try:
                 # Get current agent name for specialist display
-                active_agent = cm.get_value_from_corememory("active_agent") if cm else None
-                authenticated = cm.get_value_from_corememory("authenticated") if cm else False
-                
+                active_agent = (
+                    cm.get_value_from_corememory("active_agent") if cm else None
+                )
+                authenticated = (
+                    cm.get_value_from_corememory("authenticated") if cm else False
+                )
+
                 if active_agent == "Claims":
                     agent_sender = "Claims Specialist"
                 elif active_agent == "General":
@@ -317,9 +322,7 @@ async def process_gpt_response(  # noqa: D401
 
                 asyncio.create_task(persist_tool_results())
                 span.set_attribute("tool.execution_success", True)
-                span.add_event(
-                    "tool_execution_completed", {"tool_name": tool_name}
-                )
+                span.add_event("tool_execution_completed", {"tool_name": tool_name})
             return result
 
         span.set_attribute("completion_type", "text_only")
@@ -331,6 +334,28 @@ async def process_gpt_response(  # noqa: D401
 # ===========================================================================
 
 
+def _get_agent_sender_name(cm: "MemoManager") -> str:
+    """Get the agent sender name for display purposes."""
+    try:
+        active_agent = (
+            cm.get_value_from_corememory("active_agent") if cm else None
+        )
+        authenticated = (
+            cm.get_value_from_corememory("authenticated") if cm else False
+        )
+
+        if active_agent == "Claims":
+            return "Claims Specialist"
+        elif active_agent == "General":
+            return "General Info"
+        elif not authenticated:  # Auth agent (before authentication)
+            return "Auth Agent"
+        else:
+            return "Assistant"
+    except Exception:
+        return "Assistant"
+
+
 async def _emit_streaming_text(
     text: str,
     ws: WebSocket,
@@ -338,7 +363,7 @@ async def _emit_streaming_text(
     cm: "MemoManager",
     call_connection_id: Optional[str] = None,
     session_id: Optional[str] = None,
-    ) -> None:  # noqa: D401,E501
+) -> None:  # noqa: D401,E501
     """Emit one assistant text chunk via either ACS or WebSocket + TTS."""
     if _STREAM_TRACING:
         span_attrs = create_service_handler_attrs(
@@ -350,34 +375,39 @@ async def _emit_streaming_text(
             is_acs=is_acs,
             chunk_type="streaming_text",
         )
-        
-        with tracer.start_as_current_span("gpt_flow.emit_streaming_text", attributes=span_attrs) as span:
+
+        with tracer.start_as_current_span(
+            "gpt_flow.emit_streaming_text", attributes=span_attrs
+        ) as span:
             # Get agent voice configuration
-            agent_voice, agent_voice_style, agent_voice_rate = _get_agent_voice_config(cm)
-            
+            agent_voice, agent_voice_style, agent_voice_rate = _get_agent_voice_config(
+                cm
+            )
+
             if is_acs:
                 span.set_attribute("output_channel", "acs")
                 # Note: broadcast_message is handled separately for final responses to avoid duplication
                 await send_response_to_acs(
-                    ws, 
-                    text, 
+                    ws,
+                    text,
                     latency_tool=ws.state.lt,
                     voice_name=agent_voice,
                     voice_style=agent_voice_style,
-                    rate=agent_voice_rate
+                    rate=agent_voice_rate,
                 )
             else:
                 span.set_attribute("output_channel", "websocket_tts")
                 await send_tts_audio(
-                    text, 
-                    ws, 
+                    text,
+                    ws,
                     latency_tool=ws.state.lt,
                     voice_name=agent_voice,
                     voice_style=agent_voice_style,
-                    rate=agent_voice_rate
+                    rate=agent_voice_rate,
                 )
+                agent_sender_name = _get_agent_sender_name(cm)
                 await ws.send_text(
-                    json.dumps({"type": "assistant_streaming", "content": text})
+                    json.dumps({"type": "assistant_streaming", "content": text, "speaker": agent_sender_name})
                 )
 
             span.add_event("text_emitted", {"text_length": len(text)})
@@ -385,27 +415,28 @@ async def _emit_streaming_text(
         # Fast path when high-frequency tracing is disabled
         # Get agent voice configuration
         agent_voice, agent_voice_style, agent_voice_rate = _get_agent_voice_config(cm)
-        
+
         if is_acs:
             await send_response_to_acs(
-                ws, 
-                text, 
+                ws,
+                text,
                 latency_tool=ws.state.lt,
                 voice_name=agent_voice,
                 voice_style=agent_voice_style,
-                rate=agent_voice_rate
+                rate=agent_voice_rate,
             )
         else:
             await send_tts_audio(
-                text, 
-                ws, 
+                text,
+                ws,
                 latency_tool=ws.state.lt,
                 voice_name=agent_voice,
                 voice_style=agent_voice_style,
-                rate=agent_voice_rate
+                rate=agent_voice_rate,
             )
+            agent_sender_name = _get_agent_sender_name(cm)
             await ws.send_text(
-                json.dumps({"type": "assistant_streaming", "content": text})
+                json.dumps({"type": "assistant_streaming", "content": text, "speaker": agent_sender_name})
             )
 
 
@@ -438,7 +469,6 @@ async def _handle_tool_call(  # noqa: PLR0913
             "args_length": len(args) if args else 0,
         },
     ) as trace_ctx:
-
         params: Dict[str, Any] = json.loads(args or "{}")
         fn = function_mapping.get(tool_name)
         if fn is None:
@@ -463,7 +493,6 @@ async def _handle_tool_call(  # noqa: PLR0913
                 "parameters": params,
             },
         ) as exec_ctx:
-
             t0 = time.perf_counter()
             result_raw = await fn(params)  # Tool functions are expected to be async.
             elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -495,9 +524,13 @@ async def _handle_tool_call(  # noqa: PLR0913
         if is_acs:
             try:
                 # Get current agent name for specialist display
-                active_agent = cm.get_value_from_corememory("active_agent") if cm else None
-                authenticated = cm.get_value_from_corememory("authenticated") if cm else False
-                
+                active_agent = (
+                    cm.get_value_from_corememory("active_agent") if cm else None
+                )
+                authenticated = (
+                    cm.get_value_from_corememory("authenticated") if cm else False
+                )
+
                 if active_agent == "Claims":
                     agent_sender = "Claims Specialist"
                 elif active_agent == "General":
@@ -557,7 +590,6 @@ async def _process_tool_followup(  # noqa: PLR0913
             "followup_type": "post_tool_execution",
         },
     ) as trace_ctx:
-
         trace_ctx.add_event("starting_followup_completion")
 
         await process_gpt_response(

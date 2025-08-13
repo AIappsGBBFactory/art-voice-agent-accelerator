@@ -8,15 +8,15 @@ Provides clean call event handling without complex middleware.
 
 from .processor import (
     CallEventProcessor,
-    get_call_event_processor, 
-    reset_call_event_processor
+    get_call_event_processor,
+    reset_call_event_processor,
 )
 from .handlers import CallEventHandlers
 from .types import CallEventContext, ACSEventTypes
 from .registration import (
     register_default_handlers,
     get_processor_stats,
-    get_active_calls
+    get_active_calls,
 )
 
 # Note: Handlers are registered on first use of the processor
@@ -27,14 +27,12 @@ __all__ = [
     "CallEventProcessor",
     "get_call_event_processor",
     "reset_call_event_processor",
-    
     # Handlers and types
-    "CallEventHandlers", 
+    "CallEventHandlers",
     "CallEventContext",
     "ACSEventTypes",
-    
     # Registration utilities
     "register_default_handlers",
-    "get_processor_stats", 
+    "get_processor_stats",
     "get_active_calls",
 ]
