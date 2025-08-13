@@ -194,7 +194,20 @@ jobs:
           ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
-          
+
+      - name: 🔒 Whitelist GitHub Runner IP
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            set -eu
+            agentIP=$(curl -s https://api.ipify.org/)
+            az storage account network-rule add \
+              --resource-group "${{ env.RS_RESOURCE_GROUP }}" \
+              --account-name "${{ env.RS_STORAGE_ACCOUNT }}" \
+              --ip-address $agentIP
+            # Sleep for 60 seconds to allow the IP rule to propagate
+            sleep 60
+
       - name: 📋 Run Terraform Plan via AZD
         id: plan
         run: |
@@ -240,7 +253,18 @@ jobs:
               repo: context.repo.repo,
               body: output
             });
-
+            
+      - name: 🔓 Remove GitHub Runner IP from Whitelist
+        if: always()
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            set -eu
+            agentIP=$(curl -s https://api.ipify.org/)
+            az storage account network-rule remove \
+              --resource-group "${{ env.RS_RESOURCE_GROUP }}" \
+              --account-name "${{ env.RS_STORAGE_ACCOUNT }}" \
+              --ip-address $agentIP
   # ============================================================================
   # AZURE DEVELOPER CLI DEPLOYMENT
   # ============================================================================
