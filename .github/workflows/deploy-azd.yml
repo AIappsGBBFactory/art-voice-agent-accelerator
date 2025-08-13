@@ -72,22 +72,6 @@ on:
         required: false
         default: 'tfstate'
         type: string
-  push:
-    branches:
-      - main
-    paths:
-      - 'infra/terraform/**'
-      - 'src/**'
-      - 'apps/**'
-      - 'azure.yaml'
-      - '.github/workflows/deploy-azd.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'infra/terraform/**'
-      - 'azure.yaml'
-      - '.github/workflows/deploy-azd.yml'
 
 env:
   # Azure environment configuration
