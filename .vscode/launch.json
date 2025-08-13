@@ -27,8 +27,6 @@
             "--reload",
             "--port",
             "8010",
-            "--log-level",
-            "debug"
             ],
             "jinja": true,
             "env": {
@@ -36,69 +34,5 @@
             },
             "envFile": "${workspaceFolder}/.env"
         },
-
-        // --- RTMedAgent ---
-        {
-            "name": "[RTMedAgent] React App: Browser Debug",
-            "type": "msedge", // or "chrome"
-            "request": "launch",
-            "url": "http://localhost:5173",
-            "webRoot": "${workspaceFolder}/rtagents/RTMedAgent/frontend",
-            "sourceMaps": true,
-            "sourceMapPathOverrides": {
-            "webpack:///src/*": "${webRoot}/src/*",
-            "webpack:///*": "${webRoot}/*"
-            }
-        },
-
-        {
-            "name": "[RTMedAgent] Python Debugger: FastAPI",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "uvicorn",
-            "args": [
-            "rtagents.RTMedAgent.backend.main:app",
-            "--reload",
-            "--port",
-            "8010"
-            ],
-            "jinja": true,
-            "env": {
-            "PYTHONPATH": "${workspaceFolder}"
-            },
-            "envFile": "${workspaceFolder}/.env"
-        },
-
-        // --- RTInsuranceAgent ---
-        {
-            "name": "[RTInsuranceAgent] React App: Browser Debug",
-            "type": "msedge", // or "chrome"
-            "request": "launch",
-            "url": "http://localhost:5173",
-            "webRoot": "${workspaceFolder}/rtagents/RTInsuranceAgent/frontend",
-            "sourceMaps": true,
-            "sourceMapPathOverrides": {
-            "webpack:///src/*": "${webRoot}/src/*",
-            "webpack:///*": "${webRoot}/*"
-            }
-        },
-
-        {
-            "name": "[RTInsuranceAgent] Python Debugger: FastAPI",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "uvicorn",
-            "args": [
-            "rtagents.RTInsuranceAgent.backend.main:app",
-            "--reload",
-            "--port",
-            "8010"
-            ],
-            "jinja": true,
-            "env": {
-            "PYTHONPATH": "${workspaceFolder}"
-            },
-            "envFile": "${workspaceFolder}/.env"
-        }
     ]
 }

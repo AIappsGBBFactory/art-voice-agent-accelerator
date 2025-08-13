@@ -7,9 +7,11 @@ import "reactflow/dist/style.css";
 /* ------------------------------------------------------------------ *
  *  ENV VARS
  * ------------------------------------------------------------------ */
-const {
-  VITE_BACKEND_BASE_URL: API_BASE_URL,
-} = import.meta.env;
+// Simple placeholder that gets replaced at container startup, with fallback for local dev
+const backendPlaceholder = '__BACKEND_URL__';
+const API_BASE_URL = backendPlaceholder.startsWith('__') 
+  ? import.meta.env.VITE_BACKEND_BASE_URL || 'http://localhost:8000'
+  : backendPlaceholder;
 
 const WS_URL = API_BASE_URL.replace(/^https?/, "wss");
 
@@ -1103,7 +1105,7 @@ export default function RealTimeVoiceApp() {
       appendLog("🎤 PCM streaming started");
 
       // 1) open WS
-      const socket = new WebSocket(`${WS_URL}/api/v1/conversation`);
+      const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation`);
       // const socket = new WebSocket(`${WS_URL}/realtime`);
       socket.binaryType = "arraybuffer";
 
@@ -1371,7 +1373,7 @@ export default function RealTimeVoiceApp() {
       appendLog("📞 Call initiated");
 
       // relay WS
-      const relay = new WebSocket(`${WS_URL}/api/v1/dashboard/relay`);
+      const relay = new WebSocket(`${WS_URL}/api/v1/realtime/dashboard/relay`);
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({data}) => {
         try {

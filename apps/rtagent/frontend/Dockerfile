@@ -4,7 +4,7 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 
-# Copy package.json and package-lock.json (or yarn.lock)
+# Copy package.json and package-lock.json
 COPY package.json package-lock.json ./
 
 # Install dependencies
@@ -13,34 +13,30 @@ RUN npm ci
 # Copy the rest of the application code
 COPY . .
 
-# Build the application for production
+# Build the application for production (with placeholder)
 RUN npm run build
 
-# Stage 2: Serve the application from a lightweight image
+# Stage 2: Serve the application
 FROM node:22-alpine
 WORKDIR /app
 
-# Copy only necessary files from the builder stage
+# Copy built files and package.json
 COPY --from=builder /app/dist ./dist
 COPY package.json package-lock.json ./
+COPY entrypoint.sh ./
 
-# Install only production dependencies (like 'serve')
-# 'npm ci --omit=dev' would be better if your 'serve' is in dependencies not devDependencies
-# Or, if 'serve' is a regular dependency, 'npm ci' is fine.
-# For simplicity, if 'serve' is in dependencies:
-RUN npm ci --omit=dev 
-# If you added 'serve' as a devDependency, move it to 'dependencies' in package.json
-# or install it specifically: RUN npm install serve
+# Install production dependencies
+RUN npm ci --omit=dev
 
-# Expose the port the app will run on (this should match your ingressTargetPort in Bicep)
-EXPOSE 5173
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
 
-# Set the PORT environment variable (Azure Container Apps also sets this based on ingress)
-ENV PORT=5173
+# Expose port
+EXPOSE 8080
 
-# Command to start the production server
-# This will use the 'start' script from package.json if defined as above,
-# or you can specify the command directly.
+# Set environment variable
+ENV PORT=8080
+
+# Use entrypoint to replace placeholders at runtime
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["npm", "start"]
-# Alternatively, directly:
-# CMD ["npx", "serve", "-s", "dist", "-l", "tcp://0.0.0.0:5173"]

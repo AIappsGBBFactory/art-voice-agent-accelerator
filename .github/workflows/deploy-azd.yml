@@ -1,5 +1,16 @@
 name: 🏗️ Deploy with Azure Developer CLI
 
+# This workflow supports deployment using Azure Developer CLI (azd)
+# 
+# Terraform Remote State Configuration:
+# By default, this workflow uses GitHub repository variables for Terraform remote state storage:
+# - TF_STATE_RESOURCE_GROUP: Azure Resource Group for state storage
+# - TF_STATE_STORAGE_ACCOUNT: Azure Storage Account for state files  
+# - TF_STATE_CONTAINER_NAME: Container name for state files
+#
+# These can be overridden via workflow inputs if needed.
+# See docs/GITHUB_REPOSITORY_VARIABLES.md for setup instructions.
+
 on:
   workflow_dispatch:
     inputs:
@@ -49,6 +60,21 @@ on:
         required: true
         default: 'up'
         type: string
+      rs_resource_group:
+        description: 'Resource group for Terraform state storage'
+        required: false
+        default: 'Default-ActivityLogAlerts'
+        type: string
+      rs_storage_account:
+        description: 'Storage account for Terraform state'
+        required: false
+        default: 'rtagent'
+        type: string
+      rs_container_name:
+        description: 'Container name for Terraform state'
+        required: false
+        default: 'tfstate'
+        type: string
   push:
     branches:
       - main
@@ -93,9 +119,9 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_ENV_NAME: ${{ inputs.environment }}
-      RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group }}
-      RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account }}
-      RS_CONTAINER_NAME: ${{ inputs.rs_container_name }}
+      RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.TF_STATE_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
+      RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.TF_STATE_STORAGE_ACCOUNT || 'rtagent' }}
+      RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.TF_STATE_CONTAINER_NAME || 'tfstate' }}
       ARM_USE_OIDC: "true"
     
     steps:
@@ -235,9 +261,9 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_ENV_NAME: ${{ matrix.environment }}
-      RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || 'Default-ActivityLogAlerts' }}
-      RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || 'rtagent' }}
-      RS_CONTAINER_NAME: ${{ inputs.rs_container_name || 'tfstate' }}
+      RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.TF_STATE_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
+      RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.TF_STATE_STORAGE_ACCOUNT || 'rtagent' }}
+      RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.TF_STATE_CONTAINER_NAME || 'tfstate' }}
       ARM_USE_OIDC: "true"
     
     outputs:

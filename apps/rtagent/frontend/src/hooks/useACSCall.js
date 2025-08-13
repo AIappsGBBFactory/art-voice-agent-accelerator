@@ -1,7 +1,10 @@
 // src/hooks/useACSCall.js
 import { useState } from "react";
 
-const API_BASE = import.meta.env.VITE_BACKEND_BASE_URL;
+const backendPlaceholder = '__BACKEND_URL__';
+const API_BASE = backendPlaceholder.startsWith('__') 
+  ? import.meta.env.VITE_BACKEND_BASE_URL || 'http://localhost:8000'
+  : backendPlaceholder;
 
 export default function useACSCall(appendLog, addMindMapNode, lastAssistantId) {
   const [targetPhoneNumber, setTargetPhoneNumber] = useState("");

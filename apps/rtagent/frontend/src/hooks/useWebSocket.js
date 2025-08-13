@@ -11,7 +11,11 @@ export default function useWebSocket({
 }) {
   const [messages, setMessages] = useState([]);
   const socketRef = useRef(null);
-  const WS_URL = import.meta.env.VITE_BACKEND_BASE_URL.replace(/^https?/, "wss");
+  const backendPlaceholder = '__BACKEND_URL__';
+  const backendUrl = backendPlaceholder.startsWith('__') 
+    ? import.meta.env.VITE_BACKEND_BASE_URL || 'http://localhost:8000'
+    : backendPlaceholder;
+  const WS_URL = backendUrl.replace(/^https?/, "wss");
 
   const append = useCallback(
     (msg) => {
@@ -127,7 +131,7 @@ export default function useWebSocket({
           appendLog?.(`⚙️ ${tool} ${pct}%`);
           break;
 
-        case "tool_end":
+        case "tool_end": {
           addMindMapNode?.({
             speaker: "Assistant",
             functionCall: tool,
@@ -151,6 +155,7 @@ export default function useWebSocket({
           );
           appendLog?.(`⚙️ ${tool} ${status} (${elapsedMs} ms)`);
           break;
+        }
       }
     };
 
@@ -159,6 +164,7 @@ export default function useWebSocket({
       if (socket.readyState === WebSocket.OPEN) socket.close();
     };
   }, [
+    WS_URL,
     append,
     appendLog,
     addMindMapNode,
