@@ -181,40 +181,34 @@ jobs:
           fi
           azd env select "$ENV_NAME"
 
-            # Persist resolved remote state values into the azd environment
-            echo "🔧 Setting azd environment remote state variables from resolved values..."
-            azd env set RS_RESOURCE_GROUP "${RS_RESOURCE_GROUP}"
-            azd env set RS_STORAGE_ACCOUNT "${RS_STORAGE_ACCOUNT}"
-            azd env set RS_CONTAINER_NAME "${RS_CONTAINER_NAME}"
-            # Confirm azd env contains remote state values for RS_RESOURCE_GROUP, RS_STORAGE_ACCOUNT, RS_CONTAINER_NAME
-            echo "🔍 Checking azd environment values for remote state variables..."
-            azd env get-values > /tmp/azd-env-values.env
-            source /tmp/azd-env-values.env
+          # Persist resolved remote state values into the azd environment
+          echo "🔧 Setting azd environment remote state variables from resolved values..."
+          azd env set RS_RESOURCE_GROUP "${{ env.RS_RESOURCE_GROUP }}"
+          azd env set RS_STORAGE_ACCOUNT "${{ env.RS_STORAGE_ACCOUNT }}"
+          azd env set RS_CONTAINER_NAME "${{ env.RS_CONTAINER_NAME }}"
+          # Confirm azd env contains remote state values for RS_RESOURCE_GROUP, RS_STORAGE_ACCOUNT, RS_CONTAINER_NAME
+          echo "🔍 Checking azd environment values for remote state variables..."
+          azd env get-values > /tmp/azd-env-values.env
+          source /tmp/azd-env-values.env
 
-            missing=0
-            for var in RS_RESOURCE_GROUP RS_STORAGE_ACCOUNT RS_CONTAINER_NAME; do
+          missing=0
+          for var in RS_RESOURCE_GROUP RS_STORAGE_ACCOUNT RS_CONTAINER_NAME; do
             value=$(grep "^$var=" /tmp/azd-env-values.env | cut -d'=' -f2-)
             if [ -z "$value" ]; then
               echo "❌ Missing required remote state variable: $var"
               missing=1
-            else
-              RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.TF_STATE_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
-              RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.TF_STATE_STORAGE_ACCOUNT || 'rtagent' }}
-              RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.TF_STATE_CONTAINER_NAME || 'tfstate' }}
-
-          RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.TF_STATE_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
-          RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.TF_STATE_STORAGE_ACCOUNT || 'rtagent' }}
-          RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.TF_STATE_CONTAINER_NAME || 'tfstate' }}
             fi
+          done
+          if [ $missing -eq 0 ]; then
             echo "✅ All required remote state variables are present in azd environment."
+          else
+            echo "❌ Some required remote state variables are missing in azd environment."
+          fi
           azd provision --no-prompt --preview --environment "$ENV_NAME" || \
             azd provision --no-prompt --help | grep -i preview || \
             echo "⚠️ Plan preview not available, would provision infrastructure"
           echo "plan-available=true" >> $GITHUB_OUTPUT
         env:
-          RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.TF_STATE_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
-          RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.TF_STATE_STORAGE_ACCOUNT || 'rtagent' }}
-          RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.TF_STATE_CONTAINER_NAME || 'tfstate' }}
           AZURE_ENV_NAME: ${{ env.AZURE_ENV_NAME }}
           ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
