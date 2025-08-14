@@ -1,16 +1,5 @@
 name: 🏗️ Deploy with Azure Developer CLI
 
-# This workflow supports deployment using Azure Developer CLI (azd)
-# 
-# Terraform Remote State Configuration:
-# By default, this workflow uses GitHub repository variables for Terraform remote state storage:
-# - TF_STATE_RESOURCE_GROUP: Azure Resource Group for state storage
-# - TF_STATE_STORAGE_ACCOUNT: Azure Storage Account for state files  
-# - TF_STATE_CONTAINER_NAME: Container name for state files
-#
-# These can be overridden via workflow inputs if needed.
-# See docs/GITHUB_REPOSITORY_VARIABLES.md for setup instructions.
-
 on:
   workflow_dispatch:
     inputs:
@@ -60,22 +49,17 @@ on:
       rs_resource_group:
         description: 'Resource group for Terraform state storage'
         required: false
-        default: 'Default-ActivityLogAlerts'
         type: string
       rs_storage_account:
         description: 'Storage account for Terraform state'
         required: false
-        default: 'rtagent'
         type: string
       rs_container_name:
         description: 'Container name for Terraform state'
         required: false
-        default: 'tfstate'
         type: string
 
 env:
-  # Azure environment configuration
-  AZURE_LOCATION: eastus
   # CI/CD mode configuration
   AZD_SKIP_INTERACTIVE: true
   CI: true
@@ -108,7 +92,7 @@ jobs:
       RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account }}
       RS_CONTAINER_NAME: ${{ inputs.rs_container_name }}
       ARM_USE_OIDC: "true"
-    
+        
     steps:
       - name: 🛒 Checkout Repository
         uses: actions/checkout@v4
@@ -196,6 +180,12 @@ jobs:
             azd env new "$ENV_NAME" --no-prompt
           fi
           azd env select "$ENV_NAME"
+
+            # Persist resolved remote state values into the azd environment
+            echo "🔧 Setting azd environment remote state variables from resolved values..."
+            azd env set RS_RESOURCE_GROUP "${RS_RESOURCE_GROUP}"
+            azd env set RS_STORAGE_ACCOUNT "${RS_STORAGE_ACCOUNT}"
+            azd env set RS_CONTAINER_NAME "${RS_CONTAINER_NAME}"
             # Confirm azd env contains remote state values for RS_RESOURCE_GROUP, RS_STORAGE_ACCOUNT, RS_CONTAINER_NAME
             echo "🔍 Checking azd environment values for remote state variables..."
             azd env get-values > /tmp/azd-env-values.env
@@ -208,13 +198,13 @@ jobs:
               echo "❌ Missing required remote state variable: $var"
               missing=1
             else
-              echo "✅ $var is set to: $value"
-            fi
-            done
+              RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.TF_STATE_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
+              RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.TF_STATE_STORAGE_ACCOUNT || 'rtagent' }}
+              RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.TF_STATE_CONTAINER_NAME || 'tfstate' }}
 
-            if [ "$missing" -eq 1 ]; then
-            echo "❌ One or more remote state variables are missing in azd environment."
-            exit 1
+          RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.TF_STATE_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
+          RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.TF_STATE_STORAGE_ACCOUNT || 'rtagent' }}
+          RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.TF_STATE_CONTAINER_NAME || 'tfstate' }}
             fi
             echo "✅ All required remote state variables are present in azd environment."
           azd provision --no-prompt --preview --environment "$ENV_NAME" || \
@@ -222,15 +212,14 @@ jobs:
             echo "⚠️ Plan preview not available, would provision infrastructure"
           echo "plan-available=true" >> $GITHUB_OUTPUT
         env:
-          RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group }}
-          RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account }}
-          RS_CONTAINER_NAME: ${{ inputs.rs_container_name }}
+          RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.TF_STATE_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
+          RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.TF_STATE_STORAGE_ACCOUNT || 'rtagent' }}
+          RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.TF_STATE_CONTAINER_NAME || 'tfstate' }}
           AZURE_ENV_NAME: ${{ env.AZURE_ENV_NAME }}
           ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
-
       - name: 🧪 Generate Terraform Plan Output
         id: tfplan
         run: |
