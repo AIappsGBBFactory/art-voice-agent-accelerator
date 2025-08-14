@@ -149,19 +149,26 @@ async def broadcast_message(
 
     # Check if this exact message was recently broadcasted
     import time
+    import traceback
 
     current_time = time.time()
     if message_hash in broadcast_message._recent_messages:
         last_sent = broadcast_message._recent_messages[message_hash]
         # If the same message was sent within the last 2 seconds, skip it
         if current_time - last_sent < 2.0:
-            logger.debug(
-                f"Skipping duplicate broadcast message: {sender}: {message[:50]}..."
+            logger.warning(
+                f"🚨 DUPLICATE MESSAGE DETECTED - Sender: {sender}, Message: {message[:100]}..., "
+                f"Time since last: {current_time - last_sent:.3f}s, Hash: {message_hash}"
             )
+            # Log the call stack to see where this duplicate is coming from
+            logger.warning(f"Call stack: {traceback.format_stack()[-3:-1]}")
             return
 
-    # Mark this message as sent
+    # Mark this message as sent and log for debugging
     broadcast_message._recent_messages[message_hash] = current_time
+    logger.info(
+        f"📡 Broadcasting: {sender}: {message[:50]}... (Hash: {message_hash})"
+    )
 
     payload = {"message": message.strip(), "sender": sender}
     sent_count = 0

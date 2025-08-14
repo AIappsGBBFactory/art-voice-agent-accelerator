@@ -332,6 +332,26 @@ class ACSMediaHandler:
             logger.info(
                 f"🎤 Started greeting playback task with voice: {voice_name or 'default'}, style: {voice_style or 'chat'}, rate: {voice_rate or '+3%'}"
             )
+
+            # Determine agent sender name for greeting broadcast
+            agent_sender = "Assistant"
+            if self.cm and hasattr(self.cm, "active_agent"):
+                agent = getattr(self.cm, "active_agent", None)
+                if agent and hasattr(agent, "name"):
+                    # Use the same logic as in orchestrator/gpt_flow for sender label
+                    if agent.name.lower().startswith("fnol"):
+                        agent_sender = "Claims Specialist"
+                    elif agent.name.lower().startswith("general"):
+                        agent_sender = "General Info"
+                    else:
+                        agent_sender = agent.name
+
+            # Only broadcast after playback task is created successfully
+            asyncio.create_task(broadcast_message(
+                self.incoming_websocket.app.state.clients,
+                greeting_text,
+                agent_sender
+            ))
         except Exception as e:
             log_with_context(
                 logger,

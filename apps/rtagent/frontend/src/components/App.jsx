@@ -293,7 +293,31 @@ const styles = {
     width: "fit-content",
   },
   
-  controlButton: (isActive, variant = 'default') => ({
+  controlButton: (isActive, variant = 'default') => {
+    // Base styles for all buttons
+    return {
+      width: "56px",
+      height: "56px",
+      borderRadius: "50%",
+      border: "none",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      cursor: "pointer",
+      fontSize: "20px",
+      transition: "all 0.3s ease",
+      position: "relative",
+      background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
+      color: isActive ? "#10b981" : "#64748b",
+      transform: isActive ? "scale(1.05)" : "scale(1)",
+      boxShadow: isActive ? 
+        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
+        "0 2px 8px rgba(0,0,0,0.08)",
+    };
+  },
+
+  // Enhanced button styles with hover effects
+  resetButton: (isActive, isHovered) => ({
     width: "56px",
     height: "56px",
     borderRadius: "50%",
@@ -303,14 +327,96 @@ const styles = {
     justifyContent: "center",
     cursor: "pointer",
     fontSize: "20px",
-    transition: "all 0.2s ease",
-    background: variant === 'phone' ? "#67d8ef" : 
-                variant === 'close' ? "#f1f5f9" :
-                isActive ? "#67d8ef" : "#f1f5f9",
-    color: variant === 'phone' || isActive ? "white" : "#64748b",
-    transform: isActive ? "scale(1.05)" : "scale(1)",
-    boxShadow: isActive ? "0 4px 16px rgba(103,216,239,0.4)" : "0 2px 8px rgba(0,0,0,0.05)",
+    transition: "all 0.3s ease",
+    position: "relative",
+    background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
+    color: isActive ? "#10b981" : "#64748b",
+    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
+    boxShadow: isHovered ? 
+      "0 8px 24px rgba(100,116,139,0.3), 0 0 0 3px rgba(100,116,139,0.15)" :
+      (isActive ? 
+        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
+        "0 2px 8px rgba(0,0,0,0.08)"),
   }),
+
+  micButton: (isActive, isHovered) => ({
+    width: "56px",
+    height: "56px",
+    borderRadius: "50%",
+    border: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    fontSize: "20px",
+    transition: "all 0.3s ease",
+    position: "relative",
+    background: isHovered ? 
+      (isActive ? "linear-gradient(135deg, #10b981, #059669)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
+      "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
+    color: isHovered ? 
+      (isActive ? "white" : "#16a34a") :
+      (isActive ? "#10b981" : "#64748b"),
+    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
+    boxShadow: isHovered ? 
+      "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
+      (isActive ? 
+        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
+        "0 2px 8px rgba(0,0,0,0.08)"),
+  }),
+
+  phoneButton: (isActive, isHovered) => ({
+    width: "56px",
+    height: "56px",
+    borderRadius: "50%",
+    border: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    fontSize: "20px",
+    transition: "all 0.3s ease",
+    position: "relative",
+    background: isHovered ? 
+      (isActive ? "linear-gradient(135deg, #3f75a8ff, #2b5d8f)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
+      "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
+    color: isHovered ? 
+      (isActive ? "white" : "#3f75a8ff") :
+      (isActive ? "#3f75a8ff" : "#64748b"),
+    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
+    boxShadow: isHovered ? 
+      "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
+      (isActive ? 
+        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
+        "0 2px 8px rgba(0,0,0,0.08)"),
+  }),
+
+  // Tooltip styles
+  buttonTooltip: {
+    position: 'absolute',
+    bottom: '-45px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    background: 'rgba(51, 65, 85, 0.95)',
+    color: '#f1f5f9',
+    padding: '8px 12px',
+    borderRadius: '8px',
+    fontSize: '11px',
+    fontWeight: '500',
+    whiteSpace: 'nowrap',
+    backdropFilter: 'blur(10px)',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    pointerEvents: 'none',
+    opacity: 0,
+    transition: 'opacity 0.2s ease, transform 0.2s ease',
+    zIndex: 1000,
+  },
+
+  buttonTooltipVisible: {
+    opacity: 1,
+    transform: 'translateX(-50%) translateY(-2px)',
+  },
   
   // Input section for phone calls
   phoneInputSection: {
@@ -319,7 +425,7 @@ const styles = {
     left: "500px", // Moved further to the right from 400px to 500px
     background: "white",
     padding: "20px",
-    borderRadius: "16px",
+    borderRadius: "20px", // More rounded - changed from 16px to 20px
     boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
     border: "1px solid #e2e8f0",
     display: "flex",
@@ -332,10 +438,14 @@ const styles = {
   phoneInput: {
     padding: "12px 16px",
     border: "1px solid #d1d5db",
-    borderRadius: "8px",
+    borderRadius: "12px", // More rounded - changed from 8px to 12px
     fontSize: "14px",
     outline: "none",
-    transition: "border-color 0.2s ease",
+    transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+    "&:focus": {
+      borderColor: "#10b981",
+      boxShadow: "0 0 0 3px rgba(16,185,129,0.1)"
+    }
   },
   
 
@@ -453,16 +563,19 @@ const styles = {
     fontStyle: "italic",
   },
 
-  phoneButton: (isActive) => ({
-    padding: "12px 20px",
+  // Call Me button style (rectangular box)
+  callMeButton: (isActive) => ({
+    padding: "12px 24px",
     background: isActive ? "#ef4444" : "#67d8ef",
     color: "white",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "8px", // More box-like - less rounded
     cursor: "pointer",
     fontSize: "14px",
     fontWeight: "600",
     transition: "all 0.2s ease",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+    minWidth: "120px", // Ensure consistent width
   }),
 
   // Help button in top right corner
@@ -723,7 +836,7 @@ const HelpButton = () => {
           Design a single agent or orchestrate multiple specialist agents. The framework allows you to build your voice agent from scratch, incorporate memory, configure actions, and fine-tune your TTS and STT layers.
         </div>
         <div style={styles.helpTooltipText}>
-          🤔 <strong>How to use:</strong> Click the microphone to start speaking, or use the "Call Me" button to receive a phone call. Try different scenarios like claims intake, general questions, or authentication.
+          🤔 <strong>Try asking about:</strong> Insurance claims, policy questions, authentication, or general inquiries.
         </div>
         <div style={styles.helpTooltipText}>
          📑 <a 
@@ -1540,7 +1653,25 @@ const ChatBubble = ({ message }) => {
 /* ------------------------------------------------------------------ *
  *  MAIN COMPONENT
  * ------------------------------------------------------------------ */
-export default function RealTimeVoiceApp() {
+function RealTimeVoiceApp() {
+  
+  // Add CSS animation for pulsing effect
+  React.useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+      }
+    `;
+    document.head.appendChild(style);
+    
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+
   /* ---------- state ---------- */
   const [messages, setMessages] = useState([
     // { speaker: "User", text: "Hello, I need help with my insurance claim." },
@@ -1552,6 +1683,16 @@ export default function RealTimeVoiceApp() {
   const [callActive, setCallActive]   = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState(null);
   const [showPhoneInput, setShowPhoneInput] = useState(false);
+
+  // Tooltip states
+  const [showResetTooltip, setShowResetTooltip] = useState(false);
+  const [showMicTooltip, setShowMicTooltip] = useState(false);
+  const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
+
+  // Hover states for enhanced button effects
+  const [resetHovered, setResetHovered] = useState(false);
+  const [micHovered, setMicHovered] = useState(false);
+  const [phoneHovered, setPhoneHovered] = useState(false);
 
   // /* ---------- health monitoring ---------- */
   // const { 
@@ -1757,8 +1898,18 @@ export default function RealTimeVoiceApp() {
         }
         socketRef.current = null;
       }
+      
+      // Add session stopped message instead of clearing everything
+      setMessages(m => [...m, { 
+        speaker: "System", 
+        text: "🛑 Session stopped" 
+      }]);
+      setActiveSpeaker("System");
       setRecording(false);
       appendLog("🛑 PCM streaming stopped");
+      
+      // Don't clear all state - preserve chat history and UI
+      // Just stop the recording session
     };
 
     // Helper to dedupe consecutive identical messages
@@ -1991,42 +2142,132 @@ export default function RealTimeVoiceApp() {
           </div>
         </div>
 
-        {/* Control Buttons */}
+        {/* Control Buttons - Clean 3-button layout */}
         <div style={styles.controlSection}>
           <div style={styles.controlContainer}>
-            {/* Microphone Button */}
-            <button
-              style={styles.controlButton(recording)}
-              onClick={recording ? stopRecognition : startRecognition}
-              title={recording ? "Stop Recording" : "Start Recording"}
-            >
-              🎤
-            </button>
             
-            {/* Phone Call Button */}
-            <button
-              style={styles.controlButton(false, 'phone')}
-              onClick={() => setShowPhoneInput(!showPhoneInput)}
-              title="Phone Call"
-            >
-              📞
-            </button>
-            
-            {/* Close Button */}
-            <button
-              style={styles.controlButton(false, 'close')}
-              onClick={stopRecognition}
-              title="End Session"
-            >
-              ✕
-            </button>
+            {/* LEFT: Reset/Restart Session Button */}
+            <div style={{ position: 'relative' }}>
+              <button
+                style={styles.resetButton(false, resetHovered)}
+                onMouseEnter={() => {
+                  setShowResetTooltip(true);
+                  setResetHovered(true);
+                }}
+                onMouseLeave={() => {
+                  setShowResetTooltip(false);
+                  setResetHovered(false);
+                }}
+                onClick={() => {
+                  // Reset entire session - clear chat and restart
+                  setMessages([]);
+                  setActiveSpeaker(null);
+                  stopRecognition();
+                  setCallActive(false);
+                  setShowPhoneInput(false);
+                  appendLog("🔄️ Session reset - starting fresh");
+                  
+                  // Add welcome message
+                  setTimeout(() => {
+                    setMessages([{ 
+                      speaker: "System", 
+                      text: "✅ Session restarted. Ready for a new conversation!" 
+                    }]);
+                  }, 500);
+                }}
+              >
+                ⟲
+              </button>
+              
+              {/* Tooltip */}
+              <div 
+                style={{
+                  ...styles.buttonTooltip,
+                  ...(showResetTooltip ? styles.buttonTooltipVisible : {})
+                }}
+              >
+                Reset conversation & start fresh
+              </div>
+            </div>
+
+            {/* MIDDLE: Microphone Button */}
+            <div style={{ position: 'relative' }}>
+              <button
+                style={styles.micButton(recording, micHovered)}
+                onMouseEnter={() => {
+                  setShowMicTooltip(true);
+                  setMicHovered(true);
+                }}
+                onMouseLeave={() => {
+                  setShowMicTooltip(false);
+                  setMicHovered(false);
+                }}
+                onClick={recording ? stopRecognition : startRecognition}
+              >
+                {recording ? "🛑" : "🎤"}
+              </button>
+              
+              {/* Tooltip */}
+              <div 
+                style={{
+                  ...styles.buttonTooltip,
+                  ...(showMicTooltip ? styles.buttonTooltipVisible : {})
+                }}
+              >
+                {recording ? "Stop recording your voice" : "Start voice conversation"}
+              </div>
+            </div>
+
+            {/* RIGHT: Phone Call Button */}
+            <div style={{ position: 'relative' }}>
+              <button
+                style={styles.phoneButton(callActive, phoneHovered)}
+                onMouseEnter={() => {
+                  setShowPhoneTooltip(true);
+                  setPhoneHovered(true);
+                }}
+                onMouseLeave={() => {
+                  setShowPhoneTooltip(false);
+                  setPhoneHovered(false);
+                }}
+                onClick={() => {
+                  if (callActive) {
+                    // Hang up call
+                    stopRecognition();
+                    setCallActive(false);
+                    setMessages(prev => [...prev, { 
+                      speaker: "System",
+                      text: "📞 Call ended" 
+                    }]);
+                  } else {
+                    // Show phone input
+                    setShowPhoneInput(!showPhoneInput);
+                  }
+                }}
+              >
+                {callActive ? "📵" : "📞"}
+              </button>
+              
+              {/* Tooltip */}
+              <div 
+                style={{
+                  ...styles.buttonTooltip,
+                  ...(showPhoneTooltip ? styles.buttonTooltipVisible : {})
+                }}
+              >
+                {callActive ? "Hang up the phone call" : "Make a phone call"}
+              </div>
+            </div>
+
           </div>
         </div>
-      </div>
 
-      {/* Phone Input Panel */}
+        {/* Phone Input Panel */}
       {showPhoneInput && (
         <div style={styles.phoneInputSection}>
+          <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
+            {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
+          </div>
           <input
             type="tel"
             value={targetPhoneNumber}
@@ -2037,13 +2278,21 @@ export default function RealTimeVoiceApp() {
           />
           <button
             onClick={callActive ? stopRecognition : startACSCall}
-            style={styles.phoneButton(callActive)}
+            style={styles.callMeButton(callActive)}
+            title={callActive ? "🔴 Hang up call" : "📞 Start phone call"}
           >
-            {callActive ? "End Call" : "Call"}
+            {callActive ? "🔴 Hang Up" : "📞 Call Me"}
           </button>
         </div>
       )}
+      </div>
     </div>
   );
 }
 
+// Main App component wrapper
+function App() {
+  return <RealTimeVoiceApp />;
+}
+
+export default App;

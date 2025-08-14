@@ -9,13 +9,12 @@ Public API
 ----------
 process_gpt_response() – Stream completions, emit TTS chunks, run tools.
 """
-
 import asyncio
 import json
 import os
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from fastapi import WebSocket
 from opentelemetry import trace
@@ -40,15 +39,12 @@ from apps.rtagent.backend.src.shared_ws import (
     send_tts_audio,
 )
 from apps.rtagent.backend.settings import AZURE_OPENAI_ENDPOINT
-from src.enums.monitoring import SpanAttr
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
 from apps.rtagent.backend.src.utils.tracing_utils import (
     create_service_handler_attrs,
     create_service_dependency_attrs,
-    log_with_context,
 )
-
 
 if TYPE_CHECKING:  # pragma: no cover – typing-only import
     from src.stateful.state_managment import MemoManager  # noqa: F401
@@ -60,18 +56,18 @@ tracer = trace.get_tracer(__name__)
 
 # Performance optimization: Cache tracing configuration
 _GPT_FLOW_TRACING = os.getenv("GPT_FLOW_TRACING", "true").lower() == "true"
-_STREAM_TRACING = (
-    os.getenv("STREAM_TRACING", "false").lower() == "true"
-)  # High frequency ops
+_STREAM_TRACING = os.getenv("STREAM_TRACING", "false").lower() == "true"  # High freq
 
+JSONDict = Dict[str, Any]
 
-def _get_agent_voice_config(
-    cm: "MemoManager",
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
+# ---------------------------------------------------------------------------
+# Voice + sender helpers
+# ---------------------------------------------------------------------------
+def _get_agent_voice_config(cm: "MemoManager") -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Extract agent voice configuration from memory manager.
 
-    Returns:
-        Tuple of (voice_name, voice_style, voice_rate) or (None, None, None) if not available
+    :param cm: The active MemoManager instance.
+    :return: Tuple of (voice_name, voice_style, voice_rate) or (None, None, None).
     """
     if cm is None:
         logger.warning("MemoManager is None, using default voice configuration")
@@ -82,14 +78,256 @@ def _get_agent_voice_config(
         voice_style = cm.get_value_from_corememory("current_agent_voice_style", "chat")
         voice_rate = cm.get_value_from_corememory("current_agent_voice_rate", "+3%")
         return voice_name, voice_style, voice_rate
-    except Exception as e:
-        logger.warning(f"Failed to get agent voice config: {e}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to get agent voice config: %s", exc)
         return None, None, None
 
 
+def _get_agent_sender_name(cm: "MemoManager", *, include_autoauth: bool = True) -> str:
+    """Resolve the visible sender name for dashboard / UI.
+
+    This is centralized to keep mapping consistent across streaming, final
+    messages, and tool broadcasts. To preserve existing behavior, callers can
+    control whether the "AutoAuth" label maps to the Auth Agent explicitly.
+
+    :param cm: MemoManager instance for reading context.
+    :param include_autoauth: When True, map active_agent=="AutoAuth" to
+        "Auth Agent" (matches existing streaming path behavior). When False,
+        keep legacy behavior for final/tool broadcast sites.
+    :return: Human-friendly speaker label.
+    """
+    try:
+        active_agent = cm.get_value_from_corememory("active_agent") if cm else None
+        authenticated = cm.get_value_from_corememory("authenticated") if cm else False
+
+        if active_agent == "Claims":
+            return "Claims Specialist"
+        if active_agent == "General":
+            return "General Info"
+        if include_autoauth and active_agent == "AutoAuth":
+            return "Auth Agent"
+        if not authenticated:
+            return "Auth Agent"
+        return "Assistant"
+    except Exception:  # noqa: BLE001
+        return "Assistant"
+
+
 # ---------------------------------------------------------------------------
-# Main entry-point
+# Emission helpers
 # ---------------------------------------------------------------------------
+
+async def _emit_streaming_text(
+    text: str,
+    ws: WebSocket,
+    is_acs: bool,
+    cm: "MemoManager",
+    call_connection_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> None:
+    """Emit one assistant text chunk via either ACS or WebSocket + TTS.
+
+    :param text: The text chunk to emit.
+    :param ws: Active WebSocket.
+    :param is_acs: Whether to route via ACS.
+    :param cm: MemoManager for voice config and labels.
+    :param call_connection_id: For tracing correlation.
+    :param session_id: For tracing correlation.
+    :return: None
+    """
+    voice_name, voice_style, voice_rate = _get_agent_voice_config(cm)
+
+    if _STREAM_TRACING:
+        span_attrs = create_service_handler_attrs(
+            service_name="gpt_flow",
+            call_connection_id=call_connection_id,
+            session_id=session_id,
+            operation="emit_streaming_text",
+            text_length=len(text),
+            is_acs=is_acs,
+            chunk_type="streaming_text",
+        )
+        with tracer.start_as_current_span(
+            "gpt_flow.emit_streaming_text", attributes=span_attrs
+        ) as span:
+            try:
+                if is_acs:
+                    span.set_attribute("output_channel", "acs")
+                    await send_response_to_acs(
+                        ws,
+                        text,
+                        latency_tool=ws.state.lt,
+                        voice_name=voice_name,
+                        voice_style=voice_style,
+                        rate=voice_rate,
+                    )
+                else:
+                    span.set_attribute("output_channel", "websocket_tts")
+                    await send_tts_audio(
+                        text,
+                        ws,
+                        latency_tool=ws.state.lt,
+                        voice_name=voice_name,
+                        voice_style=voice_style,
+                        rate=voice_rate,
+                    )
+                    speaker = _get_agent_sender_name(cm, include_autoauth=True)
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "type": "assistant_streaming",
+                                "content": text,
+                                "speaker": speaker,
+                            }
+                        )
+                    )
+                span.add_event("text_emitted", {"text_length": len(text)})
+            except Exception as exc:  # noqa: BLE001
+                span.record_exception(exc)
+                logger.exception("Failed to emit streaming text")
+                raise
+    else:
+        # Fast path when high-frequency tracing is disabled
+        if is_acs:
+            await send_response_to_acs(
+                ws,
+                text,
+                latency_tool=ws.state.lt,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                rate=voice_rate,
+            )
+        else:
+            await send_tts_audio(
+                text,
+                ws,
+                latency_tool=ws.state.lt,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                rate=voice_rate,
+            )
+            speaker = _get_agent_sender_name(cm, include_autoauth=True)
+            await ws.send_text(
+                json.dumps(
+                    {"type": "assistant_streaming", "content": text, "speaker": speaker}
+                )
+            )
+
+
+async def _broadcast_dashboard(
+    ws: WebSocket,
+    cm: "MemoManager",
+    message: str,
+    *,
+    include_autoauth: bool,
+) -> None:
+    """Broadcast a message to the relay dashboard with correct speaker label.
+
+    :param ws: WebSocket carrying application state.
+    :param cm: MemoManager for resolving labels.
+    :param message: Text to broadcast.
+    :param include_autoauth: Match legacy behavior at call-sites.
+    :return: None
+    """
+    try:
+        sender = _get_agent_sender_name(cm, include_autoauth=include_autoauth)
+        logger.info(f"🎯 _broadcast_dashboard called: sender='{sender}', include_autoauth={include_autoauth}, message='{message[:50]}...'")
+        await broadcast_message(ws.app.state.clients, message, sender)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to broadcast dashboard message: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Chat + streaming helpers
+# ---------------------------------------------------------------------------
+
+def _build_chat_kwargs(
+    *,
+    history: List[JSONDict],
+    model_id: str,
+    temperature: float,
+    top_p: float,
+    max_tokens: int,
+    tools: Optional[List[JSONDict]],
+) -> JSONDict:
+    """Build Azure OpenAI chat-completions kwargs.
+
+    :return: Dict suitable for az_openai_client.chat.completions.create(**kwargs)
+    """
+    return {
+        "stream": True,
+        "messages": history,
+        "model": model_id,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "top_p": top_p,
+        "tools": tools or [],
+        "tool_choice": "auto" if (tools or []) else "none",
+    }
+
+class _ToolCallState:
+    """Minimal state carrier for a single tool call parsed from stream deltas."""
+
+    def __init__(self) -> None:
+        self.started: bool = False
+        self.name: str = ""
+        self.call_id: str = ""
+        self.args_json: str = ""
+
+async def _consume_openai_stream(
+    response_stream: Any,
+    ws: WebSocket,
+    is_acs: bool,
+    cm: "MemoManager",
+    call_connection_id: Optional[str],
+    session_id: Optional[str],
+) -> Tuple[str, _ToolCallState]:
+    """Consume the AOAI stream, emitting TTS chunks as punctuation arrives.
+
+    Preserves exact flushing behavior (flush on token \in TTS_END), while
+    collecting the final assistant text and any tool call metadata.
+
+    :return: (full_text, tool_state)
+    """
+    collected: List[str] = []  # temporary sentence buffer
+    final_chunks: List[str] = []  # full assistant text
+    tool = _ToolCallState()
+
+    for chunk in response_stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+
+        # Tool-call aggregation (function name + arguments as they stream)
+        if getattr(delta, "tool_calls", None):
+            tc = delta.tool_calls[0]
+            tool.call_id = tc.id or tool.call_id
+            tool.name = getattr(tc.function, "name", None) or tool.name
+            tool.args_json += getattr(tc.function, "arguments", None) or ""
+            if not tool.started:
+                tool.started = True
+            continue
+
+        # Text streaming (flush on boundaries in TTS_END)
+        if getattr(delta, "content", None):
+            collected.append(delta.content)
+            if delta.content in TTS_END:
+                streaming = add_space("".join(collected).strip())
+                logger.info("process_gpt_response – streaming text chunk: %s", streaming)
+                await _emit_streaming_text(
+                    streaming, ws, is_acs, cm, call_connection_id, session_id
+                )
+                final_chunks.append(streaming)
+                collected.clear()
+
+    # Handle trailing content (no terminating punctuation)
+    if collected:
+        pending = "".join(collected).strip()
+        if pending:
+            await _emit_streaming_text(pending, ws, is_acs, cm, call_connection_id, session_id)
+            final_chunks.append(pending)
+
+    return "".join(final_chunks).strip(), tool
 
 
 async def process_gpt_response(  # noqa: D401
@@ -127,7 +365,6 @@ async def process_gpt_response(  # noqa: D401
     Returns:
         Optional tool result dictionary if a tool was executed; otherwise *None*.
     """
-
     # Create handler span for GPT flow service
     span_attrs = create_service_handler_attrs(
         service_name="gpt_flow",
@@ -147,23 +384,20 @@ async def process_gpt_response(  # noqa: D401
     with tracer.start_as_current_span(
         "gpt_flow.process_response", attributes=span_attrs
     ) as span:
-        agent_history: List[Dict[str, Any]] = cm.get_history(agent_name)
+        # Build history and tools
+        agent_history: List[JSONDict] = cm.get_history(agent_name)
         agent_history.append({"role": "user", "content": user_prompt})
-
         tool_set = available_tools or DEFAULT_TOOLS
         span.set_attribute("tools.count", len(tool_set))
 
-        chat_kwargs: Dict[str, Any] = {
-            "stream": True,
-            "messages": agent_history,
-            "model": model_id,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": top_p,
-            "tools": tool_set,
-            "tool_choice": "auto" if tool_set else "none",
-        }
-
+        chat_kwargs = _build_chat_kwargs(
+            history=agent_history,
+            model_id=model_id,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            tools=tool_set,
+        )
         span.set_attribute("chat.history_length", len(agent_history))
         logger.debug("process_gpt_response – chat kwargs prepared: %s", chat_kwargs)
 
@@ -180,108 +414,52 @@ async def process_gpt_response(  # noqa: D401
         aoai_endpoint = AZURE_OPENAI_ENDPOINT
         host = urlparse(aoai_endpoint).netloc or "api.openai.azure.com"
 
-        with tracer.start_as_current_span(
-            "gpt_flow.stream_completion",
-            kind=SpanKind.CLIENT,
-            attributes={
-                **azure_openai_attrs,
-                "peer.service": "azure-openai",
-                "server.address": host,
-                "server.port": 443,
-                "http.method": "POST",
-                "http.url": f"https://{host}/openai/deployments/{model_id}/chat/completions",
-                "pipeline.stage": "orchestrator -> aoai",
-            },
-        ) as stream_span:
-            response = az_openai_client.chat.completions.create(**chat_kwargs)
-            stream_span.add_event("openai_stream_started")
+        tool_state = _ToolCallState()
+        try:
+            with tracer.start_as_current_span(
+                "gpt_flow.stream_completion",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    **azure_openai_attrs,
+                    "peer.service": "azure-openai",
+                    "server.address": host,
+                    "server.port": 443,
+                    "http.method": "POST",
+                    "http.url": f"https://{host}/openai/deployments/{model_id}/chat/completions",
+                    "pipeline.stage": "orchestrator -> aoai",
+                },
+            ) as stream_span:
+                response = az_openai_client.chat.completions.create(**chat_kwargs)
+                stream_span.add_event("openai_stream_started")
 
-            collected: List[str] = []  # Temporary buffer for partial tokens.
-            final_chunks: List[str] = []  # All streamed assistant chunks.
+                # Consume the stream and emit chunks as before
+                full_text, tool_state = await _consume_openai_stream(
+                    response, ws, is_acs, cm, call_connection_id, session_id
+                )
 
-            tool_started = False
-            tool_name = ""
-            tool_id = ""
-            args = ""
-            chunk_count = 0
+                stream_span.set_attribute("tool_call_detected", tool_state.started)
+                if tool_state.started:
+                    stream_span.set_attribute("tool_name", tool_state.name)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("AOAI streaming failed")
+            span.record_exception(exc)
+            raise
 
-            for chunk in response:
-                chunk_count += 1
-                if not chunk.choices:
-                    continue  # Skip empty chunks.
-
-                delta = chunk.choices[0].delta
-
-                if delta.tool_calls:
-                    tc = delta.tool_calls[0]
-                    tool_id = tc.id or tool_id
-                    tool_name = tc.function.name or tool_name
-                    args += tc.function.arguments or ""
-                    if not tool_started:  # First tool call chunk
-                        tool_started = True
-                        stream_span.add_event(
-                            "tool_call_detected", {"tool_name": tool_name}
-                        )
-                    continue
-
-                if delta.content:
-                    collected.append(delta.content)
-                    if delta.content in TTS_END:  # Time to flush a sentence.
-                        streaming = add_space("".join(collected).strip())
-                        logger.info(
-                            "process_gpt_response – streaming text chunk: %s",
-                            streaming,
-                        )
-                        await _emit_streaming_text(
-                            streaming, ws, is_acs, cm, call_connection_id, session_id
-                        )
-                        final_chunks.append(streaming)
-                        collected.clear()
-
-            stream_span.set_attribute("chunks_processed", chunk_count)
-            stream_span.set_attribute("tool_call_detected", tool_started)
-            if tool_started:
-                stream_span.set_attribute("tool_name", tool_name)
-
-        # Handle remaining collected content
-        if collected:
-            pending = "".join(collected).strip()
-            await _emit_streaming_text(
-                pending, ws, is_acs, cm, call_connection_id, session_id
-            )
-            final_chunks.append(pending)
-
-        full_text = "".join(final_chunks).strip()
+        # Finalize assistant text
         if full_text:
             agent_history.append({"role": "assistant", "content": full_text})
             await push_final(ws, "assistant", full_text, is_acs=is_acs)
             # Broadcast the final assistant response to relay dashboard
-            try:
-                # Get current agent name for specialist display
-                active_agent = (
-                    cm.get_value_from_corememory("active_agent") if cm else None
-                )
-                authenticated = (
-                    cm.get_value_from_corememory("authenticated") if cm else False
-                )
-
-                if active_agent == "Claims":
-                    agent_sender = "Claims Specialist"
-                elif active_agent == "General":
-                    agent_sender = "General Info"
-                elif not authenticated:  # Auth agent (before authentication)
-                    agent_sender = "Auth Agent"
-                else:
-                    agent_sender = "Assistant"
-                await broadcast_message(ws.app.state.clients, full_text, agent_sender)
-            except Exception as e:
-                logger.error(f"Failed to broadcast assistant message: {e}")
+            await _broadcast_dashboard(
+                ws, cm, full_text, include_autoauth=False  # preserve legacy behavior
+            )
             span.set_attribute("response.length", len(full_text))
 
-        # Handle follow‑up tool call (if any)
-        if tool_started:
+        # Handle follow-up tool call (if any)
+        if tool_state.started:
             span.add_event(
-                "tool_execution_starting", {"tool_name": tool_name, "tool_id": tool_id}
+                "tool_execution_starting",
+                {"tool_name": tool_state.name, "tool_id": tool_state.call_id},
             )
 
             agent_history.append(
@@ -290,17 +468,20 @@ async def process_gpt_response(  # noqa: D401
                     "content": None,
                     "tool_calls": [
                         {
-                            "id": tool_id,
+                            "id": tool_state.call_id,
                             "type": "function",
-                            "function": {"name": tool_name, "arguments": args},
+                            "function": {
+                                "name": tool_state.name,
+                                "arguments": tool_state.args_json,
+                            },
                         }
                     ],
                 }
             )
             result = await _handle_tool_call(
-                tool_name,
-                tool_id,
-                args,
+                tool_state.name,
+                tool_state.call_id,
+                tool_state.args_json,
                 cm,
                 ws,
                 agent_name,
@@ -314,130 +495,24 @@ async def process_gpt_response(  # noqa: D401
                 session_id,
             )
             if result is not None:
-                # Persist tool output and update slots in the background to avoid blocking response flow
-                async def persist_tool_results():
-                    cm.persist_tool_output(tool_name, result)
+                # Persist tool output and update slots in the background
+                async def persist_tool_results() -> None:
+                    cm.persist_tool_output(tool_state.name, result)
                     if isinstance(result, dict) and "slots" in result:
                         cm.update_slots(result["slots"])
 
                 asyncio.create_task(persist_tool_results())
                 span.set_attribute("tool.execution_success", True)
-                span.add_event("tool_execution_completed", {"tool_name": tool_name})
+                span.add_event("tool_execution_completed", {"tool_name": tool_state.name})
             return result
 
         span.set_attribute("completion_type", "text_only")
         return None
 
 
-# ===========================================================================
-# Helper routines – kept functionally identical
-# ===========================================================================
-
-
-def _get_agent_sender_name(cm: "MemoManager") -> str:
-    """Get the agent sender name for display purposes."""
-    try:
-        active_agent = (
-            cm.get_value_from_corememory("active_agent") if cm else None
-        )
-        authenticated = (
-            cm.get_value_from_corememory("authenticated") if cm else False
-        )
-
-        if active_agent == "Claims":
-            return "Claims Specialist"
-        elif active_agent == "General":
-            return "General Info"
-        elif not authenticated:  # Auth agent (before authentication)
-            return "Auth Agent"
-        else:
-            return "Assistant"
-    except Exception:
-        return "Assistant"
-
-
-async def _emit_streaming_text(
-    text: str,
-    ws: WebSocket,
-    is_acs: bool,
-    cm: "MemoManager",
-    call_connection_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-) -> None:  # noqa: D401,E501
-    """Emit one assistant text chunk via either ACS or WebSocket + TTS."""
-    if _STREAM_TRACING:
-        span_attrs = create_service_handler_attrs(
-            service_name="gpt_flow",
-            call_connection_id=call_connection_id,
-            session_id=session_id,
-            operation="emit_streaming_text",
-            text_length=len(text),
-            is_acs=is_acs,
-            chunk_type="streaming_text",
-        )
-
-        with tracer.start_as_current_span(
-            "gpt_flow.emit_streaming_text", attributes=span_attrs
-        ) as span:
-            # Get agent voice configuration
-            agent_voice, agent_voice_style, agent_voice_rate = _get_agent_voice_config(
-                cm
-            )
-
-            if is_acs:
-                span.set_attribute("output_channel", "acs")
-                # Note: broadcast_message is handled separately for final responses to avoid duplication
-                await send_response_to_acs(
-                    ws,
-                    text,
-                    latency_tool=ws.state.lt,
-                    voice_name=agent_voice,
-                    voice_style=agent_voice_style,
-                    rate=agent_voice_rate,
-                )
-            else:
-                span.set_attribute("output_channel", "websocket_tts")
-                await send_tts_audio(
-                    text,
-                    ws,
-                    latency_tool=ws.state.lt,
-                    voice_name=agent_voice,
-                    voice_style=agent_voice_style,
-                    rate=agent_voice_rate,
-                )
-                agent_sender_name = _get_agent_sender_name(cm)
-                await ws.send_text(
-                    json.dumps({"type": "assistant_streaming", "content": text, "speaker": agent_sender_name})
-                )
-
-            span.add_event("text_emitted", {"text_length": len(text)})
-    else:
-        # Fast path when high-frequency tracing is disabled
-        # Get agent voice configuration
-        agent_voice, agent_voice_style, agent_voice_rate = _get_agent_voice_config(cm)
-
-        if is_acs:
-            await send_response_to_acs(
-                ws,
-                text,
-                latency_tool=ws.state.lt,
-                voice_name=agent_voice,
-                voice_style=agent_voice_style,
-                rate=agent_voice_rate,
-            )
-        else:
-            await send_tts_audio(
-                text,
-                ws,
-                latency_tool=ws.state.lt,
-                voice_name=agent_voice,
-                voice_style=agent_voice_style,
-                rate=agent_voice_rate,
-            )
-            agent_sender_name = _get_agent_sender_name(cm)
-            await ws.send_text(
-                json.dumps({"type": "assistant_streaming", "content": text, "speaker": agent_sender_name})
-            )
+# ---------------------------------------------------------------------------
+# Tool handling
+# ---------------------------------------------------------------------------
 
 
 async def _handle_tool_call(  # noqa: PLR0913
@@ -456,7 +531,11 @@ async def _handle_tool_call(  # noqa: PLR0913
     call_connection_id: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Execute a tool, emit telemetry events, and trigger GPT follow‑up."""
+    """Execute a tool, emit telemetry events, and trigger GPT follow‑up.
+
+    :raises ValueError: If tool_name does not exist in function_mapping.
+    :return: Parsed result from the tool execution.
+    """
     with create_trace_context(
         name="gpt_flow.handle_tool_call",
         call_connection_id=call_connection_id,
@@ -469,29 +548,25 @@ async def _handle_tool_call(  # noqa: PLR0913
             "args_length": len(args) if args else 0,
         },
     ) as trace_ctx:
-        params: Dict[str, Any] = json.loads(args or "{}")
+        params: JSONDict = json.loads(args or "{}")
         fn = function_mapping.get(tool_name)
         if fn is None:
             trace_ctx.set_attribute("error", f"Unknown tool '{tool_name}'")
             raise ValueError(f"Unknown tool '{tool_name}'")
 
         trace_ctx.set_attribute("tool.parameters_count", len(params))
-        call_id = uuid.uuid4().hex[:8]
-        trace_ctx.set_attribute("tool.call_id", call_id)
+        call_short_id = uuid.uuid4().hex[:8]
+        trace_ctx.set_attribute("tool.call_id", call_short_id)
 
-        await push_tool_start(ws, call_id, tool_name, params, is_acs=is_acs)
-        trace_ctx.add_event("tool_start_pushed", {"call_id": call_id})
+        await push_tool_start(ws, call_short_id, tool_name, params, is_acs=is_acs)
+        trace_ctx.add_event("tool_start_pushed", {"call_id": call_short_id})
 
         # Execute tool with nested tracing
         with create_trace_context(
             name=f"gpt_flow.execute_tool.{tool_name}",
             call_connection_id=call_connection_id,
             session_id=session_id,
-            metadata={
-                "tool_name": tool_name,
-                "call_id": call_id,
-                "parameters": params,
-            },
+            metadata={"tool_name": tool_name, "call_id": call_short_id, "parameters": params},
         ) as exec_ctx:
             t0 = time.perf_counter()
             result_raw = await fn(params)  # Tool functions are expected to be async.
@@ -500,9 +575,7 @@ async def _handle_tool_call(  # noqa: PLR0913
             exec_ctx.set_attribute("execution.duration_ms", elapsed_ms)
             exec_ctx.set_attribute("execution.success", True)
 
-            result: Dict[str, Any] = (
-                json.loads(result_raw) if isinstance(result_raw, str) else result_raw
-            )
+            result: JSONDict = json.loads(result_raw) if isinstance(result_raw, str) else result_raw
             exec_ctx.set_attribute("result.type", type(result).__name__)
 
         agent_history = cm.get_history(agent_name)
@@ -516,34 +589,13 @@ async def _handle_tool_call(  # noqa: PLR0913
         )
 
         await push_tool_end(
-            ws, call_id, tool_name, "success", elapsed_ms, result=result, is_acs=is_acs
+            ws, call_short_id, tool_name, "success", elapsed_ms, result=result, is_acs=is_acs
         )
         trace_ctx.add_event("tool_end_pushed", {"elapsed_ms": elapsed_ms})
 
         # Broadcast tool completion to relay dashboard (only for ACS calls)
         if is_acs:
-            try:
-                # Get current agent name for specialist display
-                active_agent = (
-                    cm.get_value_from_corememory("active_agent") if cm else None
-                )
-                authenticated = (
-                    cm.get_value_from_corememory("authenticated") if cm else False
-                )
-
-                if active_agent == "Claims":
-                    agent_sender = "Claims Specialist"
-                elif active_agent == "General":
-                    agent_sender = "General Info"
-                elif not authenticated:  # Auth agent (before authentication)
-                    agent_sender = "Auth Agent"
-                else:
-                    agent_sender = "Assistant"
-                await broadcast_message(
-                    ws.app.state.clients, f"🛠️ {tool_name} ✔️", agent_sender
-                )
-            except Exception as e:
-                logger.error(f"Failed to broadcast tool completion: {e}")
+            await _broadcast_dashboard(ws, cm, f"🛠️ {tool_name} ✔️", include_autoauth=False)
 
         # Handle tool follow-up with tracing
         trace_ctx.add_event("starting_tool_followup")
