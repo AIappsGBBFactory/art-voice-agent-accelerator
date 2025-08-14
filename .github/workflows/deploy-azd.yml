@@ -58,20 +58,6 @@ on:
         description: 'Container name for Terraform state'
         required: false
         type: string
-  push:
-    branches:
-      - main
-    paths:
-      - 'infra/terraform/**'
-      - 'src/**'
-      - 'apps/**'
-      - 'azure.yaml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'infra/terraform/**'
-      - 'azure.yaml'
 
 env:
   # CI/CD mode configuration
@@ -222,6 +208,11 @@ jobs:
           EOF
           
           echo "✅ Backend configured"
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
 
       # ========================================================================
       # PREVIEW MODE (for PRs)
@@ -267,6 +258,11 @@ jobs:
           fi
           
           echo "✅ Preview output ready"
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
         
           
       - name: 💬 Comment PR with Plan Summary
@@ -355,6 +351,11 @@ jobs:
               exit 1
               ;;
           esac
+        env:
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: true
           
       - name: 📤 Extract Deployment Outputs
         id: extract-outputs
