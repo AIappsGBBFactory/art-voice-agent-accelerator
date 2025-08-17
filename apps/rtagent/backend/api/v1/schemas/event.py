@@ -4,34 +4,18 @@ Event-related API schemas.
 Pydantic schemas for event management API requests and responses.
 """
 
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any, Literal
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class EventMetricsResponse(BaseModel):
     """Response model for event metrics."""
 
-    total_events_processed: int = Field(
-        ..., description="Total number of events processed", example=1500
-    )
-    events_by_type: Dict[str, int] = Field(
-        ...,
-        description="Event count by type",
-        example={
-            "Microsoft.Communication.CallConnected": 450,
-            "Microsoft.Communication.CallDisconnected": 430,
-            "Microsoft.Communication.DtmfToneReceived": 120,
-        },
-    )
-    average_processing_time_ms: float = Field(
-        ..., description="Average processing time in milliseconds", example=12.5
-    )
-    error_rate_percent: float = Field(
-        ..., description="Error rate as percentage", example=0.2
-    )
-    active_handlers: int = Field(
-        ..., description="Number of active event handlers", example=7
-    )
+    total_events_processed: int = Field(..., description="Total number of events processed", json_schema_extra={"example": 1500})
+    events_by_type: Dict[str, int] = Field(..., description="Event count by type", json_schema_extra={"example": {"Microsoft.Communication.CallConnected": 450, "Microsoft.Communication.CallDisconnected": 430, "Microsoft.Communication.DtmfToneReceived": 120}})
+    average_processing_time_ms: float = Field(..., description="Average processing time in milliseconds", json_schema_extra={"example": 12.5})
+    error_rate_percent: float = Field(..., description="Error rate as percentage", json_schema_extra={"example": 0.2})
+    active_handlers: int = Field(..., description="Number of active event handlers", json_schema_extra={"example": 7})
 
     class Config:
         json_schema_extra = {
@@ -51,22 +35,11 @@ class EventMetricsResponse(BaseModel):
 class EventHandlerInfo(BaseModel):
     """Information about an event handler."""
 
-    name: str = Field(
-        ..., description="Handler function/class name", example="handle_call_connected"
-    )
-    event_types: List[str] = Field(
-        ...,
-        description="Event types handled",
-        example=["Microsoft.Communication.CallConnected"],
-    )
-    handler_type: str = Field(
-        ...,
-        description="Handler implementation type",
-        example="function",
-        enum=["function", "class"],
-    )
-    domain: str = Field(..., description="Event domain", example="call_events")
-    is_active: bool = Field(..., description="Whether handler is active", example=True)
+    name: str = Field(..., description="Handler function/class name", json_schema_extra={"example": "handle_call_connected"})
+    event_types: List[str] = Field(..., description="Event types handled", json_schema_extra={"example": ["Microsoft.Communication.CallConnected"]})
+    handler_type: Literal["function", "class"] = Field(..., description="Handler implementation type", json_schema_extra={"example": "function"})
+    domain: str = Field(..., description="Event domain", json_schema_extra={"example": "call_events"})
+    is_active: bool = Field(..., description="Whether handler is active", json_schema_extra={"example": True})
 
     class Config:
         json_schema_extra = {
@@ -83,14 +56,10 @@ class EventHandlerInfo(BaseModel):
 class EventSystemStatus(BaseModel):
     """Event system status response."""
 
-    is_healthy: bool = Field(..., description="Overall system health", example=True)
-    registered_handlers: List[EventHandlerInfo] = Field(
-        ..., description="List of registered handlers"
-    )
+    is_healthy: bool = Field(..., description="Overall system health", json_schema_extra={"example": True})
+    registered_handlers: List[EventHandlerInfo] = Field(..., description="List of registered handlers")
     metrics: EventMetricsResponse = Field(..., description="Event processing metrics")
-    domains: List[str] = Field(
-        ..., description="Active event domains", example=["call_events", "media_events"]
-    )
+    domains: List[str] = Field(..., description="Active event domains", json_schema_extra={"example": ["call_events", "media_events"]})
 
     class Config:
         json_schema_extra = {
@@ -120,24 +89,7 @@ class EventSystemStatus(BaseModel):
 class ProcessEventRequest(BaseModel):
     """Request model for processing events."""
 
-    events: List[Dict[str, Any]] = Field(
-        ...,
-        description="CloudEvent data as dictionaries following CloudEvents spec",
-        example=[
-            {
-                "specversion": "1.0",
-                "type": "Microsoft.Communication.CallConnected",
-                "source": "/acs/calls/test123",
-                "id": "test-event-001",
-                "time": "2025-08-10T13:45:00Z",
-                "datacontenttype": "application/json",
-                "data": {
-                    "callConnectionId": "test123",
-                    "serverCallId": "server-test-123",
-                },
-            }
-        ],
-    )
+    events: List[Dict[str, Any]] = Field(..., description="CloudEvent data as dictionaries following CloudEvents spec", json_schema_extra={"example": [{"specversion": "1.0", "type": "Microsoft.Communication.CallConnected", "source": "/acs/calls/test123", "id": "test-event-001", "time": "2025-08-10T13:45:00Z", "datacontenttype": "application/json", "data": {"callConnectionId": "test123", "serverCallId": "server-test-123"}}]})
 
     class Config:
         json_schema_extra = {
@@ -163,21 +115,9 @@ class ProcessEventRequest(BaseModel):
 class ProcessEventResponse(BaseModel):
     """Response model for event processing."""
 
-    processed_count: int = Field(
-        ..., description="Number of successfully processed events", example=2
-    )
-    failed_count: int = Field(..., description="Number of failed events", example=0)
-    results: List[Dict[str, Any]] = Field(
-        ...,
-        description="Detailed results for each event",
-        example=[
-            {
-                "event_id": "test-event-001",
-                "status": "success",
-                "message": "Event processed successfully",
-            }
-        ],
-    )
+    processed_count: int = Field(..., description="Number of successfully processed events", json_schema_extra={"example": 2})
+    failed_count: int = Field(..., description="Number of failed events", json_schema_extra={"example": 0})
+    results: List[Dict[str, Any]] = Field(..., description="Detailed results for each event", json_schema_extra={"example": [{"event_id": "test-event-001", "status": "success", "message": "Event processed successfully"}]})
 
     class Config:
         json_schema_extra = {
@@ -198,26 +138,10 @@ class ProcessEventResponse(BaseModel):
 class EventListRequest(BaseModel):
     """Request model for listing events with filters."""
 
-    event_type: Optional[str] = Field(
-        None,
-        description="Filter by event type",
-        example="Microsoft.Communication.CallConnected",
-    )
-    start_time: Optional[str] = Field(
-        None,
-        description="Filter events after this timestamp (ISO 8601)",
-        example="2025-08-10T00:00:00Z",
-    )
-    end_time: Optional[str] = Field(
-        None,
-        description="Filter events before this timestamp (ISO 8601)",
-        example="2025-08-10T23:59:59Z",
-    )
-    status: Optional[str] = Field(
-        None,
-        description="Filter by processing status",
-        enum=["pending", "processing", "completed", "failed"],
-    )
+    event_type: Optional[str] = Field(None, description="Filter by event type", json_schema_extra={"example": "Microsoft.Communication.CallConnected"})
+    start_time: Optional[str] = Field(None, description="Filter events after this timestamp (ISO 8601)", json_schema_extra={"example": "2025-08-10T00:00:00Z"})
+    end_time: Optional[str] = Field(None, description="Filter events before this timestamp (ISO 8601)", json_schema_extra={"example": "2025-08-10T23:59:59Z"})
+    status: Optional[Literal["pending", "processing", "completed", "failed"]] = Field(None, description="Filter by processing status")
     limit: int = Field(
         100, ge=1, le=1000, description="Maximum number of events to return"
     )

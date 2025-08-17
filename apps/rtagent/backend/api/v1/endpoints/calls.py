@@ -247,9 +247,18 @@ async def initiate_call(
 )
 async def list_calls(
     request: Request,
-    page: int = Query(1, ge=1, description="Page number (1-based)", example=1),
+    page: int = Query(
+        1,
+        ge=1,
+        description="Page number (1-based)",
+        examples={"default": {"summary": "page number", "value": 1}},
+    ),
     limit: int = Query(
-        10, ge=1, le=100, description="Number of items per page (1-100)", example=10
+        10,
+        ge=1,
+        le=100,
+        description="Number of items per page (1-100)",
+        examples={"default": {"summary": "items per page", "value": 10}},
     ),
     status_filter: Optional[str] = Query(
         None,
@@ -262,7 +271,7 @@ async def list_calls(
             "disconnected",
             "failed",
         ],
-        example="connected",
+        examples={"default": {"summary": "status filter", "value": "connected"}},
     ),
 ) -> CallListResponse:
     """List calls with pagination and filtering."""
