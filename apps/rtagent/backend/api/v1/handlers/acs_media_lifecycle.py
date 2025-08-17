@@ -776,7 +776,7 @@ class MainEventLoop:
         # Audio processing task tracking
         self.active_audio_tasks: Set[asyncio.Task] = set()
         self.max_concurrent_audio_tasks = (
-            50  # Increased for real-time audio (50 frames/sec)
+            5000  # Increased for real-time audio (50 frames/sec)
         )
         self.last_queue_health_log = 0  # Track queue health logging
 
