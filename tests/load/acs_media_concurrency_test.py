@@ -59,7 +59,9 @@ class MediaSessionResult:
         }
 
 
-async def generate_silence_chunk(duration_sec: float, sample_rate: int = 16000) -> bytes:
+async def generate_silence_chunk(
+    duration_sec: float, sample_rate: int = 16000
+) -> bytes:
     frame_count = int(sample_rate * duration_sec)
     return b"\x00\x00" * frame_count
 
@@ -70,7 +72,9 @@ async def run_media_session(idx: int, args) -> MediaSessionResult:
     headers = {"x-ms-call-connection-id": call_id}
     start = time.perf_counter()
     try:
-        async with websockets.connect(args.ws_url, additional_headers=headers, max_size=2**22) as ws:
+        async with websockets.connect(
+            args.ws_url, additional_headers=headers, max_size=2**22
+        ) as ws:
             result.connect_latency_ms = (time.perf_counter() - start) * 1000
             start_session = time.perf_counter()
             greeting_received = False
@@ -105,17 +109,27 @@ async def run_media_session(idx: int, args) -> MediaSessionResult:
                     continue
                 result.messages.append(msg)
                 txt = None
-                if msg.startswith('{'):
+                if msg.startswith("{"):
                     try:
                         payload = json.loads(msg)
-                        txt = payload.get('message') or payload.get('content') or payload.get('text')
+                        txt = (
+                            payload.get("message")
+                            or payload.get("content")
+                            or payload.get("text")
+                        )
                     except json.JSONDecodeError:
                         txt = msg
                 else:
                     txt = msg
-                if not greeting_received and txt and any(s in txt for s in DEFAULT_GREETING_SUBSTRINGS):
+                if (
+                    not greeting_received
+                    and txt
+                    and any(s in txt for s in DEFAULT_GREETING_SUBSTRINGS)
+                ):
                     greeting_received = True
-                    result.greeting_latency_ms = (time.perf_counter() - start_session) * 1000
+                    result.greeting_latency_ms = (
+                        time.perf_counter() - start_session
+                    ) * 1000
                     if not args.wait_for_stream:
                         break
             sender_task.cancel()
@@ -160,6 +174,7 @@ def detect_shared(results: List[MediaSessionResult]) -> Dict[str, Any]:
 def summarize(results: List[MediaSessionResult]) -> Dict[str, Any]:
     conn = [r.connect_latency_ms for r in results if r.connect_latency_ms]
     greet = [r.greeting_latency_ms for r in results if r.greeting_latency_ms]
+
     def stats(a: List[float]):
         if not a:
             return {}
@@ -171,6 +186,7 @@ def summarize(results: List[MediaSessionResult]) -> Dict[str, Any]:
             "p99_ms": round(percentile(a, 99), 2),
             "max_ms": round(max(a), 2),
         }
+
     shared = detect_shared(results)
     return {
         "sessions": len(results),
@@ -182,52 +198,75 @@ def summarize(results: List[MediaSessionResult]) -> Dict[str, Any]:
         "session_samples": [r.to_dict() for r in results[: min(5, len(results))]],
     }
 
+
 def write_csv(results: List[MediaSessionResult], path: str):
     import csv
-    with open(path, 'w', newline='', encoding='utf-8') as f:
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(['call_id','connect_latency_ms','greeting_latency_ms','duration_ms','message_count','errors'])
+        w.writerow(
+            [
+                "call_id",
+                "connect_latency_ms",
+                "greeting_latency_ms",
+                "duration_ms",
+                "message_count",
+                "errors",
+            ]
+        )
         for r in results:
-            w.writerow([r.call_id,r.connect_latency_ms,r.greeting_latency_ms,r.duration_ms,len(r.messages),'|'.join(r.errors)])
+            w.writerow(
+                [
+                    r.call_id,
+                    r.connect_latency_ms,
+                    r.greeting_latency_ms,
+                    r.duration_ms,
+                    len(r.messages),
+                    "|".join(r.errors),
+                ]
+            )
 
 
 def write_prometheus(results: List[MediaSessionResult], path: str):
     # Basic exposition format counters/histograms (manual simple form)
     conn = [r.connect_latency_ms for r in results if r.connect_latency_ms]
     greet = [r.greeting_latency_ms for r in results if r.greeting_latency_ms]
+
     def emit_hist(name: str, vals: List[float]) -> str:
         if not vals:
-            return ''
-        buckets = [50,100,200,500,1000,2000,5000]
+            return ""
+        buckets = [50, 100, 200, 500, 1000, 2000, 5000]
         out = []
         for b in buckets:
             c = sum(1 for v in vals if v <= b)
             out.append(f'{name}_bucket{{le="{b}"}} {c}')
         out.append(f'{name}_bucket{{le="+Inf"}} {len(vals)}')
-        out.append(f'{name}_count {len(vals)}')
-        out.append(f'{name}_sum {sum(vals):.2f}')
-        return '\n'.join(out)
+        out.append(f"{name}_count {len(vals)}")
+        out.append(f"{name}_sum {sum(vals):.2f}")
+        return "\n".join(out)
+
     lines = [
-        '# HELP media_sessions_total Total media sessions run',
-        '# TYPE media_sessions_total counter',
-        f'media_sessions_total {len(results)}',
-        '# HELP media_session_errors_total Total sessions with errors',
-        '# TYPE media_session_errors_total counter',
-        f'media_session_errors_total {sum(1 for r in results if r.errors)}',
-        '# HELP media_connect_latency Connection latency histogram (ms)',
-        '# TYPE media_connect_latency histogram',
-        emit_hist('media_connect_latency', conn),
-        '# HELP media_greeting_latency Greeting latency histogram (ms)',
-        '# TYPE media_greeting_latency histogram',
-        emit_hist('media_greeting_latency', greet),
-        ''
+        "# HELP media_sessions_total Total media sessions run",
+        "# TYPE media_sessions_total counter",
+        f"media_sessions_total {len(results)}",
+        "# HELP media_session_errors_total Total sessions with errors",
+        "# TYPE media_session_errors_total counter",
+        f"media_session_errors_total {sum(1 for r in results if r.errors)}",
+        "# HELP media_connect_latency Connection latency histogram (ms)",
+        "# TYPE media_connect_latency histogram",
+        emit_hist("media_connect_latency", conn),
+        "# HELP media_greeting_latency Greeting latency histogram (ms)",
+        "# TYPE media_greeting_latency histogram",
+        emit_hist("media_greeting_latency", greet),
+        "",
     ]
-    with open(path,'w',encoding='utf-8') as f:
-        f.write('\n'.join(l for l in lines if l is not None))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(l for l in lines if l is not None))
 
 
 def ensure_log_dir(path: str):
     import pathlib
+
     p = pathlib.Path(path)
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -236,7 +275,10 @@ def ensure_log_dir(path: str):
 async def main_async(args):
     results: List[MediaSessionResult] = []
     for it in range(args.iterations):
-        tasks = [run_media_session(i + it * args.concurrency, args) for i in range(args.concurrency)]
+        tasks = [
+            run_media_session(i + it * args.concurrency, args)
+            for i in range(args.concurrency)
+        ]
         batch = await asyncio.gather(*tasks)
         results.extend(batch)
         if args.iteration_delay > 0 and it < args.iterations - 1:
@@ -244,33 +286,38 @@ async def main_async(args):
     summary = summarize(results)
     print(json.dumps(summary, indent=2))
     if args.csv:
-        ensure_log_dir(os.path.dirname(args.csv) or '.')
+        ensure_log_dir(os.path.dirname(args.csv) or ".")
         write_csv(results, args.csv)
     if args.prom:
-        ensure_log_dir(os.path.dirname(args.prom) or '.')
+        ensure_log_dir(os.path.dirname(args.prom) or ".")
         write_prometheus(results, args.prom)
     if args.log_dir:
         d = ensure_log_dir(args.log_dir)
         for r in results:
-            with open(d / f"session_{r.call_id}.log", 'w', encoding='utf-8') as f:
+            with open(d / f"session_{r.call_id}.log", "w", encoding="utf-8") as f:
                 json.dump(r.to_dict() | {"messages": r.messages}, f, indent=2)
-    if summary['contamination']['shared_message_count'] > 0:
+    if summary["contamination"]["shared_message_count"] > 0:
         sys.exit(2)
 
 
 def parse_args(argv: List[str]):
-    ap = argparse.ArgumentParser(description='ACS media WebSocket concurrency test')
-    ap.add_argument('--ws-url', default=os.environ.get('TEST_ACS_MEDIA_WS_URL','ws://localhost:8000/api/v1/media/stream'))
-    ap.add_argument('-c','--concurrency', type=int, default=5)
-    ap.add_argument('--iterations', type=int, default=1)
-    ap.add_argument('--iteration-delay', type=float, default=0.0)
-    ap.add_argument('--session-timeout', type=float, default=15.0)
-    ap.add_argument('--send-audio', action='store_true')
-    ap.add_argument('--audio-seconds', type=float, default=2.0)
-    ap.add_argument('--wait-for-stream', action='store_true')
-    ap.add_argument('--csv', help='Write per-session summary CSV')
-    ap.add_argument('--prom', help='Write Prometheus metrics exposition file')
-    ap.add_argument('--log-dir', help='Directory for per-session detailed logs')
+    ap = argparse.ArgumentParser(description="ACS media WebSocket concurrency test")
+    ap.add_argument(
+        "--ws-url",
+        default=os.environ.get(
+            "TEST_ACS_MEDIA_WS_URL", "ws://localhost:8000/api/v1/media/stream"
+        ),
+    )
+    ap.add_argument("-c", "--concurrency", type=int, default=5)
+    ap.add_argument("--iterations", type=int, default=1)
+    ap.add_argument("--iteration-delay", type=float, default=0.0)
+    ap.add_argument("--session-timeout", type=float, default=15.0)
+    ap.add_argument("--send-audio", action="store_true")
+    ap.add_argument("--audio-seconds", type=float, default=2.0)
+    ap.add_argument("--wait-for-stream", action="store_true")
+    ap.add_argument("--csv", help="Write per-session summary CSV")
+    ap.add_argument("--prom", help="Write Prometheus metrics exposition file")
+    ap.add_argument("--log-dir", help="Directory for per-session detailed logs")
     return ap.parse_args(argv)
 
 
@@ -279,9 +326,9 @@ def main(argv: List[str]):
     try:
         asyncio.run(main_async(args))
     except KeyboardInterrupt:
-        print('Interrupted', file=sys.stderr)
+        print("Interrupted", file=sys.stderr)
         sys.exit(130)
 
 
-if __name__ == '__main__':  # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover
     main(sys.argv[1:])

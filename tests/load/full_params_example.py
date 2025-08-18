@@ -88,7 +88,10 @@ async def run_scenario(name: str, args):
         args.summary_json = str(result_dir / "summary.json")
     all_results = []
     for it in range(args.iterations):
-        tasks = [base.run_session(i + it * args.concurrency, args) for i in range(args.concurrency)]
+        tasks = [
+            base.run_session(i + it * args.concurrency, args)
+            for i in range(args.concurrency)
+        ]
         batch = await asyncio.gather(*tasks)
         all_results.extend(batch)
         if args.iteration_delay > 0 and it < args.iterations - 1:
@@ -102,7 +105,11 @@ async def run_scenario(name: str, args):
     if args.log_dir:
         Path(args.log_dir).mkdir(parents=True, exist_ok=True)
         for r in all_results:
-            with open(Path(args.log_dir) / f"session_{r.session_id}.log", "w", encoding="utf-8") as f:
+            with open(
+                Path(args.log_dir) / f"session_{r.session_id}.log",
+                "w",
+                encoding="utf-8",
+            ) as f:
                 json.dump(r.to_dict() | {"messages": r.messages}, f, indent=2)
     if args.summary_json:
         with open(args.summary_json, "w", encoding="utf-8") as f:
@@ -113,15 +120,23 @@ async def run_scenario(name: str, args):
 async def main():
     scenarios = []
     scenarios.append(("baseline", make_common()))
-    scenarios.append(("wait_stream", make_common({"wait_for_stream": True, "session_timeout": 12.0})))
+    scenarios.append(
+        ("wait_stream", make_common({"wait_for_stream": True, "session_timeout": 12.0}))
+    )
     scenarios.append(("audio", make_common({"send_audio": True, "audio_seconds": 3.0})))
-    scenarios.append(("multi_iterations", make_common({"iterations": 2, "concurrency": 3})))
+    scenarios.append(
+        ("multi_iterations", make_common({"iterations": 2, "concurrency": 3}))
+    )
     replay_logs = Path("tests/load/sessions/multi_iterations/logs")
     if replay_logs.exists():
-        scenarios.append(("replay_demo", make_common({"replay_log_dir": str(replay_logs)})))
+        scenarios.append(
+            ("replay_demo", make_common({"replay_log_dir": str(replay_logs)}))
+        )
     token = os.environ.get("TEST_BEARER_TOKEN")
     if ("--with-auth" in sys.argv) and token:
-        scenarios.append(("auth", make_common({"bearer_token": token, "skip_auth_errors": False})))
+        scenarios.append(
+            ("auth", make_common({"bearer_token": token, "skip_auth_errors": False}))
+        )
 
     aggregate = []
     for name, args in scenarios:
@@ -140,13 +155,21 @@ async def main():
         json.dump(aggregate, f, indent=2)
     print(f"\nWrote aggregate summary -> {agg_summary_path}")
 
-    any_contam = any(s["summary"]["contamination"]["shared_message_count"] > 0 for s in aggregate if "summary" in s)
+    any_contam = any(
+        s["summary"]["contamination"]["shared_message_count"] > 0
+        for s in aggregate
+        if "summary" in s
+    )
     if any_contam:
-        print("Detected potential message contamination in at least one scenario", file=sys.stderr)
+        print(
+            "Detected potential message contamination in at least one scenario",
+            file=sys.stderr,
+        )
         sys.exit(2)
     # All sessions failed in any scenario
     any_all_fail = any(
-        s["summary"]["sessions_with_errors"] == s["summary"]["sessions"] and s["summary"].get("sessions", 0) != 0
+        s["summary"]["sessions_with_errors"] == s["summary"]["sessions"]
+        and s["summary"].get("sessions", 0) != 0
         for s in aggregate
         if "summary" in s
     )

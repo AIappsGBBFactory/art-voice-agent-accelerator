@@ -31,7 +31,7 @@ class ARTAgent:
     ) -> None:
         """
         Initialize YAML-driven agent with configuration and prompt templates.
-        
+
         :param config_path: Path to agent configuration YAML file
         :type config_path: Optional[str | Path]
         :param template_dir: Directory containing prompt templates
@@ -97,7 +97,7 @@ class ARTAgent:
     ) -> Any:
         """
         Generate agent response using GPT with context-aware prompting.
-        
+
         :param cm: Conversation memory manager
         :param user_prompt: User input text
         :type user_prompt: str
@@ -135,7 +135,7 @@ class ARTAgent:
     def _load_yaml(path: Path) -> Dict[str, Any]:
         """
         Load YAML configuration from file path.
-        
+
         :param path: Path to YAML configuration file
         :type path: Path
         :return: Parsed YAML configuration dictionary
@@ -147,7 +147,7 @@ class ARTAgent:
     def _validate_cfg(self) -> None:
         """
         Validate required configuration sections and keys.
-        
+
         :raises ValueError: When required configuration is missing
         """
         required = [("agent", ["name"]), ("model", ["deployment_id"])]

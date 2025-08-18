@@ -151,7 +151,7 @@ async def acs_media_stream(
 ):
     """
     WebSocket endpoint for real-time ACS media streaming.
-    
+
     Provides enterprise-grade audio streaming with pluggable orchestrator support.
     Follows V1 architecture patterns with clean separation of concerns.
 
@@ -279,7 +279,7 @@ async def acs_media_stream(
 async def _validate_websocket_dependencies(websocket: WebSocket) -> None:
     """
     Validate required app state dependencies.
-    
+
     :param websocket: WebSocket connection to validate
     :type websocket: WebSocket
     :raises HTTPException: When dependencies are missing or invalid
@@ -298,7 +298,7 @@ async def _validate_websocket_dependencies(websocket: WebSocket) -> None:
 async def _validate_websocket_auth(websocket: WebSocket) -> None:
     """
     Validate WebSocket authentication if enabled.
-    
+
     :param websocket: WebSocket connection to authenticate
     :type websocket: WebSocket
     :raises HTTPException: When authentication fails
@@ -317,7 +317,7 @@ async def _validate_call_connection(
 ) -> None:
     """
     Validate that the call connection exists.
-    
+
     :param websocket: WebSocket connection for error handling
     :type websocket: WebSocket
     :param call_connection_id: Call connection identifier to validate
@@ -343,7 +343,7 @@ async def _create_media_handler(
 ):
     """
     Create appropriate media handler based on streaming mode.
-    
+
     :param websocket: WebSocket connection for media streaming
     :type websocket: WebSocket
     :param call_connection_id: Unique call connection identifier
@@ -399,13 +399,17 @@ async def _create_media_handler(
         websocket.state.target_participant = PhoneNumberIdentifier(target_phone_number)
 
     websocket.state.cm = memory_manager
-    websocket.state.call_conn = websocket.app.state.acs_caller.get_call_connection(call_connection_id)
+    websocket.state.call_conn = websocket.app.state.acs_caller.get_call_connection(
+        call_connection_id
+    )
 
     if ACS_STREAMING_MODE == StreamMode.MEDIA:
         # Use the V1 ACS media handler - acquire recognizer from pool
         per_conn_recognizer = await websocket.app.state.stt_pool.acquire()
         websocket.state.stt_client = per_conn_recognizer
-        logger.info(f"Acquired STT recognizer from pool for ACS call {call_connection_id}")
+        logger.info(
+            f"Acquired STT recognizer from pool for ACS call {call_connection_id}"
+        )
         handler = ACSMediaHandler(
             websocket=websocket,
             orchestrator_func=orchestrator,
@@ -440,7 +444,7 @@ async def _process_media_stream(
 ) -> None:
     """
     Process incoming WebSocket media messages with clean error handling.
-    
+
     :param websocket: WebSocket connection for message processing
     :type websocket: WebSocket
     :param handler: Media handler instance for message processing
@@ -510,7 +514,7 @@ def _log_websocket_disconnect(
 ) -> None:
     """
     Log WebSocket disconnection with appropriate level.
-    
+
     :param e: WebSocket disconnect exception
     :type e: WebSocketDisconnect
     :param session_id: Session identifier for logging
@@ -559,7 +563,7 @@ def _log_websocket_error(
 ) -> None:
     """
     Log WebSocket errors with full context.
-    
+
     :param e: Exception that occurred
     :type e: Exception
     :param session_id: Session identifier for logging
@@ -596,7 +600,7 @@ async def _cleanup_websocket_resources(
 ) -> None:
     """
     Clean up WebSocket resources following V1 patterns.
-    
+
     :param websocket: WebSocket connection to clean up
     :type websocket: WebSocket
     :param handler: Media handler to stop and clean up
@@ -631,8 +635,12 @@ async def _cleanup_websocket_resources(
             if hasattr(websocket.state, "stt_client") and websocket.state.stt_client:
                 try:
                     websocket.state.stt_client.stop()
-                    await websocket.app.state.stt_pool.release(websocket.state.stt_client)
-                    logger.info(f"Released STT recognizer back to pool for call {call_connection_id}")
+                    await websocket.app.state.stt_pool.release(
+                        websocket.state.stt_client
+                    )
+                    logger.info(
+                        f"Released STT recognizer back to pool for call {call_connection_id}"
+                    )
                 except Exception as e:
                     logger.error(f"Error releasing STT recognizer: {e}", exc_info=True)
 

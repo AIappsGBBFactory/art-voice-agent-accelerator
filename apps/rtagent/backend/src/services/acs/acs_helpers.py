@@ -135,7 +135,7 @@ async def broadcast_message(
     # Simple per-request deduplication without global state
     # If advanced deduplication is needed, use Redis with TTL
     message_content = message.strip()
-    
+
     logger.info(
         f"� Broadcasting to {len(connected_clients)} clients: {sender}: {message_content[:50]}..."
     )

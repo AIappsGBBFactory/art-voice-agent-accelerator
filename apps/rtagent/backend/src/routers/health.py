@@ -242,7 +242,7 @@ async def _check_speech_services_fast(tts_pool, stt_pool) -> Dict:
             "error": "pools not initialized",
             "check_time_ms": round((time.time() - start) * 1000, 2),
         }
-    
+
     # Check if pools are properly configured
     try:
         pool_info = {
@@ -256,7 +256,7 @@ async def _check_speech_services_fast(tts_pool, stt_pool) -> Dict:
     except Exception as e:
         return {
             "component": "speech_services",
-            "status": "unhealthy", 
+            "status": "unhealthy",
             "error": f"pool introspection failed: {e}",
             "check_time_ms": round((time.time() - start) * 1000, 2),
         }

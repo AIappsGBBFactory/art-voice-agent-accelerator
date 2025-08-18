@@ -72,7 +72,9 @@ class V1RealtimeHandler:
             logger,
             "dashboard_relay",
         ) as op:
-            clients: set[WebSocket] = await websocket.app.state.websocket_manager.get_clients_snapshot()
+            clients: set[
+                WebSocket
+            ] = await websocket.app.state.websocket_manager.get_clients_snapshot()
             client_id = str(uuid.uuid4())[:8]
 
             op.log_info(f"Dashboard client connecting: {client_id}")
@@ -204,10 +206,10 @@ class V1RealtimeHandler:
                 cm.append_to_history(auth_agent.name, "assistant", GREETING)
 
                 # Broadcast greeting to dashboard with Auth Agent label
-                clients = await websocket.app.state.websocket_manager.get_clients_snapshot()
-                await broadcast_message(
-                    clients, GREETING, "Auth Agent"
+                clients = (
+                    await websocket.app.state.websocket_manager.get_clients_snapshot()
                 )
+                await broadcast_message(clients, GREETING, "Auth Agent")
 
                 # Send greeting audio
                 with trace_acs_dependency(
@@ -233,7 +235,10 @@ class V1RealtimeHandler:
                     if websocket.state.is_synthesizing:
                         try:
                             # Stop per-connection TTS synthesizer if available
-                            if hasattr(websocket.state, "tts_client") and websocket.state.tts_client:
+                            if (
+                                hasattr(websocket.state, "tts_client")
+                                and websocket.state.tts_client
+                            ):
                                 websocket.state.tts_client.stop_speaking()
                             websocket.state.is_synthesizing = False
                             logger.info(
@@ -370,7 +375,10 @@ class V1RealtimeHandler:
                     # Stop TTS
                     try:
                         # Stop per-connection TTS synthesizer if available
-                        if hasattr(websocket.state, "tts_client") and websocket.state.tts_client:
+                        if (
+                            hasattr(websocket.state, "tts_client")
+                            and websocket.state.tts_client
+                        ):
                             websocket.state.tts_client.stop_speaking()
                     except Exception as e:
                         logger.warning(f"Error stopping TTS during cleanup: {e}")
@@ -410,7 +418,7 @@ def create_v1_realtime_handler(
 ) -> V1RealtimeHandler:
     """
     Factory function for creating V1 realtime handlers.
-    
+
     :param orchestrator: Optional orchestrator for conversation processing
     :type orchestrator: Optional[callable]
     :return: Configured V1 realtime handler instance

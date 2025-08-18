@@ -16,7 +16,17 @@ Public entry-point remains: :func:`route_turn`.
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterable, Optional, Tuple, Protocol
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    Optional,
+    Tuple,
+    Protocol,
+)
 import json
 import os
 
@@ -61,7 +71,9 @@ _ENTRY_AGENT: str = "AutoAuth"
 _SPECIALISTS: list[str] = ["General", "Claims"]
 
 
-def configure_entry_and_specialists(*, entry_agent: str = "AutoAuth", specialists: Optional[Iterable[str]] = None) -> None:
+def configure_entry_and_specialists(
+    *, entry_agent: str = "AutoAuth", specialists: Optional[Iterable[str]] = None
+) -> None:
     """Configure the entry agent and ordered list of specialists.
 
     :param entry_agent: Name of the entry agent (forced to 'AutoAuth' for consistency)
@@ -71,7 +83,9 @@ def configure_entry_and_specialists(*, entry_agent: str = "AutoAuth", specialist
     """
     global _ENTRY_AGENT, _SPECIALISTS  # noqa: PLW0603
     if entry_agent != "AutoAuth":
-        logger.warning("Entry agent overridden to 'AutoAuth' (requested '%s')", entry_agent)
+        logger.warning(
+            "Entry agent overridden to 'AutoAuth' (requested '%s')", entry_agent
+        )
     _ENTRY_AGENT = "AutoAuth"
     _SPECIALISTS = list(specialists or ["General", "Claims"])
 
@@ -81,14 +95,12 @@ def configure_entry_and_specialists(*, entry_agent: str = "AutoAuth", specialist
 # -------------------------------------------------------------
 class AgentHandler(Protocol):
     """Protocol for agent handler functions."""
+
     async def __call__(
-        self,
-        cm: "MemoManager", 
-        utterance: str, 
-        ws: WebSocket,
-        *,
-        is_acs: bool
-    ) -> None: ...
+        self, cm: "MemoManager", utterance: str, ws: WebSocket, *, is_acs: bool
+    ) -> None:
+        ...
+
 
 @dataclass(frozen=True)
 class _AgentBinding:
@@ -447,7 +459,9 @@ async def run_auth_agent(
         logger.info("🔀 Processing human_agent handoff…")
         reason = result.get("reason") or result.get("escalation_reason")
         _cm_set(cm, escalated=True, escalation_reason=reason)
-        logger.warning("🚨 Escalation during auth – session=%s reason=%s", cm.session_id, reason)
+        logger.warning(
+            "🚨 Escalation during auth – session=%s reason=%s", cm.session_id, reason
+        )
         return  # termination handled by orchestrator
 
     logger.info(
@@ -521,7 +535,9 @@ async def _run_specialist_base(
     agent = _get_agent_instance(ws, agent_key)
 
     # Context injection for agent awareness (preserve current content)
-    cm.append_to_history(getattr(agent, "name", agent_key), "assistant", context_message)
+    cm.append_to_history(
+        getattr(agent, "name", agent_key), "assistant", context_message
+    )
 
     async with track_latency(ws.state.lt, latency_label, ws.app.state.redis):
         resp = await agent.respond(  # type: ignore[union-attr]
@@ -553,13 +569,17 @@ async def run_general_agent(
     """
     if cm is None:
         logger.error("❌ MemoManager is None in run_general_agent")
-        raise ValueError("MemoManager (cm) parameter cannot be None in run_general_agent")
+        raise ValueError(
+            "MemoManager (cm) parameter cannot be None in run_general_agent"
+        )
 
     caller_name = _cm_get(cm, "caller_name")
     topic = _cm_get(cm, "topic")
     policy_id = _cm_get(cm, "policy_id")
 
-    context_msg = f"Authenticated caller: {caller_name} (Policy: {policy_id}) | Topic: {topic}"
+    context_msg = (
+        f"Authenticated caller: {caller_name} (Policy: {policy_id}) | Topic: {topic}"
+    )
     await _run_specialist_base(
         agent_key="General",
         cm=cm,
@@ -567,7 +587,11 @@ async def run_general_agent(
         ws=ws,
         is_acs=is_acs,
         context_message=context_msg,
-        respond_kwargs={"caller_name": caller_name, "topic": topic, "policy_id": policy_id},
+        respond_kwargs={
+            "caller_name": caller_name,
+            "topic": topic,
+            "policy_id": policy_id,
+        },
         latency_label="general_agent",
     )
 
@@ -590,7 +614,9 @@ async def run_claims_agent(
     """
     if cm is None:
         logger.error("❌ MemoManager is None in run_claims_agent")
-        raise ValueError("MemoManager (cm) parameter cannot be None in run_claims_agent")
+        raise ValueError(
+            "MemoManager (cm) parameter cannot be None in run_claims_agent"
+        )
 
     caller_name = _cm_get(cm, "caller_name")
     claim_intent = _cm_get(cm, "claim_intent")
@@ -604,7 +630,11 @@ async def run_claims_agent(
         ws=ws,
         is_acs=is_acs,
         context_message=context_msg,
-        respond_kwargs={"caller_name": caller_name, "claim_intent": claim_intent, "policy_id": policy_id},
+        respond_kwargs={
+            "caller_name": caller_name,
+            "claim_intent": claim_intent,
+            "policy_id": policy_id,
+        },
         latency_label="claim_agent",
     )
 
@@ -703,6 +733,7 @@ async def _process_tool_response(  # pylint: disable=too-complex
 # Kept for backward compatibility; now just a view over _REGISTRY.
 SPECIALIST_MAP: Dict[str, AgentHandler] = _REGISTRY
 
+
 # -------------------------------------------------------------
 # 4. Public entry‑point (per user turn)
 # -------------------------------------------------------------
@@ -730,7 +761,10 @@ async def route_turn(
     call_connection_id, session_id = _get_correlation_context(ws, cm)
 
     # Initialize session with configured entry agent if no active_agent is set
-    if not _cm_get(cm, "authenticated", False) and _cm_get(cm, "active_agent") != _ENTRY_AGENT:
+    if (
+        not _cm_get(cm, "authenticated", False)
+        and _cm_get(cm, "active_agent") != _ENTRY_AGENT
+    ):
         _cm_set(cm, active_agent=_ENTRY_AGENT)
 
     # Create handler span for orchestrator service
@@ -769,7 +803,9 @@ async def route_turn(
 
             handler = get_specialist(active)
             if handler is None:
-                logger.warning("Unknown active_agent=%s session=%s", active, cm.session_id)
+                logger.warning(
+                    "Unknown active_agent=%s session=%s", active, cm.session_id
+                )
                 span.set_attribute("orchestrator.error", "unknown_agent")
                 return
 

@@ -79,6 +79,7 @@ class CallRequest(BaseModel):
     :return: Validated CallRequest instance ready for ACS processing.
     :raises ValidationError: If target_number format is invalid or missing.
     """
+
     target_number: str
 
 
@@ -463,7 +464,9 @@ async def acs_media_ws(ws: WebSocket):
                     ):
                         # Acquire STT recognizer from pool
                         ws.state.stt_client = await ws.app.state.stt_pool.acquire()
-                        logger.info(f"Acquired STT recognizer from pool for ACS call {cid}")
+                        logger.info(
+                            f"Acquired STT recognizer from pool for ACS call {cid}"
+                        )
                         handler = ACSMediaHandler(
                             ws,
                             recognizer=ws.state.stt_client,
@@ -566,7 +569,9 @@ async def acs_media_ws(ws: WebSocket):
                 handler.recognizer.stop()
                 # Release STT recognizer back to pool
                 await ws.app.state.stt_pool.release(handler.recognizer)
-                logger.info(f"Speech recognizer stopped and released back to pool for call {cid}")
+                logger.info(
+                    f"Speech recognizer stopped and released back to pool for call {cid}"
+                )
             except Exception as e:
                 logger.error(f"Error stopping/releasing recognizer: {e}")
 

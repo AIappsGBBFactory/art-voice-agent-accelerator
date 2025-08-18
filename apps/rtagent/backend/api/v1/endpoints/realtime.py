@@ -138,7 +138,7 @@ async def get_realtime_status(request: Request):
     :raises: None (endpoint designed to always return current service status).
     """
     session_count = await request.app.state.session_manager.get_session_count()
-    
+
     return RealtimeStatusResponse(
         status="available",
         websocket_endpoints={
@@ -251,7 +251,7 @@ async def browser_conversation_endpoint(
     try:
         # Accept connection and initialize session
         await websocket.accept()
-        
+
         # Generate collision-resistant session ID
         if websocket.headers.get("x-ms-call-connection-id"):
             # For ACS calls, use the full call-connection-id (already unique)
@@ -294,10 +294,10 @@ async def browser_conversation_endpoint(
             if hasattr(websocket.app.state, "session_metrics"):
                 await websocket.app.state.session_metrics.increment_connected()
 
-            session_count = await websocket.app.state.session_manager.get_session_count()
-            connect_span.set_attribute(
-                "conversation.sessions.total", session_count
+            session_count = (
+                await websocket.app.state.session_manager.get_session_count()
             )
+            connect_span.set_attribute("conversation.sessions.total", session_count)
             connect_span.set_status(Status(StatusCode.OK))
 
             log_with_context(
@@ -383,19 +383,13 @@ async def _validate_realtime_dependencies(websocket: WebSocket) -> None:
     :raises HTTPException: If required dependencies are not initialized
     """
     # Check TTS pool
-    if (
-        not hasattr(websocket.app.state, "tts_pool")
-        or not websocket.app.state.tts_pool
-    ):
+    if not hasattr(websocket.app.state, "tts_pool") or not websocket.app.state.tts_pool:
         logger.error("TTS pool not initialized")
         await websocket.close(code=1011, reason="TTS pool not initialized")
         raise HTTPException(503, "TTS pool not initialized")
 
     # Check STT pool
-    if (
-        not hasattr(websocket.app.state, "stt_pool")
-        or not websocket.app.state.stt_pool
-    ):
+    if not hasattr(websocket.app.state, "stt_pool") or not websocket.app.state.stt_pool:
         logger.error("STT pool not initialized")
         await websocket.close(code=1011, reason="STT pool not initialized")
         raise HTTPException(503, "STT pool not initialized")
@@ -470,7 +464,10 @@ async def _initialize_conversation_session(
         if websocket.state.is_synthesizing:
             try:
                 # Stop per-connection TTS instead of global
-                if hasattr(websocket.state, "tts_client") and websocket.state.tts_client:
+                if (
+                    hasattr(websocket.state, "tts_client")
+                    and websocket.state.tts_client
+                ):
                     websocket.state.tts_client.stop_speaking()
                 websocket.state.is_synthesizing = False
                 logger.info("🛑 TTS interrupted due to user speech (server VAD)")
@@ -782,8 +779,12 @@ async def _cleanup_conversation_session(
             if hasattr(websocket.state, "tts_client") and websocket.state.tts_client:
                 try:
                     websocket.state.tts_client.stop_speaking()
-                    await websocket.app.state.tts_pool.release(websocket.state.tts_client)
-                    logger.info(f"Released TTS synthesizer back to pool for session {session_id}")
+                    await websocket.app.state.tts_pool.release(
+                        websocket.state.tts_client
+                    )
+                    logger.info(
+                        f"Released TTS synthesizer back to pool for session {session_id}"
+                    )
                 except Exception as e:
                     logger.error(f"Error releasing TTS synthesizer: {e}", exc_info=True)
 
@@ -791,16 +792,24 @@ async def _cleanup_conversation_session(
             if hasattr(websocket.state, "stt_client") and websocket.state.stt_client:
                 try:
                     websocket.state.stt_client.stop()
-                    await websocket.app.state.stt_pool.release(websocket.state.stt_client)
-                    logger.info(f"Released STT recognizer back to pool for session {session_id}")
+                    await websocket.app.state.stt_pool.release(
+                        websocket.state.stt_client
+                    )
+                    logger.info(
+                        f"Released STT recognizer back to pool for session {session_id}"
+                    )
                 except Exception as e:
                     logger.error(f"Error releasing STT recognizer: {e}", exc_info=True)
 
             # Remove from session registry thread-safely
             if session_id:
-                removed = await websocket.app.state.session_manager.remove_session(session_id)
+                removed = await websocket.app.state.session_manager.remove_session(
+                    session_id
+                )
                 if removed:
-                    remaining_count = await websocket.app.state.session_manager.get_session_count()
+                    remaining_count = (
+                        await websocket.app.state.session_manager.get_session_count()
+                    )
                     logger.info(
                         f"Conversation session {session_id} removed. Active sessions: {remaining_count}"
                     )

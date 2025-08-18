@@ -11,7 +11,7 @@ try:  # minimal, silent if python-dotenv missing
     from dotenv import load_dotenv  # type: ignore
 
     # Only load if it looks like a .env file exists and variables not already present
-    if os.path.isfile('.env'):
+    if os.path.isfile(".env"):
         load_dotenv(override=False)
 except Exception:
     pass
@@ -55,7 +55,9 @@ def setup_azure_monitor(logger_name: str = None):
     """
     # Allow hard opt-out for local dev or debugging.
     if os.getenv("DISABLE_CLOUD_TELEMETRY", "false").lower() == "true":
-        logger.info("🔌 Telemetry disabled (DISABLE_CLOUD_TELEMETRY=true) – skipping Azure Monitor setup")
+        logger.info(
+            "🔌 Telemetry disabled (DISABLE_CLOUD_TELEMETRY=true) – skipping Azure Monitor setup"
+        )
         return
 
     connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")

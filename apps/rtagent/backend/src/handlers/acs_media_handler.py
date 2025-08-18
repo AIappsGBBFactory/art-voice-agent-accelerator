@@ -159,7 +159,9 @@ class ACSMediaHandler:
             operation="start_recognizer",
             greeting=GREETING,
         )
-        connected_clients = await self.incoming_websocket.app.state.websocket_manager.get_clients_snapshot()
+        connected_clients = (
+            await self.incoming_websocket.app.state.websocket_manager.get_clients_snapshot()
+        )
         await broadcast_message(
             connected_clients=list(connected_clients),
             message=GREETING,
@@ -349,13 +351,13 @@ class ACSMediaHandler:
 
             # Only broadcast after playbook task is created successfully
             async def broadcast_with_clients():
-                connected_clients = await self.incoming_websocket.app.state.websocket_manager.get_clients_snapshot()
-                await broadcast_message(
-                    list(connected_clients),
-                    greeting_text,
-                    agent_sender
+                connected_clients = (
+                    await self.incoming_websocket.app.state.websocket_manager.get_clients_snapshot()
                 )
-            
+                await broadcast_message(
+                    list(connected_clients), greeting_text, agent_sender
+                )
+
             asyncio.create_task(broadcast_with_clients())
         except Exception as e:
             log_with_context(
@@ -694,7 +696,9 @@ class ACSMediaHandler:
                 "Route turn timed out after 30 seconds",
                 operation="route_and_playback",
             )
-            connected_clients = await self.incoming_websocket.app.state.websocket_manager.get_clients_snapshot()
+            connected_clients = (
+                await self.incoming_websocket.app.state.websocket_manager.get_clients_snapshot()
+            )
             await broadcast_message(
                 connected_clients=list(connected_clients),
                 message="I'm sorry, I'm experiencing some delays. Please try again.",

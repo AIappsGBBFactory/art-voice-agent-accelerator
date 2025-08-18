@@ -12,7 +12,7 @@ __email__ = "pablosalvador10@gmail.com"
 try:
     from .speech.text_to_speech import SpeechSynthesizer
     from .speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
-    
+
     __all__ = [
         "SpeechSynthesizer",
         "StreamingSpeechRecognizerFromBytes",

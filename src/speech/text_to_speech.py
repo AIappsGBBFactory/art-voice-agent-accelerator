@@ -37,44 +37,44 @@ _SENTENCE_END = re.compile(r"([.!?；？！。]+|\n)")
 
 def split_sentences(text: str) -> List[str]:
     """Split text into sentences while preserving delimiters for natural speech synthesis.
-    
+
     This function provides intelligent sentence boundary detection optimized for
     text-to-speech applications. It preserves punctuation marks to maintain
     natural prosody and intonation patterns during synthesis.
-    
+
     The function handles multiple languages and scripts including:
     - English punctuation (., !, ?)
     - Chinese punctuation (。, ！, ？)
     - Japanese punctuation (。, ！, ？)
     - Spanish punctuation with inverted marks
     - Newline characters as sentence boundaries
-    
+
     Args:
         text: Input text to split into sentences. Can contain mixed languages
               and various punctuation styles.
-    
+
     Returns:
         List of sentence strings with trailing whitespace removed. Empty
         sentences are filtered out. Punctuation marks are preserved within
         each sentence for proper synthesis prosody.
-    
+
     Example:
         ```python
         text = "Hello world! How are you? Fine, thanks."
         sentences = split_sentences(text)
         # Returns: ["Hello world!", "How are you?", "Fine, thanks."]
-        
+
         # Multi-language support
         mixed_text = "Hello! 你好！¿Cómo estás?"
         sentences = split_sentences(mixed_text)
         # Returns: ["Hello!", "你好！", "¿Cómo estás?"]
         ```
-    
+
     Performance:
         - O(n) time complexity where n is text length
         - Minimal memory overhead with character-by-character processing
         - Optimized for real-time text processing in voice applications
-    
+
     Note:
         This function is designed for speech synthesis and may not be suitable
         for general NLP sentence tokenization tasks. It prioritizes preserving
@@ -93,55 +93,55 @@ def split_sentences(text: str) -> List[str]:
 
 def auto_style(lang_code: str) -> Dict[str, str]:
     """Determine optimal voice style and speech rate based on language family.
-    
+
     This function provides language-specific optimizations for Azure Cognitive
     Services neural voices. It applies empirically-determined style and rate
     settings that improve naturalness and comprehension for different language
     families.
-    
+
     Optimization Logic:
     - Romance languages (Spanish, French, Italian): Use "chat" style with
       slightly faster rate (+3%) for improved conversational flow
     - English variants: Apply "chat" style with +3% rate for natural dialogue
     - Other languages: Return empty dict to use voice defaults
-    
+
     Args:
         lang_code: ISO 639-1 language code (e.g., 'en', 'es', 'fr', 'zh').
                    Case-insensitive, supports language-region codes like 'en-US'.
-    
+
     Returns:
         Dictionary with optimal synthesis parameters:
         - 'style': Voice style name (e.g., 'chat', 'news', 'customerservice')
         - 'rate': Speech rate adjustment (e.g., '+3%', '-10%', '1.2x')
-        
+
         Returns empty dict if no optimization available for the language.
-    
+
     Example:
         ```python
         # English optimization
         settings = auto_style('en-US')
         # Returns: {'style': 'chat', 'rate': '+3%'}
-        
-        # Spanish optimization  
+
+        # Spanish optimization
         settings = auto_style('es')
         # Returns: {'style': 'chat', 'rate': '+3%'}
-        
+
         # Unsupported language
         settings = auto_style('zh')
         # Returns: {}
         ```
-    
+
     Supported Language Families:
         - English: en, en-US, en-GB, en-AU, etc.
         - Spanish: es, es-ES, es-MX, es-AR, etc.
         - French: fr, fr-FR, fr-CA, etc.
         - Italian: it, it-IT, etc.
-    
+
     Performance:
         - O(1) lookup time with string prefix matching
         - Minimal memory footprint
         - Safe for high-frequency calls in real-time applications
-    
+
     Note:
         These optimizations are based on user experience testing and may be
         adjusted based on specific voice characteristics or application requirements.
@@ -201,7 +201,7 @@ def ssml_voice_wrap(
         ```python
         sentences = ["Hello world!", "¿Cómo estás?", "Très bien!"]
         sanitizer = lambda text: html.escape(text, quote=True)
-        
+
         ssml = ssml_voice_wrap(
             voice="en-US-JennyMultilingualNeural",
             language="en-US",
@@ -210,7 +210,7 @@ def ssml_voice_wrap(
             style="chat",
             rate="+5%"
         )
-        
+
         # Results in SSML like:
         # <speak version="1.0" xmlns="..." xml:lang="en-US">
         #   <voice name="en-US-JennyMultilingualNeural">
@@ -296,29 +296,29 @@ def ssml_voice_wrap(
 
 def _is_headless() -> bool:
     """Detect if the application is running in a headless environment without audio output.
-    
+
     This function provides lightweight heuristics to determine whether the current
     execution environment has audio output capabilities. It's used to prevent
     audio playback attempts in containerized deployments, CI/CD pipelines, and
     cloud server environments where audio hardware is not available.
-    
+
     Detection Logic:
     1. Linux systems without DISPLAY environment variable:
        - Typical in Docker containers, cloud VMs, and server deployments
        - DISPLAY variable indicates X11 GUI session availability
-    
+
     2. Continuous Integration environments:
        - CI environment variable is commonly set by CI/CD platforms
        - Includes GitHub Actions, Azure DevOps, Jenkins, etc.
-    
+
     3. Future extensibility:
        - Can be extended for Windows detection using SESSIONNAME
        - Supports additional platform-specific indicators
-    
+
     Returns:
         True if running in headless environment (no audio output expected).
         False if audio output capabilities are likely available.
-    
+
     Example:
         ```python
         if _is_headless():
@@ -328,30 +328,30 @@ def _is_headless() -> bool:
             print("Audio hardware detected - enabling playback")
             return create_audio_output()
         ```
-    
+
     Platform Support:
         - Linux: Checks DISPLAY environment variable
         - Windows: Placeholder for future SESSIONNAME detection
         - macOS: Inherits from UNIX-like behavior
         - CI/CD: Universal CI environment variable detection
-    
+
     Performance:
         - O(1) operation with minimal system calls
         - Safe for frequent invocation
         - No external dependencies or network calls
-    
+
     Environment Variables Checked:
         - DISPLAY: X11 display server indicator (Linux/Unix)
         - CI: Generic CI/CD environment flag
         - (Future) SESSIONNAME: Windows session type indicator
-    
+
     Use Cases:
         - Docker container audio policy decisions
         - Cloud deployment configuration
         - CI/CD pipeline optimization
         - Development vs. production environment detection
         - Automated testing in headless browsers
-    
+
     Note:
         These heuristics provide reasonable defaults but may not cover all
         edge cases. Consider adding application-specific environment variables
@@ -366,12 +366,12 @@ def _is_headless() -> bool:
 
 class SpeechSynthesizer:
     """Azure Cognitive Services Text-to-Speech synthesizer for real-time voice applications.
-    
+
     This class provides a comprehensive interface to Azure Cognitive Services Speech
     synthesis capabilities, optimized for low-latency real-time voice applications.
     It supports multiple synthesis modes, authentication methods, and output formats
     while providing robust error handling and comprehensive observability.
-    
+
     Key Capabilities:
     * Real-time text-to-speech synthesis with minimal latency
     * Multiple output formats: WAV, PCM, base64-encoded frames
@@ -381,37 +381,37 @@ class SpeechSynthesizer:
     * OpenTelemetry distributed tracing with correlation IDs
     * Concurrent synthesis limiting for service stability
     * Automatic authentication token refresh handling
-    
+
     Authentication Modes:
     1. API Key: Direct subscription key authentication
     2. Azure Default Credentials: Managed identity, service principal, CLI auth
     3. Token-based: Automatic refresh with Azure AD integration
-    
+
     Synthesis Modes:
     1. Speaker Playback: Direct audio output to system speakers
     2. Memory Synthesis: Return audio data as bytes without playback
     3. Frame-based: Generate base64-encoded frames for streaming
     4. PCM Output: Raw audio data for custom processing
-    
+
     Playback Control:
     * "auto": Enable playback only when audio hardware detected
     * "always": Force playback attempt, use null sink if headless
     * "never": Disable all playback operations
-    
+
     Performance Features:
     * Semaphore-limited concurrent synthesis (default: 4 requests)
     * Efficient SSML generation with single voice containers
     * Language-specific optimization for natural speech
     * Automatic sentence splitting for improved prosody
     * Memory-efficient streaming with chunked processing
-    
+
     Observability Integration:
     * OpenTelemetry distributed tracing with session spans
     * Azure Monitor Application Insights compatibility
     * Structured JSON logging with correlation IDs
     * Performance metrics and error tracking
     * Service dependency mapping for App Map visualization
-    
+
     Example Usage:
         ```python
         # Initialize with API key
@@ -422,60 +422,61 @@ class SpeechSynthesizer:
             playback="auto",
             enable_tracing=True
         )
-        
+
         # Local playback (if hardware available)
         synthesizer.start_speaking_text(
             "Hello, how can I help you today?",
             style="chat",
             rate="+10%"
         )
-        
+
         # Memory synthesis for processing
         audio_bytes = synthesizer.synthesize_speech(
             "This is synthesized audio data",
             voice="en-US-AriaNeural"
         )
-        
+
         # Streaming frames for real-time applications
         frames = synthesizer.synthesize_to_base64_frames(
             "Real-time streaming audio",
             sample_rate=16000
         )
-        
+
         # Validate configuration
         if synthesizer.validate_configuration():
             print("Ready for synthesis operations")
         ```
-    
+
     Thread Safety:
         - Class instances are thread-safe for synthesis operations
         - Internal semaphore prevents service overload
         - OpenTelemetry spans are properly isolated per operation
         - No shared mutable state between synthesis calls
-    
+
     Error Handling:
         - Graceful degradation when audio hardware unavailable
         - Automatic retry for transient authentication failures
         - Comprehensive error logging with correlation tracking
         - Silent fallback for non-critical playback operations
-    
+
     Resource Management:
         - Lazy initialization of audio hardware components
         - Automatic cleanup of synthesis resources
         - Efficient memory usage with streaming operations
         - Proper disposal of OpenTelemetry spans
-    
+
     Dependencies:
         - azure-cognitiveservices-speech: Core Speech SDK
         - opentelemetry-api: Distributed tracing support
         - utils.azure_auth: Azure credential management
         - langdetect: Language detection for optimization
-    
+
     Note:
         This class is designed for production use in voice applications.
         Always validate configuration before production deployment and
         monitor synthesis latency and error rates through telemetry.
     """
+
     # Limit concurrent server-side TTS synth requests to avoid SDK/service hiccups
     _synth_semaphore = asyncio.Semaphore(4)
 
@@ -491,18 +492,18 @@ class SpeechSynthesizer:
         enable_tracing: bool = True,
     ):
         """Initialize Azure Speech synthesizer with comprehensive configuration options.
-        
+
         Creates a new SpeechSynthesizer instance with flexible authentication,
         configurable output formats, and intelligent playback management. The
         initializer sets up all necessary components for text-to-speech synthesis
         while handling various deployment scenarios and error conditions gracefully.
-        
+
         Authentication Priority:
         1. Provided key parameter (highest priority)
         2. AZURE_SPEECH_KEY environment variable
         3. Azure Default Credentials (managed identity, service principal, CLI)
         4. Fallback to credential chain resolution
-        
+
         Args:
             key: Azure Speech Services subscription key. If not provided,
                  attempts to use AZURE_SPEECH_KEY environment variable or
@@ -531,19 +532,19 @@ class SpeechSynthesizer:
             enable_tracing: Whether to enable OpenTelemetry distributed tracing.
                            When enabled, creates spans for all synthesis operations
                            with detailed metrics and correlation information.
-        
+
         Raises:
             ValueError: When region is not provided for Default Credential authentication.
             RuntimeError: When no valid authentication method can be established.
             Exception: For critical configuration errors that prevent initialization.
-        
+
         Environment Variables:
             - AZURE_SPEECH_KEY: Subscription key for API authentication
             - AZURE_SPEECH_REGION: Azure region for service endpoint
             - AZURE_SPEECH_ENDPOINT: Custom endpoint URL (optional)
             - AZURE_SPEECH_RESOURCE_ID: Resource ID for AAD authentication
             - TTS_ENABLE_LOCAL_PLAYBACK: Enable/disable local audio playback
-        
+
         Example:
             ```python
             # API key authentication
@@ -553,7 +554,7 @@ class SpeechSynthesizer:
                 voice="en-US-AriaNeural",
                 playback="auto"
             )
-            
+
             # Managed identity authentication
             synthesizer = SpeechSynthesizer(
                 region="eastus",  # key=None uses managed identity
@@ -561,7 +562,7 @@ class SpeechSynthesizer:
                 voice="es-ES-ElviraNeural",
                 enable_tracing=True
             )
-            
+
             # Production configuration
             synthesizer = SpeechSynthesizer(
                 region=os.getenv("AZURE_SPEECH_REGION"),
@@ -572,25 +573,25 @@ class SpeechSynthesizer:
                 enable_tracing=True
             )
             ```
-        
+
         Initialization Behavior:
             - Lazy loading: Audio hardware components created only when needed
             - Fail-safe: Continues initialization even if tracing setup fails
             - Validation: Speech config created and validated during initialization
             - Logging: Comprehensive initialization status and error reporting
-        
+
         Performance Considerations:
             - Minimal initialization overhead with lazy component loading
             - Efficient credential caching for repeated authentications
             - Tracing overhead only when enabled and properly configured
             - Memory-efficient design suitable for long-running applications
-        
+
         Thread Safety:
             - Instance variables are set once during initialization
             - No shared mutable state between concurrent operations
             - Thread-safe for all synthesis methods after initialization
             - OpenTelemetry spans properly isolated per thread
-        
+
         Note:
             Audio hardware detection occurs lazily during first playback attempt.
             This prevents initialization failures in headless environments while
@@ -636,56 +637,56 @@ class SpeechSynthesizer:
 
     def set_call_connection_id(self, call_connection_id: str) -> None:
         """Set the call connection ID for correlation in tracing and logging.
-        
+
         Updates the correlation identifier used to link all synthesis operations
         to a specific call session or conversation. This ID is embedded in
         OpenTelemetry spans, log entries, and monitoring data to enable
         end-to-end request tracking across distributed systems.
-        
+
         The call connection ID serves as the primary correlation key for:
         - Distributed tracing across microservices
         - Log aggregation and filtering
         - Performance monitoring and debugging
         - Session-based analytics and reporting
         - Error correlation and root cause analysis
-        
+
         Args:
             call_connection_id: Unique identifier for the call session or conversation.
                                Typically provided by Azure Communication Services,
                                telephony systems, or application session managers.
                                Should be unique across the system and time.
-        
+
         Example:
             ```python
             synthesizer = SpeechSynthesizer(region="eastus")
-            
+
             # Set correlation ID for new call session
             synthesizer.set_call_connection_id("acs-call-12345-67890")
-            
+
             # All subsequent operations will include this ID
             audio = synthesizer.synthesize_speech("Hello caller")
             # Tracing spans will include rt.call.connection_id = "acs-call-12345-67890"
-            
+
             # Update for new session
             synthesizer.set_call_connection_id("acs-call-99999-11111")
             ```
-        
+
         Thread Safety:
             - Safe to call from multiple threads
             - Changes apply to all subsequent synthesis operations
             - Does not affect operations already in progress
-        
+
         Performance:
             - O(1) operation with no system calls
             - Minimal memory overhead
             - Safe for frequent updates during call transfers
-        
+
         Integration Points:
             - OpenTelemetry spans: Set as rt.call.connection_id attribute
             - Structured logs: Included in all log entries as correlation field
             - Azure Monitor: Available for custom dashboards and alerting
             - Application Insights: Enables end-to-end transaction tracking
-        
+
         Note:
             This method should be called before synthesis operations to ensure
             proper correlation. The ID will be used in all spans and logs until
@@ -695,50 +696,50 @@ class SpeechSynthesizer:
 
     def _create_speech_config(self):
         """Create and configure Azure Speech SDK configuration with flexible authentication.
-        
+
         This method establishes a connection to Azure Cognitive Services Speech
         using the most appropriate authentication method based on available credentials.
         It handles token expiration, credential refresh, and provides comprehensive
         error handling for various deployment scenarios.
-        
+
         Authentication Flow:
         1. API Key Method (preferred if available):
            - Uses subscription key and region for direct authentication
            - Simple and reliable for development and testing
            - Credentials from constructor parameters or environment variables
-        
+
         2. Azure Default Credentials (production recommended):
            - Leverages Azure AD authentication with automatic token refresh
            - Supports managed identity, service principal, and credential chains
            - Requires AZURE_SPEECH_RESOURCE_ID environment variable
            - Provides enhanced security and eliminates key management
-        
+
         Returns:
             speechsdk.SpeechConfig: Configured Speech SDK config object ready
             for synthesis operations. Includes language, voice, and format settings.
-        
+
         Raises:
             ValueError: When region is missing for Default Credential authentication.
             RuntimeError: When authentication fails or no valid method available.
             Exception: For credential token acquisition failures or config errors.
-        
+
         Configuration Applied:
             - speech_synthesis_language: Set to instance language (e.g., 'en-US')
             - speech_synthesis_voice_name: Set to instance voice name
             - output_format: Set to 24kHz 16-bit mono PCM for high quality
-        
+
         Environment Variables Used:
             - AZURE_SPEECH_KEY: Subscription key for API authentication
             - AZURE_SPEECH_REGION: Azure region for service endpoint
             - AZURE_SPEECH_ENDPOINT: Custom endpoint URL (optional)
             - AZURE_SPEECH_RESOURCE_ID: Resource ID for AAD authentication
-        
+
         Token Management:
             - Fresh token acquired on each call to handle expiration
             - Automatic refresh through Azure credential chain
             - Proper token format for Azure AD authentication
             - Error handling for token acquisition failures
-        
+
         Example Usage:
             ```python
             # Internal method - called automatically during initialization
@@ -748,25 +749,25 @@ class SpeechSynthesizer:
             except RuntimeError as e:
                 print(f"Authentication failed: {e}")
             ```
-        
+
         Performance Considerations:
             - Token acquisition may involve network calls
             - Credential caching handled by Azure SDK
             - Config creation is relatively lightweight
             - Should not be called frequently due to auth overhead
-        
+
         Security Features:
             - No credential logging or exposure
             - Secure token handling with automatic cleanup
             - Support for enterprise AAD authentication
             - Credential chain fallback for maximum flexibility
-        
+
         Error Recovery:
             - Detailed error messages for troubleshooting
             - Graceful handling of credential failures
             - Clear guidance for configuration fixes
             - Comprehensive logging for debugging
-        
+
         Note:
             This method creates a fresh configuration each time to ensure
             token freshness and handle credential rotation. The configuration
@@ -827,54 +828,54 @@ class SpeechSynthesizer:
 
     def _create_speaker_synthesizer(self):
         """Create audio output synthesizer with intelligent playback mode handling.
-        
+
         This method creates a Speech SDK synthesizer configured for local audio
         playback based on the instance's playback mode and environment detection.
         It provides flexible audio output management for different deployment
         scenarios from development to production containers.
-        
+
         Playback Mode Behavior:
-        
+
         "never" Mode:
             - Never attempts to create audio output synthesizer
             - Suitable for headless deployments and batch processing
             - Returns None immediately without hardware detection
-        
+
         "auto" Mode (recommended):
             - Creates synthesizer only when audio hardware likely available
             - Uses headless environment detection for intelligent decisions
             - Prevents audio errors in containerized deployments
             - Enables local playback in development environments
-        
+
         "always" Mode:
             - Always attempts to create synthesizer regardless of environment
             - Uses null audio sink in headless environments (no actual output)
             - Useful for testing audio processing without speaker requirements
             - May log warnings in environments without audio capabilities
-        
+
         Returns:
             speechsdk.SpeechSynthesizer or None: Configured synthesizer for
             audio playback, or None if playback disabled or unavailable.
-            
+
             The synthesizer is cached for subsequent calls to avoid repeated
             hardware detection and initialization overhead.
-        
+
         Environment Detection:
             - Checks for GUI display availability (DISPLAY environment variable)
             - Detects CI/CD pipeline environments (CI environment variable)
             - Identifies containerized deployments without audio hardware
             - Uses platform-specific heuristics for accurate detection
-        
+
         Audio Configuration:
             - use_default_speaker=True: Uses system default audio device
             - filename=None: Null sink for headless "always" mode
             - Inherits speech config settings from instance configuration
-        
+
         Example Usage:
             ```python
             # Internal method - called automatically during playback
             synthesizer._speaker = synthesizer._create_speaker_synthesizer()
-            
+
             if synthesizer._speaker:
                 # Audio playback available
                 synthesizer._speaker.speak_text_async("Hello world")
@@ -882,37 +883,37 @@ class SpeechSynthesizer:
                 # Headless environment or playback disabled
                 logger.info("Audio playback not available")
             ```
-        
+
         Caching Behavior:
             - Speaker synthesizer created once and cached
             - Subsequent calls return cached instance for efficiency
             - Cache cleared only when instance destroyed
             - No automatic refresh for hardware changes
-        
+
         Error Handling:
             - Graceful fallback when audio hardware unavailable
             - Comprehensive logging for debugging audio issues
             - Returns None on any speaker creation failure
             - No exceptions raised to avoid disrupting synthesis
-        
+
         Performance Considerations:
             - Lazy initialization only when actually needed
             - Hardware detection cached to avoid repeated system calls
             - Minimal overhead for non-playback use cases
             - Efficient reuse of created synthesizer instances
-        
+
         Thread Safety:
             - Safe to call from multiple threads
             - First caller creates and caches the synthesizer
             - Subsequent calls return cached instance
             - No race conditions in synthesizer creation
-        
+
         Resource Management:
             - Audio resources automatically managed by Speech SDK
             - Synthesizer lifecycle tied to parent instance
             - Proper cleanup when parent instance destroyed
             - No manual resource disposal required
-        
+
         Note:
             Audio hardware availability is detected at creation time.
             If hardware becomes available after instance creation,
@@ -974,65 +975,65 @@ class SpeechSynthesizer:
     @staticmethod
     def _sanitize(text: str) -> str:
         """Escape XML-significant characters for safe SSML document construction.
-        
+
         This static method provides essential XML escaping to prevent SSML
         parsing errors when user-provided text contains special characters.
         It ensures that text content can be safely embedded within SSML
         elements without breaking document structure or syntax.
-        
+
         Characters Escaped:
         - & (ampersand) → &amp; (entity references)
         - < (less than) → &lt; (opening tags)
         - > (greater than) → &gt; (closing tags)
         - " (double quote) → &quot; (attribute values)
         - ' (single quote) → &#x27; (attribute values)
-        
+
         Args:
             text: Raw text string that may contain XML-significant characters.
                   Can include user input, dynamic content, or multilingual text
                   that needs to be safely embedded in SSML documents.
-        
+
         Returns:
             Escaped text string safe for inclusion in SSML XML documents.
             All XML-significant characters are replaced with their entity
             references while preserving the original text meaning.
-        
+
         Example:
             ```python
             # User input with special characters
             user_text = 'Say "Hello & welcome!" with <emphasis>'
             safe_text = SpeechSynthesizer._sanitize(user_text)
             # Result: 'Say &quot;Hello &amp; welcome!&quot; with &lt;emphasis&gt;'
-            
+
             # Can now be safely used in SSML
             ssml = f'<speak><voice name="en-US-JennyNeural">{safe_text}</voice></speak>'
             ```
-        
+
         Use Cases:
             - User-generated content in voice applications
             - Dynamic text from databases or APIs
             - Multilingual content with special punctuation
             - Template-based SSML generation
             - Real-time text processing in voice assistants
-        
+
         Performance:
             - O(n) time complexity where n is text length
             - Minimal memory overhead with efficient string operations
             - Safe for high-frequency calls in real-time applications
             - No external dependencies or network calls
-        
+
         SSML Compatibility:
             - Follows XML 1.0 specification for character escaping
             - Compatible with Azure Cognitive Services SSML parser
             - Preserves Unicode characters and multilingual content
             - Does not interfere with legitimate SSML markup
-        
+
         Security Considerations:
             - Prevents XML injection attacks through user input
             - Ensures SSML document well-formedness
             - Safe for processing untrusted text content
             - No risk of malformed synthesis requests
-        
+
         Note:
             This method only escapes content text, not SSML markup.
             If you need to include actual SSML tags in your text,

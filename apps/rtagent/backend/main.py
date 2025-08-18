@@ -23,6 +23,7 @@ from utils.telemetry_config import setup_azure_monitor
 setup_azure_monitor(logger_name="rtagent")
 
 from utils.ml_logging import get_logger
+
 logger = get_logger("main")
 
 import time
@@ -101,22 +102,25 @@ async def lifespan(app: FastAPI):
         logger.info("🚀 startup…")
         start_time = time.perf_counter()
 
-        span.set_attributes({
-            "service.name": "rtagent-api",
-            "service.version": "1.0.0",
-            "startup.stage": "initialization",
-        })
+        span.set_attributes(
+            {
+                "service.name": "rtagent-api",
+                "service.version": "1.0.0",
+                "startup.stage": "initialization",
+            }
+        )
 
         # ------------------------ Process-wide shared state -------------------
         # Dashboard sockets & greeted set
         # Thread-safe WebSocket client management
         from src.pools.session_manager import ThreadSafeSessionManager
+
         app.state.websocket_manager = ThreadSafeWebSocketManager()
         app.state.session_manager = ThreadSafeSessionManager()
-        
-        app.state.greeted_call_ids = set()    # avoid double greetings
 
-        # Thread-safe session metrics for visibility  
+        app.state.greeted_call_ids = set()  # avoid double greetings
+
+        # Thread-safe session metrics for visibility
         app.state.session_metrics = ThreadSafeSessionMetrics()
 
         # ------------------------ Speech Pools (TTS / STT) -------------------
@@ -201,11 +205,13 @@ async def lifespan(app: FastAPI):
 
         elapsed = time.perf_counter() - start_time
         logger.info(f"startup complete in {elapsed:.2f}s")
-        span.set_attributes({
-            "startup.duration_sec": elapsed,
-            "startup.stage": "complete",
-            "startup.success": True,
-        })
+        span.set_attributes(
+            {
+                "startup.duration_sec": elapsed,
+                "startup.stage": "complete",
+                "startup.success": True,
+            }
+        )
 
     # ---- Run app ----
     yield
@@ -213,7 +219,9 @@ async def lifespan(app: FastAPI):
     # ---- Shutdown ----
     with tracer.start_as_current_span("shutdown-lifespan") as span:
         logger.info("🛑 shutdown…")
-        span.set_attributes({"service.name": "rtagent-api", "shutdown.stage": "cleanup"})
+        span.set_attributes(
+            {"service.name": "rtagent-api", "shutdown.stage": "cleanup"}
+        )
         span.set_attribute("shutdown.success", True)
 
 
@@ -234,6 +242,7 @@ def create_app() -> FastAPI:
     :raises ImportError: If required documentation modules cannot be imported.
     """
     from apps.rtagent.backend.api.swagger_docs import get_tags, get_description
+
     tags = get_tags()
     description = get_description()
 
@@ -242,7 +251,10 @@ def create_app() -> FastAPI:
         description=description,
         version="1.0.0",
         contact={"name": "Real-Time Voice Agent Team", "email": "support@example.com"},
-        license_info={"name": "MIT License", "url": "https://opensource.org/licenses/MIT"},
+        license_info={
+            "name": "MIT License",
+            "url": "https://opensource.org/licenses/MIT",
+        },
         openapi_tags=tags,
         lifespan=lifespan,
         docs_url="/docs",
@@ -277,6 +289,7 @@ def setup_app_middleware_and_routes(app: FastAPI):
     )
 
     if ENABLE_AUTH_VALIDATION:
+
         @app.middleware("http")
         async def entraid_auth_middleware(request: Request, call_next):
             """
@@ -297,7 +310,9 @@ def setup_app_middleware_and_routes(app: FastAPI):
             try:
                 await validate_entraid_token(request)
             except HTTPException as e:
-                return JSONResponse(content={"error": e.detail}, status_code=e.status_code)
+                return JSONResponse(
+                    content={"error": e.detail}, status_code=e.status_code
+                )
             return await call_next(request)
 
     # app.include_router(api_router)  # legacy, if needed
@@ -308,6 +323,7 @@ def setup_app_middleware_and_routes(app: FastAPI):
 
 # Create the app
 app = None
+
 
 def initialize_app():
     """
@@ -326,6 +342,7 @@ def initialize_app():
     setup_app_middleware_and_routes(app)
     return app
 
+
 # Initialize the app
 app = initialize_app()
 
@@ -336,8 +353,8 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8010))
     # For development with reload, use the import string instead of app object
     uvicorn.run(
-        "main:app",           # Use import string for reload to work
-        host="0.0.0.0",       # nosec: B104
+        "main:app",  # Use import string for reload to work
+        host="0.0.0.0",  # nosec: B104
         port=port,
         reload=True,
     )

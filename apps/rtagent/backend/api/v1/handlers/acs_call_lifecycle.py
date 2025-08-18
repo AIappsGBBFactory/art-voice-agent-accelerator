@@ -52,7 +52,7 @@ tracer = trace.get_tracer(__name__)
 def safe_set_span_attributes(span, attributes: dict):
     """
     Safely set span attributes without errors.
-    
+
     :param span: OpenTelemetry span instance
     :param attributes: Dictionary of attributes to set
     :type attributes: dict
@@ -388,7 +388,7 @@ class ACSLifecycleHandler:
     ) -> JSONResponse:
         """
         Handle Event Grid subscription validation.
-        
+
         :param event_data: Event data containing validation code
         :type event_data: Dict[str, Any]
         :param span: OpenTelemetry span for tracing
@@ -414,7 +414,7 @@ class ACSLifecycleHandler:
     ) -> JSONResponse:
         """
         Handle incoming call event.
-        
+
         :param event_data: Event data containing call information
         :type event_data: Dict[str, Any]
         :param acs_caller: ACS caller instance for call operations
@@ -491,7 +491,7 @@ class ACSLifecycleHandler:
     def _extract_caller_id(self, caller_info: Dict[str, Any]) -> str:
         """
         Extract caller ID from caller information.
-        
+
         :param caller_info: Caller information dictionary
         :type caller_info: Dict[str, Any]
         :return: Caller ID string
@@ -506,7 +506,7 @@ class ACSLifecycleHandler:
     ) -> None:
         """
         Initialize conversation state for the call.
-        
+
         :param call_connection_id: ACS call connection identifier
         :type call_connection_id: str
         :param caller_id: Caller identification string

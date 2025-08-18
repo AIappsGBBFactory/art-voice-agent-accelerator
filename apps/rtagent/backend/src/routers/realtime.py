@@ -48,11 +48,13 @@ async def relay_ws(ws: WebSocket):
     :return: None (maintains persistent connection for real-time message relay).
     :raises WebSocketDisconnect: If the dashboard client connection is terminated.
     """
-    clients: set[WebSocket] = await ws.app.state.websocket_manager.get_clients_snapshot()
+    clients: set[
+        WebSocket
+    ] = await ws.app.state.websocket_manager.get_clients_snapshot()
     if ws not in clients:
         await ws.accept()
         clients.add(ws)
-        
+
         # Track WebSocket connection for session metrics
         if hasattr(ws.app.state, "session_metrics"):
             await ws.app.state.session_metrics.increment_connected()
@@ -66,7 +68,7 @@ async def relay_ws(ws: WebSocket):
         # Track WebSocket disconnection for session metrics
         if hasattr(ws.app.state, "session_metrics"):
             await ws.app.state.session_metrics.increment_disconnected()
-            
+
         if ws.application_state.name == "CONNECTED" and ws.client_state.name not in (
             "DISCONNECTED",
             "CLOSED",
@@ -97,11 +99,11 @@ async def realtime_ws(ws: WebSocket):
 
         redis_mgr = ws.app.state.redis
         cm = MemoManager.from_redis(session_id, redis_mgr)
-        
+
         # Acquire per-connection TTS synthesizer from pool
         ws.state.tts_client = await ws.app.state.tts_pool.acquire()
         logger.info(f"Acquired TTS synthesizer from pool for session {session_id}")
-        
+
         ws.state.cm = cm
         ws.state.session_id = session_id
         ws.state.lt = LatencyTool(cm)
@@ -111,11 +113,11 @@ async def realtime_ws(ws: WebSocket):
         auth_agent = ws.app.state.auth_agent
         cm.append_to_history(auth_agent.name, "assistant", GREETING)
         await send_tts_audio(GREETING, ws, latency_tool=ws.state.lt)
-        
+
         # Track WebSocket connection for session metrics
         if hasattr(ws.app.state, "session_metrics"):
             await ws.app.state.session_metrics.increment_connected()
-            
+
         clients = await ws.app.state.websocket_manager.get_clients_snapshot()
         await broadcast_message(clients, GREETING, "Auth Agent")
         await cm.persist_to_redis_async(redis_mgr)
@@ -147,6 +149,7 @@ async def realtime_ws(ws: WebSocket):
                     json.dumps({"type": "assistant_streaming", "content": txt})
                 )
             )
+
         # Acquire per-connection STT recognizer from pool
         ws.state.stt_client = await ws.app.state.stt_pool.acquire()
         logger.info(f"Acquired STT recognizer from pool for session {session_id}")

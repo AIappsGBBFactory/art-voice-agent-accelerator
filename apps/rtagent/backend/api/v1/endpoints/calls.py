@@ -50,7 +50,7 @@ def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
     :type data: dict
     :return: Properly formatted event for V1 processor
     :rtype: CloudEvent
-    
+
     .. note::
         When using with CallEventProcessor.process_events(), remember to pass
         the request.app.state as the second argument for dependency injection.
@@ -268,7 +268,7 @@ async def list_calls(
 ) -> CallListResponse:
     """
     List calls with pagination and filtering.
-    
+
     :param request: FastAPI request object for accessing app state
     :type request: Request
     :param page: Page number (1-based)

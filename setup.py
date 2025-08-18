@@ -4,7 +4,9 @@ from setuptools import setup, find_packages
 
 # Read requirements from requirements.txt
 with open("requirements.txt", "r", encoding="utf-8") as f:
-    requirements = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+    requirements = [
+        line.strip() for line in f if line.strip() and not line.startswith("#")
+    ]
 
 # Read long description from README
 try:
@@ -28,7 +30,7 @@ setup(
     extras_require={
         "docs": [
             "mkdocs>=1.5.0",
-            "mkdocs-material>=9.0.0", 
+            "mkdocs-material>=9.0.0",
             "mkdocstrings[python]>=0.20.0",
             "pymdown-extensions>=10.0.0",
         ],

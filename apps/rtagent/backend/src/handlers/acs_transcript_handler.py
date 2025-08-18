@@ -25,12 +25,16 @@ class TranscriptionHandler:
         self.clients = None  # Will be set during first usage
         # Per-connection value (placed on websocket.state by router)
         self.call_conn = getattr(websocket.state, "call_conn", None)
-        logger.info(f"📝 Transcription handler initialized | Session: {self.cm.session_id}")
+        logger.info(
+            f"📝 Transcription handler initialized | Session: {self.cm.session_id}"
+        )
 
     async def _ensure_clients(self):
         """Lazy initialization of clients to avoid async call in __init__"""
         if self.clients is None:
-            self.clients = await self.websocket.app.state.websocket_manager.get_clients_snapshot()
+            self.clients = (
+                await self.websocket.app.state.websocket_manager.get_clients_snapshot()
+            )
 
     async def handle_transcription_message(self, message: Dict[str, Any]) -> None:
         """

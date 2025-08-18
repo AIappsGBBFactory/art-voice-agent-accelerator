@@ -51,7 +51,9 @@ class VADIteratorWithDenoiseAndToggle:
             audio_bytes = await self.denoiser.filter(audio_bytes)
 
         # Convert PCM16 bytes to float32
-        audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        audio_np = (
+            np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        )
         audio_tensor = torch.from_numpy(audio_np).unsqueeze(0)
 
         window_size_samples = len(audio_tensor[0])
@@ -83,7 +85,9 @@ class VADIteratorWithDenoiseAndToggle:
             self.buffer.append(audio_tensor)
 
         self.start_pad_buffer.append(audio_tensor)
-        self.start_pad_buffer = self.start_pad_buffer[-int(self.speech_pad_samples // window_size_samples):]
+        self.start_pad_buffer = self.start_pad_buffer[
+            -int(self.speech_pad_samples // window_size_samples) :
+        ]
 
         return None
 

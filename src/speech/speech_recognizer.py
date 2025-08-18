@@ -34,15 +34,15 @@ load_dotenv()
 class StreamingSpeechRecognizerFromBytes:
     """
     Real-time streaming speech recognizer using Azure Speech SDK with advanced features.
-    
+
     A comprehensive speech recognition engine that processes audio bytes in real-time
     using Azure Cognitive Services Speech SDK. Provides advanced features including
     automatic language detection, speaker diarization, neural audio processing,
     and comprehensive observability through OpenTelemetry tracing.
-    
+
     This class is optimized for voice agent applications requiring low-latency
     speech recognition with high accuracy and advanced audio processing capabilities.
-    
+
     Features:
         - Real-time streaming from PushAudioInputStream
         - Multi-format audio support (PCM, WebM, MP3, OGG)
@@ -54,26 +54,26 @@ class StreamingSpeechRecognizerFromBytes:
         - Comprehensive error handling and recovery
         - OpenTelemetry tracing with Azure Monitor integration
         - Flexible authentication (API key or Default Credentials)
-        
+
     Authentication Options:
         1. API Key: Traditional subscription key authentication
         2. Azure Default Credentials: Managed identity, service principal,
            or developer credentials for secure, keyless authentication
-           
+
     Audio Processing Pipeline:
         1. Audio bytes written to PushAudioInputStream
         2. Optional neural front-end processing (noise reduction)
         3. Real-time speech recognition with language detection
         4. Optional speaker diarization for multi-speaker scenarios
         5. Continuous callbacks for partial and final results
-        
+
     Observability:
         - Session-level spans for complete recognition sessions
         - Event tracking for audio chunks and recognition results
         - Application Map visualization as external service dependency
         - Call correlation across distributed voice agent components
         - Performance metrics and error tracking
-        
+
     Attributes:
         key (Optional[str]): Azure Speech API key for authentication
         region (str): Azure region for Speech services
@@ -83,7 +83,7 @@ class StreamingSpeechRecognizerFromBytes:
         use_semantic (bool): Enable semantic segmentation
         call_connection_id (str): Call identifier for correlation
         enable_tracing (bool): Enable OpenTelemetry tracing
-        
+
     Example:
         ```python
         # Initialize with comprehensive configuration
@@ -99,20 +99,20 @@ class StreamingSpeechRecognizerFromBytes:
             call_connection_id="call_123",
             enable_tracing=True
         )
-        
+
         # Set up event callbacks
         def handle_partial(text, language, speaker_id):
             print(f"Partial ({language}): {text}")
-            
+
         def handle_final(text, language, speaker_id):
             print(f"Final ({language}): {text}")
-            
+
         recognizer.set_partial_result_callback(handle_partial)
         recognizer.set_final_result_callback(handle_final)
-        
+
         # Start recognition session
         recognizer.start()
-        
+
         # Process real-time audio stream
         try:
             for audio_chunk in audio_stream:
@@ -121,11 +121,11 @@ class StreamingSpeechRecognizerFromBytes:
             recognizer.stop()
             recognizer.close_stream()
         ```
-        
+
     Note:
         For production deployments, Azure Default Credentials with managed
         identity is recommended over API keys for enhanced security.
-        
+
     Raises:
         ValueError: If required configuration is missing or invalid
         Exception: If Azure authentication fails or Speech SDK errors occur
@@ -159,18 +159,18 @@ class StreamingSpeechRecognizerFromBytes:
     ):
         """
         Initialize the streaming speech recognizer with comprehensive configuration.
-        
+
         Creates a new speech recognizer instance with advanced audio processing
         capabilities, authentication options, and observability features for
         real-time voice agent applications.
-        
+
         Args:
             key (Optional[str]): Azure Speech Services API key. If None, uses
                 Azure Default Credentials (managed identity, service principal).
                 For production, Default Credentials are recommended.
             region (Optional[str]): Azure region for Speech services (e.g., "eastus").
                 Required for both API key and credential authentication.
-                
+
         Behavior Configuration:
             candidate_languages (Optional[List[str]]): Languages for automatic
                 detection. Defaults to ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"].
@@ -183,7 +183,7 @@ class StreamingSpeechRecognizerFromBytes:
             audio_format (str): Audio input format. Options:
                 - "pcm": Raw PCM 16kHz 16-bit mono audio
                 - "any": Compressed formats (WebM, MP3, OGG) via GStreamer
-                
+
         Advanced Features:
             enable_neural_fe (bool): Enable neural audio front-end processing
                 including noise suppression, acoustic echo cancellation, and
@@ -192,20 +192,20 @@ class StreamingSpeechRecognizerFromBytes:
                 different speakers in multi-speaker conversations. Default: True.
             speaker_count_hint (int): Hint for expected number of speakers
                 (1-16). Helps optimize diarization accuracy. Default: 2.
-                
+
         Observability:
             call_connection_id (Optional[str]): Unique identifier for call
                 correlation in tracing and logging. If None, uses "unknown".
             enable_tracing (bool): Enable OpenTelemetry tracing with Azure
                 Monitor integration for performance monitoring. Default: True.
-                
+
         Attributes Initialized:
             - Authentication configuration and credentials
             - Audio processing parameters and feature flags
             - Callback handlers for recognition events
             - OpenTelemetry tracer for observability
             - Azure Speech SDK configuration
-            
+
         Example:
             ```python
             # Production configuration with Default Credentials
@@ -217,7 +217,7 @@ class StreamingSpeechRecognizerFromBytes:
                 enable_diarisation=True,
                 call_connection_id="call_abc123"
             )
-            
+
             # Development configuration with API key
             recognizer = StreamingSpeechRecognizerFromBytes(
                 key="your-speech-key",
@@ -226,13 +226,13 @@ class StreamingSpeechRecognizerFromBytes:
                 enable_tracing=True
             )
             ```
-            
+
         Raises:
             ValueError: If region is missing when using Default Credentials,
                 or if invalid audio_format is specified.
             Exception: If Azure authentication fails or Speech SDK initialization
                 encounters errors.
-                
+
         Note:
             The recognizer must be started with start() before processing audio.
             Authentication validation occurs during start(), not initialization.
@@ -279,25 +279,25 @@ class StreamingSpeechRecognizerFromBytes:
     def set_call_connection_id(self, call_connection_id: str) -> None:
         """
         Update the call connection ID for correlation in tracing and logging.
-        
+
         Sets or updates the call connection identifier used for correlating
         speech recognition operations across distributed voice agent components.
         This ID appears in OpenTelemetry traces and logs for end-to-end tracking.
-        
+
         Args:
             call_connection_id (str): Unique identifier for the call or session.
                 Typically provided by Azure Communication Services or your
                 call management system.
-                
+
         Example:
             ```python
             # Set ID from Azure Communication Services
             recognizer.set_call_connection_id("acs_call_123456")
-            
+
             # Update ID during call transfer
             recognizer.set_call_connection_id("transferred_call_789")
             ```
-            
+
         Note:
             This ID is used for correlation in Azure Monitor Application Map
             and distributed tracing. Changes take effect immediately for
@@ -308,37 +308,37 @@ class StreamingSpeechRecognizerFromBytes:
     def _create_speech_config(self) -> speechsdk.SpeechConfig:
         """
         Create Azure Speech SDK configuration with authentication.
-        
+
         Initializes the SpeechConfig using either API key authentication or
         Azure Default Credentials, following Azure security best practices
         for authentication in cloud environments.
-        
+
         Authentication Methods:
             1. API Key: Uses subscription key and region (traditional method)
             2. Default Credentials: Uses managed identity, service principal,
                or developer credentials (recommended for production)
-               
+
         Returns:
             speechsdk.SpeechConfig: Configured Speech SDK instance ready for
                 use with recognition services.
-                
+
         Environment Variables:
             - AZURE_SPEECH_KEY: API key for subscription-based auth
             - AZURE_SPEECH_REGION: Azure region for Speech services
             - AZURE_SPEECH_ENDPOINT: Custom endpoint URL (optional)
-            
+
         Example:
             ```python
             # Internal method called during initialization
             config = recognizer._create_speech_config()
             ```
-            
+
         Raises:
             ValueError: If region is missing when using Default Credentials,
                 or if authentication token retrieval fails.
             Exception: If Azure authentication fails or Speech SDK configuration
                 encounters errors.
-                
+
         Note:
             For Default Credentials, the identity must have the "Cognitive
             Services User" RBAC role assigned for the Speech resource.
@@ -387,29 +387,29 @@ class StreamingSpeechRecognizerFromBytes:
     def set_partial_result_callback(self, callback: Callable[[str, str], None]) -> None:
         """
         Set callback function for partial (intermediate) recognition results.
-        
+
         Registers a callback function that will be invoked whenever the speech
         recognizer produces partial recognition results during continuous
         recognition. Partial results provide real-time feedback as speech
         is being processed.
-        
+
         Args:
             callback (Callable[[str, str], None]): Function to call with partial results.
                 Function signature: callback(text, detected_language, speaker_id)
                 - text (str): Partial recognized text (may change as more audio is processed)
                 - detected_language (str): ISO language code (e.g., "en-US")
                 - speaker_id (Optional[str]): Speaker identifier if diarization enabled
-                
+
         Example:
             ```python
             def handle_partial_result(text, language, speaker_id):
                 print(f"Partial ({language}): {text}")
                 if speaker_id:
                     print(f"Speaker: {speaker_id}")
-                    
+
             recognizer.set_partial_result_callback(handle_partial_result)
             ```
-            
+
         Note:
             Partial results are intermediate and may change as more audio
             is processed. Use final results for definitive text output.
@@ -420,28 +420,28 @@ class StreamingSpeechRecognizerFromBytes:
     def set_final_result_callback(self, callback: Callable[[str, str], None]) -> None:
         """
         Set callback function for final recognition results.
-        
+
         Registers a callback function that will be invoked when the speech
         recognizer produces final recognition results. Final results represent
         completed speech segments and are stable (won't change).
-        
+
         Args:
             callback (Callable[[str, str], None]): Function to call with final results.
                 Function signature: callback(text, detected_language, speaker_id)
                 - text (str): Final recognized text (stable, won't change)
                 - detected_language (str): ISO language code (e.g., "en-US")
                 - speaker_id (Optional[str]): Speaker identifier if diarization enabled
-                
+
         Example:
             ```python
             def handle_final_result(text, language, speaker_id):
                 print(f"Final ({language}): {text}")
                 # Process completed utterance
                 process_user_input(text, language)
-                
+
             recognizer.set_final_result_callback(handle_final_result)
             ```
-            
+
         Note:
             Final results are triggered by voice activity detection silence
             timeouts or semantic segmentation boundaries. Callback is
@@ -454,16 +454,16 @@ class StreamingSpeechRecognizerFromBytes:
     ) -> None:
         """
         Set callback function for cancellation and error events.
-        
+
         Registers a callback function that will be invoked when speech recognition
         is canceled due to errors, network issues, or other exceptional conditions.
         This enables custom error handling and recovery logic.
-        
+
         Args:
             callback (Callable[[speechsdk.SessionEventArgs], None]): Function to call
                 when cancellation occurs. Receives SessionEventArgs with details
                 about the cancellation reason and error information.
-                
+
         Example:
             ```python
             def handle_cancellation(event_args):
@@ -472,14 +472,14 @@ class StreamingSpeechRecognizerFromBytes:
                     print(f"Recognition canceled: {details.reason}")
                     if details.error_details:
                         print(f"Error: {details.error_details}")
-                        
+
                     # Implement recovery logic
                     if details.reason == speechsdk.CancellationReason.Error:
                         restart_recognition()
-                        
+
             recognizer.set_cancel_callback(handle_cancellation)
             ```
-            
+
         Note:
             Cancellation can occur due to network errors, authentication
             failures, quota exceeded, or service interruptions. Implement
@@ -490,28 +490,28 @@ class StreamingSpeechRecognizerFromBytes:
     def prepare_stream(self) -> None:
         """
         Initialize the audio input stream for speech recognition.
-        
+
         Creates and configures a PushAudioInputStream based on the specified
         audio format. This stream will receive audio bytes for real-time
         speech recognition processing.
-        
+
         Stream Formats:
             - PCM: Raw 16kHz 16-bit mono audio (uncompressed)
             - ANY: Compressed audio formats (WebM, MP3, OGG) via GStreamer
-            
+
         Example:
             ```python
             # Prepare stream before starting recognition
             recognizer.prepare_stream()
             recognizer.start()
-            
+
             # Now ready to receive audio bytes
             recognizer.write_bytes(audio_chunk)
             ```
-            
+
         Raises:
             ValueError: If audio_format is not "pcm" or "any"
-            
+
         Note:
             This method is called automatically by start() and prepare_start().
             Manual calls are only needed for advanced stream management scenarios.
@@ -534,19 +534,19 @@ class StreamingSpeechRecognizerFromBytes:
     def start(self) -> None:
         """
         Start continuous speech recognition with comprehensive tracing.
-        
+
         Initializes and starts the speech recognition session with OpenTelemetry
         tracing for monitoring and debugging. Creates a session-level span that
         tracks the entire recognition lifecycle and integrates with Azure Monitor
         Application Map for service dependency visualization.
-        
+
         Tracing Features:
             - Session-level span for complete recognition lifecycle
             - Call correlation with connection ID attributes
             - Azure Monitor Application Map integration
             - Service dependency visualization
             - Performance monitoring and error tracking
-            
+
         Span Attributes:
             - rt.call.connection_id: Call correlation identifier
             - rt.session.id: Session identifier
@@ -557,24 +557,24 @@ class StreamingSpeechRecognizerFromBytes:
             - http.url: Recognition endpoint URL
             - speech.audio_format: Audio format configuration
             - speech.candidate_languages: Language detection settings
-            
+
         Example:
             ```python
             # Start recognition with tracing
             recognizer.start()
-            
+
             # Recognition is now active and ready for audio
             for audio_chunk in audio_stream:
                 recognizer.write_bytes(audio_chunk)
-                
+
             # Clean up
             recognizer.stop()
             ```
-            
+
         Raises:
             Exception: If Speech SDK initialization fails, authentication
                 errors occur, or network connectivity issues prevent startup.
-                
+
         Note:
             This method blocks until the Speech SDK completes initialization.
             Recognition runs on background threads after successful startup.
@@ -642,28 +642,28 @@ class StreamingSpeechRecognizerFromBytes:
     def _start_recognition(self) -> None:
         """
         Internal method to initialize and start the Speech SDK recognizer.
-        
+
         Builds the complete Speech SDK recognizer configuration and starts
         continuous recognition in a single operation. This method handles
         the low-level SDK setup and network connection establishment.
-        
+
         Process:
             1. Prepare audio stream and recognizer configuration
             2. Configure advanced features (neural FE, diarization)
             3. Set up language detection and recognition parameters
             4. Connect event callbacks for results and errors
             5. Start continuous recognition with network connection
-            
+
         Logging:
             - Logs recognition startup with configuration details
             - Tracks session events in OpenTelemetry spans
             - Records successful initialization
-            
+
         Raises:
             Exception: If Speech SDK fails to initialize or start recognition
                 due to configuration errors, authentication issues, or network
                 connectivity problems.
-                
+
         Note:
             This method is called internally by start() and should not be
             called directly. Use start() for public API access.
@@ -680,12 +680,12 @@ class StreamingSpeechRecognizerFromBytes:
     def prepare_start(self) -> None:
         """
         Configure and prepare the Speech SDK recognizer with advanced features.
-        
+
         Builds a complete Speech SDK recognizer instance with all configured
         features including neural front-end processing, speaker diarization,
         language detection, and semantic segmentation. This method handles
         the complex SDK configuration without starting network communication.
-        
+
         Configuration Stages:
             1. SpeechConfig: Global properties and service settings
             2. Audio Stream: Format-specific input stream configuration
@@ -693,32 +693,32 @@ class StreamingSpeechRecognizerFromBytes:
             4. Language Detection: Auto-detection configuration
             5. Recognizer Assembly: Complete recognizer with all features
             6. Callback Wiring: Event handler registration
-            
+
         Advanced Features:
             - Neural Front-End: Noise suppression, AEC, AGC when enabled
             - Speaker Diarization: Multi-speaker identification and separation
             - Language Detection: Continuous auto-detection from candidates
             - Semantic Segmentation: Improved sentence boundary detection
             - VAD Configuration: Customizable silence timeout settings
-            
+
         Audio Formats:
             - PCM: Raw 16kHz 16-bit mono for optimal performance
             - ANY: Compressed formats (WebM, MP3, OGG) via GStreamer
-            
+
         Example:
             ```python
             # Internal method called by start()
             recognizer.prepare_start()
             # Recognizer is configured but not yet started
             ```
-            
+
         Logging:
             Logs detailed configuration information including:
             - Audio format and processing options
             - Neural front-end and diarization settings
             - Language detection and VAD configuration
             - Callback registration status
-            
+
         Note:
             This method prepares the recognizer but does not start recognition.
             Call speech_recognizer.start_continuous_recognition_async() after
@@ -843,45 +843,45 @@ class StreamingSpeechRecognizerFromBytes:
     def write_bytes(self, audio_chunk: bytes) -> None:
         """
         Write audio bytes to the recognition stream for real-time processing.
-        
+
         Feeds audio data to the Speech SDK's PushAudioInputStream for continuous
         speech recognition. Optimized for high-frequency calls with minimal
         overhead by using span events rather than per-chunk spans.
-        
+
         Args:
             audio_chunk (bytes): Raw audio data to process. Format depends on
                 the configured audio_format:
                 - PCM: Raw 16kHz 16-bit mono audio bytes
                 - ANY: Compressed audio data (WebM, MP3, OGG)
-                
+
         Performance Considerations:
             - Avoids creating individual spans per chunk for optimal performance
             - Uses span events for coarse-grained visibility
             - Designed for high-frequency calls (100+ times per second)
             - Minimal overhead even with large audio streams
-            
+
         Example:
             ```python
             # Real-time audio processing
             recognizer.start()
-            
+
             for audio_chunk in audio_stream:
                 recognizer.write_bytes(audio_chunk)
-                
+
             recognizer.stop()
             ```
-            
+
         Tracing:
             Adds lightweight events to the session span including:
             - Audio chunk size for throughput monitoring
             - Stream health indicators
             - No per-chunk spans to maintain performance
-            
+
         Logging:
             - Debug logs for chunk size and stream status
             - Warning logs if stream is not initialized
             - Performance-optimized logging levels
-            
+
         Note:
             The push_stream must be initialized (via start() or prepare_start())
             before calling this method. Audio chunks are queued and processed
@@ -908,43 +908,43 @@ class StreamingSpeechRecognizerFromBytes:
     def stop(self) -> None:
         """
         Stop continuous speech recognition with graceful cleanup and tracing.
-        
+
         Terminates the active speech recognition session asynchronously without
         blocking the calling thread. Properly finalizes OpenTelemetry tracing
         spans and ensures clean shutdown of Speech SDK resources.
-        
+
         Cleanup Process:
             1. Add stop event to session span for tracking
             2. Initiate asynchronous recognition termination
             3. Finalize session span with success status
             4. Clean up tracing resources
-            
+
         Behavior:
             - Non-blocking operation for responsive applications
             - Graceful termination of recognition processing
             - Proper span finalization for complete traces
             - Safe to call multiple times (idempotent)
-            
+
         Example:
             ```python
             # Start recognition
             recognizer.start()
-            
+
             # Process audio...
             for chunk in audio_stream:
                 recognizer.write_bytes(chunk)
-                
+
             # Stop when done
             recognizer.stop()
             recognizer.close_stream()  # Complete cleanup
             ```
-            
+
         Tracing:
             - Adds "speech_recognition_stopping" event
-            - Adds "speech_recognition_stopped" event  
+            - Adds "speech_recognition_stopped" event
             - Sets span status to OK for successful completion
             - Ends session span to complete the trace
-            
+
         Note:
             This method initiates shutdown but does not wait for completion.
             The Speech SDK handles final processing asynchronously. Call
@@ -972,45 +972,45 @@ class StreamingSpeechRecognizerFromBytes:
     def close_stream(self) -> None:
         """
         Close the audio input stream with final cleanup and tracing.
-        
+
         Properly closes the PushAudioInputStream to release resources and
         signal end of audio input to the Speech SDK. Completes any remaining
         OpenTelemetry tracing activities for the session.
-        
+
         Cleanup Activities:
             1. Add stream closing event to session span
             2. Close the PushAudioInputStream
             3. Add stream closed confirmation event
             4. End session span if still active
             5. Clean up tracing resources
-            
+
         Resource Management:
             - Releases audio stream buffers and handles
             - Signals end-of-stream to Speech SDK
             - Completes any pending recognition operations
             - Frees memory and network resources
-            
+
         Example:
             ```python
             try:
                 recognizer.start()
-                
+
                 # Process audio stream
                 for chunk in audio_stream:
                     recognizer.write_bytes(chunk)
-                    
+
             finally:
                 # Always clean up resources
                 recognizer.stop()
                 recognizer.close_stream()
             ```
-            
+
         Tracing:
             - Adds "audio_stream_closing" event
             - Adds "audio_stream_closed" event
             - Ends session span if not already completed
             - Ensures trace completion for monitoring
-            
+
         Note:
             Call this method after stop() to ensure complete cleanup.
             Safe to call multiple times. The stream cannot be reused
@@ -1033,23 +1033,23 @@ class StreamingSpeechRecognizerFromBytes:
     def _extract_lang(evt) -> str:
         """
         Extract detected language from recognition event with fallback handling.
-        
+
         Attempts to extract the detected language code from a speech recognition
         event using multiple fallback strategies to ensure reliable language
         detection regardless of the Language Identification (LID) mode.
-        
+
         Args:
             evt: Speech recognition event containing language detection results
-            
+
         Returns:
             str: ISO language code (e.g., "en-US") or empty string if detection
                 fails. Empty string signals the caller to use default language.
-                
+
         Detection Priority:
             1. evt.result.language: Direct language field (Continuous LID mode)
             2. AutoDetectSourceLanguageResult: Property-based detection
             3. Empty string: Fallback when detection fails
-            
+
         Example:
             ```python
             # Internal usage in event handlers
@@ -1057,7 +1057,7 @@ class StreamingSpeechRecognizerFromBytes:
             if not detected_lang:
                 detected_lang = "en-US"  # Use default
             ```
-            
+
         Note:
             This static method is used internally by recognition event handlers
             to provide consistent language detection across different LID modes
@@ -1078,23 +1078,23 @@ class StreamingSpeechRecognizerFromBytes:
     def _extract_speaker_id(self, evt):
         """
         Extract speaker identifier from diarization results in recognition event.
-        
+
         Parses the JSON result property to extract speaker identification
         information when speaker diarization is enabled. This enables
         multi-speaker conversation tracking and attribution.
-        
+
         Args:
             evt: Speech recognition event potentially containing diarization data
-            
+
         Returns:
             Optional[str]: Speaker identifier string (e.g., "0", "1") if
                 diarization is active and speaker detected, None otherwise.
-                
+
         JSON Structure:
             The Speech SDK provides diarization results in the JsonResult
             property as a nested JSON structure containing SpeakerId field
             when speaker diarization is enabled.
-            
+
         Example:
             ```python
             # Internal usage in event handlers
@@ -1102,13 +1102,13 @@ class StreamingSpeechRecognizerFromBytes:
             if speaker_id:
                 print(f"Speaker {speaker_id}: {text}")
             ```
-            
+
         Error Handling:
             - Returns None if JSON parsing fails
             - Returns None if SpeakerId field is missing
             - Returns None if diarization is disabled
             - Graceful handling of malformed JSON
-            
+
         Note:
             Speaker IDs are typically numeric strings ("0", "1", "2") assigned
             by the diarization algorithm. The same speaker may receive different
@@ -1128,49 +1128,49 @@ class StreamingSpeechRecognizerFromBytes:
     def _on_recognizing(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
         """
         Handle partial recognition results with comprehensive tracing and logging.
-        
+
         Processes intermediate speech recognition results during continuous
         recognition, providing real-time feedback for voice applications.
         Creates detailed traces for monitoring and debugging partial results.
-        
+
         Args:
             evt (speechsdk.SpeechRecognitionEventArgs): Recognition event containing
                 partial text, language detection, and optional speaker information.
-                
+
         Processing Pipeline:
             1. Extract partial text and language from event
             2. Extract speaker ID if diarization is enabled
             3. Create tracing span for partial recognition
             4. Add session events for monitoring
             5. Invoke user callback with results
-            
+
         Tracing Attributes:
             - speech.result.type: "partial" for intermediate results
             - speech.result.text_length: Character count for throughput analysis
             - speech.detected_language: Auto-detected language code
             - rt.call.connection_id: Call correlation identifier
-            
+
         Example:
             ```python
             # Set callback to receive partial results
             def handle_partial(text, language, speaker_id):
                 print(f"Partial ({language}): {text}")
-                
+
             recognizer.set_partial_result_callback(handle_partial)
             ```
-            
+
         Callback Signature:
             callback(text, detected_language, speaker_id)
             - text (str): Partial recognized text (may change)
             - detected_language (str): ISO language code
             - speaker_id (Optional[str]): Speaker identifier if available
-            
+
         Performance:
             - Optimized for high-frequency calls
             - Lightweight span creation
             - Debug-level logging to minimize overhead
             - Efficient language detection extraction
-            
+
         Note:
             Partial results are intermediate and may change as more audio
             is processed. They provide real-time feedback but should not
@@ -1222,55 +1222,55 @@ class StreamingSpeechRecognizerFromBytes:
     def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
         """
         Handle final recognition results with comprehensive tracing and processing.
-        
+
         Processes completed speech recognition results representing finalized
         speech segments. Creates detailed traces and invokes user callbacks
         for stable recognition results that won't change.
-        
+
         Args:
             evt (speechsdk.SpeechRecognitionEventArgs): Recognition event containing
                 final text, language detection, result reason, and metadata.
-                
+
         Processing Pipeline:
             1. Validate recognition success (RecognizedSpeech reason)
             2. Extract final text and detected language
             3. Create comprehensive tracing span
             4. Add detailed session events with text preview
             5. Invoke user callback with stable results
-            
+
         Result Validation:
             Only processes events with ResultReason.RecognizedSpeech to ensure
             valid speech was detected (not silence, noise, or errors).
-            
+
         Tracing Attributes:
             - speech.result.type: "final" for completed results
             - speech.result.text_length: Character count for analysis
             - speech.detected_language: Auto-detected language code
             - speech.result.reason: Recognition result status
             - rt.call.connection_id: Call correlation identifier
-            
+
         Session Events:
             - final_recognition_received: Tracks completed recognitions
             - text_length: Character count for throughput monitoring
             - detected_language: Language detection results
             - text_preview: First 50 characters for debugging
-            
+
         Example:
             ```python
             # Set callback to receive final results
             def handle_final(text, language, speaker_id):
                 print(f"Final ({language}): {text}")
                 process_user_input(text, language)
-                
+
             recognizer.set_final_result_callback(handle_final)
             ```
-            
+
         Callback Signature:
             callback(text, detected_language, speaker_id)
             - text (str): Final recognized text (stable)
             - detected_language (str): ISO language code
             - speaker_id (Optional[str]): Speaker identifier if available
-            
+
         Note:
             Final results are triggered by voice activity detection silence
             timeouts or semantic segmentation boundaries. These results are
@@ -1334,35 +1334,35 @@ class StreamingSpeechRecognizerFromBytes:
     def _on_canceled(self, evt: speechsdk.SessionEventArgs) -> None:
         """
         Handle cancellation events with comprehensive error tracking and recovery.
-        
+
         Processes speech recognition cancellation events caused by errors,
         network issues, authentication failures, or service interruptions.
         Provides detailed error information and tracing for debugging and
         monitoring purposes.
-        
+
         Args:
             evt (speechsdk.SessionEventArgs): Cancellation event containing
                 error details, reason codes, and diagnostic information.
-                
+
         Error Processing:
             1. Log cancellation event with details
             2. Set error status on session span
             3. Extract detailed cancellation information
             4. Add comprehensive error events to span
             5. Enable error analysis and recovery
-            
+
         Common Cancellation Reasons:
             - EndOfStream: Normal end of audio input
             - CancelledByUser: Intentional cancellation
             - Error: Network, authentication, or service errors
             - BadRequest: Invalid configuration or parameters
-            
+
         Tracing Integration:
             - Sets span status to ERROR with description
             - Adds recognition_canceled event with details
             - Adds cancellation_details event with reason and error
             - Enables Application Map error visualization
-            
+
         Example Error Handling:
             ```python
             def handle_cancellation(event_args):
@@ -1372,16 +1372,16 @@ class StreamingSpeechRecognizerFromBytes:
                         # Implement retry logic
                         logger.error(f"Recognition error: {details.error_details}")
                         schedule_retry()
-                        
+
             recognizer.set_cancel_callback(handle_cancellation)
             ```
-            
+
         Recovery Strategies:
             - Network errors: Implement exponential backoff retry
             - Authentication errors: Refresh tokens and reconnect
             - Quota errors: Implement rate limiting and delays
             - Service errors: Switch to backup regions if available
-            
+
         Note:
             Cancellation events often indicate recoverable conditions.
             Implement appropriate retry logic in custom cancel callbacks
@@ -1416,35 +1416,35 @@ class StreamingSpeechRecognizerFromBytes:
     def _on_session_stopped(self, evt: speechsdk.SessionEventArgs) -> None:
         """
         Handle session stopped events with final cleanup and tracing completion.
-        
+
         Processes the session stopped event that signals the end of a speech
         recognition session. Performs final cleanup of tracing resources and
         ensures proper session lifecycle completion.
-        
+
         Args:
             evt (speechsdk.SessionEventArgs): Session event containing information
                 about the session termination.
-                
+
         Cleanup Activities:
             1. Log session termination
             2. Add session stopped event to span
             3. Set final span status to OK (successful completion)
             4. End session span to complete tracing
             5. Clean up tracing resources
-            
+
         Session Lifecycle:
             Session stopped events occur when:
             - Recognition is explicitly stopped via stop()
             - End of audio stream is reached
             - Session timeout is exceeded
             - Unrecoverable errors force termination
-            
+
         Tracing Completion:
             - Adds "speech_session_stopped" event
             - Sets span status to OK for normal termination
             - Ends session span to complete the trace
             - Clears span reference for cleanup
-            
+
         Example:
             ```python
             # Session lifecycle
@@ -1453,14 +1453,14 @@ class StreamingSpeechRecognizerFromBytes:
             recognizer.stop()           # Session stopping
             # _on_session_stopped called # Session ended
             ```
-            
+
         Integration:
             This method works with Azure Monitor Application Map to:
             - Complete service dependency traces
             - Provide session duration metrics
             - Enable end-to-end call correlation
             - Support distributed tracing across services
-            
+
         Note:
             This method is called automatically by the Speech SDK and
             should not be invoked directly. It ensures proper cleanup

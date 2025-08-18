@@ -84,7 +84,9 @@ async def send_tts_audio(
             # Fallback: temporarily acquire from pool
             synth = await ws.app.state.tts_pool.acquire()
             temp_synth = True
-            logger.warning(f"Temporarily acquired TTS synthesizer from pool - session should have its own")
+            logger.warning(
+                f"Temporarily acquired TTS synthesizer from pool - session should have its own"
+            )
 
         # Per-connection flag lives on ws.state (was already) – keep isolated
         ws.state.is_synthesizing = True  # type: ignore[attr-defined]
@@ -112,10 +114,15 @@ async def send_tts_audio(
         if latency_tool:
             latency_tool.stop("tts:synthesis", ws.app.state.redis)
 
-        frames = SpeechSynthesizer.split_pcm_to_base64_frames(pcm_bytes, sample_rate=48000)
+        frames = SpeechSynthesizer.split_pcm_to_base64_frames(
+            pcm_bytes, sample_rate=48000
+        )
         try:
             from opentelemetry import trace as _t
-            _t.get_current_span().set_attribute("pipeline.stage", "tts -> websocket (browser)")
+
+            _t.get_current_span().set_attribute(
+                "pipeline.stage", "tts -> websocket (browser)"
+            )
         except Exception:
             pass
         logger.debug("tts.frames_prepared count=%d", len(frames))
@@ -237,7 +244,9 @@ async def send_response_to_acs(
                 # Fallback: temporarily acquire from pool
                 synth = await ws.app.state.tts_pool.acquire()
                 temp_synth = True
-                logger.warning(f"ACS MEDIA: Temporarily acquired TTS synthesizer from pool - session should have its own")
+                logger.warning(
+                    f"ACS MEDIA: Temporarily acquired TTS synthesizer from pool - session should have its own"
+                )
 
             # Use agent voice if provided, otherwise fallback to default
             voice_to_use = voice_name or GREETING_VOICE_TTS
@@ -313,7 +322,9 @@ async def send_response_to_acs(
         # Fetch participant from per-connection state (moved off app.state)
         target_participant = getattr(ws.state, "target_participant", None)
         coro = play_response_with_queue(
-            ws=ws, response_text=text, participants=[target_participant] if target_participant else None
+            ws=ws,
+            response_text=text,
+            participants=[target_participant] if target_participant else None,
         )
 
         if not hasattr(ws.state, "tts_tasks"):

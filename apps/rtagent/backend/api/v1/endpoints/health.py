@@ -59,7 +59,10 @@ def _validate_phone_number(phone_number: str) -> tuple[bool, str]:
             return False, f"Phone number must start with '+': {phone_number}"
 
         if not phone_number[1:].isdigit():
-            return False, f"Phone number must contain only digits after '+': {phone_number}"
+            return (
+                False,
+                f"Phone number must contain only digits after '+': {phone_number}",
+            )
 
         if len(phone_number) < 8 or len(phone_number) > 16:  # Basic length validation
             return (
@@ -100,12 +103,12 @@ def _validate_guid(guid_str: str) -> bool:
             r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         )
         result = bool(guid_pattern.match(guid_str))
-        
+
         if result:
             logger.debug(f"GUID validation successful: {guid_str}")
         else:
             logger.debug(f"GUID validation failed: {guid_str}")
-            
+
         return result
     except Exception as e:
         logger.error(f"Error validating GUID: {e}")
@@ -159,13 +162,19 @@ def _validate_auth_configuration() -> tuple[bool, str]:
 
         if validation_errors:
             error_message = "; ".join(validation_errors)
-            logger.error(f"Authentication configuration validation failed: {error_message}")
+            logger.error(
+                f"Authentication configuration validation failed: {error_message}"
+            )
             return False, error_message
 
-        success_message = f"Auth validation enabled with {len(ALLOWED_CLIENT_IDS)} allowed client(s)"
-        logger.info(f"Authentication configuration validation successful: {success_message}")
+        success_message = (
+            f"Auth validation enabled with {len(ALLOWED_CLIENT_IDS)} allowed client(s)"
+        )
+        logger.info(
+            f"Authentication configuration validation successful: {success_message}"
+        )
         return True, success_message
-        
+
     except Exception as e:
         logger.error(f"Error validating authentication configuration: {e}")
         raise
@@ -217,7 +226,7 @@ async def health_check(request: Request) -> HealthResponse:
         # Session metrics snapshot (WebSocket connection metrics)
         sm = getattr(request.app.state, "session_metrics", None)
         ws_manager = getattr(request.app.state, "websocket_manager", None)
-        
+
         if sm is not None:
             if hasattr(sm, "get_snapshot"):
                 snap = await sm.get_snapshot()  # type: ignore[func-returns-value]
@@ -228,20 +237,20 @@ async def health_check(request: Request) -> HealthResponse:
             if isinstance(snap, dict):
                 # Use new metric names for clarity
                 active_connections = snap.get("active_connections", 0)
-                total_connected = snap.get("total_connected", 0) 
+                total_connected = snap.get("total_connected", 0)
                 total_disconnected = snap.get("total_disconnected", 0)
-                
+
                 # Cross-check with actual WebSocket manager count for accuracy
                 actual_ws_count = 0
                 if ws_manager and hasattr(ws_manager, "get_client_count"):
                     actual_ws_count = await ws_manager.get_client_count()
-                
+
                 session_metrics = {
-                    "connected": active_connections,        # Currently active WebSocket connections (from metrics)
-                    "disconnected": total_disconnected,     # Historical total disconnections
-                    "active": active_connections,           # Same as connected (real-time active)
-                    "total_connected": total_connected,     # Historical total connections made
-                    "actual_ws_count": actual_ws_count,     # Real-time count from WebSocket manager (cross-check)
+                    "connected": active_connections,  # Currently active WebSocket connections (from metrics)
+                    "disconnected": total_disconnected,  # Historical total disconnections
+                    "active": active_connections,  # Same as connected (real-time active)
+                    "total_connected": total_connected,  # Historical total connections made
+                    "actual_ws_count": actual_ws_count,  # Real-time count from WebSocket manager (cross-check)
                 }
     except Exception:
         session_metrics = None
@@ -503,7 +512,7 @@ async def _check_speech_services_fast(tts_pool, stt_pool) -> ServiceCheck:
             error="pools not initialized",
             check_time_ms=round((time.time() - start) * 1000, 2),
         )
-    
+
     # Check if pools are properly configured
     try:
         pool_info = {
@@ -517,7 +526,7 @@ async def _check_speech_services_fast(tts_pool, stt_pool) -> ServiceCheck:
     except Exception as e:
         return ServiceCheck(
             component="speech_services",
-            status="unhealthy", 
+            status="unhealthy",
             error=f"pool introspection failed: {e}",
             check_time_ms=round((time.time() - start) * 1000, 2),
         )

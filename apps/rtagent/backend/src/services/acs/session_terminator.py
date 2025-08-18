@@ -351,9 +351,7 @@ async def terminate_session(
                 if hasattr(ws.state, "handler") and ws.state.handler:
                     goodbye_message = _get_goodbye_message(reason)
                     if goodbye_message:
-                        ws.state.handler.play_greeting(
-                            greeting_text=goodbye_message
-                        )
+                        ws.state.handler.play_greeting(greeting_text=goodbye_message)
                         # Brief pause to let goodbye play
                         await asyncio.sleep(2.0)
             except Exception as goodbye_exc:

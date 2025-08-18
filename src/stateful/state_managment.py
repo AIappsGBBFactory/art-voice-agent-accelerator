@@ -60,15 +60,15 @@ logger = get_logger("src.stateful.state_managment")
 class MemoManager:
     """
     Manages conversation session state for real-time voice agents.
-    
+
     The MemoManager is the central component for handling voice agent sessions,
     providing comprehensive state management including core memory, chat history,
     message queuing, and Redis persistence with live-refresh capabilities.
-    
+
     This class maintains session-scoped state that persists across WebSocket
     connections and enables real-time collaboration between distributed agent
     instances through Redis-based synchronization.
-    
+
     Attributes:
         session_id (str): Unique identifier for the conversation session
         chatHistory (ChatHistory): Multi-agent conversation history manager
@@ -77,25 +77,25 @@ class MemoManager:
         latency (LatencyTracker): Performance monitoring for operation timing
         auto_refresh_interval (float, optional): Auto-refresh interval in seconds
         last_refresh_time (float): Timestamp of last Redis refresh operation
-        
+
     Redis Keys:
         - corememory: Agent context, slots, tool outputs, and configuration
         - chat_history: Multi-agent conversation threads and message history
-        
+
     Example:
         ```python
         # Basic session management
         manager = MemoManager("session_123")
         manager.set_context("user_id", "user_456")
         manager.append_to_history("agent1", "user", "Hello")
-        
+
         # Redis persistence
         await manager.persist_to_redis_async(redis_mgr)
-        
+
         # Live refresh with auto-sync
         manager.enable_auto_refresh(redis_mgr, interval_seconds=30.0)
         ```
-        
+
     Note:
         Session IDs are truncated to 8 characters for readability while
         maintaining sufficient uniqueness for concurrent sessions.
@@ -112,11 +112,11 @@ class MemoManager:
     ) -> None:
         """
         Initialize a new MemoManager instance for session state management.
-        
+
         Creates a new conversation session with unique identification and
         initializes all required state management components including
         chat history, core memory, message queue, and performance tracking.
-        
+
         Args:
             session_id (Optional[str]): Unique session identifier. If None,
                 generates a new UUID4 truncated to 8 characters for readability.
@@ -124,7 +124,7 @@ class MemoManager:
                 automatic Redis state refresh. If None, auto-refresh is disabled.
             redis_mgr (Optional[AzureRedisManager]): Redis connection manager
                 for persistence operations. Can be set later via method calls.
-                
+
         Attributes Initialized:
             - session_id: Session identifier (generated if not provided)
             - chatHistory: Empty ChatHistory instance for conversation tracking
@@ -134,12 +134,12 @@ class MemoManager:
             - _is_tts_interrupted: Flag for TTS interruption state
             - _refresh_task: Background task for auto-refresh (if enabled)
             - _redis_manager: Stored Redis manager for persistence
-            
+
         Example:
             ```python
             # Auto-generate session ID
             manager = MemoManager()
-            
+
             # Specific session with auto-refresh
             manager = MemoManager(
                 session_id="custom_session",
@@ -147,7 +147,7 @@ class MemoManager:
                 redis_mgr=redis_manager
             )
             ```
-            
+
         Note:
             Session IDs are limited to 8 characters to balance uniqueness
             with readability in logs and debugging output.
@@ -192,22 +192,22 @@ class MemoManager:
     def build_redis_key(session_id: str) -> str:
         """
         Construct the Redis key for session data storage.
-        
+
         Generates a standardized Redis key format for storing session state
         data, ensuring consistent key naming across the application.
-        
+
         Args:
             session_id (str): Unique session identifier
-            
+
         Returns:
             str: Formatted Redis key in the format "session:{session_id}"
-            
+
         Example:
             ```python
             key = MemoManager.build_redis_key("abc12345")
             # Returns: "session:abc12345"
             ```
-            
+
         Note:
             This method is static to allow key construction without
             instantiating a MemoManager object, useful for Redis
@@ -218,27 +218,27 @@ class MemoManager:
     def to_redis_dict(self) -> Dict[str, str]:
         """
         Serialize session state to Redis-compatible dictionary format.
-        
+
         Converts the current session state (core memory and chat history)
         into a dictionary with JSON-serialized values suitable for Redis storage.
-        
+
         Returns:
             Dict[str, str]: Dictionary containing serialized session data with keys:
                 - 'corememory': JSON string of core memory state
                 - 'chat_history': JSON string of chat history data
-                
+
         Example:
             ```python
             manager.set_context("user_name", "Alice")
             manager.append_to_history("agent1", "user", "Hello")
-            
+
             redis_data = manager.to_redis_dict()
             # Returns: {
             #     'corememory': '{"user_name": "Alice"}',
             #     'chat_history': '{"agent1": [{"role": "user", "content": "Hello"}]}'
             # }
             ```
-            
+
         Note:
             The returned dictionary contains JSON strings as values, ready
             for direct storage in Redis hash fields.
@@ -252,27 +252,27 @@ class MemoManager:
     def from_redis(cls, session_id: str, redis_mgr: AzureRedisManager) -> "MemoManager":
         """
         Create a MemoManager instance from existing Redis session data.
-        
+
         Factory method that reconstructs a session manager from previously
         persisted Redis data, restoring both core memory and chat history.
-        
+
         Args:
             session_id (str): Unique session identifier to load
             redis_mgr (AzureRedisManager): Redis connection manager for data retrieval
-            
+
         Returns:
             MemoManager: New instance with state loaded from Redis
-            
+
         Example:
             ```python
             # Load existing session
             manager = MemoManager.from_redis("session_123", redis_mgr)
-            
+
             # Access restored state
             user_name = manager.get_context("user_name")
             history = manager.get_history("agent1")
             ```
-            
+
         Note:
             If no data exists in Redis for the given session_id, returns
             a new MemoManager with empty state. Missing core memory or
@@ -293,30 +293,30 @@ class MemoManager:
     ) -> "MemoManager":
         """
         Create a MemoManager with stored Redis manager reference.
-        
+
         Alternative factory method that creates a session manager from Redis
         data while storing the Redis manager instance for future operations.
         This enables automatic persistence and refresh capabilities.
-        
+
         Args:
             session_id (str): Unique session identifier to load
             redis_mgr (AzureRedisManager): Redis connection manager to store and use
-            
+
         Returns:
             MemoManager: New instance with Redis manager stored for auto-operations
-            
+
         Example:
             ```python
             # Create with stored manager
             manager = MemoManager.from_redis_with_manager("session_123", redis_mgr)
-            
+
             # Auto-persist without passing manager
             await manager.persist()
-            
+
             # Enable auto-refresh
             manager.enable_auto_refresh(redis_mgr, 30.0)
             ```
-            
+
         Note:
             This method is preferred when the manager will perform multiple
             Redis operations, as it eliminates the need to pass the Redis
@@ -329,29 +329,29 @@ class MemoManager:
     async def persist(self, redis_mgr: Optional[AzureRedisManager] = None) -> None:
         """
         Persist session state to Redis using stored or provided manager.
-        
+
         Convenience method that persists current session state to Redis
         using either the provided Redis manager or the stored instance.
-        
+
         Args:
             redis_mgr (Optional[AzureRedisManager]): Redis manager to use.
                 If None, uses the stored manager from initialization.
-                
+
         Raises:
             ValueError: If no Redis manager is available (neither provided
                 nor stored during initialization).
-                
+
         Example:
             ```python
             # With stored manager
             manager = MemoManager(redis_mgr=redis_mgr)
             await manager.persist()
-            
+
             # With provided manager
             manager = MemoManager()
             await manager.persist(redis_mgr)
             ```
-            
+
         Note:
             This method automatically selects between async and sync
             persistence based on the current execution context.
@@ -366,29 +366,29 @@ class MemoManager:
     ) -> None:
         """
         Synchronously persist session state to Redis.
-        
+
         Stores the current session state (core memory and chat history) to Redis
         using synchronous operations. Optionally sets an expiration time for
         automatic cleanup of inactive sessions.
-        
+
         Args:
             redis_mgr (AzureRedisManager): Redis connection manager for persistence
             ttl_seconds (Optional[int]): Time-to-live in seconds for session data.
                 If None, data persists indefinitely until manually deleted.
-                
+
         Example:
             ```python
             # Persist without expiration
             manager.persist_to_redis(redis_mgr)
-            
+
             # Persist with 1-hour expiration
             manager.persist_to_redis(redis_mgr, ttl_seconds=3600)
             ```
-            
+
         Logging:
             Logs successful persistence with session statistics including
             history counts per agent and core memory keys.
-            
+
         Note:
             Use the async version (persist_to_redis_async) in async contexts
             to avoid blocking the event loop.
@@ -407,35 +407,35 @@ class MemoManager:
     ) -> None:
         """
         Asynchronously persist session state to Redis without blocking.
-        
+
         Stores the current session state to Redis using async operations,
         preventing blocking of the event loop. Handles cancellation gracefully
         and logs errors without re-raising to avoid crashing callers.
-        
+
         Args:
             redis_mgr (AzureRedisManager): Redis connection manager for persistence
             ttl_seconds (Optional[int]): Time-to-live in seconds for session data.
                 If None, data persists indefinitely.
-                
+
         Raises:
             asyncio.CancelledError: Re-raised to allow proper cleanup during
                 task cancellation.
-                
+
         Example:
             ```python
             # Basic async persistence
             await manager.persist_to_redis_async(redis_mgr)
-            
+
             # With automatic cleanup after 2 hours
             await manager.persist_to_redis_async(redis_mgr, ttl_seconds=7200)
             ```
-            
+
         Error Handling:
             - Cancellation errors are re-raised for proper task cleanup
             - Other exceptions are logged but not re-raised to prevent
               crashing the calling code
             - Successful operations log session statistics
-            
+
         Note:
             Preferred method for persistence in async contexts such as
             WebSocket handlers and background tasks.
@@ -466,13 +466,13 @@ class MemoManager:
     def is_tts_interrupted(self) -> bool:
         """
         Check the current TTS interruption state from local memory.
-        
+
         Returns the in-memory flag indicating whether text-to-speech
         playback has been interrupted by user input or system events.
-        
+
         Returns:
             bool: True if TTS is currently interrupted, False otherwise
-            
+
         Example:
             ```python
             if manager.is_tts_interrupted():
@@ -482,7 +482,7 @@ class MemoManager:
                 # Proceed with TTS
                 await play_audio(response)
             ```
-            
+
         Note:
             This method returns the local state only. For distributed
             scenarios, use is_tts_interrupted_live() to check Redis state.
@@ -492,24 +492,24 @@ class MemoManager:
     def set_tts_interrupted(self, value: bool) -> None:
         """
         Set the TTS interruption state in local memory and context.
-        
+
         Updates both the in-memory flag and core memory context to reflect
         the current TTS interruption state. This method provides local
         state management without Redis synchronization.
-        
+
         Args:
             value (bool): True to mark TTS as interrupted, False to clear
                 the interruption state
-                
+
         Example:
             ```python
             # User interrupts during TTS playback
             manager.set_tts_interrupted(True)
-            
+
             # TTS completion or reset
             manager.set_tts_interrupted(False)
             ```
-            
+
         Note:
             For distributed scenarios where multiple processes need
             to coordinate TTS state, use set_tts_interrupted_live()
@@ -523,25 +523,25 @@ class MemoManager:
     ) -> None:
         """
         Set TTS interruption state with Redis synchronization.
-        
+
         Updates the TTS interruption flag in Redis for distributed coordination
         across multiple voice agent processes or WebSocket connections.
-        
+
         Args:
             redis_mgr (Optional[AzureRedisManager]): Redis manager for persistence.
                 Uses stored manager if None provided.
             session_id (str): Session identifier for Redis key construction
             value (bool): True to mark TTS as interrupted, False to clear
-                
+
         Example:
             ```python
             # Interrupt TTS across all processes
             await manager.set_tts_interrupted_live(redis_mgr, "session_123", True)
-            
+
             # Clear interruption state
             await manager.set_tts_interrupted_live(redis_mgr, "session_123", False)
             ```
-            
+
         Note:
             This method enables coordination between distributed voice
             agent instances, ensuring TTS interruptions are recognized
@@ -558,29 +558,29 @@ class MemoManager:
     ) -> bool:
         """
         Check TTS interruption state with optional Redis synchronization.
-        
+
         Checks the TTS interruption status, optionally refreshing from
         Redis for distributed coordination. Falls back to local state
         if Redis parameters are not provided.
-        
+
         Args:
             redis_mgr (Optional[AzureRedisManager]): Redis manager for live data.
                 If None, uses local state only.
             session_id (Optional[str]): Session identifier for Redis lookup.
                 If None, uses local state only.
-                
+
         Returns:
             bool: True if TTS is interrupted, False otherwise
-            
+
         Example:
             ```python
             # Check with Redis sync
             interrupted = await manager.is_tts_interrupted_live(redis_mgr, "session_123")
-            
+
             # Check local state only
             interrupted = await manager.is_tts_interrupted_live()
             ```
-            
+
         Note:
             When both redis_mgr and session_id are provided, this method
             updates local state from Redis before returning the result,
@@ -597,15 +597,15 @@ class MemoManager:
     def update_slots(self, slots: Dict[str, Any]) -> None:
         """
         Update slot values in core memory for agent configuration.
-        
+
         Merges new slot values into the existing slots dictionary stored
         in core memory. Slots are used for dynamic agent configuration
         and state management during conversations.
-        
+
         Args:
             slots (Dict[str, Any]): Dictionary of slot names and values to update.
                 Existing slots with the same names will be overwritten.
-                
+
         Example:
             ```python
             # Update agent configuration slots
@@ -614,14 +614,14 @@ class MemoManager:
                 "preferred_language": "en-US",
                 "conversation_mode": "casual"
             })
-            
+
             # Update individual slot
             manager.update_slots({"last_topic": "weather"})
             ```
-            
+
         Logging:
             Logs the updated slots at debug level for troubleshooting.
-            
+
         Note:
             Empty or None slots dictionaries are ignored to prevent
             clearing existing slot data accidentally.
@@ -636,28 +636,28 @@ class MemoManager:
     def get_slot(self, slot_name: str, default: Any = None) -> Any:
         """
         Retrieve a specific slot value from core memory.
-        
+
         Gets a slot value from the slots dictionary stored in core memory,
         returning a default value if the slot doesn't exist.
-        
+
         Args:
             slot_name (str): Name of the slot to retrieve
             default (Any): Default value to return if slot doesn't exist
-            
+
         Returns:
             Any: The slot value, or default if not found
-            
+
         Example:
             ```python
             # Get user preference with default
             language = manager.get_slot("preferred_language", "en-US")
-            
+
             # Check if slot exists
             user_name = manager.get_slot("user_name")
             if user_name:
                 greet_user(user_name)
             ```
-            
+
         Note:
             Slots are stored under the 'slots' key in core memory and
             are typically used for agent configuration and user preferences.
@@ -667,15 +667,15 @@ class MemoManager:
     def persist_tool_output(self, tool_name: str, result: Dict[str, Any]) -> None:
         """
         Store the last execution result for a backend tool.
-        
+
         Persists tool execution results in core memory for later reference,
         debugging, and context preservation across conversation turns.
         Each tool's most recent output overwrites previous results.
-        
+
         Args:
             tool_name (str): Unique identifier for the tool that was executed
             result (Dict[str, Any]): The result data returned by the tool execution
-            
+
         Example:
             ```python
             # Store weather API result
@@ -685,15 +685,15 @@ class MemoManager:
                 "location": "San Francisco"
             }
             manager.persist_tool_output("weather_api", weather_data)
-            
+
             # Store database query result
             query_result = {"records_found": 5, "data": [...]}
             manager.persist_tool_output("database_query", query_result)
             ```
-            
+
         Logging:
             Logs the tool name and result at debug level for troubleshooting.
-            
+
         Note:
             Empty tool names or results are ignored to prevent storing
             invalid data. Only the most recent result per tool is kept.
@@ -708,30 +708,30 @@ class MemoManager:
     def get_tool_output(self, tool_name: str, default: Any = None) -> Any:
         """
         Retrieve the last execution result for a specific tool.
-        
+
         Gets the most recently stored result for a tool from core memory,
         useful for accessing previous tool outputs in conversation context.
-        
+
         Args:
             tool_name (str): Unique identifier for the tool whose result to retrieve
             default (Any): Default value to return if no result exists for the tool
-            
+
         Returns:
             Any: The last tool execution result, or default if not found
-            
+
         Example:
             ```python
             # Get last weather data
             weather = manager.get_tool_output("weather_api", {})
             if weather:
                 temperature = weather.get("temperature")
-                
+
             # Check if tool has been executed
             db_result = manager.get_tool_output("database_query")
             if db_result is None:
                 logger.info("Database tool not yet executed")
             ```
-            
+
         Note:
             Tool outputs are stored under the 'tool_outputs' key in core
             memory and persist across conversation turns for context.
@@ -742,28 +742,28 @@ class MemoManager:
     def note_latency(self, stage: str, start_t: float, end_t: float) -> None:
         """
         Record latency measurement for a specific processing stage.
-        
+
         Captures timing data for performance monitoring and optimization,
         tracking how long different stages of voice processing take.
-        
+
         Args:
             stage (str): Descriptive name for the processing stage being measured
             start_t (float): Start timestamp (typically from time.time())
             end_t (float): End timestamp (typically from time.time())
-            
+
         Example:
             ```python
             # Measure STT processing time
             start_time = time.time()
             text_result = await speech_to_text(audio)
             manager.note_latency("stt", start_time, time.time())
-            
+
             # Measure TTS generation time
             start_time = time.time()
             audio_data = await text_to_speech(response)
             manager.note_latency("tts", start_time, time.time())
             ```
-            
+
         Note:
             Latency data is accumulated across multiple measurements
             for the same stage, enabling statistical analysis of
@@ -774,36 +774,36 @@ class MemoManager:
     def latency_summary(self) -> Dict[str, Dict[str, float]]:
         """
         Get comprehensive latency statistics for all measured stages.
-        
+
         Returns a summary of performance metrics including average, minimum,
         maximum, and total latency for each processing stage that has been measured.
-        
+
         Returns:
             Dict[str, Dict[str, float]]: Nested dictionary with stage names as keys
                 and statistics dictionaries as values. Each statistics dict contains:
                 - 'avg': Average latency in seconds
-                - 'min': Minimum latency in seconds  
+                - 'min': Minimum latency in seconds
                 - 'max': Maximum latency in seconds
                 - 'total': Total accumulated latency in seconds
                 - 'count': Number of measurements
-                
+
         Example:
             ```python
             # Get performance summary
             stats = manager.latency_summary()
-            
+
             # Example return value:
             # {
             #     'stt': {'avg': 0.245, 'min': 0.180, 'max': 0.350, 'count': 12},
             #     'tts': {'avg': 0.890, 'min': 0.650, 'max': 1.200, 'count': 8},
             #     'llm': {'avg': 1.450, 'min': 0.800, 'max': 2.100, 'count': 10}
             # }
-            
+
             # Check TTS performance
             if stats.get('tts', {}).get('avg', 0) > 1.0:
                 logger.warning("TTS latency above threshold")
             ```
-            
+
         Note:
             Statistics are calculated from all measurements since the
             MemoManager instance was created. Use this for performance
@@ -815,32 +815,32 @@ class MemoManager:
     def append_to_history(self, agent: str, role: str, content: str) -> None:
         """
         Add a new message to the conversation history for a specific agent.
-        
+
         Appends a message with the specified role and content to the chat
         history thread for the given agent. Each agent maintains a separate
         conversation thread for independent context management.
-        
+
         Args:
             agent (str): Unique identifier for the agent (e.g., "main_agent", "tool_agent")
             role (str): Message role ("user", "assistant", "system", "tool")
             content (str): The message content/text
-            
+
         Example:
             ```python
             # Add user message
             manager.append_to_history("main_agent", "user", "What's the weather?")
-            
+
             # Add assistant response
             manager.append_to_history("main_agent", "assistant", "It's sunny and 72°F")
-            
+
             # Add system message
             manager.append_to_history("main_agent", "system", "Tool execution completed")
-            
+
             # Multiple agents
             manager.append_to_history("weather_agent", "user", "Check forecast")
             manager.append_to_history("calendar_agent", "user", "Schedule meeting")
             ```
-            
+
         Note:
             Each agent maintains its own conversation thread, allowing
             for specialized agents with different contexts and histories
@@ -851,41 +851,41 @@ class MemoManager:
     def get_history(self, agent_name: str) -> List[Dict[str, str]]:
         """
         Retrieve the complete conversation history for a specific agent.
-        
+
         Gets the full message history for the specified agent, creating
         an empty history list if the agent doesn't exist yet.
-        
+
         Args:
             agent_name (str): Unique identifier for the agent whose history to retrieve
-            
+
         Returns:
             List[Dict[str, str]]: List of message dictionaries, each containing:
                 - 'role': Message role ("user", "assistant", "system", "tool")
                 - 'content': Message content/text
                 - Other optional fields like timestamps
-                
+
         Example:
             ```python
             # Get agent's conversation history
             history = manager.get_history("main_agent")
-            
+
             # Example return value:
             # [
             #     {"role": "system", "content": "You are a helpful assistant"},
             #     {"role": "user", "content": "What's the weather?"},
             #     {"role": "assistant", "content": "It's sunny and 72°F"}
             # ]
-            
+
             # Check history length
             if len(history) > 50:
                 logger.info(f"Long conversation: {len(history)} messages")
-            
+
             # Get last message
             if history:
                 last_msg = history[-1]
                 logger.debug(f"Last {last_msg['role']}: {last_msg['content']}")
             ```
-            
+
         Note:
             If the agent doesn't exist, an empty list is returned and
             the agent is automatically created for future use.
@@ -895,34 +895,34 @@ class MemoManager:
     def clear_history(self, agent_name: Optional[str] = None) -> None:
         """
         Clear conversation history for one agent or all agents.
-        
+
         Removes chat history either for a specific agent or for all agents
         in the session. This is useful for resetting conversation context
         or implementing conversation boundaries.
-        
+
         Args:
             agent_name (Optional[str]): Name of the agent whose history to clear.
                 If None, clears history for ALL agents in the session.
-                
+
         Example:
             ```python
             # Clear specific agent's history
             manager.clear_history("main_agent")
-            
+
             # Clear all agents' histories
             manager.clear_history()
-            
+
             # Reset conversation after error
             if error_occurred:
                 manager.clear_history("main_agent")
                 manager.append_to_history("main_agent", "system", "Starting fresh conversation")
             ```
-            
+
         Warning:
             Clearing all agent histories (agent_name=None) will remove
             all conversation context from the session. This action
             cannot be undone unless the session was previously persisted.
-            
+
         Note:
             System prompts and core memory are not affected by this
             operation - only the conversational message history is cleared.
@@ -935,32 +935,32 @@ class MemoManager:
     def get_context(self, key: str, default: Any = None) -> Any:
         """
         Retrieve a value from core memory by key.
-        
+
         Gets a stored value from the persistent core memory store,
         returning a default value if the key doesn't exist.
-        
+
         Args:
             key (str): The key to look up in core memory
             default (Any): Default value to return if key doesn't exist
-            
+
         Returns:
             Any: The stored value, or default if key not found
-            
+
         Example:
             ```python
             # Get user preferences
             user_name = manager.get_context("user_name", "Anonymous")
             language = manager.get_context("preferred_language", "en-US")
-            
+
             # Get configuration
             api_config = manager.get_context("api_settings", {})
-            
+
             # Check if value exists
             session_start = manager.get_context("session_start_time")
             if session_start:
                 duration = time.time() - session_start
             ```
-            
+
         Note:
             Core memory persists across conversation turns and can
             store any JSON-serializable data including strings, numbers,
@@ -971,32 +971,32 @@ class MemoManager:
     def set_context(self, key: str, value: Any) -> None:
         """
         Store a value in core memory, overwriting any existing value.
-        
+
         Sets a key-value pair in the persistent core memory store,
         replacing any existing value for the same key.
-        
+
         Args:
             key (str): The key to store the value under
             value (Any): The value to store (must be JSON-serializable)
-            
+
         Example:
             ```python
             # Store user information
             manager.set_context("user_name", "Alice")
             manager.set_context("user_id", 12345)
-            
+
             # Store configuration
             manager.set_context("api_settings", {
                 "timeout": 30,
                 "retries": 3,
                 "endpoint": "https://api.example.com"
             })
-            
+
             # Store session metadata
             manager.set_context("session_start_time", time.time())
             manager.set_context("conversation_topic", "weather")
             ```
-            
+
         Note:
             Changes are made to local memory immediately but require
             calling persist() or persist_to_redis_async() to save
@@ -1007,33 +1007,33 @@ class MemoManager:
     def update_context(self, key: str, value: Any) -> None:
         """
         Merge a value into an existing dictionary in core memory.
-        
+
         If the existing value is a dictionary and the new value is also
         a dictionary, merges them together. Otherwise, replaces the
         existing value entirely.
-        
+
         Args:
             key (str): The key for the value to update in core memory
             value (Any): The value to merge or set
-            
+
         Example:
             ```python
             # Initialize settings
             manager.set_context("user_preferences", {"theme": "dark"})
-            
+
             # Merge additional preferences
             manager.update_context("user_preferences", {"language": "en", "notifications": True})
             # Result: {"theme": "dark", "language": "en", "notifications": True}
-            
+
             # Update individual preference
             manager.update_context("user_preferences", {"theme": "light"})
             # Result: {"theme": "light", "language": "en", "notifications": True}
-            
+
             # Replace non-dict value
             manager.set_context("counter", 5)
             manager.update_context("counter", {"value": 10})  # Replaces entirely
             ```
-            
+
         Note:
             This method is particularly useful for gradually building up
             configuration dictionaries or user preferences without losing
@@ -1054,35 +1054,35 @@ class MemoManager:
     ) -> None:
         """
         Ensure the system prompt is properly set for an agent's conversation.
-        
+
         Guarantees that the specified system prompt is the first message
         in the agent's conversation history. If no system message exists,
         adds one. If a system message exists, updates it with the new content.
-        
+
         Args:
             agent_name (str): Unique identifier for the agent
             system_prompt (str): The system prompt content to set
-            
+
         Example:
             ```python
             # Set initial system prompt
             prompt = "You are a helpful weather assistant. Always provide accurate forecasts."
             manager.ensure_system_prompt("weather_agent", prompt)
-            
+
             # Update system prompt with new instructions
             updated_prompt = prompt + " Include temperature in Celsius and Fahrenheit."
             manager.ensure_system_prompt("weather_agent", updated_prompt)
-            
+
             # Different agents, different prompts
             manager.ensure_system_prompt("calendar_agent", "You help manage schedules and appointments.")
             manager.ensure_system_prompt("email_agent", "You assist with email composition and management.")
             ```
-            
+
         Behavior:
             - If history is empty: Adds system message as first entry
             - If first message is not system: Inserts system message at beginning
             - If first message is system: Updates content with new prompt
-            
+
         Note:
             This method always updates the system prompt content on each
             call, ensuring the agent operates with the most current instructions.

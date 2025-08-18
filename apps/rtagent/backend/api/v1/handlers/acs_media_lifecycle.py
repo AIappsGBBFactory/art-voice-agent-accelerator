@@ -95,7 +95,7 @@ class ThreadBridge:
     def __init__(self, main_loop: Optional[asyncio.AbstractEventLoop] = None):
         """
         Initialize cross-thread communication bridge.
-        
+
         :param main_loop: Main event loop for cross-thread communication
         :type main_loop: Optional[asyncio.AbstractEventLoop]
         """
@@ -103,7 +103,7 @@ class ThreadBridge:
     def set_main_loop(self, loop: asyncio.AbstractEventLoop):
         """
         Set the main event loop reference for cross-thread communication.
-        
+
         :param loop: Main event loop instance
         :type loop: asyncio.AbstractEventLoop
         """
@@ -113,7 +113,7 @@ class ThreadBridge:
     def schedule_barge_in(self, handler_func: Callable):
         """
         Schedule barge-in handler to run on main event loop ASAP.
-        
+
         :param handler_func: Barge-in handler function to schedule
         :type handler_func: Callable
         """
@@ -150,7 +150,7 @@ class ThreadBridge:
     def queue_speech_result(self, speech_queue: asyncio.Queue, event: SpeechEvent):
         """
         Queue final speech result for Route Turn Thread processing.
-        
+
         :param speech_queue: Async queue for speech events
         :type speech_queue: asyncio.Queue
         :param event: Speech event to queue
@@ -233,7 +233,7 @@ class SpeechSDKThread:
     ):
         """
         Initialize Speech SDK Thread Manager.
-        
+
         :param recognizer: Speech recognition client instance
         :type recognizer: StreamingSpeechRecognizerFromBytes
         :param thread_bridge: Cross-thread communication bridge
@@ -258,7 +258,7 @@ class SpeechSDKThread:
     def _setup_callbacks(self):
         """
         Configure speech recognition callbacks for immediate response.
-        
+
         :raises Exception: When callback setup fails
         """
 
@@ -370,7 +370,7 @@ class SpeechSDKThread:
     def start_recognizer(self):
         """
         Start the actual speech recognizer (called on AudioMetadata).
-        
+
         :raises Exception: When recognizer startup fails
         """
         if self.recognizer_started:
@@ -539,7 +539,7 @@ class RouteTurnThread:
     ):
         """
         Initialize Route Turn Thread Manager.
-        
+
         :param speech_queue: Queue for incoming speech events
         :type speech_queue: asyncio.Queue
         :param orchestrator_func: Function for conversation orchestration
@@ -642,7 +642,7 @@ class RouteTurnThread:
     async def _process_final_speech(self, event: SpeechEvent):
         """
         Process final speech through orchestrator.
-        
+
         :param event: Final speech event to process
         :type event: SpeechEvent
         """
@@ -841,7 +841,7 @@ class MainEventLoop:
     ):
         """
         Initialize Main Event Loop Manager.
-        
+
         :param websocket: WebSocket connection for communication
         :type websocket: WebSocket
         :param call_connection_id: ACS call connection identifier
@@ -947,7 +947,7 @@ class MainEventLoop:
     async def handle_media_message(self, stream_data: str, recognizer, acs_handler):
         """
         Handle incoming media messages (Main Event Loop responsibility).
-        
+
         :param stream_data: JSON string containing media message data
         :type stream_data: str
         :param recognizer: Speech recognition client
@@ -1125,7 +1125,7 @@ class MainEventLoop:
     async def _play_greeting_when_ready(self, acs_handler=None):
         """
         Queue greeting for playback through Route Turn Thread (maintains architecture consistency).
-        
+
         :param acs_handler: ACS media handler instance for greeting configuration
         """
         if self.greeting_played:
@@ -1199,7 +1199,7 @@ class ACSMediaHandler:
     ):
         """
         Initialize the three-thread architecture media handler.
-        
+
         :param websocket: WebSocket connection for media streaming
         :type websocket: WebSocket
         :param orchestrator_func: Orchestrator function for conversation management
@@ -1263,7 +1263,7 @@ class ACSMediaHandler:
     async def start(self):
         """
         Start all three threads in coordinated fashion.
-        
+
         :raises Exception: When thread startup fails
         """
         with tracer.start_as_current_span(
@@ -1321,7 +1321,7 @@ class ACSMediaHandler:
     async def handle_media_message(self, stream_data: str):
         """
         Handle incoming media messages (Main Event Loop responsibility).
-        
+
         :param stream_data: JSON string containing media message data
         :type stream_data: str
         """
@@ -1374,7 +1374,7 @@ class ACSMediaHandler:
     def is_running(self) -> bool:
         """
         Check if the handler is currently running.
-        
+
         :return: True if handler is running, False otherwise
         :rtype: bool
         """

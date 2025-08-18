@@ -34,7 +34,7 @@ def check_for_stopwords(prompt: str) -> bool:
     if not isinstance(prompt, str):
         logger.error(f"Expected string prompt, got {type(prompt)}")
         raise TypeError("Prompt must be a string")
-    
+
     try:
         result = any(stop in prompt.lower() for stop in STOP_WORDS)
         if result:
@@ -60,7 +60,7 @@ def check_for_interrupt(prompt: str) -> bool:
     if not isinstance(prompt, str):
         logger.error(f"Expected string prompt, got {type(prompt)}")
         raise TypeError("Prompt must be a string")
-    
+
     try:
         result = "interrupt" in prompt.lower()
         if result:
@@ -86,7 +86,7 @@ def add_space(text: str) -> str:
     if not isinstance(text, str):
         logger.error(f"Expected string text, got {type(text)}")
         raise TypeError("Text must be a string")
-    
+
     try:
         if text and text[-1] not in [" ", "\n"]:
             return text + " "
@@ -112,7 +112,7 @@ async def receive_and_filter(ws: WebSocket) -> Optional[str]:
     try:
         logger.debug("Receiving WebSocket frame")
         raw: str = await ws.receive_text()
-        
+
         try:
             msg: Dict[str, Any] = json.loads(raw)
             if msg.get("type") == "interrupt":
@@ -125,7 +125,7 @@ async def receive_and_filter(ws: WebSocket) -> Optional[str]:
         except json.JSONDecodeError:
             logger.debug("Received plain text message (not JSON)")
             return raw.strip()
-            
+
     except Exception as e:
         logger.error(f"Error receiving and filtering WebSocket message: {e}")
         raise
