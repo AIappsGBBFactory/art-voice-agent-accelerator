@@ -69,7 +69,6 @@ permissions:
   id-token: write   # Required for OIDC authentication
   contents: read    # Required to checkout repository
   pull-requests: write  # Required to comment on PRs
-  actions: write    # Required to set repository variables
 
 jobs:
   # ============================================================================
@@ -406,27 +405,6 @@ jobs:
             echo "frontend_url=" >> $GITHUB_OUTPUT
             echo "backend_url=" >> $GITHUB_OUTPUT
           fi
-
-      - name: 🔧 Set Container Registry as Repository Variable
-        if: github.event_name != 'pull_request' && inputs.action != 'down' && steps.extract-outputs.outputs.container_registry_endpoint != 'unknown'
-        run: |
-          echo "🔧 Setting AZURE_CONTAINER_REGISTRY_ENDPOINT as repository variable..."
-          
-          # Get the current environment name for the variable
-          ENVIRONMENT="${{ env.AZURE_ENV_NAME }}"
-          REGISTRY_ENDPOINT="${{ steps.extract-outputs.outputs.container_registry_endpoint }}"
-          
-          echo "Environment: $ENVIRONMENT"
-          echo "Registry Endpoint: $REGISTRY_ENDPOINT"
-          
-          # Set the repository variable using GitHub CLI
-          gh variable set AZURE_CONTAINER_REGISTRY_ENDPOINT \
-            --env "$ENVIRONMENT" \
-            --body "$REGISTRY_ENDPOINT"
-          
-          echo "✅ Successfully set AZURE_CONTAINER_REGISTRY_ENDPOINT=$REGISTRY_ENDPOINT for environment $ENVIRONMENT"
-        env:
-          GH_TOKEN: ${{ github.token }}
           
       - name: 🔍 Show Deployment Status
         if: github.event_name != 'pull_request' && inputs.action != 'down'
