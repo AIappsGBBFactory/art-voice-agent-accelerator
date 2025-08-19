@@ -41,6 +41,21 @@ resource "azurerm_role_assignment" "acr_backend_pull" {
   principal_id         = azurerm_user_assigned_identity.backend.principal_id
 }
 
+# System-assigned managed identity role assignments for Metrics Publisher
+resource "azurerm_role_assignment" "frontend_metrics_publisher" {
+  scope                = azurerm_resource_group.main.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_container_app.frontend.identity[0].principal_id
+  depends_on           = [azurerm_container_app.frontend]
+}
+
+resource "azurerm_role_assignment" "backend_metrics_publisher" {
+  scope                = azurerm_resource_group.main.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+  depends_on           = [azurerm_container_app.backend]
+}
+
 # ============================================================================
 # CONTAINER APPS ENVIRONMENT
 # ============================================================================
@@ -67,13 +82,18 @@ resource "azurerm_container_app" "frontend" {
   revision_mode                = "Single"
 
   // Image is managed outside of terraform (i.e azd deploy)
+  // EasyAuth configs are managed outside of terraform
   lifecycle {
     ignore_changes = [
-      template[0].container[0].image
+      template[0].container[0].image,
+      ingress[0].cors,
+      ingress[0].client_certificate_mode,
+      ingress[0].ip_security_restriction
     ]
   }
+
   identity {
-    type         = "UserAssigned"
+    type         = "SystemAssigned, UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.frontend.id]
   }
 
@@ -126,7 +146,7 @@ resource "azurerm_container_app" "backend" {
   revision_mode                = "Single"
 
   identity {
-    type         = "UserAssigned"
+    type         = "SystemAssigned, UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.backend.id]
   }
 
@@ -376,10 +396,6 @@ output "BACKEND_CONTAINER_APP_URL" {
   value       = "https://${azurerm_container_app.backend.ingress[0].fqdn}"
 }
 
-output "AZURE_CONTAINER_REGISTRY_ENDPOINT" {
-  description = "Azure Container Registry endpoint"
-  value       = azurerm_container_registry.main.login_server
-}
 
 output "BACKEND_API_URL" {
   description = "Backend API URL"

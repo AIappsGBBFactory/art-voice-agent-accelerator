@@ -310,6 +310,19 @@ def initialize_app():
 app = initialize_app()
 
 # --------------------------------------------------------------------------- #
+#  Main entry point for uv run
+# --------------------------------------------------------------------------- #
+def main():
+    """Entry point for uv run rtagent-server."""
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(
+        app,                  # Use app object directly
+        host="0.0.0.0",       # nosec: B104
+        port=port,
+        reload=False,         # Don't use reload in production
+    )
+
+# --------------------------------------------------------------------------- #
 #  CLI entry-point
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":

@@ -69,6 +69,7 @@ permissions:
   id-token: write   # Required for OIDC authentication
   contents: read    # Required to checkout repository
   pull-requests: write  # Required to comment on PRs
+  actions: write    # Required to set repository variables
 
 jobs:
   # ============================================================================
@@ -109,6 +110,7 @@ jobs:
       resource_group: ${{ steps.extract-outputs.outputs.resource_group }}
       frontend_url: ${{ steps.extract-outputs.outputs.frontend_url }}
       backend_url: ${{ steps.extract-outputs.outputs.backend_url }}
+      container_registry_endpoint: ${{ steps.extract-outputs.outputs.container_registry_endpoint }}
       
     steps:
       # ========================================================================
@@ -214,6 +216,17 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
 
+      - name: Whitelist GitHub Runner IP
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            set -eu
+            agentIP=$(curl -s https://api.ipify.org/)
+            az storage account network-rule add \
+              --resource-group "${{ env.RS_RESOURCE_GROUP }}" \
+              --account-name "${{ env.RS_STORAGE_ACCOUNT }}" \
+              --ip-address $agentIP
+            sleep 300
       # ========================================================================
       # PREVIEW MODE (for PRs)
       # ========================================================================
@@ -330,12 +343,21 @@ jobs:
           echo "🚀 Executing azd action: $ACTION"
           
           case "$ACTION" in
+            "preview")
+              echo "🔍 Running infrastructure provision preview..."
+              azd provision --no-prompt --preview
+              ;;
             "provision")
               echo "🏗️ Provisioning infrastructure only..."
               azd provision --no-prompt
               ;;
             "deploy")
               echo "📦 Deploying application only..."
+                # Get registry endpoint from repository variable if available
+              REGISTRY_ENDPOINT="${AZURE_CONTAINER_REGISTRY_ENDPOINT:-}"
+              if [ -n "$REGISTRY_ENDPOINT" ]; then
+                azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$REGISTRY_ENDPOINT"
+              fi
               azd deploy --no-prompt
               ;;
             "up")
@@ -369,6 +391,7 @@ jobs:
             
             # Extract common outputs
             echo "resource_group=${AZURE_RESOURCE_GROUP:-unknown}" >> $GITHUB_OUTPUT
+            echo "container_registry_endpoint=${AZURE_CONTAINER_REGISTRY_ENDPOINT:-unknown}" >> $GITHUB_OUTPUT
             
             # Try to get service endpoints
             FRONTEND_URL=$(azd show --output json 2>/dev/null | jq -r '.services."rtaudio-client".endpoint // empty' || echo "")
@@ -379,15 +402,44 @@ jobs:
           else
             echo "⚠️ Could not extract azd outputs"
             echo "resource_group=unknown" >> $GITHUB_OUTPUT
+            echo "container_registry_endpoint=unknown" >> $GITHUB_OUTPUT
             echo "frontend_url=" >> $GITHUB_OUTPUT
             echo "backend_url=" >> $GITHUB_OUTPUT
           fi
+
+      - name: 🔧 Set Container Registry as Repository Variable
+        if: github.event_name != 'pull_request' && inputs.action != 'down' && steps.extract-outputs.outputs.container_registry_endpoint != 'unknown'
+        run: |
+          echo "🔧 Setting AZURE_CONTAINER_REGISTRY_ENDPOINT as repository variable..."
+          
+          # Get the current environment name for the variable
+          ENVIRONMENT="${{ env.AZURE_ENV_NAME }}"
+          REGISTRY_ENDPOINT="${{ steps.extract-outputs.outputs.container_registry_endpoint }}"
+          
+          echo "Environment: $ENVIRONMENT"
+          echo "Registry Endpoint: $REGISTRY_ENDPOINT"
+          
+          # Set the repository variable using GitHub CLI
+          gh variable set AZURE_CONTAINER_REGISTRY_ENDPOINT \
+            --env "$ENVIRONMENT" \
+            --body "$REGISTRY_ENDPOINT"
+          
+          echo "✅ Successfully set AZURE_CONTAINER_REGISTRY_ENDPOINT=$REGISTRY_ENDPOINT for environment $ENVIRONMENT"
+        env:
+          GH_TOKEN: ${{ github.token }}
           
       - name: 🔍 Show Deployment Status
         if: github.event_name != 'pull_request' && inputs.action != 'down'
         run: |
           echo "📊 Deployment Status:"
           azd show --output table || echo "⚠️ Could not show deployment status"
+          
+          echo ""
+          echo "🏷️ Extracted Values:"
+          echo "Resource Group: ${{ steps.extract-outputs.outputs.resource_group }}"
+          echo "Container Registry: ${{ steps.extract-outputs.outputs.container_registry_endpoint }}"
+          echo "Frontend URL: ${{ steps.extract-outputs.outputs.frontend_url }}"
+          echo "Backend URL: ${{ steps.extract-outputs.outputs.backend_url }}"
           
       # ========================================================================
       # CLEANUP STEPS
@@ -445,10 +497,21 @@ jobs:
                 echo "| Backend URL | [${{ steps.extract-outputs.outputs.backend_url }}](${{ steps.extract-outputs.outputs.backend_url }}) |" >> $GITHUB_STEP_SUMMARY
               fi
               
+              if [ -n "${{ steps.extract-outputs.outputs.container_registry_endpoint }}" ] && [ "${{ steps.extract-outputs.outputs.container_registry_endpoint }}" != "unknown" ]; then
+                echo "| Container Registry | \`${{ steps.extract-outputs.outputs.container_registry_endpoint }}\` |" >> $GITHUB_STEP_SUMMARY
+              fi
+              
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
               echo "- Test your application using the URLs above" >> $GITHUB_STEP_SUMMARY
               echo "- Monitor resources in the [Azure Portal](https://portal.azure.com)" >> $GITHUB_STEP_SUMMARY
               echo "- Check logs with \`azd monitor\`" >> $GITHUB_STEP_SUMMARY
+              
+              if [ -n "${{ steps.extract-outputs.outputs.container_registry_endpoint }}" ] && [ "${{ steps.extract-outputs.outputs.container_registry_endpoint }}" != "unknown" ]; then
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "### 🏗️ Environment Configuration" >> $GITHUB_STEP_SUMMARY
+                echo "- ✅ **AZURE_CONTAINER_REGISTRY_ENDPOINT** set for environment \`${{ env.AZURE_ENV_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+                echo "- This variable is now available for subsequent deployments and workflows" >> $GITHUB_STEP_SUMMARY
+              fi
             fi
           fi

@@ -18,20 +18,30 @@
 			"userUid": "automatic",
 			"userGid": "automatic"
 		},
-		"ghcr.io/devcontainers-contrib/features/zsh-plugins:0": {
+		"ghcr.io/devcontainers-extra/features/zsh-plugins:0": {
 			"plugins": "ssh-agent zsh-syntax-highlighting zsh-autosuggestions",
 			"omzPlugins": "https://github.com/zsh-users/zsh-autosuggestions https://github.com/zsh-users/zsh-syntax-highlighting",
 			"username": "vscode"
 		},
 		"ghcr.io/stuartleeks/dev-container-features/shell-history:0": {},
-		"ghcr.io/va-h/devcontainers-features/uv:1": {},
 		// Node.js for React/Vite frontend toolchain
 		"ghcr.io/devcontainers/features/node:1": {
 			"version": "22",
 			"nodeGypDependencies": true
 		},
-		// Azure CLI (used to install/drive Bicep)
-		"ghcr.io/devcontainers/features/azure-cli:1": {}
+		"ghcr.io/va-h/devcontainers-features/uv:1": {},
+		// Azure CLI
+		"ghcr.io/devcontainers/features/azure-cli:1": {
+			"version": "latest"
+		},
+		// Terraform
+		"ghcr.io/devcontainers/features/terraform:1": {
+			"version": "latest"
+		},
+		// Azure Developer CLI (azd)
+		"ghcr.io/azure/azure-dev/azd:0": {
+			"version": "latest"
+		}
 	},
 	// Configure tool-specific properties.
 	"customizations": {
@@ -57,20 +67,22 @@
 				"ms-azuretools.vscode-azureterraform",
 				"ms-vscode.azurecli",
 				"ms-azureaispeech.azure-ai-speech-toolkit",
-				"github.vscode-github-actions"
+				"github.vscode-github-actions",
+				"ms-python.debugpy",
+				"GitHub.copilot-chat"
 			]
 		}
 	},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [9000],
+	"forwardPorts": [8010],
 	// Use 'portsAttributes' to set default properties for specific forwarded ports. 
 	// More info: https://containers.dev/implementors/json_reference/#port-attributes
-	// "portsAttributes": {
-	// 	"9000": {
-	// 		"label": "Hello Remote World",
-	// 		"onAutoForward": "notify"
-	// 	}
-	// },
+	"portsAttributes": {
+		"8010": {
+			"label": "Hello Remote World",
+			"onAutoForward": "notify"
+		}
+	},
 	// Use 'postCreateCommand' to run commands after the container is created.
 	"postCreateCommand": "bash .devcontainer/post_create.sh",
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.

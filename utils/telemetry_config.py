@@ -124,6 +124,8 @@ def setup_azure_monitor(logger_name: str = None):
                 "flask": {"enabled": True},
                 "requests": {"enabled": True},
                 "urllib3": {"enabled": True},
+                "psycopg2": {"enabled": False},  # Disable psycopg2 since we use MongoDB
+                "django": {"enabled": False},    # Disable django since we use FastAPI
             },
         )
 
@@ -221,6 +223,8 @@ def _retry_without_live_metrics(logger_name: str, connection_string: str):
                 "flask": {"enabled": True},
                 "requests": {"enabled": True},
                 "urllib3": {"enabled": True},
+                "psycopg2": {"enabled": False},  # Disable psycopg2 since we use MongoDB
+                "django": {"enabled": False},    # Disable django since we use FastAPI
             },
         )
         logger.info(

@@ -47,6 +47,11 @@ storage_exists() {
     local account="$1"
     local rg="$2"
     az storage account show --name "$account" --resource-group "$rg" &> /dev/null
+    local result
+    result=$(az storage account show --name "$account" --resource-group "$rg" --query "provisioningState" -o tsv 2>/dev/null)
+    log_info "Checked storage account '$account' in resource group '$rg': provisioningState=$result"
+    echo "az storage account show --name \"$account\" --resource-group \"$rg\" --query \"provisioningState\" -o tsv"
+    echo "$result" | grep -q "Succeeded"
 }
 
 # Generate unique resource names
@@ -191,66 +196,6 @@ is_dev_sandbox() {
     return 1
 }
 
-# Ensure current public IP is whitelisted if storage is not reachable via public network rules
-ensure_storage_ip_whitelisted() {
-    local account="$1"; local rg="$2"
-
-    # If reachable already, nothing to do
-    if can_access_storage_containers "$account" "$rg"; then
-        log_success "Storage account '$account' is reachable with current credentials."
-        return 0
-    fi
-
-    # Check if public network access is disabled (private endpoints scenario)
-    local pna
-    pna=$(az storage account show --name "$account" --resource-group "$rg" --query "publicNetworkAccess" -o tsv 2>/dev/null || echo "Enabled")
-    if [ "$pna" = "Disabled" ]; then
-        if is_dev_sandbox; then
-            log_warning "Public network access is Disabled on '$account'. Enabling PNA and setting default-action=Deny for dev/sandbox, then whitelisting current IP."
-            if ! az storage account update --name "$account" --resource-group "$rg" --public-network-access Enabled -o none 2>/tmp/storage_pna_enable_err.txt; then
-                log_warning "Failed to enable Public Network Access on '$account'. Reason: $(tr -d '\n' < /tmp/storage_pna_enable_err.txt)"
-                return 1
-            fi
-            # Lock down to selected networks by setting default action to Deny
-            if ! az storage account network-rule update --resource-group "$rg" --account-name "$account" --default-action Deny -o none 2>/tmp/storage_default_deny_err.txt; then
-                log_warning "Failed to set default-action=Deny on '$account'. Reason: $(tr -d '\n' < /tmp/storage_default_deny_err.txt)"
-                # Continue anyway; adding an IP rule may still help depending on current policy
-            fi
-        else
-            log_warning "Public network access is disabled for '$account'. Skipping IP whitelist (non-dev environment)."
-            return 1
-        fi
-    fi
-
-    # Get current public IP
-    local ip
-    ip=$(get_public_ip)
-    if [ -z "$ip" ]; then
-        log_warning "Could not determine current public IP. Skipping IP whitelist."
-        return 1
-    fi
-
-    log_info "Adding current IP to storage network rules: $ip"
-    if az storage account network-rule add \
-        --resource-group "$rg" \
-        --account-name "$account" \
-        --ip-address "$ip" \
-        -o none 2>/tmp/storage_rule_err.txt; then
-        # Re-check access
-        sleep 3
-        if can_access_storage_containers "$account" "$rg"; then
-            log_success "Whitelisted IP $ip for storage '$account' and verified access."
-            return 0
-        else
-            log_warning "IP added, but access still failing. This may be due to RBAC propagation or other policies."
-            return 1
-        fi
-    else
-        log_warning "Failed to add IP rule to storage '$account'. Reason: $(tr -d '\n' < /tmp/storage_rule_err.txt)"
-        return 1
-    fi
-}
-
 # Check if JSON file has meaningful content
 has_json_content() {
     local file="$1"
@@ -324,9 +269,21 @@ main() {
     local container=$(get_azd_env "RS_CONTAINER_NAME")
     local resource_group=$(get_azd_env "RS_RESOURCE_GROUP")
     
-    # If not configured or doesn't exist, create new
-    if [[ -z "$storage_account" ]] || ! storage_exists "$storage_account" "$resource_group"; then
-        log_info "Setting up new Terraform remote state storage..."
+    # Only create new storage if variables are missing OR if storage doesn't actually exist
+    if [[ -z "$storage_account" ]] || [[ -z "$container" ]] || [[ -z "$resource_group" ]] || ! storage_exists "$storage_account" "$resource_group"; then
+        if [[ -n "$storage_account" ]] && [[ -n "$container" ]] && [[ -n "$resource_group" ]]; then
+            log_warning "Storage configuration exists but storage account '$storage_account' not found."
+            read -p "Do you want to create a new storage account for Terraform remote state? [y/N]: " confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                log_info "Proceeding to create new storage account..."
+            else
+                log_info "Skipping remote state storage creation. Continuing with local state."
+                return 0
+            fi
+        else
+            log_info "Setting up new Terraform remote state storage..."
+        fi
+        
         read storage_account container resource_group <<< $(generate_names "$env_name" "$sub_id")
         create_storage "$storage_account" "$container" "$resource_group" "$location"
         
@@ -337,15 +294,14 @@ main() {
         azd env set RS_STATE_KEY "$env_name.tfstate"
     else
         log_success "Using existing remote state configuration"
+        log_info "Storage Account: $storage_account"
+        log_info "Container: $container" 
+        log_info "Resource Group: $resource_group"
     fi
 
-    # Ensure current IP is allowed if storage isn't reachable
-    ensure_storage_ip_whitelisted "$storage_account" "$resource_group" || true
-    
     # Update tfvars file (only if empty or doesn't exist)
     update_tfvars "$env_name" "$location"
     
-
     
     log_success "✅ Terraform remote state setup completed!"
     echo ""

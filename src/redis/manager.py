@@ -12,14 +12,6 @@ import redis
 from redis.exceptions import AuthenticationError
 from utils.ml_logging import get_logger
 
-try:
-    import redis.asyncio as aioredis  # reserved for future use
-
-    ASYNC_REDIS_AVAILABLE = True
-except ImportError:
-    ASYNC_REDIS_AVAILABLE = False
-
-
 class AzureRedisManager:
     """
     AzureRedisManager provides a simplified interface to connect, store,
