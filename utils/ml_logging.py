@@ -154,43 +154,6 @@ class TraceLogFilter(logging.Filter):
 
         return True
 
-
-def configure_azure_monitor(logger_name: Optional[str] = None):
-    """
-    Configure Azure Monitor for the specified logger or root logger.
-    This ensures logs are sent to Application Insights with proper trace correlation.
-    """
-    if _telemetry_disabled:
-        return
-        
-    setup_azure_monitor(logger_name)
-
-    # Get the target logger
-    target_logger = (
-        logging.getLogger(logger_name) if logger_name else logging.getLogger()
-    )
-
-    # Check if Azure Monitor handler is already attached to avoid duplicates
-    if LoggingHandler is not None:
-        has_azure_handler = any(
-            isinstance(h, LoggingHandler) for h in target_logger.handlers
-        )
-        if not has_azure_handler:
-            try:
-                handler = LoggingHandler(level=logging.INFO)
-                target_logger.addHandler(handler)
-                target_logger.debug(
-                    f"Azure Monitor LoggingHandler attached to logger: {logger_name or 'root'}"
-                )
-            except Exception as e:
-                target_logger.debug(f"Failed to attach Azure Monitor handler: {e}")
-
-    # Ensure trace filter is attached
-    has_trace_filter = any(isinstance(f, TraceLogFilter) for f in target_logger.filters)
-    if not has_trace_filter:
-        target_logger.addFilter(TraceLogFilter())
-
-
 def set_span_correlation_attributes(
     call_connection_id: Optional[str] = None,
     session_id: Optional[str] = None,

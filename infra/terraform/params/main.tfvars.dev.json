@@ -14,25 +14,25 @@
     {
       "name": "gpt-4o",
       "version": "2024-11-20",
-      "sku_name": "DataZoneStandard",
-      "capacity": 50
+      "sku_name": "GlobalStandard",
+      "capacity": 300
     },
     {
       "name": "gpt-4o-mini",
       "version": "2024-07-18",
-      "sku_name": "DataZoneStandard",
-      "capacity": 50
+      "sku_name": "GlobalStandard",
+      "capacity": 2000
     },
     {
       "name": "gpt-4.1-mini",
       "version": "2025-04-14",
-      "sku_name": "DataZoneStandard",
+      "sku_name": "GlobalStandard",
       "capacity": 50
     },
     {
       "name": "gpt-4.1",
       "version": "2025-04-14",
-      "sku_name": "DataZoneStandard",
+      "sku_name": "GlobalStandard",
       "capacity": 50
     }
   ],

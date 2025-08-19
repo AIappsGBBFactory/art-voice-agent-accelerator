@@ -16,24 +16,20 @@ azure-storage-blob>=12.19.0
 azure-cognitiveservices-speech>=1.45.0
 azure-communication-callautomation>=1.4.0
 azure-communication-identity>=1.5.0
-
 azure-keyvault-secrets>=4.7.0
 azure-eventgrid>=4.10.0
 
 # Azure monitoring and telemetry
 azure-monitor-opentelemetry>=1.6.11
-
 opentelemetry-sdk
 opentelemetry-instrumentation
-opentelemetry-instrumentation-django
 opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-flask
-opentelemetry-instrumentation-psycopg2
 opentelemetry-instrumentation-requests
 opentelemetry-instrumentation-urllib
 opentelemetry-instrumentation-urllib3
 opentelemetry-instrumentation-openai-v2
 
+# Azure + misc
 azure-core>=1.29.0
 colorama>=0.4.6
 

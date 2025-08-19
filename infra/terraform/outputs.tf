@@ -157,6 +157,12 @@ output "FRONTEND_UAI_PRINCIPAL_ID" {
   value       = azurerm_user_assigned_identity.frontend.principal_id
 }
 
+# Container Registry
+output "AZURE_CONTAINER_REGISTRY_ENDPOINT" {
+  description = "Azure Container Registry endpoint"
+  value       = azurerm_container_registry.main.login_server
+}
+
 # Monitoring
 output "APPLICATIONINSIGHTS_CONNECTION_STRING" {
   description = "Application Insights connection string"

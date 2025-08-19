@@ -75,6 +75,7 @@ locals {
     "project"      = "gbb-ai-audio-agent"
     "environment"  = var.environment_name
     "deployment"   = "terraform"
+    "deployed_by"  = coalesce(var.deployed_by, local.principal_id)
   }
 
   # Resource naming with Azure standard abbreviations

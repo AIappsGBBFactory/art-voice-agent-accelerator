@@ -47,6 +47,19 @@ storage_exists() {
     local account="$1"
     local rg="$2"
     az storage account show --name "$account" --resource-group "$rg" &> /dev/null
+    local result
+    result=$(az storage account show --name "$account" --resource-group "$rg" --query "provisioningState" -o tsv 2>/dev/null)
+    log_info "Checked storage account '$account' in resource group '$rg': provisioningState=$result"
+    echo "az storage account show --name \"$account\" --resource-group \"$rg\" --query \"provisioningState\" -o tsv"
+    local result
+    result=$(az storage account show --name "$account" --resource-group "$rg" --query "provisioningState" -o tsv 2>/dev/null)
+    if [[ "$result" == "Succeeded" ]]; then
+        log_info "Storage account '$account' in resource group '$rg' exists and is provisioned."
+        return 0
+    else
+        log_info "Storage account '$account' in resource group '$rg' does not exist or is not provisioned (provisioningState=$result)."
+        return 1
+    fi
 }
 
 # Generate unique resource names
@@ -86,13 +99,22 @@ create_storage() {
             --min-tls-version TLS1_2 \
             --output none
             
-        # Enable versioning and change feed
-        az storage account blob-service-properties update \
+        # Enable versioning and change feed (best-effort)
+        # Some Azure CLI versions/extensions may hit InvalidApiVersionParameter; do not fail setup.
+        if ! az storage account blob-service-properties update \
             --account-name "$storage_account" \
             --resource-group "$resource_group" \
             --enable-versioning true \
             --enable-change-feed true \
-            --output none
+            --output none 2>/tmp/blob_props_err.txt; then
+            log_warning "Could not update blob service properties (versioning/change feed)."
+            if grep -q "InvalidApiVersionParameter" /tmp/blob_props_err.txt; then
+                log_warning "Azure API version not supported by your CLI for this operation. Skipping this step."
+                log_warning "You can enable Versioning and Change Feed later in the Azure Portal under Storage Account > Data management."
+            else
+                log_warning "Reason: $(tr -d '\n' < /tmp/blob_props_err.txt)"
+            fi
+        fi
     fi
     
     # Create container
@@ -129,6 +151,59 @@ create_storage() {
     fi
 }
 
+# Attempt to obtain the current public IP using multiple strategies
+get_public_ip() {
+    local ip=""
+    # Try DNS-based discovery (often works without HTTPS egress restrictions)
+    if command -v dig >/dev/null 2>&1; then
+        ip=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null || echo "")
+    fi
+    # Fallbacks via HTTPS services
+    if [ -z "$ip" ] && command -v curl >/dev/null 2>&1; then
+        ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || echo "")
+    fi
+    if [ -z "$ip" ] && command -v curl >/dev/null 2>&1; then
+        ip=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "")
+    fi
+    # Final sanity check: ensure it matches IPv4 format
+    if echo "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+        echo "$ip"
+        return 0
+    else
+        echo ""
+        return 1
+    fi
+}
+
+# Check if we can list containers using Azure AD auth; returns 0 on success
+can_access_storage_containers() {
+    local account="$1"; local rg="$2"
+    az storage container list \
+        --account-name "$account" \
+        --resource-group "$rg" \
+        --auth-mode login \
+        -o none 2>/tmp/storage_list_err.txt && return 0
+    return 1
+}
+
+# Determine if current azd environment is a dev/sandbox context
+is_dev_sandbox() {
+    local env_name sandbox
+    env_name=$(get_azd_env "AZURE_ENV_NAME")
+    sandbox=$(get_azd_env "SANDBOX_MODE")
+    # Explicit override via SANDBOX_MODE=true/1/yes
+    if echo "${sandbox}" | grep -Eiq '^(1|true|yes)$'; then
+
+        log_info "Detected dev/sandbox environment: ${env_name}"
+        return 0
+    fi
+    # Heuristic based on environment name
+    if echo "${env_name}" | grep -Eiq '^(dev|local|sandbox)$'; then
+        return 0
+    fi
+    return 1
+}
+
 # Check if JSON file has meaningful content
 has_json_content() {
     local file="$1"
@@ -151,8 +226,8 @@ has_json_content() {
 # Update tfvars file only if empty or non-existent
 update_tfvars() {
     local tfvars_file="./infra/terraform/main.tfvars.json"
-    local env_name="${1:-tfdev}"
-    local location="${2:-eastus2}"
+    local env_name="${1}"
+    local location="${2}"
     
     # Ensure directory exists
     mkdir -p "$(dirname "$tfvars_file")"
@@ -188,18 +263,35 @@ main() {
     local location=$(get_azd_env "AZURE_LOCATION")
     local sub_id=$(az account show --query id -o tsv)
     
-    # Use defaults if not set
-    env_name="${env_name:-tfdev}"
-    location="${location:-eastus2}"
-    
+    if [[ -z "$env_name" ]]; then
+        log_error "AZURE_ENV_NAME is not set in the azd environment."
+        exit 1
+    fi
+    if [[ -z "$location" ]]; then
+        log_error "AZURE_LOCATION is not set in the azd environment."
+        exit 1
+    fi
+
     # Check existing configuration
     local storage_account=$(get_azd_env "RS_STORAGE_ACCOUNT")
     local container=$(get_azd_env "RS_CONTAINER_NAME")
     local resource_group=$(get_azd_env "RS_RESOURCE_GROUP")
     
-    # If not configured or doesn't exist, create new
-    if [[ -z "$storage_account" ]] || ! storage_exists "$storage_account" "$resource_group"; then
-        log_info "Setting up new Terraform remote state storage..."
+    # Only create new storage if variables are missing OR if storage doesn't actually exist
+    if [[ -z "$storage_account" ]] || [[ -z "$container" ]] || [[ -z "$resource_group" ]] || ! storage_exists "$storage_account" "$resource_group"; then
+        if [[ -n "$storage_account" ]] && [[ -n "$container" ]] && [[ -n "$resource_group" ]]; then
+            log_warning "Storage configuration exists but storage account '$storage_account' not found."
+            read -p "Do you want to create a new storage account for Terraform remote state? [y/N]: " confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                log_info "Proceeding to create new storage account..."
+            else
+                log_info "Skipping remote state storage creation. Continuing with local state."
+                return 0
+            fi
+        else
+            log_info "Setting up new Terraform remote state storage..."
+        fi
+        
         read storage_account container resource_group <<< $(generate_names "$env_name" "$sub_id")
         create_storage "$storage_account" "$container" "$resource_group" "$location"
         
@@ -207,15 +299,17 @@ main() {
         azd env set RS_STORAGE_ACCOUNT "$storage_account"
         azd env set RS_CONTAINER_NAME "$container"
         azd env set RS_RESOURCE_GROUP "$resource_group"
-        azd env set RS_STATE_KEY "terraform.tfstate"
+        azd env set RS_STATE_KEY "$env_name.tfstate"
     else
         log_success "Using existing remote state configuration"
+        log_info "Storage Account: $storage_account"
+        log_info "Container: $container" 
+        log_info "Resource Group: $resource_group"
     fi
-    
+
     # Update tfvars file (only if empty or doesn't exist)
     update_tfvars "$env_name" "$location"
     
-
     
     log_success "✅ Terraform remote state setup completed!"
     echo ""

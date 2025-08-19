@@ -34,7 +34,7 @@ from apps.rtagent.backend.src.shared_ws import (
 )
 from src.enums.monitoring import SpanAttr  # noqa: F401 – imported for side‑effects
 from utils.ml_logging import get_logger
-from apps.rtagent.backend.src.utils.tracing_utils import (
+from apps.rtagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
     create_service_dependency_attrs,
 )

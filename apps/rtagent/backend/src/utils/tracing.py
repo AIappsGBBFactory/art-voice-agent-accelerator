@@ -17,7 +17,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from utils.ml_logging import get_logger
 
 # Default logger for fallback usage
-_default_logger = get_logger("tracing_utils")
+_default_logger = get_logger(__name__)
 
 # Performance optimization: Cache tracing configuration
 TRACING_ENABLED = os.getenv("ENABLE_TRACING", "false").lower() == "true"

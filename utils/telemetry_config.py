@@ -35,6 +35,8 @@ def suppress_azure_credential_logs():
         "azure.identity._credentials.app_service",
         "azure.identity._internal.msal_managed_identity_client",
         "azure.core.pipeline.policies._authentication",
+        "azure.core.pipeline.policies.http_logging_policy",
+        "azure.monitor.opentelemetry.exporter.export._base",
     ]
 
     for logger_name in azure_loggers:
@@ -122,6 +124,8 @@ def setup_azure_monitor(logger_name: str = None):
                 "flask": {"enabled": True},
                 "requests": {"enabled": True},
                 "urllib3": {"enabled": True},
+                "psycopg2": {"enabled": False},  # Disable psycopg2 since we use MongoDB
+                "django": {"enabled": False},    # Disable django since we use FastAPI
             },
         )
 
@@ -219,6 +223,8 @@ def _retry_without_live_metrics(logger_name: str, connection_string: str):
                 "flask": {"enabled": True},
                 "requests": {"enabled": True},
                 "urllib3": {"enabled": True},
+                "psycopg2": {"enabled": False},  # Disable psycopg2 since we use MongoDB
+                "django": {"enabled": False},    # Disable django since we use FastAPI
             },
         )
         logger.info(

@@ -253,3 +253,30 @@ TTS_END: set[str] = {";", ".", "?", "!"}
 
 # Allowed CORS origins for the FastAPI app:
 ALLOWED_ORIGINS: list[str] = ["*"]
+
+# ------------------------------------------------------------------------------
+# API Documentation & Environment Settings
+# ------------------------------------------------------------------------------
+# Environment configuration
+ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development").lower()
+DEBUG_MODE: bool = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes", "on")
+
+# Swagger/OpenAPI Documentation Configuration
+ENABLE_DOCS: bool = os.getenv("ENABLE_DOCS", "auto").lower()
+
+# Auto-detect docs enablement based on environment if not explicitly set
+if ENABLE_DOCS == "auto":
+    # Enable docs in development/testing, disable in production
+    ENABLE_DOCS = ENVIRONMENT in ("development", "dev", "testing", "test", "staging")
+elif ENABLE_DOCS in ("true", "1", "yes", "on"):
+    ENABLE_DOCS = True
+else:
+    ENABLE_DOCS = False
+
+# OpenAPI endpoints configuration
+DOCS_URL: str | None = "/docs" if ENABLE_DOCS else None
+REDOC_URL: str | None = "/redoc" if ENABLE_DOCS else None
+OPENAPI_URL: str | None = "/openapi.json" if ENABLE_DOCS else None
+
+# Alternative secure docs URL for production access (if needed)
+SECURE_DOCS_URL: str | None = os.getenv("SECURE_DOCS_URL") if ENABLE_DOCS else None

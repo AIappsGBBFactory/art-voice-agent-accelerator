@@ -72,6 +72,12 @@ variable "principal_type" {
   }
 }
 
+variable "deployed_by" {
+  description = "Identifier of the deployer (e.g., 'Full Name <email@domain>' or UPN). Used to tag resources for traceability."
+  type        = string
+  default     = null
+}
+
 variable "acs_data_location" {
   description = "Data location for Azure Communication Services"
   type        = string

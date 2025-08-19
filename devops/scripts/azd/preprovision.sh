@@ -109,6 +109,33 @@ case "$PROVIDER" in
         echo "Setting Terraform variables from Azure environment..."
         export TF_VAR_environment_name="$AZURE_ENV_NAME"
         export TF_VAR_location="$AZURE_LOCATION"
+
+        # Derive deployer identity from local git or Azure account
+        DEPLOYER_NAME=""
+        if command -v git >/dev/null 2>&1; then
+            GIT_NAME=$(git config --get user.name 2>/dev/null || echo "")
+            GIT_EMAIL=$(git config --get user.email 2>/dev/null || echo "")
+            if [ -n "$GIT_NAME" ] && [ -n "$GIT_EMAIL" ]; then
+                DEPLOYER_NAME="$GIT_NAME <$GIT_EMAIL>"
+            elif [ -n "$GIT_NAME" ]; then
+                DEPLOYER_NAME="$GIT_NAME"
+            elif [ -n "$GIT_EMAIL" ]; then
+                DEPLOYER_NAME="$GIT_EMAIL"
+            fi
+        fi
+
+        if [ -z "$DEPLOYER_NAME" ] && command -v az >/dev/null 2>&1; then
+            AZ_USER_UPN=$(az account show --query user.name -o tsv 2>/dev/null || echo "")
+            if [ -n "$AZ_USER_UPN" ] && [ "$AZ_USER_UPN" != "None" ]; then
+                DEPLOYER_NAME="$AZ_USER_UPN"
+            fi
+        fi
+
+        if [ -z "$DEPLOYER_NAME" ]; then
+            DEPLOYER_NAME="unknown"
+        fi
+        export TF_VAR_deployed_by="$DEPLOYER_NAME"
+        echo "Deployer identity set to: $DEPLOYER_NAME"
         # Validate required variables
         if [ -z "$AZURE_ENV_NAME" ]; then
             echo "Error: AZURE_ENV_NAME environment variable is not set"
