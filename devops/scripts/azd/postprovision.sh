@@ -1,6 +1,4 @@
 #!/bin/bash
-# filepath: /Users/jinle/Repos/_AIProjects/migration_staging/gbb-ai-audio-agent-migration-target/devops/scripts/azd/postprovision.sh
-
 # ========================================================================
 # 🎯 Azure Developer CLI Post-Provisioning Script
 # ========================================================================

@@ -1,6 +1,4 @@
 #!/bin/bash
-# filepath: /Users/jinle/Repos/_AIProjects/migration_staging/gbb-ai-audio-agent-migration-target/devops/scripts/azd/preprovision.sh
-
 # ========================================================================
 # 🎯 Azure Developer CLI Pre-Provisioning Script
 # ========================================================================

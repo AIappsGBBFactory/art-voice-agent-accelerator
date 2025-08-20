@@ -90,49 +90,44 @@ class DTMFValidationLifecycle:
             )
 
 
-    @staticmethod
-    async def handle_dtmf_tone_received(context: CallEventContext) -> None:
-        """Handle DTMF tone with AWS Connect validation and sequence validation."""
-        with tracer.start_as_current_span(
-            "v1.handle_dtmf_tone_received",
-            kind=SpanKind.INTERNAL,
-            attributes={
-                "call.connection.id": context.call_connection_id,
-                "event.type": context.event_type,
-            },
-        ):
-            # Extract tone and sequence information
-            tone = context.get_event_data().get("tone")
-            sequence_id = context.get_event_data().get("sequenceId")
+    # @staticmethod
+    # async def handle_dtmf_tone_received(context: CallEventContext) -> None:
+    #     """Handle DTMF tone with AWS Connect validation and sequence validation."""
+    #     with tracer.start_as_current_span(
+    #         "v1.handle_dtmf_tone_received",
+    #         kind=SpanKind.INTERNAL,
+    #         attributes={
+    #             "call.connection.id": context.call_connection_id,
+    #             "event.type": context.event_type,
+    #         },
+    #     ):
+    #         # Extract tone and sequence information
+    #         tone = context.get_event_data().get("tone")
+    #         sequence_id = context.get_event_data().get("sequenceId")
 
-            logger.info(f"🔢 DTMF tone received: {tone}, sequence_id: {sequence_id}")
+    #         logger.info(f"🔢 DTMF tone received: {tone}, sequence_id: {sequence_id}")
 
-            if tone:
-                normalized_tone = DTMFValidationLifecycle._normalize_tone(tone)
-                if normalized_tone and context.memo_manager:
-                    # Check if we're in AWS Connect validation mode
-                    aws_validation_pending = context.memo_manager.get_context("aws_connect_validation_pending", True)
+    #         if tone:
+    #             normalized_tone = DTMFValidationLifecycle._normalize_tone(tone)
+    #             if normalized_tone and context.memo_manager:
+    #                 # Check if we're in AWS Connect validation mode
+    #                 aws_validation_pending = context.memo_manager.get_context("aws_connect_validation_pending", True)
                     
-                    if aws_validation_pending:
-                        # Handle AWS Connect validation tone
-                        await DTMFValidationLifecycle._handle_aws_connect_validation_tone(
-                            context, normalized_tone
-                        )
-                    else:
-                        # Handle regular DTMF sequence
-                        DTMFValidationLifecycle._update_dtmf_sequence(context, normalized_tone)
+    #                 if aws_validation_pending:
+    #                     # Handle AWS Connect validation tone
+    #                     await DTMFValidationLifecycle._handle_aws_connect_validation_tone(
+    #                         context, normalized_tone
+    #                     )
+    #                 else:
+    #                     # Handle regular DTMF sequence
+    #                     DTMFValidationLifecycle._update_dtmf_sequence(context, normalized_tone)
 
-                        # Check if sequence is complete (ends with #)
-                        current_sequence = context.memo_manager.get_context("dtmf_sequence", "")
-                        if current_sequence.endswith("#"):
-                            # Remove the # and validate
-                            final_sequence = current_sequence[:-1]
-                            DTMFValidationLifecycle._validate_sequence(context, final_sequence)
-                            
-                            # Start async validation
-                            asyncio.create_task(
-                                DTMFValidationLifecycle._async_validate_sequence(context)
-                            )
+    #                     # Check if sequence is complete (ends with #)
+    #                     current_sequence = context.memo_manager.get_context("dtmf_sequence", "")
+    #                     if current_sequence.endswith("#"):
+    #                         # Remove the # and validate
+    #                         final_sequence = current_sequence[:-1]
+    #                         DTMFValidationLifecycle._validate_sequence(context, final_sequence)
 
     @staticmethod
     def is_dtmf_validation_gate_open(memory_manager, call_connection_id: str) -> bool:
@@ -190,6 +185,37 @@ class DTMFValidationLifecycle:
         except Exception as e:
             logger.error(f"❌ Error setting up AWS Connect validation flow: {e}")
 
+
+    async def handle_dtmf_tone_received(context: CallEventContext) -> None:
+        """Handle incoming DTMF tones."""
+        try:
+            if not context.memo_manager:
+                return
+
+            # Get the latest DTMF tone
+            tone = context.get_event_data().get("tone")
+            logger.info(f"🔢 Received DTMF tone: {tone}")
+            sequence_id = context.get_event_data().get("sequenceId")
+
+            logger.info(f"🔢 DTMF tone received: {tone}, sequence_id: {sequence_id}")
+
+            if tone:
+                tone = DTMFValidationLifecycle._normalize_tone(tone)
+
+            # Handle the tone based on the current validation state
+            if context.memo_manager.get_context("aws_connect_validation_pending", False):
+                await DTMFValidationLifecycle._handle_aws_connect_validation_tone(context, tone)
+            else:
+                # Append the received tone to the current dtmf_tone context
+                current_tones = context.memo_manager.get_context("dtmf_tone", "")
+                updated_tones = current_tones + tone
+                context.memo_manager.set_context("dtmf_tone", updated_tones)
+                logger.info(f"🔢 DTMF tone sequence updated: {updated_tones}")
+
+                context.memo_manager.persist_to_redis_async(context.redis_mgr)
+
+        except Exception as e:
+            logger.error(f"❌ Error handling DTMF tone: {e}")
 
     @staticmethod
     async def _handle_aws_connect_validation_tone(context: CallEventContext, tone: str) -> None:
