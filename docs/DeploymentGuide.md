@@ -1,138 +1,142 @@
+# Deployment Guide
 
-# 🚀 Deployment Guide
+> A comprehensive guide to deploy your Real-Time Azure Voice Agentic App using Terraform infrastructure and Container Apps.
 
-> A comprehensive guide to deploy your Real-Time Azure Voice Agentic App with secure SSL and WebSocket connectivity.
+## Infrastructure Overview
 
-## 📋 Table of Contents
+This deployment guide uses **Terraform** as the Infrastructure as Code (IaC) provider with **Azure Container Apps** for hosting. The infrastructure provides:
 
-- [Prerequisites](#-prerequisites)
-- [Quick Start](#-quick-start)
-- [Detailed Deployment Steps](#-detailed-deployment-steps)
-    - [1. SSL Certificate Requirements](#1-ssl-certificate-requirements)
-    - [2. Environment Configuration](#2-environment-configuration)
-    - [3. Infrastructure Provisioning](#3-infrastructure-provisioning)
-    - [4. Application Deployment](#4-application-deployment)
-    - [5. SSL Certificate and DNS Configuration](#5-ssl-certificate-and-dns-configuration)
-    - [6. WebSocket Connectivity Testing](#6-websocket-connectivity-testing)
-- [Environment Management](#-environment-management)
-- [Certificate Management](#-certificate-management)
-- [Monitoring and Troubleshooting](#-monitoring-and-troubleshooting)
-- [Cleanup](#-cleanup)
-- [Advanced Configuration](#-advanced-configuration)
-- [Support](#-support)
+- **AI Services**: Azure OpenAI (GPT-4o models) + Speech Services
+- **Communication**: Azure Communication Services for real-time voice
+- **Data Layer**: Cosmos DB (MongoDB API) + Redis Enterprise + Blob Storage
+- **Security**: Managed Identity authentication with RBAC
+- **Hosting**: Azure Container Apps with auto-scaling and built-in TLS
+- **Monitoring**: Application Insights + Log Analytics integration
+
+> **Infrastructure Details**: See the complete [Terraform Infrastructure README](../infra/terraform/README.md) for resource specifications and configuration options.
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Quick Start with Azure Developer CLI](#quick-start-with-azure-developer-cli)
+- [Alternative: Direct Terraform Deployment](#alternative-direct-terraform-deployment)
+- [Detailed Deployment Steps](#detailed-deployment-steps)
+    - [1. Environment Configuration](#1-environment-configuration)
+    - [2. Terraform Infrastructure Provisioning](#2-terraform-infrastructure-provisioning)
+    - [3. Application Deployment](#3-application-deployment)
+    - [4. Phone Number Configuration](#4-phone-number-configuration)
+    - [5. Connectivity Testing](#5-connectivity-testing)
+- [Environment Management](#environment-management)
+- [Backend Storage Configuration](#backend-storage-configuration)
+- [Monitoring and Troubleshooting](#monitoring-and-troubleshooting)
+- [Cleanup](#cleanup)
+- [Advanced Configuration](#advanced-configuration)
+- [Support](#support)
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
 Before you begin, ensure you have the following installed and configured:
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Azure CLI](https://docs.microsoft.com/cli/azure/install-azure-cli) | Latest | Azure resource management |
+| [Azure CLI](https://docs.microsoft.com/cli/azure/install-azure-cli) | >=2.50.0 | Azure resource management |
 | [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) | Latest | Simplified deployment |
+| [Terraform](https://developer.hashicorp.com/terraform/downloads) | >=1.1.7, <2.0.0 | Infrastructure as Code |
+| [Docker](https://docs.docker.com/get-docker/) | 20.10+ | Containerization and local testing |
 | Node.js | 18+ | Frontend development |
 | Python | 3.11+ | Backend development |
 
 **Additional Requirements:**
-- ✅ Azure subscription with appropriate permissions
-- ✅ **A publicly trusted SSL certificate** for your domain (required for Azure Communication Services WebSocket connections)
+- Azure subscription with appropriate permissions (Contributor role)
+- Terraform state storage (see [Backend Storage Configuration](#backend-storage-configuration))
 
-> ⚠️ **Important**: Self-signed certificates will not work with Azure Communication Services WebSocket connections.
+> **Note**: This deployment uses Azure Container Apps which provides built-in TLS termination with public endpoints, eliminating the need for custom SSL certificate management.
 
 ---
 
-## ⚡ Quick Start
+## Quick Start with Azure Developer CLI
 
-Get up and running in 3 simple steps:
+The easiest and **recommended** way to deploy this application is using Azure Developer CLI with Terraform backend:
 
-### 1️⃣ Clone and Initialize
+### Step 1: Clone and Initialize
 ```bash
 git clone <repository-url>
-cd gbb-ai-audio-agent
+cd gbb-ai-audio-agent-migration-target
 azd auth login
 azd init
 ```
 
-### 2️⃣ Set Environment Variables
+### Step 2: Set Environment Variables
 ```bash
 azd env new <environment-name>
-azd env set LOCATION "East US"
-azd env set ENVIRONMENT_NAME "<environment-name>"
+azd env set AZURE_LOCATION "eastus"
+azd env set AZURE_ENV_NAME "<environment-name>"
 ```
 
-### 3️⃣ Deploy Infrastructure and Code
+### Step 3: Deploy Infrastructure and Applications
 ```bash
 azd up
 ```
 
+**Total deployment time**: ~15 minutes for complete infrastructure and application deployment.
+
 ---
 
-## 🔧 Detailed Deployment Steps
+## Alternative: Direct Terraform Deployment
 
-### 1. SSL Certificate Requirements
+For users who prefer direct Terraform control or in environments where `azd` is not available:
 
-> 🔐 **Critical**: Azure Communication Services requires a publicly trusted SSL certificate for WebSocket connections.
-
-#### 📋 Certificate Preparation Checklist
-
-- [ ] **Obtain Certificate**: Purchase from a CA (DigiCert, Let's Encrypt, etc.)
-- [ ] **Domain Coverage**: Ensure certificate covers your domain (e.g., `voice-agent.yourdomain.com`)
-- [ ] **Format**: Certificate must be in PFX format with password
-- [ ] **Trust Chain**: Include full certificate chain for proper validation
-
-#### 🔑 Store Certificate in Key Vault
-
+### Step 1: Initialize Terraform Backend
 ```bash
-# Import certificate to Key Vault
-az keyvault certificate import \
-    --vault-name kv-voice-agent-prod \
-    --name ssl-certificate \
-    --file /path/to/your/certificate.pfx \
-    --password "your-certificate-password"
+# Set your Azure subscription
+export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+export AZURE_ENV_NAME="dev"  # or your preferred environment name
 
-# Store certificate password as secret
-az keyvault secret set \
-    --vault-name kv-voice-agent-prod \
-    --name ssl-certificate-password \
-    --value "your-certificate-password"
-
-# Configure environment
-azd env set AZURE_SSL_KEY_VAULT_SECRET_ID https://kv-voice-agent-prod.vault.azure.net/secrets/ssl-certificate
+# Configure backend storage (see Backend Storage Configuration below)
+cd infra/terraform
+cp backend.tf.example backend.tf
+# Edit backend.tf with your storage account details
 ```
 
-#### 🆔 Configure Managed Identity
-
+### Step 2: Configure Variables
 ```bash
-# Create user-assigned managed identity
-az identity create \
-        --name id-voice-agent-cert \
-        --resource-group rg-voice-agent-prod
+# Copy and customize terraform variables
+cp terraform.tfvars.example terraform.tfvars
 
-# Get principal ID
-IDENTITY_PRINCIPAL_ID=$(az identity show \
-        --name id-voice-agent-cert \
-        --resource-group rg-voice-agent-prod \
-        --query principalId -o tsv)
-
-# Grant Key Vault permissions
-az keyvault set-policy \
-        --name kv-voice-agent-prod \
-        --object-id $IDENTITY_PRINCIPAL_ID \
-        --certificate-permissions get list \
-        --secret-permissions get list
-
-# Set identity for deployment
-IDENTITY_RESOURCE_ID=$(az identity show \
-        --name id-voice-agent-cert \
-        --resource-group rg-voice-agent-prod \
-        --query id -o tsv)
-
-azd env set AZURE_KEY_VAULT_SECRET_USER_IDENTITY $IDENTITY_RESOURCE_ID
+# Get your principal ID for RBAC assignments
+PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)
+echo "principal_id = \"$PRINCIPAL_ID\"" >> terraform.tfvars
 ```
 
-### 2. Environment Configuration
+### Step 3: Deploy Infrastructure
+```bash
+terraform init
+terraform plan
+terraform apply
+```
 
+### Step 4: Generate Environment Files
+```bash
+cd ../../  # Return to repo root
+make generate_env_from_terraform
+make update_env_with_secrets
+```
+
+### Step 5: Deploy Applications
+```bash
+make deploy_backend
+make deploy_frontend
+```
+
+---
+
+## Detailed Deployment Steps
+
+### 1. Environment Configuration
+
+#### Azure Developer CLI Setup
 Configure your deployment environment with the required parameters:
 
 ```bash
@@ -140,121 +144,167 @@ Configure your deployment environment with the required parameters:
 azd env new production
 
 # Set core parameters
-azd env set LOCATION "East US"
-azd env set RESOURCE_GROUP_NAME "rg-voice-agent-prod"
-azd env set PRINCIPAL_ID $(az ad signed-in-user show --query id -o tsv)
-azd env set CUSTOM_DOMAIN "voice-agent.yourdomain.com"
+azd env set AZURE_LOCATION "eastus"
+azd env set AZURE_ENV_NAME "production"
+
+# Optional: Configure specific settings
+azd env set AZURE_PRINCIPAL_ID $(az ad signed-in-user show --query id -o tsv)
 ```
 
-### 3. Infrastructure Provisioning
+#### Direct Terraform Setup
+For direct Terraform deployments, configure your `terraform.tfvars`:
 
-Deploy Azure resources using Bicep templates:
+```hcl
+# Environment configuration
+environment_name = "dev"
+name            = "rtaudioagent"
+location        = "eastus"
 
-| Command | Purpose |
-|---------|---------|
-| `azd provision` | Deploy infrastructure only |
-| `azd deploy` | Deploy code to existing infrastructure |
-| `azd up` | Deploy both infrastructure and code |
+# Principal configuration (replace with your user ID)
+principal_id   = "your-user-principal-id-here"
+principal_type = "User"
 
+# Azure Communication Services data location
+acs_data_location = "United States"
+
+# Authentication settings
+disable_local_auth = true
+
+# Redis Enterprise SKU (adjust based on your needs and regional availability)
+redis_sku = "MemoryOptimized_M10"
+
+# OpenAI model deployments
+openai_models = [
+  {
+    name     = "gpt-4o"
+    version  = "2024-11-20"
+    sku_name = "DataZoneStandard"
+    capacity = 50
+  },
+  {
+    name     = "gpt-4o-mini"
+    version  = "2024-07-18"
+    sku_name = "DataZoneStandard"
+    capacity = 50
+  }
+]
+```
+
+### 2. Terraform Infrastructure Provisioning
+
+Deploy Azure resources using Terraform:
+
+#### With Azure Developer CLI (Recommended)
 ```bash
-# Full deployment (recommended for first deployment)
+# Full deployment (provisions infrastructure and deploys applications)
 azd up
+
+# Infrastructure only
+azd provision
 ```
 
-**📖 Resources Created:**
+#### With Direct Terraform
+```bash
+cd infra/terraform
+terraform init
+terraform plan
+terraform apply
+```
+
+**Resources Created:**
 - Azure Container Apps Environment
-- Azure OpenAI Service
+- Azure OpenAI Service (GPT-4o, GPT-4o-mini models)
 - Azure Communication Services
-- Redis Cache
-- Key Vault
-- Application Gateway (with SSL certificate)
-- Storage Account
-- Cosmos DB
-- Private endpoints and networking
+- Redis Enterprise Cache
+- Key Vault with managed identity authentication
+- Azure Container Registry
+- Storage Account with blob containers
+- Cosmos DB (MongoDB API)
+- Application Insights & Log Analytics
+- User-assigned managed identities with RBAC
 
-> 📚 For detailed infrastructure information (azd up), see the [Infrastructure README](../infra/README.md).
-> 📚 For detailed infrastructure information (Terraform), see the [Infrastructure README](../infra-tf/README.md).
+> For detailed infrastructure information, see the [Terraform Infrastructure README](../infra/terraform/README.md).
 
-### 4. Application Deployment
+### 3. Application Deployment
 
 Deploy your application code to the provisioned infrastructure:
 
+#### With Azure Developer CLI
 ```bash
-# Deploy to existing infrastructure
+# Deploy applications to existing infrastructure
 azd deploy
 ```
 
-### 5. SSL Certificate and DNS Configuration
-
-#### 🌐 Get Application Gateway Public IP
-
+#### With Direct Terraform + Make
 ```bash
-az network public-ip show \
-    --resource-group rg-voice-agent-prod \
-    --name pip-appgw-voice-agent \
-    --query ipAddress -o tsv
+# Deploy both backend and frontend
+make deploy_backend
+make deploy_frontend
+
+# Monitor deployment progress
+make monitor_backend_deployment
+make monitor_frontend_deployment
 ```
 
-#### 📝 Update DNS Records
+### 4. Phone Number Configuration
 
-1. **Go to your DNS provider**
-2. **Create/update A record**: `voice-agent.yourdomain.com` → `[Application Gateway IP]`
-3. **Wait for DNS propagation** (5-30 minutes)
+Configure an Azure Communication Services phone number for voice calls:
 
-#### ✅ Verify SSL Certificate
+#### Automatic via azd (Recommended)
+The `azd up` command automatically handles phone number provisioning through post-provision hooks.
 
+#### Manual Configuration
 ```bash
-# Basic health check
-curl -I https://voice-agent.yourdomain.com/health
+# Purchase a phone number using the helper script
+make purchase_acs_phone_number
 
-# Check certificate details
-openssl s_client -connect voice-agent.yourdomain.com:443 \
-    -servername voice-agent.yourdomain.com | \
-    openssl x509 -noout -subject -ext subjectAltName
-
-# Verify certificate expiration
-openssl s_client -connect voice-agent.yourdomain.com:443 \
-    -servername voice-agent.yourdomain.com -showcerts </dev/null 2>/dev/null | \
-    openssl x509 -noout -dates
+# Or set an existing number
+azd env set ACS_SOURCE_PHONE_NUMBER "+1234567890"
 ```
 
-**✅ Expected Output:**
-- Valid certificate subject matching your domain
-- Subject Alternative Names (SAN) including your domain
-- Future expiration date
+#### Via Azure Portal
+1. Navigate to your Azure Communication Services resource
+2. Go to **Phone numbers** → **Get**
+3. Select your country, number type, and features
+4. Complete the purchase process
+5. Update your environment configuration
 
-### 6. WebSocket Connectivity Testing
+> **Detailed Guide**: [Get a phone number for Azure Communication Services](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/telephony/get-phone-number)
 
-Test WebSocket functionality to ensure real-time communication works:
+### 5. Connectivity Testing
 
+Test your deployed application to ensure everything works correctly:
+
+#### Health Check
+```bash
+# Get backend URL
+BACKEND_URL=$(azd env get-value BACKEND_CONTAINER_APP_URL)
+
+# Test health endpoint
+curl -I $BACKEND_URL/health
+```
+
+#### WebSocket Testing
 ```bash
 # Install wscat
 npm install -g wscat
 
-# Test production WebSocket
-wscat -c wss://voice-agent.yourdomain.com/ws
-
-# Test local development
-wscat -c ws://localhost:8000/ws
+# Test WebSocket connection
+BACKEND_FQDN=$(azd env get-value BACKEND_CONTAINER_APP_FQDN)
+wscat -c wss://$BACKEND_FQDN/api/v1/stream
 ```
 
-**✅ Expected Behavior:**
-- ✅ Connection establishes successfully
-- ✅ Receives connection confirmation message
-- ✅ Bidirectional communication works
-- ✅ Use `Ctrl+C` to disconnect
+**Expected Behavior:**
+- Health endpoint returns 200 OK
+- WebSocket connection establishes successfully
+- Receives connection confirmation message
+- Use `Ctrl+C` to disconnect
 
-**🚨 Troubleshooting WebSocket Issues:**
-- Check backend container logs
-- Test local backend first
-- Verify SSL certificate is trusted
-- Ensure DNS is properly configured
-
-> 🔧 **More WebSocket troubleshooting:** For detailed WebSocket connection debugging and testing with wscat, see the [WebSocket troubleshooting section](Troubleshooting.md#websocket-connection-issues).
+> **Need help?** See our [troubleshooting section](#monitoring-and-troubleshooting) below.
 
 ---
 
-## 🔄 Environment Management
+## Environment Management
 
 ### Switch Between Environments
 
@@ -275,165 +325,364 @@ azd env get-values
 # View all environment variables
 azd env get-values
 
-# Update domain configuration
-azd env set AZURE_DOMAIN_FQDN <your-domain-name>
+# Update location
+azd env set AZURE_LOCATION <azure-region>
+
+# Update phone number
+azd env set ACS_SOURCE_PHONE_NUMBER <phone-number>
 
 # Apply changes
 azd deploy
 ```
 
----
+### Environment Files for Local Development
 
-## 🔐 Certificate Management
-
-### 📜 Creating App Service Certificate
-
-For managed certificate creation through Azure Portal:
-
-1. **Navigate to "App Service Certificates"**
-2. **Create new certificate** for your domain
-3. **Complete domain verification**
-4. **Bind certificate** to your application
-5. **Configure custom domain** settings
-
-> 📖 **Detailed Guide**: [Secure a custom DNS name with a TLS/SSL binding in Azure App Service](https://learn.microsoft.com/en-us/azure/app-service/tutorial-secure-domain-certificate)
-
-### 🔄 Certificate Updates
+Generate environment files from deployed infrastructure:
 
 ```bash
-# Import new certificate
-az keyvault certificate import \
-        --vault-name kv-voice-agent-prod \
-        --name ssl-certificate \
-        --file /path/to/new/certificate.pfx \
-        --password "new-certificate-password"
+# Generate .env file from Terraform outputs
+make generate_env_from_terraform
 
-# Update password secret
-az keyvault secret set \
-        --vault-name kv-voice-agent-prod \
-        --name ssl-certificate-password \
-        --value "new-certificate-password"
+# Update with Key Vault secrets
+make update_env_with_secrets
 
-# Apply changes
-azd deploy
-```
-
-### 🔗 Full-Chain Certificate Requirements
-
-For third-party certificates (GoDaddy, etc.), create a full-chain bundle:
-
-#### Download Intermediate Bundle
-
-```bash
-# GoDaddy G2 bundle
-curl -o gd_bundle-g2-g1.crt https://certs.godaddy.com/repository/gd_bundle-g2-g1.crt
-```
-
-#### Create Full-Chain PFX
-
-```bash
-# Combine certificate with intermediate bundle
-cat your-domain.crt gd_bundle-g2-g1.crt > fullchain.crt
-
-# Convert to PFX
-openssl pkcs12 -export \
-    -out fullchain.pfx \
-    -inkey your-domain.key \
-    -in fullchain.crt \
-    -password pass:your-pfx-password
-
-# Import to Key Vault
-az keyvault certificate import \
-    --vault-name kv-voice-agent-prod \
-    --name ssl-certificate \
-    --file fullchain.pfx \
-    --password "your-pfx-password"
+# View current environment file
+make show_env_file
 ```
 
 ---
 
-## 📊 Monitoring and Troubleshooting
+## Backend Storage Configuration
 
-### 🔍 Deployment Monitoring
+### Terraform Remote State
 
-```bash
-# Check deployment status
-azd show
+#### For Azure Developer CLI Deployments
+Remote state is automatically configured by the `azd` pre-provision hooks. No manual setup required.
 
-# Real-time logs
-az containerapp logs show \
-    --name ca-voice-agent-backend \
-    --resource-group rg-voice-agent-prod \
-    --follow
+#### For Direct Terraform Deployments
 
-# Recent logs (last 100 lines)
-az containerapp logs show \
-    --name ca-voice-agent-backend \
-    --resource-group rg-voice-agent-prod \
-    --tail 100
-```
+You have two options for managing Terraform state:
 
-### 🚨 Common Issues & Solutions
-
-| Issue | Symptoms | Solution |
-|-------|----------|----------|
-| **SSL Not Working** | HTTPS errors, certificate warnings | Verify DNS A record, wait for propagation, check certificate import |
-| **WebSocket Fails** | Connection refused, handshake errors | Ensure publicly trusted certificate, test SSL config |
-| **Container Won't Start** | App unavailable, startup errors | Check environment variables, verify managed identity permissions |
-| **Redis Connection Issues** | Cache errors, timeout issues | Verify private endpoint connectivity, check access keys |
-
-> 📖 **Need more help?** For detailed troubleshooting steps, diagnostic commands, and solutions to common issues, see the comprehensive [Troubleshooting Guide](Troubleshooting.md).
-
----
-
-## 🧹 Cleanup
-
-Remove all deployed resources:
+**Option 1: Bring Your Own Storage (BYOS)**
+Set environment variables for your existing storage account:
 
 ```bash
-# Delete all resources
-azd down
-
-# Delete specific environment
-azd env delete <environment-name>
+export RS_STORAGE_ACCOUNT="yourstorageaccount"
+export RS_CONTAINER_NAME="tfstate"
+export RS_RESOURCE_GROUP="your-rg"
+export RS_STATE_KEY="rtaudioagent.tfstate"
 ```
 
----
+**Option 2: Configure backend.tf manually**
+```bash
+# Copy the example and configure
+cp infra/terraform/backend.tf.example infra/terraform/backend.tf
 
-## ⚙️ Advanced Configuration
+# Edit backend.tf with your storage account details
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "your-terraform-state-rg"
+    storage_account_name = "yourtfstateaccount"
+    container_name       = "tfstate"
+    key                  = "rtaudioagent.tfstate"
+    use_azuread_auth     = true
+    subscription_id      = "your-subscription-id"
+  }
+}
+```
 
-### 📈 Scaling Configuration
+#### Create Storage Account for Terraform State
 
-Update container app scaling in `infra/modules/containerapp.bicep`:
+If you don't have a storage account for Terraform state:
 
-```bicep
-scale: {
-    minReplicas: 1
-    maxReplicas: 10
-    rules: [
-        {
-            name: 'http-scaling'
-            http: {
-                metadata: {
-                    concurrentRequests: '100'
-                }
-            }
-        }
-    ]
+```bash
+# Set variables
+RG_NAME="rg-terraform-state"
+STORAGE_NAME="tfstate$(openssl rand -hex 4)"
+LOCATION="eastus"
+
+# Create resource group and storage account
+az group create --name $RG_NAME --location $LOCATION
+az storage account create \
+  --name $STORAGE_NAME \
+  --resource-group $RG_NAME \
+  --location $LOCATION \
+  --sku Standard_LRS \
+  --encryption-services blob
+
+# Create container
+az storage container create \
+  --name tfstate \
+  --account-name $STORAGE_NAME \
+  --auth-mode login
+
+echo "Configure your backend.tf with:"
+echo "  storage_account_name = \"$STORAGE_NAME\""
+echo "  resource_group_name  = \"$RG_NAME\""
+```
+
+### Required Terraform Versions
+
+```hcl
+terraform {
+  required_version = ">= 1.1.7, < 2.0.0"
+  
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 3.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
+    azapi = {
+      source = "Azure/azapi"
+    }
+  }
 }
 ```
 
 ---
 
-## 🆘 Support
+## Monitoring and Troubleshooting
+
+### Deployment Monitoring
+
+#### Azure Developer CLI
+```bash
+# Check deployment status
+azd show
+
+# View environment details
+azd env get-values
+
+# View deployment logs
+azd deploy --debug
+```
+
+#### Direct Terraform
+```bash
+# Check Terraform state
+terraform show
+
+# View outputs
+terraform output
+
+# Monitor deployment
+make monitor_backend_deployment
+make monitor_frontend_deployment
+```
+
+### Container App Logs
+
+```bash
+# Real-time logs
+az containerapp logs show \
+    --name ca-voice-agent-backend \
+    --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) \
+    --follow
+
+# Recent logs (last 100 lines)
+az containerapp logs show \
+    --name ca-voice-agent-backend \
+    --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) \
+    --tail 100
+```
+
+### Common Issues & Solutions
+
+| Issue | Symptoms | Solution |
+|-------|----------|----------|
+| **Terraform Init Fails** | Backend configuration errors | Check storage account permissions, verify backend.tf configuration |
+| **Container Won't Start** | App unavailable, startup errors | Check environment variables, verify managed identity permissions |
+| **Redis Connection Issues** | Cache errors, timeout issues | Verify Redis Enterprise configuration, check access policies |
+| **Phone Number Issues** | ACS calling fails | Verify phone number is purchased and configured correctly |
+| **OpenAI Rate Limits** | API quota exceeded | Check deployment capacity, monitor usage in Azure Portal |
+| **WebSocket Connection Fails** | Connection refused, handshake errors | Check Container App ingress settings, test health endpoint |
+
+### Health Check Commands
+
+```bash
+# Basic health check
+BACKEND_URL=$(azd env get-value BACKEND_CONTAINER_APP_URL)
+curl -I $BACKEND_URL/health
+
+# Test WebSocket connection
+BACKEND_FQDN=$(azd env get-value BACKEND_CONTAINER_APP_FQDN)
+wscat -c wss://$BACKEND_FQDN/ws
+
+# Check all service endpoints
+echo "Backend: https://$BACKEND_FQDN"
+echo "Frontend: https://$(azd env get-value FRONTEND_CONTAINER_APP_FQDN)"
+echo "Health: $BACKEND_URL/health"
+```
+
+### Advanced Debugging
+
+#### Enable Debug Logging
+```bash
+# Deploy with debug logging
+azd deploy --debug
+
+# Check container environment variables
+az containerapp show \
+    --name $(azd env get-value BACKEND_CONTAINER_APP_NAME) \
+    --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) \
+    --query "properties.template.containers[0].env"
+```
+
+#### Verify RBAC Assignments
+```bash
+# Check managed identity assignments
+az role assignment list \
+    --assignee $(azd env get-value BACKEND_UAI_PRINCIPAL_ID) \
+    --all \
+    --output table
+
+# Verify Key Vault access
+az keyvault show \
+    --name $(azd env get-value AZURE_KEY_VAULT_NAME) \
+    --query "properties.accessPolicies"
+```
+
+> **Need more help?** For detailed troubleshooting steps, diagnostic commands, and solutions to common issues, see the comprehensive [Troubleshooting Guide](Troubleshooting.md).
+
+---
+
+## Cleanup
+
+Remove all deployed resources:
+
+```bash
+# Delete all resources (recommended)
+azd down
+
+# Delete specific environment
+azd env delete <environment-name>
+
+# Direct Terraform cleanup
+cd infra/terraform
+terraform destroy
+```
+
+---
+
+## Advanced Configuration
+
+### Container Apps Scaling Configuration
+
+Update container app scaling in your `terraform.tfvars`:
+
+```hcl
+# Adjust based on expected load
+container_apps_configuration = {
+  backend = {
+    min_replicas = 1
+    max_replicas = 10
+    cpu_limit    = "1.0"
+    memory_limit = "2Gi"
+  }
+  frontend = {
+    min_replicas = 1
+    max_replicas = 5
+    cpu_limit    = "0.5"
+    memory_limit = "1Gi"
+  }
+}
+```
+
+### Model Configuration
+
+Customize OpenAI model deployments:
+
+```hcl
+openai_models = [
+  {
+    name     = "gpt-4o"
+    version  = "2024-11-20"
+    sku_name = "DataZoneStandard"
+    capacity = 100  # Increase for higher throughput
+  },
+  {
+    name     = "gpt-4o-mini"
+    version  = "2024-07-18"
+    sku_name = "DataZoneStandard"
+    capacity = 50
+  }
+]
+```
+
+### Security Hardening
+
+For production deployments, consider:
+
+```hcl
+# Enhanced security settings
+disable_local_auth = true
+enable_redis_ha    = true
+principal_type     = "ServicePrincipal"  # For CI/CD deployments
+
+# Use higher Redis SKU for production
+redis_sku = "Enterprise_E20"
+```
+
+### Multi-Region Deployment
+
+Configure secondary regions for OpenAI and Cosmos DB:
+
+```hcl
+# Primary location
+location = "eastus"
+
+# Secondary locations for specific services
+openai_location   = "westus2"
+cosmosdb_location = "westus"
+```
+
+---
+
+## Support
 
 Having deployment issues? Follow this troubleshooting checklist:
 
-1. ✅ **Check Azure Portal** for resource status
-2. ✅ **Review container app logs** for error details
-3. ✅ **Verify network connectivity** and DNS settings
-4. ✅ **Ensure permissions** are properly granted
-5. ✅ **Verify SSL certificate** is trusted and properly configured
+1. **Check Azure Portal** for resource status
+2. **Review container app logs** for error details
+3. **Verify Terraform state** and resource configuration
+4. **Check managed identity permissions** and RBAC assignments
+5. **Verify environment variables** in Container Apps
+6. **Test connectivity** to Azure services (OpenAI, Speech, Redis)
 
-> 💡 **Pro Tip**: Always test locally first to isolate issues before deploying to Azure.
+### Quick Diagnostic Commands
 
+```bash
+# Check deployment status
+azd show
+
+# Verify backend health
+curl -I $(azd env get-value BACKEND_CONTAINER_APP_URL)/health
+
+# Check container logs
+az containerapp logs show \
+    --name $(azd env get-value BACKEND_CONTAINER_APP_NAME) \
+    --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) \
+    --tail 50
+
+# Verify managed identity permissions
+az role assignment list \
+    --assignee $(azd env get-value BACKEND_UAI_PRINCIPAL_ID) \
+    --output table
+```
+
+### Additional Resources
+
+- [Terraform Infrastructure README](../infra/terraform/README.md) - Detailed infrastructure documentation
+- [Troubleshooting Guide](Troubleshooting.md) - Comprehensive problem-solving guide
+- [Azure Container Apps Documentation](https://learn.microsoft.com/en-us/azure/container-apps/) - Official Microsoft docs
+- [Azure Communication Services Docs](https://learn.microsoft.com/en-us/azure/communication-services/) - ACS specific guidance
+
+> **Pro Tip**: Always test locally first using the development setup in `apps/rtagent/scripts/` to isolate issues before deploying to Azure.

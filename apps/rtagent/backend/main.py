@@ -385,10 +385,10 @@ app = initialize_app()
 # --------------------------------------------------------------------------- #
 def main():
     """Entry point for uv run rtagent-server."""
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 8080))
     uvicorn.run(
         app,                  # Use app object directly
-        host="0.0.0.0",       # nosec: B104
+        host="0.0.0.0",      # nosec: B104
         port=port,
         reload=False,         # Don't use reload in production
     )
