@@ -114,7 +114,7 @@ class CallEventProcessor:
             self._stats["events_processed"] += processed_count
             self._stats["events_failed"] += failed_count
 
-            logger.info(
+            logger.debug(
                 f"✅ Processed {processed_count}/{len(events)} events successfully"
             )
 

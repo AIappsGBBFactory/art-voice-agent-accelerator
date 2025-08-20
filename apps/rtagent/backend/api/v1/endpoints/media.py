@@ -172,7 +172,7 @@ async def acs_media_stream(
         # Extract call_connection_id from WebSocket query parameters or wait for first message
         query_params = dict(websocket.query_params)
         call_connection_id = query_params.get("call_connection_id")
-        logger.info(f"🔍 Query params: {query_params}")
+        logger.debug(f"🔍 Query params: {query_params}")
 
         # If not in query params, check headers
         if not call_connection_id:
@@ -181,8 +181,6 @@ async def acs_media_stream(
             logger.debug(f"🔍 Headers: {headers_dict}")
 
         session_id = call_connection_id
-        logger.info(f"✅ Call connection ID determined: {call_connection_id}")
-
         # Start tracing with valid call connection ID
         with tracer.start_as_current_span(
             "api.v1.media.websocket_accept",
@@ -230,29 +228,10 @@ async def acs_media_stream(
             # Start the handler
             await handler.start()
             init_span.set_attribute("handler.initialized", True)
-            logger.info(
-                f"✅ Media handler initialized and started for call: {call_connection_id}"
-            )
 
             # Track WebSocket connection for session metrics
             if hasattr(websocket.app.state, "session_metrics"):
                 await websocket.app.state.session_metrics.increment_connected()
-
-            # Send acknowledgment message to ACS to confirm connection is ready
-            try:
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "kind": "ConnectionEstablished",
-                            "connectionId": call_connection_id,
-                            "status": "ready",
-                        }
-                    )
-                )
-                logger.info("📡 Connection acknowledgment sent to ACS")
-            except Exception as ack_error:
-                logger.warning(f"Failed to send connection acknowledgment: {ack_error}")
-                # Continue anyway - this is not critical
 
         # Process media messages with clean loop
         await _process_media_stream(websocket, handler, call_connection_id)
@@ -332,8 +311,6 @@ async def _validate_call_connection(
         await websocket.close(code=1000, reason="Call not found")
         raise HTTPException(404, f"Call connection {call_connection_id} not found")
 
-    logger.info(f"Call connection validated: {call_connection_id}")
-
 
 async def _create_media_handler(
     websocket: WebSocket,
@@ -406,7 +383,10 @@ async def _create_media_handler(
     if ACS_STREAMING_MODE == StreamMode.MEDIA:
         # Use the V1 ACS media handler - acquire recognizer from pool
         per_conn_recognizer = await websocket.app.state.stt_pool.acquire()
+        per_conn_synthesizer = await websocket.app.state.tts_pool.acquire()
         websocket.state.stt_client = per_conn_recognizer
+        websocket.state.tts_client = per_conn_synthesizer
+        
         logger.info(
             f"Acquired STT recognizer from pool for ACS call {call_connection_id}"
         )
@@ -423,15 +403,15 @@ async def _create_media_handler(
         logger.info("Created V1 ACS media handler for MEDIA mode")
         return handler
 
-    elif ACS_STREAMING_MODE == StreamMode.TRANSCRIPTION:
-        # Import and use transcription handler for non-media mode
-        from apps.rtagent.backend.src.handlers import TranscriptionHandler
+    # elif ACS_STREAMING_MODE == StreamMode.TRANSCRIPTION:
+    #     # Import and use transcription handler for non-media mode
+    #     from apps.rtagent.backend.src.handlers import TranscriptionHandler
 
-        handler = TranscriptionHandler(websocket, cm=memory_manager)
-        # Register the handler in the global registry
-        _active_handlers[call_connection_id] = handler
-        logger.info("Created transcription handler for TRANSCRIPTION mode")
-        return handler
+    #     handler = TranscriptionHandler(websocket, cm=memory_manager)
+    #     # Register the handler in the global registry
+    #     _active_handlers[call_connection_id] = handler
+    #     logger.info("Created transcription handler for TRANSCRIPTION mode")
+    #     return handler
     else:
         error_msg = f"Unknown streaming mode: {ACS_STREAMING_MODE}"
         logger.error(error_msg)

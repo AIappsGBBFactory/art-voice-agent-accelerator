@@ -468,9 +468,6 @@ class ACSLifecycleHandler:
                 },
             )
 
-            # Initialize conversation state
-            await self._initialize_call_state(call_connection_id, caller_id, acs_caller)
-
             logger.info(
                 f"✅ Call answered successfully: {call_connection_id} (latency: {latency:.3f}s)"
             )
@@ -501,38 +498,6 @@ class ACSLifecycleHandler:
             return caller_info.get("phoneNumber", {}).get("value", "unknown")
         return caller_info.get("rawId", "unknown")
 
-    async def _initialize_call_state(
-        self, call_connection_id: str, caller_id: str, acs_caller
-    ) -> None:
-        """
-        Initialize conversation state for the call.
-
-        :param call_connection_id: ACS call connection identifier
-        :type call_connection_id: str
-        :param caller_id: Caller identification string
-        :type caller_id: str
-        :param acs_caller: ACS caller instance for Redis access
-        """
-        try:
-            redis_mgr = getattr(acs_caller, "redis_mgr", None)
-            if not redis_mgr:
-                logger.warning("No Redis manager available for state initialization")
-                return
-
-            cm = MemoManager.from_redis(
-                session_id=call_connection_id,
-                redis_mgr=redis_mgr,
-            )
-
-            cm.update_context("caller_id", caller_id)
-            cm.update_context("call_direction", "inbound")
-            cm.update_context("answered_at", datetime.utcnow().isoformat() + "Z")
-
-            cm.persist_to_redis(redis_mgr)
-            logger.debug(f"📝 Call state initialized for {call_connection_id}")
-
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to initialize call state: {e}")
 
     async def process_call_events(
         self,

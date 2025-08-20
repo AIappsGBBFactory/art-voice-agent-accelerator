@@ -309,7 +309,7 @@ class AcsCaller:
         Answer an incoming call and set up live transcription.
         """
         try:
-            logger.info(f"Answering incoming call: {incoming_call_context}")
+            logger.debug(f"Answering incoming call: {incoming_call_context}")
             transcription = None
             cognitive_services_endpoint = None
             media_streaming = None
