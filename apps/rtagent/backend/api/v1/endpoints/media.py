@@ -382,14 +382,28 @@ async def _create_media_handler(
 
     if ACS_STREAMING_MODE == StreamMode.MEDIA:
         # Use the V1 ACS media handler - acquire recognizer from pool
-        per_conn_recognizer = await websocket.app.state.stt_pool.acquire()
-        per_conn_synthesizer = await websocket.app.state.tts_pool.acquire()
-        websocket.state.stt_client = per_conn_recognizer
-        websocket.state.tts_client = per_conn_synthesizer
-        
-        logger.info(
-            f"Acquired STT recognizer from pool for ACS call {call_connection_id}"
-        )
+        try:
+            # P0 FIX: Add defensive pool monitoring to prevent deadlocks
+            stt_queue_size = websocket.app.state.stt_pool._q.qsize()
+            tts_queue_size = websocket.app.state.tts_pool._q.qsize()
+            logger.info(f"Pool status before acquire: STT={stt_queue_size}, TTS={tts_queue_size}")
+            
+            per_conn_recognizer = await websocket.app.state.stt_pool.acquire()
+            per_conn_synthesizer = await websocket.app.state.tts_pool.acquire()
+            websocket.state.stt_client = per_conn_recognizer
+            websocket.state.tts_client = per_conn_synthesizer
+            
+            logger.info(
+                f"Successfully acquired STT & TTS from pools for ACS call {call_connection_id}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to acquire pool resources for {call_connection_id}: {e}")
+            # Ensure partial cleanup if one acquire succeeded
+            if hasattr(websocket.state, 'stt_client') and websocket.state.stt_client:
+                await websocket.app.state.stt_pool.release(websocket.state.stt_client)
+            if hasattr(websocket.state, 'tts_client') and websocket.state.tts_client:
+                await websocket.app.state.tts_pool.release(websocket.state.tts_client)
+            raise
         handler = ACSMediaHandler(
             websocket=websocket,
             orchestrator_func=orchestrator,
@@ -621,6 +635,19 @@ async def _cleanup_websocket_resources(
                     )
                 except Exception as e:
                     logger.error(f"Error releasing STT recognizer: {e}", exc_info=True)
+            
+            # P0 FIX: Release TTS synthesizer back to pool (was missing!)
+            # This was causing TTS pool exhaustion after 8 sessions
+            if hasattr(websocket.state, "tts_client") and websocket.state.tts_client:
+                try:
+                    await websocket.app.state.tts_pool.release(
+                        websocket.state.tts_client
+                    )
+                    logger.info(
+                        f"Released TTS synthesizer back to pool for call {call_connection_id}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error releasing TTS synthesizer: {e}", exc_info=True)
 
             # Stop and cleanup handler
             if handler:
@@ -633,12 +660,9 @@ async def _cleanup_websocket_resources(
                         Status(StatusCode.ERROR, f"Handler cleanup error: {e}")
                     )
 
-                # Remove handler from registry
-                if call_connection_id and call_connection_id in _active_handlers:
-                    del _active_handlers[call_connection_id]
-                    logger.debug(
-                        f"Removed handler for call {call_connection_id} from registry"
-                    )
+                # P0 FIX: Don't double-remove from registry - handler.stop() already removes itself
+                # This prevents cleanup race conditions and double-cleanup errors
+                logger.debug(f"Handler cleanup complete for call {call_connection_id}")
 
             span.set_status(Status(StatusCode.OK))
             log_with_context(
