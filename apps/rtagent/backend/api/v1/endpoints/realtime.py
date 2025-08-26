@@ -56,7 +56,7 @@ from apps.rtagent.backend.settings import GREETING, ENABLE_AUTH_VALIDATION
 from apps.rtagent.backend.src.helpers import check_for_stopwords, receive_and_filter
 from src.tools.latency_tool import LatencyTool
 from apps.rtagent.backend.src.orchestration.orchestrator import route_turn
-from apps.rtagent.backend.src.shared_ws import broadcast_message, send_tts_audio
+from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message, send_tts_audio
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.postcall.push import build_and_flush
 from src.stateful.state_managment import MemoManager

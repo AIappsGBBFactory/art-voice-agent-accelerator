@@ -34,7 +34,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from apps.rtagent.backend.settings import GREETING
-from apps.rtagent.backend.src.shared_ws import send_response_to_acs
+from apps.rtagent.backend.src.ws_helpers.shared_ws import send_response_to_acs
 from apps.rtagent.backend.src.orchestration.orchestrator import route_turn
 from src.enums.stream_modes import StreamMode
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes

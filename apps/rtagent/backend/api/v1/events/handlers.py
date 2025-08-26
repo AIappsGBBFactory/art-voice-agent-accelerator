@@ -21,7 +21,7 @@ from azure.communication.callautomation import PhoneNumberIdentifier
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
-from apps.rtagent.backend.src.shared_ws import broadcast_message
+from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message
 from utils.ml_logging import get_logger
 from .types import CallEventContext, ACSEventTypes
 

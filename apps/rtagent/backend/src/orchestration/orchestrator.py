@@ -37,7 +37,7 @@ from apps.rtagent.backend.src.services.acs.session_terminator import (
     terminate_session,
     TerminationReason,
 )
-from apps.rtagent.backend.src.shared_ws import (
+from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     send_tts_audio,
     send_response_to_acs,
