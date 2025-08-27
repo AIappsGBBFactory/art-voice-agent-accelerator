@@ -13,7 +13,7 @@ agent:
     becomes too complex or heated, it escalates to a live adjuster.
 
 model:
-  deployment_id: gpt-4o-mini
+  deployment_id: gpt-4o
   temperature: 0.50
   top_p: 0.9
   max_tokens: 1024

@@ -54,7 +54,9 @@ from apps.rtagent.backend.api.v1.schemas.media import (
     AudioStreamStatus,
 )
 
-from apps.rtagent.backend.settings import ACS_STREAMING_MODE, ENABLE_AUTH_VALIDATION
+# Import from config system
+from config import ACS_STREAMING_MODE
+from config.app_settings import ENABLE_AUTH_VALIDATION
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.enums.stream_modes import StreamMode
 from src.stateful.state_managment import MemoManager
@@ -70,9 +72,6 @@ from ..dependencies.orchestrator import get_orchestrator
 
 logger = get_logger("api.v1.endpoints.media")
 tracer = trace.get_tracer(__name__)
-
-# Global registry to track active handlers per call connection ID
-_active_handlers = {}
 
 router = APIRouter()
 
@@ -163,13 +162,10 @@ async def acs_media_stream(
     handler = None
     call_connection_id = None
     session_id = None
+    conn_id = None
     orchestrator = get_orchestrator()
     try:
-        # Accept WebSocket connection first
-        await websocket.accept()
-        logger.info("WebSocket connection accepted, extracting call connection ID")
-
-        # Extract call_connection_id from WebSocket query parameters or wait for first message
+        # Extract call_connection_id from WebSocket query parameters or headers
         query_params = dict(websocket.query_params)
         call_connection_id = query_params.get("call_connection_id")
         logger.debug(f"🔍 Query params: {query_params}")
@@ -180,7 +176,28 @@ async def acs_media_stream(
             call_connection_id = headers_dict.get("x-ms-call-connection-id")
             logger.debug(f"🔍 Headers: {headers_dict}")
 
-        session_id = call_connection_id
+        # 🎯 CRITICAL FIX: Use browser session_id if provided, otherwise create media-specific session
+        # This enables UI dashboard to see ACS call progress by sharing the same session ID
+        browser_session_id = query_params.get("session_id") or headers_dict.get("x-session-id")
+        
+        # If no browser session ID provided via params/headers, check Redis mapping
+        if not browser_session_id and call_connection_id:
+            try:
+                stored_session_id = await websocket.app.state.redis.get_value_async(f"call_session_map:{call_connection_id}")
+                if stored_session_id:
+                    browser_session_id = stored_session_id
+                    logger.info(f"🔍 Retrieved stored browser session ID: {browser_session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to retrieve session mapping: {e}")
+        
+        if browser_session_id:
+            # Use the browser's session ID for UI/ACS coordination
+            session_id = browser_session_id
+            logger.info(f"🔗 Using browser session ID for ACS call: {session_id}")
+        else:
+            # Fallback to media-specific session (for direct ACS calls)
+            session_id = f"media_{call_connection_id}" if call_connection_id else f"media_{str(uuid.uuid4())[:8]}"
+            logger.info(f"📞 Created ACS-only session ID: {session_id}")
         # Start tracing with valid call connection ID
         with tracer.start_as_current_span(
             "api.v1.media.websocket_accept",
@@ -192,15 +209,20 @@ async def acs_media_stream(
                 "network.protocol.name": "websocket",
             },
         ) as accept_span:
-            # Validate dependencies first
-            await _validate_websocket_dependencies(websocket)
-
-            # Authenticate if required
-            if ENABLE_AUTH_VALIDATION:
-                await _validate_websocket_auth(websocket)
-
-            # Validate call connection exists
-            await _validate_call_connection(websocket, call_connection_id)
+            # Clean single-call registration with call validation
+            conn_id = await websocket.app.state.conn_manager.register(
+                websocket,
+                client_type="media",
+                call_id=call_connection_id,
+                session_id=session_id,
+                topics={"media"},
+                accept_already_done=False,  # Let manager handle accept cleanly
+            )
+            
+            # Set up WebSocket state attributes for compatibility with orchestrator
+            websocket.state.conn_id = conn_id
+            websocket.state.session_id = session_id
+            websocket.state.call_connection_id = call_connection_id
 
             accept_span.set_attribute("call.connection.id", call_connection_id)
             logger.info(
@@ -223,7 +245,16 @@ async def acs_media_stream(
                 call_connection_id=call_connection_id,
                 session_id=session_id,
                 orchestrator=orchestrator,
+                conn_id=conn_id,  # Pass the connection ID
             )
+
+            # Store the handler object in connection metadata for lifecycle management
+            # Note: We keep our metadata dictionary and store the handler separately
+            conn_meta = await websocket.app.state.conn_manager.get_connection_meta(conn_id)
+            if conn_meta:
+                if not conn_meta.handler:
+                    conn_meta.handler = {}
+                conn_meta.handler["media_handler"] = handler
 
             # Start the handler
             await handler.start()
@@ -255,68 +286,12 @@ async def acs_media_stream(
 # ============================================================================
 
 
-async def _validate_websocket_dependencies(websocket: WebSocket) -> None:
-    """
-    Validate required app state dependencies.
-
-    :param websocket: WebSocket connection to validate
-    :type websocket: WebSocket
-    :raises HTTPException: When dependencies are missing or invalid
-    """
-    if (
-        not hasattr(websocket.app.state, "acs_caller")
-        or not websocket.app.state.acs_caller
-    ):
-        logger.error("ACS caller not initialized")
-        await websocket.close(code=1011, reason="ACS not initialized")
-        raise HTTPException(503, "ACS caller not initialized")
-
-    # Per-connection STT recognizer now created later; no global validation here
-
-
-async def _validate_websocket_auth(websocket: WebSocket) -> None:
-    """
-    Validate WebSocket authentication if enabled.
-
-    :param websocket: WebSocket connection to authenticate
-    :type websocket: WebSocket
-    :raises HTTPException: When authentication fails
-    """
-    try:
-        _ = await validate_acs_ws_auth(websocket)
-        logger.info("WebSocket authenticated successfully")
-    except AuthError as e:
-        logger.warning(f"WebSocket authentication failed: {str(e)}")
-        await websocket.close(code=4001, reason="Authentication failed")
-        raise HTTPException(401, f"Authentication failed: {str(e)}")
-
-
-async def _validate_call_connection(
-    websocket: WebSocket, call_connection_id: str
-) -> None:
-    """
-    Validate that the call connection exists.
-
-    :param websocket: WebSocket connection for error handling
-    :type websocket: WebSocket
-    :param call_connection_id: Call connection identifier to validate
-    :type call_connection_id: str
-    :raises HTTPException: When call connection is not found
-    """
-    acs_caller = websocket.app.state.acs_caller
-    call_connection = acs_caller.get_call_connection(call_connection_id)
-
-    if not call_connection:
-        logger.warning(f"Call connection {call_connection_id} not found")
-        await websocket.close(code=1000, reason="Call not found")
-        raise HTTPException(404, f"Call connection {call_connection_id} not found")
-
-
 async def _create_media_handler(
     websocket: WebSocket,
     call_connection_id: str,
     session_id: str,
     orchestrator: callable,
+    conn_id: str,  # Add connection_id parameter
 ):
     """
     Create appropriate media handler based on streaming mode.
@@ -329,24 +304,15 @@ async def _create_media_handler(
     :type session_id: str
     :param orchestrator: Orchestrator function for conversation management
     :type orchestrator: callable
+    :param conn_id: Connection manager connection ID
+    :type conn_id: str
     :return: Configured media handler instance
     :rtype: Union[ACSMediaHandler, TranscriptionHandler]
     :raises HTTPException: When streaming mode is invalid
     """
 
-    # Check if there's already an active handler for this call ID
-    if call_connection_id in _active_handlers:
-        existing_handler = _active_handlers[call_connection_id]
-        if existing_handler.is_running:
-            logger.warning(
-                f"⚠️ Handler already exists for call {call_connection_id}, stopping existing handler"
-            )
-            try:
-                await existing_handler.stop()
-            except Exception as e:
-                logger.error(f"Error stopping existing handler: {e}")
-        # Remove from registry regardless
-        del _active_handlers[call_connection_id]
+    # Handler lifecycle is now managed by ConnectionManager
+    # No need for separate handler tracking - ConnectionManager handles this
 
     redis_mgr = websocket.app.state.redis
 
@@ -365,20 +331,36 @@ async def _create_media_handler(
         logger.info(f"Creating new memory manager for {call_connection_id}")
         memory_manager = MemoManager(session_id=call_connection_id)
 
-    # Initialize latency tracking
-    websocket.state.lt = LatencyTool(memory_manager)
-    websocket.state.lt.start("greeting_ttfb")
-    websocket.state._greeting_ttfb_stopped = False
-
-    # Set up call context in websocket state (per-connection)
-    target_phone_number = memory_manager.get_context("target_number")
-    if target_phone_number:
-        websocket.state.target_participant = PhoneNumberIdentifier(target_phone_number)
-
+    # Initialize latency tracking with proper connection manager access
+    # Use connection_id stored during registration instead of direct WebSocket state access
+    
+    latency_tool = LatencyTool(memory_manager)
+    
+    # Set up WebSocket state for orchestrator compatibility
+    websocket.state.lt = latency_tool
     websocket.state.cm = memory_manager
-    websocket.state.call_conn = websocket.app.state.acs_caller.get_call_connection(
-        call_connection_id
-    )
+    websocket.state.is_synthesizing = False
+    
+    # Store latency tool and other handler metadata via connection manager
+    conn_meta = await websocket.app.state.conn_manager.get_connection_meta(conn_id)
+    if conn_meta:
+        if not conn_meta.handler:
+            conn_meta.handler = {}
+        conn_meta.handler["lt"] = latency_tool
+        conn_meta.handler["_greeting_ttfb_stopped"] = False
+    
+    latency_tool.start("greeting_ttfb")
+
+    # Set up call context using connection manager metadata
+    target_phone_number = memory_manager.get_context("target_number")
+    if target_phone_number and conn_meta:
+        conn_meta.handler["target_participant"] = PhoneNumberIdentifier(target_phone_number)
+
+    if conn_meta:
+        conn_meta.handler["cm"] = memory_manager
+        conn_meta.handler["call_conn"] = websocket.app.state.acs_caller.get_call_connection(
+            call_connection_id
+        )
 
     if ACS_STREAMING_MODE == StreamMode.MEDIA:
         # Use the V1 ACS media handler - acquire recognizer from pool
@@ -390,8 +372,23 @@ async def _create_media_handler(
             
             per_conn_recognizer = await websocket.app.state.stt_pool.acquire()
             per_conn_synthesizer = await websocket.app.state.tts_pool.acquire()
-            websocket.state.stt_client = per_conn_recognizer
+            
+            # Set up WebSocket state for orchestrator compatibility
             websocket.state.tts_client = per_conn_synthesizer
+            
+            # 🚀 PHASE 1 OPTIMIZATION: Try to allocate dedicated TTS client for ACS media
+            if hasattr(websocket.app.state, 'dedicated_tts_manager'):
+                try:
+                    dedicated_tts, client_tier = await websocket.app.state.dedicated_tts_manager.get_dedicated_client(call_connection_id)
+                    websocket.state.tts_client = dedicated_tts  # Override with dedicated client
+                    websocket.state.session_id = call_connection_id  # Store for cleanup
+                    logger.info(f"Allocated dedicated TTS client for ACS call {call_connection_id} (tier={client_tier.value})")
+                except Exception as e:
+                    logger.warning(f"Failed to allocate dedicated TTS client for ACS call {call_connection_id}: {e}")
+            
+            if conn_meta:
+                conn_meta.handler["stt_client"] = per_conn_recognizer
+                conn_meta.handler["tts_client"] = websocket.state.tts_client  # Use the final client (dedicated or fallback)
             
             logger.info(
                 f"Successfully acquired STT & TTS from pools for ACS call {call_connection_id}"
@@ -399,10 +396,15 @@ async def _create_media_handler(
         except Exception as e:
             logger.error(f"Failed to acquire pool resources for {call_connection_id}: {e}")
             # Ensure partial cleanup if one acquire succeeded
-            if hasattr(websocket.state, 'stt_client') and websocket.state.stt_client:
-                await websocket.app.state.stt_pool.release(websocket.state.stt_client)
-            if hasattr(websocket.state, 'tts_client') and websocket.state.tts_client:
-                await websocket.app.state.tts_pool.release(websocket.state.tts_client)
+            stt_client = conn_meta.handler.get("stt_client") if conn_meta else None
+            tts_client = conn_meta.handler.get("tts_client") if conn_meta else None
+            if stt_client:
+                await websocket.app.state.stt_pool.release(stt_client)
+            if tts_client:
+                await websocket.app.state.tts_pool.release(tts_client)
+                # Also clear from WebSocket state
+                if hasattr(websocket.state, 'tts_client'):
+                    websocket.state.tts_client = None
             raise
         handler = ACSMediaHandler(
             websocket=websocket,
@@ -412,8 +414,7 @@ async def _create_media_handler(
             memory_manager=memory_manager,
             session_id=session_id,
         )
-        # Register the handler in the global registry
-        _active_handlers[call_connection_id] = handler
+        # Handler lifecycle managed by ConnectionManager - no separate registry needed
         logger.info("Created V1 ACS media handler for MEDIA mode")
         return handler
 
@@ -422,8 +423,7 @@ async def _create_media_handler(
     #     from apps.rtagent.backend.src.handlers import TranscriptionHandler
 
     #     handler = TranscriptionHandler(websocket, cm=memory_manager)
-    #     # Register the handler in the global registry
-    #     _active_handlers[call_connection_id] = handler
+    #     # Handler lifecycle managed by ConnectionManager - no separate registry needed
     #     logger.info("Created transcription handler for TRANSCRIPTION mode")
     #     return handler
     else:
@@ -611,44 +611,7 @@ async def _cleanup_websocket_resources(
         },
     ) as span:
         try:
-            # Close WebSocket if still connected
-            if (
-                websocket.client_state == WebSocketState.CONNECTED
-                and websocket.application_state == WebSocketState.CONNECTED
-            ):
-                await websocket.close()
-                logger.info("WebSocket connection closed")
-
-            # Track WebSocket disconnection for session metrics
-            if hasattr(websocket.app.state, "session_metrics"):
-                await websocket.app.state.session_metrics.increment_disconnected()
-
-            # Release STT recognizer back to pool
-            if hasattr(websocket.state, "stt_client") and websocket.state.stt_client:
-                try:
-                    websocket.state.stt_client.stop()
-                    await websocket.app.state.stt_pool.release(
-                        websocket.state.stt_client
-                    )
-                    logger.info(
-                        f"Released STT recognizer back to pool for call {call_connection_id}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error releasing STT recognizer: {e}", exc_info=True)
-            
-            # Release TTS synthesizer back to pool
-            if hasattr(websocket.state, "tts_client") and websocket.state.tts_client:
-                try:
-                    await websocket.app.state.tts_pool.release(
-                        websocket.state.tts_client
-                    )
-                    logger.info(
-                        f"Released TTS synthesizer back to pool for call {call_connection_id}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error releasing TTS synthesizer: {e}", exc_info=True)
-
-            # Stop and cleanup handler
+            # Stop and cleanup handler first
             if handler:
                 try:
                     await handler.stop()
@@ -659,8 +622,79 @@ async def _cleanup_websocket_resources(
                         Status(StatusCode.ERROR, f"Handler cleanup error: {e}")
                     )
 
-                # Don't double-remove from registry - handler.stop() already removes itself
-                logger.debug(f"Handler cleanup complete for call {call_connection_id}")
+            # Clean up media session resources through connection manager metadata
+            conn_manager = websocket.app.state.conn_manager
+            if hasattr(websocket.state, "conn_id") and websocket.state.conn_id:
+                connection = conn_manager._conns.get(websocket.state.conn_id)
+                
+                if connection and connection.meta.handler and isinstance(connection.meta.handler, dict):
+                    # Clean up TTS client
+                    tts_client = connection.meta.handler.get('tts_client')
+                    if tts_client and hasattr(websocket.app.state, 'tts_pool'):
+                        try:
+                            tts_client.stop_speaking()
+                            await websocket.app.state.tts_pool.release(tts_client)
+                            logger.info("Released TTS client during media cleanup")
+                        except Exception as e:
+                            logger.error(f"Error releasing TTS client: {e}")
+                    
+                    # Clean up STT client
+                    stt_client = connection.meta.handler.get('stt_client')
+                    if stt_client and hasattr(websocket.app.state, 'stt_pool'):
+                        try:
+                            stt_client.stop()
+                            await websocket.app.state.stt_pool.release(stt_client)
+                            logger.info("Released STT client during media cleanup")
+                        except Exception as e:
+                            logger.error(f"Error releasing STT client: {e}")
+                    
+                    # Clean up any other tracked tasks
+                    tts_tasks = connection.meta.handler.get('tts_tasks')
+                    if tts_tasks:
+                        for task in list(tts_tasks):
+                            if not task.done():
+                                task.cancel()
+                                logger.debug("Cancelled TTS task during media cleanup")
+                
+                logger.info(f"Media session cleanup complete for {call_connection_id}")
+                
+                # Unregister from connection manager
+                try:
+                    await websocket.app.state.conn_manager.unregister(websocket.state.conn_id)
+                    logger.info(f"Unregistered from connection manager: {websocket.state.conn_id}")
+                except Exception as e:
+                    logger.error(f"Error unregistering from connection manager: {e}")
+
+            # Close WebSocket if still connected
+            if (
+                websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED
+            ):
+                await websocket.close()
+                logger.info("WebSocket connection closed")
+
+            # Clean up latency timers on session disconnect
+            if connection and hasattr(connection.meta, 'handler') and connection.meta.handler:
+                latency_tool = connection.meta.handler.get('latency_tool')
+                if latency_tool and hasattr(latency_tool, 'cleanup_timers'):
+                    try:
+                        latency_tool.cleanup_timers()
+                        logger.debug("Cleaned up latency timers during media cleanup")
+                    except Exception as e:
+                        logger.error(f"Error cleaning up latency timers: {e}")
+            
+            # 🚀 PHASE 1 OPTIMIZATION: Release dedicated TTS client for ACS media
+            if hasattr(websocket.app.state, 'dedicated_tts_manager') and call_connection_id:
+                try:
+                    released = await websocket.app.state.dedicated_tts_manager.release_session_client(call_connection_id)
+                    if released:
+                        logger.info(f"Released dedicated TTS client for ACS call {call_connection_id}")
+                except Exception as e:
+                    logger.error(f"Error releasing dedicated TTS client for ACS call {call_connection_id}: {e}")
+
+            # Track WebSocket disconnection for session metrics
+            if hasattr(websocket.app.state, "session_metrics"):
+                await websocket.app.state.session_metrics.increment_disconnected()
 
             span.set_status(Status(StatusCode.OK))
             log_with_context(

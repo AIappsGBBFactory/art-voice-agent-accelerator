@@ -37,11 +37,12 @@ from apps.rtagent.backend.src.services.acs.session_terminator import (
     terminate_session,
     TerminationReason,
 )
-from apps.rtagent.backend.src.shared_ws import (
+from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     send_tts_audio,
     send_response_to_acs,
 )
+from apps.rtagent.backend.src.ws_helpers.envelopes import make_event_envelope, make_status_envelope
 from src.enums.monitoring import SpanAttr  # noqa: F401 – imported for side-effects
 from utils.ml_logging import get_logger
 from apps.rtagent.backend.src.utils.tracing import (
@@ -244,9 +245,22 @@ async def _maybe_terminate_if_escalated(
 ) -> bool:
     """Check if memory shows escalation and terminate session if needed."""
     if _cm_get(cm, "escalated", False):
-        # Preserve previous UI signal
+        # Preserve previous UI signal with session-aware messaging
         try:
-            await ws.send_text(json.dumps({"type": "live_agent_transfer"}))
+            call_connection_id, session_id = _get_correlation_context(ws, cm)
+            # ✅ SAFE: Use session-aware envelope and connection manager
+            envelope = make_event_envelope(
+                event_type="live_agent_transfer",
+                event_data={"type": "live_agent_transfer"},
+                session_id=session_id,
+            )
+            if hasattr(ws.app.state, 'conn_manager') and hasattr(ws.state, 'conn_id'):
+                await ws.app.state.conn_manager.send_to_connection(
+                    ws.state.conn_id, envelope
+                )
+            else:
+                # Fallback for connections not managed by ConnectionManager
+                await ws.send_text(json.dumps({"type": "live_agent_transfer"}))
         except Exception:  # pragma: no cover - UI signal best-effort
             pass
         call_connection_id, _ = _get_correlation_context(ws, cm)
@@ -320,8 +334,12 @@ async def _send_agent_greeting(
             agent_sender = "General Info"
         else:
             agent_sender = "Assistant"
-        clients = await ws.app.state.websocket_manager.get_clients_snapshot()
-        await broadcast_message(clients, greeting, agent_sender)
+        
+        # Extract session_id for session-safe broadcasting
+        call_connection_id, session_id = _get_correlation_context(ws, cm)
+        
+        # 🔒 SESSION-SAFE: Use session-specific broadcasting instead of topic-based
+        await broadcast_message(None, greeting, agent_sender, app_state=ws.app.state, session_id=session_id)
         try:
             # Use send_response_to_acs for proper ACS audio playback
             await send_response_to_acs(
@@ -343,7 +361,19 @@ async def _send_agent_greeting(
             agent_name,
             voice_name or "default",
         )
-        await ws.send_text(json.dumps({"type": "status", "message": greeting}))
+        # ✅ SAFE: Use session-aware envelope and connection manager
+        call_connection_id, session_id = _get_correlation_context(ws, cm) 
+        envelope = make_status_envelope(
+            message=greeting,
+            session_id=session_id,
+        )
+        if hasattr(ws.app.state, 'conn_manager') and hasattr(ws.state, 'conn_id'):
+            await ws.app.state.conn_manager.send_to_connection(
+                ws.state.conn_id, envelope
+            )
+        else:
+            # Fallback for connections not managed by ConnectionManager
+            await ws.send_text(json.dumps({"type": "status", "message": greeting}))
         await send_tts_audio(
             greeting,
             ws,
@@ -624,7 +654,7 @@ async def _process_tool_response(  # pylint: disable=too-complex
         if new_agent != prev_agent:
             logger.info("🔀 Routed via intent → %s", new_agent)
             await _send_agent_greeting(cm, ws, new_agent, is_acs)
-        return  # Skip legacy hand-off logic if present
+        return  # No legacy hand-off logic
 
     # ─── hand-off (non-auth transfers) ──────
     if handoff_type == "ai_agent" and target_agent:
@@ -657,7 +687,6 @@ async def _process_tool_response(  # pylint: disable=too-complex
 
 
 # Mapping from *active_agent* value ➜ handler coroutine.
-# Kept for backward compatibility; now just a view over _REGISTRY.
 SPECIALIST_MAP: Dict[str, AgentHandler] = _REGISTRY
 
 
@@ -725,10 +754,13 @@ async def route_turn(
     ) as span:
         redis_mgr = ws.app.state.redis
 
-        # 0) Broadcast raw user transcript to dashboards.
+        # 0) Broadcast raw user transcript to dashboards with session isolation.
         try:
-            clients = await ws.app.state.websocket_manager.get_clients_snapshot()
-            await broadcast_message(clients, transcript, "User")
+            # Extract session_id for session-safe broadcasting
+            call_connection_id, session_id = _get_correlation_context(ws, cm)
+            
+            # 🔒 SESSION-SAFE: Use session-specific broadcasting instead of topic-based
+            await broadcast_message(None, transcript, "User", app_state=ws.app.state, session_id=session_id)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.error("Broadcast failure: %s", exc)
 
@@ -775,8 +807,11 @@ async def route_turn(
             span.set_attribute("orchestrator.error", "exception")
             raise
         finally:
-            # Ensure core-memory is persisted even if a downstream component failed.
-            await cm.persist_to_redis_async(redis_mgr)
+            # 🚀 OPTIMIZATION: Use background persistence to avoid blocking the conversation turn
+            # This is a critical hot path optimization - prevents Redis I/O from blocking user interaction
+            logger.debug(f"[PERF] Starting background session persistence for {cm.session_id}")
+            await cm.persist_background(redis_mgr)
+            logger.debug(f"[PERF] Background persistence initiated for {cm.session_id} (non-blocking)")
 
 
 # ---------------------------------------------------------------------------

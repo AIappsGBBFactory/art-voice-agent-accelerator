@@ -66,12 +66,57 @@ class AzureRedisManager:
             scope or os.getenv("REDIS_SCOPE") or "https://redis.azure.com/.default"
         )
         self.user_name = user_name or os.getenv("REDIS_USER_NAME") or "user"
+        self._auth_expires_at = 0  # For AAD token refresh tracking
 
         # Build initial client and, if using AAD, start a refresh thread
         self._create_client()
         if not self.access_key:
             t = threading.Thread(target=self._refresh_loop, daemon=True)
             t.start()
+
+    async def initialize(self) -> None:
+        """
+        Async initialization method for FastAPI lifespan compatibility.
+        
+        Validates Redis connectivity and ensures proper initialization.
+        This method is idempotent and can be called multiple times safely.
+        """
+        try:
+            self.logger.info(f"Validating Redis connection to {self.host}:{self.port}")
+            
+            # Validate connection with health check
+            loop = asyncio.get_event_loop()
+            ping_result = await loop.run_in_executor(None, self._health_check)
+            
+            if ping_result:
+                self.logger.info("✅ Redis connection validated successfully")
+            else:
+                raise ConnectionError("Redis health check failed")
+                
+        except Exception as e:
+            self.logger.error(f"Redis initialization failed: {e}")
+            raise ConnectionError(f"Failed to initialize Redis: {e}")
+
+    def _health_check(self) -> bool:
+        """
+        Perform comprehensive health check on Redis connection.
+        """
+        try:
+            # Basic connectivity test
+            if not self.redis_client.ping():
+                return False
+                
+            # Test basic operations
+            test_key = "health_check_test"
+            self.redis_client.set(test_key, "test_value", ex=5)
+            result = self.redis_client.get(test_key)
+            self.redis_client.delete(test_key)
+            
+            return result == "test_value"
+            
+        except Exception as e:
+            self.logger.error(f"Redis health check failed: {e}")
+            return False
 
     def _redis_span(self, name: str, op: str | None = None):
         host = (self.host or "").split(":")[0]

@@ -141,10 +141,18 @@ async def initiate_call(
             with trace_acs_dependency(
                 tracer, logger, "acs_lifecycle", "start_outbound_call"
             ) as dep_op:
+                # Extract browser session ID from request context for UI coordination
+                browser_session_id = request.context.get("browser_session_id") if request.context else None
+                
+                # Log session correlation for debugging
+                logger.info(f"📞 [BACKEND] Phone call initiation received with browser_session_id: {browser_session_id}")
+                logger.info(f"📞 [BACKEND] Target number: {request.target_number} | Session ID: {browser_session_id}")
+                
                 result = await acs_handler.start_outbound_call(
                     acs_caller=http_request.app.state.acs_caller,
                     target_number=request.target_number,
                     redis_mgr=http_request.app.state.redis,
+                    browser_session_id=browser_session_id,  # 🎯 Pass browser session for coordination
                 )
                 if result.get("status") == "success":
                     call_id = result.get("callId")

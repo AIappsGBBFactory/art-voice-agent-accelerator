@@ -13,7 +13,7 @@ from fastapi import HTTPException, Request, WebSocket
 from fastapi.websockets import WebSocketState
 from functools import cache
 from utils.ml_logging import get_logger
-from apps.rtagent.backend.settings import (
+from config import (
     ACS_JWKS_URL,
     ACS_ISSUER,
     ACS_AUDIENCE,

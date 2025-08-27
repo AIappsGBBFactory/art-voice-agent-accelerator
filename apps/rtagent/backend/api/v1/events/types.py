@@ -30,6 +30,7 @@ class CallEventContext:
     redis_mgr: Optional[Any] = None
     acs_caller: Optional[Any] = None
     clients: Optional[list] = None
+    app_state: Optional[Any] = None  # For accessing ConnectionManager
 
     def get_event_data(self) -> Dict[str, Any]:
         """

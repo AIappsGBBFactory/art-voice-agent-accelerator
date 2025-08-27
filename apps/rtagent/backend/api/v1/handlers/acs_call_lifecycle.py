@@ -27,12 +27,12 @@ from fastapi.responses import JSONResponse
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from apps.rtagent.backend.settings import (
+from config import (
     ACS_STREAMING_MODE,
     GREETING,
     GREETING_VOICE_TTS,
 )
-from apps.rtagent.backend.src.shared_ws import broadcast_message
+from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message
 
 from src.enums.stream_modes import StreamMode
 from src.stateful.state_managment import MemoManager
@@ -191,6 +191,7 @@ class ACSLifecycleHandler:
         target_number: str,
         redis_mgr,
         call_id: str = None,
+        browser_session_id: str = None,  # 🎯 NEW: Browser session ID for UI coordination
     ) -> Dict[str, Any]:
         """
         Initiate an outbound call with orchestrator support.
@@ -201,6 +202,8 @@ class ACSLifecycleHandler:
         :param redis_mgr: Redis manager instance for state persistence
         :param call_id: Optional call ID for tracking (auto-generated if None)
         :type call_id: str
+        :param browser_session_id: Browser session ID for UI/ACS coordination
+        :type browser_session_id: str
         :return: Call initiation result
         :rtype: Dict[str, Any]
         :raises HTTPException: When ACS caller is not initialized or call fails
@@ -247,8 +250,23 @@ class ACSLifecycleHandler:
                     {
                         "call.connection.id": call_id,
                         "call.success": True,
+                        "browser.session_id": browser_session_id,
                     },
                 )
+
+                # 🎯 CRITICAL: Store browser session ID mapping for media endpoint coordination
+                if browser_session_id and redis_mgr:
+                    try:
+                        # Store the mapping: call_connection_id -> browser_session_id
+                        # This enables the media endpoint to use the browser's session ID
+                        await redis_mgr.set_value_async(
+                            f"call_session_map:{call_id}", 
+                            browser_session_id,
+                            ttl_seconds=3600  # Expire after 1 hour
+                        )
+                        logger.info(f"🔗 Stored session mapping: {call_id} -> {browser_session_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to store session mapping: {e}")
 
                 # Emit call initiated event for business logic processing
                 await self._emit_call_event(
@@ -259,6 +277,7 @@ class ACSLifecycleHandler:
                         "api_version": "v1",
                         "call_direction": "outbound",
                         "initiated_at": datetime.utcnow().isoformat() + "Z",
+                        "browser_session_id": browser_session_id,  # Include in event data
                     },
                     redis_mgr,
                 )

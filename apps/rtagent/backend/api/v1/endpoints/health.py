@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 
-from apps.rtagent.backend.settings import (
+from config import (
     ACS_CONNECTION_STRING,
     ACS_ENDPOINT,
     ACS_SOURCE_PHONE_NUMBER,
@@ -225,7 +225,7 @@ async def health_check(request: Request) -> HealthResponse:
     try:
         # Session metrics snapshot (WebSocket connection metrics)
         sm = getattr(request.app.state, "session_metrics", None)
-        ws_manager = getattr(request.app.state, "websocket_manager", None)
+        conn_manager = getattr(request.app.state, "conn_manager", None)
 
         if sm is not None:
             if hasattr(sm, "get_snapshot"):
@@ -240,17 +240,18 @@ async def health_check(request: Request) -> HealthResponse:
                 total_connected = snap.get("total_connected", 0)
                 total_disconnected = snap.get("total_disconnected", 0)
 
-                # Cross-check with actual WebSocket manager count for accuracy
+                # Cross-check with actual ConnectionManager count for accuracy
                 actual_ws_count = 0
-                if ws_manager and hasattr(ws_manager, "get_client_count"):
-                    actual_ws_count = await ws_manager.get_client_count()
+                if conn_manager and hasattr(conn_manager, "stats"):
+                    conn_stats = await conn_manager.stats()
+                    actual_ws_count = conn_stats.get("total_connections", 0)
 
                 session_metrics = {
                     "connected": active_connections,  # Currently active WebSocket connections (from metrics)
                     "disconnected": total_disconnected,  # Historical total disconnections
                     "active": active_connections,  # Same as connected (real-time active)
                     "total_connected": total_connected,  # Historical total connections made
-                    "actual_ws_count": actual_ws_count,  # Real-time count from WebSocket manager (cross-check)
+                    "actual_ws_count": actual_ws_count,  # Real-time count from ConnectionManager (cross-check)
                 }
     except Exception:
         session_metrics = None
@@ -683,7 +684,7 @@ async def get_agents_info(request: Request):
                 agent_voice_style = getattr(agent, "voice_style", "chat")
 
                 # Fallback to global GREETING_VOICE_TTS if agent doesn't have voice configured
-                from settings import GREETING_VOICE_TTS
+                from config import GREETING_VOICE_TTS
 
                 current_voice = agent_voice or GREETING_VOICE_TTS
 
@@ -732,14 +733,14 @@ async def get_agents_info(request: Request):
 
         # Extract info for each agent
         if auth_agent:
-            from settings import AGENT_AUTH_CONFIG
+            from config import AGENT_AUTH_CONFIG
 
             agent_info = extract_agent_info(auth_agent, AGENT_AUTH_CONFIG)
             if agent_info:
                 agents_info.append(agent_info)
 
         if claim_intake_agent:
-            from settings import AGENT_CLAIM_INTAKE_CONFIG
+            from config import AGENT_CLAIM_INTAKE_CONFIG
 
             agent_info = extract_agent_info(
                 claim_intake_agent, AGENT_CLAIM_INTAKE_CONFIG
@@ -748,7 +749,7 @@ async def get_agents_info(request: Request):
                 agents_info.append(agent_info)
 
         if general_info_agent:
-            from settings import AGENT_GENERAL_INFO_CONFIG
+            from config import AGENT_GENERAL_INFO_CONFIG
 
             agent_info = extract_agent_info(
                 general_info_agent, AGENT_GENERAL_INFO_CONFIG

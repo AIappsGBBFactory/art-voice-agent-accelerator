@@ -21,12 +21,12 @@ from azure.communication.callautomation import PhoneNumberIdentifier
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
-from apps.rtagent.backend.src.shared_ws import broadcast_message
+from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message
 from utils.ml_logging import get_logger
 from .types import CallEventContext, ACSEventTypes
 
 from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import DTMFValidationLifecycle
-from apps.rtagent.backend.settings import DTMF_VALIDATION_ENABLED
+from config import DTMF_VALIDATION_ENABLED
 
 logger = get_logger("v1.events.handlers")
 tracer = trace.get_tracer(__name__)
@@ -256,9 +256,12 @@ class CallEventHandlers:
                     )
             # Broadcast connection status to WebSocket clients
             try:
-                if context.clients:
+                if context.app_state:
+                    # For ACS calls, use call_connection_id as session_id for proper session isolation
+                    session_id = context.call_connection_id
+                    
                     await broadcast_message(
-                        context.clients,
+                        None,  # clients ignored when using ConnectionManager
                         json.dumps(
                             {
                                 "type": "call_connected",
@@ -269,6 +272,8 @@ class CallEventHandlers:
                                 "validation_flow": "aws_connect_simulation",
                             }
                         ),
+                        app_state=context.app_state,
+                        session_id=session_id,  # 🔒 SESSION-SAFE: Include session_id for proper isolation
                     )
             except Exception as e:
                 logger.error(f"Failed to broadcast call connected: {e}")
@@ -466,7 +471,7 @@ class CallEventHandlers:
             if not context.acs_caller or not context.memo_manager:
                 return
 
-            from apps.rtagent.backend.settings import GREETING, GREETING_VOICE_TTS
+            from config import GREETING, GREETING_VOICE_TTS
             from azure.communication.callautomation import TextSource
 
             # Create greeting source

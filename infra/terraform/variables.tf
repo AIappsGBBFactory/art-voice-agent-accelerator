@@ -98,15 +98,22 @@ variable "disable_local_auth" {
 }
 
 variable "enable_redis_ha" {
-  description = "Enable Redis Enterprise High Availability"
+  description = "Enable Redis Enterprise High Availability for production workloads"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "redis_sku" {
-  description = "SKU for Azure Managed Redis (Enterprise)"
+  description = "SKU for Azure Managed Redis (Enterprise) optimized for performance"
   type        = string
-  default     = "MemoryOptimized_M10"
+  default     = "MemoryOptimized_M20"
+  validation {
+    condition = contains([
+      "MemoryOptimized_M10", "MemoryOptimized_M20", "MemoryOptimized_M50",
+      "MemoryOptimized_M100", "ComputeOptimized_X5", "ComputeOptimized_X10"
+    ], var.redis_sku)
+    error_message = "Redis SKU must be a valid Enterprise tier SKU."
+  }
 }
 
 variable "redis_port" {
@@ -116,7 +123,7 @@ variable "redis_port" {
 }
 
 variable "openai_models" {
-  description = "Azure OpenAI model deployments"
+  description = "Azure OpenAI model deployments optimized for high performance"
   type = list(object({
     name     = string
     version  = string
@@ -128,25 +135,25 @@ variable "openai_models" {
       name     = "gpt-4o"
       version  = "2024-11-20"
       sku_name = "DataZoneStandard"
-      capacity = 50
+      capacity = 150
     },
     {
       name     = "gpt-4o-mini"
       version  = "2024-07-18"
       sku_name = "DataZoneStandard"
-      capacity = 50
+      capacity = 150
     },
     {
       name     = "gpt-4.1-mini"
       version  = "2025-04-14"
       sku_name = "DataZoneStandard"
-      capacity = 50
+      capacity = 150
     },
     {
       name     = "gpt-4.1"
       version  = "2025-04-14"
       sku_name = "DataZoneStandard"
-      capacity = 50
+      capacity = 150
     }
   ]
 }
@@ -169,4 +176,75 @@ variable "mongo_collection_name" {
     condition     = length(var.mongo_collection_name) >= 1 && length(var.mongo_collection_name) <= 64
     error_message = "MongoDB collection name must be between 1 and 64 characters."
   }
+}
+
+variable "container_app_min_replicas" {
+  description = "Minimum number of container app replicas for high availability"
+  type        = number
+  default     = 5
+  validation {
+    condition     = var.container_app_min_replicas >= 1 && var.container_app_min_replicas <= 25
+    error_message = "Container app min replicas must be between 1 and 25."
+  }
+}
+
+variable "container_app_max_replicas" {
+  description = "Maximum number of container app replicas for auto-scaling"
+  type        = number
+  default     = 50
+  validation {
+    condition     = var.container_app_max_replicas >= 1 && var.container_app_max_replicas <= 300
+    error_message = "Container app max replicas must be between 1 and 300."
+  }
+}
+
+variable "container_cpu_cores" {
+  description = "CPU cores allocated to each container instance"
+  type        = number
+  default     = 2
+  validation {
+    condition     = contains([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2], var.container_cpu_cores)
+    error_message = "Container CPU cores must be one of: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2"
+  }
+}
+
+variable "container_memory_gb" {
+  description = "Memory in GB allocated to each container instance"
+  type        = string
+  default     = "4.0Gi"
+  validation {
+    condition     = contains(["0.5Gi", "1.0Gi", "1.5Gi", "2.0Gi", "2.5Gi", "3.0Gi", "3.5Gi", "4.0Gi"], var.container_memory_gb)
+    error_message = "Container memory must be between 0.5Gi and 4.0Gi in 0.5Gi increments."
+  }
+}
+
+variable "aoai_pool_size" {
+  description = "Size of the Azure OpenAI client pool for optimal performance"
+  type        = number
+  default     = 50
+  validation {
+    condition     = var.aoai_pool_size >= 5 && var.aoai_pool_size <= 200
+    error_message = "AOAI pool size must be between 5 and 200."
+  }
+}
+
+variable "tts_pool_size" {
+  description = "Size of the TTS client pool for optimal performance"
+  type        = number
+  default     = 100
+  validation {
+    condition     = var.tts_pool_size >= 10 && var.tts_pool_size <= 500
+    error_message = "TTS pool size must be between 10 and 500."
+  }
+}
+
+variable "stt_pool_size" {
+  description = "Size of the STT client pool for optimal performance"
+  type        = number
+  default     = 100
+  validation {
+    condition     = var.stt_pool_size >= 10 && var.stt_pool_size <= 500
+    error_message = "STT pool size must be between 10 and 500."
+  }
+
 }

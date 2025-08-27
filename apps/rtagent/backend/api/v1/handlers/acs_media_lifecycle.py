@@ -33,8 +33,8 @@ from fastapi import WebSocket
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from apps.rtagent.backend.settings import GREETING
-from apps.rtagent.backend.src.shared_ws import send_response_to_acs
+from config import GREETING, STT_PROCESSING_TIMEOUT
+from apps.rtagent.backend.src.ws_helpers.shared_ws import send_response_to_acs
 from apps.rtagent.backend.src.orchestration.orchestrator import route_turn
 from src.enums.stream_modes import StreamMode
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
@@ -49,8 +49,7 @@ tracer = trace.get_tracer(__name__)
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-# Lock-free handler registry using weak references for automatic cleanup
-_active_handlers = {}
+# Thread pool for cleanup operations
 _handlers_cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="handler-cleanup")
 
 
@@ -642,7 +641,7 @@ class MainEventLoop:
                     asyncio.get_event_loop().run_in_executor(
                         None, recognizer.write_bytes, audio_bytes
                     ),
-                    timeout=0.03,  # Reduced timeout for better performance
+                    timeout=0.5,  # Reasonable timeout for audio chunk processing
                 )
                 logger.debug(f"[{self.call_id_short}] Audio chunk sent to recognizer successfully")
         except asyncio.TimeoutError:
@@ -773,14 +772,7 @@ class ACSMediaHandler:
             try:
                 logger.info(f"[{self.call_id_short}] Starting three-thread media handler")
                 
-                # Lock-free atomic registration
-                existing = _active_handlers.get(self.call_connection_id)
-                if existing and existing.is_running:
-                    logger.warning(f"[{self.call_id_short}] Stopping existing handler")
-                    await existing.stop()
-                # Atomic dict assignment - no lock needed
-                _active_handlers[self.call_connection_id] = self
-                
+                # Handler lifecycle managed by ConnectionManager - no separate registry needed
                 self.running = True
 
                 # Capture main event loop
@@ -823,8 +815,7 @@ class ACSMediaHandler:
                 self._stopped = True
                 self.running = False
 
-                # Lock-free cleanup
-                _active_handlers.pop(self.call_connection_id, None)
+                # Handler cleanup managed by ConnectionManager - no separate registry cleanup needed
 
                 # Stop components with individual error isolation
                 cleanup_errors = []
@@ -913,16 +904,4 @@ class ACSMediaHandler:
             return False
 
 
-# Lock-free utility functions for debugging
-def get_active_handlers_count() -> int:
-    """Get count of active handlers (lock-free)."""
-    return len(_active_handlers)
-
-
-def get_active_handlers_debug() -> dict:
-    """Get debug info for active handlers (lock-free snapshot)."""
-    handlers_snapshot = dict(_active_handlers)  # Atomic snapshot
-    return {
-        "count": len(handlers_snapshot),
-        "call_ids": [call_id[-8:] for call_id in handlers_snapshot.keys()]
-    }
+# Utility functions removed - handler tracking now managed by ConnectionManager

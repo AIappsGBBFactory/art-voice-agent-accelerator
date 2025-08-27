@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from apps.rtagent.backend.settings import (
+from config import (
     ACS_CALL_CALLBACK_PATH,
     ACS_CONNECTION_STRING,
     ACS_ENDPOINT,

@@ -22,7 +22,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from urllib.parse import urlparse
 
-from apps.rtagent.backend.settings import (
+from config import (
     AZURE_OPENAI_CHAT_DEPLOYMENT_ID,
     AZURE_OPENAI_ENDPOINT,
     TTS_END,
@@ -37,13 +37,14 @@ from apps.rtagent.backend.src.agents.tool_store.tools_helper import (
 )
 from apps.rtagent.backend.src.helpers import add_space
 from apps.rtagent.backend.src.services.openai_services import client as az_openai_client
-from apps.rtagent.backend.src.shared_ws import (
+from src.pools.aoai_pool import get_session_client
+from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     push_final,
     send_response_to_acs,
     send_tts_audio,
 )
-from apps.rtagent.backend.settings import AZURE_OPENAI_ENDPOINT
+from apps.rtagent.backend.src.ws_helpers.envelopes import make_assistant_streaming_envelope
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
 from apps.rtagent.backend.src.utils.tracing import (
@@ -82,6 +83,9 @@ AOAI_RETRY_BASE_DELAY_SEC: float = _env_float("AOAI_RETRY_BASE_DELAY_SEC", 0.5)
 AOAI_RETRY_MAX_DELAY_SEC: float = _env_float("AOAI_RETRY_MAX_DELAY_SEC", 8.0)
 AOAI_RETRY_BACKOFF_FACTOR: float = _env_float("AOAI_RETRY_BACKOFF_FACTOR", 2.0)
 AOAI_RETRY_JITTER_SEC: float = _env_float("AOAI_RETRY_JITTER_SEC", 0.2)
+
+# 🚀 AOAI Client Pool Configuration
+AOAI_USE_SESSION_POOL: bool = os.getenv("AOAI_USE_SESSION_POOL", "true").lower() == "true"
 
 
 @dataclass
@@ -459,16 +463,22 @@ async def _emit_streaming_text(
                         voice_style=voice_style,
                         rate=voice_rate,
                     )
-                    speaker = _get_agent_sender_name(cm, include_autoauth=True)
-                    await ws.send_text(
-                        json.dumps(
-                            {
-                                "type": "assistant_streaming",
-                                "content": text,
-                                "speaker": speaker,
-                            }
-                        )
+                    # ✅ SAFE: Use session-aware envelope and connection manager
+                    envelope = make_assistant_streaming_envelope(
+                        content=text,
+                        session_id=session_id,
                     )
+                    if hasattr(ws.app.state, 'conn_manager') and hasattr(ws.state, 'conn_id'):
+                        await ws.app.state.conn_manager.send_to_connection(
+                            ws.state.conn_id, envelope
+                        )
+                    else:
+                        # Fallback for connections not managed by ConnectionManager
+                        await ws.send_text(json.dumps({
+                            "type": "assistant_streaming",
+                            "content": text,
+                            "speaker": _get_agent_sender_name(cm, include_autoauth=True),
+                        }))
                 span.add_event("text_emitted", {"text_length": len(text)})
             except Exception as exc:  # noqa: BLE001
                 span.record_exception(exc)
@@ -493,12 +503,23 @@ async def _emit_streaming_text(
                 voice_style=voice_style,
                 rate=voice_rate,
             )
-            speaker = _get_agent_sender_name(cm, include_autoauth=True)
-            await ws.send_text(
-                json.dumps(
-                    {"type": "assistant_streaming", "content": text, "speaker": speaker}
-                )
+            # ✅ SAFE: Use session-aware envelope and connection manager
+            envelope = make_assistant_streaming_envelope(
+                content=text,
+                session_id=session_id,
             )
+            if hasattr(ws.app.state, 'conn_manager') and hasattr(ws.state, 'conn_id'):
+                await ws.app.state.conn_manager.send_to_connection(
+                    ws.state.conn_id, envelope
+                )
+            else:
+                # Fallback for connections not managed by ConnectionManager
+                speaker = _get_agent_sender_name(cm, include_autoauth=True)
+                await ws.send_text(
+                    json.dumps(
+                        {"type": "assistant_streaming", "content": text, "speaker": speaker}
+                    )
+                )
 
 
 async def _broadcast_dashboard(
@@ -518,14 +539,25 @@ async def _broadcast_dashboard(
     """
     try:
         sender = _get_agent_sender_name(cm, include_autoauth=include_autoauth)
+        
+        # Extract session_id for session-safe broadcasting
+        session_id = (
+            getattr(ws.state, "session_id", None)
+            or getattr(cm, "session_id", None)
+            or ws.headers.get("x-session-id")
+            or "unknown"
+        )
+        
         logger.info(
-            "🎯 dashboard_broadcast: sender='%s' include_autoauth=%s msg='%s...'",
+            "🎯 dashboard_broadcast: sender='%s' include_autoauth=%s msg='%s...' session_id='%s'",
             sender,
             include_autoauth,
             message[:50],
+            session_id,
         )
-        clients = await ws.app.state.websocket_manager.get_clients_snapshot()
-        await broadcast_message(clients, message, sender)
+        
+        # SESSION-SAFE: Use session-specific broadcasting instead of topic-based
+        await broadcast_message(None, message, sender, app_state=ws.app.state, session_id=session_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to broadcast dashboard message: %s", exc)
 
@@ -579,9 +611,13 @@ async def _openai_stream_with_retry(
     *,
     model_id: str,
     dep_span,  # active OTEL span for dependency call
+    session_id: Optional[str] = None,  # NEW: Session ID for client pooling
 ) -> Tuple[Iterable[Any], RateLimitInfo]:
     """
     Invoke AOAI streaming with explicit retry and capture rate-limit headers.
+    
+    Uses session-specific client from pool to eliminate
+    resource contention and improve concurrent session throughput.
 
     We try the SDK's streaming-response context (if present) to access headers.
     Falls back to normal `.create(**kwargs)`.
@@ -592,6 +628,26 @@ async def _openai_stream_with_retry(
     last_info = RateLimitInfo()
     aoai_host = urlparse(AZURE_OPENAI_ENDPOINT).netloc or "api.openai.azure.com"
 
+    # Get session-specific client to avoid resource contention
+    if AOAI_USE_SESSION_POOL and session_id:
+        try:
+            pooled_client = await get_session_client(session_id)
+            if pooled_client:
+                aoai_client = pooled_client
+                logger.info(f"Using session-specific AOAI client for {session_id}")
+            else:
+                aoai_client = az_openai_client
+                logger.debug(f"Session pool returned None for {session_id}, using shared client")
+        except Exception as e:
+            logger.warning(f"Failed to get session AOAI client for {session_id}, falling back to shared client: {e}")
+            aoai_client = az_openai_client
+    else:
+        aoai_client = az_openai_client
+        if session_id:
+            logger.debug(f"AOAI pool disabled (AOAI_USE_SESSION_POOL={AOAI_USE_SESSION_POOL}), using shared client for {session_id}")
+        else:
+            logger.debug("No session_id provided, using shared AOAI client")
+
     logger.info(
         "Starting AOAI stream request: model=%s host=%s max_attempts=%d",
         model_id,
@@ -601,6 +657,8 @@ async def _openai_stream_with_retry(
             "model_id": model_id,
             "aoai_host": aoai_host,
             "max_attempts": AOAI_RETRY_MAX_ATTEMPTS,
+            "session_id": session_id,
+            "using_pooled_client": session_id is not None,
             "event_type": "aoai_stream_start"
         }
     )
@@ -614,13 +672,14 @@ async def _openai_stream_with_retry(
             extra={
                 "attempt": attempts,
                 "max_attempts": AOAI_RETRY_MAX_ATTEMPTS,
+                "session_id": session_id,
                 "event_type": "aoai_stream_attempt"
             }
         )
 
         try:
             with_stream_ctx = getattr(
-                az_openai_client.chat.completions, "with_streaming_response", None
+                aoai_client.chat.completions, "with_streaming_response", None
             )
 
             if callable(with_stream_ctx):
@@ -639,6 +698,7 @@ async def _openai_stream_with_retry(
                         extra={
                             "attempt": attempts,
                             "success": True,
+                            "session_id": session_id,
                             "event_type": "aoai_stream_success"
                         }
                     )
@@ -647,7 +707,7 @@ async def _openai_stream_with_retry(
                     return response_stream, last_info
             else:
                 logger.debug("Using direct create method (older SDK)", extra={"sdk_method": "direct_create", "event_type": "aoai_sdk_method"})
-                response_stream = az_openai_client.chat.completions.create(**chat_kwargs)
+                response_stream = aoai_client.chat.completions.create(**chat_kwargs)
                 dep_span.add_event("openai_stream_started", {"attempt": attempts})
                 logger.info(
                     "AOAI stream successful on attempt %d (no headers available)",
@@ -656,6 +716,7 @@ async def _openai_stream_with_retry(
                         "attempt": attempts,
                         "success": True,
                         "headers_available": False,
+                        "session_id": session_id,
                         "event_type": "aoai_stream_success"
                     }
                 )
@@ -979,7 +1040,7 @@ async def process_gpt_response(  # noqa: PLR0913
                     pass
 
                 response_stream, last_rate_info = await _openai_stream_with_retry(
-                    chat_kwargs, model_id=model_id, dep_span=dep_span
+                    chat_kwargs, model_id=model_id, dep_span=dep_span, session_id=session_id
                 )
 
                 # Consume the stream and emit chunks
@@ -1179,7 +1240,7 @@ async def _handle_tool_call(  # noqa: PLR0913
         call_short_id = uuid.uuid4().hex[:8]
         trace_ctx.set_attribute("tool.call_id", call_short_id)
 
-        await push_tool_start(ws, call_short_id, tool_name, params, is_acs=is_acs)
+        await push_tool_start(ws, call_short_id, tool_name, params, is_acs=is_acs, session_id=session_id)
         trace_ctx.add_event("tool_start_pushed", {"call_id": call_short_id})
 
         with create_trace_context(
@@ -1254,6 +1315,7 @@ async def _handle_tool_call(  # noqa: PLR0913
             elapsed_ms,
             result=result,
             is_acs=is_acs,
+            session_id=session_id,
         )
         trace_ctx.add_event("tool_end_pushed", {"elapsed_ms": elapsed_ms})
 

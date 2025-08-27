@@ -157,14 +157,61 @@ resource "azurerm_container_app" "backend" {
   }
 
   template {
-    min_replicas = 3
-    max_replicas = 10
+    min_replicas = var.container_app_min_replicas
+    max_replicas = var.container_app_max_replicas
 
     container {
       name   = "main"
       image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-      cpu    = 2
-      memory = "4.0Gi"
+      cpu    = var.container_cpu_cores
+      memory = var.container_memory_gb
+
+      # Pool Configuration for Maximum Performance
+      env {
+        name  = "AOAI_POOL_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "AOAI_POOL_SIZE"
+        value = tostring(var.aoai_pool_size)
+      }
+
+      env {
+        name  = "POOL_SIZE_TTS"
+        value = tostring(var.tts_pool_size)
+      }
+
+      env {
+        name  = "POOL_SIZE_STT"
+        value = tostring(var.stt_pool_size)
+      }
+
+      env {
+        name  = "TTS_POOL_PREWARMING_ENABLED"
+        value = "true"
+      }
+
+      env {
+        name  = "STT_POOL_PREWARMING_ENABLED"
+        value = "true"
+      }
+
+      # Performance Optimization Settings
+      env {
+        name  = "POOL_PREWARMING_BATCH_SIZE"
+        value = "10"
+      }
+
+      env {
+        name  = "CLIENT_MAX_AGE_SECONDS"
+        value = "3600"
+      }
+
+      env {
+        name  = "CLEANUP_INTERVAL_SECONDS"
+        value = "180"
+      }
 
       # Azure Communication Services Configuration
       env {
@@ -193,6 +240,26 @@ resource "azurerm_container_app" "backend" {
       env {
         name  = "ACS_STREAMING_MODE"
         value = "media"
+      }
+
+      env {
+        name  = "ACS_STREAMING_TRANSPORT"
+        value = "websocket"
+      }
+
+      env {
+        name  = "ACS_MEDIA_STREAMING_LOCALE"
+        value = "en-US"
+      }
+
+      env {
+        name  = "ACS_MEDIA_STREAMING_FORMAT"
+        value = "Pcm16Khz16BitMono"
+      }
+
+      env {
+        name  = "ACS_CONNECTION_POOL_SIZE"
+        value = "100"
       }
 
       env {
@@ -315,10 +382,113 @@ resource "azurerm_container_app" "backend" {
         }
       }
 
-      # Python-specific settings
+      # Python-specific settings for performance
       env {
         name  = "PYTHONPATH"
         value = "/home/site/wwwroot"
+      }
+
+      env {
+        name  = "PYTHONUNBUFFERED"
+        value = "1"
+      }
+
+      env {
+        name  = "PYTHONDONTWRITEBYTECODE"
+        value = "1"
+      }
+
+      env {
+        name  = "UVICORN_WORKERS"
+        value = "4"
+      }
+
+      env {
+        name  = "UVICORN_HOST"
+        value = "0.0.0.0"
+      }
+
+      env {
+        name  = "UVICORN_PORT"
+        value = "8000"
+      }
+
+      env {
+        name  = "UVICORN_LOOP"
+        value = "uvloop"
+      }
+
+      env {
+        name  = "UVICORN_HTTP"
+        value = "httptools"
+      }
+
+      # Performance Monitoring and Optimization
+      env {
+        name  = "ENABLE_PERFORMANCE_MONITORING"
+        value = "true"
+      }
+
+      env {
+        name  = "POOL_HEALTH_CHECK_INTERVAL"
+        value = "30"
+      }
+
+      env {
+        name  = "CONNECTION_POOL_MAX_SIZE"
+        value = "200"
+      }
+
+      env {
+        name  = "CONNECTION_POOL_MIN_SIZE"
+        value = "10"
+      }
+
+      env {
+        name  = "ASYNC_TASK_POOL_SIZE"
+        value = "100"
+      }
+
+      # WebSocket Optimization for High Concurrency
+      env {
+        name  = "WEBSOCKET_MAX_CONNECTIONS"
+        value = "5000"
+      }
+
+      env {
+        name  = "WEBSOCKET_BUFFER_SIZE"
+        value = "65536"
+      }
+
+      env {
+        name  = "WEBSOCKET_HEARTBEAT_INTERVAL"
+        value = "30"
+      }
+
+      env {
+        name  = "WEBSOCKET_CONNECTION_TIMEOUT"
+        value = "300"
+      }
+
+      # FastAPI Performance Settings
+      env {
+        name  = "FASTAPI_LIFESPAN_TIMEOUT"
+        value = "30"
+      }
+
+      env {
+        name  = "FASTAPI_REQUEST_TIMEOUT"
+        value = "300"
+      }
+
+      env {
+        name  = "WEBSOCKET_PING_INTERVAL"
+        value = "20"
+      }
+
+      env {
+        name  = "WEBSOCKET_PING_TIMEOUT"
+        value = "60"
       }
     }
   }

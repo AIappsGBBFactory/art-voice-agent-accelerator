@@ -174,3 +174,44 @@ output "LOG_ANALYTICS_WORKSPACE_ID" {
   description = "Log Analytics workspace ID"
   value       = azurerm_log_analytics_workspace.main.id
 }
+
+# Performance Configuration Outputs
+output "AOAI_POOL_SIZE" {
+  description = "Azure OpenAI pool size for performance optimization"
+  value       = var.aoai_pool_size
+}
+
+output "TTS_POOL_SIZE" {
+  description = "TTS pool size for concurrent session handling"
+  value       = var.tts_pool_size
+}
+
+output "STT_POOL_SIZE" {
+  description = "STT pool size for concurrent session handling"
+  value       = var.stt_pool_size
+}
+
+output "CONTAINER_CPU_CORES" {
+  description = "CPU cores allocated per container instance"
+  value       = var.container_cpu_cores
+}
+
+output "CONTAINER_MEMORY_GB" {
+  description = "Memory allocated per container instance"
+  value       = var.container_memory_gb
+}
+
+output "CONTAINER_MIN_REPLICAS" {
+  description = "Minimum container replicas for high availability"
+  value       = var.container_app_min_replicas
+}
+
+output "CONTAINER_MAX_REPLICAS" {
+  description = "Maximum container replicas for auto-scaling"
+  value       = var.container_app_max_replicas
+}
+
+output "REDIS_SKU_OPTIMIZED" {
+  description = "Redis Enterprise SKU for optimal performance"
+  value       = var.redis_sku
+}

@@ -12,7 +12,11 @@ import asyncio
 import json
 import time
 import uuid
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
+
+from utils.ml_logging import get_logger
+
+logger = get_logger(__name__)
 
 from fastapi import WebSocket
 
@@ -35,22 +39,29 @@ async def call_agent_tool(tool_name: str, args: dict) -> Any:
         return {"ok": False, "message": str(e)}
 
 
-async def _emit(ws: WebSocket, payload: dict, *, is_acs: bool) -> None:
+async def _emit(ws: WebSocket, payload: dict, *, is_acs: bool, session_id: Optional[str] = None) -> None:
     """
-    • browser `/realtime`  → send JSON directly on that socket
-    • phone   `/call/*`    → fan-out to every dashboard on `/relay`
+    • browser `/realtime`  → send JSON directly to specific session
+    • phone   `/call/*`    → broadcast to dashboards only for that session
 
-    IMPORTANT: we forward the *raw* JSON (no additional wrapper) so that the
-               front-end can treat both transports identically.
+    IMPORTANT: Tool frames are now session-aware to prevent cross-session leakage.
     """
-    frame = json.dumps(payload)
-
     if is_acs:
-        # never block STT/TTS – fire-and-forget
-        clients = await ws.app.state.websocket_manager.get_clients_snapshot()
-        for cli in clients:
-            asyncio.create_task(cli.send_text(frame))
+        # Use session-aware broadcasting for ACS calls
+        if hasattr(ws.app.state, 'conn_manager'):
+            if session_id:
+                # Session-safe: Only broadcast to connections in the same session
+                asyncio.create_task(ws.app.state.conn_manager.broadcast_session(session_id, payload))
+                logger.debug(f"Tool frame broadcasted to session {session_id}: {payload.get('tool', 'unknown')}")
+            else:
+                # Fallback: Dashboard-only broadcast (safer than broadcast_all)
+                asyncio.create_task(ws.app.state.conn_manager.broadcast_topic("dashboard", payload))
+                logger.warning(f"Tool frame broadcasted to dashboard topic (no session): {payload.get('tool', 'unknown')}")
+        else:
+            logger.warning("ConnectionManager not available for tool frame broadcast")
     else:
+        # Direct WebSocket send for browser connections
+        frame = json.dumps(payload)
         await ws.send_text(frame)
 
 
@@ -76,8 +87,9 @@ async def push_tool_start(
     args: dict,
     *,
     is_acs: bool = False,
+    session_id: Optional[str] = None,
 ) -> None:
-    await _emit(ws, _frame("tool_start", call_id, name, args=args), is_acs=is_acs)
+    await _emit(ws, _frame("tool_start", call_id, name, args=args), is_acs=is_acs, session_id=session_id)
 
 
 async def push_tool_progress(
@@ -88,9 +100,10 @@ async def push_tool_progress(
     note: str | None = None,
     *,
     is_acs: bool = False,
+    session_id: Optional[str] = None,
 ) -> None:
     await _emit(
-        ws, _frame("tool_progress", call_id, name, pct=pct, note=note), is_acs=is_acs
+        ws, _frame("tool_progress", call_id, name, pct=pct, note=note), is_acs=is_acs, session_id=session_id
     )
 
 
@@ -104,6 +117,7 @@ async def push_tool_end(
     result: dict | None = None,
     error: str | None = None,
     is_acs: bool = False,
+    session_id: Optional[str] = None,
 ) -> None:
     await _emit(
         ws,
@@ -117,4 +131,5 @@ async def push_tool_end(
             error=error,
         ),
         is_acs=is_acs,
+        session_id=session_id,
     )

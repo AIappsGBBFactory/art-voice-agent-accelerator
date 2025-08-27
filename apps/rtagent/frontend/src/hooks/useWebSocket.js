@@ -10,7 +10,8 @@ export default function useWebSocket({
   appendMessage,     // optional: if you want to mirror into another queue
 }) {
   const [messages, setMessages] = useState([]);
-  const socketRef = useRef(null);
+  const conversationSocketRef = useRef(null);
+  const dashboardSocketRef = useRef(null);
   const backendPlaceholder = '__BACKEND_URL__';
   const backendUrl = backendPlaceholder.startsWith('__') 
     ? import.meta.env.VITE_BACKEND_BASE_URL || 'http://localhost:8000'
@@ -27,8 +28,8 @@ export default function useWebSocket({
 
   const sendText = useCallback(
     (text) => {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ text }));
+      if (conversationSocketRef.current?.readyState === WebSocket.OPEN) {
+        conversationSocketRef.current.send(JSON.stringify({ text }));
         append({ speaker: "User", text });
         addMindMapNode?.({ speaker: "User", text });
         setActiveSpeaker?.("User");

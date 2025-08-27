@@ -314,33 +314,8 @@ async def terminate_session(
     acs_attempted = False
     acs_succeeded = False
 
-    # 0) Clean up active media handlers first (before hanging up)
-    if is_acs and call_connection_id:
-        try:
-            # Import here to avoid circular imports
-            from apps.rtagent.backend.api.v1.endpoints.media import _active_handlers
-
-            if call_connection_id in _active_handlers:
-                handler = _active_handlers[call_connection_id]
-                logger.info(
-                    f"Stopping active media handler for call {call_connection_id}"
-                )
-                try:
-                    if hasattr(handler, "stop") and callable(handler.stop):
-                        await handler.stop()
-                        logger.info(
-                            f"Media handler stopped successfully for call {call_connection_id}"
-                        )
-                except Exception as handler_exc:
-                    logger.error(f"Failed to stop media handler cleanly: {handler_exc}")
-
-                # Remove from active handlers registry
-                del _active_handlers[call_connection_id]
-                logger.info(
-                    f"Removed call {call_connection_id} from active handlers registry"
-                )
-        except Exception as cleanup_exc:
-            logger.warning(f"Failed to cleanup active handlers: {cleanup_exc}")
+    # Handler cleanup is now managed by ConnectionManager during WebSocket disconnection
+    # No need for manual handler cleanup here since ConnectionManager handles this automatically
 
     # 1) Try to hang up ACS (best-effort) - REMOVED the hardcoded 10s delay!
     if is_acs and call_connection_id and resolved_acs_client:

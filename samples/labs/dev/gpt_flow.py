@@ -21,7 +21,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from urllib.parse import urlparse
 
-from apps.rtagent.backend.settings import AZURE_OPENAI_CHAT_DEPLOYMENT_ID, TTS_END
+from apps.rtagent.backend.config import AZURE_OPENAI_CHAT_DEPLOYMENT_ID, TTS_END
 from apps.rtagent.backend.src.agents.tool_store.tool_registry import (
     available_tools as DEFAULT_TOOLS,
 )
@@ -32,13 +32,13 @@ from apps.rtagent.backend.src.agents.tool_store.tools_helper import (
 )
 from apps.rtagent.backend.src.helpers import add_space
 from apps.rtagent.backend.src.services.openai_services import client as az_openai_client
-from apps.rtagent.backend.src.shared_ws import (
+from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     push_final,
     send_response_to_acs,
     send_tts_audio,
 )
-from apps.rtagent.backend.settings import AZURE_OPENAI_ENDPOINT
+from apps.rtagent.backend.config import AZURE_OPENAI_ENDPOINT
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
 from apps.rtagent.backend.src.utils.tracing import (

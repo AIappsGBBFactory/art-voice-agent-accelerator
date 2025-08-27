@@ -217,6 +217,7 @@ class CallEventProcessor:
             redis_mgr=getattr(request_state, "redis", None),
             acs_caller=getattr(request_state, "acs_caller", None),
             clients=getattr(request_state, "clients", []),
+            app_state=request_state,  # Pass full app state for ConnectionManager access
         )
 
     async def _execute_handlers(

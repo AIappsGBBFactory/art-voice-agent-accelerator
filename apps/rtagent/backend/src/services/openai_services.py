@@ -14,7 +14,7 @@ from azure.identity import (
     get_bearer_token_provider,
 )
 from openai import AzureOpenAI
-from apps.rtagent.backend.settings import (
+from config import (
     AZURE_CLIENT_ID,
     AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_KEY,

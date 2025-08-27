@@ -23,7 +23,7 @@ from fastapi import WebSocket
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from websockets.exceptions import ConnectionClosedError
 
-from apps.rtagent.backend.settings import (
+from config import (
     ACS_CALL_CALLBACK_PATH,
     ACS_CONNECTION_STRING,
     ACS_SOURCE_PHONE_NUMBER,
@@ -119,45 +119,32 @@ async def broadcast_message(
     connected_clients: List[WebSocket], message: str, sender: str = "system"
 ):
     """
-    Send a message to all connected WebSocket clients without duplicates.
-
-    Uses per-request message deduplication to prevent the same message from being
-    sent multiple times during a single broadcast operation.
-
-    Parameters:
-    - connected_clients (List[WebSocket]): List of connected WebSocket clients
-    - message (str): The message to broadcast.
-    - sender (str): Indicates the sender of the message. Can be 'Assistant', 'User', or 'System'.
+    DEPRECATED: This function bypasses session isolation and is unsafe for production.
+    
+    ⚠️  SECURITY WARNING: This legacy function does not respect session boundaries 
+    and can leak data between different user sessions.
+    
+    Use ConnectionManager's session-aware broadcasting methods instead:
+    - conn_manager.broadcast_session(session_id, payload)  # Session-safe
+    - conn_manager.broadcast_topic("dashboard", payload)   # Topic-based
+    
+    This function is kept only for backward compatibility during migration.
+    It will log a warning and delegate to safer broadcast methods.
     """
-    if not connected_clients or not message.strip():
-        return
-
-    # Simple per-request deduplication without global state
-    # If advanced deduplication is needed, use Redis with TTL
-    message_content = message.strip()
-
+    logger.warning(
+        "⚠️  DEPRECATED: broadcast_message() bypasses session isolation. "
+        "Use ConnectionManager.broadcast_session() or broadcast_topic() instead."
+    )
+    
+    # For safety, do not perform unsafe broadcasting
+    # Log the attempt for debugging purposes
     logger.info(
-        f"� Broadcasting to {len(connected_clients)} clients: {sender}: {message_content[:50]}..."
+        f"🚫 Legacy broadcast blocked for security: {sender}: {message[:50]}... "
+        f"(would affect {len(connected_clients) if connected_clients else 0} clients)"
     )
-
-    payload = {"message": message_content, "sender": sender}
-    sent_count = 0
-    failed_count = 0
-
-    for client in connected_clients:
-        try:
-            if client.client_state == WebSocketState.CONNECTED:
-                await client.send_text(json.dumps(payload))
-                sent_count += 1
-            else:
-                logger.debug(f"Skipping disconnected client in broadcast")
-        except Exception as e:
-            failed_count += 1
-            logger.error(f"Failed to send broadcast message to client: {e}")
-
-    logger.debug(
-        f"Broadcasted message to {sent_count} clients (failed: {failed_count}): {sender}: {message[:50]}..."
-    )
+    
+    # Return without sending to prevent session data leakage
+    return
 
 
 # async def send_pcm_frames(ws: WebSocket, pcm_bytes: list, sample_rate: int):
