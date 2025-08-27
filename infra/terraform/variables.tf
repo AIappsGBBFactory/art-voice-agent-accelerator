@@ -201,20 +201,20 @@ variable "container_app_max_replicas" {
 variable "container_cpu_cores" {
   description = "CPU cores allocated to each container instance"
   type        = number
-  default     = 4
+  default     = 2
   validation {
-    condition     = contains([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4], var.container_cpu_cores)
-    error_message = "Container CPU cores must be one of: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4."
+    condition     = contains([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2], var.container_cpu_cores)
+    error_message = "Container CPU cores must be one of: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2"
   }
 }
 
 variable "container_memory_gb" {
   description = "Memory in GB allocated to each container instance"
   type        = string
-  default     = "8.0Gi"
+  default     = "4.0Gi"
   validation {
-    condition     = contains(["0.5Gi", "1.0Gi", "1.5Gi", "2.0Gi", "2.5Gi", "3.0Gi", "3.5Gi", "4.0Gi", "4.5Gi", "5.0Gi", "5.5Gi", "6.0Gi", "6.5Gi", "7.0Gi", "7.5Gi", "8.0Gi"], var.container_memory_gb)
-    error_message = "Container memory must be between 0.5Gi and 8.0Gi in 0.5Gi increments."
+    condition     = contains(["0.5Gi", "1.0Gi", "1.5Gi", "2.0Gi", "2.5Gi", "3.0Gi", "3.5Gi", "4.0Gi"], var.container_memory_gb)
+    error_message = "Container memory must be between 0.5Gi and 4.0Gi in 0.5Gi increments."
   }
 }
 
@@ -246,4 +246,5 @@ variable "stt_pool_size" {
     condition     = var.stt_pool_size >= 10 && var.stt_pool_size <= 500
     error_message = "STT pool size must be between 10 and 500."
   }
+
 }
