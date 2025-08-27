@@ -173,10 +173,14 @@ async def get_realtime_status(
 
 
 @router.websocket("/dashboard/relay")
-async def dashboard_relay_endpoint(websocket: WebSocket):
+async def dashboard_relay_endpoint(
+    websocket: WebSocket, 
+    session_id: Optional[str] = Query(None)
+):
     """Production-ready dashboard relay WebSocket endpoint.
 
     :param websocket: WebSocket connection from dashboard client
+    :param session_id: Optional session ID for filtering dashboard messages
     :return: None
     :raises WebSocketDisconnect: When client disconnects from WebSocket
     :raises Exception: For any other errors during connection processing
@@ -186,6 +190,10 @@ async def dashboard_relay_endpoint(websocket: WebSocket):
     try:
         # Generate client ID for logging
         client_id = str(uuid.uuid4())[:8]
+        
+        # Log session correlation for debugging
+        logger.info(f"🔗 [BACKEND] Dashboard relay WebSocket connection from frontend with session_id: {session_id}")
+        logger.info(f"🔗 [BACKEND] Client ID: {client_id} | Session ID: {session_id}")
 
         with tracer.start_as_current_span(
             "api.v1.realtime.dashboard_relay_connect",
@@ -202,6 +210,7 @@ async def dashboard_relay_endpoint(websocket: WebSocket):
                 websocket,
                 client_type="dashboard",
                 topics={"dashboard"},
+                session_id=session_id,  # 🎯 CRITICAL: Include session ID for proper routing
                 accept_already_done=False,  # Let manager handle accept cleanly
             )
 
@@ -268,7 +277,8 @@ async def browser_conversation_endpoint(
                 # For realtime calls, use full UUID4 to prevent collisions
                 session_id = str(uuid.uuid4())
         
-        logger.info(f"Browser conversation starting with session_id: {session_id}")
+        logger.info(f"🔗 [BACKEND] Conversation WebSocket connection from frontend with session_id: {session_id}")
+        logger.info(f"🔗 [BACKEND] Browser conversation starting with session_id: {session_id}")
 
         with tracer.start_as_current_span(
             "api.v1.realtime.conversation_connect",
@@ -366,6 +376,9 @@ async def _initialize_conversation_session(
     # Create latency tool for this session
     latency_tool = LatencyTool(memory_manager)
 
+    # Track background orchestration tasks for proper cleanup
+    orchestration_tasks = set()
+    
     # Set up WebSocket state for orchestrator compatibility
     websocket.state.cm = memory_manager
     websocket.state.session_id = session_id
@@ -373,6 +386,7 @@ async def _initialize_conversation_session(
     websocket.state.lt = latency_tool  # ← KEY FIX: Orchestrator expects this
     websocket.state.is_synthesizing = False
     websocket.state.user_buffer = ""
+    websocket.state.orchestration_tasks = orchestration_tasks  # Track background tasks
 
     # Set up WebSocket state through connection manager metadata (for compatibility)
     conn_manager = websocket.app.state.conn_manager
@@ -468,6 +482,20 @@ async def _initialize_conversation_session(
     stt_client.set_partial_result_callback(on_partial)
     stt_client.set_final_result_callback(on_final)
     stt_client.start()
+
+    # 🚀 PHASE 1 OPTIMIZATION: Allocate dedicated TTS client for this session
+    if hasattr(websocket.app.state, 'dedicated_tts_manager'):
+        try:
+            tts_client, client_tier = await websocket.app.state.dedicated_tts_manager.get_dedicated_client(session_id)
+            set_metadata("tts_client", tts_client)
+            set_metadata("tts_client_tier", client_tier)
+            
+            # Store session_id on WebSocket state for shared_ws access
+            websocket.state.session_id = session_id
+            
+            logger.info(f"Allocated dedicated TTS client for session {session_id} (tier={client_tier.value})")
+        except Exception as e:
+            logger.warning(f"Failed to allocate dedicated TTS client for session {session_id}: {e}")
 
     logger.info(f"STT recognizer started for session {session_id}")
     return memory_manager
@@ -594,10 +622,25 @@ async def _process_conversation_messages(
                             )
                             break
 
-                        # Route through orchestrator
-                        await route_turn(
-                            memory_manager, prompt, websocket, is_acs=False
-                        )
+                        # Process orchestration in background for non-blocking response
+                        # This prevents blocking the WebSocket receive loop, allowing true parallelism
+                        async def run_orchestration():
+                            try:
+                                await route_turn(memory_manager, prompt, websocket, is_acs=False)
+                            except Exception as e:
+                                logger.error(f"[PERF] Orchestration task failed for session {session_id}: {e}")
+                            finally:
+                                # Clean up completed task from tracking set
+                                orchestration_tasks = getattr(websocket.state, 'orchestration_tasks', set())
+                                orchestration_tasks.discard(asyncio.current_task())
+                        
+                        orchestration_task = asyncio.create_task(run_orchestration())
+                        
+                        # Track the task for proper cleanup
+                        orchestration_tasks = getattr(websocket.state, 'orchestration_tasks', set())
+                        orchestration_tasks.add(orchestration_task)
+                        
+                        logger.debug(f"[PERF] Started parallel orchestration task for session {session_id} (active tasks: {len(orchestration_tasks)})")
 
                 # Handle disconnect
                 elif msg.get("type") == "websocket.disconnect":
@@ -789,6 +832,22 @@ async def _cleanup_conversation_session(
         attributes={"session_id": session_id, "conn_id": conn_id}
     ) as span:
         try:
+            # Cancel background orchestration tasks to prevent resource leaks
+            orchestration_tasks = getattr(websocket.state, 'orchestration_tasks', set())
+            if orchestration_tasks:
+                logger.info(f"[PERF] Cancelling {len(orchestration_tasks)} background orchestration tasks for session {session_id}")
+                for task in orchestration_tasks.copy():
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await asyncio.wait_for(task, timeout=1.0)
+                        except (asyncio.CancelledError, asyncio.TimeoutError):
+                            pass  # Expected for cancelled tasks
+                        except Exception as e:
+                            logger.warning(f"[PERF] Error during task cancellation: {e}")
+                orchestration_tasks.clear()
+                logger.debug(f"[PERF] Background task cleanup complete for session {session_id}")
+            
             # Clean up session resources directly through connection manager
             conn_manager = websocket.app.state.conn_manager
             connection = conn_manager._conns.get(conn_id)
@@ -803,6 +862,24 @@ async def _cleanup_conversation_session(
                         logger.info("Released TTS client during cleanup")
                     except Exception as e:
                         logger.error(f"Error releasing TTS client: {e}")
+                
+                # 🚀 PHASE 1 OPTIMIZATION: Release dedicated TTS client
+                if hasattr(websocket.app.state, 'dedicated_tts_manager') and session_id:
+                    try:
+                        released = await websocket.app.state.dedicated_tts_manager.release_session_client(session_id)
+                        if released:
+                            logger.info(f"Released dedicated TTS client for session {session_id}")
+                    except Exception as e:
+                        logger.error(f"Error releasing dedicated TTS client for session {session_id}: {e}")
+                
+                # 🚀 AOAI CLIENT POOL: Release session-specific AOAI client
+                if session_id:
+                    try:
+                        from src.pools.aoai_pool import release_session_client
+                        await release_session_client(session_id)
+                        logger.info(f"Released dedicated AOAI client for session {session_id}")
+                    except Exception as e:
+                        logger.error(f"Error releasing AOAI client for session {session_id}: {e}")
                 
                 # Clean up STT client
                 stt_client = connection.meta.handler.get('stt_client')
@@ -821,6 +898,15 @@ async def _cleanup_conversation_session(
                         if not task.done():
                             task.cancel()
                             logger.debug("Cancelled TTS task during cleanup")
+                
+                # Clean up latency timers on session disconnect
+                latency_tool = connection.meta.handler.get('latency_tool')
+                if latency_tool and hasattr(latency_tool, 'cleanup_timers'):
+                    try:
+                        latency_tool.cleanup_timers()
+                        logger.debug("Cleaned up latency timers during realtime cleanup")
+                    except Exception as e:
+                        logger.error(f"Error cleaning up latency timers: {e}")
             
             logger.info(f"Session cleanup complete for {conn_id}")
             

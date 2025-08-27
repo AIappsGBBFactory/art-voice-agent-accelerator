@@ -465,6 +465,51 @@ class MemoManager:
             logger.error(f"Error persisting session {self.session_id} to Redis: {e}")
             # Don't re-raise non-cancellation errors to avoid crashing the caller
 
+    async def persist_background(self, redis_mgr: Optional[AzureRedisManager] = None, ttl_seconds: Optional[int] = None) -> None:
+        """
+        🚀 OPTIMIZATION: Persist session state in background without blocking the current operation.
+        
+        This method creates a background task for session persistence, allowing the
+        calling code to continue without waiting for Redis I/O completion. Ideal for
+        hot path operations where latency is critical.
+        
+        Args:
+            redis_mgr (Optional[AzureRedisManager]): Redis manager to use.
+                If None, uses the stored manager from initialization.
+            ttl_seconds (Optional[int]): Time-to-live in seconds for session data.
+        
+        Example:
+            ```python
+            # In hot path - non-blocking
+            await manager.persist_background()  # Returns immediately
+            
+            # Traditional blocking approach (avoid in hot path)
+            await manager.persist()  # Waits for Redis I/O
+            ```
+        
+        Note:
+            Background tasks are fire-and-forget. If persistence fails, it will be
+            logged but won't affect the calling operation. Use regular persist()
+            when you need to handle persistence errors.
+        """
+        mgr = redis_mgr or self._redis_manager
+        if not mgr:
+            logger.warning(f"[PERF] No Redis manager available for background persistence of session {self.session_id}")
+            return
+        
+        # Create background task for non-blocking persistence
+        asyncio.create_task(
+            self._background_persist_task(mgr, ttl_seconds),
+            name=f"persist_session_{self.session_id}"
+        )
+    
+    async def _background_persist_task(self, redis_mgr: AzureRedisManager, ttl_seconds: Optional[int] = None) -> None:
+        """Internal background task for session persistence."""
+        try:
+            await self.persist_to_redis_async(redis_mgr, ttl_seconds)
+        except Exception as e:
+            logger.error(f"[PERF] Background persistence failed for session {self.session_id}: {e}")
+
     # --- TTS Interrupt ------------------------------------------------
     def is_tts_interrupted(self) -> bool:
         """

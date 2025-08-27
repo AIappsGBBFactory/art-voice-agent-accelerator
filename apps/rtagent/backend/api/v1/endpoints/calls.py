@@ -144,6 +144,10 @@ async def initiate_call(
                 # Extract browser session ID from request context for UI coordination
                 browser_session_id = request.context.get("browser_session_id") if request.context else None
                 
+                # Log session correlation for debugging
+                logger.info(f"📞 [BACKEND] Phone call initiation received with browser_session_id: {browser_session_id}")
+                logger.info(f"📞 [BACKEND] Target number: {request.target_number} | Session ID: {browser_session_id}")
+                
                 result = await acs_handler.start_outbound_call(
                     acs_caller=http_request.app.state.acs_caller,
                     target_number=request.target_number,
@@ -371,100 +375,6 @@ async def list_calls(
             )
 
 
-@router.get(
-    "/sessions",
-    summary="List Active Call Sessions",
-    description="""
-    Retrieve a list of active call sessions with their session IDs.
-    
-    This endpoint helps UIs discover and monitor active call sessions:
-    - Lists both inbound and outbound call sessions
-    - Provides session IDs for dashboard connection
-    - Shows call direction and basic metadata
-    
-    Perfect for implementing "monitor active calls" dashboards.
-    """,
-    tags=["Call Management"],
-    responses={
-        200: {
-            "description": "Active sessions retrieved successfully",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "sessions": [
-                            {
-                                "session_id": "inbound_abc12345-def6-7890-ghij-klmnopqrstuv",
-                                "call_connection_id": "call_xyz789",
-                                "direction": "inbound",
-                                "status": "active",
-                                "created_at": "2023-01-01T12:00:00Z"
-                            },
-                            {
-                                "session_id": "session_browser123",
-                                "call_connection_id": "call_def456",
-                                "direction": "outbound",
-                                "status": "active",
-                                "created_at": "2023-01-01T12:05:00Z"
-                            }
-                        ],
-                        "total": 2
-                    }
-                }
-            },
-        }
-    },
-)
-async def list_active_sessions(request: Request):
-    """
-    List active call sessions for monitoring purposes.
-
-    :param request: FastAPI request object for accessing app state
-    :type request: Request
-    :return: List of active call sessions with metadata
-    :rtype: dict
-    """
-    try:
-        redis_mgr = request.app.state.redis
-        
-        # Get all call session mappings from Redis
-        session_keys = await redis_mgr.keys("call_session_map:*")
-        
-        sessions = []
-        for key in session_keys:
-            try:
-                call_connection_id = key.split(":")[-1]  # Extract call_connection_id from key
-                session_id = await redis_mgr.get(key)
-                
-                if session_id:
-                    # Determine direction based on session ID format
-                    direction = "inbound" if session_id.startswith("inbound_") else "outbound"
-                    
-                    sessions.append({
-                        "session_id": session_id,
-                        "call_connection_id": call_connection_id,
-                        "direction": direction,
-                        "status": "active",  # All sessions in Redis are considered active
-                        "created_at": None,  # Could be enhanced to store creation time
-                    })
-            except Exception as e:
-                logger.warning(f"Failed to process session key {key}: {e}")
-                continue
-                
-        logger.info(f"Found {len(sessions)} active call sessions")
-        
-        return {
-            "sessions": sessions,
-            "total": len(sessions)
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to list active sessions: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list active sessions: {str(e)}",
-        )
-
-
 @router.post(
     "/answer",
     summary="Answer Inbound Call",
@@ -552,7 +462,6 @@ async def answer_inbound_call(
                 result = await acs_handler.accept_inbound_call(
                     request_body=request_body,
                     acs_caller=http_request.app.state.acs_caller,
-                    redis_mgr=http_request.app.state.redis,  # 🎯 Pass redis for session mapping
                 )
 
             op.log_info("Inbound call processed successfully")

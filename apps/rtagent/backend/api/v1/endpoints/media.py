@@ -183,7 +183,7 @@ async def acs_media_stream(
         # If no browser session ID provided via params/headers, check Redis mapping
         if not browser_session_id and call_connection_id:
             try:
-                stored_session_id = await websocket.app.state.redis.get(f"call_session_map:{call_connection_id}")
+                stored_session_id = await websocket.app.state.redis.get_value_async(f"call_session_map:{call_connection_id}")
                 if stored_session_id:
                     browser_session_id = stored_session_id
                     logger.info(f"🔍 Retrieved stored browser session ID: {browser_session_id}")
@@ -376,9 +376,19 @@ async def _create_media_handler(
             # Set up WebSocket state for orchestrator compatibility
             websocket.state.tts_client = per_conn_synthesizer
             
+            # 🚀 PHASE 1 OPTIMIZATION: Try to allocate dedicated TTS client for ACS media
+            if hasattr(websocket.app.state, 'dedicated_tts_manager'):
+                try:
+                    dedicated_tts, client_tier = await websocket.app.state.dedicated_tts_manager.get_dedicated_client(call_connection_id)
+                    websocket.state.tts_client = dedicated_tts  # Override with dedicated client
+                    websocket.state.session_id = call_connection_id  # Store for cleanup
+                    logger.info(f"Allocated dedicated TTS client for ACS call {call_connection_id} (tier={client_tier.value})")
+                except Exception as e:
+                    logger.warning(f"Failed to allocate dedicated TTS client for ACS call {call_connection_id}: {e}")
+            
             if conn_meta:
                 conn_meta.handler["stt_client"] = per_conn_recognizer
-                conn_meta.handler["tts_client"] = per_conn_synthesizer
+                conn_meta.handler["tts_client"] = websocket.state.tts_client  # Use the final client (dedicated or fallback)
             
             logger.info(
                 f"Successfully acquired STT & TTS from pools for ACS call {call_connection_id}"
@@ -662,6 +672,25 @@ async def _cleanup_websocket_resources(
             ):
                 await websocket.close()
                 logger.info("WebSocket connection closed")
+
+            # Clean up latency timers on session disconnect
+            if connection and hasattr(connection.meta, 'handler') and connection.meta.handler:
+                latency_tool = connection.meta.handler.get('latency_tool')
+                if latency_tool and hasattr(latency_tool, 'cleanup_timers'):
+                    try:
+                        latency_tool.cleanup_timers()
+                        logger.debug("Cleaned up latency timers during media cleanup")
+                    except Exception as e:
+                        logger.error(f"Error cleaning up latency timers: {e}")
+            
+            # 🚀 PHASE 1 OPTIMIZATION: Release dedicated TTS client for ACS media
+            if hasattr(websocket.app.state, 'dedicated_tts_manager') and call_connection_id:
+                try:
+                    released = await websocket.app.state.dedicated_tts_manager.release_session_client(call_connection_id)
+                    if released:
+                        logger.info(f"Released dedicated TTS client for ACS call {call_connection_id}")
+                except Exception as e:
+                    logger.error(f"Error releasing dedicated TTS client for ACS call {call_connection_id}: {e}")
 
             # Track WebSocket disconnection for session metrics
             if hasattr(websocket.app.state, "session_metrics"):

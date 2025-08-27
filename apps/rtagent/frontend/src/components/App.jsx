@@ -18,29 +18,32 @@ const WS_URL = API_BASE_URL.replace(/^https?/, "wss");
 /* ------------------------------------------------------------------ *
  *  SESSION MANAGEMENT
  * ------------------------------------------------------------------ */
-// Generate or retrieve a persistent session ID for this browser
+// Generate or retrieve a tab-specific session ID (sessionStorage for per-tab isolation)
 const getOrCreateSessionId = () => {
   const sessionKey = 'voice_agent_session_id';
-  let sessionId = localStorage.getItem(sessionKey);
+  let sessionId = sessionStorage.getItem(sessionKey);
   
   if (!sessionId) {
-    // Generate a new UUID4-style session ID
-    sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem(sessionKey, sessionId);
-    console.log('🆔 Created new session ID:', sessionId);
+    // Generate a new tab-specific session ID with better uniqueness
+    const tabId = Math.random().toString(36).substr(2, 6);
+    sessionId = `session_${Date.now()}_${tabId}`;
+    sessionStorage.setItem(sessionKey, sessionId);
+    console.log('🆔 [FRONTEND] Created NEW tab-specific session ID:', sessionId);
+    console.log('🔗 [FRONTEND] This session ID will be sent to backend WebSocket endpoints');
   } else {
-    console.log('🆔 Retrieved existing session ID:', sessionId);
+    console.log('🆔 [FRONTEND] Retrieved existing tab session ID:', sessionId);
   }
   
   return sessionId;
 };
 
-// Force create a new session ID (for session reset)
+// Force create a new tab-specific session ID (for session reset)
 const createNewSessionId = () => {
   const sessionKey = 'voice_agent_session_id';
-  const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-  localStorage.setItem(sessionKey, sessionId);
-  console.log('🆔 Created NEW session ID for reset:', sessionId);
+  const tabId = Math.random().toString(36).substr(2, 6);
+  const sessionId = `session_${Date.now()}_${tabId}`;
+  sessionStorage.setItem(sessionKey, sessionId);
+  console.log('🔄 Created NEW session ID for reset:', sessionId);
   return sessionId;
 };
 
@@ -2121,6 +2124,7 @@ function RealTimeVoiceApp() {
 
       // Get or create persistent session ID
       const sessionId = getOrCreateSessionId();
+      console.log('🔗 [FRONTEND] Starting conversation WebSocket with session_id:', sessionId);
 
       // 1) open WS with session ID
       const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}`);
@@ -2510,13 +2514,18 @@ function RealTimeVoiceApp() {
       return;
     }
     try {
+      // Get the current session ID for this browser session
+      const currentSessionId = getOrCreateSessionId();
+      console.log('📞 [FRONTEND] Initiating phone call with session_id:', currentSessionId);
+      console.log('📞 [FRONTEND] This session_id will be sent to backend for call mapping');
+      
       const res = await fetch(`${API_BASE_URL}/api/v1/calls/initiate`, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ 
           target_number: targetPhoneNumber,
           context: {
-            browser_session_id: sessionId  // 🎯 CRITICAL: Pass browser session ID for ACS coordination
+            browser_session_id: currentSessionId  // 🎯 CRITICAL: Pass browser session ID for ACS coordination
           }
         }),
       });
@@ -2532,7 +2541,8 @@ function RealTimeVoiceApp() {
       ]);
       appendLog("📞 Call initiated");
 
-      // relay WS
+      // relay WS WITHOUT session_id to monitor ALL sessions (including phone calls)
+      console.log('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor all sessions');
       const relay = new WebSocket(`${WS_URL}/api/v1/realtime/dashboard/relay`);
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({data}) => {
@@ -2625,8 +2635,8 @@ function RealTimeVoiceApp() {
               alignItems: 'center',
               gap: '4px'
             }}>
-              <span>🆔</span>
-              <span>Session: {getOrCreateSessionId().split('_')[1]}</span>
+              <span>💬</span>
+              <span>Session: {getOrCreateSessionId()}</span>
             </div>
           </div>
           {/* Top Right Help Button */}

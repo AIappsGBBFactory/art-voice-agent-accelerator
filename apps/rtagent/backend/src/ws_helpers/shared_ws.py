@@ -23,6 +23,7 @@ from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
 
 from config import ACS_STREAMING_MODE, GREETING_VOICE_TTS, TTS_SAMPLE_RATE_ACS, TTS_SAMPLE_RATE_UI
+from src.pools.dedicated_tts_pool import ClientTier  # Phase 1 optimization
 from src.tools.latency_tool import LatencyTool
 from apps.rtagent.backend.src.services.acs.acs_helpers import play_response_with_queue
 from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
@@ -59,12 +60,17 @@ def _set_connection_metadata(ws: WebSocket, key: str, value):
 
 
 def _lt_stop(latency_tool: Optional[LatencyTool], stage: str, ws: WebSocket, meta=None):
-    """Stop latency tracking with error handling."""
+    """Stop latency tracking with error handling and duplicate protection."""
     if latency_tool:
         try:
-            latency_tool.stop(stage, ws.app.state.redis, meta=meta)
+            # 🔧 OPTIMIZATION: Check if timer is actually running before stopping
+            if hasattr(latency_tool, '_active_timers') and stage in latency_tool._active_timers:
+                latency_tool.stop(stage, ws.app.state.redis, meta=meta)
+            else:
+                # Timer not running - this is the source of the warning messages
+                logger.debug(f"[PERF] Timer '{stage}' not running, skipping stop (run={meta.get('run_id', 'unknown') if meta else 'unknown'})")
         except Exception as e:
-            logger.error(f"Latency stop error: {e}")
+            logger.error(f"Latency stop error for stage '{stage}': {e}")
 
 
 async def send_tts_audio(
@@ -75,25 +81,51 @@ async def send_tts_audio(
     voice_style: Optional[str] = None,
     rate: Optional[str] = None,
 ) -> None:
-    """Send TTS audio to browser WebSocket client."""
+    """Send TTS audio to browser WebSocket client with optimized pool management."""
     run_id = str(uuid.uuid4())[:8]
     
-    # Start latency tracking
+    # Start latency tracking with duplicate protection
     if latency_tool:
         try:
-            latency_tool.start("tts")
-            latency_tool.start("tts:synthesis")
+            # 🔧 OPTIMIZATION: Safe timer starts with duplicate detection
+            if not hasattr(latency_tool, '_active_timers'):
+                latency_tool._active_timers = set()
+            
+            if "tts" not in latency_tool._active_timers:
+                latency_tool.start("tts")
+                latency_tool._active_timers.add("tts")
+                
+            if "tts:synthesis" not in latency_tool._active_timers:
+                latency_tool.start("tts:synthesis")
+                latency_tool._active_timers.add("tts:synthesis")
         except Exception as e:
-            logger.error(f"Latency start error: {e}")
+            logger.error(f"Latency start error (run={run_id}): {e}")
 
-    # Get TTS synthesizer from connection metadata or fallback to pool
-    synth = _get_connection_metadata(ws, "tts_client")
-    temp_synth = False
+    # 🚀 PHASE 1 OPTIMIZATION: Use dedicated TTS client per session
+    synth = None
+    client_tier = None
+    session_id = getattr(ws.state, 'session_id', None)
     
+    if session_id and hasattr(ws.app.state, 'dedicated_tts_manager'):
+        try:
+            synth, client_tier = await ws.app.state.dedicated_tts_manager.get_dedicated_client(session_id)
+            logger.debug(f"[PERF] Using dedicated TTS client for session {session_id} (tier={client_tier.value}, run={run_id})")
+        except Exception as e:
+            logger.error(f"[PERF] Failed to get dedicated TTS client (run={run_id}): {e}")
+    
+    # Fallback to legacy pool if dedicated system unavailable
     if not synth:
-        synth = await ws.app.state.tts_pool.acquire()
-        temp_synth = True
-        logger.warning("Temporarily acquired TTS synthesizer from pool")
+        synth = _get_connection_metadata(ws, "tts_client")
+        temp_synth = False
+        
+        if not synth:
+            logger.warning(f"[PERF] Falling back to legacy TTS pool (run={run_id})")
+            try:
+                synth = await ws.app.state.tts_pool.acquire(timeout=2.0)
+                temp_synth = True
+            except Exception as e:
+                logger.error(f"[PERF] TTS pool exhausted! No synthesizer available (run={run_id}): {e}")
+                return  # Graceful degradation - don't crash the session
 
     try:
         # Set synthesis flag
@@ -104,7 +136,7 @@ async def send_tts_audio(
         style = voice_style or "conversational"
         eff_rate = rate or "medium"
 
-        logger.debug(f"TTS synthesis: voice={voice_to_use}, style={style}, rate={eff_rate}")
+        logger.debug(f"TTS synthesis: voice={voice_to_use}, style={style}, rate={eff_rate} (run={run_id})")
 
         # Synthesize audio
         pcm_bytes = synth.synthesize_to_pcm(
@@ -120,18 +152,21 @@ async def send_tts_audio(
 
         # Split into frames
         frames = SpeechSynthesizer.split_pcm_to_base64_frames(pcm_bytes, sample_rate=TTS_SAMPLE_RATE_UI)
-        logger.debug(f"TTS frames prepared: {len(frames)}")
+        logger.debug(f"TTS frames prepared: {len(frames)} (run={run_id})")
 
-        # Send frames to client
+        # Send frames to client with optimized latency tracking
         if latency_tool:
             try:
-                latency_tool.start("tts:send_frames")
+                # 🔧 OPTIMIZATION: Safe start for send_frames stage
+                if "tts:send_frames" not in latency_tool._active_timers:
+                    latency_tool.start("tts:send_frames")
+                    latency_tool._active_timers.add("tts:send_frames")
             except Exception:
                 pass
 
         for i, frame in enumerate(frames):
             if ws.client_state != WebSocketState.CONNECTED:
-                logger.warning("WebSocket disconnected during audio transmission")
+                logger.warning(f"WebSocket disconnected during audio transmission (run={run_id})")
                 break
             try:
                 await ws.send_json({
@@ -143,16 +178,22 @@ async def send_tts_audio(
                     "is_final": i == len(frames) - 1,
                 })
             except Exception as e:
-                logger.error(f"Failed to send audio frame {i}: {e}")
+                logger.error(f"Failed to send audio frame {i} (run={run_id}): {e}")
                 break
 
+        # 🔧 OPTIMIZATION: Safe stop with timer cleanup
+        if latency_tool and "tts:send_frames" in latency_tool._active_timers:
+            latency_tool._active_timers.remove("tts:send_frames")
         _lt_stop(latency_tool, "tts:send_frames", ws,
                  meta={"run_id": run_id, "mode": "browser", "frames": len(frames)})
 
-        logger.debug(f"TTS complete: {len(frames)} frames sent")
+        logger.debug(f"TTS complete: {len(frames)} frames sent (run={run_id})")
 
     except Exception as e:
-        logger.error(f"TTS synthesis failed: {e}")
+        logger.error(f"TTS synthesis failed (run={run_id}): {e}")
+        # Clean up timer state on error
+        if latency_tool and "tts:synthesis" in latency_tool._active_timers:
+            latency_tool._active_timers.remove("tts:synthesis")
         _lt_stop(latency_tool, "tts:synthesis", ws, 
                  meta={"run_id": run_id, "mode": "browser", "error": str(e)})
         try:
@@ -164,18 +205,26 @@ async def send_tts_audio(
         except Exception:
             pass
     finally:
+        # Clean up timer state
+        if latency_tool:
+            if "tts" in latency_tool._active_timers:
+                latency_tool._active_timers.remove("tts")
         _lt_stop(latency_tool, "tts", ws, 
                  meta={"run_id": run_id, "mode": "browser", "voice": voice_to_use})
         
         # Clear synthesis flag
         _set_connection_metadata(ws, "is_synthesizing", False)
         
-        # Release temporary synthesizer
-        if temp_synth and synth:
+        # 🚀 PHASE 1 OPTIMIZATION: Enhanced pool management with dedicated clients
+        if hasattr(ws.app.state, 'dedicated_tts_manager') and session_id:
+            # Dedicated clients are managed by the pool manager, no manual release needed
+            logger.debug(f"[PERF] Dedicated TTS client usage complete (session={session_id}, run={run_id})")
+        elif temp_synth and synth:
             try:
                 await ws.app.state.tts_pool.release(synth)
+                logger.debug(f"[PERF] Released temporary TTS client back to pool (run={run_id})")
             except Exception as e:
-                logger.error(f"Error releasing temporary TTS synthesizer: {e}")
+                logger.error(f"Error releasing temporary TTS synthesizer (run={run_id}): {e}")
 
 
 async def send_response_to_acs(

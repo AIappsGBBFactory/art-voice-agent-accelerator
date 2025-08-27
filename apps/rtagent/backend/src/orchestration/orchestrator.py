@@ -807,8 +807,11 @@ async def route_turn(
             span.set_attribute("orchestrator.error", "exception")
             raise
         finally:
-            # Ensure core-memory is persisted even if a downstream component failed.
-            await cm.persist_to_redis_async(redis_mgr)
+            # 🚀 OPTIMIZATION: Use background persistence to avoid blocking the conversation turn
+            # This is a critical hot path optimization - prevents Redis I/O from blocking user interaction
+            logger.debug(f"[PERF] Starting background session persistence for {cm.session_id}")
+            await cm.persist_background(redis_mgr)
+            logger.debug(f"[PERF] Background persistence initiated for {cm.session_id} (non-blocking)")
 
 
 # ---------------------------------------------------------------------------

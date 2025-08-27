@@ -213,6 +213,35 @@ async def lifespan(app: FastAPI):
             app.state.stt_pool.prepare(),
         )
 
+        # 🚀 PHASE 1 OPTIMIZATION: Initialize dedicated TTS pool manager
+        span.set_attribute("startup.stage", "dedicated_tts_pool")
+        from src.pools.dedicated_tts_pool import DedicatedTtsPoolManager
+        
+        app.state.dedicated_tts_manager = DedicatedTtsPoolManager(
+            warm_pool_size=app_config.speech_pools.tts_pool_size,  # Reuse config
+            max_dedicated_clients=app_config.connections.max_connections,  # Scale with connections
+            prewarming_batch_size=5,
+            enable_prewarming=True
+        )
+        await app.state.dedicated_tts_manager.initialize()
+        logger.info("✅ Enhanced Dedicated TTS Pool Manager initialized for Phase 1 optimization")
+
+        # Initialize AOAI client pool during startup to avoid first-request delays
+        span.set_attribute("startup.stage", "aoai_pool")
+        from src.pools.aoai_pool import get_aoai_pool
+        
+        if os.getenv("AOAI_POOL_ENABLED", "true").lower() == "true":
+            logger.info("Initializing AOAI client pool during startup...")
+            start_time = time.time()
+            aoai_pool = await get_aoai_pool()
+            if aoai_pool:
+                init_time = time.time() - start_time
+                logger.info(f"AOAI client pool pre-initialized in {init_time:.2f}s with {len(aoai_pool.clients)} clients")
+            else:
+                logger.warning("AOAI pool initialization returned None")
+        else:
+            logger.info("AOAI pool disabled, skipping startup initialization")
+
         # ------------------------ Other singletons ---------------------------
         span.set_attribute("startup.stage", "cosmos_db")
         app.state.cosmos = CosmosDBMongoCoreManager(
@@ -264,6 +293,11 @@ async def lifespan(app: FastAPI):
         if hasattr(app.state, "conn_manager"):
             await app.state.conn_manager.stop()
             logger.info("✅ Connection manager stopped")
+        
+        # 🚀 PHASE 1 OPTIMIZATION: Shutdown dedicated TTS pool manager
+        if hasattr(app.state, "dedicated_tts_manager"):
+            await app.state.dedicated_tts_manager.shutdown()
+            logger.info("✅ 🚀 Enhanced Dedicated TTS Pool Manager shutdown complete")
         
         span.set_attribute("shutdown.success", True)
 

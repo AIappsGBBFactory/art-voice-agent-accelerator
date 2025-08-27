@@ -503,19 +503,6 @@ class CallEventHandlers:
             # Basic cleanup - delegate DTMF cleanup to lifecycle handler
             logger.info(f"🧹 Cleaning up call state: {context.call_connection_id}")
             
-            # 🎯 CRITICAL: Clean up session mapping when call disconnects
-            if context.redis_mgr and context.call_connection_id:
-                try:
-                    session_key = f"call_session_map:{context.call_connection_id}"
-                    session_id = await context.redis_mgr.get(session_key)
-                    if session_id:
-                        await context.redis_mgr.delete(session_key)
-                        logger.info(f"🗑️ Cleaned up session mapping: {context.call_connection_id} -> {session_id}")
-                    else:
-                        logger.debug(f"🗑️ No session mapping found for call {context.call_connection_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to clean up session mapping for {context.call_connection_id}: {e}")
-            
             # Clear memo context if available
             if context.memo_manager:
                 context.memo_manager.update_context("call_active", False)
