@@ -26,7 +26,7 @@ from conversation_simulator import (
 
 @dataclass
 class LoadTestConfig:
-    """Configuration for load testing."""
+    """Configuration for load testing with enhanced conversation control."""
     max_concurrent_conversations: int = 10
     total_conversations: int = 50
     ramp_up_time_s: float = 30.0  # Time to reach max concurrency
@@ -34,6 +34,11 @@ class LoadTestConfig:
     conversation_templates: List[str] = field(default_factory=lambda: ["insurance_inquiry", "quick_question"])
     ws_url: str = "ws://localhost:8010/api/v1/media/stream"
     output_dir: str = "load_test_results"
+    
+    # Enhanced conversation control
+    max_conversation_turns: int = 5  # Maximum turns per conversation
+    min_conversation_turns: int = 1  # Minimum turns per conversation
+    turn_variation_strategy: str = "random"  # "random", "fixed", "increasing"
 
 @dataclass
 class LoadTestResults:
@@ -132,19 +137,37 @@ class ConversationLoadTester:
         conversation_id: int,
         semaphore: asyncio.Semaphore
     ) -> Optional[ConversationMetrics]:
-        """Run a single conversation with concurrency control."""
+        """Run a single conversation with concurrency control and configurable turn depth."""
         
         async with semaphore:
             self.active_conversations += 1
             self.max_active_conversations = max(self.max_active_conversations, self.active_conversations)
             
-            simulator = ConversationSimulator(self.config.ws_url)
+            # Determine number of turns for this conversation based on strategy
+            if self.config.turn_variation_strategy == "random":
+                num_turns = random.randint(self.config.min_conversation_turns, self.config.max_conversation_turns)
+            elif self.config.turn_variation_strategy == "increasing":
+                # Gradually increase turns as conversations progress
+                progress = min(1.0, conversation_id / self.config.total_conversations)
+                range_size = self.config.max_conversation_turns - self.config.min_conversation_turns
+                num_turns = self.config.min_conversation_turns + int(progress * range_size)
+            else:  # "fixed"
+                num_turns = self.config.max_conversation_turns
+            
+            simulator = ConversationSimulator(
+                ws_url=self.config.ws_url,
+                conversation_turns=num_turns
+            )
             session_id = f"load-test-{uuid.uuid4().hex}"
             
             try:
-                print(f"🎭 Starting conversation {conversation_id} ({template.name})")
+                print(f"🎭 Starting conversation {conversation_id} ({template.name}, {num_turns} turns)")
                 
-                metrics = await simulator.simulate_conversation(template, session_id)
+                metrics = await simulator.simulate_conversation(
+                    template=template, 
+                    session_id=session_id,
+                    max_turns=num_turns
+                )
                 
                 # Update results
                 self.results.total_conversations_completed += 1

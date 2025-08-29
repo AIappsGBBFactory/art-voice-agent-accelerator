@@ -25,8 +25,8 @@ class ComprehensiveLoadTest:
         self.base_url = base_url
         self.results = []
     
-    async def run_light_load_test(self) -> dict:
-        """Light load: 5 concurrent, 15 total conversations."""
+    async def run_light_load_test(self, max_turns: int = 3) -> dict:
+        """Light load: 3 concurrent, 3 total conversations with configurable turns."""
         print("🟢 Running LIGHT load test...")
         
         config = LoadTestConfig(
@@ -36,7 +36,10 @@ class ComprehensiveLoadTest:
             test_duration_s=120.0,
             conversation_templates=["quick_question"],
             ws_url=self.base_url,
-            output_dir="tests/load/results"
+            output_dir="tests/load/results",
+            max_conversation_turns=max_turns,
+            min_conversation_turns=1,
+            turn_variation_strategy="random"
         )
         
         tester = ConversationLoadTester(config)
@@ -56,8 +59,8 @@ class ComprehensiveLoadTest:
             "summary": results.get_summary()
         }
     
-    async def run_medium_load_test(self) -> dict:
-        """Medium load: 10 concurrent, 30 total conversations."""
+    async def run_medium_load_test(self, max_turns: int = 5) -> dict:
+        """Medium load: 10 concurrent, 30 total conversations with configurable turns."""
         print("🟡 Running MEDIUM load test...")
         
         config = LoadTestConfig(
@@ -67,7 +70,10 @@ class ComprehensiveLoadTest:
             test_duration_s=120.0,
             conversation_templates=["quick_question", "insurance_inquiry", "confused_customer"],
             ws_url=self.base_url,
-            output_dir="tests/load/results"
+            output_dir="tests/load/results",
+            max_conversation_turns=max_turns,
+            min_conversation_turns=2,
+            turn_variation_strategy="random"
         )
         
         tester = ConversationLoadTester(config)
@@ -87,8 +93,8 @@ class ComprehensiveLoadTest:
             "summary": results.get_summary()
         }
     
-    async def run_heavy_load_test(self) -> dict:
-        """Heavy load: 20 concurrent, 50 total conversations."""
+    async def run_heavy_load_test(self, max_turns: int = 7) -> dict:
+        """Heavy load: 20 concurrent, 50 total conversations with configurable turns."""
         print("🔴 Running HEAVY load test...")
         
         config = LoadTestConfig(
@@ -98,7 +104,10 @@ class ComprehensiveLoadTest:
             test_duration_s=300.0,
             conversation_templates=["quick_question", "insurance_inquiry", "confused_customer"],
             ws_url=self.base_url,
-            output_dir="tests/load/results"
+            output_dir="tests/load/results",
+            max_conversation_turns=max_turns,
+            min_conversation_turns=3,
+            turn_variation_strategy="increasing"
         )
         
         tester = ConversationLoadTester(config)
@@ -118,8 +127,8 @@ class ComprehensiveLoadTest:
             "summary": results.get_summary()
         }
     
-    async def run_stress_test(self) -> dict:
-        """Stress test: 50 concurrent, 100 total conversations."""
+    async def run_stress_test(self, max_turns: int = 10) -> dict:
+        """Stress test: 150 concurrent, 200 total conversations with configurable turns."""
         print("🚨 Running STRESS test...")
         
         config = LoadTestConfig(
@@ -129,7 +138,10 @@ class ComprehensiveLoadTest:
             test_duration_s=600.0,
             conversation_templates=["quick_question", "insurance_inquiry", "confused_customer"],
             ws_url=self.base_url,
-            output_dir="tests/load/results"
+            output_dir="tests/load/results",
+            max_conversation_turns=max_turns,
+            min_conversation_turns=1,
+            turn_variation_strategy="random"
         )
         
         tester = ConversationLoadTester(config)
@@ -149,8 +161,8 @@ class ComprehensiveLoadTest:
             "summary": results.get_summary()
         }
     
-    async def run_endurance_test(self) -> dict:
-        """Endurance test: 15 concurrent, 200 total conversations over 30 minutes."""
+    async def run_endurance_test(self, max_turns: int = 6) -> dict:
+        """Endurance test: 15 concurrent, 200 total conversations over 30 minutes with configurable turns."""
         print("⏳ Running ENDURANCE test...")
         
         config = LoadTestConfig(
@@ -160,7 +172,10 @@ class ComprehensiveLoadTest:
             test_duration_s=1800.0,  # 30 minutes
             conversation_templates=["quick_question", "insurance_inquiry", "confused_customer"],
             ws_url=self.base_url,
-            output_dir="tests/load/results"
+            output_dir="tests/load/results",
+            max_conversation_turns=max_turns,
+            min_conversation_turns=2,
+            turn_variation_strategy="random"
         )
         
         tester = ConversationLoadTester(config)
@@ -241,25 +256,28 @@ class ComprehensiveLoadTest:
     async def run_comprehensive_suite(
         self, 
         tests: list = None,
-        pause_between_tests_s: float = 30.0
+        pause_between_tests_s: float = 30.0,
+        max_conversation_turns: int = 5
     ) -> list:
-        """Run a comprehensive suite of load tests."""
+        """Run a comprehensive suite of load tests with configurable conversation depth."""
         
         if tests is None:
             tests = ["light", "medium", "heavy"]  # Default to non-extreme tests
         
         print(f"🚀 Starting comprehensive load testing suite")
         print(f"📋 Tests to run: {', '.join(tests)}")
+        print(f"🔄 Max conversation turns: {max_conversation_turns}")
         print(f"⏸️  Pause between tests: {pause_between_tests_s}s")
         print(f"🎯 Target URL: {self.base_url}")
         print("=" * 70)
         
+        # Update test mapping to pass max_conversation_turns
         test_mapping = {
-            "light": self.run_light_load_test,
-            "medium": self.run_medium_load_test,
-            "heavy": self.run_heavy_load_test,
-            "stress": self.run_stress_test,
-            "endurance": self.run_endurance_test,
+            "light": lambda: self.run_light_load_test(max_turns=min(3, max_conversation_turns)),
+            "medium": lambda: self.run_medium_load_test(max_turns=max_conversation_turns),
+            "heavy": lambda: self.run_heavy_load_test(max_turns=max_conversation_turns),
+            "stress": lambda: self.run_stress_test(max_turns=max_conversation_turns),
+            "endurance": lambda: self.run_endurance_test(max_turns=max_conversation_turns),
         }
         
         results = []
@@ -301,7 +319,7 @@ class ComprehensiveLoadTest:
         return results
 
 async def main():
-    """Main entry point for comprehensive load testing."""
+    """Main entry point for comprehensive load testing with configurable conversation depth."""
     
     parser = argparse.ArgumentParser(description="Comprehensive Load Testing Suite")
     parser.add_argument("--url", default="ws://localhost:8010/api/v1/media/stream",
@@ -312,6 +330,8 @@ async def main():
                        help="Tests to run")
     parser.add_argument("--pause", type=float, default=30.0,
                        help="Pause between tests in seconds")
+    parser.add_argument("--max-turns", type=int, default=5,
+                       help="Maximum conversation turns per conversation (default: 5)")
     
     args = parser.parse_args()
     
@@ -323,7 +343,8 @@ async def main():
     suite = ComprehensiveLoadTest(args.url)
     results = await suite.run_comprehensive_suite(
         tests=args.tests,
-        pause_between_tests_s=args.pause
+        pause_between_tests_s=args.pause,
+        max_conversation_turns=args.max_turns
     )
     
     # Save overall summary
