@@ -534,10 +534,6 @@ class MainEventLoop:
     async def handle_barge_in(self):
         """Handle barge-in interruption."""
         with tracer.start_as_current_span("main_event_loop.handle_barge_in", kind=SpanKind.INTERNAL):
-            if self._stopped:
-                logger.debug(f"[{self.call_id_short}] Skipping barge-in - handler stopped")
-                return
-                
             if self.barge_in_active.is_set():
                 return  # Already handling barge-in
 
@@ -569,11 +565,6 @@ class MainEventLoop:
 
     async def _send_stop_audio_command(self):
         """Send stop audio command to ACS."""
-        # Don't send stop audio if handler is stopped or websocket is closed
-        if self._stopped:
-            logger.debug(f"[{self.call_id_short}] Skipping stop audio - handler stopped")
-            return
-            
         try:
             stop_audio_data = {"Kind": "StopAudio", "AudioData": None, "StopAudio": {}}
             await self.websocket.send_text(json.dumps(stop_audio_data))

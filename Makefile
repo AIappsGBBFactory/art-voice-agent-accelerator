@@ -11,6 +11,8 @@ CONDA_ENV ?= audioagent
 # Ensure current directory is in PYTHONPATH
 export PYTHONPATH=$(PWD):$PYTHONPATH;
 SCRIPTS_DIR = apps/rtagent/scripts
+SCRIPTS_LOAD_DIR = tests/load
+PHONE = +18165019907
 
 
 # Install pre-commit and pre-push git hooks
@@ -107,6 +109,46 @@ start_frontend:
 
 start_tunnel:
 	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
+
+generate_audio:
+	python $(SCRIPTS_LOAD_DIR)/audio_generator.py --max-turns 5
+
+# WebSocket endpoint load testing (current approach)
+DEPLOYED_URL = rtaudioagent-backend-1wzjoyj7.victoriousgrass-aaa9e3d8.eastus.azurecontainerapps.io
+LOCAL_URL = localhost:8010
+run_load_test:
+	python $(SCRIPTS_LOAD_DIR)/detailed_statistics_analyzer.py \
+		--url ws://$(LOCAL_URL)/api/v1/media/stream \
+		--turns 5 \
+		--conversations 5 \
+		--concurrent 3 \
+		--record \
+		--record-rate 0.2
+
+# Conversation Analysis Targets
+list-conversations:
+	python $(SCRIPTS_LOAD_DIR)/conversation_playback.py --list
+
+FILE_TO_ANALYZE = tests\load\results\recorded_conversations_20250829_085350.json
+
+playback-conversations:
+	python $(SCRIPTS_LOAD_DIR)/conversation_playback.py --conversation-file $(FILE_TO_ANALYZE)
+
+# ACS call load testing (real phone calls - requires phone numbers)
+run_acs_call_load_test:
+	@echo "⚠️  WARNING: This will initiate real ACS phone calls!"
+	@echo "⚠️  Make sure you have test numbers and sufficient credits!"
+	@echo "⚠️  Press Ctrl+C to cancel in the next 5 seconds..."
+	@sleep 5
+	python $(SCRIPTS_LOAD_DIR)/acs_call_load_test.py
+
+# Development ACS testing (single call to specified phone)
+run_acs_dev_test:
+	python $(SCRIPTS_LOAD_DIR)/acs_call_load_test_dev.py --environment dev --target-phones $(PHONE)
+
+# Staging ACS testing (5 calls)
+run_acs_staging_test:
+	python $(SCRIPTS_LOAD_DIR)/acs_call_load_test_dev.py --environment staging --target-phones $(PHONE)
 
 ############################################################
 # Azure App Service Deployment Artifacts
@@ -750,6 +792,14 @@ help:
 	@echo "  start_backend                    Start backend via script"
 	@echo "  start_frontend                   Start frontend via script"
 	@echo "  start_tunnel                     Start dev tunnel via script"
+	@echo ""
+	@echo "⚡ Load Testing:"
+	@echo "  generate_audio                   Generate PCM audio files for load testing"
+	@echo "  run_load_test                    Run WebSocket endpoint load testing (safe)"
+	@echo "  run_acs_dev_test                 Run 1 ACS call to +8165019907 (development)"
+	@echo "  run_acs_staging_test             Run 5 ACS calls (staging environment)"
+	@echo "  run_acs_prod_test                Run 20 ACS calls (production testing)"
+	@echo "  show_acs_test_config             Show ACS test configurations without running"
 	@echo ""
 	@echo "📦 Deployment Artifacts:"
 	@echo "  generate_backend_deployment      Generate backend deployment artifacts and zip"

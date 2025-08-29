@@ -147,40 +147,149 @@ class LoadTestAudioGenerator:
             return False
 
 
+    def generate_conversation_sets(self, max_turns: int = 10, scenarios: list = None) -> Dict[str, Dict[str, bytes]]:
+        """
+        Generate multiple conversation sets with configurable turn counts.
+        
+        Args:
+            max_turns: Maximum number of turns to generate per conversation
+            scenarios: List of conversation scenarios to generate
+            
+        Returns:
+            Dictionary mapping scenario names to audio cache dictionaries
+        """
+        if scenarios is None:
+            scenarios = [
+                "insurance_inquiry", 
+                "quick_question", 
+                "confused_customer",
+                "claim_filing",
+                "policy_update",
+                "billing_inquiry"
+            ]
+        
+        conversation_templates = self._get_conversation_templates()
+        all_conversation_sets = {}
+        
+        print(f"🎭 Generating conversation sets for {len(scenarios)} scenarios, up to {max_turns} turns each")
+        
+        for scenario in scenarios:
+            if scenario not in conversation_templates:
+                print(f"⚠️  Skipping unknown scenario: {scenario}")
+                continue
+                
+            scenario_audio_cache = {}
+            base_texts = conversation_templates[scenario]
+            
+            print(f"\n📋 Processing scenario: {scenario}")
+            
+            # Generate audio for each turn count (1 to max_turns)
+            for turn_count in range(1, min(max_turns + 1, len(base_texts) + 1)):
+                conversation_texts = base_texts[:turn_count]
+                
+                print(f"  🔄 Generating {turn_count}-turn conversation...")
+                
+                for i, text in enumerate(conversation_texts):
+                    turn_key = f"{scenario}_turn_{i+1}_of_{turn_count}"
+                    audio_bytes = self.generate_audio(text)
+                    scenario_audio_cache[turn_key] = audio_bytes
+                    
+                    duration = len(audio_bytes) / (16000 * 2) if audio_bytes else 0
+                    print(f"    📝 Turn {i+1}: '{text[:40]}...' ({duration:.2f}s)")
+            
+            all_conversation_sets[scenario] = scenario_audio_cache
+            print(f"  ✅ {scenario}: {len(scenario_audio_cache)} audio files generated")
+        
+        return all_conversation_sets
+    
+    def _get_conversation_templates(self) -> Dict[str, list]:
+        """Define conversation templates for 2 simplified scenarios."""
+        return {
+            "insurance_inquiry": [
+                "Hello, my name is Alice Brown, my social is 1234, and my zip code is 60601",
+                "I'm calling about my auto insurance policy",
+                "I need to understand what's covered under my current plan", 
+                "What happens if I get into an accident?",
+                "Thank you for all the information, that's very helpful"
+            ],
+            "quick_question": [
+                "Hi there, I have a quick question",
+                "Can you help me check my account balance?",
+                "Thanks, that's all I needed to know"
+            ]
+        }
+
 def main():
-    """Test the audio generator."""
+    """Enhanced audio generator with multiple conversation scenarios."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Generate PCM audio files for load testing")
+    parser.add_argument("--max-turns", type=int, default=5, 
+                       help="Maximum number of turns per conversation (default: 5)")
+    parser.add_argument("--scenarios", nargs="+", 
+                       choices=["insurance_inquiry", "quick_question"],
+                       default=["insurance_inquiry", "quick_question"],
+                       help="Conversation scenarios to generate (simplified to 2 scenarios)")
+    parser.add_argument("--voices", nargs="+",
+                       default=["en-US-JennyMultilingualNeural"],
+                       help="Voice names to use for generation")
+    parser.add_argument("--clear-cache", action="store_true",
+                       help="Clear existing cache before generating")
+    
+    args = parser.parse_args()
+    
     generator = LoadTestAudioGenerator()
+    
+    # Clear cache if requested
+    if args.clear_cache:
+        generator.clear_cache()
     
     # Validate configuration
     if not generator.validate_configuration():
         print("❌ Configuration validation failed. Please check your Azure Speech credentials.")
         return
     
-    # Test audio generation
-    test_texts = [
-        "Hello, my name is Alice Brown, my social is 1234, and my zip code is 60610",
-        "I'm looking to learn about Madrid. Please provide in 100 words",
-        "Actually, I need help with my car insurance.",
-        "What does my policy cover?",
-        "Thank you for the information."
-    ]
+    # Generate conversation sets for multiple voices
+    all_generated = {}
     
-    print(f"\n🧪 Testing audio generation with {len(test_texts)} samples...")
+    for voice in args.voices:
+        print(f"\n🎤 Generating audio with voice: {voice}")
+        generator.synthesizer.voice = voice
+        
+        conversation_sets = generator.generate_conversation_sets(
+            max_turns=args.max_turns,
+            scenarios=args.scenarios
+        )
+        
+        all_generated[voice] = conversation_sets
     
-    # Pre-generate all audio
-    audio_cache = generator.pregenerate_conversation_audio(test_texts)
+    # Summary report
+    print(f"\n📊 GENERATION SUMMARY")
+    print(f"=" * 60)
     
-    # Show results
-    print(f"\n📊 Results:")
-    for text, audio_bytes in audio_cache.items():
-        duration = len(audio_bytes) / (16000 * 2)  # 16kHz, 16-bit
-        print(f"  '{text[:40]}...' -> {len(audio_bytes)} bytes ({duration:.2f}s)")
+    total_files = 0
+    for voice, scenarios in all_generated.items():
+        voice_files = sum(len(audio_cache) for audio_cache in scenarios.values())
+        total_files += voice_files
+        print(f"🎤 {voice}: {voice_files} files across {len(scenarios)} scenarios")
+        
+        for scenario, audio_cache in scenarios.items():
+            total_duration = sum(
+                len(audio_bytes) / (16000 * 2) 
+                for audio_bytes in audio_cache.values() 
+                if audio_bytes
+            )
+            print(f"   📋 {scenario}: {len(audio_cache)} files, {total_duration:.1f}s total")
     
     # Show cache info
     cache_info = generator.get_cache_info()
     print(f"\n📂 Cache Info:")
     print(f"  Files: {cache_info['file_count']}")
     print(f"  Size: {cache_info['total_size_mb']:.2f} MB")
+    print(f"  Directory: {cache_info['cache_directory']}")
+    
+    print(f"\n✅ Generated {total_files} total audio files")
+    print(f"🚀 Ready for load testing with up to {args.max_turns} conversation turns!")
 
 
 if __name__ == "__main__":
