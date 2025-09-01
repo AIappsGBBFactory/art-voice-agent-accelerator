@@ -1144,7 +1144,7 @@ class SpeechSynthesizer:
                 self._session_span.add_event("tts_speaker_synthesizer_created")
 
             logger.info(
-                "[🔊] Starting streaming speech synthesis for text: %s",
+                "Starting streaming speech synthesis for text: %s",
                 text[:50] + "...",
             )
 

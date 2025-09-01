@@ -12,6 +12,7 @@ import redis
 from redis.exceptions import AuthenticationError
 from utils.ml_logging import get_logger
 
+
 class AzureRedisManager:
     """
     AzureRedisManager provides a simplified interface to connect, store,
@@ -77,22 +78,22 @@ class AzureRedisManager:
     async def initialize(self) -> None:
         """
         Async initialization method for FastAPI lifespan compatibility.
-        
+
         Validates Redis connectivity and ensures proper initialization.
         This method is idempotent and can be called multiple times safely.
         """
         try:
             self.logger.info(f"Validating Redis connection to {self.host}:{self.port}")
-            
+
             # Validate connection with health check
             loop = asyncio.get_event_loop()
             ping_result = await loop.run_in_executor(None, self._health_check)
-            
+
             if ping_result:
                 self.logger.info("✅ Redis connection validated successfully")
             else:
                 raise ConnectionError("Redis health check failed")
-                
+
         except Exception as e:
             self.logger.error(f"Redis initialization failed: {e}")
             raise ConnectionError(f"Failed to initialize Redis: {e}")
@@ -105,15 +106,15 @@ class AzureRedisManager:
             # Basic connectivity test
             if not self.redis_client.ping():
                 return False
-                
+
             # Test basic operations
             test_key = "health_check_test"
             self.redis_client.set(test_key, "test_value", ex=5)
             result = self.redis_client.get(test_key)
             self.redis_client.delete(test_key)
-            
+
             return result == "test_value"
-            
+
         except Exception as e:
             self.logger.error(f"Redis health check failed: {e}")
             return False
@@ -183,7 +184,7 @@ class AzureRedisManager:
                 self.logger.error("Failed to refresh Redis token: %s", e)
                 # retry sooner if something goes wrong
                 time.sleep(5)
-                
+
     def publish_event(self, stream_key: str, event_data: Dict[str, Any]) -> str:
         """Append an event to a Redis stream."""
         with self._redis_span("Redis.XADD"):
@@ -205,9 +206,14 @@ class AzureRedisManager:
                 {stream_key: last_id}, block=block_ms, count=count
             )
             return streams if streams else None
-    async def publish_event_async(self, stream_key: str, event_data: Dict[str, Any]) -> str:
+
+    async def publish_event_async(
+        self, stream_key: str, event_data: Dict[str, Any]
+    ) -> str:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.publish_event, stream_key, event_data)
+        return await loop.run_in_executor(
+            None, self.publish_event, stream_key, event_data
+        )
 
     async def read_events_blocking_async(
         self,
@@ -220,7 +226,7 @@ class AzureRedisManager:
         return await loop.run_in_executor(
             None, self.read_events_blocking, stream_key, last_id, block_ms, count
         )
-        
+
     async def ping(self) -> bool:
         """Check Redis connectivity."""
         try:

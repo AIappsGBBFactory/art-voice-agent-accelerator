@@ -261,7 +261,11 @@ class AcsCaller:
                 media_streaming = self.media_streaming_options
 
             # Default to transcription if no valid mode specified
-            if stream_mode not in [StreamMode.TRANSCRIPTION, StreamMode.MEDIA, StreamMode.VOICE_LIVE]:
+            if stream_mode not in [
+                StreamMode.TRANSCRIPTION,
+                StreamMode.MEDIA,
+                StreamMode.VOICE_LIVE,
+            ]:
                 logger.warning(
                     f"Invalid stream_mode '{stream_mode}', defaulting to transcription"
                 )
@@ -321,9 +325,12 @@ class AcsCaller:
             if stream_mode == StreamMode.MEDIA or stream_mode == StreamMode.VOICE_LIVE:
                 media_streaming = self.media_streaming_options
 
-
             # Default to transcription if no valid mode specified
-            if stream_mode not in [StreamMode.TRANSCRIPTION, StreamMode.MEDIA, StreamMode.VOICE_LIVE]:
+            if stream_mode not in [
+                StreamMode.TRANSCRIPTION,
+                StreamMode.MEDIA,
+                StreamMode.VOICE_LIVE,
+            ]:
                 logger.warning(
                     f"Invalid stream_mode '{stream_mode}', defaulting to transcription"
                 )
@@ -392,7 +399,7 @@ class AcsCaller:
                         container_url=self.recording_storage_container_url,
                     ),
                 )
-            logger.info(f"🎤 Started recording for call {server_call_id}")
+            logger.info(f"Started recording for call {server_call_id}")
         except Exception as e:
             logger.error(f"Error starting recording for call {server_call_id}: {e}")
 
@@ -411,6 +418,6 @@ class AcsCaller:
                 },
             ):
                 self.client.stop_recording(server_call_id=server_call_id)
-            logger.info(f"🎤 Stopped recording for call {server_call_id}")
+            logger.info(f"Stopped recording for call {server_call_id}")
         except Exception as e:
             logger.error(f"Error stopping recording for call {server_call_id}: {e}")

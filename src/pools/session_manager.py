@@ -37,7 +37,7 @@ class ThreadSafeSessionManager:
                 "start_time": datetime.now(),
             }
             logger.info(
-                f"🔄 Added conversation session {session_id}. Total sessions: {len(self._sessions)}"
+                f"Added conversation session {session_id}. Total sessions: {len(self._sessions)}"
             )
 
     async def remove_session(self, session_id: str) -> bool:
@@ -46,7 +46,7 @@ class ThreadSafeSessionManager:
             if session_id in self._sessions:
                 del self._sessions[session_id]
                 logger.info(
-                    f"🗑️ Removed conversation session {session_id}. Remaining sessions: {len(self._sessions)}"
+                    f"Removed conversation session {session_id}. Remaining sessions: {len(self._sessions)}"
                 )
                 return True
             return False

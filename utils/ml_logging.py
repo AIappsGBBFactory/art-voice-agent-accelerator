@@ -155,6 +155,7 @@ class TraceLogFilter(logging.Filter):
 
         return True
 
+
 def set_span_correlation_attributes(
     call_connection_id: Optional[str] = None,
     session_id: Optional[str] = None,

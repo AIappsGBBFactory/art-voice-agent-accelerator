@@ -26,12 +26,12 @@ async def escalate_emergency(args: EscalateEmergencyArgs) -> Dict[str, Any]:
             "caller_name": None,
             "policy_id": None,
         }
-    
+
     try:
         reason = args.get("reason", "").strip()
         caller_name = args.get("caller_name", "").strip()
         policy_id = args.get("policy_id", "").strip()
-        
+
         if not reason:
             return {
                 "escalated": False,
@@ -40,7 +40,7 @@ async def escalate_emergency(args: EscalateEmergencyArgs) -> Dict[str, Any]:
                 "caller_name": caller_name,
                 "policy_id": policy_id,
             }
-        
+
         if not caller_name:
             return {
                 "escalated": False,
@@ -49,7 +49,7 @@ async def escalate_emergency(args: EscalateEmergencyArgs) -> Dict[str, Any]:
                 "caller_name": None,
                 "policy_id": policy_id,
             }
-        
+
         if not policy_id:
             return {
                 "escalated": False,
@@ -59,8 +59,12 @@ async def escalate_emergency(args: EscalateEmergencyArgs) -> Dict[str, Any]:
                 "policy_id": None,
             }
 
-        logger.info("🔴 Escalating to human agent – %s (caller: %s, policy: %s)", 
-                    reason, caller_name, policy_id)
+        logger.info(
+            "🔴 Escalating to human agent – %s (caller: %s, policy: %s)",
+            reason,
+            caller_name,
+            policy_id,
+        )
 
         # The sentinel that upstream code will look for
         return {

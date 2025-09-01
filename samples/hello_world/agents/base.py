@@ -23,28 +23,36 @@ logger = get_logger("rt_agent")
 # Import local tool store from this samples folder ONLY
 # This is a standalone demo version that uses only local tools
 import sys
+
 samples_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(samples_dir))
 
 try:
     from agents.tool_store import tool_registry as tool_store
-    logger.info("✅ Using LOCAL tool registry from samples/hello_world/agents/tool_store")
+
+    logger.info(
+        "✅ Using LOCAL tool registry from samples/hello_world/agents/tool_store"
+    )
 except ImportError as e:
     logger.error(f"❌ Could not load local tool store: {e}")
-    logger.error("💡 Make sure you have created the tool_store directory with all required files")
+    logger.error(
+        "💡 Make sure you have created the tool_store directory with all required files"
+    )
     raise ImportError(
         "This demo ARTAgent requires the local tool store. "
         "Please ensure samples/hello_world/agents/tool_store/ exists with all tool files."
     ) from e
 
+
 class ARTAgent:
     """
     Standalone ARTAgent for tutorial/demo purposes.
-    
+
     This version only uses local tools from the samples directory
     and is designed for educational and demonstration purposes.
     It does not fall back to production tool stores.
     """
+
     CONFIG_PATH: str | Path = "agent.yaml"
 
     def __init__(

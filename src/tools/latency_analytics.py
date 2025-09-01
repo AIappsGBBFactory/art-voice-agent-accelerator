@@ -6,6 +6,7 @@ import math
 
 Number = float
 
+
 def compute_latency_statistics(
     payload: Dict[str, Any],
     *,
@@ -52,7 +53,9 @@ def compute_latency_statistics(
 
     def _agg(values: List[Number]) -> Dict[str, Number]:
         if not values:
-            return dict(count=0, total=0.0, avg=0.0, min=0.0, max=0.0, p50=0.0, p90=0.0, p95=0.0)
+            return dict(
+                count=0, total=0.0, avg=0.0, min=0.0, max=0.0, p50=0.0, p90=0.0, p95=0.0
+            )
         total = float(sum(values))
         return {
             "count": len(values),
@@ -114,7 +117,11 @@ def compute_latency_statistics(
             # threshold tracking per-stage per-run
             if stage in stage_thresholds and dur > float(stage_thresholds[stage]):
                 threshold_breaches[stage].append(
-                    {"run_id": run_id, "duration": dur, "threshold": float(stage_thresholds[stage])}
+                    {
+                        "run_id": run_id,
+                        "duration": dur,
+                        "threshold": float(stage_thresholds[stage]),
+                    }
                 )
 
         per_run_summary.append(
@@ -139,8 +146,14 @@ def compute_latency_statistics(
 
     # SLA rollups (examples)
     n_runs = len(per_run_summary)
-    runs_with_tts_le_1_5 = sum(1 for r in per_run_summary if r["tts"]["max_single"] <= 1.5)
-    runs_with_ttfb_le_2_0 = sum(1 for r in per_run_summary if r.get("greeting_ttfb", 0.0) <= 2.0 and r.get("greeting_ttfb", 0.0) > 0.0)
+    runs_with_tts_le_1_5 = sum(
+        1 for r in per_run_summary if r["tts"]["max_single"] <= 1.5
+    )
+    runs_with_ttfb_le_2_0 = sum(
+        1
+        for r in per_run_summary
+        if r.get("greeting_ttfb", 0.0) <= 2.0 and r.get("greeting_ttfb", 0.0) > 0.0
+    )
 
     sla = {
         "runs": n_runs,
@@ -151,31 +164,53 @@ def compute_latency_statistics(
     # --------------- chart series (front-end ready) ---------------
     # bar: average duration by stage (top 10)
     stage_avg_bar = sorted(
-        [{"stage": st, "avg_ms": stage_stats[st]["avg"] * 1000.0, "count": stage_stats[st]["count"]}
-         for st in stage_stats],
+        [
+            {
+                "stage": st,
+                "avg_ms": stage_stats[st]["avg"] * 1000.0,
+                "count": stage_stats[st]["count"],
+            }
+            for st in stage_stats
+        ],
         key=lambda x: x["avg_ms"],
         reverse=True,
     )[:10]
 
     # bar: average tts:synthesis by voice
     voice_avg_bar = sorted(
-        [{"voice": v, "avg_ms": voice_stats[v]["avg"] * 1000.0, "count": voice_stats[v]["count"]}
-         for v in voice_stats],
+        [
+            {
+                "voice": v,
+                "avg_ms": voice_stats[v]["avg"] * 1000.0,
+                "count": voice_stats[v]["count"],
+            }
+            for v in voice_stats
+        ],
         key=lambda x: x["avg_ms"],
         reverse=True,
     )
 
     # bar: agent stage averages
     agent_avg_bar = sorted(
-        [{"agent_stage": a, "avg_ms": agent_stats[a]["avg"] * 1000.0, "count": agent_stats[a]["count"]}
-         for a in agent_stats],
+        [
+            {
+                "agent_stage": a,
+                "avg_ms": agent_stats[a]["avg"] * 1000.0,
+                "count": agent_stats[a]["count"],
+            }
+            for a in agent_stats
+        ],
         key=lambda x: x["avg_ms"],
         reverse=True,
     )
 
     # line-ish series: per run tts maxima (ms) in order
     tts_per_run_series = [
-        {"run_id": r["run_id"], "max_single_ms": r["tts"]["max_single"] * 1000.0, "sum_ms": r["tts"]["sum"] * 1000.0}
+        {
+            "run_id": r["run_id"],
+            "max_single_ms": r["tts"]["max_single"] * 1000.0,
+            "sum_ms": r["tts"]["sum"] * 1000.0,
+        }
         for r in per_run_summary
     ]
 

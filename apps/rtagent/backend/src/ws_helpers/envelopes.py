@@ -9,7 +9,9 @@ Provides standardized envelope format with minimal complexity.
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Literal
 
-EnvelopeType = Literal["event", "status", "assistant_streaming", "exit", "error", "debug"]
+EnvelopeType = Literal[
+    "event", "status", "assistant_streaming", "exit", "error", "debug"
+]
 TopicType = Literal["dashboard", "session", "call", "user", "system", "media"]
 SenderType = Literal["Assistant", "User", "System", "ACS", "STT", "TTS"]
 
@@ -61,6 +63,7 @@ def make_status_envelope(
 def make_assistant_streaming_envelope(
     content: str,
     *,
+    sender: SenderType = "Assistant",
     session_id: Optional[str] = None,
     call_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -68,7 +71,7 @@ def make_assistant_streaming_envelope(
     """Create assistant streaming response envelope."""
     return make_envelope(
         etype="assistant_streaming",
-        sender="Assistant",
+        sender=sender,
         payload={"content": content, "streaming": True},
         topic="session",
         session_id=session_id,

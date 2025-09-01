@@ -191,7 +191,7 @@ class ACSLifecycleHandler:
         target_number: str,
         redis_mgr,
         call_id: str = None,
-        browser_session_id: str = None,  # 🎯 NEW: Browser session ID for UI coordination
+        browser_session_id: str = None,  # NEW: Browser session ID for UI coordination
     ) -> Dict[str, Any]:
         """
         Initiate an outbound call with orchestrator support.
@@ -223,7 +223,7 @@ class ACSLifecycleHandler:
             },
         ) as span:
             try:
-                logger.info(f"🚀 Starting outbound call to {target_number} ")
+                logger.info(f"Starting outbound call to {target_number} ")
 
                 start_time = time.perf_counter()
                 result = await acs_caller.initiate_call(
@@ -254,17 +254,19 @@ class ACSLifecycleHandler:
                     },
                 )
 
-                # 🎯 CRITICAL: Store browser session ID mapping for media endpoint coordination
+                # Store browser session ID mapping for media endpoint coordination
                 if browser_session_id and redis_mgr:
                     try:
                         # Store the mapping: call_connection_id -> browser_session_id
                         # This enables the media endpoint to use the browser's session ID
                         await redis_mgr.set_value_async(
-                            f"call_session_map:{call_id}", 
+                            f"call_session_map:{call_id}",
                             browser_session_id,
-                            ttl_seconds=3600  # Expire after 1 hour
+                            ttl_seconds=3600,  # Expire after 1 hour
                         )
-                        logger.info(f"🔗 Stored session mapping: {call_id} -> {browser_session_id}")
+                        logger.info(
+                            f"🔗 Stored session mapping: {call_id} -> {browser_session_id}"
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to store session mapping: {e}")
 
@@ -461,7 +463,7 @@ class ACSLifecycleHandler:
             },
         )
 
-        logger.info(f"📞 Answering incoming call from {caller_id}")
+        logger.info(f"Answering incoming call from {caller_id}")
 
         # Answer the call
         start_time = time.perf_counter()
@@ -516,7 +518,6 @@ class ACSLifecycleHandler:
         if caller_info.get("kind") == "phoneNumber":
             return caller_info.get("phoneNumber", {}).get("value", "unknown")
         return caller_info.get("rawId", "unknown")
-
 
     async def process_call_events(
         self,

@@ -116,7 +116,7 @@ async def authenticate_caller(
         Outcome of the authentication attempt.  On success the caller's
         *intent* and *claim_intent* are echoed back; on failure they are
         ``None`` so the orchestrator can decide next steps. Always returns
-        a valid result dictionary - never raises exceptions to prevent 
+        a valid result dictionary - never raises exceptions to prevent
         conversation corruption.
     """
     # Input type validation to prevent 400 errors
@@ -137,10 +137,10 @@ async def authenticate_caller(
     # ------------------------------------------------------------------
     zip_code = args.get("zip_code", "").strip() if args.get("zip_code") else ""
     last4_id = args.get("last4_id", "").strip() if args.get("last4_id") else ""
-    
+
     if not zip_code and not last4_id:
         msg = "zip_code or last4_id must be provided"
-        logger.error("❌ %s", msg)
+        logger.error("%s", msg)
         # Never raise exceptions from tool functions - return error result instead
         # This prevents 400 errors and conversation corruption in OpenAI API
         attempt = int(args.get("attempt", 1))
@@ -157,14 +157,15 @@ async def authenticate_caller(
     # ------------------------------------------------------------------
     # Normalise inputs
     # ------------------------------------------------------------------
-    full_name = args.get("full_name", "").strip().title() if args.get("full_name") else ""
+    full_name = (
+        args.get("full_name", "").strip().title() if args.get("full_name") else ""
+    )
     # Use the already safely extracted zip_code and last4_id from above
     last4 = last4_id  # Alias for consistency with existing code
     attempt = int(args.get("attempt", 1))
 
-    # Additional input validation
     if not full_name:
-        logger.error("❌ full_name is required")
+        logger.error("full_name is required")
         return {
             "authenticated": False,
             "message": "Full name is required for authentication.",
@@ -179,7 +180,7 @@ async def authenticate_caller(
     claim_intent = args.get("claim_intent")
 
     logger.info(
-        "🔎 Attempt %d – Authenticating %s | ZIP=%s | last-4=%s | intent=%s | claim_intent=%s",
+        "Attempt %d – Authenticating %s | ZIP=%s | last-4=%s | intent=%s | claim_intent=%s",
         attempt,
         full_name,
         zip_code or "<none>",
@@ -190,7 +191,7 @@ async def authenticate_caller(
 
     rec = policyholders_db.get(full_name)
     if not rec:
-        logger.warning("❌ Name not found: %s", full_name)
+        logger.warning("Name not found: %s", full_name)
         return {
             "authenticated": False,
             "message": f"Name '{full_name}' not found.",
@@ -202,14 +203,12 @@ async def authenticate_caller(
         }
 
     # ------------------------------------------------------------------
-    # Verify provided factors
-    # ------------------------------------------------------------------
     last4_fields: List[str] = ["ssn4", "policy4", "claim4", "phone4"]
     last4_match = bool(last4) and last4 in (rec[f] for f in last4_fields)
     zip_match = bool(zip_code) and rec["zip"] == zip_code
 
     if zip_match or last4_match:
-        logger.info("✅ Authentication succeeded for %s", full_name)
+        logger.info("Authentication succeeded for %s", full_name)
         return {
             "authenticated": True,
             "message": f"Authenticated {full_name}.",
@@ -223,7 +222,7 @@ async def authenticate_caller(
     # ------------------------------------------------------------------
     # Authentication failed
     # ------------------------------------------------------------------
-    logger.warning("❌ ZIP and last-4 both mismatched for %s", full_name)
+    logger.warning("ZIP and last-4 both mismatched for %s", full_name)
 
     return {
         "authenticated": False,

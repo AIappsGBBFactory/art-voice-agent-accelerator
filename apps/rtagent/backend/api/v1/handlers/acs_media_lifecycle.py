@@ -34,7 +34,10 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from config import GREETING, STT_PROCESSING_TIMEOUT
-from apps.rtagent.backend.src.ws_helpers.shared_ws import send_response_to_acs
+from apps.rtagent.backend.src.ws_helpers.shared_ws import (
+    send_response_to_acs,
+    broadcast_message,
+)
 from apps.rtagent.backend.src.orchestration.orchestrator import route_turn
 from src.enums.stream_modes import StreamMode
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
@@ -50,11 +53,14 @@ import weakref
 from concurrent.futures import ThreadPoolExecutor
 
 # Thread pool for cleanup operations
-_handlers_cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="handler-cleanup")
+_handlers_cleanup_executor = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="handler-cleanup"
+)
 
 
 class SpeechEventType(Enum):
     """Types of speech recognition events."""
+
     PARTIAL = "partial"
     FINAL = "final"
     ERROR = "error"
@@ -67,6 +73,7 @@ class SpeechEventType(Enum):
 @dataclass
 class SpeechEvent:
     """Speech recognition event with metadata."""
+
     event_type: SpeechEventType
     text: str
     language: Optional[str] = None
@@ -78,10 +85,11 @@ class SpeechEvent:
 class ThreadBridge:
     """
     Cross-thread communication bridge.
-    
+
     Provides thread-safe communication between Speech SDK Thread and Main Event Loop.
     Implements the non-blocking patterns described in the documentation.
     """
+
     def __init__(self):
         """
         Initialize cross-thread communication bridge.
@@ -92,8 +100,10 @@ class ThreadBridge:
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
         # Create shorthand for call connection ID (last 8 chars)
         self.call_id_short = "unknown"
-    
-    def set_main_loop(self, loop: asyncio.AbstractEventLoop, call_connection_id: str = None):
+
+    def set_main_loop(
+        self, loop: asyncio.AbstractEventLoop, call_connection_id: str = None
+    ):
         """
         Set the main event loop reference for cross-thread communication.
 
@@ -112,7 +122,9 @@ class ThreadBridge:
         :type handler_func: Callable
         """
         if not self.main_loop or self.main_loop.is_closed():
-            logger.warning(f"[{self.call_id_short}] No main loop for barge-in scheduling")
+            logger.warning(
+                f"[{self.call_id_short}] No main loop for barge-in scheduling"
+            )
             return
 
         try:
@@ -160,13 +172,13 @@ class SpeechSDKThread:
     - Never blocks on queue operations
     - Pre-initializes push_stream to prevent audio data loss
     """
-    
+
     def __init__(
-            self,
-            recognizer: StreamingSpeechRecognizerFromBytes,
-            thread_bridge: ThreadBridge,
-            barge_in_handler: Callable,
-            speech_queue: asyncio.Queue
+        self,
+        recognizer: StreamingSpeechRecognizerFromBytes,
+        thread_bridge: ThreadBridge,
+        barge_in_handler: Callable,
+        speech_queue: asyncio.Queue,
     ):
         self.recognizer = recognizer
         self.thread_bridge = thread_bridge
@@ -182,61 +194,93 @@ class SpeechSDKThread:
         # This ensures callbacks are registered before any recognizer operations
         self._setup_callbacks()
         self._pre_initialize_recognizer()
-    
+
     def _pre_initialize_recognizer(self):
         """
         P0 Performance Fix: Pre-initialize push_stream to prevent audio data loss.
-        
+
         This addresses the critical timing issue where audio chunks arrive before
         the recognizer's push_stream is created, causing audio data to be discarded
         with "write_bytes called but push_stream is None" warnings.
         """
         try:
             # SAFER APPROACH: Only pre-create push_stream, avoid prepare_start which may reset callbacks
-            logger.debug(f"[{self.thread_bridge.call_id_short}] Attempting to pre-initialize push_stream only...")
-            
+            logger.debug(
+                f"[{self.thread_bridge.call_id_short}] Attempting to pre-initialize push_stream only..."
+            )
+
             # Check if push_stream already exists
-            if hasattr(self.recognizer, 'push_stream') and self.recognizer.push_stream is not None:
-                logger.info(f"[{self.thread_bridge.call_id_short}] Push_stream already exists, skipping pre-init")
+            if (
+                hasattr(self.recognizer, "push_stream")
+                and self.recognizer.push_stream is not None
+            ):
+                logger.info(
+                    f"[{self.thread_bridge.call_id_short}] Push_stream already exists, skipping pre-init"
+                )
                 return
-            
+
             # Try direct push_stream creation first
-            if hasattr(self.recognizer, 'create_push_stream'):
+            if hasattr(self.recognizer, "create_push_stream"):
                 self.recognizer.create_push_stream()
-                logger.info(f"[{self.thread_bridge.call_id_short}] Pre-initialized push_stream via create_push_stream()")
-            elif hasattr(self.recognizer, 'prepare_stream'):
+                logger.info(
+                    f"[{self.thread_bridge.call_id_short}] Pre-initialized push_stream via create_push_stream()"
+                )
+            elif hasattr(self.recognizer, "prepare_stream"):
                 # Alternative method name
                 self.recognizer.prepare_stream()
-                logger.info(f"[{self.thread_bridge.call_id_short}] Pre-initialized push_stream via prepare_stream()")
+                logger.info(
+                    f"[{self.thread_bridge.call_id_short}] Pre-initialized push_stream via prepare_stream()"
+                )
             else:
                 # Fallback: call prepare_start but warn about potential callback issues
-                logger.warning(f"[{self.thread_bridge.call_id_short}] No direct push_stream method found, using prepare_start fallback")
+                logger.warning(
+                    f"[{self.thread_bridge.call_id_short}] No direct push_stream method found, using prepare_start fallback"
+                )
                 self.recognizer.prepare_start()
-                logger.info(f"[{self.thread_bridge.call_id_short}] Pre-initialized via prepare_start (may need callback re-registration)")
-                
+                logger.info(
+                    f"[{self.thread_bridge.call_id_short}] Pre-initialized via prepare_start (may need callback re-registration)"
+                )
+
         except Exception as e:
-            logger.warning(f"[{self.thread_bridge.call_id_short}] Failed to pre-init push_stream: {e}")
-            logger.debug(f"[{self.thread_bridge.call_id_short}] Will rely on normal recognizer.start() timing")
+            logger.warning(
+                f"[{self.thread_bridge.call_id_short}] Failed to pre-init push_stream: {e}"
+            )
+            logger.debug(
+                f"[{self.thread_bridge.call_id_short}] Will rely on normal recognizer.start() timing"
+            )
 
     def _setup_callbacks(self):
         """Configure speech recognition callbacks."""
+
         def on_partial(text: str, lang: str, speaker_id: Optional[str] = None):
             # Debug: Log ALL partial results to verify callbacks are working
-            logger.info(f"[{self.thread_bridge.call_id_short}] Partial speech: '{text}' ({lang}) len={len(text.strip())}")
+            logger.info(
+                f"[{self.thread_bridge.call_id_short}] Partial speech: '{text}' ({lang}) len={len(text.strip())}"
+            )
             if len(text.strip()) > 3:  # Only trigger on meaningful partial results
-                logger.info(f"[{self.thread_bridge.call_id_short}] Barge-in: '{text[:30]}...' ({lang})")
+                logger.info(
+                    f"[{self.thread_bridge.call_id_short}] Barge-in: '{text[:30]}...' ({lang})"
+                )
                 try:
                     self.thread_bridge.schedule_barge_in(self.barge_in_handler)
                 except Exception as e:
-                    logger.error(f"[{self.thread_bridge.call_id_short}] Barge-in error: {e}")
+                    logger.error(
+                        f"[{self.thread_bridge.call_id_short}] Barge-in error: {e}"
+                    )
             else:
-                logger.debug(f"[{self.thread_bridge.call_id_short}] Partial result too short, ignoring")
+                logger.debug(
+                    f"[{self.thread_bridge.call_id_short}] Partial result too short, ignoring"
+                )
 
         def on_final(text: str, lang: str, speaker_id: Optional[str] = None):
-            # Debug: Log ALL final results to verify callbacks are working  
-            logger.debug(f"[{self.thread_bridge.call_id_short}] Final speech: '{text}' ({lang}) len={len(text.strip())}")
+            # Debug: Log ALL final results to verify callbacks are working
+            logger.debug(
+                f"[{self.thread_bridge.call_id_short}] Final speech: '{text}' ({lang}) len={len(text.strip())}"
+            )
             if len(text.strip()) > 1:  # Only process meaningful final results
-                logger.info(f"[{self.thread_bridge.call_id_short}] Speech: '{text}' ({lang})")
+                logger.info(
+                    f"[{self.thread_bridge.call_id_short}] Speech: '{text}' ({lang})"
+                )
                 event = SpeechEvent(
                     event_type=SpeechEventType.FINAL,
                     text=text,
@@ -245,7 +289,9 @@ class SpeechSDKThread:
                 )
                 self.thread_bridge.queue_speech_result(self.speech_queue, event)
             else:
-                logger.debug(f"[{self.thread_bridge.call_id_short}] Final result too short, ignoring")
+                logger.debug(
+                    f"[{self.thread_bridge.call_id_short}] Final result too short, ignoring"
+                )
 
         def on_error(error: str):
             logger.error(f"[{self.thread_bridge.call_id_short}] Speech error: {error}")
@@ -253,13 +299,19 @@ class SpeechSDKThread:
             self.thread_bridge.queue_speech_result(self.speech_queue, error_event)
 
         try:
-            logger.debug(f"[{self.thread_bridge.call_id_short}] Registering speech recognition callbacks...")
+            logger.debug(
+                f"[{self.thread_bridge.call_id_short}] Registering speech recognition callbacks..."
+            )
             self.recognizer.set_partial_result_callback(on_partial)
             self.recognizer.set_final_result_callback(on_final)
             self.recognizer.set_cancel_callback(on_error)
-            logger.info(f"[{self.thread_bridge.call_id_short}] Speech callbacks registered successfully")
+            logger.info(
+                f"[{self.thread_bridge.call_id_short}] Speech callbacks registered successfully"
+            )
         except Exception as e:
-            logger.error(f"[{self.thread_bridge.call_id_short}] Failed to setup callbacks: {e}")
+            logger.error(
+                f"[{self.thread_bridge.call_id_short}] Failed to setup callbacks: {e}"
+            )
             raise
 
     def prepare_thread(self):
@@ -273,7 +325,9 @@ class SpeechSDKThread:
                 while self.thread_running and not self.stop_event.is_set():
                     self.stop_event.wait(0.1)
             except Exception as e:
-                logger.error(f"[{self.thread_bridge.call_id_short}] Speech thread error: {e}")
+                logger.error(
+                    f"[{self.thread_bridge.call_id_short}] Speech thread error: {e}"
+                )
             finally:
                 self.thread_running = False
 
@@ -283,16 +337,24 @@ class SpeechSDKThread:
     def start_recognizer(self):
         """Start the speech recognizer."""
         if self.recognizer_started or not self.thread_running:
-            logger.debug(f"[{self.thread_bridge.call_id_short}] Recognizer start skipped: already_started={self.recognizer_started}, thread_running={self.thread_running}")
+            logger.debug(
+                f"[{self.thread_bridge.call_id_short}] Recognizer start skipped: already_started={self.recognizer_started}, thread_running={self.thread_running}"
+            )
             return
 
         try:
-            logger.info(f"[{self.thread_bridge.call_id_short}] Starting speech recognizer, push_stream_exists={bool(self.recognizer.push_stream)}")
+            logger.info(
+                f"[{self.thread_bridge.call_id_short}] Starting speech recognizer, push_stream_exists={bool(self.recognizer.push_stream)}"
+            )
             self.recognizer.start()
             self.recognizer_started = True
-            logger.info(f"[{self.thread_bridge.call_id_short}] Speech recognizer started successfully")
+            logger.info(
+                f"[{self.thread_bridge.call_id_short}] Speech recognizer started successfully"
+            )
         except Exception as e:
-            logger.error(f"[{self.thread_bridge.call_id_short}] Failed to start recognizer: {e}")
+            logger.error(
+                f"[{self.thread_bridge.call_id_short}] Failed to start recognizer: {e}"
+            )
             raise
 
     def stop(self):
@@ -301,7 +363,9 @@ class SpeechSDKThread:
             return
 
         try:
-            logger.info(f"[{self.thread_bridge.call_id_short}] Stopping speech SDK thread")
+            logger.info(
+                f"[{self.thread_bridge.call_id_short}] Stopping speech SDK thread"
+            )
             self._stopped = True
             self.thread_running = False
             self.recognizer_started = False
@@ -310,25 +374,41 @@ class SpeechSDKThread:
             # Stop recognizer with proper error handling
             if self.recognizer:
                 try:
-                    logger.debug(f"[{self.thread_bridge.call_id_short}] Stopping speech recognizer")
+                    logger.debug(
+                        f"[{self.thread_bridge.call_id_short}] Stopping speech recognizer"
+                    )
                     self.recognizer.stop()
-                    logger.debug(f"[{self.thread_bridge.call_id_short}] Speech recognizer stopped")
+                    logger.debug(
+                        f"[{self.thread_bridge.call_id_short}] Speech recognizer stopped"
+                    )
                 except Exception as e:
-                    logger.error(f"[{self.thread_bridge.call_id_short}] Error stopping recognizer: {e}")
+                    logger.error(
+                        f"[{self.thread_bridge.call_id_short}] Error stopping recognizer: {e}"
+                    )
 
             # Ensure thread cleanup with timeout
             if self.thread_obj and self.thread_obj.is_alive():
-                logger.debug(f"[{self.thread_bridge.call_id_short}] Waiting for recognition thread to stop")
+                logger.debug(
+                    f"[{self.thread_bridge.call_id_short}] Waiting for recognition thread to stop"
+                )
                 self.thread_obj.join(timeout=2.0)
                 if self.thread_obj.is_alive():
-                    logger.warning(f"[{self.thread_bridge.call_id_short}] Recognition thread did not stop within timeout")
+                    logger.warning(
+                        f"[{self.thread_bridge.call_id_short}] Recognition thread did not stop within timeout"
+                    )
                 else:
-                    logger.debug(f"[{self.thread_bridge.call_id_short}] Recognition thread stopped successfully")
-            
-            logger.info(f"[{self.thread_bridge.call_id_short}] Speech SDK thread stopped")
-            
+                    logger.debug(
+                        f"[{self.thread_bridge.call_id_short}] Recognition thread stopped successfully"
+                    )
+
+            logger.info(
+                f"[{self.thread_bridge.call_id_short}] Speech SDK thread stopped"
+            )
+
         except Exception as e:
-            logger.error(f"[{self.thread_bridge.call_id_short}] Error during speech SDK thread stop: {e}")
+            logger.error(
+                f"[{self.thread_bridge.call_id_short}] Error during speech SDK thread stop: {e}"
+            )
 
 
 class RouteTurnThread:
@@ -344,8 +424,14 @@ class RouteTurnThread:
     - Delegates to orchestrator for response generation
     - Isolated from real-time operations
     """
-    
-    def __init__(self, speech_queue: asyncio.Queue, orchestrator_func: Callable, memory_manager: Optional[MemoManager], websocket: WebSocket):
+
+    def __init__(
+        self,
+        speech_queue: asyncio.Queue,
+        orchestrator_func: Callable,
+        memory_manager: Optional[MemoManager],
+        websocket: WebSocket,
+    ):
         self.speech_queue = speech_queue
         self.orchestrator_func = orchestrator_func
         self.memory_manager = memory_manager
@@ -355,7 +441,11 @@ class RouteTurnThread:
         self.running = False
         self._stopped = False
         # Get call ID shorthand from websocket if available
-        self.call_id_short = getattr(websocket, '_call_connection_id', 'unknown')[-8:] if hasattr(websocket, '_call_connection_id') else 'unknown'
+        self.call_id_short = (
+            getattr(websocket, "_call_connection_id", "unknown")[-8:]
+            if hasattr(websocket, "_call_connection_id")
+            else "unknown"
+        )
 
     async def start(self):
         """Start the route turn processing loop."""
@@ -369,20 +459,24 @@ class RouteTurnThread:
         """Main processing loop."""
         while self.running:
             try:
-                speech_event = await asyncio.wait_for(self.speech_queue.get(), timeout=1.0)
-                
+                speech_event = await asyncio.wait_for(
+                    self.speech_queue.get(), timeout=1.0
+                )
+
                 try:
                     if speech_event.event_type == SpeechEventType.FINAL:
                         await self._process_final_speech(speech_event)
                     elif speech_event.event_type in {
-                        SpeechEventType.GREETING, 
-                        SpeechEventType.ANNOUNCEMENT, 
-                        SpeechEventType.STATUS_UPDATE, 
-                        SpeechEventType.ERROR_MESSAGE
+                        SpeechEventType.GREETING,
+                        SpeechEventType.ANNOUNCEMENT,
+                        SpeechEventType.STATUS_UPDATE,
+                        SpeechEventType.ERROR_MESSAGE,
                     }:
                         await self._process_direct_text_playback(speech_event)
                     elif speech_event.event_type == SpeechEventType.ERROR:
-                        logger.error(f"[{self.call_id_short}] Speech error: {speech_event.text}")
+                        logger.error(
+                            f"[{self.call_id_short}] Speech error: {speech_event.text}"
+                        )
                 except asyncio.CancelledError:
                     continue  # Barge-in cancellation, continue processing
             except asyncio.TimeoutError:
@@ -402,6 +496,27 @@ class RouteTurnThread:
                 if not self.memory_manager:
                     logger.error(f"[{self.call_id_short}] No memory manager available")
                     return
+
+                # Broadcast user transcription to dashboard
+                if (
+                    hasattr(self.memory_manager, "session_id")
+                    and self.memory_manager.session_id
+                ):
+                    try:
+                        await broadcast_message(
+                            connected_clients=None,  # Ignored for safety
+                            message=event.text,
+                            sender="User",
+                            app_state=self.websocket.app.state,
+                            session_id=self.memory_manager.session_id,
+                        )
+                        logger.info(
+                            f"[{self.call_id_short}] Broadcasting user transcript: '{event.text[:50]}...' to session: {self.memory_manager.session_id}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[{self.call_id_short}] Failed to broadcast user transcript: {e}"
+                        )
 
                 if self.orchestrator_func:
                     await self.orchestrator_func(
@@ -438,12 +553,16 @@ class RouteTurnThread:
         :type playback_type: str
         :raises asyncio.CancelledError: When playback is cancelled by barge-in
         """
-        with tracer.start_as_current_span("route_turn_thread.process_direct_text_playback", kind=SpanKind.CLIENT):
+        with tracer.start_as_current_span(
+            "route_turn_thread.process_direct_text_playback", kind=SpanKind.CLIENT
+        ):
             try:
                 playback_type = event.event_type.value
                 # Only log significant text or greeting
                 if event.event_type == SpeechEventType.GREETING or len(event.text) > 10:
-                    logger.info(f"[{event.speaker_id}] Playing {playback_type}: '{event.text[:50]}...'")
+                    logger.info(
+                        f"[{event.speaker_id}] Playing {playback_type}: '{event.text[:50]}...'"
+                    )
 
                 self.current_response_task = asyncio.create_task(
                     send_response_to_acs(
@@ -456,7 +575,9 @@ class RouteTurnThread:
                 )
                 await self.current_response_task
             except asyncio.CancelledError:
-                logger.info(f"[{self.call_id_short}] {event.event_type.value} playback cancelled")
+                logger.info(
+                    f"[{self.call_id_short}] {event.event_type.value} playback cancelled"
+                )
                 raise
             except Exception as e:
                 logger.error(f"[{self.call_id_short}] Playback error: {e}")
@@ -473,7 +594,7 @@ class RouteTurnThread:
                     self.speech_queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
-            
+
             if queue_size > 2:  # Only log if significant clearing
                 logger.info(f"[{self.call_id_short}] Cleared {queue_size} stale events")
 
@@ -517,11 +638,18 @@ class MainEventLoop:
     - Real-time WebSocket handling
     - Coordinates with other threads via async patterns
     """
-    
-    def __init__(self, websocket: WebSocket, call_connection_id: str, route_turn_thread: Optional[RouteTurnThread] = None):
+
+    def __init__(
+        self,
+        websocket: WebSocket,
+        call_connection_id: str,
+        route_turn_thread: Optional[RouteTurnThread] = None,
+    ):
         self.websocket = websocket
         self.call_connection_id = call_connection_id
-        self.call_id_short = call_connection_id[-8:] if call_connection_id else "unknown"
+        self.call_id_short = (
+            call_connection_id[-8:] if call_connection_id else "unknown"
+        )
         self.route_turn_thread = route_turn_thread
         self.current_playback_task: Optional[asyncio.Task] = None
         self.barge_in_active = threading.Event()
@@ -533,7 +661,9 @@ class MainEventLoop:
 
     async def handle_barge_in(self):
         """Handle barge-in interruption."""
-        with tracer.start_as_current_span("main_event_loop.handle_barge_in", kind=SpanKind.INTERNAL):
+        with tracer.start_as_current_span(
+            "main_event_loop.handle_barge_in", kind=SpanKind.INTERNAL
+        ):
             if self.barge_in_active.is_set():
                 return  # Already handling barge-in
 
@@ -594,9 +724,11 @@ class MainEventLoop:
             elif kind == "AudioData":
                 audio_data_section = data.get("audioData", {})
                 is_silent = audio_data_section.get("silent", True)
-                
+
                 # Debug logging for audio data processing
-                logger.debug(f"[{self.call_id_short}] AudioData: silent={is_silent}, has_data={bool(audio_data_section.get('data'))}")
+                logger.debug(
+                    f"[{self.call_id_short}] AudioData: silent={is_silent}, has_data={bool(audio_data_section.get('data'))}"
+                )
 
                 if not is_silent:
                     audio_bytes = audio_data_section.get("data")
@@ -604,19 +736,29 @@ class MainEventLoop:
                         # logger.info(f"[{self.call_id_short}] Processing audio chunk: {len(audio_bytes)} base64 chars, recognizer_started={getattr(acs_handler.speech_sdk_thread, 'recognizer_started', False)}")
 
                         # No artificial throttling - process all audio chunks
-                        if self.max_concurrent_audio_tasks is None or len(self.active_audio_tasks) < self.max_concurrent_audio_tasks:
+                        if (
+                            self.max_concurrent_audio_tasks is None
+                            or len(self.active_audio_tasks)
+                            < self.max_concurrent_audio_tasks
+                        ):
                             task = asyncio.create_task(
                                 self._process_audio_chunk_async(audio_bytes, recognizer)
                             )
                             self.active_audio_tasks.add(task)
-                            task.add_done_callback(lambda t: self.active_audio_tasks.discard(t))
+                            task.add_done_callback(
+                                lambda t: self.active_audio_tasks.discard(t)
+                            )
                     else:
-                        logger.warning(f"[{self.call_id_short}] AudioData skipped: audio_bytes={bool(audio_bytes)}, recognizer={bool(recognizer)}")
+                        logger.warning(
+                            f"[{self.call_id_short}] AudioData skipped: audio_bytes={bool(audio_bytes)}, recognizer={bool(recognizer)}"
+                        )
                 else:
-                    logger.debug(f"[{self.call_id_short}] AudioData marked as silent, skipping")
+                    logger.debug(
+                        f"[{self.call_id_short}] AudioData marked as silent, skipping"
+                    )
 
             elif kind == "DtmfData":
-                tone = data.get('dtmfData').get('data')
+                tone = data.get("dtmfData").get("data")
                 logger.info(f"[{self.call_id_short}] DTMF tone received: {tone}")
                 # DTMF handling is delegated to DTMFValidationLifecycle via event handlers
 
@@ -625,16 +767,20 @@ class MainEventLoop:
         except Exception as e:
             logger.error(f"[{self.call_id_short}] Media message error: {e}")
 
-    async def _process_audio_chunk_async(self, audio_bytes: Union[str, bytes], recognizer) -> None:
+    async def _process_audio_chunk_async(
+        self, audio_bytes: Union[str, bytes], recognizer
+    ) -> None:
         """Process audio chunk asynchronously."""
         try:
             # Handle base64 decoding if needed
             original_type = type(audio_bytes).__name__
             if isinstance(audio_bytes, str):
                 audio_bytes = base64.b64decode(audio_bytes)
-            
+
             decoded_len = len(audio_bytes)
-            logger.debug(f"[{self.call_id_short}] Audio chunk: {original_type} -> {decoded_len} bytes, push_stream_exists={bool(recognizer.push_stream if recognizer else False)}")
+            logger.debug(
+                f"[{self.call_id_short}] Audio chunk: {original_type} -> {decoded_len} bytes, push_stream_exists={bool(recognizer.push_stream if recognizer else False)}"
+            )
 
             if recognizer:
                 await asyncio.wait_for(
@@ -643,9 +789,13 @@ class MainEventLoop:
                     ),
                     timeout=0.5,  # Reasonable timeout for audio chunk processing
                 )
-                logger.debug(f"[{self.call_id_short}] Audio chunk sent to recognizer successfully")
+                logger.debug(
+                    f"[{self.call_id_short}] Audio chunk sent to recognizer successfully"
+                )
         except asyncio.TimeoutError:
-            logger.warning(f"[{self.call_id_short}] Audio processing timeout - chunk may be lost")
+            logger.warning(
+                f"[{self.call_id_short}] Audio processing timeout - chunk may be lost"
+            )
         except Exception as e:
             logger.error(f"[{self.call_id_short}] Audio processing error: {e}")
 
@@ -664,7 +814,7 @@ class MainEventLoop:
                 event_type=SpeechEventType.GREETING,
                 text=greeting_text,
                 language="en-US",
-                speaker_id=self.call_id_short
+                speaker_id=self.call_id_short,
             )
             acs_handler.thread_bridge.queue_speech_result(
                 acs_handler.speech_queue, greeting_event
@@ -675,12 +825,13 @@ class MainEventLoop:
             logger.error(f"[{self.call_id_short}] Failed to queue greeting: {e}")
             self.greeting_played = True
 
+
 # ============================================================================
-# 🎯 MAIN ORCHESTRATOR - THREE-THREAD ARCHITECTURE COORDINATOR
+# MAIN ORCHESTRATOR - THREE-THREAD ARCHITECTURE COORDINATOR
 # ============================================================================
 class ACSMediaHandler:
     """
-    🎯 V1 ACS Media Handler - Three-Thread Architecture Implementation
+    V1 ACS Media Handler - Three-Thread Architecture Implementation
 
     Coordinates the documented three-thread architecture for low-latency voice interactions:
 
@@ -726,7 +877,9 @@ class ACSMediaHandler:
         self.session_id = session_id or call_connection_id
         self.memory_manager = memory_manager
         self.greeting_text = greeting_text
-        self.call_id_short = call_connection_id[-8:] if call_connection_id else "unknown"
+        self.call_id_short = (
+            call_connection_id[-8:] if call_connection_id else "unknown"
+        )
 
         # Initialize speech recognizer
         self.recognizer = recognizer or StreamingSpeechRecognizerFromBytes(
@@ -770,8 +923,10 @@ class ACSMediaHandler:
             attributes={"call.connection.id": self.call_connection_id},
         ):
             try:
-                logger.info(f"[{self.call_id_short}] Starting three-thread media handler")
-                
+                logger.info(
+                    f"[{self.call_id_short}] Starting three-thread media handler"
+                )
+
                 # Handler lifecycle managed by ConnectionManager - no separate registry needed
                 self.running = True
 
@@ -800,7 +955,9 @@ class ACSMediaHandler:
         :type stream_data: str
         """
         try:
-            await self.main_event_loop.handle_media_message(stream_data, self.recognizer, self)
+            await self.main_event_loop.handle_media_message(
+                stream_data, self.recognizer, self
+            )
         except Exception as e:
             logger.error(f"[{self.call_id_short}] Media message error: {e}")
 
@@ -809,7 +966,9 @@ class ACSMediaHandler:
         if self._stopped:
             return
 
-        with tracer.start_as_current_span("acs_media_handler.stop", kind=SpanKind.INTERNAL):
+        with tracer.start_as_current_span(
+            "acs_media_handler.stop", kind=SpanKind.INTERNAL
+        ):
             try:
                 logger.info(f"[{self.call_id_short}] Stopping media handler")
                 self._stopped = True
@@ -819,33 +978,43 @@ class ACSMediaHandler:
 
                 # Stop components with individual error isolation
                 cleanup_errors = []
-                
+
                 try:
                     await self.route_turn_thread.stop()
                     logger.debug(f"[{self.call_id_short}] Route turn thread stopped")
                 except Exception as e:
                     cleanup_errors.append(f"route_turn_thread: {e}")
-                    logger.error(f"[{self.call_id_short}] Error stopping route turn thread: {e}")
+                    logger.error(
+                        f"[{self.call_id_short}] Error stopping route turn thread: {e}"
+                    )
 
                 try:
                     self.speech_sdk_thread.stop()
                     logger.debug(f"[{self.call_id_short}] Speech SDK thread stopped")
                 except Exception as e:
                     cleanup_errors.append(f"speech_sdk_thread: {e}")
-                    logger.error(f"[{self.call_id_short}] Error stopping speech SDK thread: {e}")
+                    logger.error(
+                        f"[{self.call_id_short}] Error stopping speech SDK thread: {e}"
+                    )
 
                 try:
                     await self.main_event_loop._cancel_current_playback()
                     logger.debug(f"[{self.call_id_short}] Main event loop cleaned up")
                 except Exception as e:
                     cleanup_errors.append(f"main_event_loop: {e}")
-                    logger.error(f"[{self.call_id_short}] Error cleaning up main event loop: {e}")
+                    logger.error(
+                        f"[{self.call_id_short}] Error cleaning up main event loop: {e}"
+                    )
 
                 if cleanup_errors:
-                    logger.warning(f"[{self.call_id_short}] Media handler stopped with {len(cleanup_errors)} cleanup errors")
+                    logger.warning(
+                        f"[{self.call_id_short}] Media handler stopped with {len(cleanup_errors)} cleanup errors"
+                    )
                 else:
-                    logger.info(f"[{self.call_id_short}] Media handler stopped successfully")
-                    
+                    logger.info(
+                        f"[{self.call_id_short}] Media handler stopped successfully"
+                    )
+
             except Exception as e:
                 logger.error(f"[{self.call_id_short}] Critical stop error: {e}")
                 # Don't re-raise - ensure cleanup always completes
@@ -892,11 +1061,15 @@ class ACSMediaHandler:
         }
 
         if playback_type not in valid_types:
-            logger.error(f"[{self.call_id_short}] Invalid playback type: {playback_type}")
+            logger.error(
+                f"[{self.call_id_short}] Invalid playback type: {playback_type}"
+            )
             return False
 
         try:
-            text_event = SpeechEvent(event_type=playback_type, text=text, language=language)
+            text_event = SpeechEvent(
+                event_type=playback_type, text=text, language=language
+            )
             self.thread_bridge.queue_speech_result(self.speech_queue, text_event)
             return True
         except Exception as e:

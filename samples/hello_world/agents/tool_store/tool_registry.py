@@ -49,13 +49,13 @@ TOOL_REGISTRY: Dict[str, Dict] = {
 def get_tool_function(tool_name: str) -> Callable[..., Any]:
     """
     Get the function implementation for a given tool name.
-    
+
     Args:
         tool_name: The name of the tool function
-        
+
     Returns:
         The callable function for the tool
-        
+
     Raises:
         KeyError: If the tool name is not found in the registry
     """
@@ -67,13 +67,13 @@ def get_tool_function(tool_name: str) -> Callable[..., Any]:
 def get_tool_schema(tool_name: str) -> Dict[str, Any]:
     """
     Get the schema for a given tool name.
-    
+
     Args:
         tool_name: The name of the tool
-        
+
     Returns:
         The tool schema dictionary
-        
+
     Raises:
         KeyError: If the tool name is not found in the registry
     """
@@ -85,7 +85,7 @@ def get_tool_schema(tool_name: str) -> Dict[str, Any]:
 def list_available_tools() -> List[str]:
     """
     Get a list of all available tool names.
-    
+
     Returns:
         List of tool names
     """
@@ -95,23 +95,23 @@ def list_available_tools() -> List[str]:
 def validate_tool_registry() -> bool:
     """
     Validate that all tools have both functions and schemas registered.
-    
+
     Returns:
         True if registry is valid, False otherwise
     """
     function_names = set(function_mapping.keys())
     schema_names = set(TOOL_REGISTRY.keys())
-    
+
     if function_names != schema_names:
         missing_functions = schema_names - function_names
         missing_schemas = function_names - schema_names
-        
+
         if missing_functions:
             print(f"Missing functions for schemas: {missing_functions}")
         if missing_schemas:
             print(f"Missing schemas for functions: {missing_schemas}")
         return False
-    
+
     return True
 
 

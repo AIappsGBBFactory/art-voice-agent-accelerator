@@ -1,119 +1,151 @@
-# **🚀 Deploying Voice-to-Voice Application Powered by ARTAgent**
+# Real-Time Voice Agent Application
 
-This README provides technical instructions for deploying, customizing, and running a real-time voice-to-voice demo application built with the ARTAgent framework. Refer to the [ARTAgent README](../README.md) for full framework details.
+Voice agent application built with ARTAgent framework for Azure Communication Services.
 
-### **Application Structure**
+## Structure
 
-```text
-apps/
-└── rtagent/
-  ├── backend/   # FastAPI WebSocket backend for transcription & GPT orchestration
-  ├── frontend/  # React + Vite frontend using Azure Speech SDK
-  └── scripts/   # Setup and utility scripts
+```
+apps/rtagent/
+├── backend/     # FastAPI backend with multi-agent orchestration
+├── frontend/    # React frontend with Azure Speech SDK
+└── scripts/     # Setup and deployment utilities
 ```
 
-### **Extending ARTAgent: Framework-Agnostic Agent Customization**
+## Architecture
 
-ARTAgent is designed to be modular and extensible, allowing teams to tailor the system for domain-specific deployments and intelligent orchestration.
+**Real-time voice application** with intelligent agent routing:
+- **Frontend** - Browser-based voice interface using Azure Speech SDK
+- **Backend** - FastAPI WebSocket server with multi-agent orchestration
+- **Agents** - AuthAgent → FNOLIntakeAgent/GeneralInfoAgent workflow
 
-To begin customizing, refer to the following key backend components:
+## Quick Start
 
-+ `rtagent/backend/src/agents/` – Core agent definitions and logic
-
-- `rtagent/backend/src/agent_store/` – Persistent store for registered agents and metadata
-
-+ `rtagent/backend/src/prompt_store/` – Structured storage for agent-specific prompt templates
-
-- `rtagent/backend/src/tool_store/` – Interface for injecting custom tools, APIs, and capabilities
-
-#### **🔧 Extension Capabilities**
-
- **🧠 Custom Agents** -> Develop specialized agents such as LegalAgent, HealthcareAgent, or domain-specific copilots.Register them in the agent_store and link them to corresponding prompts in the prompt_store. Define behavior, memory scope, and toolchains specific to their operational goals.
-
- **🔌 Tool Integration** -> Augment agent capabilities with external APIs, document retrieval functions, or third-party services. Extend the tool_store with domain tools—these tools are automatically exposed to agents through function-calling or tool selection logic.
-
- **🧬 Memory Enhancements** -> Implement advanced memory mechanisms for long-term user context, dialogue history, and personalized responses. You can plug in vector memory backends (e.g., Redis, ChromaDB) or use custom embeddings to persist semantic interactions across sessions.
-
- **🧭 Dynamic Routing (LLM and Agent Orchestration)** -> ARTAgent supports dynamic routing strategies that can be modified at multiple abstraction layers:
-
-  + **API Dispatching (Low Latency Pathways)** -> Within the router/ module, adjust the FastAPI-based routing logic to handle cost-aware, latency-sensitive decision trees across model backends or endpoint variants.
-  - **Agentic Orchestration (Cognitive Planning Layer)** -> Within the orchestrator/ module, you can define custom orchestration flows—using heuristics, scoring functions, or embedding similarity—to route queries between agents. You may also substitute this with your own orchestration stack such as Semantic Kernel, Autogen, or OpenAgents-style architectures for more advanced agent-based collaboration. ARTAgent doesn’t lock you into a rigid architecture—it provides a principled starting point for building low-latency, stateful, and tool-augmented chat agents that can evolve to fit your infrastructure, orchestration strategy, and domain-specific requirements.
-
-## **Before to Start..**
-
-### **Setup Your Development Environment**
-
+### Prerequisites
 - Python 3.11+
-- Node.js 18+ (with npm)
-- Docker
-- Terraform
-- Azure CLI (Dev Tunnel extension)
+- Node.js 18+
+- Azure services provisioned (see Infrastructure section)
 
+### 1. Backend Setup
 ```bash
-az extension add --name devtunnel
-```
-### **Required Azure Services**
-
-- Azure Communication Services  
-- Azure Cosmos DB (Mongo vCore)  
-- Azure Event Grid  
-- Azure Key Vault  
-- Azure Managed Redis Enterprise  
-- Azure Monitor (Log Analytics / Application Insights)  
-- Azure OpenAI  
-- Azure Speech Services  
-- Azure Storage Account  
-- User-Assigned Managed Identities  
-- Azure Container Apps & Registry or App Service Plan / Web Apps  
-
-#### **Infrastructure Deployment Options**
-
-Provision the required Azure services before deploying:
-
-1. **Manual Provisioning**  
-   Set up each service via the Azure portal.
-2. **Automated Provisioning (Recommended)**  
-   Use IaC for repeatable deployments:
-   - **Terraform:** Provided Terraform scripts  
-   - **Azure Developer CLI (azd):** Provided azd scripts  
-
-See the [Infrastructure Deployment Guide](../../docs/DeploymentGuide.md) for detailed steps.
-
-## ⚡ Running the App Locally?
-
-Ensure infrastructure is provisioned before running locally.
-
-### Backend Setup
-
-```bash
-git clone https://github.com/your-org/gbb-ai-audio-agent.git
-cd gbb-ai-audio-agent/apps/rtagent/backend
+cd apps/rtagent/backend
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.sample .env     # Configure ACS, Speech, and OpenAI credentials
-python server.py        # Backend available at ws://localhost:8010/realtime
+cp .env.sample .env  # Configure Azure credentials
+python main.py
 ```
 
-### Frontend Setup
+### 2. Frontend Setup
+```bash
+cd apps/rtagent/frontend
+npm install
+npm run dev
+```
+
+### 3. Access Application
+- **Frontend**: http://localhost:5173
+- **Backend**: ws://localhost:8010
+- **API Docs**: http://localhost:8010/docs
+
+## Configuration
+
+### Environment Variables
+Configure `.env` files in both backend and frontend:
+
+**Backend** (`backend/.env`):
+```bash
+AZURE_OPENAI_ENDPOINT=your-endpoint
+AZURE_SPEECH_KEY=your-key
+ACS_CONNECTION_STRING=your-connection-string
+```
+
+**Frontend** (`frontend/.env`):
+```bash
+VITE_BACKEND_URL=ws://localhost:8010
+VITE_SPEECH_KEY=your-speech-key
+```
+
+## Infrastructure Requirements
+
+### Azure Services
+- **Azure Communication Services** - Phone calling and media streaming
+- **Azure Speech Services** - STT/TTS processing
+- **Azure OpenAI** - GPT model for agent responses
+- **Azure Redis** - Session and conversation state
+- **Azure Cosmos DB** - Persistent data storage
+- **Azure Storage** - Audio recording storage
+
+### Deployment Options
+1. **Terraform** - Use `infra/terraform/` for automated provisioning
+2. **Azure Developer CLI** - Use `azd up` for quick deployment
+3. **Manual** - Configure services via Azure Portal
+
+See [Deployment Guide](../../docs/DeploymentGuide.md) for detailed steps.
+
+## Development
+
+### Adding Agents
+1. Create YAML config in `backend/src/agents/agent_store/`
+2. Add prompt template in `backend/src/agents/prompt_store/`
+3. Register in orchestration system
+
+### Modifying Voice Settings
+Edit `backend/config/voice_config.py` for TTS voices and speech recognition.
+
+### Feature Toggles
+Edit `backend/config/feature_flags.py` to enable/disable features.
+
+## Production Deployment
+
+### Local Development with Azure Integration
+Use Azure Dev Tunnels for ACS callback integration:
 
 ```bash
-cd ../../frontend
-npm install
-npm run dev            # Frontend available at http://localhost:5173
+cd scripts/
+./start_devtunnel_host.sh  # Exposes backend publicly
 ```
 
-Enabling ACS Call-In and “Call Me” Locally feature: 
+Update `BASE_URL` in environment variables with the tunnel URL.
 
-- Expose the backend via Azure Dev Tunnels. How ? Update `BASE_URL` in both `.env` files, and configure the ACS event subscription. 
-- Update the public URL in Azure Communication Services’ event callback.
+### Container Deployment
+```bash
+docker build -t voice-agent-backend ./backend
+docker build -t voice-agent-frontend ./frontend
+```
 
-## Need help getting started? Use the Utility Scripts
+## Utility Scripts
 
-| Script                          | Purpose                                  |
-| ------------------------------- | ---------------------------------------- |
-| scripts/start_backend.py        | Launch backend & verify environment      |
-| scripts/start_frontend.sh       | Launch React frontend dev server         |
-| scripts/start_devtunnel_host.sh | Open Dev Tunnel & display public URL     |
+| Script | Purpose |
+|--------|---------|
+| `scripts/start_backend.py` | Launch backend with environment validation |
+| `scripts/start_frontend.sh` | Launch React development server |
+| `scripts/start_devtunnel_host.sh` | Create Azure Dev Tunnel for ACS integration |
 
-For advanced customization, see the [ARTAgent documentation](../README.md).
+## Agent Workflow
+
+```
+1. User calls → ACS → WebSocket connection
+2. AuthAgent validates caller identity
+3. Intent routing: Claims → FNOLIntakeAgent, General → GeneralInfoAgent
+4. Agent processes with approved tools
+5. Response generation via Azure OpenAI
+6. TTS conversion and audio streaming
+```
+
+## Extending the System
+
+### Custom Agents
+- Create domain-specific agents (LegalAgent, HealthcareAgent)
+- Define agent behavior in YAML configuration
+- Link to specialized prompt templates and tools
+
+### Tool Integration
+- Add external APIs and services to `backend/src/agents/tool_store/`
+- Tools automatically available to agents via function calling
+
+### Memory Enhancement
+- Implement custom memory backends
+- Add vector storage for semantic search
+- Extend conversation persistence
+
+For advanced customization, see the [ARTAgent Framework Documentation](../README.md).

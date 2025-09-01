@@ -18,7 +18,7 @@ from .voice_live import (
     VoiceLiveMetrics,
     VoiceLiveSessionStatus,
     VoiceLiveAudioConfig,
-    VoiceLiveModelConfig
+    VoiceLiveModelConfig,
 )
 
 __all__ = [
@@ -32,5 +32,5 @@ __all__ = [
     "VoiceLiveSession",
     "VoiceLiveConnectionState",
     "VoiceLiveMetrics",
-    "VoiceLiveSessionStatus"
+    "VoiceLiveSessionStatus",
 ]

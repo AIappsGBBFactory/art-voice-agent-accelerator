@@ -142,7 +142,7 @@ async def get_realtime_status(
     :raises: None (endpoint designed to always return current service status).
     """
     session_count = await request.app.state.session_manager.get_session_count()
-    
+
     # Get connection stats from the new manager
     conn_stats = await request.app.state.conn_manager.stats()
     dashboard_clients = conn_stats.get("by_topic", {}).get("dashboard", 0)
@@ -174,8 +174,7 @@ async def get_realtime_status(
 
 @router.websocket("/dashboard/relay")
 async def dashboard_relay_endpoint(
-    websocket: WebSocket, 
-    session_id: Optional[str] = Query(None)
+    websocket: WebSocket, session_id: Optional[str] = Query(None)
 ):
     """Production-ready dashboard relay WebSocket endpoint.
 
@@ -190,10 +189,12 @@ async def dashboard_relay_endpoint(
     try:
         # Generate client ID for logging
         client_id = str(uuid.uuid4())[:8]
-        
+
         # Log session correlation for debugging
-        logger.info(f"🔗 [BACKEND] Dashboard relay WebSocket connection from frontend with session_id: {session_id}")
-        logger.info(f"🔗 [BACKEND] Client ID: {client_id} | Session ID: {session_id}")
+        logger.info(
+            f"[BACKEND] Dashboard relay WebSocket connection from frontend with session_id: {session_id}"
+        )
+        logger.info(f"[BACKEND] Client ID: {client_id} | Session ID: {session_id}")
 
         with tracer.start_as_current_span(
             "api.v1.realtime.dashboard_relay_connect",
@@ -221,10 +222,10 @@ async def dashboard_relay_endpoint(
             # Get updated connection stats
             conn_stats = await websocket.app.state.conn_manager.stats()
             dashboard_count = conn_stats.get("by_topic", {}).get("dashboard", 0)
-            
+
             connect_span.set_attribute("dashboard.clients.total", dashboard_count)
             connect_span.set_status(Status(StatusCode.OK))
-            
+
             log_with_context(
                 logger,
                 "info",
@@ -250,9 +251,9 @@ async def dashboard_relay_endpoint(
 
 @router.websocket("/conversation")
 async def browser_conversation_endpoint(
-    websocket: WebSocket, 
+    websocket: WebSocket,
     session_id: Optional[str] = Query(None),
-    orchestrator: Optional[callable] = Depends(get_orchestrator)
+    orchestrator: Optional[callable] = Depends(get_orchestrator),
 ):
     """Production-ready browser conversation WebSocket endpoint.
 
@@ -276,9 +277,13 @@ async def browser_conversation_endpoint(
             else:
                 # For realtime calls, use full UUID4 to prevent collisions
                 session_id = str(uuid.uuid4())
-        
-        logger.info(f"🔗 [BACKEND] Conversation WebSocket connection from frontend with session_id: {session_id}")
-        logger.info(f"🔗 [BACKEND] Browser conversation starting with session_id: {session_id}")
+
+        logger.info(
+            f"[BACKEND] Conversation WebSocket connection from frontend with session_id: {session_id}"
+        )
+        logger.info(
+            f"[BACKEND] Browser conversation starting with session_id: {session_id}"
+        )
 
         with tracer.start_as_current_span(
             "api.v1.realtime.conversation_connect",
@@ -347,7 +352,9 @@ async def browser_conversation_endpoint(
         _log_conversation_error(e, session_id)
         raise
     finally:
-        await _cleanup_conversation_session(websocket, session_id, memory_manager, conn_id)
+        await _cleanup_conversation_session(
+            websocket, session_id, memory_manager, conn_id
+        )
 
 
 # ============================================================================
@@ -356,7 +363,10 @@ async def browser_conversation_endpoint(
 
 
 async def _initialize_conversation_session(
-    websocket: WebSocket, session_id: str, conn_id: str, orchestrator: Optional[callable]
+    websocket: WebSocket,
+    session_id: str,
+    conn_id: str,
+    orchestrator: Optional[callable],
 ) -> MemoManager:
     """Initialize conversation session with consolidated state management.
 
@@ -378,7 +388,7 @@ async def _initialize_conversation_session(
 
     # Track background orchestration tasks for proper cleanup
     orchestration_tasks = set()
-    
+
     # Set up WebSocket state for orchestrator compatibility
     websocket.state.cm = memory_manager
     websocket.state.session_id = session_id
@@ -412,7 +422,7 @@ async def _initialize_conversation_session(
         if connection and connection.meta.handler:
             return connection.meta.handler.get(key, default)
         return default
-    
+
     def set_metadata(key: str, value):
         # Use connection metadata as single source of truth
         if connection and connection.meta.handler:
@@ -442,18 +452,18 @@ async def _initialize_conversation_session(
 
     # Set up STT callbacks
     def on_partial(txt: str, lang: str, speaker_id: str):
-        logger.info(f"🗣️ User (partial) in {lang}: {txt}")
+        logger.info(f"User (partial) in {lang}: {txt}")
         try:
             # Check both synthesis flag and session audio state for barge-in
             is_synthesizing = get_metadata("is_synthesizing", False)
             audio_playing = get_metadata("audio_playing", False)
-            
+
             if is_synthesizing or audio_playing:
                 # Interrupt TTS synthesizer immediately
                 tts_client = get_metadata("tts_client")
                 if tts_client:
                     tts_client.stop_speaking()
-                
+
                 # Clear both synthesis flag and audio state
                 set_metadata("is_synthesizing", False)
                 set_metadata("audio_playing", False)
@@ -471,18 +481,22 @@ async def _initialize_conversation_session(
                 if loop and loop.is_running():
                     loop.call_soon_threadsafe(
                         asyncio.create_task,
-                        websocket.app.state.conn_manager.send_to_connection(conn_id, cancel_msg)
+                        websocket.app.state.conn_manager.send_to_connection(
+                            conn_id, cancel_msg
+                        ),
                     )
                 else:
                     # Best-effort fallback
                     asyncio.create_task(
-                        websocket.app.state.conn_manager.send_to_connection(conn_id, cancel_msg)
+                        websocket.app.state.conn_manager.send_to_connection(
+                            conn_id, cancel_msg
+                        )
                     )
         except Exception as e:
             logger.debug(f"Failed to dispatch UI cancel control: {e}")
 
     def on_final(txt: str, lang: str):
-        logger.info(f"🧾 User (final) in {lang}: {txt}")
+        logger.info(f"User (final) in {lang}: {txt}")
         current_buffer = get_metadata("user_buffer", "")
         set_metadata("user_buffer", current_buffer + txt.strip() + "\n")
 
@@ -494,18 +508,27 @@ async def _initialize_conversation_session(
     stt_client.start()
 
     # Allocate dedicated TTS client for this session
-    if hasattr(websocket.app.state, 'dedicated_tts_manager'):
+    if hasattr(websocket.app.state, "dedicated_tts_manager"):
         try:
-            tts_client, client_tier = await websocket.app.state.dedicated_tts_manager.get_dedicated_client(session_id)
+            (
+                tts_client,
+                client_tier,
+            ) = await websocket.app.state.dedicated_tts_manager.get_dedicated_client(
+                session_id
+            )
             set_metadata("tts_client", tts_client)
             set_metadata("tts_client_tier", client_tier)
-            
+
             # Store session_id on WebSocket state for shared_ws access
             websocket.state.session_id = session_id
-            
-            logger.info(f"Allocated dedicated TTS client for session {session_id} (tier={client_tier.value})")
+
+            logger.info(
+                f"Allocated dedicated TTS client for session {session_id} (tier={client_tier.value})"
+            )
         except Exception as e:
-            logger.warning(f"Failed to allocate dedicated TTS client for session {session_id}: {e}")
+            logger.warning(
+                f"Failed to allocate dedicated TTS client for session {session_id}: {e}"
+            )
 
     logger.info(f"STT recognizer started for session {session_id}")
     return memory_manager
@@ -567,17 +590,17 @@ async def _process_conversation_messages(
             # Get connection manager for this session
             conn_manager = websocket.app.state.conn_manager
             connection = conn_manager._conns.get(conn_id)
-            
+
             # Helper function to access connection metadata
             def get_metadata(key: str, default=None):
                 if connection and connection.meta.handler:
                     return connection.meta.handler.get(key, default)
                 return default
-            
+
             def set_metadata(key: str, value):
                 if connection and connection.meta.handler:
                     connection.meta.handler[key] = value
-            
+
             message_count = 0
             while (
                 websocket.client_state == WebSocketState.CONNECTED
@@ -595,62 +618,72 @@ async def _process_conversation_messages(
                     if stt_client:
                         stt_client.write_bytes(msg["bytes"])
 
-                    # Process accumulated user buffer
-                    user_buffer = get_metadata("user_buffer", "")
-                    if user_buffer.strip():
-                        prompt = user_buffer.strip()
-                        set_metadata("user_buffer", "")
+                # Process accumulated user buffer (moved outside audio handling to prevent duplication)
+                user_buffer = get_metadata("user_buffer", "")
+                if user_buffer.strip():
+                    prompt = user_buffer.strip()
+                    set_metadata("user_buffer", "")
 
-                        # Send user message to frontend using envelope format
-                        user_envelope = make_envelope(
-                            etype="event",
-                            sender="User",
-                            payload={"sender": "User", "message": prompt},
+                    # Send user message to all connections in the session using session-isolated broadcasting
+                    user_envelope = make_envelope(
+                        etype="event",
+                        sender="User",
+                        payload={"sender": "User", "message": prompt},
+                        topic="session",
+                        session_id=session_id,
+                    )
+                    await websocket.app.state.conn_manager.broadcast_session(
+                        session_id, user_envelope
+                    )
+
+                    # Check for stopwords
+                    if check_for_stopwords(prompt):
+                        goodbye = "Thank you for using our service. Goodbye."
+                        goodbye_envelope = make_envelope(
+                            etype="exit",
+                            sender="System",
+                            payload={"type": "exit", "message": goodbye},
                             topic="session",
                             session_id=session_id,
                         )
-                        await websocket.app.state.conn_manager.send_to_connection(
-                            conn_id, user_envelope
+                        await websocket.app.state.conn_manager.broadcast_session(
+                            session_id, goodbye_envelope
                         )
+                        latency_tool = get_metadata("lt")
+                        await send_tts_audio(
+                            goodbye, websocket, latency_tool=latency_tool
+                        )
+                        break
 
-                        # Check for stopwords
-                        if check_for_stopwords(prompt):
-                            goodbye = "Thank you for using our service. Goodbye."
-                            goodbye_envelope = make_envelope(
-                                etype="exit",
-                                sender="System",
-                                payload={"type": "exit", "message": goodbye},
-                                topic="session",
-                                session_id=session_id,
+                    # Process orchestration in background for non-blocking response
+                    # This prevents blocking the WebSocket receive loop, allowing true parallelism
+                    async def run_orchestration():
+                        try:
+                            await route_turn(
+                                memory_manager, prompt, websocket, is_acs=False
                             )
-                            await websocket.app.state.conn_manager.send_to_connection(
-                                conn_id, goodbye_envelope
+                        except Exception as e:
+                            logger.error(
+                                f"[PERF] Orchestration task failed for session {session_id}: {e}"
                             )
-                            latency_tool = get_metadata("lt")
-                            await send_tts_audio(
-                                goodbye, websocket, latency_tool=latency_tool
+                        finally:
+                            # Clean up completed task from tracking set
+                            orchestration_tasks = getattr(
+                                websocket.state, "orchestration_tasks", set()
                             )
-                            break
+                            orchestration_tasks.discard(asyncio.current_task())
 
-                        # Process orchestration in background for non-blocking response
-                        # This prevents blocking the WebSocket receive loop, allowing true parallelism
-                        async def run_orchestration():
-                            try:
-                                await route_turn(memory_manager, prompt, websocket, is_acs=False)
-                            except Exception as e:
-                                logger.error(f"[PERF] Orchestration task failed for session {session_id}: {e}")
-                            finally:
-                                # Clean up completed task from tracking set
-                                orchestration_tasks = getattr(websocket.state, 'orchestration_tasks', set())
-                                orchestration_tasks.discard(asyncio.current_task())
-                        
-                        orchestration_task = asyncio.create_task(run_orchestration())
-                        
-                        # Track the task for proper cleanup
-                        orchestration_tasks = getattr(websocket.state, 'orchestration_tasks', set())
-                        orchestration_tasks.add(orchestration_task)
-                        
-                        logger.debug(f"[PERF] Started parallel orchestration task for session {session_id} (active tasks: {len(orchestration_tasks)})")
+                    orchestration_task = asyncio.create_task(run_orchestration())
+
+                    # Track the task for proper cleanup
+                    orchestration_tasks = getattr(
+                        websocket.state, "orchestration_tasks", set()
+                    )
+                    orchestration_tasks.add(orchestration_task)
+
+                    logger.debug(
+                        f"[PERF] Started parallel orchestration task for session {session_id} (active tasks: {len(orchestration_tasks)})"
+                    )
 
                 # Handle disconnect
                 elif msg.get("type") == "websocket.disconnect":
@@ -786,8 +819,8 @@ async def _cleanup_dashboard_connection(
     :raises Exception: If cleanup operations fail (logged but not re-raised)
     """
     with tracer.start_as_current_span(
-        "api.v1.realtime.cleanup_dashboard", 
-        attributes={"client_id": client_id, "conn_id": conn_id}
+        "api.v1.realtime.cleanup_dashboard",
+        attributes={"client_id": client_id, "conn_id": conn_id},
     ) as span:
         try:
             # Unregister from connection manager
@@ -838,14 +871,16 @@ async def _cleanup_conversation_session(
     :raises Exception: If cleanup operations fail (logged but not re-raised)
     """
     with tracer.start_as_current_span(
-        "api.v1.realtime.cleanup_conversation", 
-        attributes={"session_id": session_id, "conn_id": conn_id}
+        "api.v1.realtime.cleanup_conversation",
+        attributes={"session_id": session_id, "conn_id": conn_id},
     ) as span:
         try:
             # Cancel background orchestration tasks to prevent resource leaks
-            orchestration_tasks = getattr(websocket.state, 'orchestration_tasks', set())
+            orchestration_tasks = getattr(websocket.state, "orchestration_tasks", set())
             if orchestration_tasks:
-                logger.info(f"[PERF] Cancelling {len(orchestration_tasks)} background orchestration tasks for session {session_id}")
+                logger.info(
+                    f"[PERF] Cancelling {len(orchestration_tasks)} background orchestration tasks for session {session_id}"
+                )
                 for task in orchestration_tasks.copy():
                     if not task.done():
                         task.cancel()
@@ -854,76 +889,95 @@ async def _cleanup_conversation_session(
                         except (asyncio.CancelledError, asyncio.TimeoutError):
                             pass  # Expected for cancelled tasks
                         except Exception as e:
-                            logger.warning(f"[PERF] Error during task cancellation: {e}")
+                            logger.warning(
+                                f"[PERF] Error during task cancellation: {e}"
+                            )
                 orchestration_tasks.clear()
-                logger.debug(f"[PERF] Background task cleanup complete for session {session_id}")
-            
+                logger.debug(
+                    f"[PERF] Background task cleanup complete for session {session_id}"
+                )
+
             # Clean up session resources directly through connection manager
             conn_manager = websocket.app.state.conn_manager
             connection = conn_manager._conns.get(conn_id)
-            
+
             if connection and connection.meta.handler:
                 # Clean up TTS client
-                tts_client = connection.meta.handler.get('tts_client')
-                if tts_client and hasattr(websocket.app.state, 'tts_pool'):
+                tts_client = connection.meta.handler.get("tts_client")
+                if tts_client and hasattr(websocket.app.state, "tts_pool"):
                     try:
                         tts_client.stop_speaking()
                         await websocket.app.state.tts_pool.release(tts_client)
                         logger.info("Released TTS client during cleanup")
                     except Exception as e:
                         logger.error(f"Error releasing TTS client: {e}")
-                
+
                 # Release dedicated TTS client
-                if hasattr(websocket.app.state, 'dedicated_tts_manager') and session_id:
+                if hasattr(websocket.app.state, "dedicated_tts_manager") and session_id:
                     try:
-                        released = await websocket.app.state.dedicated_tts_manager.release_session_client(session_id)
+                        released = await websocket.app.state.dedicated_tts_manager.release_session_client(
+                            session_id
+                        )
                         if released:
-                            logger.info(f"Released dedicated TTS client for session {session_id}")
+                            logger.info(
+                                f"Released dedicated TTS client for session {session_id}"
+                            )
                     except Exception as e:
-                        logger.error(f"Error releasing dedicated TTS client for session {session_id}: {e}")
-                
+                        logger.error(
+                            f"Error releasing dedicated TTS client for session {session_id}: {e}"
+                        )
+
                 #  Release session-specific AOAI client
                 if session_id:
                     try:
                         from src.pools.aoai_pool import release_session_client
+
                         await release_session_client(session_id)
-                        logger.info(f"Released dedicated AOAI client for session {session_id}")
+                        logger.info(
+                            f"Released dedicated AOAI client for session {session_id}"
+                        )
                     except Exception as e:
-                        logger.error(f"Error releasing AOAI client for session {session_id}: {e}")
-                
+                        logger.error(
+                            f"Error releasing AOAI client for session {session_id}: {e}"
+                        )
+
                 # Clean up STT client
-                stt_client = connection.meta.handler.get('stt_client')
-                if stt_client and hasattr(websocket.app.state, 'stt_pool'):
+                stt_client = connection.meta.handler.get("stt_client")
+                if stt_client and hasattr(websocket.app.state, "stt_pool"):
                     try:
                         stt_client.stop()
                         await websocket.app.state.stt_pool.release(stt_client)
                         logger.info("Released STT client during cleanup")
                     except Exception as e:
                         logger.error(f"Error releasing STT client: {e}")
-                
+
                 # Clean up any other tracked tasks
-                tts_tasks = connection.meta.handler.get('tts_tasks')
+                tts_tasks = connection.meta.handler.get("tts_tasks")
                 if tts_tasks:
                     for task in list(tts_tasks):
                         if not task.done():
                             task.cancel()
                             logger.debug("Cancelled TTS task during cleanup")
-                
+
                 # Clean up latency timers on session disconnect
-                latency_tool = connection.meta.handler.get('latency_tool')
-                if latency_tool and hasattr(latency_tool, 'cleanup_timers'):
+                latency_tool = connection.meta.handler.get("latency_tool")
+                if latency_tool and hasattr(latency_tool, "cleanup_timers"):
                     try:
                         latency_tool.cleanup_timers()
-                        logger.debug("Cleaned up latency timers during realtime cleanup")
+                        logger.debug(
+                            "Cleaned up latency timers during realtime cleanup"
+                        )
                     except Exception as e:
                         logger.error(f"Error cleaning up latency timers: {e}")
-            
+
             logger.info(f"Session cleanup complete for {conn_id}")
-            
+
             # Unregister from connection manager (this also cleans up handler if attached)
             if conn_id:
                 await websocket.app.state.conn_manager.unregister(conn_id)
-                logger.info(f"Conversation connection {conn_id} unregistered from manager")
+                logger.info(
+                    f"Conversation connection {conn_id} unregistered from manager"
+                )
 
             # Remove from session registry thread-safely
             if session_id:

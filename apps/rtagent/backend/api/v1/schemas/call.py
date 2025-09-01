@@ -49,10 +49,26 @@ class CallInitiateRequest(BaseModel):
 class CallInitiateResponse(BaseModel):
     """Response model for call initiation."""
 
-    call_id: str = Field(..., description="Unique call identifier", json_schema_extra={"example": "call_abc12345"})
-    status: str = Field(..., description="Current call status", json_schema_extra={"example": "initiating"})
-    target_number: str = Field(..., description="Target phone number", json_schema_extra={"example": "+1234567890"})
-    message: str = Field(..., description="Human-readable status message", json_schema_extra={"example": "Call initiation requested"})
+    call_id: str = Field(
+        ...,
+        description="Unique call identifier",
+        json_schema_extra={"example": "call_abc12345"},
+    )
+    status: str = Field(
+        ...,
+        description="Current call status",
+        json_schema_extra={"example": "initiating"},
+    )
+    target_number: str = Field(
+        ...,
+        description="Target phone number",
+        json_schema_extra={"example": "+1234567890"},
+    )
+    message: str = Field(
+        ...,
+        description="Human-readable status message",
+        json_schema_extra={"example": "Call initiation requested"},
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -69,7 +85,11 @@ class CallInitiateResponse(BaseModel):
 class CallStatusResponse(BaseModel):
     """Response model for call status."""
 
-    call_id: str = Field(..., description="Unique call identifier", json_schema_extra={"example": "call_abc12345"})
+    call_id: str = Field(
+        ...,
+        description="Unique call identifier",
+        json_schema_extra={"example": "call_abc12345"},
+    )
     status: Literal[
         "initiating",
         "ringing",
@@ -77,9 +97,15 @@ class CallStatusResponse(BaseModel):
         "on_hold",
         "disconnected",
         "failed",
-    ] = Field(..., description="Current call status", json_schema_extra={"example": "connected"})
+    ] = Field(
+        ...,
+        description="Current call status",
+        json_schema_extra={"example": "connected"},
+    )
     duration: Optional[int] = Field(
-        None, description="Call duration in seconds (null if not connected)", json_schema_extra={"example": 120}
+        None,
+        description="Call duration in seconds (null if not connected)",
+        json_schema_extra={"example": 120},
     )
     participants: List[Dict[str, Any]] = Field(
         default_factory=list,
@@ -145,22 +171,26 @@ class CallUpdateRequest(BaseModel):
         None, description="Updated metadata for the call"
     )
 
-    model_config = ConfigDict(json_schema_extra={
-        "example": {
-            "status": "on_hold",
-            "metadata": {
-                "hold_reason": "customer_request",
-                "hold_duration_estimate": 120,
-            },
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "status": "on_hold",
+                "metadata": {
+                    "hold_reason": "customer_request",
+                    "hold_duration_estimate": 120,
+                },
+            }
         }
-    })
+    )
 
 
 class CallHangupResponse(BaseModel):
     """Response model for call hangup."""
 
     call_id: str = Field(
-        ..., description="Unique call identifier", json_schema_extra={"example": "call_abc12345"}
+        ...,
+        description="Unique call identifier",
+        json_schema_extra={"example": "call_abc12345"},
     )
     status: str = Field(..., description="Updated call status", example="hanging_up")
     message: str = Field(
@@ -169,15 +199,21 @@ class CallHangupResponse(BaseModel):
         json_schema_extra={"example": "Call hangup requested"},
     )
 
-    status: str = Field(..., description="Updated call status", json_schema_extra={"example": "hanging_up"})
+    status: str = Field(
+        ...,
+        description="Updated call status",
+        json_schema_extra={"example": "hanging_up"},
+    )
 
-    model_config = ConfigDict(json_schema_extra={
-        "example": {
-            "call_id": "call_abc12345",
-            "status": "hanging_up",
-            "message": "Call hangup requested",
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "call_id": "call_abc12345",
+                "status": "hanging_up",
+                "message": "Call hangup requested",
+            }
         }
-    })
+    )
 
 
 class CallListResponse(BaseModel):
@@ -185,27 +221,35 @@ class CallListResponse(BaseModel):
 
     calls: List[CallStatusResponse] = Field(..., description="List of calls")
     total: int = Field(
-        ..., description="Total number of calls matching criteria", json_schema_extra={"example": 25}
+        ...,
+        description="Total number of calls matching criteria",
+        json_schema_extra={"example": 25},
     )
     page: int = Field(1, description="Current page number (1-based)", example=1)
     limit: int = Field(10, description="Number of items per page", example=10)
 
-    page: int = Field(1, description="Current page number (1-based)", json_schema_extra={"example": 1})
-    limit: int = Field(10, description="Number of items per page", json_schema_extra={"example": 10})
+    page: int = Field(
+        1, description="Current page number (1-based)", json_schema_extra={"example": 1}
+    )
+    limit: int = Field(
+        10, description="Number of items per page", json_schema_extra={"example": 10}
+    )
 
-    model_config = ConfigDict(json_schema_extra={
-        "example": {
-            "calls": [
-                {
-                    "call_id": "call_abc12345",
-                    "status": "connected",
-                    "duration": 120,
-                    "participants": [],
-                    "events": [],
-                }
-            ],
-            "total": 25,
-            "page": 1,
-            "limit": 10,
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "calls": [
+                    {
+                        "call_id": "call_abc12345",
+                        "status": "connected",
+                        "duration": 120,
+                        "participants": [],
+                        "events": [],
+                    }
+                ],
+                "total": 25,
+                "page": 1,
+                "limit": 10,
+            }
         }
-    })
+    )

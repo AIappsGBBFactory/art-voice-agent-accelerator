@@ -127,7 +127,7 @@ class ARTAgent:
             top_p=self.top_p,
             max_tokens=self.max_tokens,
             available_tools=self.tools,
-            session_id=cm.session_id,  # 🚀 Pass session_id for AOAI client pooling
+            session_id=cm.session_id,  # Pass session_id for AOAI client pooling
         )
 
         return result

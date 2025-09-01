@@ -133,7 +133,6 @@ def _get_disconnect_event(
             store = {}
             ws.app.state.acs_disconnect_events = store  # type: ignore[attr-defined]
 
-        # Create or get existing event
         if call_connection_id not in store:
             store[call_connection_id] = asyncio.Event()
             logger.debug(f"Created disconnect event for call {call_connection_id}")
@@ -183,7 +182,6 @@ async def _wait_for_acs_disconnect(
 
     disconnected = False
 
-    # 1) Event-driven (preferred)
     ev = _get_disconnect_event(ws, call_connection_id)
     if ev is not None:
         try:
@@ -199,7 +197,6 @@ async def _wait_for_acs_disconnect(
                 extra={"call_connection_id": call_connection_id},
             )
 
-    # 2) Fallback: polling (best-effort; API names vary by SDK version)
     if not disconnected and acs_client:
         deadline = asyncio.get_event_loop().time() + max_wait_s
         while asyncio.get_event_loop().time() < deadline:
@@ -317,17 +314,14 @@ async def terminate_session(
     # Handler cleanup is now managed by ConnectionManager during WebSocket disconnection
     # No need for manual handler cleanup here since ConnectionManager handles this automatically
 
-    # 1) Try to hang up ACS (best-effort) - REMOVED the hardcoded 10s delay!
     if is_acs and call_connection_id and resolved_acs_client:
         acs_attempted = True
         try:
-            # Send goodbye message before hanging up (if media handler is still available)
             try:
                 if hasattr(ws.state, "handler") and ws.state.handler:
                     goodbye_message = _get_goodbye_message(reason)
                     if goodbye_message:
                         ws.state.handler.play_greeting(greeting_text=goodbye_message)
-                        # Brief pause to let goodbye play
                         await asyncio.sleep(2.0)
             except Exception as goodbye_exc:
                 logger.debug(f"Could not play goodbye message: {goodbye_exc}")
@@ -344,7 +338,6 @@ async def terminate_session(
                 extra={"error": repr(exc)},
             )
 
-    # 2) Wait for ACS to actually disconnect (event > polling > timeout)
     disconnected = True
     if is_acs and call_connection_id:
         disconnected = await _wait_for_acs_disconnect(
@@ -361,10 +354,8 @@ async def terminate_session(
             },
         )
 
-    # 3) Notify client we're ending (after ACS is done, to avoid premature UI closure)
     await _send_session_end(ws, reason)
 
-    # 4) Close the WebSocket (idempotent)
     ws_closed = False
     try:
         if ws.application_state in (

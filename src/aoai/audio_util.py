@@ -184,13 +184,13 @@ def choose_audio_device(predefined_index: int = None) -> int:
 
         if predefined_index is not None:
             if predefined_index in mic_indices:
-                print(f"🎤 Using predefined audio input device: {predefined_index}")
+                print(f"Using predefined audio input device: {predefined_index}")
                 return predefined_index
             else:
                 print(f"Provided index {predefined_index} is not a valid input device.")
 
         if len(mic_indices) == 1:
-            print(f"🎤 Only one audio input device found: {mic_indices[0]}")
+            print(f"Only one audio input device found: {mic_indices[0]}")
             return mic_indices[0]
 
         print("Available audio input devices:")

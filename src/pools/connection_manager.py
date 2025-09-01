@@ -32,6 +32,7 @@ ClientType = Literal["dashboard", "conversation", "media", "other"]
 @dataclass
 class ConnectionMeta:
     """Simple connection metadata for routing."""
+
     connection_id: str
     client_type: ClientType = "other"
     session_id: Optional[str] = None
@@ -44,7 +45,7 @@ class ConnectionMeta:
 
 class _Connection:
     """Internal connection wrapper with send queue and proper thread safety."""
-    
+
     def __init__(self, websocket: WebSocket, meta: ConnectionMeta):
         self.ws = websocket
         self.meta = meta
@@ -57,7 +58,7 @@ class _Connection:
         """Queue JSON message for sending with thread safety."""
         if self._closed:
             return
-            
+
         async with self._send_lock:  # Protect queue operations
             try:
                 message = json.dumps(payload)
@@ -69,7 +70,10 @@ class _Connection:
                         pass
                 await self._queue.put(message)
             except Exception as e:
-                logger.error(f"Failed to queue message: {e}", extra={"conn_id": self.meta.connection_id})
+                logger.error(
+                    f"Failed to queue message: {e}",
+                    extra={"conn_id": self.meta.connection_id},
+                )
 
     async def _sender_loop(self) -> None:
         """Send queued messages to WebSocket with proper error handling."""
@@ -79,34 +83,46 @@ class _Connection:
                     message = await asyncio.wait_for(self._queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     continue  # Check _closed flag periodically
-                    
+
                 if message is None:  # Shutdown signal
                     return
-                
+
                 # Thread-safe WebSocket state check and send
                 try:
-                    if (self.ws.client_state == WebSocketState.CONNECTED and 
-                        self.ws.application_state == WebSocketState.CONNECTED):
+                    if (
+                        self.ws.client_state == WebSocketState.CONNECTED
+                        and self.ws.application_state == WebSocketState.CONNECTED
+                    ):
                         await self.ws.send_text(message)
                     else:
-                        logger.debug(f"WebSocket not connected, dropping message", extra={"conn_id": self.meta.connection_id})
+                        logger.debug(
+                            f"WebSocket not connected, dropping message",
+                            extra={"conn_id": self.meta.connection_id},
+                        )
                         return
                 except Exception as e:
-                    logger.error(f"WebSocket send failed: {e}", extra={"conn_id": self.meta.connection_id})
+                    logger.error(
+                        f"WebSocket send failed: {e}",
+                        extra={"conn_id": self.meta.connection_id},
+                    )
                     return
-                    
+
         except asyncio.CancelledError:
-            logger.debug(f"Sender loop cancelled", extra={"conn_id": self.meta.connection_id})
+            logger.debug(
+                f"Sender loop cancelled", extra={"conn_id": self.meta.connection_id}
+            )
         except Exception as e:
-            logger.error(f"Sender loop error: {e}", extra={"conn_id": self.meta.connection_id})
+            logger.error(
+                f"Sender loop error: {e}", extra={"conn_id": self.meta.connection_id}
+            )
 
     async def close(self) -> None:
         """Close connection and cleanup resources with proper thread safety."""
         if self._closed:
             return
-            
+
         self._closed = True
-        
+
         async with self._send_lock:  # Ensure no concurrent send operations
             try:
                 # Signal sender to stop (only if queue not full to avoid blocking)
@@ -115,7 +131,7 @@ class _Connection:
                         self._queue.put_nowait(None)
                 except asyncio.QueueFull:
                     pass  # Sender will timeout and check _closed flag
-                
+
                 # Cancel sender task
                 if not self._sender_task.done():
                     self._sender_task.cancel()
@@ -123,30 +139,38 @@ class _Connection:
                         await self._sender_task
                     except asyncio.CancelledError:
                         pass
-                
+
                 # Close WebSocket if still connected
                 try:
-                    if (self.ws.client_state == WebSocketState.CONNECTED and 
-                        self.ws.application_state == WebSocketState.CONNECTED):
+                    if (
+                        self.ws.client_state == WebSocketState.CONNECTED
+                        and self.ws.application_state == WebSocketState.CONNECTED
+                    ):
                         await self.ws.close()
                 except Exception as e:
-                    logger.debug(f"Error closing WebSocket: {e}", extra={"conn_id": self.meta.connection_id})
-                    
+                    logger.debug(
+                        f"Error closing WebSocket: {e}",
+                        extra={"conn_id": self.meta.connection_id},
+                    )
+
             except Exception as e:
-                logger.error(f"Error during connection cleanup: {e}", extra={"conn_id": self.meta.connection_id})
+                logger.error(
+                    f"Error during connection cleanup: {e}",
+                    extra={"conn_id": self.meta.connection_id},
+                )
 
 
 class ThreadSafeConnectionManager:
     """
     Clean WebSocket connection manager for production use with connection limits.
-    
+
     Simple API:
     - register() - Add new WebSocket connection (with limit enforcement)
-    - unregister() - Remove connection  
+    - unregister() - Remove connection
     - send_to_connection() - Send to specific connection
     - broadcast_*() - Send to multiple connections
     - stats() - Get connection statistics
-    
+
     Phase 1 Features:
     - Connection limit enforcement (200 max by default)
     - Connection queue for overflow handling
@@ -154,26 +178,26 @@ class ThreadSafeConnectionManager:
     """
 
     def __init__(
-        self, 
+        self,
         max_connections: int = 200,
         queue_size: int = 50,
         enable_connection_limits: bool = True,
     ):
         self._lock = asyncio.Lock()
         self._conns: Dict[str, _Connection] = {}
-        
+
         # Simple indexes for efficient broadcast
         self._by_session: Dict[str, Set[str]] = {}
         self._by_call: Dict[str, Set[str]] = {}
         self._by_topic: Dict[str, Set[str]] = {}
-        
+
         # Connection limit management
         self.max_connections = max_connections
         self.queue_size = queue_size
         self.enable_limits = enable_connection_limits
         self._connection_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_size)
         self._rejected_count = 0
-        
+
         logger.info(
             f"ConnectionManager initialized: max_connections={max_connections}, "
             f"queue_size={queue_size}, limits_enabled={enable_connection_limits}"
@@ -184,7 +208,7 @@ class ThreadSafeConnectionManager:
         async with self._lock:
             close_tasks = [conn.close() for conn in self._conns.values()]
         await asyncio.gather(*close_tasks, return_exceptions=True)
-        
+
         async with self._lock:
             self._conns.clear()
             self._by_session.clear()
@@ -205,7 +229,7 @@ class ThreadSafeConnectionManager:
     ) -> str:
         """
         Register a WebSocket connection with connection limit enforcement.
-        
+
         Args:
             websocket: WebSocket instance (will be accepted if accept_already_done=False)
             client_type: Type of client (dashboard, conversation, media, other)
@@ -215,10 +239,10 @@ class ThreadSafeConnectionManager:
             topics: Optional set of topics for broadcasting
             handler: Optional handler instance for lifecycle management
             accept_already_done: If False, will call websocket.accept()
-            
+
         Returns:
             str: Generated connection ID
-            
+
         Raises:
             RuntimeError: If connection limit exceeded and queue is full
         """
@@ -226,7 +250,7 @@ class ThreadSafeConnectionManager:
         if self.enable_limits:
             async with self._lock:
                 current_count = len(self._conns)
-                
+
             if current_count >= self.max_connections:
                 # Try to queue the connection
                 try:
@@ -241,7 +265,7 @@ class ThreadSafeConnectionManager:
                             f"Connection limit exceeded: {current_count}/{self.max_connections} "
                             "and queue is full. Please try again later."
                         )
-                    
+
                     logger.info(
                         f"Connection queued: current={current_count}/{self.max_connections}, "
                         f"queue_size={self._connection_queue.qsize()}"
@@ -253,7 +277,7 @@ class ThreadSafeConnectionManager:
                         f"Connection limit exceeded: {current_count}/{self.max_connections}. "
                         "Please try again later."
                     )
-                    
+
                 except asyncio.QueueFull:
                     self._rejected_count += 1
                     logger.warning(
@@ -292,8 +316,8 @@ class ThreadSafeConnectionManager:
 
         logger.info(
             f"WebSocket registered: {conn_id} ({client_type}) "
-            f"[{len(self._conns)}/{self.max_connections if self.enable_limits else '∞'}]", 
-            extra={"conn_id": conn_id, "session_id": session_id, "call_id": call_id}
+            f"[{len(self._conns)}/{self.max_connections if self.enable_limits else '∞'}]",
+            extra={"conn_id": conn_id, "session_id": session_id, "call_id": call_id},
         )
         return conn_id
 
@@ -307,10 +331,14 @@ class ThreadSafeConnectionManager:
             # Cleanup handler if present
             if conn.meta.handler:
                 try:
-                    if hasattr(conn.meta.handler, 'stop') and callable(conn.meta.handler.stop):
+                    if hasattr(conn.meta.handler, "stop") and callable(
+                        conn.meta.handler.stop
+                    ):
                         await conn.meta.handler.stop()
                 except Exception as e:
-                    logger.error(f"Error stopping handler: {e}", extra={"conn_id": connection_id})
+                    logger.error(
+                        f"Error stopping handler: {e}", extra={"conn_id": connection_id}
+                    )
 
             # Remove from indexes
             if conn.meta.session_id:
@@ -340,7 +368,11 @@ class ThreadSafeConnectionManager:
             return {
                 "connections": len(self._conns),
                 "max_connections": self.max_connections if self.enable_limits else None,
-                "utilization_percent": round(len(self._conns) / self.max_connections * 100, 1) if self.enable_limits else None,
+                "utilization_percent": round(
+                    len(self._conns) / self.max_connections * 100, 1
+                )
+                if self.enable_limits
+                else None,
                 "rejected_count": self._rejected_count,
                 "queue_size": self._connection_queue.qsize(),
                 "queue_capacity": self.queue_size,
@@ -350,10 +382,12 @@ class ThreadSafeConnectionManager:
                 "by_topic": {k: len(v) for k, v in self._by_topic.items()},
             }
 
-    async def send_to_connection(self, connection_id: str, payload: Dict[str, Any]) -> bool:
+    async def send_to_connection(
+        self, connection_id: str, payload: Dict[str, Any]
+    ) -> bool:
         """
         Send message to specific connection.
-        
+
         Returns:
             bool: True if sent successfully, False if connection not found
         """
@@ -367,7 +401,7 @@ class ThreadSafeConnectionManager:
     async def broadcast_session(self, session_id: str, payload: Dict[str, Any]) -> int:
         """
         Broadcast to all connections in a session with session-safe data filtering.
-        
+
         This ensures the frontend can only grab data concerning that session,
         providing proper session isolation and security.
         """
@@ -381,44 +415,49 @@ class ThreadSafeConnectionManager:
             "session_context": {
                 "session_id": session_id,
                 "restricted_to_session": True,
-                "timestamp": time.time()
-            }
+                "timestamp": time.time(),
+            },
         }
 
         sent = 0
         failed_connections = []
-        
+
         # Use asyncio.gather with return_exceptions for better error handling
         tasks = []
         for conn in targets:
             tasks.append(self._safe_send_to_connection(conn, session_payload))
-        
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 failed_connections.append(targets[i].meta.connection_id)
-                logger.error(f"Session broadcast failed: {result}", extra={
-                    "conn_id": targets[i].meta.connection_id,
-                    "session_id": session_id
-                })
+                logger.error(
+                    f"Session broadcast failed: {result}",
+                    extra={
+                        "conn_id": targets[i].meta.connection_id,
+                        "session_id": session_id,
+                    },
+                )
             else:
                 sent += 1
-        
+
         # Clean up failed connections asynchronously
         if failed_connections:
             asyncio.create_task(self._cleanup_failed_connections(failed_connections))
-            
+
         return sent
 
-    async def _safe_send_to_connection(self, conn: "_Connection", payload: Dict[str, Any]) -> None:
+    async def _safe_send_to_connection(
+        self, conn: "_Connection", payload: Dict[str, Any]
+    ) -> None:
         """Safely send to a connection with proper error handling."""
         try:
             await conn.send_json(payload)
         except Exception as e:
             # Re-raise for gather() to handle
             raise e
-            
+
     async def _cleanup_failed_connections(self, failed_conn_ids: list[str]) -> None:
         """Clean up failed connections in background."""
         for conn_id in failed_conn_ids:
@@ -440,7 +479,9 @@ class ThreadSafeConnectionManager:
                 await conn.send_json(payload)
                 sent += 1
             except Exception as e:
-                logger.error(f"Broadcast failed: {e}", extra={"conn_id": conn.meta.connection_id})
+                logger.error(
+                    f"Broadcast failed: {e}", extra={"conn_id": conn.meta.connection_id}
+                )
         return sent
 
     async def broadcast_topic(self, topic: str, payload: Dict[str, Any]) -> int:
@@ -455,7 +496,9 @@ class ThreadSafeConnectionManager:
                 await conn.send_json(payload)
                 sent += 1
             except Exception as e:
-                logger.error(f"Broadcast failed: {e}", extra={"conn_id": conn.meta.connection_id})
+                logger.error(
+                    f"Broadcast failed: {e}", extra={"conn_id": conn.meta.connection_id}
+                )
         return sent
 
     async def broadcast_all(self, payload: Dict[str, Any]) -> int:
@@ -469,7 +512,9 @@ class ThreadSafeConnectionManager:
                 await conn.send_json(payload)
                 sent += 1
             except Exception as e:
-                logger.error(f"Broadcast failed: {e}", extra={"conn_id": conn.meta.connection_id})
+                logger.error(
+                    f"Broadcast failed: {e}", extra={"conn_id": conn.meta.connection_id}
+                )
         return sent
 
     async def get_connection_meta(self, connection_id: str) -> Optional[ConnectionMeta]:
@@ -484,10 +529,12 @@ class ThreadSafeConnectionManager:
             conn_ids = self._by_call.get(call_id, set())
             return next(iter(conn_ids), None) if conn_ids else None
 
-    async def get_session_data_safe(self, session_id: str, requesting_connection_id: str) -> Optional[Dict[str, Any]]:
+    async def get_session_data_safe(
+        self, session_id: str, requesting_connection_id: str
+    ) -> Optional[Dict[str, Any]]:
         """
         Get session data safely - only if the requesting connection belongs to that session.
-        
+
         This ensures frontend can only access data from their own session,
         providing proper session isolation and security.
         """
@@ -495,13 +542,18 @@ class ThreadSafeConnectionManager:
             # Check if requesting connection belongs to this session
             requesting_conn = self._conns.get(requesting_connection_id)
             if not requesting_conn or requesting_conn.meta.session_id != session_id:
-                logger.warning(f"Unauthorized session data access attempt", extra={
-                    "requesting_conn_id": requesting_connection_id,
-                    "requested_session_id": session_id,
-                    "actual_session_id": requesting_conn.meta.session_id if requesting_conn else None
-                })
+                logger.warning(
+                    f"Unauthorized session data access attempt",
+                    extra={
+                        "requesting_conn_id": requesting_connection_id,
+                        "requested_session_id": session_id,
+                        "actual_session_id": requesting_conn.meta.session_id
+                        if requesting_conn
+                        else None,
+                    },
+                )
                 return None
-            
+
             # Get all connections in this session
             session_conn_ids = self._by_session.get(session_id, set())
             session_connections = [
@@ -511,18 +563,18 @@ class ThreadSafeConnectionManager:
                     "call_id": self._conns[conn_id].meta.call_id,
                     "user_id": self._conns[conn_id].meta.user_id,
                     "topics": list(self._conns[conn_id].meta.topics),
-                    "created_at": self._conns[conn_id].meta.created_at
+                    "created_at": self._conns[conn_id].meta.created_at,
                 }
                 for conn_id in session_conn_ids
                 if conn_id in self._conns
             ]
-            
+
             return {
                 "session_id": session_id,
                 "connections": session_connections,
                 "connection_count": len(session_connections),
                 "timestamp": time.time(),
-                "restricted_to_session": True
+                "restricted_to_session": True,
             }
 
     async def get_connection_by_websocket(self, websocket: WebSocket) -> Optional[str]:
@@ -536,7 +588,7 @@ class ThreadSafeConnectionManager:
     async def validate_and_cleanup_stale_connections(self) -> Dict[str, int]:
         """
         Validate connection states and cleanup stale connections.
-        
+
         Returns:
             Dict with cleanup statistics
         """
@@ -544,14 +596,16 @@ class ThreadSafeConnectionManager:
             stale_conn_ids = []
             for conn_id, conn in self._conns.items():
                 # Check if WebSocket is still connected
-                if (conn.ws.client_state != WebSocketState.CONNECTED or 
-                    conn.ws.application_state != WebSocketState.CONNECTED):
+                if (
+                    conn.ws.client_state != WebSocketState.CONNECTED
+                    or conn.ws.application_state != WebSocketState.CONNECTED
+                ):
                     stale_conn_ids.append(conn_id)
-            
+
             # Remove stale connections
             for conn_id in stale_conn_ids:
                 await self._cleanup_connection_unsafe(conn_id)
-            
+
             return {
                 "removed_stale": len(stale_conn_ids),
                 "active_connections": len(self._conns),
@@ -567,10 +621,14 @@ class ThreadSafeConnectionManager:
         # Cleanup handler if present
         if conn.meta.handler:
             try:
-                if hasattr(conn.meta.handler, 'stop') and callable(conn.meta.handler.stop):
+                if hasattr(conn.meta.handler, "stop") and callable(
+                    conn.meta.handler.stop
+                ):
                     await conn.meta.handler.stop()
             except Exception as e:
-                logger.error(f"Error stopping handler: {e}", extra={"conn_id": connection_id})
+                logger.error(
+                    f"Error stopping handler: {e}", extra={"conn_id": connection_id}
+                )
 
         # Remove from indexes
         if conn.meta.session_id:
@@ -612,38 +670,45 @@ class ThreadSafeConnectionManager:
     async def get_session_data(self, session_id: str) -> Dict[str, Any]:
         """
         Get all data for a specific session - thread-safe for frontend consumption.
-        
+
         Frontend can call this to get only data from their session.
         """
         async with self._lock:
             conn_ids = self._by_session.get(session_id, set())
             connections = []
-            
+
             for conn_id in conn_ids:
                 conn = self._conns.get(conn_id)
                 if conn:
-                    connections.append({
-                        "connection_id": conn_id,
-                        "client_type": conn.meta.client_type,
-                        "call_id": conn.meta.call_id,
-                        "user_id": conn.meta.user_id,
-                        "topics": list(conn.meta.topics),
-                        "created_at": conn.meta.created_at,
-                        "connected": (conn.ws.client_state == WebSocketState.CONNECTED and 
-                                    conn.ws.application_state == WebSocketState.CONNECTED)
-                    })
-            
+                    connections.append(
+                        {
+                            "connection_id": conn_id,
+                            "client_type": conn.meta.client_type,
+                            "call_id": conn.meta.call_id,
+                            "user_id": conn.meta.user_id,
+                            "topics": list(conn.meta.topics),
+                            "created_at": conn.meta.created_at,
+                            "connected": (
+                                conn.ws.client_state == WebSocketState.CONNECTED
+                                and conn.ws.application_state
+                                == WebSocketState.CONNECTED
+                            ),
+                        }
+                    )
+
             return {
                 "session_id": session_id,
                 "connections": connections,
                 "connection_count": len(connections),
-                "active_connections": sum(1 for c in connections if c["connected"])
+                "active_connections": sum(1 for c in connections if c["connected"]),
             }
 
-    async def broadcast_session_with_metadata(self, session_id: str, payload: Dict[str, Any], include_metadata: bool = True) -> Dict[str, Any]:
+    async def broadcast_session_with_metadata(
+        self, session_id: str, payload: Dict[str, Any], include_metadata: bool = True
+    ) -> Dict[str, Any]:
         """
         Enhanced session broadcast with metadata for frontend isolation.
-        
+
         Returns detailed broadcast results for frontend consumption.
         """
         async with self._lock:
@@ -653,32 +718,42 @@ class ThreadSafeConnectionManager:
         sent = 0
         failed = 0
         results = []
-        
+
         for conn in targets:
             try:
                 await conn.send_json(payload)
                 sent += 1
                 if include_metadata:
-                    results.append({
-                        "connection_id": conn.meta.connection_id,
-                        "client_type": conn.meta.client_type,
-                        "status": "sent"
-                    })
+                    results.append(
+                        {
+                            "connection_id": conn.meta.connection_id,
+                            "client_type": conn.meta.client_type,
+                            "status": "sent",
+                        }
+                    )
             except Exception as e:
                 failed += 1
-                logger.error(f"Session broadcast failed: {e}", extra={"conn_id": conn.meta.connection_id, "session_id": session_id})
+                logger.error(
+                    f"Session broadcast failed: {e}",
+                    extra={
+                        "conn_id": conn.meta.connection_id,
+                        "session_id": session_id,
+                    },
+                )
                 if include_metadata:
-                    results.append({
-                        "connection_id": conn.meta.connection_id,
-                        "client_type": conn.meta.client_type,
-                        "status": "failed",
-                        "error": str(e)
-                    })
-        
+                    results.append(
+                        {
+                            "connection_id": conn.meta.connection_id,
+                            "client_type": conn.meta.client_type,
+                            "status": "failed",
+                            "error": str(e),
+                        }
+                    )
+
         return {
             "session_id": session_id,
             "sent": sent,
             "failed": failed,
             "total_targets": len(targets),
-            "results": results if include_metadata else None
+            "results": results if include_metadata else None,
         }

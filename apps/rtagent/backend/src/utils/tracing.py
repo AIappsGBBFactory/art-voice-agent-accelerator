@@ -19,7 +19,6 @@ from utils.ml_logging import get_logger
 # Default logger for fallback usage
 _default_logger = get_logger(__name__)
 
-# Performance optimization: Cache tracing configuration
 TRACING_ENABLED = os.getenv("ENABLE_TRACING", "false").lower() == "true"
 
 # Logical service names used in logs/attributes (Resource `service.name` should

@@ -87,10 +87,10 @@ async def validate_entraid_token(request: Request) -> dict:
         client_id = decoded.get("azp") or decoded.get("appid")
         if client_id not in ALLOWED_CLIENT_IDS:
             raise HTTPException(status_code=403, detail="Unauthorized client_id")
-        logger.info("✅ EntraID request authenticated")
+        logger.info("EntraID request authenticated")
         return decoded
     except AuthError as e:
-        logger.warning(f"🔒 EntraID validation failed: {e}")
+        logger.warning(f"EntraID validation failed: {e}")
         raise HTTPException(status_code=401, detail=str(e))
 
 
@@ -102,10 +102,10 @@ def validate_acs_http_auth(request: Request) -> dict:
         decoded = validate_jwt_token(
             token, jwks_url=ACS_JWKS_URL, issuer=ACS_ISSUER, audience=ACS_AUDIENCE
         )
-        logger.info("✅ ACS HTTP request authenticated")
+        logger.info("ACS HTTP request authenticated")
         return decoded
     except AuthError as e:
-        logger.warning(f"🔒 ACS HTTP auth failed: {e}")
+        logger.warning(f"ACS HTTP auth failed: {e}")
         raise HTTPException(status_code=401, detail=str(e))
 
 
@@ -113,7 +113,7 @@ async def validate_acs_ws_auth(ws: WebSocket) -> dict:
     """Validates bearer token for ACS WebSocket handshake."""
     auth_header = ws.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        logger.warning("❌ Missing or invalid WebSocket auth header")
+        logger.warning("Missing or invalid WebSocket auth header")
         if ws.client_state == WebSocketState.CONNECTED:
             await ws.close(code=1008)
         raise AuthError("Missing or invalid WebSocket auth header")
@@ -123,10 +123,10 @@ async def validate_acs_ws_auth(ws: WebSocket) -> dict:
         decoded = validate_jwt_token(
             token, jwks_url=ACS_JWKS_URL, issuer=ACS_ISSUER, audience=ACS_AUDIENCE
         )
-        logger.info("✅ ACS WebSocket authenticated")
+        logger.info("ACS WebSocket authenticated")
         return decoded
     except AuthError as e:
-        logger.error(f"❌ WebSocket auth failed: {e}")
+        logger.error(f"WebSocket auth failed: {e}")
         if ws.client_state == WebSocketState.CONNECTED:
             await ws.close(code=1011)
         raise

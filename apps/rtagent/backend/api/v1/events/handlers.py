@@ -25,7 +25,9 @@ from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message
 from utils.ml_logging import get_logger
 from .types import CallEventContext, ACSEventTypes
 
-from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import DTMFValidationLifecycle
+from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
+    DTMFValidationLifecycle,
+)
 from config import DTMF_VALIDATION_ENABLED
 
 logger = get_logger("v1.events.handlers")
@@ -78,7 +80,9 @@ class CallEventHandlers:
                             "target_number", target_number
                         )
                     if context.redis_mgr:
-                        await context.memo_manager.persist_to_redis_async(context.redis_mgr)
+                        await context.memo_manager.persist_to_redis_async(
+                            context.redis_mgr
+                        )
                 except Exception as e:
                     logger.error(f"Failed to update call state: {e}")
 
@@ -112,7 +116,9 @@ class CallEventHandlers:
                     context.memo_manager.update_context("caller_info", caller_info)
                     context.memo_manager.update_context("api_version", "v1")
                     if context.redis_mgr:
-                        await context.memo_manager.persist_to_redis_async(context.redis_mgr)
+                        await context.memo_manager.persist_to_redis_async(
+                            context.redis_mgr
+                        )
                 except Exception as e:
                     logger.error(f"Failed to initialize inbound call state: {e}")
 
@@ -144,7 +150,9 @@ class CallEventHandlers:
                         "answered_at", datetime.utcnow().isoformat() + "Z"
                     )
                     if context.redis_mgr:
-                        await context.memo_manager.persist_to_redis_async(context.redis_mgr)
+                        await context.memo_manager.persist_to_redis_async(
+                            context.redis_mgr
+                        )
                 except Exception as e:
                     logger.error(f"Failed to update call answer state: {e}")
 
@@ -168,8 +176,10 @@ class CallEventHandlers:
                 "event.source": "acs_webhook",
             },
         ):
-            logger.info(f"🌐 Webhook event: {context.event_type} for {context.call_connection_id}")
-            
+            logger.info(
+                f"🌐 Webhook event: {context.event_type} for {context.call_connection_id}"
+            )
+
             # Route to specific handlers
             if context.event_type == ACSEventTypes.CALL_CONNECTED:
                 await CallEventHandlers.handle_call_connected(context)
@@ -192,14 +202,20 @@ class CallEventHandlers:
             elif context.event_type == ACSEventTypes.RECOGNIZE_FAILED:
                 await CallEventHandlers.handle_recognize_failed(context)
             else:
-                logger.warning(f"⚠️  Unhandled webhook event type: {context.event_type}")
+                logger.warning(
+                    f"⚠️  Unhandled webhook event type: {context.event_type}"
+                )
 
             # Update webhook statistics
             try:
                 if context.memo_manager:
-                    context.memo_manager.update_context("last_webhook_event", context.event_type)
+                    context.memo_manager.update_context(
+                        "last_webhook_event", context.event_type
+                    )
                     if context.redis_mgr:
-                        await context.memo_manager.persist_to_redis_async(context.redis_mgr)
+                        await context.memo_manager.persist_to_redis_async(
+                            context.redis_mgr
+                        )
             except Exception as e:
                 logger.error(f"Failed to update webhook stats: {e}")
 
@@ -220,9 +236,11 @@ class CallEventHandlers:
             },
         ):
             logger.info(f"📞 Call connected: {context.call_connection_id}")
-            
+
             # Extract target phone from call connected event
-            call_conn = context.acs_caller.get_call_connection(context.call_connection_id)
+            call_conn = context.acs_caller.get_call_connection(
+                context.call_connection_id
+            )
             participants = call_conn.list_participants()
 
             caller_participant = None
@@ -231,9 +249,9 @@ class CallEventHandlers:
 
             for participant in participants:
                 identifier = participant.identifier
-                if getattr(identifier, "kind", None) == 'phone_number':
+                if getattr(identifier, "kind", None) == "phone_number":
                     caller_participant = participant
-                    caller_id = identifier.properties.get('value')
+                    caller_id = identifier.properties.get("value")
                 elif getattr(identifier, "kind", None) == "communicationUser":
                     acs_participant = participant
 
@@ -242,12 +260,14 @@ class CallEventHandlers:
             if not acs_participant:
                 logger.warning("ACS participant not found in participants list.")
 
-            logger.info(f"   Caller phone number: {caller_id if caller_id else 'unknown'}")
+            logger.info(
+                f"   Caller phone number: {caller_id if caller_id else 'unknown'}"
+            )
 
             if DTMF_VALIDATION_ENABLED:
                 try:
                     await DTMFValidationLifecycle.setup_aws_connect_validation_flow(
-                        context, 
+                        context,
                         call_conn,
                     )
                 except Exception as e:
@@ -257,9 +277,31 @@ class CallEventHandlers:
             # Broadcast connection status to WebSocket clients
             try:
                 if context.app_state:
-                    # For ACS calls, use call_connection_id as session_id for proper session isolation
-                    session_id = context.call_connection_id
-                    
+                    # Get browser session_id from Redis mapping (call_connection_id -> browser_session_id)
+                    browser_session_id = None
+                    if (
+                        hasattr(context.app_state, "redis_pool")
+                        and context.app_state.redis_pool
+                    ):
+                        try:
+                            redis = context.app_state.redis_pool
+                            browser_session_id = await redis.get(
+                                f"call_session_mapping:{context.call_connection_id}"
+                            )
+                            if browser_session_id:
+                                browser_session_id = browser_session_id.decode("utf-8")
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to get browser session ID from Redis: {e}"
+                            )
+
+                    # Use browser session_id if available, fallback to call_connection_id
+                    session_id = browser_session_id or context.call_connection_id
+
+                    logger.info(
+                        f"🎯 Broadcasting call_connected to session: {session_id} (browser_session_id={browser_session_id}, call_connection_id={context.call_connection_id})"
+                    )
+
                     await broadcast_message(
                         None,  # clients ignored when using ConnectionManager
                         json.dumps(
@@ -273,11 +315,11 @@ class CallEventHandlers:
                             }
                         ),
                         app_state=context.app_state,
-                        session_id=session_id,  # 🔒 SESSION-SAFE: Include session_id for proper isolation
+                        session_id=session_id,  # 🔒 SESSION-SAFE: Use browser session_id for proper isolation
                     )
             except Exception as e:
                 logger.error(f"Failed to broadcast call connected: {e}")
-                
+
             # Note: Greeting and conversation flow will be triggered AFTER validation succeeds
 
     @staticmethod
@@ -299,9 +341,11 @@ class CallEventHandlers:
             # Extract disconnect reason
             event_data = context.get_event_data()
             disconnect_reason = event_data.get("callConnectionState")
-            
-            logger.info(f"📞 Call disconnected: {context.call_connection_id}, reason: {disconnect_reason}")
-            
+
+            logger.info(
+                f"📞 Call disconnected: {context.call_connection_id}, reason: {disconnect_reason}"
+            )
+
             # Clean up call state
             await CallEventHandlers._cleanup_call_state(context)
 
@@ -322,7 +366,9 @@ class CallEventHandlers:
             },
         ):
             result_info = context.get_event_field("resultInformation", {})
-            logger.error(f"❌ Create call failed: {context.call_connection_id}, reason: {result_info}")
+            logger.error(
+                f"❌ Create call failed: {context.call_connection_id}, reason: {result_info}"
+            )
 
     @staticmethod
     async def handle_answer_call_failed(context: CallEventContext) -> None:
@@ -341,7 +387,9 @@ class CallEventHandlers:
             },
         ):
             result_info = context.get_event_field("resultInformation", {})
-            logger.error(f"❌ Answer call failed: {context.call_connection_id}, reason: {result_info}")
+            logger.error(
+                f"❌ Answer call failed: {context.call_connection_id}, reason: {result_info}"
+            )
 
     @staticmethod
     async def handle_participants_updated(context: CallEventContext) -> None:
@@ -362,13 +410,15 @@ class CallEventHandlers:
             try:
                 participants = context.get_event_field("participants", [])
                 logger.info(f"👥 Participants updated: {len(participants)} participants")
-                
+
                 # Log participant details
                 for i, participant in enumerate(participants):
                     identifier = participant.get("identifier", {})
                     is_muted = participant.get("isMuted", False)
-                    logger.info(f"   Participant {i+1}: {identifier.get('kind', 'unknown')}, muted: {is_muted}")
-                    
+                    logger.info(
+                        f"   Participant {i+1}: {identifier.get('kind', 'unknown')}, muted: {is_muted}"
+                    )
+
             except Exception as e:
                 logger.error(f"Error in participants updated handler: {e}")
 
@@ -502,12 +552,12 @@ class CallEventHandlers:
         try:
             # Basic cleanup - delegate DTMF cleanup to lifecycle handler
             logger.info(f"🧹 Cleaning up call state: {context.call_connection_id}")
-            
+
             # Clear memo context if available
             if context.memo_manager:
                 context.memo_manager.update_context("call_active", False)
                 context.memo_manager.update_context("call_disconnected", True)
-                
+
             if context.memo_manager and context.redis_mgr:
                 # Persist final state before cleanup
                 await context.memo_manager.persist_to_redis_async(context.redis_mgr)

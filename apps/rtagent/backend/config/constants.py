@@ -57,7 +57,7 @@ AVAILABLE_VOICES = {
         "en-US-Ava:DragonHDLatestNeural",  # Female
         "en-US-Brian:DragonHDLatestNeural",  # Male
         "en-US-Emma:DragonHDLatestNeural",  # Female
-    ]
+    ],
 }
 
 # TTS streaming markers
@@ -89,7 +89,7 @@ DEFAULT_ENABLE_AUTH_VALIDATION: bool = False
 
 SUPPORTED_LANGUAGES: List[str] = [
     "en-US",
-    "es-ES", 
+    "es-ES",
     "fr-FR",
     "ko-KR",
     "it-IT",

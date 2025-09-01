@@ -46,7 +46,7 @@ class ThreadSafeSessionMetrics:
             self._metrics["last_updated"] = datetime.utcnow().isoformat()
             active_count = self._metrics["active_connections"]
             total_count = self._metrics["total_connected"]
-            logger.info(f"📈 WS Connected: Active={active_count}, Total={total_count}")
+            logger.info(f"WS Connected: Active={active_count}, Total={total_count}")
             return active_count
 
     async def increment_disconnected(self) -> int:
@@ -66,7 +66,7 @@ class ThreadSafeSessionMetrics:
             active_count = self._metrics["active_connections"]
             total_disconnected = self._metrics["total_disconnected"]
             logger.info(
-                f"📉 WS Disconnected: Active={active_count}, TotalDisconnected={total_disconnected}"
+                f"WS Disconnected: Active={active_count}, TotalDisconnected={total_disconnected}"
             )
             return active_count
 

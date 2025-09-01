@@ -1,7 +1,13 @@
 """
 acs_helpers.py
 
-This module provides helper functions and utilities for integrating with Azure Communication Services (ACS) in the context of real-time media streaming and WebSocket communication. It includes initialization routines, WebSocket URL construction, message broadcasting, and audio data handling for ACS media streaming scenarios.
+This module provides helper functions and utilities for integrating with Azure Communication Services (ACS) in the context of rasync def send_data(websocket, buffer):treaming and WebSocket communication. It includes initialization routines, WebSocket URL construction, message         return
+
+    if not response_text or not response_text.strip():
+        logger.info(
+            f"Skipping media playback for call {call_connection_id} because response_text is empty."
+        )
+        returnting, and audio data handling for ACS media streaming scenarios.
 
 """
 
@@ -43,10 +49,10 @@ logger = get_logger()
 # --- Helper Functions for Initialization ---
 def construct_websocket_url(base_url: str, path: str) -> Optional[str]:
     """Constructs a WebSocket URL from a base URL and path."""
-    if not base_url:  # Added check for empty base_url
+    if not base_url:
         logger.error("BASE_URL is empty or not provided.")
         return None
-    if "<your" in base_url:  # Added check for placeholder
+    if "<your" in base_url:
         logger.warning(
             "BASE_URL contains placeholder. Please update environment variable."
         )
@@ -56,19 +62,17 @@ def construct_websocket_url(base_url: str, path: str) -> Optional[str]:
     path_clean = path.strip("/")
 
     if base_url.startswith("https://"):
-        # Remove the https:// prefix before constructing wss://
         base_url_clean = base_url.replace("https://", "").strip("/")
         ws_url = f"wss://{base_url_clean}/{path_clean}"
-        logger.info(f"🔗 Constructed WebSocket URL: {ws_url}")
+        logger.info(f"Constructed WebSocket URL: {ws_url}")
         return ws_url
     elif base_url.startswith("http://"):
         logger.warning(
             "BASE_URL starts with http://. ACS Media Streaming usually requires wss://."
         )
-        # Remove the http:// prefix before constructing ws://
         base_url_clean = base_url.replace("http://", "").strip("/")
         ws_url = f"ws://{base_url_clean}/{path_clean}"
-        logger.info(f"🔗 Constructed WebSocket URL: {ws_url}")
+        logger.info(f"Constructed WebSocket URL: {ws_url}")
         return ws_url
     else:
         logger.error(
@@ -120,62 +124,38 @@ async def broadcast_message(
 ):
     """
     DEPRECATED: This function bypasses session isolation and is unsafe for production.
-    
-    ⚠️  SECURITY WARNING: This legacy function does not respect session boundaries 
+
+    SECURITY WARNING: This legacy function does not respect session boundaries
     and can leak data between different user sessions.
-    
+
     Use ConnectionManager's session-aware broadcasting methods instead:
     - conn_manager.broadcast_session(session_id, payload)  # Session-safe
     - conn_manager.broadcast_topic("dashboard", payload)   # Topic-based
-    
+
     This function is kept only for backward compatibility during migration.
     It will log a warning and delegate to safer broadcast methods.
     """
     logger.warning(
-        "⚠️  DEPRECATED: broadcast_message() bypasses session isolation. "
+        "DEPRECATED: broadcast_message() bypasses session isolation. "
         "Use ConnectionManager.broadcast_session() or broadcast_topic() instead."
     )
-    
-    # For safety, do not perform unsafe broadcasting
-    # Log the attempt for debugging purposes
+
     logger.info(
-        f"🚫 Legacy broadcast blocked for security: {sender}: {message[:50]}... "
+        f"Legacy broadcast blocked for security: {sender}: {message[:50]}... "
         f"(would affect {len(connected_clients) if connected_clients else 0} clients)"
     )
-    
-    # Return without sending to prevent session data leakage
+
     return
-
-
-# async def send_pcm_frames(ws: WebSocket, pcm_bytes: list, sample_rate: int):
-
-#     packet_size = 640 if sample_rate == 16000 else 960
-#     for i in range(0, len(pcm_bytes), packet_size):
-#         frame = pcm_bytes[i : i + packet_size]
-#         # pad last frame
-#         if len(frame) < packet_size:
-#             frame += b"\x00" * (packet_size - len(frame))
-#         b64 = b64encode(frame).decode("ascii")
-
-#         payload = {"kind": "AudioData", "AudioData": {"data": b64}, "StopAudio": None}
-#         await send_data(ws, json.dumps(payload))
 
 
 async def send_pcm_frames(
     ws: WebSocket,
     b64_frames: list[str],
-    # redis,
-    # call_id: str
 ):
     try:
         import sys
 
         for b64 in b64_frames:
-            # interrupt_flag = await redis.get(f"session:{call_id}:interrupt")
-            # if interrupt_flag and interrupt_flag.decode("utf-8") == "true":
-            #     logger.info("Voice interruption detected — stopping playback.")
-            #     return
-
             payload = {
                 "kind": "AudioData",
                 "AudioData": {"data": b64},
@@ -183,7 +163,7 @@ async def send_pcm_frames(
             }
 
             await ws.send_json(payload)
-            # await asyncio.sleep(0.02)
+            await asyncio.sleep(0.02)
 
     except asyncio.CancelledError:
         logger.info("TTS task cancelled")
@@ -196,10 +176,8 @@ async def send_pcm_frames(
 async def send_data(websocket, buffer):
     if websocket.client_state == WebSocketState.CONNECTED:
         data = {"Kind": "AudioData", "AudioData": {"data": buffer}, "StopAudio": None}
-        # Serialize the server streaming data
         serialized_data = json.dumps(data)
         print(f"Out Streaming Data ---> {serialized_data}")
-        # Send the chunk over the WebSocket
         await websocket.send_json(data)
 
 
@@ -248,7 +226,6 @@ async def play_response(
     :param max_retries:        Maximum retry attempts for 8500 errors
     :param initial_backoff:    Initial backoff time in seconds
     """
-    # 1) Get the call-specific client
     call_connection_id = ws.headers.get("x-ms-call-connection-id")
     acs_caller = ws.app.state.acs_caller
     call_conn = acs_caller.get_call_connection(call_connection_id=call_connection_id)
@@ -277,27 +254,23 @@ async def play_response(
         )
         return
 
-    # 2) Validate and sanitize response text
     if not response_text or not response_text.strip():
         logger.info(
             f"Skipping media playback for call {call_connection_id} because response_text is empty."
         )
-        return  # 3) Set bot_speaking flag at start
+        return
 
     try:
-        # Sanitize and prepare the response text
         sanitized_text = response_text.strip().replace("\n", " ").replace("\r", " ")
         sanitized_text = " ".join(sanitized_text.split())
 
-        # Log the sanitized text (first 100 chars) for debugging
         text_preview = (
             sanitized_text[:100] + "..."
             if len(sanitized_text) > 100
             else sanitized_text
         )
-        logger.info(f"🔧 Playing text: '{text_preview}'")
+        logger.info(f"Playing text: '{text_preview}'")
 
-        # 4) Build the correct play_source object
         if use_ssml:
             source = SsmlSource(ssml_text=sanitized_text)
             logger.debug(f"Created SsmlSource for call {call_connection_id}")
@@ -307,7 +280,7 @@ async def play_response(
             )
             logger.debug(
                 f"Created TextSource for call {call_connection_id} with voice {voice_name}"
-            )  # 5) Retry loop for 8500 errors
+            )
         for attempt in range(max_retries):
             try:
                 # Run the synchronous play_media call in a thread pool to avoid blocking
@@ -321,7 +294,7 @@ async def play_response(
                     ),
                 )
                 logger.info(
-                    f"✅ Successfully played media on attempt {attempt + 1} to play response: {sanitized_text}"
+                    f"Successfully played media on attempt {attempt + 1} to play response: {sanitized_text}"
                 )
                 return response
 
@@ -371,10 +344,10 @@ async def play_response(
                             f"Failed to play media after {max_retries} retries for call {call_connection_id}"
                         )
                 else:
-                    logger.error(f"❌ Unexpected ACS error during play_media: {e}")
+                    logger.error(f"Unexpected ACS error during play_media: {e}")
                     raise
             except Exception as e:
-                logger.error(f"❌ Unexpected exception during play_media: {e}")
+                logger.error(f"Unexpected exception during play_media: {e}")
                 raise
         # If we reach here, all retries failed
         logger.error(
@@ -385,17 +358,15 @@ async def play_response(
         )
 
     except Exception as e:
-        logger.error(f"❌ Error in play_response for call {call_connection_id}: {e}")
+        logger.error(f"Error in play_response for call {call_connection_id}: {e}")
         raise
     finally:
-        # 6) Always clear bot_speaking flag when done (success or error)
         if cm:
             cm.update_context("bot_speaking", False)
             await cm.persist_to_redis_async(ws.app.state.redis)
-            logger.debug(f"🔄 Cleared bot_speaking flag for call {call_connection_id}")
+            logger.debug(f"Cleared bot_speaking flag for call {call_connection_id}")
 
 
-# async def play_response_with_queue(
 async def play_response_with_queue(
     ws: WebSocket,
     response_text: str,
@@ -424,7 +395,6 @@ async def play_response_with_queue(
     cm = getattr(ws.state, "cm", None)
     call_connection_id = ws.headers.get("x-ms-call-connection-id")
 
-    # Check if bot is currently speaking
     bot_speaking = cm.get_context("bot_speaking", False)
     logger.info(
         f"Queue processing: {cm.is_queue_processing()}, "
@@ -434,7 +404,7 @@ async def play_response_with_queue(
     if bot_speaking or cm.is_queue_processing():
         # Bot is speaking or queue is being processed, add to queue
         logger.info(
-            f"🎵 Bot is speaking or queue processing for call {call_connection_id}. Adding message to queue."
+            f"Bot is speaking or queue processing for call {call_connection_id}. Adding message to queue."
         )
         await cm.enqueue_message(
             response_text=response_text,
@@ -447,7 +417,6 @@ async def play_response_with_queue(
             transcription_resume_delay=transcription_resume_delay,
         )
 
-        # Start queue processing if not already running
         if not cm.is_queue_processing():
             asyncio.create_task(process_message_queue(ws))
         return
@@ -480,7 +449,7 @@ async def process_message_queue(ws: WebSocket):
     call_connection_id = ws.headers.get("x-ms-call-connection-id")
 
     await cm.set_queue_processing_status(True)
-    logger.info(f"🎬 Started queue processing for call {call_connection_id}")
+    logger.info(f"Started queue processing for call {call_connection_id}")
 
     try:
         while True:
@@ -495,7 +464,7 @@ async def process_message_queue(ws: WebSocket):
             if not message_data:
                 break
 
-            logger.info(f"🎵 Processing queued message for call {call_connection_id}")
+            logger.info(f"Processing queued message for call {call_connection_id}")
 
             try:
                 # Play the queued message
@@ -523,12 +492,12 @@ async def process_message_queue(ws: WebSocket):
 
     except Exception as e:
         logger.error(
-            f"❌ Error processing message queue for call {call_connection_id}: {e}",
+            f"Error processing message queue for call {call_connection_id}: {e}",
             exc_info=True,
         )
     finally:
         await cm.set_queue_processing_status(False)
-        logger.info(f"🎬 Finished queue processing for call {call_connection_id}")
+        logger.info(f"Finished queue processing for call {call_connection_id}")
 
 
 async def _play_response_direct(
@@ -556,7 +525,6 @@ async def _play_response_direct(
     :param initial_backoff:           Initial backoff time in seconds
     :param transcription_resume_delay: Extra delay after media ends to ensure transcription resumes
     """
-    # 1) Get the call-specific client
     call_connection_id = ws.headers.get("x-ms-call-connection-id")
     acs_caller = ws.app.state.acs_caller
     call_conn = acs_caller.get_call_connection(call_connection_id=call_connection_id)
@@ -585,34 +553,23 @@ async def _play_response_direct(
         )
         return
 
-    # 2) Validate and sanitize response text
     if not response_text or not response_text.strip():
         logger.info(
             f"Skipping media playback for call {call_connection_id} because response_text is empty."
         )
         return
 
-    # 3) Set bot_speaking flag and transcription_paused indicator at start
-    # .   Note: This is now managed on the CallConnected event callback (routers/acs.py)
-    # if cm:
-    # cm.update_context("bot_speaking", True)
-    # cm.update_context("transcription_paused_for_media", True)
-    # await cm.persist_to_redis_async(ws.app.state.redis)
-
     try:
-        # Sanitize and prepare the response text
         sanitized_text = response_text.strip().replace("\n", " ").replace("\r", " ")
         sanitized_text = " ".join(sanitized_text.split())
 
-        # Log the sanitized text (first 100 chars) for debugging
         text_preview = (
             sanitized_text[:100] + "..."
             if len(sanitized_text) > 100
             else sanitized_text
         )
-        logger.info(f"🔧 Playing text: '{text_preview}'")
+        logger.info(f"Playing text: '{text_preview}'")
 
-        # 4) Build the correct play_source object
         if use_ssml:
             source = SsmlSource(ssml_text=sanitized_text)
             logger.debug(f"Created SsmlSource for call {call_connection_id}")
@@ -624,7 +581,6 @@ async def _play_response_direct(
                 f"Created TextSource for call {call_connection_id} with voice {voice_name}"
             )
 
-        # 5) Retry loop for 8500 errors
         for attempt in range(max_retries):
             try:
                 # Run the synchronous play_media call in a thread pool to avoid blocking
@@ -638,7 +594,7 @@ async def _play_response_direct(
                     ),
                 )
                 logger.info(
-                    f"✅ Successfully played media on attempt {attempt + 1} to play response: {sanitized_text}"
+                    f"Successfully played media on attempt {attempt + 1} to play response: {sanitized_text}"
                 )
 
                 # Add delay for transcription to resume
@@ -693,10 +649,10 @@ async def _play_response_direct(
                             f"Failed to play media after {max_retries} retries for call {call_connection_id}"
                         )
                 else:
-                    logger.error(f"❌ Unexpected ACS error during play_media: {e}")
+                    logger.error(f"Unexpected ACS error during play_media: {e}")
                     raise
             except Exception as e:
-                logger.error(f"❌ Unexpected exception during play_media: {e}")
+                logger.error(f"Unexpected exception during play_media: {e}")
                 raise
 
         # If we reach here, all retries failed
@@ -709,13 +665,9 @@ async def _play_response_direct(
 
     except Exception as e:
         logger.error(
-            f"❌ Error in _play_response_direct for call {call_connection_id}: {e}"
+            f"Error in _play_response_direct for call {call_connection_id}: {e}"
         )
         raise
     finally:
-        # 6) Always clear bot_speaking flag when done (success or error)
         if cm:
-            # cm.update_context("bot_speaking", False)
-            # cm.update_context("transcription_paused_for_media", False)
-            # await cm.persist_to_redis_async(ws.app.state.redis)
-            logger.debug(f"🔄 Cleared bot_speaking flag for call {call_connection_id}")
+            logger.debug(f"Cleared bot_speaking flag for call {call_connection_id}")

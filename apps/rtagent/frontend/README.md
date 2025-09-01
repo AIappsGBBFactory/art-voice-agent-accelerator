@@ -1,136 +1,108 @@
-# �️ Real-Time Voice Agent Frontend
+# Real-Time Voice Agent Frontend
 
-A React-based real-time voice application that provides an intelligent voice agent interface with WebRTC capabilities, backend health monitoring, and Azure Communication Services integration.
+React-based voice interface for Azure Communication Services with WebSocket real-time communication.
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- Node.js 18+ and npm
-- Backend service running on `http://localhost:8000`
+- Node.js 18+
+- Backend running on `http://localhost:8000`
 
-### Installation & Run
+### Setup
 ```bash
-# Install dependencies
 npm install
-
-# Start development server
-npm run dev
+npm run dev  # Available at http://localhost:5173
 ```
 
-The app will be available at `http://localhost:5173`
-
-### Production Build
+### Production
 ```bash
-# Build for production
 npm run build
-
-# Preview production build
 npm run preview
 ```
 
-## 📁 Essential File Structure
+## Architecture
 
-The frontend uses a **monolithic architecture** with all functionality consolidated into a single component:
+### Single Component Design
+Monolithic architecture with all functionality in `RealTimeVoiceApp.jsx`:
 
 ```
 frontend/
-├── public/                    # Static assets
 ├── src/
-│   ├── main.jsx              # React app entry point
-│   ├── App.jsx               # Main app wrapper
-│   ├── App.css               # Background styles
-│   ├── index.css             # Global styles
+│   ├── main.jsx              # React entry point
+│   ├── App.jsx               # App wrapper
 │   └── components/
-│       └── RealTimeVoiceApp.jsx 
-├── package.json              # Dependencies & scripts
-├── vite.config.js           # Vite configuration
-├── .env                     # Environment variables
-└── index.html               # HTML template
+│       └── RealTimeVoiceApp.jsx  # Complete voice application
+├── package.json
+├── vite.config.js
+└── .env                      # Environment configuration
 ```
 
-### 🎯 Core Files (Required)
+### Core Components
+All components defined inline in `RealTimeVoiceApp.jsx`:
+- **BackendIndicator** - Connection health monitoring
+- **WaveformVisualization** - Audio-reactive visual feedback
+- **ChatBubble** - Message display with timestamps
+- **HelpButton** - User assistance modal
+- **BackendStatisticsButton** - Backend metrics display
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `src/main.jsx` | React DOM entry point | ✅ Required |
-| `src/App.jsx` | App wrapper, imports main component | ✅ Required |
-| `src/components/RealTimeVoiceApp.jsx` | **Complete voice agent application** | ✅ Required |
-| `src/App.css` | Background styling | ✅ Required |
-| `src/index.css` | Global CSS reset | ✅ Required |
-| `package.json` | Dependencies & npm scripts | ✅ Required |
-| `vite.config.js` | Build configuration | ✅ Required |
+## Features
 
-## 🏗️ Architecture Overview
+- **Real-time Voice Processing** - WebAudio API integration
+- **WebSocket Communication** - Live backend connectivity
+- **Azure Communication Services** - Phone call integration
+- **Health Monitoring** - Backend status indicators
+- **Fixed-width Interface** - 768px professional design
 
-### Monolithic Design
-The app uses a **single-file architecture** where all components are defined inline within `RealTimeVoiceAppOriginal.jsx`:
+## Configuration
 
-- **BackendIndicator**: Health monitoring with connection status
-- **WaveformVisualization**: Audio-reactive visual feedback  
-- **ChatBubble**: Message display with styling
-- **HelpButton**: User assistance modal
-- **BackendStatisticsButton**: Backend metrics display
-
-### Key Features
-- 🎯 **Real-time Voice Processing**: WebAudio API integration
-- 🔄 **WebSocket Communication**: Live backend connectivity
-- 📞 **Phone Call Integration**: Azure Communication Services
-- 📊 **Backend Health Monitoring**: Real-time status indicators
-- 🎨 **Fixed-width Design**: 768px professional interface
-- 🔍 **Debug Tools**: Component and connection diagnostics
-
-### Environment Configuration
+### Environment Variables
 ```bash
-# .env file
+# .env
 VITE_BACKEND_BASE_URL=http://localhost:8000
 ```
 
-### Dependencies
-- **React 19**: Core framework
-- **Vite**: Build tool and dev server
-- **Azure Communication Services**: Voice calling
-- **Microsoft Cognitive Services**: Speech SDK
-- **ReactFlow**: Visualization components
-- **Lucide React**: Icons
+### Backend Integration
+- Health: `/api/v1/readiness`
+- WebSocket: `/api/v1/ws/call/{call_id}`
+- Calls: `/api/v1/calls/`
 
-## 🔧 Development
+## Dependencies
+
+- **React 19** - Core framework
+- **Vite** - Build tool
+- **Azure Communication Services** - Voice calling
+- **Microsoft Cognitive Services** - Speech SDK
+- **ReactFlow** - Visualization
+- **Lucide React** - Icons
+
+## Development
 
 ### Commands
 ```bash
-npm run dev      # Development server (localhost:5173)
+npm run dev      # Development server
 npm run build    # Production build
-npm run preview  # Preview production build
+npm run preview  # Preview build
 ```
 
-### Browser Support
-- WebAudio API compatibility required
-- WebSocket support needed
+### Browser Requirements
+- WebAudio API support
+- WebSocket support
 
-### Backend Integration
-The frontend connects to backend APIs:
-- Health endpoint: `/api/v1/readiness`
-- WebSocket: `/api/v1/ws/call/{call_id}`
-- Phone calls: `/api/v1/calls/`
+## Deployment
 
-## 🎨 UI Components
-
-All components are **inline within RealTimeVoiceAppOriginal.jsx**:
-
-- **Main Interface**: 768px fixed width with professional styling
-- **Voice Controls**: Start/stop recording, phone call buttons
-- **Visual Feedback**: Real-time waveform animation
-- **Chat Display**: Message bubbles with timestamps
-- **Status Indicators**: Backend health and connection status
-- **Help System**: Contextual assistance modals
-
-## 🚀 Production Deployment
-
-The app builds to static files and can be deployed to any static hosting service:
-
+Static build deployment:
 ```bash
-npm run build   # Generates /dist folder
+npm run build  # Generates /dist folder
 ```
 
-Deploy the `/dist` folder to your preferred hosting platform.
+Deploy `/dist` to any static hosting service (Vercel, Netlify, Azure Static Web Apps).
 
+## UI Components
 
+**Main Interface**:
+- 768px fixed width
+- Voice controls (start/stop, phone)
+- Real-time waveform animation
+- Message bubbles with timestamps
+- Backend health status
+- Help system modal

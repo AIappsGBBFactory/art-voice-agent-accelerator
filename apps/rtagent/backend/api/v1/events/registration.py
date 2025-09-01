@@ -70,12 +70,13 @@ def register_default_handlers() -> None:
 
     # Register DTMF handlers (delegated to DTMFValidationLifecycle)
     processor.register_handler(
-        ACSEventTypes.DTMF_TONE_RECEIVED, DTMFValidationLifecycle.handle_dtmf_tone_received
+        ACSEventTypes.DTMF_TONE_RECEIVED,
+        DTMFValidationLifecycle.handle_dtmf_tone_received,
     )
-    
+
     processor.register_handler(
-        V1EventTypes.DTMF_RECOGNITION_START_REQUESTED, 
-        DTMFValidationLifecycle.handle_dtmf_recognition_start_requested
+        V1EventTypes.DTMF_RECOGNITION_START_REQUESTED,
+        DTMFValidationLifecycle.handle_dtmf_recognition_start_requested,
     )
 
     # Register media handlers
@@ -99,14 +100,16 @@ def register_default_handlers() -> None:
     _handlers_registered = True  # Mark as registered
     logger.info("✅ V1 call event handlers registered successfully")
 
+
 def register_all_handlers() -> None:
     """
     Register all event handlers (Call and Live Voice) with the V1 Event Processor.
-    
+
     This is the main registration function that should be called to set up
     the complete event processing system.
     """
     register_default_handlers()
+
 
 def get_processor_stats() -> dict:
     """

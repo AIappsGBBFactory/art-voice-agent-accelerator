@@ -14,27 +14,27 @@ search_product_catalog_schema = {
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Search term or product ID to look up in catalog"
+                "description": "Search term or product ID to look up in catalog",
             }
         },
-        "required": ["query"]
-    }
+        "required": ["query"],
+    },
 }
 
 # Tool schema for order status checking
 check_order_status_schema = {
-    "name": "check_order_status", 
+    "name": "check_order_status",
     "description": "Check the status and tracking information for a customer order",
     "parameters": {
         "type": "object",
         "properties": {
             "order_id": {
                 "type": "string",
-                "description": "The order ID to look up (e.g., ORD123456)"
+                "description": "The order ID to look up (e.g., ORD123456)",
             }
         },
-        "required": ["order_id"]
-    }
+        "required": ["order_id"],
+    },
 }
 
 # Tool schema for return request creation
@@ -42,19 +42,19 @@ create_return_request_schema = {
     "name": "create_return_request",
     "description": "Create a return request for a customer order",
     "parameters": {
-        "type": "object", 
+        "type": "object",
         "properties": {
             "order_id": {
                 "type": "string",
-                "description": "The order ID for the return request"
+                "description": "The order ID for the return request",
             },
             "reason": {
-                "type": "string", 
-                "description": "Reason for the return (e.g., defective item, wrong size)"
-            }
+                "type": "string",
+                "description": "Reason for the return (e.g., defective item, wrong size)",
+            },
         },
-        "required": ["order_id", "reason"]
-    }
+        "required": ["order_id", "reason"],
+    },
 }
 
 # Tool schema for human escalation
@@ -66,9 +66,9 @@ escalate_to_human_schema = {
         "properties": {
             "reason": {
                 "type": "string",
-                "description": "Reason for escalation (e.g., complex technical issue, customer request)"
+                "description": "Reason for escalation (e.g., complex technical issue, customer request)",
             }
         },
-        "required": ["reason"]
-    }
+        "required": ["reason"],
+    },
 }

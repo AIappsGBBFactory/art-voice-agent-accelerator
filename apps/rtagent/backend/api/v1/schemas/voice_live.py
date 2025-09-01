@@ -35,13 +35,19 @@ class VoiceLiveStatusResponse(BaseModel):
     status: str = Field(
         ...,
         description="Current Live Voice service status",
-        json_schema_extra={"example": "available", "enum": ["available", "degraded", "unavailable"]},
+        json_schema_extra={
+            "example": "available",
+            "enum": ["available", "degraded", "unavailable"],
+        },
     )
 
     azure_speech_status: str = Field(
         ...,
         description="Azure AI Speech integration status",
-        json_schema_extra={"example": "connected", "enum": ["connected", "disconnected", "error", "unknown"]},
+        json_schema_extra={
+            "example": "connected",
+            "enum": ["connected", "disconnected", "error", "unknown"],
+        },
     )
 
     websocket_endpoints: Dict[str, str] = Field(
@@ -81,7 +87,9 @@ class VoiceLiveStatusResponse(BaseModel):
         json_schema_extra={"example": ["WebSocket"]},
     )
 
-    version: str = Field(default="v1", description="API version", json_schema_extra={"example": "v1"})
+    version: str = Field(
+        default="v1", description="API version", json_schema_extra={"example": "v1"}
+    )
 
 
 class VoiceLiveSessionResponse(BaseModel):
@@ -91,15 +99,19 @@ class VoiceLiveSessionResponse(BaseModel):
     Provides comprehensive information about Live Voice sessions including
     session management, configuration, and connection state.
     """
-    
+
     model_config = ConfigDict()
 
     session_id: str = Field(
-        ..., description="Unique identifier for the Live Voice session", json_schema_extra={"example": "lv_abc123def"}
+        ...,
+        description="Unique identifier for the Live Voice session",
+        json_schema_extra={"example": "lv_abc123def"},
     )
 
     start_time: datetime = Field(
-        ..., description="Timestamp when the session was started", json_schema_extra={"example": "2024-01-01T12:00:00Z"}
+        ...,
+        description="Timestamp when the session was started",
+        json_schema_extra={"example": "2024-01-01T12:00:00Z"},
     )
 
     status: str = Field(
@@ -107,12 +119,22 @@ class VoiceLiveSessionResponse(BaseModel):
         description="Current session status",
         json_schema_extra={
             "example": "connected",
-            "enum": ["initializing", "connected", "processing", "paused", "disconnecting", "disconnected", "error"],
+            "enum": [
+                "initializing",
+                "connected",
+                "processing",
+                "paused",
+                "disconnecting",
+                "disconnected",
+                "error",
+            ],
         },
     )
 
     azure_speech_connected: bool = Field(
-        ..., description="Whether Azure AI Speech is connected", json_schema_extra={"example": True}
+        ...,
+        description="Whether Azure AI Speech is connected",
+        json_schema_extra={"example": True},
     )
 
     audio_config: Dict[str, Any] = Field(
@@ -223,14 +245,22 @@ class VoiceLiveMessage(BaseModel):
     message identification, typing, and session metadata.
     """
 
-    type: str = Field(..., description="Message type identifier", json_schema_extra={"example": "audio"})
+    type: str = Field(
+        ...,
+        description="Message type identifier",
+        json_schema_extra={"example": "audio"},
+    )
 
     timestamp: Optional[datetime] = Field(
-        None, description="Message timestamp", json_schema_extra={"example": "2024-01-01T12:00:00Z"}
+        None,
+        description="Message timestamp",
+        json_schema_extra={"example": "2024-01-01T12:00:00Z"},
     )
 
     session_id: Optional[str] = Field(
-        None, description="Associated session identifier", json_schema_extra={"example": "lv_abc123def"}
+        None,
+        description="Associated session identifier",
+        json_schema_extra={"example": "lv_abc123def"},
     )
 
 
@@ -255,22 +285,36 @@ class VoiceLiveAudioMessage(VoiceLiveMessage):
     )
 
     sample_rate: int = Field(
-        ..., description="Audio sample rate in Hz", json_schema_extra={"example": 24000}, gt=0
+        ...,
+        description="Audio sample rate in Hz",
+        json_schema_extra={"example": 24000},
+        gt=0,
     )
 
     channels: int = Field(
-        default=1, description="Number of audio channels", json_schema_extra={"example": 1}, ge=1, le=2
+        default=1,
+        description="Number of audio channels",
+        json_schema_extra={"example": 1},
+        ge=1,
+        le=2,
     )
 
     chunk_size: Optional[int] = Field(
-        None, description="Size of audio chunk in bytes", json_schema_extra={"example": 1024}, gt=0
+        None,
+        description="Size of audio chunk in bytes",
+        json_schema_extra={"example": 1024},
+        gt=0,
     )
 
     is_final: bool = Field(
-        default=False, description="Whether this is the final audio chunk", json_schema_extra={"example": False}
+        default=False,
+        description="Whether this is the final audio chunk",
+        json_schema_extra={"example": False},
     )
 
-    language: Optional[str] = Field(None, description="Audio language code", json_schema_extra={"example": "en-US"})
+    language: Optional[str] = Field(
+        None, description="Audio language code", json_schema_extra={"example": "en-US"}
+    )
 
 
 class VoiceLiveTextMessage(VoiceLiveMessage):
@@ -287,16 +331,25 @@ class VoiceLiveTextMessage(VoiceLiveMessage):
         json_schema_extra={"example": "text"},
     )
 
-    content: str = Field(..., description="Text content", json_schema_extra={"example": "Hello, how can I help you?"})
+    content: str = Field(
+        ...,
+        description="Text content",
+        json_schema_extra={"example": "Hello, how can I help you?"},
+    )
 
     role: str = Field(
         ...,
         description="Message role",
-        json_schema_extra={"example": "assistant", "enum": ["user", "assistant", "system"]},
+        json_schema_extra={
+            "example": "assistant",
+            "enum": ["user", "assistant", "system"],
+        },
     )
 
     is_partial: bool = Field(
-        default=False, description="Whether this is a partial message", json_schema_extra={"example": False}
+        default=False,
+        description="Whether this is a partial message",
+        json_schema_extra={"example": False},
     )
 
     confidence: Optional[float] = Field(
@@ -307,7 +360,11 @@ class VoiceLiveTextMessage(VoiceLiveMessage):
         le=1.0,
     )
 
-    language: Optional[str] = Field(None, description="Detected language code", json_schema_extra={"example": "en-US"})
+    language: Optional[str] = Field(
+        None,
+        description="Detected language code",
+        json_schema_extra={"example": "en-US"},
+    )
 
 
 class VoiceLiveControlMessage(VoiceLiveMessage):
@@ -336,7 +393,9 @@ class VoiceLiveControlMessage(VoiceLiveMessage):
     parameters: Optional[Dict[str, Any]] = Field(
         None,
         description="Command parameters",
-        json_schema_extra={"example": {"audio_enabled": True, "voice_activity_detection": True}},
+        json_schema_extra={
+            "example": {"audio_enabled": True, "voice_activity_detection": True}
+        },
     )
 
 
@@ -364,19 +423,26 @@ class VoiceLiveStatusMessage(VoiceLiveMessage):
     )
 
     message: str = Field(
-        ..., description="Status message content", json_schema_extra={"example": "Live Voice session connected successfully"}
+        ...,
+        description="Status message content",
+        json_schema_extra={"example": "Live Voice session connected successfully"},
     )
 
     level: str = Field(
         default="info",
         description="Message level",
-        json_schema_extra={"example": "info", "enum": ["info", "warning", "error", "success"]},
+        json_schema_extra={
+            "example": "info",
+            "enum": ["info", "warning", "error", "success"],
+        },
     )
 
     details: Optional[Dict[str, Any]] = Field(
         None,
         description="Additional status details",
-        json_schema_extra={"example": {"azure_speech_connected": True, "model_loaded": True}},
+        json_schema_extra={
+            "example": {"azure_speech_connected": True, "model_loaded": True}
+        },
     )
 
 
@@ -395,13 +461,17 @@ class VoiceLiveErrorMessage(VoiceLiveMessage):
     )
 
     error_code: str = Field(
-        ..., description="Error code identifier", json_schema_extra={"example": "AZURE_SPEECH_ERROR"}
+        ...,
+        description="Error code identifier",
+        json_schema_extra={"example": "AZURE_SPEECH_ERROR"},
     )
 
     error_message: str = Field(
         ...,
         description="Human-readable error message",
-        json_schema_extra={"example": "Azure AI Speech service temporarily unavailable"},
+        json_schema_extra={
+            "example": "Azure AI Speech service temporarily unavailable"
+        },
     )
 
     error_type: str = Field(
@@ -425,17 +495,27 @@ class VoiceLiveErrorMessage(VoiceLiveMessage):
     error_details: Optional[Dict[str, Any]] = Field(
         None,
         description="Additional error details",
-        json_schema_extra={"example": {"service": "azure_speech", "endpoint": "voice_live", "retry_after": 30}},
+        json_schema_extra={
+            "example": {
+                "service": "azure_speech",
+                "endpoint": "voice_live",
+                "retry_after": 30,
+            }
+        },
     )
 
     recovery_suggestion: Optional[str] = Field(
         None,
         description="Suggested recovery action",
-        json_schema_extra={"example": "Please check your internet connection and try again"},
+        json_schema_extra={
+            "example": "Please check your internet connection and try again"
+        },
     )
 
     is_recoverable: bool = Field(
-        default=True, description="Whether the error condition is recoverable", json_schema_extra={"example": True}
+        default=True,
+        description="Whether the error condition is recoverable",
+        json_schema_extra={"example": True},
     )
 
 
@@ -481,7 +561,13 @@ class VoiceLiveMetricsMessage(VoiceLiveMessage):
     resource_metrics: Optional[Dict[str, float]] = Field(
         None,
         description="Resource utilization metrics",
-        json_schema_extra={"example": {"cpu_usage_percent": 25.5, "memory_usage_mb": 128.3, "network_throughput_kbps": 64.2}},
+        json_schema_extra={
+            "example": {
+                "cpu_usage_percent": 25.5,
+                "memory_usage_mb": 128.3,
+                "network_throughput_kbps": 64.2,
+            }
+        },
     )
 
     session_stats: Optional[Dict[str, Any]] = Field(
@@ -515,7 +601,10 @@ class VoiceLiveConfigurationMessage(VoiceLiveMessage):
     configuration_type: str = Field(
         ...,
         description="Type of configuration being updated",
-        json_schema_extra={"example": "audio", "enum": ["audio", "model", "session", "voice"]},
+        json_schema_extra={
+            "example": "audio",
+            "enum": ["audio", "model", "session", "voice"],
+        },
     )
 
     configuration_data: Dict[str, Any] = Field(

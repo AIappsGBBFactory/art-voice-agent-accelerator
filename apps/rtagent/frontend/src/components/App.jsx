@@ -1,13 +1,7 @@
-// src/RealTimeVoiceApp.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import "reactflow/dist/style.css";
-// import { useHealthMonitor } from "./hooks/useHealthMonitor";
-// import HealthStatusIndicator from "./components/HealthStatusIndicator";
 
-/* ------------------------------------------------------------------ *
- *  ENV VARS
- * ------------------------------------------------------------------ */
-// Simple placeholder that gets replaced at container startup, with fallback for local dev
+// Environment configuration
 const backendPlaceholder = '__BACKEND_URL__';
 const API_BASE_URL = backendPlaceholder.startsWith('__') 
   ? import.meta.env.VITE_BACKEND_BASE_URL || 'http://localhost:8000'
@@ -15,45 +9,37 @@ const API_BASE_URL = backendPlaceholder.startsWith('__')
 
 const WS_URL = API_BASE_URL.replace(/^https?/, "wss");
 
-/* ------------------------------------------------------------------ *
- *  SESSION MANAGEMENT
- * ------------------------------------------------------------------ */
-// Generate or retrieve a tab-specific session ID (sessionStorage for per-tab isolation)
+// Session management utilities
 const getOrCreateSessionId = () => {
   const sessionKey = 'voice_agent_session_id';
   let sessionId = sessionStorage.getItem(sessionKey);
   
   if (!sessionId) {
-    // Generate a new tab-specific session ID with better uniqueness
     const tabId = Math.random().toString(36).substr(2, 6);
     sessionId = `session_${Date.now()}_${tabId}`;
     sessionStorage.setItem(sessionKey, sessionId);
-    console.log('🆔 [FRONTEND] Created NEW tab-specific session ID:', sessionId);
-    console.log('🔗 [FRONTEND] This session ID will be sent to backend WebSocket endpoints');
+    console.log('Created NEW tab-specific session ID:', sessionId);
   } else {
-    console.log('🆔 [FRONTEND] Retrieved existing tab session ID:', sessionId);
+    console.log('Retrieved existing tab session ID:', sessionId);
   }
   
   return sessionId;
 };
 
-// Force create a new tab-specific session ID (for session reset)
 const createNewSessionId = () => {
   const sessionKey = 'voice_agent_session_id';
   const tabId = Math.random().toString(36).substr(2, 6);
   const sessionId = `session_${Date.now()}_${tabId}`;
   sessionStorage.setItem(sessionKey, sessionId);
-  console.log('🔄 Created NEW session ID for reset:', sessionId);
+  console.log('Created NEW session ID for reset:', sessionId);
   return sessionId;
 };
 
-/* ------------------------------------------------------------------ *
- *  STYLES
- * ------------------------------------------------------------------ */
+// Component styles
 const styles = {
   root: {
     width: "768px",
-    maxWidth: "768px", // Expanded from iPad width
+    maxWidth: "768px",
     fontFamily: "Segoe UI, Roboto, sans-serif",
     background: "transparent",
     minHeight: "100vh",
@@ -67,12 +53,11 @@ const styles = {
     border: "0px solid #0e4bf3ff",
   },
   
-  // Main iPad-sized container
   mainContainer: {
     width: "100%",
-    maxWidth: "100%", // Expanded from iPad width
+    maxWidth: "100%",
     height: "90vh",
-    maxHeight: "900px", // Adjusted height
+    maxHeight: "900px",
     background: "white",
     borderRadius: "20px",
     boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
@@ -82,7 +67,6 @@ const styles = {
     overflow: "hidden",
   },
 
-  // App header with title - more blended approach  
   appHeader: {
     backgroundColor: "#f8fafc",
     background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
@@ -132,8 +116,6 @@ const styles = {
     lineHeight: "1.3",
     opacity: 0.8,
   },
-  
-  // Waveform section - blended design
   waveformSection: {
     backgroundColor: "#f1f5f9",
     background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
@@ -188,10 +170,9 @@ const styles = {
     transition: "filter 0.3s ease",
   },
   
-  // Chat section (middle section)
   chatSection: {
     flex: 1,
-    padding: "15px 20px 15px 5px", // Remove most left padding, keep right padding
+    padding: "15px 20px 15px 5px",
     width: "100%",
     overflowY: "auto",
     backgroundColor: "#ffffff",
@@ -229,7 +210,7 @@ const styles = {
     left: "0",
     top: "0",
     bottom: "0",
-    width: "0px", // Removed blue border
+    width: "0px",
     backgroundColor: "#3b82f6",
   },
   
@@ -239,14 +220,13 @@ const styles = {
     gap: "16px",
     flex: 1,
     overflowY: "auto",
-    padding: "0", // Remove all padding for maximum space usage
+    padding: "0",
   },
   
-  // User message (right aligned - blue bubble)
   userMessage: {
     alignSelf: "flex-end",
-    maxWidth: "75%", // More conservative width
-    marginRight: "15px", // Increased margin for more right padding
+    maxWidth: "75%",
+    marginRight: "15px",
     marginBottom: "4px",
   },
   
@@ -984,7 +964,6 @@ const BackendIndicator = ({ url, onConfigureClick }) => {
   // Check readiness endpoint
   const checkReadiness = async () => {
     try {
-      // Simple GET request without extra headers
       const response = await fetch(`${url}/api/v1/readiness`);
 
       if (!response.ok) {
@@ -1741,13 +1720,12 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
     };
   }, [speaker, audioLevel, outputAudioLevel]);
   
-  // Simple wave path generation
   const generateWavePath = () => {
     const width = 750;
     const height = 100;
     const centerY = height / 2;
     const frequency = 0.02;
-    const points = 100; // Reduced points for better performance
+    const points = 100;
     
     let path = `M 0 ${centerY}`;
     
@@ -1890,12 +1868,10 @@ const ChatBubble = ({ message }) => {
   );
 };
 
-/* ------------------------------------------------------------------ *
- *  MAIN COMPONENT
- * ------------------------------------------------------------------ */
+// Main voice application component
 function RealTimeVoiceApp() {
   
-  // Add CSS animation for pulsing effect
+  // CSS animation for pulsing effect
   React.useEffect(() => {
     const style = document.createElement('style');
     style.textContent = `
@@ -1912,15 +1888,12 @@ function RealTimeVoiceApp() {
     };
   }, []);
 
-  /* ---------- state ---------- */
-  const [messages, setMessages] = useState([
-    // { speaker: "User", text: "Hello, I need help with my insurance claim." },
-    // { speaker: "Assistant", text: "I'd be happy to help you with your insurance claim. Can you please provide me with your policy number?" }
-  ]);
-  const [log, setLog]                 = useState("");
-  const [recording, setRecording]     = useState(false);
+  // Component state
+  const [messages, setMessages] = useState([]);
+  const [log, setLog] = useState("");
+  const [recording, setRecording] = useState(false);
   const [targetPhoneNumber, setTargetPhoneNumber] = useState("");
-  const [callActive, setCallActive]   = useState(false);
+  const [callActive, setCallActive] = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState(null);
   const [showPhoneInput, setShowPhoneInput] = useState(false);
 
@@ -1929,36 +1902,38 @@ function RealTimeVoiceApp() {
   const [showMicTooltip, setShowMicTooltip] = useState(false);
   const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
 
-  // Hover states for enhanced button effects
+  // Hover states
   const [resetHovered, setResetHovered] = useState(false);
   const [micHovered, setMicHovered] = useState(false);
   const [phoneHovered, setPhoneHovered] = useState(false);
 
-  // /* ---------- health monitoring ---------- */
-  // const { 
-  //   healthStatus = { isHealthy: null, lastChecked: null, responseTime: null, error: null },
-  //   readinessStatus = { status: null, timestamp: null, responseTime: null, checks: [], lastChecked: null, error: null },
-  //   overallStatus = { isHealthy: false, hasWarnings: false, criticalErrors: [] },
-  //   refresh = () => {} 
-  // } = useHealthMonitor({
-  //   baseUrl: API_BASE_URL,
-  //   healthInterval: 30000,
-  //   readinessInterval: 15000,
-  //   enableAutoRefresh: true,
-  // });
+  // Health monitoring (disabled)
+  /*
+  const { 
+    healthStatus = { isHealthy: null, lastChecked: null, responseTime: null, error: null },
+    readinessStatus = { status: null, timestamp: null, responseTime: null, checks: [], lastChecked: null, error: null },
+    overallStatus = { isHealthy: false, hasWarnings: false, criticalErrors: [] },
+    refresh = () => {} 
+  } = useHealthMonitor({
+    baseUrl: API_BASE_URL,
+    healthInterval: 30000,
+    readinessInterval: 15000,
+    enableAutoRefresh: true,
+  });
+  */
 
+  // Function call state (disabled)
+  /*
+  const [functionCalls, setFunctionCalls] = useState([]);
+  const [callResetKey, setCallResetKey] = useState(0);
+  */
 
-  // Function call state (not mind-map)
-  // const [functionCalls, setFunctionCalls] = useState([]);
-  // const [callResetKey, setCallResetKey]   = useState(0);
-
-  /* ---------- refs ---------- */
-  const chatRef      = useRef(null);
+  // Component refs
+  const chatRef = useRef(null);
   const messageContainerRef = useRef(null);
-  const socketRef    = useRef(null);
-  // const recognizerRef= useRef(null);
+  const socketRef = useRef(null);
 
-  // Fix: missing refs for audio and processor
+  // Audio processing refs
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
   const analyserRef = useRef(null);
@@ -1968,13 +1943,9 @@ function RealTimeVoiceApp() {
   const playbackAudioContextRef = useRef(null);
   const pcmSinkRef = useRef(null);
   
-  // Audio level tracking for reactive waveforms
   const [audioLevel, setAudioLevel] = useState(0);
-  // const [outputAudioLevel, setOutputAudioLevel] = useState(0);
   const audioLevelRef = useRef(0);
-  // const outputAudioLevelRef = useRef(0);
 
-  // AudioWorklet source code for PCM streaming playback
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
       constructor() {
@@ -2061,9 +2032,7 @@ function RealTimeVoiceApp() {
 
   const appendLog = m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`);
 
-  /* ---------- scroll chat on new message ---------- */
   useEffect(()=>{
-    // Try both refs to ensure scrolling works
     if(messageContainerRef.current) {
       messageContainerRef.current.scrollTo({
         top: messageContainerRef.current.scrollHeight,
@@ -2077,7 +2046,6 @@ function RealTimeVoiceApp() {
     }
   },[messages]);
 
-  /* ---------- teardown on unmount ---------- */
   useEffect(() => {
     return () => {
       if (processorRef.current) {
@@ -2111,23 +2079,17 @@ function RealTimeVoiceApp() {
     };
   }, []);
 
-  /* ---------- derive callActive from logs ---------- */
   useEffect(()=>{
     if (log.includes("Call connected"))  setCallActive(true);
     if (log.includes("Call ended"))      setCallActive(false);
   },[log]);
-  /* ------------------------------------------------------------------ *
-   *  START RECOGNITION + WS
-   * ------------------------------------------------------------------ */
+
   const startRecognition = async () => {
-      // mind-map reset not needed
       setMessages([]);
       appendLog("🎤 PCM streaming started");
 
-      // Initialize audio playback system on user gesture
       await initializeAudioPlayback();
 
-      // Get or create persistent session ID
       const sessionId = getOrCreateSessionId();
       console.log('🔗 [FRONTEND] Starting conversation WebSocket with session_id:', sessionId);
 
@@ -2160,21 +2122,17 @@ function RealTimeVoiceApp() {
 
       const source = audioCtx.createMediaStreamSource(stream);
 
-      // Add analyser for real-time audio level monitoring
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.3;
       analyserRef.current = analyser;
       
-      // Connect source to analyser
       source.connect(analyser);
 
-      // 3) ScriptProcessor with small buffer for low latency (256 or 512 samples)
       const bufferSize = 512; 
       const processor  = audioCtx.createScriptProcessor(bufferSize, 1, 1);
       processorRef.current = processor;
 
-      // Connect analyser to processor for audio data flow
       analyser.connect(processor);
 
       processor.onaudioprocess = (evt) => {
@@ -2233,16 +2191,7 @@ function RealTimeVoiceApp() {
         }
         audioContextRef.current = null;
       }
-      // Note: Keep playback context alive for TTS even when stopping recording
-      // if (playbackAudioContextRef.current) {
-      //   try { 
-      //     playbackAudioContextRef.current.close(); 
-      //   } catch (e) {
-      //     console.warn("Error closing playback audio context:", e);
-      //   }
-      //   playbackAudioContextRef.current = null;
-      //   pcmSinkRef.current = null;
-      // }
+      
       if (socketRef.current) {
         try { 
           socketRef.current.close(); 
@@ -2260,14 +2209,9 @@ function RealTimeVoiceApp() {
       setActiveSpeaker("System");
       setRecording(false);
       appendLog("🛑 PCM streaming stopped");
-      
-      // Don't clear all state - preserve chat history and UI
-      // Just stop the recording session
     };
 
-    // Helper to dedupe consecutive identical messages
     const pushIfChanged = (arr, msg) => {
-      // Only dedupe if the last message is from the same speaker and has the same text
       if (arr.length === 0) return [...arr, msg];
       const last = arr[arr.length - 1];
       if (last.speaker === msg.speaker && last.text === msg.text) return arr;
@@ -2419,23 +2363,19 @@ function RealTimeVoiceApp() {
       const txt = content || message;
       const msgType = (type || "").toLowerCase();
 
-      /* ---------- USER BRANCH ---------- */
       if (msgType === "user" || speaker === "User") {
         setActiveSpeaker("User");
-        // Always append user message immediately, do not dedupe
         setMessages(prev => [...prev, { speaker: "User", text: txt }]);
 
         appendLog(`User: ${txt}`);
         return;
       }
 
-      /* ---------- ASSISTANT STREAM ---------- */
       if (type === "assistant_streaming") {
         const streamingSpeaker = speaker || "Assistant";
         setActiveSpeaker(streamingSpeaker);
         setMessages(prev => {
           if (prev.at(-1)?.streaming && prev.at(-1)?.speaker === streamingSpeaker) {
-            // Accumulate streaming text chunks instead of replacing
             return prev.map((m,i)=> i===prev.length-1 ? {...m, text: m.text + txt} : m);
           }
           return [...prev, { speaker:streamingSpeaker, text:txt, streaming:true }];
@@ -2443,7 +2383,6 @@ function RealTimeVoiceApp() {
         return;
       }
 
-      /* ---------- ASSISTANT FINAL ---------- */
       if (msgType === "assistant" || msgType === "status" || speaker === "Assistant") {
         setActiveSpeaker("Assistant");
         setMessages(prev => {
@@ -2510,7 +2449,6 @@ function RealTimeVoiceApp() {
         return;
       }
 
-      /* ---------- CONTROL MESSAGES BRANCH ---------- */
       if (type === "control") {
         const { action } = payload;
         console.log("🎮 Control message received:", action);
@@ -2519,12 +2457,10 @@ function RealTimeVoiceApp() {
           console.log("🔇 TTS cancelled - clearing audio queue");
           appendLog("🔇 Audio interrupted by user speech");
           
-          // Clear the audio worklet queue
           if (pcmSinkRef.current) {
             pcmSinkRef.current.port.postMessage({ type: 'clear' });
           }
           
-          // Reset active speaker since TTS was interrupted
           setActiveSpeaker(null);
           return;
         }
@@ -2570,9 +2506,9 @@ function RealTimeVoiceApp() {
       ]);
       appendLog("📞 Call initiated");
 
-      // relay WS WITHOUT session_id to monitor ALL sessions (including phone calls)
-      console.log('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor all sessions');
-      const relay = new WebSocket(`${WS_URL}/api/v1/realtime/dashboard/relay`);
+      // relay WS WITH session_id to monitor THIS session (including phone calls)
+      console.log('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor session:', currentSessionId);
+      const relay = new WebSocket(`${WS_URL}/api/v1/realtime/dashboard/relay?session_id=${currentSessionId}`);
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({data}) => {
         try {
@@ -2630,8 +2566,6 @@ function RealTimeVoiceApp() {
         appendLog("Relay WS disconnected");
         setCallActive(false);
         setActiveSpeaker(null);
-        // setFunctionCalls([]);
-        // setCallResetKey(k=>k+1);
       };
     } catch(e) {
       appendLog(`Network error starting call: ${e.message}`);
@@ -2735,8 +2669,6 @@ function RealTimeVoiceApp() {
                       text: "✅ Session restarted with new ID. Ready for a fresh conversation!" 
                     }]);
                   }, 500);
-                  
-                  // Note: WebSocket will be reconnected automatically when user starts recording
                 }}
               >
                 ⟲

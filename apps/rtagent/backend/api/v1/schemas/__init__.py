@@ -60,7 +60,7 @@ from .voice_live import (
     VoiceLiveErrorMessage,
     VoiceLiveTextMessage,
     VoiceLiveMetricsMessage,
-    VoiceLiveControlMessage
+    VoiceLiveControlMessage,
 )
 
 __all__ = [
@@ -103,7 +103,6 @@ __all__ = [
     "WebhookResponse",
     "ACSWebhookEvent",
     "MediaWebhookEvent",
-
     # Voice Live schemas
     "VoiceLiveStatusResponse",
     "VoiceLiveSessionResponse",
@@ -112,5 +111,5 @@ __all__ = [
     "VoiceLiveErrorMessage",
     "VoiceLiveTextMessage",
     "VoiceLiveMetricsMessage",
-    "VoiceLiveControlMessage"
+    "VoiceLiveControlMessage",
 ]

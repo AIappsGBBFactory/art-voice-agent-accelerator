@@ -888,7 +888,7 @@ class StreamingSpeechRecognizerFromBytes:
             asynchronously by the Speech SDK.
         """
         logger.debug(
-            f"🎤 write_bytes called: {len(audio_chunk)} bytes, has_push_stream={self.push_stream is not None}"
+            f"write_bytes called: {len(audio_chunk)} bytes, has_push_stream={self.push_stream is not None}"
         )
         if self.push_stream:
             if self.enable_tracing and self._session_span:
@@ -1211,7 +1211,7 @@ class StreamingSpeechRecognizerFromBytes:
                         )
 
             logger.debug(
-                f"🔥 Calling partial_callback with: '{txt}', '{detected}', '{speaker_id}'"
+                f"Calling partial_callback with: '{txt}', '{detected}', '{speaker_id}'"
             )
             self.partial_callback(txt, detected, speaker_id)
         elif txt:
@@ -1319,7 +1319,7 @@ class StreamingSpeechRecognizerFromBytes:
 
             if self.final_callback and evt.result.text:
                 logger.debug(
-                    f"🔥 Calling final_callback with: '{evt.result.text}', '{detected_lang}'"
+                    f"Calling final_callback with: '{evt.result.text}', '{detected_lang}'"
                 )
                 self.final_callback(evt.result.text, detected_lang)
             elif evt.result.text:

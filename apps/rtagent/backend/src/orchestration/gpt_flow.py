@@ -143,7 +143,6 @@ def _extract_headers(container: Any) -> Dict[str, str]:
 
     if hasattr(container, "headers") and isinstance(container.headers, dict):
         headers = container.headers
-        logger.debug("Headers found directly on container", extra={"header_source": "direct", "event_type": "header_extraction"})
 
     if headers is None:
         for attr in cand_attrs:
@@ -153,22 +152,18 @@ def _extract_headers(container: Any) -> Dict[str, str]:
             maybe = getattr(obj, "headers", None)
             if isinstance(maybe, dict):
                 headers = maybe
-                logger.debug("Headers found via %s", attr, extra={"header_source": attr, "event_type": "header_extraction"})
                 break
             if callable(getattr(obj, "headers", None)):
                 try:
                     h = obj.headers()
                     if isinstance(h, dict):
                         headers = h
-                        logger.debug("Headers found via %s.headers() method", attr, extra={"header_source": f"{attr}.headers()", "event_type": "header_extraction"})
                         break
-                except Exception as e:
-                    logger.debug("Failed to call %s.headers(): %s", attr, e, extra={"header_source": f"{attr}.headers()", "error": str(e), "event_type": "header_extraction_error"})
+                except Exception:
+                    continue
 
     if headers is None:
-        logger.warning("No headers could be extracted from container", extra={"container_type": type(container).__name__, "event_type": "header_extraction_failed"})
-    else:
-        logger.debug("Successfully extracted %d headers", len(headers), extra={"header_count": len(headers), "event_type": "header_extraction_success"})
+        logger.warning("No headers could be extracted from container", extra={"container_type": type(container).__name__})
 
     return headers or {}
 
@@ -268,7 +263,7 @@ def _inspect_client_retry_settings() -> None:
         transport = getattr(az_openai_client, "transport", None)
         logger.info("AOAI SDK retry: max_retries=%s transport=%s", max_retries, type(transport).__name__ if transport else None)
     except Exception:
-        logger.debug("Unable to introspect SDK retry settings")
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -529,22 +524,16 @@ async def _broadcast_dashboard(
     *,
     include_autoauth: bool,
 ) -> None:
-    """
-    Broadcast a message to the relay dashboard with correct speaker label.
-
-    :param ws: WebSocket connection carrying application state.
-    :param cm: MemoManager instance for resolving speaker labels.
-    :param message: Text message to broadcast to dashboard.
-    :param include_autoauth: Flag to match legacy behavior at call-sites.
-    """
+    """Broadcast a message to the relay dashboard with correct speaker label."""
     try:
         sender = _get_agent_sender_name(cm, include_autoauth=include_autoauth)
         
-        # Extract session_id for session-safe broadcasting
         session_id = (
-            getattr(ws.state, "session_id", None)
-            or getattr(cm, "session_id", None)
+            cm.session_id
+            or getattr(ws.state, "session_id", None)
+            or getattr(ws.state, "call_connection_id", None)
             or ws.headers.get("x-session-id")
+            or ws.headers.get("x-call-connection-id")
             or "unknown"
         )
         
@@ -768,16 +757,11 @@ async def _openai_stream_with_retry(
                 logger.info(f"Using session-specific AOAI client for {session_id}")
             else:
                 aoai_client = az_openai_client
-                logger.debug(f"Session pool returned None for {session_id}, using shared client")
         except Exception as e:
             logger.warning(f"Failed to get session AOAI client for {session_id}, falling back to shared client: {e}")
             aoai_client = az_openai_client
     else:
         aoai_client = az_openai_client
-        if session_id:
-            logger.debug(f"AOAI pool disabled (AOAI_USE_SESSION_POOL={AOAI_USE_SESSION_POOL}), using shared client for {session_id}")
-        else:
-            logger.debug("No session_id provided, using shared AOAI client")
 
     logger.info(
         "Starting AOAI stream request: model=%s host=%s max_attempts=%d",
@@ -814,7 +798,6 @@ async def _openai_stream_with_retry(
             )
 
             if callable(with_stream_ctx):
-                logger.debug("Using with_streaming_response context manager", extra={"sdk_method": "with_streaming_response", "event_type": "aoai_sdk_method"})
                 ctx = with_stream_ctx.create(**chat_kwargs)
                 with ctx as resp_ctx:
                     headers = _extract_headers(resp_ctx)
@@ -837,7 +820,6 @@ async def _openai_stream_with_retry(
                     response_stream = resp_ctx
                     return response_stream, last_info
             else:
-                logger.debug("Using direct create method (older SDK)", extra={"sdk_method": "direct_create", "event_type": "aoai_sdk_method"})
                 response_stream = aoai_client.chat.completions.create(**chat_kwargs)
                 dep_span.add_event("openai_stream_started", {"attempt": attempts})
                 logger.info(
@@ -1121,7 +1103,6 @@ async def process_gpt_response(  # noqa: PLR0913
             tools=tool_set,
         )
         span.set_attribute("chat.history_length", len(agent_history))
-        logger.debug("process_gpt_response – chat kwargs prepared: %s", chat_kwargs)
 
         # Dependency span for AOAI
         azure_openai_attrs = create_service_dependency_attrs(

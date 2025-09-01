@@ -143,7 +143,7 @@ async def record_fnol(args: ClaimIntakeFull) -> Dict[str, Any]:
             "claim_success": False,
             "missing_data": "Invalid request format. Please provide claim details as a structured object.",
         }
-    
+
     try:
         args.setdefault("date_reported", datetime.now(timezone.utc).date().isoformat())
 
@@ -156,9 +156,10 @@ async def record_fnol(args: ClaimIntakeFull) -> Dict[str, Any]:
 
         claim_id = _new_claim_id()
         claims_db.append({**args, "claim_id": claim_id, "status": "OPEN"})
-        log.info("📄 FNOL recorded (%s) for %s", claim_id, args.get("caller_name", "unknown"))
+        log.info(
+            "📄 FNOL recorded (%s) for %s", claim_id, args.get("caller_name", "unknown")
+        )
 
-        # Return all collected parameters in the response
         return {
             "claim_success": True,
             "claim_id": claim_id,

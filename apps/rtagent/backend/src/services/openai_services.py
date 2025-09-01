@@ -65,8 +65,6 @@ def create_azure_openai_client():
             logger.info("Using DefaultAzureCredential for Azure OpenAI authentication")
             credential = get_credential()
 
-        # Create token provider with the correct scope for Azure Cognitive Services
-        # This ensures the JWT token contains the proper audience claim for APIM evaluation
         azure_ad_token_provider = get_bearer_token_provider(
             credential, "https://cognitiveservices.azure.com/.default"
         )
@@ -99,7 +97,6 @@ def create_azure_openai_client():
         )
 
 
-# Create the client instance
 client = create_azure_openai_client()
 
 __all__ = ["client", "create_azure_openai_client"]

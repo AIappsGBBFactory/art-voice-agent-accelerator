@@ -36,7 +36,7 @@ tracer = trace.get_tracer(__name__)
 class DTMFValidationLifecycle:
     """
     Simplified DTMF validation lifecycle handler.
-    
+
     Handles core DTMF processing including:
     - AWS Connect-style validation flow
     - Basic tone sequence management
@@ -52,10 +52,12 @@ class DTMFValidationLifecycle:
     # ============================================================================
 
     @staticmethod
-    async def handle_dtmf_recognition_start_requested(context: CallEventContext) -> None:
+    async def handle_dtmf_recognition_start_requested(
+        context: CallEventContext,
+    ) -> None:
         """
         Handle request to start DTMF recognition.
-        
+
         This is a custom V1 event that can be triggered anywhere in the call lifecycle
         to start DTMF recognition. It provides a clean, reusable way to initiate DTMF
         processing regardless of when it's needed.
@@ -69,7 +71,9 @@ class DTMFValidationLifecycle:
                 "dtmf.operation": "start_recognition",
             },
         ) as span:
-            logger.info(f"🎤 DTMF recognition start requested: {context.call_connection_id}")
+            logger.info(
+                f"DTMF recognition start requested: {context.call_connection_id}"
+            )
 
             if not context.acs_caller:
                 logger.error("❌ ACS caller not available for DTMF recognition")
@@ -77,114 +81,86 @@ class DTMFValidationLifecycle:
                 return
 
             # Get target phone from call (async call)
-            call_conn = context.acs_caller.get_call_connection(context.call_connection_id)
+            call_conn = context.acs_caller.get_call_connection(
+                context.call_connection_id
+            )
 
             # Start DTMF recognition in a non-blocking way using an executor
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
                 lambda: call_conn.start_continuous_dtmf_recognition(
-                    target_participant=DTMFValidationLifecycle._get_target_participant(call_conn),
-                    operation_context=f"dtmf_recognition_{context.call_connection_id}"
+                    target_participant=DTMFValidationLifecycle._get_target_participant(
+                        call_conn
+                    ),
+                    operation_context=f"dtmf_recognition_{context.call_connection_id}",
                 ),
             )
-
-
-    # @staticmethod
-    # async def handle_dtmf_tone_received(context: CallEventContext) -> None:
-    #     """Handle DTMF tone with AWS Connect validation and sequence validation."""
-    #     with tracer.start_as_current_span(
-    #         "v1.handle_dtmf_tone_received",
-    #         kind=SpanKind.INTERNAL,
-    #         attributes={
-    #             "call.connection.id": context.call_connection_id,
-    #             "event.type": context.event_type,
-    #         },
-    #     ):
-    #         # Extract tone and sequence information
-    #         tone = context.get_event_data().get("tone")
-    #         sequence_id = context.get_event_data().get("sequenceId")
-
-    #         logger.info(f"🔢 DTMF tone received: {tone}, sequence_id: {sequence_id}")
-
-    #         if tone:
-    #             normalized_tone = DTMFValidationLifecycle._normalize_tone(tone)
-    #             if normalized_tone and context.memo_manager:
-    #                 # Check if we're in AWS Connect validation mode
-    #                 aws_validation_pending = context.memo_manager.get_context("aws_connect_validation_pending", True)
-                    
-    #                 if aws_validation_pending:
-    #                     # Handle AWS Connect validation tone
-    #                     await DTMFValidationLifecycle._handle_aws_connect_validation_tone(
-    #                         context, normalized_tone
-    #                     )
-    #                 else:
-    #                     # Handle regular DTMF sequence
-    #                     DTMFValidationLifecycle._update_dtmf_sequence(context, normalized_tone)
-
-    #                     # Check if sequence is complete (ends with #)
-    #                     current_sequence = context.memo_manager.get_context("dtmf_sequence", "")
-    #                     if current_sequence.endswith("#"):
-    #                         # Remove the # and validate
-    #                         final_sequence = current_sequence[:-1]
-    #                         DTMFValidationLifecycle._validate_sequence(context, final_sequence)
 
     @staticmethod
     def is_dtmf_validation_gate_open(memory_manager, call_connection_id: str) -> bool:
         """
         Check if DTMF validation gate is open (validation completed).
-        
+
         Args:
             memory_manager: Memory manager instance
             call_connection_id: Call connection ID for logging
-            
+
         Returns:
             bool: True if validation gate is open, False if blocked
         """
         if not memory_manager:
             # No memory manager - fail open for safety
             return True
-            
+
         try:
             # Check the validation gate status
             gate_open = memory_manager.get_context("dtmf_validation_gate_open", False)
-            
+
             if not gate_open:
-                logger.debug(f"🔒 DTMF validation gate CLOSED for call {call_connection_id}")
-            
+                logger.debug(
+                    f"🔒 DTMF validation gate CLOSED for call {call_connection_id}"
+                )
+
             return gate_open
-            
+
         except Exception as e:
-            logger.warning(f"⚠️ Error checking DTMF validation gate for call {call_connection_id}: {e}. Failing open.")
+            logger.warning(
+                f"⚠️ Error checking DTMF validation gate for call {call_connection_id}: {e}. Failing open."
+            )
             # Fail open to avoid blocking system on errors
             return True
+
     # ============================================================================
     # AWS Connect Validation Flow
     # ============================================================================
 
     @staticmethod
-    async def setup_aws_connect_validation_flow(context: CallEventContext, call_conn: CallConnectionClient) -> None:
+    async def setup_aws_connect_validation_flow(
+        context: CallEventContext, call_conn: CallConnectionClient
+    ) -> None:
         """Set up AWS Connect-style validation flow."""
         try:
             # Generate 3 random validation digits
-            validation_digits = ''.join(random.choices(string.digits, k=3))
+            validation_digits = "".join(random.choices(string.digits, k=3))
             logger.info(f"🔐 AWS Connect validation setup: digits={validation_digits}")
 
             # Update context to track validation state
             if context.memo_manager:
                 context.memo_manager.set_context("aws_connect_validation_pending", True)
-                context.memo_manager.set_context("aws_connect_validation_digits", validation_digits)
+                context.memo_manager.set_context(
+                    "aws_connect_validation_digits", validation_digits
+                )
                 context.memo_manager.set_context("aws_connect_input_sequence", "")
-                
+
                 if context.redis_mgr:
                     await context.memo_manager.persist_to_redis_async(context.redis_mgr)
 
             # Start DTMF recognition
             await DTMFValidationLifecycle._start_dtmf_recognition(context, call_conn)
-            
+
         except Exception as e:
             logger.error(f"❌ Error setting up AWS Connect validation flow: {e}")
-
 
     async def handle_dtmf_tone_received(context: CallEventContext) -> None:
         """Handle incoming DTMF tones."""
@@ -203,8 +179,12 @@ class DTMFValidationLifecycle:
                 tone = DTMFValidationLifecycle._normalize_tone(tone)
 
             # Handle the tone based on the current validation state
-            if context.memo_manager.get_context("aws_connect_validation_pending", False):
-                await DTMFValidationLifecycle._handle_aws_connect_validation_tone(context, tone)
+            if context.memo_manager.get_context(
+                "aws_connect_validation_pending", False
+            ):
+                await DTMFValidationLifecycle._handle_aws_connect_validation_tone(
+                    context, tone
+                )
             else:
                 # Append the received tone to the current dtmf_tone context
                 current_tones = context.memo_manager.get_context("dtmf_tone", "")
@@ -218,15 +198,21 @@ class DTMFValidationLifecycle:
             logger.error(f"❌ Error handling DTMF tone: {e}")
 
     @staticmethod
-    async def _handle_aws_connect_validation_tone(context: CallEventContext, tone: str) -> None:
+    async def _handle_aws_connect_validation_tone(
+        context: CallEventContext, tone: str
+    ) -> None:
         """Handle DTMF tones during AWS Connect validation phase."""
         try:
             if not context.memo_manager:
                 return
 
             # Get expected digits and current input
-            expected_digits = context.memo_manager.get_context("aws_connect_validation_digits", "")
-            input_sequence = context.memo_manager.get_context("aws_connect_input_sequence", "")
+            expected_digits = context.memo_manager.get_context(
+                "aws_connect_validation_digits", ""
+            )
+            input_sequence = context.memo_manager.get_context(
+                "aws_connect_input_sequence", ""
+            )
 
             if tone == "#":
                 # Complete validation
@@ -236,15 +222,21 @@ class DTMFValidationLifecycle:
             else:
                 # Add tone to sequence
                 input_sequence += tone
-                context.memo_manager.set_context("aws_connect_input_sequence", input_sequence)
+                context.memo_manager.set_context(
+                    "aws_connect_input_sequence", input_sequence
+                )
                 logger.info(f"🔢 AWS Connect input sequence: {input_sequence}")
-                await context.memo_manager.persist_to_redis_async(redis_mgr=context.redis_mgr)
-                    
+                await context.memo_manager.persist_to_redis_async(
+                    redis_mgr=context.redis_mgr
+                )
+
         except Exception as e:
             logger.error(f"❌ Error handling AWS Connect validation tone: {e}")
 
     @staticmethod
-    async def _complete_aws_connect_validation(context: CallEventContext, input_sequence: str, expected_digits: str) -> None:
+    async def _complete_aws_connect_validation(
+        context: CallEventContext, input_sequence: str, expected_digits: str
+    ) -> None:
         """Complete AWS Connect validation attempt."""
         try:
             if not context.memo_manager:
@@ -252,14 +244,16 @@ class DTMFValidationLifecycle:
 
             # Check if validation is successful
             is_valid = input_sequence == expected_digits
-            
+
             if is_valid:
                 # Success - unblock conversation flow
                 logger.info(f"✅ AWS Connect validation SUCCESS: {input_sequence}")
-                context.memo_manager.set_context("aws_connect_validation_pending", False)
+                context.memo_manager.set_context(
+                    "aws_connect_validation_pending", False
+                )
                 context.memo_manager.set_context("dtmf_validated", True)
                 context.memo_manager.set_context("dtmf_validation_gate_open", True)
-                
+
                 # Trigger validation completion event if Redis available
                 if context.redis_mgr:
                     stream_key = DTMFValidationLifecycle.DTMF_VALIDATION_STREAM_KEY_FORMAT.format(
@@ -267,15 +261,19 @@ class DTMFValidationLifecycle:
                     )
                     await context.redis_mgr.add_event_async(
                         stream_key=stream_key,
-                        data={"validation_status": "completed", "result": "success"}
+                        data={"validation_status": "completed", "result": "success"},
                     )
                     await context.memo_manager.persist_to_redis_async(context.redis_mgr)
             else:
                 # Failure - retry or fail
-                logger.warning(f"❌ AWS Connect validation FAILED: expected={expected_digits}, got={input_sequence}")
-                context.memo_manager.set_context("aws_connect_validation_pending", False)
+                logger.warning(
+                    f"❌ AWS Connect validation FAILED: expected={expected_digits}, got={input_sequence}"
+                )
+                context.memo_manager.set_context(
+                    "aws_connect_validation_pending", False
+                )
                 context.memo_manager.set_context("dtmf_validated", False)
-                
+
         except Exception as e:
             logger.error(f"❌ Error completing AWS Connect validation: {e}")
 
@@ -284,30 +282,34 @@ class DTMFValidationLifecycle:
     # ============================================================================
 
     @staticmethod
-    async def wait_for_dtmf_validation_completion(redis_mgr, call_connection_id: str, timeout_ms: int = 30000) -> bool:
+    async def wait_for_dtmf_validation_completion(
+        redis_mgr, call_connection_id: str, timeout_ms: int = 30000
+    ) -> bool:
         """
         Wait for DTMF validation to complete by listening to Redis stream events.
-        
+
         Args:
             redis_mgr: Redis manager instance
             call_connection_id: Call connection ID
             timeout_ms: Timeout in milliseconds (default 30 seconds)
-            
+
         Returns:
             bool: True if validation completed successfully, False if timeout or error
         """
         try:
-            stream_key = DTMFValidationLifecycle.DTMF_VALIDATION_STREAM_KEY_FORMAT.format(
-                call_connection_id=call_connection_id
+            stream_key = (
+                DTMFValidationLifecycle.DTMF_VALIDATION_STREAM_KEY_FORMAT.format(
+                    call_connection_id=call_connection_id
+                )
             )
-            logger.info(f"🛑 Waiting for DTMF validation to complete on stream: {stream_key}")
-            
+            logger.info(
+                f"🛑 Waiting for DTMF validation to complete on stream: {stream_key}"
+            )
+
             event = await redis_mgr.read_events_blocking_async(
-                stream_key=stream_key,
-                last_id="$",
-                block_ms=timeout_ms
+                stream_key=stream_key, last_id="$", block_ms=timeout_ms
             )
-            
+
             if event:
                 logger.info("✅ DTMF validation completed successfully")
                 return True
@@ -318,46 +320,53 @@ class DTMFValidationLifecycle:
                     # Get the call connection client and hang up
 
                     if hasattr(redis_mgr, "get_call_connection"):
-                        call_conn = (call_connection_id)
+                        call_conn = call_connection_id
                         if call_conn:
                             await asyncio.get_event_loop().run_in_executor(
-                                None,
-                                lambda: call_conn.hang_up(is_for_everyone=True)
+                                None, lambda: call_conn.hang_up(is_for_everyone=True)
                             )
-                            logger.info(f"📞 Call {call_connection_id} hung up due to DTMF validation timeout")
+                            logger.info(
+                                f"Call {call_connection_id} hung up due to DTMF validation timeout"
+                            )
                 except Exception as hangup_error:
-                    logger.error(f"❌ Error hanging up call {call_connection_id}: {hangup_error}")
+                    logger.error(
+                        f"❌ Error hanging up call {call_connection_id}: {hangup_error}"
+                    )
                 return False
-                
+
         except Exception as e:
             logger.error(f"❌ Error waiting for DTMF validation completion: {e}")
             return False
 
     @staticmethod
-    def get_fresh_dtmf_validation_status(memory_manager, call_connection_id: str) -> bool:
+    def get_fresh_dtmf_validation_status(
+        memory_manager, call_connection_id: str
+    ) -> bool:
         """
         Get the most current DTMF validation status.
-        
+
         This method uses the locally cached context which gets refreshed periodically
         from parallel streams via the adaptive refresh mechanism.
-        
+
         Args:
             memory_manager: Memory manager instance
             call_connection_id: Call connection ID for logging
-            
+
         Returns:
             bool: True if DTMF validation is complete, False otherwise
         """
         if not memory_manager:
             # No memory manager - fail open for performance
             return True
-            
+
         try:
             # Use local context which gets refreshed from Redis periodically
             dtmf_validated = memory_manager.get_context("dtmf_validated", False)
             return dtmf_validated
         except Exception as e:
-            logger.warning(f"Error getting DTMF validation status for call {call_connection_id}: {e}, assuming validated")
+            logger.warning(
+                f"Error getting DTMF validation status for call {call_connection_id}: {e}, assuming validated"
+            )
             # Fail open - assume validated to avoid blocking audio processing
             return True
 
@@ -373,24 +382,38 @@ class DTMFValidationLifecycle:
 
         tone_str = str(tone).strip().lower()
         tone_map = {
-            "0": "0", "zero": "0",
-            "1": "1", "one": "1",
-            "2": "2", "two": "2",
-            "3": "3", "three": "3",
-            "4": "4", "four": "4",
-            "5": "5", "five": "5",
-            "6": "6", "six": "6",
-            "7": "7", "seven": "7",
-            "8": "8", "eight": "8",
-            "9": "9", "nine": "9",
-            "*": "*", "star": "*",
-            "#": "#", "pound": "#"
+            "0": "0",
+            "zero": "0",
+            "1": "1",
+            "one": "1",
+            "2": "2",
+            "two": "2",
+            "3": "3",
+            "three": "3",
+            "4": "4",
+            "four": "4",
+            "5": "5",
+            "five": "5",
+            "6": "6",
+            "six": "6",
+            "7": "7",
+            "seven": "7",
+            "8": "8",
+            "eight": "8",
+            "9": "9",
+            "nine": "9",
+            "*": "*",
+            "star": "*",
+            "#": "#",
+            "pound": "#",
         }
 
         return tone_map.get(tone_str)
 
     @staticmethod
-    def _update_dtmf_sequence(context: CallEventContext, tone: str, sequence_id: Optional[int]) -> None:
+    def _update_dtmf_sequence(
+        context: CallEventContext, tone: str, sequence_id: Optional[int]
+    ) -> None:
         """Update DTMF sequence in memory (simplified)."""
         if not context.memo_manager:
             return
@@ -420,32 +443,43 @@ class DTMFValidationLifecycle:
         context.memo_manager.update_context("dtmf_sequence", new_sequence)
         if context.redis_mgr:
             asyncio.create_task(
-                context.redis_mgr.set_value_async(f"dtmf_sequence:{context.call_connection_id}", new_sequence, ttl_seconds=300)
+                context.redis_mgr.set_value_async(
+                    f"dtmf_sequence:{context.call_connection_id}",
+                    new_sequence,
+                    ttl_seconds=300,
+                )
             )
 
         logger.info(f"🔢 DTMF sequence updated: {new_sequence}")
 
     @staticmethod
-    async def _start_dtmf_recognition(context: CallEventContext, call_conn: CallConnectionClient) -> None:
+    async def _start_dtmf_recognition(
+        context: CallEventContext, call_conn: CallConnectionClient
+    ) -> None:
         """Start DTMF recognition (simplified)."""
         try:
             # Get target participant (caller)
             participants = call_conn.list_participants()
             caller_participant = None
-            
+
             for participant in participants:
-                if hasattr(participant.identifier, "kind") and participant.identifier.kind == 'phone_number':
+                if (
+                    hasattr(participant.identifier, "kind")
+                    and participant.identifier.kind == "phone_number"
+                ):
                     caller_participant = participant
                     break
 
             if caller_participant:
                 call_conn.start_continuous_dtmf_recognition(
                     target_participant=caller_participant.identifier,
-                    operation_context=f"dtmf_recognition_{context.call_connection_id}"
+                    operation_context=f"dtmf_recognition_{context.call_connection_id}",
                 )
-                logger.info(f"🎤 Started DTMF recognition for {context.call_connection_id}")
+                logger.info(
+                    f"Started DTMF recognition for {context.call_connection_id}"
+                )
             else:
                 logger.warning("⚠️ No caller participant found for DTMF recognition")
-                
+
         except Exception as e:
             logger.error(f"❌ Error starting DTMF recognition: {e}")

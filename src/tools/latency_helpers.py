@@ -14,6 +14,7 @@ logger = get_logger("tools.latency_helpers")
 MAX_RUNS = int(os.getenv("LAT_MAX_RUNS", "200"))
 MAX_SAMPLES_PER_RUN = int(os.getenv("LAT_MAX_SAMPLES_PER_RUN", "200"))
 
+
 @dataclass
 class StageSample:
     stage: str
@@ -22,6 +23,7 @@ class StageSample:
     dur: float
     meta: Dict[str, Any] | None = None
 
+
 @dataclass
 class RunRecord:
     run_id: str
@@ -29,11 +31,14 @@ class RunRecord:
     created_at: float
     samples: List[StageSample]
 
-_CORE_KEY = "latency"   # lives under CoreMemory["latency"]
+
+_CORE_KEY = "latency"  # lives under CoreMemory["latency"]
+
 
 def _now() -> float:
     # monotonic high-res (duration safe)
     return time.perf_counter()
+
 
 class PersistentLatency:
     """
@@ -72,7 +77,9 @@ class PersistentLatency:
             lat["order"] = []
 
         lat["current_run_id"] = rid
-        lat["runs"][rid] = asdict(RunRecord(run_id=rid, label=label, created_at=_now(), samples=[]))
+        lat["runs"][rid] = asdict(
+            RunRecord(run_id=rid, label=label, created_at=_now(), samples=[])
+        )
 
         lat["order"].append(rid)
         # enforce limits
@@ -96,17 +103,30 @@ class PersistentLatency:
         rid = run_id or self.current_run_id() or self.begin_run()
         self._inflight[(rid, stage)] = _now()
 
-    def stop(self, stage: str, *, redis_mgr, run_id: Optional[str] = None, meta: Optional[Dict[str, Any]] = None) -> Optional[StageSample]:
+    def stop(
+        self,
+        stage: str,
+        *,
+        redis_mgr,
+        run_id: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> Optional[StageSample]:
         rid = run_id or self.current_run_id()
         if not rid:
-            logger.warning("[Latency] stop(%s) called but no run_id; creating new run", stage)
+            logger.warning(
+                "[Latency] stop(%s) called but no run_id; creating new run", stage
+            )
             rid = self.begin_run()
         start = self._inflight.pop((rid, stage), None)
         if start is None:
-            logger.warning("[Latency] stop(%s) without matching start (run=%s)", stage, rid)
+            logger.warning(
+                "[Latency] stop(%s) without matching start (run=%s)", stage, rid
+            )
             return None
         end = _now()
-        sample = StageSample(stage=stage, start=start, end=end, dur=end - start, meta=meta or {})
+        sample = StageSample(
+            stage=stage, start=start, end=end, dur=end - start, meta=meta or {}
+        )
         self._append_sample(rid, sample)
         # persist immediately for live dashboards
         try:
@@ -128,7 +148,9 @@ class PersistentLatency:
             for s in lat["runs"].get(rid, {}).get("samples", []):
                 d = s["dur"]
                 st = s["stage"]
-                acc = out.setdefault(st, {"count": 0, "avg": 0.0, "min": d, "max": d, "total": 0.0})
+                acc = out.setdefault(
+                    st, {"count": 0, "avg": 0.0, "min": d, "max": d, "total": 0.0}
+                )
                 acc["count"] += 1
                 acc["total"] += d
                 if d < acc["min"]:
@@ -151,7 +173,9 @@ class PersistentLatency:
         for s in run.get("samples", []):
             d = s["dur"]
             st = s["stage"]
-            acc = out.setdefault(st, {"count": 0, "avg": 0.0, "min": d, "max": d, "total": 0.0})
+            acc = out.setdefault(
+                st, {"count": 0, "avg": 0.0, "min": d, "max": d, "total": 0.0}
+            )
             acc["count"] += 1
             acc["total"] += d
             if d < acc["min"]:
@@ -168,7 +192,9 @@ class PersistentLatency:
         run = lat.setdefault("runs", {}).get(run_id)
         if not run:
             # create missing run bucket if someone forgot begin_run()
-            run = asdict(RunRecord(run_id=run_id, label="turn", created_at=_now(), samples=[]))
+            run = asdict(
+                RunRecord(run_id=run_id, label="turn", created_at=_now(), samples=[])
+            )
             lat.setdefault("runs", {})[run_id] = run
             lat.setdefault("order", []).append(run_id)
 
@@ -176,7 +202,7 @@ class PersistentLatency:
         samples.append(asdict(sample))
         # cap samples to avoid unbounded growth
         if len(samples) > MAX_SAMPLES_PER_RUN:
-            del samples[0: len(samples) - MAX_SAMPLES_PER_RUN]
+            del samples[0 : len(samples) - MAX_SAMPLES_PER_RUN]
         self._set_bucket(lat)
 
     def _get_bucket(self) -> Dict[str, Any]:

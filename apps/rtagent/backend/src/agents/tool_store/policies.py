@@ -176,10 +176,10 @@ async def find_information_for_policy(
                 "caller_name": None,
                 "raw_data": None,
             }
-        
+
         pid = args.get("policy_id", "").strip().upper() if args.get("policy_id") else ""
         q = args.get("question", "").strip() if args.get("question") else ""
-        
+
         if not pid:
             logger.error("policy_id is required and cannot be empty")
             return {
@@ -189,7 +189,7 @@ async def find_information_for_policy(
                 "caller_name": None,
                 "raw_data": None,
             }
-        
+
         if not q:
             logger.error("question is required and cannot be empty")
             return {
@@ -224,20 +224,26 @@ async def find_information_for_policy(
             "caller_name": rec["policyholder"],
             "raw_data": rec,
         }
-        
+
     except Exception as exc:
         # Catch all exceptions to prevent 400 errors
         logger.error(
             "Policy query failed: policy_id=%s, question=%s, error=%s",
-            args.get("policy_id", "unknown") if isinstance(args, dict) else "invalid_args",
-            args.get("question", "unknown")[:100] if isinstance(args, dict) else "invalid_args",
+            args.get("policy_id", "unknown")
+            if isinstance(args, dict)
+            else "invalid_args",
+            args.get("question", "unknown")[:100]
+            if isinstance(args, dict)
+            else "invalid_args",
             exc,
-            exc_info=True
+            exc_info=True,
         )
         return {
             "found": False,
             "answer": "I'm experiencing technical difficulties. Please try again or contact customer service for assistance.",
-            "policy_id": args.get("policy_id", "unknown") if isinstance(args, dict) else "unknown",
+            "policy_id": args.get("policy_id", "unknown")
+            if isinstance(args, dict)
+            else "unknown",
             "caller_name": None,
             "raw_data": None,
         }

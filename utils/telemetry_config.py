@@ -58,7 +58,7 @@ def setup_azure_monitor(logger_name: str = None):
     # Allow hard opt-out for local dev or debugging.
     if os.getenv("DISABLE_CLOUD_TELEMETRY", "false").lower() == "true":
         logger.info(
-            "🔌 Telemetry disabled (DISABLE_CLOUD_TELEMETRY=true) – skipping Azure Monitor setup"
+            "Telemetry disabled (DISABLE_CLOUD_TELEMETRY=true) – skipping Azure Monitor setup"
         )
         return
 
@@ -85,9 +85,9 @@ def setup_azure_monitor(logger_name: str = None):
         )
         return
 
-    logger.info(f"🔧 Setting up Azure Monitor with logger_name: {logger_name}")
-    logger.info(f"🔧 Connection string found: {connection_string[:50]}...")
-    logger.info(f"🔧 Resource attributes: {resource_attrs}")
+    logger.info(f"Setting up Azure Monitor with logger_name: {logger_name}")
+    logger.info(f"Connection string found: {connection_string[:50]}...")
+    logger.info(f"Resource attributes: {resource_attrs}")
 
     try:
         # Try to get appropriate credential
@@ -102,7 +102,7 @@ def setup_azure_monitor(logger_name: str = None):
         )
 
         logger.info(
-            f"🔧 Configuring Azure Monitor with live metrics: {enable_live_metrics}"
+            f"Configuring Azure Monitor with live metrics: {enable_live_metrics}"
         )
 
         resource = Resource(attributes=resource_attrs)
@@ -127,7 +127,7 @@ def setup_azure_monitor(logger_name: str = None):
                 "requests": {"enabled": True},
                 "urllib3": {"enabled": True},
                 "psycopg2": {"enabled": False},  # Disable psycopg2 since we use MongoDB
-                "django": {"enabled": False},    # Disable django since we use FastAPI
+                "django": {"enabled": False},  # Disable django since we use FastAPI
             },
         )
 
@@ -226,7 +226,7 @@ def _retry_without_live_metrics(logger_name: str, connection_string: str):
                 "requests": {"enabled": True},
                 "urllib3": {"enabled": True},
                 "psycopg2": {"enabled": False},  # Disable psycopg2 since we use MongoDB
-                "django": {"enabled": False},    # Disable django since we use FastAPI
+                "django": {"enabled": False},  # Disable django since we use FastAPI
             },
         )
         logger.info(

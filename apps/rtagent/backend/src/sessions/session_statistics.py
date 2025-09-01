@@ -28,7 +28,7 @@ tracer = trace.get_tracer(__name__)
 class SessionStatisticsManager:
     """
     Centralized manager for session statistics across media and realtime endpoints.
-    
+
     Provides unified tracking of:
     - Active sessions (media handlers and conversation sessions)
     - Total disconnection counters (persisted across restarts)
@@ -38,7 +38,7 @@ class SessionStatisticsManager:
     def __init__(self, cosmos_manager: Optional[Any] = None):
         """
         Initialize session statistics manager.
-        
+
         :param cosmos_manager: CosmosDB manager for persistence
         """
         self._lock = asyncio.Lock()
@@ -47,12 +47,14 @@ class SessionStatisticsManager:
         self._total_disconnected_count = 0
         self._cosmos_manager = cosmos_manager
         self._stats_collection_name = "session_statistics"
-        
+
     async def initialize(self) -> None:
         """
         Initialize statistics manager and load persistent counters.
         """
-        with tracer.start_span("session_stats_initialize", kind=SpanKind.INTERNAL) as span:
+        with tracer.start_span(
+            "session_stats_initialize", kind=SpanKind.INTERNAL
+        ) as span:
             try:
                 await self._load_persistent_counters()
                 span.set_attribute("session_stats.initialization", "success")
@@ -70,15 +72,15 @@ class SessionStatisticsManager:
         if not self._cosmos_manager:
             logger.warning("No CosmosDB manager available, using in-memory counters")
             return
-            
+
         try:
-            # Load the global statistics document
             stats_doc = await self._get_stats_document()
             if stats_doc:
                 self._total_disconnected_count = stats_doc.get("total_disconnected", 0)
-                logger.info(f"Loaded persistent total disconnected count: {self._total_disconnected_count}")
+                logger.info(
+                    f"Loaded persistent total disconnected count: {self._total_disconnected_count}"
+                )
             else:
-                # Create initial document
                 await self._create_initial_stats_document()
                 logger.info("Created initial session statistics document")
         except Exception as e:
@@ -107,7 +109,7 @@ class SessionStatisticsManager:
                 "_id": "global_session_stats",
                 "total_disconnected": 0,
                 "created_at": datetime.utcnow().isoformat(),
-                "last_updated": datetime.utcnow().isoformat()
+                "last_updated": datetime.utcnow().isoformat(),
             }
             collection.insert_one(initial_doc)
         except Exception as e:
@@ -119,7 +121,7 @@ class SessionStatisticsManager:
         """
         if not self._cosmos_manager:
             return
-            
+
         try:
             collection = self._cosmos_manager.database[self._stats_collection_name]
             collection.update_one(
@@ -127,10 +129,10 @@ class SessionStatisticsManager:
                 {
                     "$set": {
                         "total_disconnected": self._total_disconnected_count,
-                        "last_updated": datetime.utcnow().isoformat()
+                        "last_updated": datetime.utcnow().isoformat(),
                     }
                 },
-                upsert=True
+                upsert=True,
             )
         except Exception as e:
             logger.error(f"Failed to persist counter update: {e}")
@@ -138,7 +140,7 @@ class SessionStatisticsManager:
     async def add_media_session(self, call_connection_id: str, handler: Any) -> None:
         """
         Add an active media session.
-        
+
         :param call_connection_id: The ACS call connection ID
         :param handler: The media handler instance
         """
@@ -147,14 +149,16 @@ class SessionStatisticsManager:
                 "handler": handler,
                 "session_type": "media",
                 "start_time": datetime.utcnow(),
-                "call_connection_id": call_connection_id
+                "call_connection_id": call_connection_id,
             }
-            logger.info(f"Added media session {call_connection_id}. Active media sessions: {len(self._active_media_sessions)}")
+            logger.info(
+                f"Added media session {call_connection_id}. Active media sessions: {len(self._active_media_sessions)}"
+            )
 
     async def remove_media_session(self, call_connection_id: str) -> bool:
         """
         Remove a media session and increment disconnection counter.
-        
+
         :param call_connection_id: The ACS call connection ID
         :return: True if session was removed, False if not found
         """
@@ -162,22 +166,24 @@ class SessionStatisticsManager:
             if call_connection_id in self._active_media_sessions:
                 del self._active_media_sessions[call_connection_id]
                 self._total_disconnected_count += 1
-                
+
                 logger.info(
                     f"Removed media session {call_connection_id}. "
                     f"Active media sessions: {len(self._active_media_sessions)}, "
                     f"Total disconnected: {self._total_disconnected_count}"
                 )
-                
+
                 # Persist the counter update
                 await self._persist_counter_update()
                 return True
             return False
 
-    async def add_realtime_session(self, session_id: str, memory_manager: Any, websocket: Any) -> None:
+    async def add_realtime_session(
+        self, session_id: str, memory_manager: Any, websocket: Any
+    ) -> None:
         """
         Add an active realtime conversation session.
-        
+
         :param session_id: The session identifier
         :param memory_manager: The memory manager instance
         :param websocket: The WebSocket connection
@@ -187,14 +193,16 @@ class SessionStatisticsManager:
                 "memory_manager": memory_manager,
                 "websocket": websocket,
                 "session_type": "realtime",
-                "start_time": datetime.utcnow()
+                "start_time": datetime.utcnow(),
             }
-            logger.info(f"Added realtime session {session_id}. Active realtime sessions: {len(self._active_realtime_sessions)}")
+            logger.info(
+                f"Added realtime session {session_id}. Active realtime sessions: {len(self._active_realtime_sessions)}"
+            )
 
     async def remove_realtime_session(self, session_id: str) -> bool:
         """
         Remove a realtime session and increment disconnection counter.
-        
+
         :param session_id: The session identifier
         :return: True if session was removed, False if not found
         """
@@ -202,13 +210,13 @@ class SessionStatisticsManager:
             if session_id in self._active_realtime_sessions:
                 del self._active_realtime_sessions[session_id]
                 self._total_disconnected_count += 1
-                
+
                 logger.info(
                     f"Removed realtime session {session_id}. "
                     f"Active realtime sessions: {len(self._active_realtime_sessions)}, "
                     f"Total disconnected: {self._total_disconnected_count}"
                 )
-                
+
                 # Persist the counter update
                 await self._persist_counter_update()
                 return True
@@ -217,7 +225,7 @@ class SessionStatisticsManager:
     async def get_statistics(self) -> Dict[str, Any]:
         """
         Get comprehensive session statistics.
-        
+
         :return: Dictionary containing all session statistics
         """
         async with self._lock:
@@ -225,13 +233,14 @@ class SessionStatisticsManager:
                 "active_sessions": {
                     "media": len(self._active_media_sessions),
                     "realtime": len(self._active_realtime_sessions),
-                    "total": len(self._active_media_sessions) + len(self._active_realtime_sessions)
+                    "total": len(self._active_media_sessions)
+                    + len(self._active_realtime_sessions),
                 },
                 "total_disconnected": self._total_disconnected_count,
                 "session_details": {
                     "media_sessions": list(self._active_media_sessions.keys()),
-                    "realtime_sessions": list(self._active_realtime_sessions.keys())
-                }
+                    "realtime_sessions": list(self._active_realtime_sessions.keys()),
+                },
             }
 
     async def get_active_media_count(self) -> int:
@@ -240,14 +249,16 @@ class SessionStatisticsManager:
             return len(self._active_media_sessions)
 
     async def get_active_realtime_count(self) -> int:
-        """Get count of active realtime sessions.""" 
+        """Get count of active realtime sessions."""
         async with self._lock:
             return len(self._active_realtime_sessions)
 
     async def get_total_active_count(self) -> int:
         """Get total count of all active sessions."""
         async with self._lock:
-            return len(self._active_media_sessions) + len(self._active_realtime_sessions)
+            return len(self._active_media_sessions) + len(
+                self._active_realtime_sessions
+            )
 
     async def get_total_disconnected_count(self) -> int:
         """Get total disconnection count."""
