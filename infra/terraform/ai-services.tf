@@ -18,6 +18,26 @@ resource "azurerm_cognitive_account" "openai" {
   tags = local.tags
 }
 
+# Diagnostic settings for Azure OpenAI
+resource "azurerm_monitor_diagnostic_setting" "openai_diagnostics" {
+  name                       = "${azurerm_cognitive_account.openai.name}-diagnostics"
+  target_resource_id         = azurerm_cognitive_account.openai.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  # Common Cognitive Services categories
+  enabled_log {
+    category = "Audit"
+  }
+
+  enabled_log {
+    category = "RequestResponse"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
 # OpenAI model deployments
 resource "azurerm_cognitive_deployment" "openai_models" {
   for_each = { for idx, model in var.openai_models : model.name => model }
@@ -78,6 +98,25 @@ resource "azurerm_cognitive_account" "speech" {
   #local_auth_enabled = !var.disable_local_auth
 
   tags = local.tags
+}
+
+# Diagnostic settings for Speech Services
+resource "azurerm_monitor_diagnostic_setting" "speech_diagnostics" {
+  name                       = "${azurerm_cognitive_account.speech.name}-diagnostics"
+  target_resource_id         = azurerm_cognitive_account.speech.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  enabled_log {
+    category = "Audit"
+  }
+
+  enabled_log {
+    category = "RequestResponse"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
 }
 
 # RBAC assignments for Speech Services

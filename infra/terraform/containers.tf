@@ -511,6 +511,24 @@ resource "azurerm_container_app" "backend" {
   ]
 }
 
+# ============================================================================
+# ROLE ASSIGNMENTS: Monitoring Metrics Publisher for system-assigned identities
+# ============================================================================
+
+# Grant the frontend Container App's system-assigned identity permission to publish metrics
+resource "azurerm_role_assignment" "frontend_metrics_publisher_system" {
+  scope                = azurerm_application_insights.main.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_container_app.frontend.identity[0].principal_id
+}
+
+# Grant the backend Container App's system-assigned identity permission to publish metrics
+resource "azurerm_role_assignment" "backend_metrics_publisher_system" {
+  scope                = azurerm_application_insights.main.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+}
+
 # Container Apps Environment
 output "CONTAINER_APPS_ENVIRONMENT_ID" {
   description = "Container Apps Environment resource ID"
