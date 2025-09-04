@@ -97,7 +97,7 @@ Pick one of three ways to run the voice inference layer—the rest of the framew
 ## **Getting started**
 
 > [!TIP]
-> Not an Infra-as-Code person? Start by skimming docs/DeploymentGuide.md. You’ve got two easy deploy paths—azd (one-command) or Terraform + Makefile— but the guide also can help youto deploy the same template from the Azure Portal UI. Once your cloud resources are up, follow docs/quickstart-local-development.md for a step-by-step local run.
+> Not an Infrastructure-as-Code person? Start by skimming `docs/DeploymentGuide.md`. You've got two easy deployment paths—azd (one-command) or Terraform + Makefile—but you could also deploy the infrastructure from the Azure Portal UI or reuse your current infrastructure if it matches the requirements. Once your cloud resources are up, follow `docs/quickstart-local-development.md` for a step-by-step local run.
 
 ### **Understand the Repository map (high‑level)**
 
@@ -106,19 +106,13 @@ Pick one of three ways to run the voice inference layer—the rest of the framew
   ├── 🔧 backend/          # FastAPI + WebSockets voice pipeline
   ├── 🌐 frontend/         # Vite + React demo client
   └── 📜 scripts/          # Helper launchers (backend, frontend, tunnel)
-
 📁 src/                    # Core libraries (ACS, Speech, AOAI, Redis, Cosmos, VAD, tools, prompts)
-
 📁 samples/                # Hands-on tutorials and examples (hello_world, labs)
-
 📁 infra/                  # Infrastructure as Code
   ├── 🔷 bicep/            # Azure Bicep modules
   └── 🏗️ terraform/        # Terraform modules
-
 📁 docs/                   # Guides and references (architecture, getting started, troubleshooting)
-
 📁 tests/                  # Pytest suite and load testing framework
-
 📁 utils/                  # Logging/telemetry helpers and images
 ```
 
