@@ -32,9 +32,11 @@ from utils.ml_logging import get_logger
 from ..handlers.acs_call_lifecycle import ACSLifecycleHandler
 from ..dependencies.orchestrator import get_orchestrator
 from ..events import CallEventProcessor, ACSEventTypes
-from src.pools.voice_live_pool import get_voice_live_pool
 from src.enums.stream_modes import StreamMode
 from config import ACS_STREAMING_MODE
+from apps.rtagent.backend.src.agents.Lvagent.factory import build_lva_from_yaml
+import asyncio
+import os
 
 logger = get_logger("api.v1.calls")
 tracer = trace.get_tracer(__name__)
@@ -188,36 +190,30 @@ async def initiate_call(
                 if result.get("status") == "success":
                     call_id = result.get("callId")
 
-                    # Pre-initialize a Voice Live session bound to this call (no audio yet)
+                    # Pre-initialize a Voice Live session bound to this call (no audio yet, no pool)
                     try:
-                        if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
-                            # Lazily ensure pool exists and acquire an agent
-                            voice_live_pool = getattr(
-                                http_request.app.state, "voice_live_pool", None
+                        if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE and hasattr(
+                            http_request.app.state, "conn_manager"
+                        ):
+                            agent_yaml = os.getenv(
+                                "VOICE_LIVE_AGENT_YAML",
+                                "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
                             )
-                            if voice_live_pool is None:
-                                voice_live_pool = await get_voice_live_pool(
-                                    background_prewarm=True
-                                )
-                                http_request.app.state.voice_live_pool = (
-                                    voice_live_pool
-                                )
-
-                            lva_agent, tier = await voice_live_pool.get_agent()
-
+                            lva_agent = build_lva_from_yaml(
+                                agent_yaml, enable_audio_io=False
+                            )
+                            await asyncio.to_thread(lva_agent.connect)
                             # Store for media WS to claim later
                             await http_request.app.state.conn_manager.set_call_context(
                                 call_id,
                                 {
                                     "lva_agent": lva_agent,
-                                    "pool": voice_live_pool,
-                                    "tier": tier,
                                     "target_number": request.target_number,
                                     "browser_session_id": browser_session_id,
                                 },
                             )
                             logger.info(
-                                f"Pre-initialized Voice Live agent for outbound call {call_id} (tier={tier})"
+                                f"Pre-initialized Voice Live agent for outbound call {call_id}"
                             )
                     except Exception as e:
                         logger.warning(
@@ -532,39 +528,30 @@ async def answer_inbound_call(
                 )
 
             op.log_info("Inbound call processed successfully")
-            # Attempt to pre-initialize Voice Live for this inbound call
+            # Attempt to pre-initialize Voice Live for this inbound call (no pool)
             try:
                 if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
                     # Extract call_connection_id from response body
                     body_bytes = result.body if hasattr(result, "body") else None
-                    if body_bytes:
+                    if body_bytes and hasattr(http_request.app.state, "conn_manager"):
                         import json
 
                         body = json.loads(body_bytes.decode("utf-8"))
                         call_connection_id = body.get("call_connection_id")
                         if call_connection_id:
-                            voice_live_pool = getattr(
-                                http_request.app.state, "voice_live_pool", None
+                            agent_yaml = os.getenv(
+                                "VOICE_LIVE_AGENT_YAML",
+                                "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
                             )
-                            if voice_live_pool is None:
-                                voice_live_pool = await get_voice_live_pool(
-                                    background_prewarm=True
-                                )
-                                http_request.app.state.voice_live_pool = (
-                                    voice_live_pool
-                                )
-
-                            lva_agent, tier = await voice_live_pool.get_agent()
+                            lva_agent = build_lva_from_yaml(
+                                agent_yaml, enable_audio_io=False
+                            )
+                            await asyncio.to_thread(lva_agent.connect)
                             await http_request.app.state.conn_manager.set_call_context(
-                                call_connection_id,
-                                {
-                                    "lva_agent": lva_agent,
-                                    "pool": voice_live_pool,
-                                    "tier": tier,
-                                },
+                                call_connection_id, {"lva_agent": lva_agent}
                             )
                             logger.info(
-                                f"Pre-initialized Voice Live agent for inbound call {call_connection_id} (tier={tier})"
+                                f"Pre-initialized Voice Live agent for inbound call {call_connection_id}"
                             )
             except Exception as e:
                 logger.debug(f"Voice Live preinit (inbound) skipped: {e}")

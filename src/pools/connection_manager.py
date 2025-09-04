@@ -125,20 +125,33 @@ class _Connection:
 
         async with self._send_lock:  # Ensure no concurrent send operations
             try:
-                # Signal sender to stop (only if queue not full to avoid blocking)
+                # Signal sender to stop via sentinel; ensure it enqueues even if full
                 try:
-                    if not self._queue.full():
-                        self._queue.put_nowait(None)
+                    self._queue.put_nowait(None)
                 except asyncio.QueueFull:
-                    pass  # Sender will timeout and check _closed flag
-
-                # Cancel sender task
-                if not self._sender_task.done():
-                    self._sender_task.cancel()
+                    # Drop one oldest and try again to guarantee shutdown signal
                     try:
-                        await self._sender_task
-                    except asyncio.CancelledError:
+                        _ = self._queue.get_nowait()
+                    except asyncio.QueueEmpty:
                         pass
+                    try:
+                        self._queue.put_nowait(None)
+                    except asyncio.QueueFull:
+                        # As last resort, rely on timeout + _closed flag in loop
+                        logger.debug(
+                            "Queue full during close; relying on timeout/_closed to exit",
+                            extra={"conn_id": self.meta.connection_id},
+                        )
+
+                # Allow sender task to exit gracefully (sentinel or _closed flag)
+                if not self._sender_task.done():
+                    try:
+                        await asyncio.wait_for(self._sender_task, timeout=2.0)
+                    except asyncio.TimeoutError:
+                        logger.debug(
+                            "Sender task timeout on close; proceeding to force close",
+                            extra={"conn_id": self.meta.connection_id},
+                        )
 
                 # Close WebSocket if still connected
                 try:

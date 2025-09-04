@@ -144,13 +144,13 @@ class VoiceLiveHandler:
                     )
                     # Connect in a worker thread to avoid blocking the loop
                     await asyncio.to_thread(self._lva_agent.connect)
-                    logger.info(
+                    logger.debug(
                         "LVA agent connected | url=%s | auth=%s",
                         getattr(self._lva_agent, "url", "(hidden)"),
                         getattr(self._lva_agent, "auth_method", "unknown"),
                     )
                 else:
-                    logger.info(
+                    logger.debug(
                         "Using injected LVA agent | url=%s | auth=%s",
                         getattr(self._lva_agent, "url", "(hidden)"),
                         getattr(self._lva_agent, "auth_method", "unknown"),

@@ -74,6 +74,9 @@ from azure.communication.callautomation import PhoneNumberIdentifier
 # Import V1 components
 from ..handlers.acs_media_lifecycle import ACSMediaHandler
 from ..handlers.voice_live_handler import VoiceLiveHandler
+from apps.rtagent.backend.src.agents.Lvagent.factory import build_lva_from_yaml
+import asyncio
+import os
 
 from ..dependencies.orchestrator import get_orchestrator
 
@@ -518,33 +521,37 @@ async def _create_media_handler(
     elif ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
         # Prefer a pre-initialized Voice Live agent bound at call initiation
         injected_agent = None
-        voice_live_pool = getattr(websocket.app.state, "voice_live_pool", None)
-        agent_tier = None
-
         try:
             call_ctx = await websocket.app.state.conn_manager.pop_call_context(
                 call_connection_id
             )
             if call_ctx and call_ctx.get("lva_agent"):
                 injected_agent = call_ctx.get("lva_agent")
-                voice_live_pool = call_ctx.get("pool") or voice_live_pool
-                agent_tier = call_ctx.get("tier")
                 logger.info(
                     f"Bound pre-initialized Voice Live agent to call {call_connection_id}"
-                    + (f" (tier={agent_tier})" if agent_tier else "")
                 )
         except Exception as e:
             logger.debug(f"No pre-initialized Voice Live context found: {e}")
 
-        # Fallback to pool allocation if nothing pre-bound
-        if injected_agent is None and voice_live_pool is not None:
+        # Fallback to on-demand agent creation via factory (no pool)
+        if injected_agent is None:
             try:
-                injected_agent, agent_tier = await voice_live_pool.get_agent()
+                agent_yaml = os.getenv(
+                    "VOICE_LIVE_AGENT_YAML",
+                    "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
+                )
+                injected_agent = build_lva_from_yaml(
+                    agent_yaml, enable_audio_io=False
+                )
+                await asyncio.to_thread(injected_agent.connect)
                 logger.info(
-                    f"Allocated Voice Live agent from pool (tier={agent_tier})"
+                    f"Created and connected Voice Live agent on-demand for call {call_connection_id}"
                 )
             except Exception as e:
-                logger.warning(f"Voice Live pool allocation failed: {e}")
+                logger.error(
+                    f"Failed to create Voice Live agent for call {call_connection_id}: {e}"
+                )
+                raise
 
         handler = VoiceLiveHandler(
             azure_endpoint=AZURE_VOICE_LIVE_ENDPOINT,
@@ -554,7 +561,6 @@ async def _create_media_handler(
             orchestrator=orchestrator,
             use_lva_agent=True,
             lva_agent=injected_agent,
-            voice_live_pool=voice_live_pool if injected_agent else None,
         )
 
         logger.info("Created V1 ACS voice live handler for VOICE_LIVE mode")
