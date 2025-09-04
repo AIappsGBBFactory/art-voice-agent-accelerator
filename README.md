@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-# **🎙️ ARTVoice Accelerator Framework**
+# **ARTVoice Accelerator Framework**
 
 **TL;DR**: Ship real-time voice agents on Azure— single hyperscale platform, omnichannel (ACS telephony included), code‑first, and modular by default.
 
