@@ -1,53 +1,37 @@
-# 🏗️ RTVoice Accelerator - Infrastructure as Code
+# **ARTVoice Infrastructure**
 
-This directory contains the Infrastructure as Code (IaC) implementations for deploying the RTVoice Accelerator on Azure. Two approaches are available to suit different deployment scenarios and organizational preferences.
+Infrastructure as Code for deploying ARTVoice Accelerator on Azure. Choose between Terraform (recommended) and Bicep deployments.
 
-## 🎯 Deployment Options Overview
+## **Deployment Options**
 
-### 🔵 **Bicep Deployment** (`/bicep/`) - **⚠️ Work In Progress**
-**Opinionated, enterprise-ready private deployment with comprehensive security**
-
-- **Status**: 🚧 **Active Development** - Advanced configuration with private networking
-- **Target Audience**: Enterprise production environments requiring maximum security
-- **Architecture**: Hub-spoke networking with private endpoints and API Management
-- **Security**: Private endpoints, network isolation, enterprise-grade configuration
-- **Use Case**: Production workloads with strict network security requirements
-
-### 🟢 **Terraform Deployment** (`/terraform/`) - **✅ Current Recommended**
-**Simplified, public-facing PoC deployment for rapid development**
-
-- **Status**: ✅ **PoC Ready** - Simplified public configuration
-- **Target Audience**: Development teams, PoCs, and quick deployments  
+### **🟢 Terraform** (`/terraform/`) - **Recommended**
+- **Status**: ✅ Production ready
+- **Target**: Development, PoCs, and production workloads
 - **Architecture**: Public endpoints with managed identity authentication
-- **Security**: RBAC-first approach with managed identities (no network isolation)
-- **Use Case**: Development, testing, demos, and initial MVP workloads
+- **Security**: RBAC-based with comprehensive monitoring
 
----
+### **🔵 Bicep** (`/bicep/`) - **Work in Progress**
+- **Status**: 🚧 Development
+- **Target**: Enterprise environments with maximum security
+- **Architecture**: Hub-spoke networking with private endpoints
+- **Security**: Network isolation and enterprise-grade configuration
 
-## 🔵 Bicep Deployment - Private Enterprise Configuration
+## **Quick Start**
 
-### Current Status: **🚧 Work In Progress**
+**Option 1: Azure Developer CLI (Recommended)**
+```bash
+azd up  # Complete deployment in ~15 minutes
+```
 
-The Bicep deployment represents an **opinionated approach** for enterprise-grade security with comprehensive private networking. This configuration is designed for organizations with strict security and compliance requirements.
+**Option 2: Direct Terraform**
+```bash
+cd terraform/
+terraform init
+terraform plan
+terraform apply
+```
 
-#### 🛡️ Security Features (In Development)
-
-| Component | Security Feature | Status |
-|-----------|------------------|---------|
-| **Networking** | Hub-spoke topology with private subnets | ✅ Implemented |
-| **API Management** | Internal VNET injection with private endpoints | 🚧 WIP |
-| **Azure Services** | All services behind private endpoints | ✅ Implemented |
-| **DNS Resolution** | Private DNS zones for all endpoints | ✅ Implemented |
-| **Traffic Flow** | Network Security Groups with restrictive rules | ✅ Implemented |
-| **Load Balancing** | Application Gateway with WAF v2 | ✅ Implemented |
-
-#### 📋 Key Components
-
-- **Application Gateway**: Layer 7 load balancer with SSL termination and WAF protection
-- **Hub-Spoke VNet**: Dedicated network architecture with isolated subnets
-- **Private Endpoints**: Secure connectivity to Azure PaaS services
-- **API Management**: Load balancing and security for AI services (🚧 in progress)
-- **Container Apps**: Serverless application hosting with VNET integration
+See `/terraform/README.md` for detailed instructions.
 - **Enterprise Security**: Comprehensive RBAC, managed identities, and Key Vault
 
 #### ⚠️ Known Limitations

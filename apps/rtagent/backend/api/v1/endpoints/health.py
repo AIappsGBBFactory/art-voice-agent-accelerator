@@ -39,13 +39,24 @@ def _validate_phone_number(phone_number: str) -> tuple[bool, str]:
     """
     Validate Azure Communication Services phone number format compliance.
 
-    This function performs comprehensive validation of phone number formatting
-    according to ACS requirements including proper country code prefix, digit
-    validation, and length constraints for international telephony standards.
+    Performs comprehensive validation of phone number formatting according to
+    ACS requirements including country code prefix validation, digit verification,
+    and length constraints for international telephony standards (E.164 format).
 
-    :param phone_number: The phone number string to validate for ACS compatibility.
-    :return: Tuple containing validation result (True/False) and error message if invalid.
-    :raises TypeError: If phone_number is not a string type.
+    Args:
+        phone_number: The phone number string to validate for ACS compatibility.
+
+    Returns:
+        tuple[bool, str]: Validation result (True/False) and error message
+        if validation fails, empty string if successful.
+
+    Raises:
+        TypeError: If phone_number is not a string type.
+
+    Example:
+        >>> is_valid, error = _validate_phone_number("+1234567890")
+        >>> if is_valid:
+        ...     print("Valid phone number")
     """
     if not isinstance(phone_number, str):
         logger.error(f"Phone number must be string, got {type(phone_number)}")
@@ -81,13 +92,22 @@ def _validate_guid(guid_str: str) -> bool:
     """
     Validate string format compliance with GUID (Globally Unique Identifier) standards.
 
-    This function performs strict validation of GUID format according to RFC 4122
-    standards, ensuring proper hexadecimal digit patterns and hyphen placement
-    for Azure resource identification and tracking systems.
+    Performs strict validation of GUID format according to RFC 4122 standards,
+    ensuring proper hexadecimal digit patterns and hyphen placement for Azure
+    resource identification and tracking systems.
 
-    :param guid_str: The string to validate against GUID format requirements.
-    :return: True if string matches valid GUID format, False otherwise.
-    :raises TypeError: If guid_str is not a string type.
+    Args:
+        guid_str: The string to validate against GUID format requirements.
+
+    Returns:
+        bool: True if string matches valid GUID format, False otherwise.
+
+    Raises:
+        TypeError: If guid_str is not a string type.
+
+    Example:
+        >>> is_valid = _validate_guid("550e8400-e29b-41d4-a716-446655440000")
+        >>> print(is_valid)  # True
     """
     if not isinstance(guid_str, str):
         logger.error(f"GUID must be string, got {type(guid_str)}")

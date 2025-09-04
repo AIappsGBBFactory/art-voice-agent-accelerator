@@ -1,6 +1,6 @@
 # ⚡ Local Development
 
-Run the Real-Time Voice Agent locally with only raw commands. No Makefile usage. Keep secrets out of git and rotate any previously exposed keys.
+Run the ARTVoice Accelerator locally with raw commands. No Makefile usage. Keep secrets out of git and rotate any previously exposed keys.
 
 ---
 
@@ -37,7 +37,7 @@ If you only want a browser demo (no phone), ACS variables are optional.
 ## 3. Clone Repository
 
 ```bash
-git clone https://github.com/your-org/gbb-ai-audio-agent.git
+git clone https://github.com/pablosalvador10/gbb-ai-audio-agent.git
 cd gbb-ai-audio-agent
 ```
 
@@ -70,10 +70,10 @@ Minimal template (edit placeholders; DO NOT commit real values):
 # ===== Azure OpenAI =====
 AZURE_OPENAI_ENDPOINT=https://<your-aoai>.openai.azure.com
 AZURE_OPENAI_KEY=<aoai-key>
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
+AZURE_OPENAI_DEPLOYMENT=gpt-4-1-mini
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
-AZURE_OPENAI_CHAT_DEPLOYMENT_ID=gpt-4o
-AZURE_OPENAI_CHAT_DEPLOYMENT_VERSION=2024-10-01-preview
+AZURE_OPENAI_CHAT_DEPLOYMENT_ID=gpt-4-1-mini
+AZURE_OPENAI_CHAT_DEPLOYMENT_VERSION=2024-11-20
 
 # ===== Speech =====
 AZURE_SPEECH_REGION=<speech-region>
@@ -115,8 +115,8 @@ devtunnel host -p 8010 --allow-anonymous
 Copy the printed HTTPS URL and set `BASE_URL` in root `.env`. Update it again if the tunnel restarts (URL changes).
 
 The Dev Tunnel URL will look similar to:
-``` bash
-https://832tlq4w-8010.usw3.devtunnels.ms
+```bash
+https://abc123xy-8010.usw3.devtunnels.ms
 ```
 
 ---
@@ -209,7 +209,8 @@ WebSocket URL is auto-derived by replacing `http/https` with `ws/wss`.
 | No audio | Speech key/region invalid | Verify Azure Speech resource |
 | WS closes fast | Wrong `VITE_BACKEND_BASE_URL` | Use exact backend/tunnel URL |
 | Slow first reply | Cold pool warm-up | Keep process running |
-| Phone call no events | ACS callback not updated to tunnel | Reconfigure Event Grid / Call Automation |
+| Phone call no events | ACS callback not updated to tunnel | Reconfigure Event Grid subscription |
+| Import errors | Missing dependencies | Re-run `pip install -r requirements.txt` |
 
 ---
 

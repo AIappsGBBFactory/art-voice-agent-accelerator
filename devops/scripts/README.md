@@ -1,48 +1,37 @@
-# 🔧 DevOps Scripts for RTVoice Accelerator
+# **DevOps Scripts**
 
-This directory contains automation scripts for setting up and managing the Azure deployment pipeline for the RTVoice Accelerator project.
+**Automation scripts** for Azure deployment pipeline setup and management for ARTVoice Accelerator.
 
-## 🚀 Quick Start - CI/CD Setup
-
-### New to the project? Start here:
+## **Quick Start**
 
 ```bash
-# Setup CI/CD configuration for azd deployment
+# Complete CI/CD setup for azd deployment
 ./setup-gha-config.sh --interactive
 ```
 
-This will:
-1. ✅ Create Azure App Registration for OIDC authentication
-2. ✅ Configure GitHub Actions federated credentials
-3. ✅ Set up Azure permissions and Terraform state storage
-4. ✅ Optionally configure GitHub secrets/variables automatically
+This configures:
+- Azure App Registration for OIDC authentication
+- GitHub Actions federated credentials  
+- Azure permissions and Terraform state storage
+- Optional GitHub secrets/variables setup
 
-## 📁 Script Directory
+## **Scripts Overview**
 
-### 🎯 **CI/CD Setup (Recommended)**
-- **[`setup-gha-config.sh`](./setup-gha-config.sh)** - **START HERE** - Complete CI/CD setup for azd deployment
+### **CI/CD Setup**
+- **[`setup-gha-config.sh`](./setup-gha-config.sh)** - Complete CI/CD setup (start here)
 
-### 🏗️ **Azure Developer CLI (AZD) Helpers**
-- **[`azd/`](./azd/)** - AZD lifecycle hooks and helper scripts
+### **Azure Developer CLI Helpers**
+- **[`azd/`](./azd/)** - AZD lifecycle hooks and utilities
   - [`postprovision.sh`](./azd/postprovision.sh) - Post-deployment configuration
   - [`preprovision.sh`](./azd/preprovision.sh) - Pre-deployment setup
-  - [`helpers/`](./azd/helpers/) - Utility scripts for AZD workflows
 
-### 🗄️ **Terraform & Infrastructure**
+### **Infrastructure Management**
 - **[`generate-env-from-terraform.sh`](./generate-env-from-terraform.sh)** - Generate .env from Terraform outputs
-- **[`Generate-EnvFromTerraform.ps1`](./Generate-EnvFromTerraform.ps1)** - PowerShell version
-- **[`validate-terraform-backend.sh`](./validate-terraform-backend.sh)** - Validate Terraform backend configuration
-
-### 🔗 **Integration & Configuration**
-- **[`eventgrid-appconfig.sh`](./eventgrid-appconfig.sh)** - Event Grid integration setup
-- **[`EventGrid-AppConfig.ps1`](./eventgrid-appconfig.ps1)** - PowerShell version
+- **[`validate-terraform-backend.sh`](./validate-terraform-backend.sh)** - Validate Terraform backend
 - **[`webapp-deploy.sh`](./webapp-deploy.sh)** - Direct webapp deployment
 
-## 📋 Prerequisites
+## **Prerequisites**
 
-Before running any scripts, ensure you have:
-
-### Required Tools
 - **Azure CLI** (`az`) - [Install Guide](https://docs.microsoft.com/cli/azure/install-azure-cli)
 - **Azure Developer CLI** (`azd`) - [Install Guide](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd)
 - **jq** - JSON processor

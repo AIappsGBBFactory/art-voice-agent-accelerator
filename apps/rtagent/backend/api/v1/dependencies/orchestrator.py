@@ -35,13 +35,25 @@ async def route_conversation_turn(
     cm: MemoManager, transcript: str, ws: WebSocket, **kwargs
 ) -> None:
     """
-    Route a conversation turn through the orchestration system.
+    Route a conversation turn through the orchestration system with error handling.
+
+    Processes user input through the conversation orchestrator with comprehensive
+    error handling for WebSocket disconnections and system failures. Provides
+    tracing and logging for debugging conversation flow issues.
 
     Args:
-        cm: Memory manager for conversation state
-        transcript: User's transcribed speech
-        ws: WebSocket connection for real-time communication
-        **kwargs: Additional context (call_id, session_id, etc.)
+        cm: Memory manager instance for conversation state persistence and retrieval.
+        transcript: User's transcribed speech text to process through orchestration.
+        ws: WebSocket connection for real-time communication and response streaming.
+        **kwargs: Additional context including call_id, session_id, and ACS flags.
+
+    Raises:
+        Exception: For non-WebSocket related orchestration failures that require
+                  upstream handling and recovery.
+
+    Note:
+        WebSocket connection errors are handled gracefully and logged without
+        re-raising to prevent unnecessary error propagation during normal disconnects.
     """
     call_id = kwargs.get("call_id")
     session_id = getattr(cm, "session_id", None) if cm else None
@@ -87,10 +99,21 @@ async def route_conversation_turn(
             raise
 
 
-def get_orchestrator():
+def get_orchestrator() -> callable:
     """
-    FastAPI dependency to get the orchestrator function.
+    FastAPI dependency provider for conversation orchestrator function.
 
-    Returns the route_conversation_turn function for dependency injection.
+    Returns the route_conversation_turn function for dependency injection into
+    WebSocket endpoints and API handlers. Enables clean separation of concerns
+    between API layer and conversation orchestration logic.
+
+    Returns:
+        callable: The route_conversation_turn function configured for use
+        as a FastAPI dependency in endpoint handlers.
+
+    Example:
+        >>> @router.websocket("/conversation")
+        >>> async def endpoint(ws: WebSocket, orchestrator=Depends(get_orchestrator)):
+        ...     await orchestrator(cm, transcript, ws)
     """
     return route_conversation_turn

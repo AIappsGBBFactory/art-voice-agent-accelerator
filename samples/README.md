@@ -1,53 +1,37 @@
-# 📚 Samples & Learning Resources
+# **ARTVoice Samples**
 
-Welcome to the **Real-Time Audio Agent** samples repository! This folder contains hands-on examples, tutorials, and experimental notebooks to help you understand and extend the voice-to-voice AI agent framework.
+**Hands-on examples and tutorials** for building voice agents with the ARTVoice Accelerator framework.
 
-## 🗂️ Repository Structure
+## **Structure**
 
 ```
 samples/
-├── hello_world/          # 🎯 Quick start tutorials
-├── labs/                 # 🧪 Advanced experiments and deep dives  
-└── README.md             # 📖 This guide
+├── hello_world/          # Quick start tutorials
+├── labs/                 # Advanced experiments and deep dives  
+└── README.md             # This guide
 ```
 
----
+## **🎯 Getting Started: Hello World**
 
-## 🎯 **Getting Started: Hello World**
+**Best for**: Newcomers, proof-of-concept development, learning the basics.
 
-**Purpose**: Jump straight into building your first real-time voice agent with guided tutorials.
+| Notebook | Description |
+|----------|-------------|
+| `01-create-your-first-rt-agent.ipynb` | Build a complete customer support voice agent |
+| `03-create-your-first-foundry-agents.ipynb` | Create Azure AI Foundry agents |
+| `04-exploring-live-api.ipynb` | Explore Azure Live Voice API integration |
+| `05-create-your-first-livevoice.ipynb` | Build with Live Voice capabilities |
 
-**Best for**: Newcomers to the framework, proof-of-concept development, learning the basics.
+### **Quick Start**
+1. Start with notebook 01 if you're new to the project
+2. Follow notebooks in sequence
+3. Each notebook is self-contained with working examples
 
-### 📂 Contents
+## **🧪 Advanced Labs**
 
-| Notebook | Description | What You'll Learn |
-|----------|-------------|-------------------|
-| `01-create-your-first-rt-agent.ipynb` | **Foundation Tutorial** - Build a complete customer support voice agent from scratch | ARTAgent architecture, YAML configuration, agent patterns, custom tools |
-| `02-run-test-rt-agent.ipynb` | **End-to-End Implementation** - Deploy and test your voice agent with real conversations | Azure Speech integration, OpenAI function calling, TTS streaming |
+**Best for**: Framework extension, research experiments, specific use cases.
 
-### 🚀 Quick Start
-
-1. **Start here if you're new to the project**
-2. Follow notebooks in order (01 → 02)
-3. Each notebook is self-contained with full explanations
-4. Working code examples that you can run immediately
-
----
-
-## 🧪 **Advanced Labs**
-
-**Purpose**: Deep technical exploration, experimentation, and advanced feature development.
-
-**Best for**: Developers extending the framework, research experiments, specific use case implementations.
-
-### 📂 Lab Categories
-
-#### **Core Development (`labs/dev/`)**
-
-Advanced notebooks for understanding and extending framework components:
-
-| Notebook | Focus Area | Use Case |
+Advanced notebooks for understanding and extending framework components.
 |----------|------------|----------|
 | `01-build-your-audio-agent.ipynb` | **Full Pipeline** | Complete voice-to-voice system with Azure AI |
 | `02-how-to-use-aoai-for-realtime-transcriptions.ipynb` | **Speech Recognition** | Azure OpenAI STT optimization |

@@ -40,20 +40,24 @@ router = APIRouter()
 
 def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
     """
-    Create a CloudEvent for call-related operations using V1 event system.
+    Create a CloudEvent for call-related operations using the V1 event system.
 
-    :param event_type: Type of the call event
-    :type event_type: str
-    :param call_id: Call connection ID
-    :type call_id: str
-    :param data: Event data payload
-    :type data: dict
-    :return: Properly formatted event for V1 processor
-    :rtype: CloudEvent
+    Factory function that generates properly formatted CloudEvent instances for
+    call lifecycle management. Events are processed by CallEventProcessor for
+    asynchronous call handling and state management within the ACS integration.
 
-    .. note::
-        When using with CallEventProcessor.process_events(), remember to pass
-        the request.app.state as the second argument for dependency injection.
+    Args:
+        event_type: Type of call event (e.g., 'call.initiated', 'call.ended').
+        call_id: Unique call connection identifier for event correlation.
+        data: Event data payload containing call-specific information.
+
+    Returns:
+        CloudEvent: Properly formatted event ready for V1 event processor
+        consumption with standardized source and data structure.
+
+    Note:
+        When using with CallEventProcessor.process_events(), pass
+        request.app.state as the second argument for dependency injection.
     """
     return CloudEvent(
         source="api/v1/calls",
@@ -121,13 +125,29 @@ async def initiate_call(
     """
     Initiate an outbound call through Azure Communication Services.
 
-    :param request: Call initiation request with target phone number
-    :type request: CallInitiateRequest
-    :param http_request: FastAPI request object for accessing app state
-    :type http_request: Request
-    :return: Call status and tracking information
-    :rtype: CallInitiateResponse
-    :raises HTTPException: When call initiation fails or dependencies are unavailable
+    Creates a new outbound call to the specified phone number using ACS call
+    automation. Validates phone number format, generates unique call tracking
+    ID, and processes the request asynchronously through the V1 event system
+    for reliable call establishment and monitoring.
+
+    Args:
+        request: Call initiation request containing target phone number and
+                optional context information for session coordination.
+        http_request: FastAPI request object providing access to application
+                     state and dependency injection services.
+
+    Returns:
+        CallInitiateResponse: Call status information including unique call ID,
+        current status, target number, and confirmation message.
+
+    Raises:
+        HTTPException: When call initiation fails due to invalid phone number
+                      format, ACS service unavailability, or system errors.
+
+    Example:
+        >>> request = CallInitiateRequest(target_number="+1234567890")
+        >>> response = await initiate_call(request, http_request)
+        >>> print(response.call_id)
     """
     with trace_acs_operation(
         tracer, logger, "initiate_call", session_id=None, call_connection_id=None

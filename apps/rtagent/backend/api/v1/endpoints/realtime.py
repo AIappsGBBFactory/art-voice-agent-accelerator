@@ -127,19 +127,26 @@ router = APIRouter()
         }
     },
 )
-async def get_realtime_status(
-    request: Request,
-):
+async def get_realtime_status(request: Request) -> RealtimeStatusResponse:
     """
     Retrieve comprehensive status and configuration of real-time communication services.
 
-    This endpoint provides detailed information about WebSocket endpoints, active
-    session counts, and service availability for dashboard relay and browser
-    conversation capabilities within the voice agent system.
+    Provides detailed information about WebSocket endpoint availability, active
+    session counts, supported features, and service health. Essential for
+    monitoring dashboard functionality and conversation capabilities within
+    the voice agent system.
 
-    :param request: FastAPI request object providing access to application state and session manager.
-    :return: RealtimeStatusResponse containing service status, endpoints, and session information.
-    :raises: None (endpoint designed to always return current service status).
+    Args:
+        request: FastAPI request object providing access to application state,
+                session manager, and connection statistics.
+
+    Returns:
+        RealtimeStatusResponse: Complete service status including WebSocket
+        endpoints, feature flags, active connection counts, and API version.
+
+    Note:
+        This endpoint is designed to always return current service status
+        and does not raise exceptions under normal circumstances.
     """
     session_count = await request.app.state.session_manager.get_session_count()
 
@@ -175,14 +182,27 @@ async def get_realtime_status(
 @router.websocket("/dashboard/relay")
 async def dashboard_relay_endpoint(
     websocket: WebSocket, session_id: Optional[str] = Query(None)
-):
-    """Production-ready dashboard relay WebSocket endpoint.
+) -> None:
+    """
+    Production-ready WebSocket endpoint for dashboard relay communication.
 
-    :param websocket: WebSocket connection from dashboard client
-    :param session_id: Optional session ID for filtering dashboard messages
-    :return: None
-    :raises WebSocketDisconnect: When client disconnects from WebSocket
-    :raises Exception: For any other errors during connection processing
+    Establishes a persistent WebSocket connection for dashboard clients to
+    receive real-time updates and notifications. Handles session filtering,
+    connection management, and proper resource cleanup with comprehensive
+    error handling and observability.
+
+    Args:
+        websocket: WebSocket connection from dashboard client for real-time updates.
+        session_id: Optional session ID for filtering dashboard messages to
+                   specific conversation sessions.
+
+    Raises:
+        WebSocketDisconnect: When dashboard client disconnects from WebSocket.
+        Exception: For authentication failures or system errors during connection.
+
+    Note:
+        Session ID enables dashboard clients to monitor specific conversation
+        sessions while maintaining connection isolation and proper routing.
     """
     client_id = None
     conn_id = None
@@ -254,16 +274,30 @@ async def browser_conversation_endpoint(
     websocket: WebSocket,
     session_id: Optional[str] = Query(None),
     orchestrator: Optional[callable] = Depends(get_orchestrator),
-):
-    """Production-ready browser conversation WebSocket endpoint.
+) -> None:
+    """
+    Production-ready WebSocket endpoint for browser-based voice conversations.
 
-    :param websocket: WebSocket connection from browser client
-    :param session_id: Optional session ID from query parameter for session persistence
-    :param orchestrator: Injected conversation orchestrator (optional)
-    :return: None
-    :raises WebSocketDisconnect: When client disconnects from WebSocket
-    :raises HTTPException: For authentication or dependency validation failures
-    :raises Exception: For any other errors during conversation processing
+    Handles real-time bidirectional audio communication between browser clients
+    and the voice agent system. Supports speech-to-text, text-to-speech,
+    conversation orchestration, and session persistence with comprehensive
+    error handling and resource management.
+
+    Args:
+        websocket: WebSocket connection from browser client for voice interaction.
+        session_id: Optional session ID for conversation persistence and state
+                   management across reconnections.
+        orchestrator: Injected conversation orchestrator for processing user
+                     interactions and generating responses.
+
+    Raises:
+        WebSocketDisconnect: When browser client disconnects normally or abnormally.
+        HTTPException: For authentication failures or dependency validation errors.
+        Exception: For system errors during conversation processing.
+
+    Note:
+        Session ID generation: Uses provided session_id, ACS call-connection-id
+        from headers, or generates collision-resistant UUID4 for session isolation.
     """
     memory_manager = None
     conn_id = None

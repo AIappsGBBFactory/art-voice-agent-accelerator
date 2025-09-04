@@ -1,52 +1,43 @@
-# Enhanced Multi-Turn Load Testing Framework
+# **Load Testing Framework**
 
-## Overview
+**Comprehensive multi-turn conversation load testing** for ARTVoice Accelerator with detailed per-turn statistics and realistic conversation simulation.
 
-This enhanced load testing framework provides comprehensive load testing capabilities with detailed per-turn statistics and configurable conversation turn depth, enabling realistic multi-turn conversation simulation for your real-time voice AI agent.
+## **Key Features**
 
-## Key Features
+- **Per-Turn Statistics**: P50-P99.9 percentiles for every conversation turn
+- **Concurrency Analysis**: Peak concurrent connections and latency impact
+- **Conversation Recording**: 20% sampling for detailed conversation analysis  
+- **Multiple Scenarios**: Insurance inquiry (5 turns) and quick questions (3 turns)
+- **Comprehensive Metrics**: Speech recognition, agent processing, and end-to-end latency
 
-### Detailed Per-Turn Statistics
-- Comprehensive metrics: P50, P75, P90, P95, P99, P99.9 percentiles for every metric
-- Per-turn breakdown: Individual timing analysis for each conversation turn
-- Turn position analysis: How performance varies by turn number (1st turn vs 5th turn)
-- Template comparison: Performance differences between conversation scenarios
+## **Quick Start**
 
-### Concurrency Analysis
-- Peak concurrent conversation tracking
-- Average concurrency over test duration
-- Timeline analysis of concurrent connections
-- Latency impact under different concurrency levels
-
-### Conversation Recording
-- Random sampling of conversations for detailed analysis
-- Configurable recording percentage (default: 20% of conversations)
-- Full conversation flow capture including latencies and errors
-- Exported conversation records for manual review
-
-### Simplified 2-Scenario Focus
-- `insurance_inquiry`: 5-turn detailed insurance conversation
-- `quick_question`: 3-turn simple account inquiry
-- Focused analysis: Deep insights without scenario complexity
-- **Speech Recognition Latency**: Time from audio end to first agent response
-- **Agent Processing Latency**: Time from first to last agent response  
-- **End-to-End Latency**: Total turn completion time
-- **Audio Send Duration**: Time to transmit user audio
-- **Turn Success Rate**: Percentage of successful turns per position
-
-## 🛠️ Setup Instructions
-
-### 1. Generate Audio Files for 2 Scenarios
-
+### **1. Generate Audio Files**
 ```bash
-# Generate audio for simplified 2-scenario system
 python tests/load/audio_generator.py \
   --max-turns 5 \
   --scenarios insurance_inquiry quick_question
-
-# Clear cache and regenerate if needed
-python tests/load/audio_generator.py --clear-cache --max-turns 5
 ```
+
+### **2. Run Load Test**
+```bash
+# Basic load test
+locust -f tests/load/locustfile.py --host=http://localhost:8010
+
+# Advanced configuration
+locust -f tests/load/locustfile.py \
+  --host=https://your-backend.azurecontainerapps.io \
+  --users 50 \
+  --spawn-rate 5 \
+  --run-time 300s
+```
+
+## **Metrics Tracked**
+
+- **Speech Recognition Latency**: Audio end to first agent response
+- **Agent Processing Latency**: First to last agent response  
+- **End-to-End Latency**: Total turn completion time
+- **Turn Success Rate**: Percentage of successful turns by position
 
 **Generated Files Structure:**
 ```

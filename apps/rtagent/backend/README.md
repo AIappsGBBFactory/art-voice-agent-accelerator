@@ -1,52 +1,36 @@
-# **Real-Time Voice Agent Backend**
+# **ARTVoice Backend**
 
-**Real-time voice AI system** for enterprise phone calls via Azure Communication Services.
+**FastAPI + multi-agent voice AI** for real-time phone calls via Azure Communication Services.
 
-### **Core Flow**
+## **Architecture**
 
 ```
-Phone Call → ACS → WebSocket → STT → Multi-Agent AI → TTS → Audio Response
+Phone → ACS → WebSocket → STT → Multi-Agent AI → TTS → Audio Response
 ```
 
-### **Key Design Decisions**
+## **Key Features**
 
-- **Multi-Agent Orchestration**: Specialized agents (Auth, Billing, Support) vs monolithic prompt. Easier debugging, better context handling.
-- **Connection Pooling**: Pre-warmed Azure client pools. Avoid cold start latency on high-concurrency calls.
-- **WebSocket Streaming**: Real-time audio requires streaming. HTTP too slow for natural conversation (<2s response time).
-- **Session State in Redis**: Agents remember conversation context. Survives WebSocket disconnects.
+- **Multi-Agent System**: ARTAgent, LVAgent, FoundryAgents with specialized roles
+- **Connection Pooling**: Pre-warmed Azure clients for low-latency responses
+- **WebSocket Streaming**: Real-time audio processing for natural conversation
+- **Session Management**: Redis-backed state persistence across connections
 
-### **Production Considerations**
-
-- **Latency Optimized**: Buffer tuning, async pools, optimized Azure service calls
-- **Resource Cleanup**: Robust WebSocket disconnect handling, no connection leaks  
-- **Horizontal Scale**: Async architecture handles hundreds of concurrent calls
-- **Observability**: OpenTelemetry traces, health endpoints, agent decision logging
-
-### **Adding Features**
-New agent: YAML config → Handler function → Register in orchestrator. Core audio/Azure integration untouched.
-
-### **Project Structure**
+## **Structure**
 
 ```
 backend/
-├── main.py              # FastAPI app with connection pooling
-├── api/v1/              # V1 API endpoints 
-├── config/              # Environment configuration
-└── src/                 # Core services and utilities
+├── main.py              # FastAPI app entry point
+├── api/v1/              # REST and WebSocket endpoints 
+├── config/              # Voice, features, environment config
+└── src/                 # Core services and agent framework
 ```
 
-## **V1 API Endpoints**
+## **Key Endpoints**
 
-### **WebSocket Endpoints**
-- **`/api/v1/media/stream`** - ACS media streaming with audio processing
-- **`/api/v1/realtime/conversation`** - Real-time conversation with STT/TTS
-- **`/api/v1/realtime/dashboard`** - Dashboard relay with connection tracking
-
-### **REST Endpoints**  
-- **`/api/v1/calls/*`** - Call management (initiate, hangup, status)
-- **`/api/v1/health`** - Health checks and system status
-
-### **API Layer Structure**
+- **`/api/v1/media/stream`** - ACS media streaming
+- **`/api/v1/realtime/conversation`** - Real-time voice conversation
+- **`/api/v1/calls/*`** - Call management and status
+- **`/health`** - System health and readiness
 ```
 api/v1/
 ├── endpoints/           # WebSocket and REST handlers

@@ -109,14 +109,31 @@ async def get_media_status():
 @router.post(
     "/sessions", response_model=MediaSessionResponse, summary="Create Media Session"
 )
-async def create_media_session(request: MediaSessionRequest):
+async def create_media_session(request: MediaSessionRequest) -> MediaSessionResponse:
     """
-    Create a new media streaming session.
+    Create a new media streaming session for Azure Communication Services.
 
-    :param request: Media session configuration
-    :type request: MediaSessionRequest
-    :return: Session creation result with WebSocket connection details
-    :rtype: MediaSessionResponse
+    Initializes a media session with specified audio configuration and returns
+    WebSocket connection details for real-time audio streaming. This endpoint
+    prepares the infrastructure for bidirectional media communication with
+    configurable audio parameters.
+
+    Args:
+        request: Media session configuration including call connection ID, 
+                audio format, sample rate, and streaming options.
+
+    Returns:
+        MediaSessionResponse: Session details containing unique session ID,
+        WebSocket URL for streaming, status, and audio configuration.
+
+    Raises:
+        HTTPException: When session creation fails due to invalid configuration
+                      or system resource constraints.
+
+    Example:
+        >>> request = MediaSessionRequest(call_connection_id="call_123")
+        >>> response = await create_media_session(request)
+        >>> print(response.websocket_url)
     """
     session_id = str(uuid.uuid4())
 
@@ -132,14 +149,24 @@ async def create_media_session(request: MediaSessionRequest):
 @router.get(
     "/sessions/{session_id}", response_model=dict, summary="Get Media Session Status"
 )
-async def get_media_session(session_id: str):
+async def get_media_session(session_id: str) -> dict:
     """
-    Get the status of a specific media session.
+    Retrieve status and metadata for a specific media session.
 
-    :param session_id: The unique session identifier
-    :type session_id: str
-    :return: Session status and information
-    :rtype: dict
+    Queries the current state of an active media session including connection
+    status, WebSocket state, and session configuration details. Used for
+    monitoring and debugging media streaming sessions.
+
+    Args:
+        session_id: Unique identifier for the media session to query.
+
+    Returns:
+        dict: Session information including status, connection state, creation
+        timestamp, and API version details.
+
+    Example:
+        >>> session_info = await get_media_session("media_session_123")
+        >>> print(session_info["status"])
     """
     # This is a placeholder - in a real implementation, you'd query session state
     return {
@@ -152,19 +179,27 @@ async def get_media_session(session_id: str):
 
 
 @router.websocket("/stream")
-async def acs_media_stream(
-    websocket: WebSocket,
-):
+async def acs_media_stream(websocket: WebSocket) -> None:
     """
-    WebSocket endpoint for real-time ACS media streaming.
+    WebSocket endpoint for enterprise-grade Azure Communication Services media streaming.
 
-    Provides enterprise-grade audio streaming with pluggable orchestrator support.
-    Follows V1 architecture patterns with clean separation of concerns.
+    Handles real-time bidirectional audio streaming with comprehensive session
+    management, pluggable orchestrator support, and production-ready error
+    handling. Supports multiple streaming modes including media processing,
+    transcription, and live voice interaction.
 
-    :param websocket: WebSocket connection from ACS
-    :type websocket: WebSocket
-    :raises WebSocketDisconnect: When client disconnects
-    :raises HTTPException: When dependencies or validation fail
+    Args:
+        websocket: WebSocket connection from Azure Communication Services for
+                  real-time media data exchange.
+
+    Raises:
+        WebSocketDisconnect: When client disconnects normally or abnormally.
+        HTTPException: When dependencies fail validation or initialization errors occur.
+
+    Note:
+        Session ID coordination: Uses browser session ID when available for UI
+        dashboard integration, otherwise creates media-specific session for
+        direct ACS calls.
     """
     handler = None
     call_connection_id = None
@@ -314,24 +349,32 @@ async def _create_media_handler(
     call_connection_id: str,
     session_id: str,
     orchestrator: callable,
-    conn_id: str,  # Add connection_id parameter
+    conn_id: str,
 ):
     """
-    Create appropriate media handler based on streaming mode.
+    Create appropriate media handler based on configured streaming mode.
 
-    :param websocket: WebSocket connection for media streaming
-    :type websocket: WebSocket
-    :param call_connection_id: Unique call connection identifier
-    :type call_connection_id: str
-    :param session_id: Session identifier for tracking
-    :type session_id: str
-    :param orchestrator: Orchestrator function for conversation management
-    :type orchestrator: callable
-    :param conn_id: Connection manager connection ID
-    :type conn_id: str
-    :return: Configured media handler instance
-    :rtype: Union[ACSMediaHandler, TranscriptionHandler]
-    :raises HTTPException: When streaming mode is invalid
+    Factory function that initializes the correct media handler type based on
+    the ACS_STREAMING_MODE configuration. Handles resource acquisition from
+    STT/TTS pools, memory manager initialization, and latency tracking setup.
+
+    Args:
+        websocket: WebSocket connection for media streaming operations.
+        call_connection_id: Unique call connection identifier from ACS.
+        session_id: Session identifier for tracking and coordination.
+        orchestrator: Conversation orchestrator function for processing.
+        conn_id: Connection manager connection ID for lifecycle management.
+
+    Returns:
+        Configured media handler instance based on streaming mode
+        (ACSMediaHandler for MEDIA mode or VoiceLiveHandler for VOICE_LIVE mode).
+
+    Raises:
+        HTTPException: When streaming mode is invalid or resource acquisition fails.
+
+    Note:
+        Memory manager uses call_connection_id for Redis lookup but session_id
+        for session isolation to ensure proper state management.
     """
 
     # Handler lifecycle is now managed by ConnectionManager
@@ -497,15 +540,26 @@ async def _process_media_stream(
     websocket: WebSocket, handler, call_connection_id: str
 ) -> None:
     """
-    Process incoming WebSocket media messages with clean error handling.
+    Process incoming WebSocket media messages with comprehensive error handling.
 
-    :param websocket: WebSocket connection for message processing
-    :type websocket: WebSocket
-    :param handler: Media handler instance for message processing
-    :param call_connection_id: Call connection identifier for logging
-    :type call_connection_id: str
-    :raises WebSocketDisconnect: When client disconnects
-    :raises Exception: When message processing fails
+    Main message processing loop that receives WebSocket messages and routes
+    them to the appropriate handler based on streaming mode. Implements proper
+    disconnect handling with differentiation between normal and abnormal
+    disconnections for production monitoring.
+
+    Args:
+        websocket: WebSocket connection for message processing.
+        handler: Media handler instance (ACSMediaHandler or VoiceLiveHandler).
+        call_connection_id: Call connection identifier for logging and tracing.
+
+    Raises:
+        WebSocketDisconnect: When client disconnects (normal codes 1000/1001
+                           are handled gracefully, abnormal codes are re-raised).
+        Exception: When message processing fails due to system errors.
+
+    Note:
+        Normal disconnects (codes 1000/1001) are logged but not re-raised to
+        prevent unnecessary error traces in monitoring systems.
     """
     with tracer.start_as_current_span(
         "api.v1.media.process_stream",

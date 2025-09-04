@@ -103,23 +103,42 @@ class ThreadBridge:
 
     def set_main_loop(
         self, loop: asyncio.AbstractEventLoop, call_connection_id: str = None
-    ):
+    ) -> None:
         """
         Set the main event loop reference for cross-thread communication.
 
-        :param loop: Main event loop instance
-        :type loop: asyncio.AbstractEventLoop
+        Establishes the event loop context required for scheduling coroutines
+        from background threads. Essential for barge-in detection and speech
+        result processing coordination between Speech SDK Thread and Main Event Loop.
+
+        Args:
+            loop: Main event loop instance for cross-thread coroutine scheduling.
+            call_connection_id: Optional call connection ID for logging context
+                               and debugging (uses last 8 characters as shorthand).
+
+        Note:
+            Must be called before starting speech recognition to ensure proper
+            cross-thread communication channels are established.
         """
         self.main_loop = loop
         if call_connection_id:
             self.call_id_short = call_connection_id[-8:]
 
-    def schedule_barge_in(self, handler_func: Callable):
+    def schedule_barge_in(self, handler_func: Callable) -> None:
         """
-        Schedule barge-in handler to run on main event loop ASAP.
+        Schedule barge-in handler to execute on main event loop with priority.
 
-        :param handler_func: Barge-in handler function to schedule
-        :type handler_func: Callable
+        Enables immediate interruption handling by scheduling barge-in processing
+        on the main event loop from the Speech SDK Thread. Critical for low-latency
+        voice interaction where user interruptions must be processed immediately.
+
+        Args:
+            handler_func: Callable barge-in handler function to schedule for
+                         execution on the main event loop thread.
+
+        Note:
+            Uses run_coroutine_threadsafe for thread-safe event loop scheduling.
+            Failures are logged but do not raise exceptions to maintain system stability.
         """
         if not self.main_loop or self.main_loop.is_closed():
             logger.warning(
@@ -132,15 +151,25 @@ class ThreadBridge:
         except Exception as e:
             logger.error(f"[{self.call_id_short}] Failed to schedule barge-in: {e}")
 
-    def queue_speech_result(self, speech_queue: asyncio.Queue, event: SpeechEvent):
+    def queue_speech_result(self, speech_queue: asyncio.Queue, event: SpeechEvent) -> None:
         """
-        Queue final speech result for Route Turn Thread processing.
+        Queue final speech recognition result for Route Turn Thread processing.
 
-        :param speech_queue: Async queue for speech events
-        :type speech_queue: asyncio.Queue
-        :param event: Speech event to queue
-        :type event: SpeechEvent
-        :raises RuntimeError: When unable to queue speech event
+        Transfers completed speech recognition events from Speech SDK Thread to
+        Route Turn Thread via asyncio.Queue. Implements fallback mechanisms to
+        prevent event loss during queue operations and maintains system resilience.
+
+        Args:
+            speech_queue: Async queue for speech event transfer between threads.
+            event: Speech recognition event containing final transcription results.
+
+        Raises:
+            RuntimeError: When unable to queue speech event after all fallback
+                         attempts have been exhausted.
+
+        Note:
+            Uses put_nowait for immediate queuing with run_coroutine_threadsafe
+            fallback to prevent blocking the Speech SDK Thread during queue operations.
         """
         try:
             speech_queue.put_nowait(event)

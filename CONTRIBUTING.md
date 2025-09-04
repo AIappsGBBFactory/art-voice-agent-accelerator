@@ -1,4 +1,4 @@
-# Contributing
+# Contributing to ARTVoice Accelerator
 
 This project welcomes contributions and suggestions. Most contributions require you to
 agree to a Contributor License Agreement (CLA) declaring that you have the right to,
@@ -15,203 +15,146 @@ or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any addi
 
 ---
 
-## 🚀 Suggested Workflow for an Effective Development Process
+## Development Workflow
 
-This workflow enables the team to collaboratively build a robust, user-centered software product while upholding high technical and product standards.
+### 1. Start with an Issue
+Create an issue for bugs, feature requests, or enhancements before starting work.
 
-### 1. Start with a New Issue
-Kick off your contribution by creating a new issue in the repository's issue tracker. Use GitHub Issues for tracking bugs and requesting features.
-
-🔗 **[GitHub Issues Quickstart Guide](https://docs.github.com/en/issues/tracking-your-work-with-issues/quickstart#:~:text=Opening%20a%20blank%20issue%201%20On%20GitHub.com%2C%20navigate,uses%20issue%20templates%2C%20click%20Open%20a%20blank%20issue).**
-
----
-
-### 2. Clone the Repository
+### 2. Clone and Setup
 ```bash
-git clone https://github.example.com/{your_project}.git
+git clone https://github.com/pablosalvador10/gbb-ai-audio-agent.git
+cd gbb-ai-audio-agent
 ```
 
----
+### 3. Environment Setup
+The project uses Python 3.11 and Conda for environment management.
 
-### 3. Set Up Your Development Environment
-#### Modify `environment.yaml`
-```yaml
-name: my-template-environment
-channels:
-  - conda-forge
-  - defaults
-dependencies:
-  - python=3.10
-  - pip
-  - pip:
-      - -r requirements.txt
-      - -r requirements-codequality.txt
-```
-
-#### Creating and Activating the Conda Environment
-For Windows:
 ```bash
+# Create and activate environment
 conda env create -f environment.yaml
-conda activate pa-ai-env
+conda activate audioagent
+
+# Install dependencies
+pip install -r requirements.txt
+pip install -r requirements-codequality.txt
 ```
-For Linux (or WSL):
+
+For local development, also see `docs/quickstart-local-development.md`.
+
+### 4. Create a Feature Branch
 ```bash
-make create_conda_env
-conda activate pa-ai-env
+git checkout -b feature/your-feature-name
+# or for bug fixes:
+git checkout -b bugfix/issue-description
 ```
 
----
+**Branching Strategy:**
+- `feature/*` → Development branches
+- `staging` → Testing and validation
+- `main` → Production-ready code
 
-### 4. Create a New Branch for Features or Bug Fixes
+### 5. Development Process
+- Write tests for new functionality
+- Update documentation and docstrings
+- Follow the FastAPI and Python 3.11 patterns established in the codebase
+- Ensure compatibility with Azure services (ACS, Speech, OpenAI)
+
+### 6. Quality Checks
 ```bash
-git checkout -b feature/YourFeatureName_or_bugfix/YourBugFixName
-```
-📌 **Branching Strategy**
-- `feature/new_feature` → Development
-- `staging` → Testing & validation
-- `main` → Production
-
-![Branching Strategy Diagram](utils/images/flow.png)
-
----
-
-### 5. Incorporate Tests and Update Documentation
-- **Unit Tests** → `tests/test_my_module.py`
-- **Integration Tests** → `tests/integration/`
-- **Documentation** → Update docstrings & README
-
----
-
-### 6. Run Tests & Style Checks
-```bash
+# Run all quality checks
 make run_code_quality_checks
+
+# Run tests
 make run_tests
+
+# Start local development
+make start_backend  # FastAPI backend
+make start_frontend # React frontend
 ```
 
----
-
-### 7. Update Requirements & Document Changes
-**Versioning:**
-- **Major (5.0.0)** → Breaking changes
-- **Minor (5.1.0)** → New features
-- **Patch (5.1.4)** → Fixes
-
----
-
-### 8. Commit & Push Your Changes
+### 7. Submit Your Changes
 ```bash
-git commit -m 'TypeOfChange: Brief description of the change'
-git push origin YourBranchName
+git add .
+git commit -m "feat: brief description of change"
+git push origin your-branch-name
 ```
 
----
-
-### 9. Create a Well-Documented Pull Request
-- Open a pull request (PR) targeting either the `staging` or `main` branch.
-- Link to an issue: `Closes #XXX`
-- Follow PR template
-- Await **WG review** & GitHub CI checks
-
-🔗 **[GitHub PR Guide](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests).**
+Create a pull request targeting the appropriate branch with:
+- Clear description of changes
+- Link to related issue (e.g., "Closes #123")
+- Test results and validation steps
 
 ---
 
-## 📦 Additional Setup Steps
-### 🔧 Setting Up VSCode for Jupyter Notebooks
-- Install `Python` & `Jupyter` extensions
-- Attach Conda kernel: `pa-ai-env`
-- Run `01-indexing-content.ipynb`
+## Development Environment Setup
 
-### 🔍 Configuring Pre-commit Hooks
+### VSCode Configuration
+1. Install Python and Jupyter extensions
+2. Select the `audioagent` conda environment as your Python interpreter
+3. Configure settings for FastAPI development
+
+### Pre-commit Hooks
 ```bash
 make set_up_precommit_and_prepush
 ```
 
----
-
-## 💡 Development Tips
-### 🧪 Commit to Testing Early
-- Quick identification of bugs
-- Improves maintainability
-- Understands performance
-
-### 📓 Using `%%ipytest` for Interactive Testing
-```python
-%%ipytest
-def test_add_numbers():
-    assert add_numbers(1, 2) == 3
-    assert add_numbers(-1, 1) == 0
-```
+This sets up automated code quality checks that run before commits.
 
 ---
 
-## 🛠 Working Groups
-Each Working Group (WG) oversees a key area of the project.
+## Project Architecture
 
-| Working Group | Scope |
-|--------------|----------------------------------------------|
-| **Application Deployment WG** | CI/CD, containerization, branching strategy, Cloud provisioning, security, automation |
-| **App Development WG** | Frontend, backend, features, APIs |
-| **AIOps WG** | Prompt engineering, model evaluation, monitoring, extraction |
+### Core Components
+- **FastAPI Backend** → Real-time voice processing with WebSocket support
+- **Azure Communication Services** → Telephony integration
+- **Azure Speech Services** → STT/TTS processing
+- **Azure OpenAI** → LLM inference
+- **React Frontend** → Administrative interface
 
-📌 **WG leads track tasks in GitHub Projects and coordinate with the Steering Committee for releases.**
+### Testing Strategy
+- **Unit Tests** → `tests/test_*.py`
+- **Integration Tests** → End-to-end workflow testing
+- **Load Tests** → Voice pipeline performance validation
 
----
-
-## 🚀 Release Strategy
-### 📋 Release Planning
-- The **Steering Committee** defines release scope
-- **WG leads commit features & fixes**
-- Progress tracked in **GitHub Projects**
-
-### 🔀 Branching Strategy
-- `main` → Stable
-- `release/x.y` → In-progress releases
-- `hotfix/x.y.z` → Critical patches
-
-### 📊 Managing Releases in GitHub Projects
-1. Create **Release Project**
-2. Add issues & PRs
-3. Track progress (`To Do` → `In Progress` → `Done`)
-4. Final validation
-5. **Cut release branch & publish notes**
+### Key Directories
+- `src/` → Core application modules (ACS, Speech, AI, etc.)
+- `apps/rtagent/` → Main application code
+- `infra/` → Infrastructure as Code (Bicep/Terraform)
+- `docs/` → Documentation and guides
 
 ---
 
-## 🔧 Steering Committee
-A **three-person Steering Committee** oversees governance, release planning, and issue resolution.
+## Project Governance
 
-**Responsibilities:**
-- Approving new Working Groups
-- Resolving PR disputes
-- Roadmap alignment
-- Managing cloud resources
+### Maintainers
+| Role | Contributor |
+|------|-------------|
+| **Lead Developer** | [Pablo Salvador Lopez](https://github.com/pablosalvador10) |
+| **Infrastructure Lead** | [Jin Lee](https://github.com/marcjimz) |
 
-📌 **Steering Committee Members:**
-| Member | Working Group |
-|--------|--------------|
-| **[Pablo Salvador Lopez](https://github.com/pablosalvador10)** | App Development |
-| **[Marcin Jimenez](https://github.com/marcjimz)** | AIOps |
-| **[Jin Lee](https://github.com/marcjimz)** | App Deployment |
+### Pull Request Process
+1. All PRs require maintainer review
+2. CI checks must pass (tests, linting, security scans)
+3. Documentation updates required for new features
+4. Breaking changes require version bump discussion
+
+### Release Process
+- **Major** → Breaking API changes
+- **Minor** → New features, backward compatible
+- **Patch** → Bug fixes and improvements
+
+Releases are managed through GitHub releases with automated deployment via Azure DevOps.
 
 ---
 
-## 💬 Communication Channels
-| Platform | Purpose |
+## Getting Help
+
+| Resource | Purpose |
 |----------|---------|
-| **Microsoft Teams** | Discussions & announcements |
-| **GitHub Issues** | Bugs, features, proposals |
-| **GitHub PRs** | Code reviews & merges |
-| **GitHub Projects** | Task & release tracking |
-
-📌 **Pending: We hold bi-weekly/monthly syncs for updates, demos, and proposals.**
+| **GitHub Issues** | Bug reports and feature requests |
+| **GitHub Discussions** | Questions and community support |
+| **Documentation** | `docs/` folder for technical guides |
 
 ---
 
-### 🌟 Summary
-✅ **Follow the structured workflow**
-✅ **Test early & update documentation**
-✅ **Engage in PR reviews & WG discussions**
-✅ **Stay connected via Teams & GitHub**
-
-💙 *We appreciate all contributions! Your efforts make this project stronger!* 🚀
+**Thank you for contributing to ARTVoice Accelerator!** Your contributions help advance real-time voice AI capabilities.

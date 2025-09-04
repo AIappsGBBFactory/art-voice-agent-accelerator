@@ -1,393 +1,151 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-# 🎙️ **RTVoice Accelerator**  
-*Omni-channel, real-time voice-intelligence accelerator framework on Azure*
+# **ARTVoice Accelerator Framework**
 
-**ARTAgent** is an accelerator that delivers a friction-free, AI-driven voice experience—whether callers dial a phone number, speak to an IVR, or click “Call Me” in a web app. Built entirely on generally available Azure services—Azure Communication Services, Azure AI, and Azure App Service—it provides a low-latency stack that scales on demand while keeping the AI layer fully under your control.
+> **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
 
-Design a single agent or orchestrate multiple specialist agents (claims intake, authorization triage, appointment scheduling—anything). The framework allows you to build your voice agent from scratch, incorporate long- and short-term memory, configure actions, and fine-tune your TTS and STT layers to give any workflow an intelligent voice.
+<img src="utils/images/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
 
-## **Overview** 
+You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
 
-<img src="utils/images/RTAGENT.png" align="right" height="180" alt="ARTAgent Logo" />
+<details closed>
+<summary><h3>The what and why behind this accelerator</h3></summary>
 
-> **88 %** of customers still make a **phone call** when they need real support  
-> — yet most IVRs feel like 1999. **ARTAgent** fixes that.
+## **What you get**
 
-**ARTAgent in a nutshell**
+- **Omnichannel, including first-class telephony**. Azure Communication Services (ACS) integration for PSTN, SIP transfer, IVR/DTMF routing, and number provisioning—extendable for contact centers and custom IVR trees.
 
-RT Agent is a plug-and-play accelerator, voice-to-voice AI pipeline that slots into any phone line, web client, or CCaaS flow. Caller audio arrives through Azure Communication Services (ACS), is transcribed by a dedicated STT component, routed through your agent chain of LLMs, tool calls, and business logic, then re-synthesised by a TTS component—all in a sub-second round-trip. Because each stage runs as an independent microservice, you can swap models, fine-tune latency budgets, or inject custom logic without touching the rest of the stack. The result is natural, real-time conversation with precision control over every hop of the call.
+- **Transport that scales**. FastAPI + WebSockets for true bidirectional streaming; runs locally and scales out in Kubernetes. Leverages ACS bidirectional media streaming for low-latency ingest/playback (barge-in ready), with helper classes to wire your UI WebSocket client or loop back into ACS— the plumbing is done for you.
 
-<img src="utils/images/RTAgentArch.png" alt="ARTAgent Logo" />
+- **Model freedom**. Use GPT-family or your provider of choice behind a slim adapter; swap models without touching the transport.
+
+- **Clear seams for customization**. Replace code, switch STT/TTS providers, add tool routers, or inject domain policies—without tearing down the whole app.
+
+### **Choose your voice inference pipeline (voice‑to‑voice):**
+
+- **Build from scratch (maximum control).** Use our AI inference layer and patterns to wire STT → LLM → TTS with your preferred Azure services and assessments. Own the event loop, intercept any step, and tailor latency/quality trade-offs for your use case. Ideal for on‑prem/hybrid, strict compliance, or deep customization.
+
+- **Managed path (ship fast, enterprise‑ready).** Leverage the latest addition to the Azure AI family—Azure Voice Live API (preview)—for voice-to-voice media, and connect to Azure AI Foundry Agents for built-in tool/function calling. Keep your hooks; let Azure AI Foundry handle the media layer, scaling, noise suppression, and barge-in.
+
+- **Bring your own voice‑to‑voice model.** Drop in your model behind(e.g., latest gpt‑realtime or equivalent). Transport/orchestration (including ACS telephony) stays the same—no app changes.
+
+*The question of the century: Is it production-ready?*
+
+“Production” means different things, but our intent is clear: this is an accelerator—it gets you ~80% of the way with battle-tested plumbing. You bring the last mile: hardening, infrastructure policies, security posture, SRE/DevOps, and your enterprise release process.
+
+We ship the scaffolding to make that last mile fast: structured logging, metrics/tracing hooks, and a load-testing harness so you can profile end-to-end latency and concurrency, then tune or harden as needed to reach your target volume.
+
+</details>
+
+## **Demo, Demo, Demo..**
+
+
+
+## **The How (Architecture)**
+
+Pick one of three ways to run the voice inference layer—the rest of the framework (transport, orchestration, ACS telephony, UI wiring) stays the same. Choose based on control vs. speed vs. portability.
+
+<details>
+<summary><strong>Build the AI voice pipeline from scratch (maximum control)</strong></summary>
+<br>
+<img src="utils/images/ARTAgentarch.png" alt="ARTAgent Arch" />
+
+- **Own the event loop**: STT → LLM/Tools → TTS, with granular hooks.
+- **Swap services per stage**: Azure Speech, Azure OpenAI, etc.
+- **Tune for your SLOs**: latency budgets, custom VAD, barge-in, domain policies.
+- **Deep integration**: ACS telephony, Event Hubs, Cosmos DB, FastAPI/WebSockets, Kubernetes, observability, custom memory/tool stores.
+- **Best for**: on-prem/hybrid, strict compliance, or heavy customization.
+
+</details>
+
+<details>
+<summary><strong>Use Azure Voice Live API + Azure AI Foundry Agents (ship fast)</strong></summary>
+<br>
+
+> [!NOTE]
+> WIP/Preview: Azure Voice Live API is in preview; behavior and APIs may change.
 
 <br>
 
-| What you get | How it helps |
-|--------------|--------------|
-| **Sub-second loop** (STT → LLM/Tools → TTS) | Conversations feel human, not robotic latency-ridden dialogs. |
-| **100 % GA Azure stack** | No private previews, no hidden SKUs—easy procurement & support. |
-| **Drop-in YAML agents** | Spin up FNOL claims bots, triage nurses, or legal intake in minutes. |
-| **Micro-service architecture** | Swap models, tune latency, or add new business logic without redeploying the whole stack. |
+<img src="utils/images/LIVEVOICEApi.png" alt="LIVEVOICEApi" />
 
-## Deploy and Customize the Demo App Using the ARTAgent Framework
+ - **Enterprise Managed voice-to-voice**: barge-in, noise suppression, elastic scale.
+ - **Agent runtime**: connect to Azure AI Foundry Agents for built-in tool/function calling and orchestration.
+ - **Built-ins**: tool store, guardrails/evals, threads/memory patterns, APIM gateway options.
+ - **Keep your hooks**: reduce ops surface and move faster to pilot/production.
 
-### **🚀 One-Command Azure Deployment**
+ **Key differences vs. from-scratch**
 
-Provision the full solution—including App Gateway, Container Apps, Cosmos DB, Redis, OpenAI, and Key Vault—with a single command:
+ - Media layer and agent runtime are managed (less infra to own).
+ - Faster “happy-path” to omnichannel via ACS, while still supporting your policies and extensions.
+ - Great fit when you want speed, scale and consistency without giving up critical integration points.
+
+</details>
+
+<details>
+<summary><strong>Bring your own voice-to-voice model (e.g., gpt-realtime) — coming soon</strong></summary>
+
+> [!NOTE]
+> Coming soon: This adapter path is under active development.
+
+- Plug a BYO voice-to-voice model behind a slim adapter; no changes to transport/orchestration.
+- ACS telephony path remains intact.
+
+
+</details>
+
+## **Getting started**
+
+> [!TIP]
+> Not an Infra-as-Code person? Start by skimming docs/DeploymentGuide.md. You’ve got two easy deploy paths—azd (one-command) or Terraform + Makefile— but the guide also can help youto deploy the same template from the Azure Portal UI. Once your cloud resources are up, follow docs/quickstart-local-development.md for a step-by-step local run.
+
+### **Understand the Repository map (high‑level)**
+
+```
+📁 apps/rtagent/           # Main application
+  ├── 🔧 backend/          # FastAPI + WebSockets voice pipeline
+  ├── 🌐 frontend/         # Vite + React demo client
+  └── 📜 scripts/          # Helper launchers (backend, frontend, tunnel)
+
+📁 src/                    # Core libraries (ACS, Speech, AOAI, Redis, Cosmos, VAD, tools, prompts)
+
+📁 samples/                # Hands-on tutorials and examples (hello_world, labs)
+
+📁 infra/                  # Infrastructure as Code
+  ├── 🔷 bicep/            # Azure Bicep modules
+  └── 🏗️ terraform/        # Terraform modules
+
+📁 docs/                   # Guides and references (architecture, getting started, troubleshooting)
+
+📁 tests/                  # Pytest suite and load testing framework
+
+📁 utils/                  # Logging/telemetry helpers and images
+```
+
+> [!NOTE]
+> Need a deeper map (up to 5 levels) and exact local run steps? See [`docs/repo-structure.md`](docs/repo-structure.md).
+
+### **Deploy and Customize the Demo App Using the ARTAgent Framework**
+
+Already have infra deployed? You can skip azd and run locally using the Quickstart — see `docs/quickstart-local-development.md`.
+
+> [!IMPORTANT]
+> Prerequisites for azd deployment:
+> - Azure Developer CLI installed and logged in (`azd auth login`)
+> - Active subscription selected in Azure CLI (`az account show`)
+> - Sufficient permissions to create resource groups and resources
+
+Provision the complete Azure stack—including **App Gateway**, **Container Apps**, **Cosmos DB**, **Redis Cache**, **Azure OpenAI**, **Speech Services**, **Key Vault**, **Application Insights**, **Log Analytics**, **Azure Communication Services**, **Event Grid**, and **Storage Account**—with a single command:
 
 ```bash
 azd auth login
 azd up   # ~15 min for complete infra and code deployment
 ```
 
-**Key Features:**
-- TLS managed by Key Vault and App Gateway
-- KEDA auto-scales RT Agent workers
-- All outbound calls remain within a private VNet
-
 For a detailed deployment walkthrough, see [`docs/DeploymentGuide.md`](docs/DeploymentGuide.md).
 
-### 🎯 **Quick Reference: Common Commands**
-
-```bash
-# Full deployment 
-export ARM_SUBSCRIPTION_ID="your-subscription-id"
-cd infra/terraform 
-terraform init
-terraform apply 
-cd ../.. 
-
-# Environment management
-make generate_env_from_terraform    # Extract config from Terraform
-make update_env_with_secrets        # Add Key Vault secrets  
-make show_env_file                  # View current environment
-
-# Deploy applications  
-make deploy_backend                 # Deploy FastAPI backend
-make deploy_frontend                # Deploy Vite/React frontend
-
-# Monitor deployments (enhanced with timeout handling)
-make monitor_backend_deployment     # Backend deployment status
-make monitor_frontend_deployment    # Frontend deployment status  
-
-# ACS phone setup
-make purchase_acs_phone_number      # Purchase phone number
-
-# Get help
-make help                           # Show all available targets
-```
-
-**💡 Pro Tips:**
-- Large frontend deployments may timeout after 15 minutes but continue in background
-- Use monitoring commands to check deployment progress  
-- Install 'Azure App Service' VS Code extension for easy log streaming
-- All sensitive values are automatically stored in Azure Key Vault
-
-**Project Structure Highlights:**
-
-| Path                | Description                                 |
-|---------------------|---------------------------------------------|
-| apps/rtagent/backend| FastAPI + WebSocket voice pipeline          |
-| apps/rtagent/frontend| Vite + React demo client                   |
-| apps/rtagent/scripts| Helper launchers (backend, frontend, tunnel)|
-| infra/              | Bicep/Terraform IaC                        |
-| docs/               | Architecture, agents, tuning guides         |
-| tests/              | Pytest suite                               |
-| Makefile            | One-line dev commands                       |
-| environment.yaml    | Conda environment spec (name: audioagent)   |
-
-
-**Prerequisites:** 
-- Infra deployed (above)
-- Python 3.11 
-- Node.js ≥ 22
-- Azure CLI
-- [Azure Dev Tunnels](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started?tabs=windows)
-
-
-**Backend (FastAPI + Uvicorn):**
-```bash
-git clone https://github.com/your-org/gbb-ai-audio-agent.git
-cd gbb-ai-audio-agent/rtagents/ARTAgent/backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-make generate_env_from_terraform  # Generate .env from Terraform outputs
-cp .env.<env name> .env   # Configure ACS, Speech, and OpenAI keys
-
-devtunnel host -p 8010 --allow-anonymous  # Start dev tunnel for local testing
-make start_backend
-```
-
-> 💡 **Having issues?** Check the [troubleshooting guide](docs/Troubleshooting.md) for common setup problems and solutions.
-
-**Frontend (Vite + React):**
-```bash
-make start_frontend
-```
-
-## **Deployment on Azure**
-
-### 🚀 **Quick Start (Recommended)**
-
-The fastest way to deploy ARTAgent is using Azure Developer CLI:
-
-```bash
-azd auth login
-azd up         # Complete infra + code deployment (~15 min)
-```
-
-### 🛠️ **Alternative Deployment: Terraform + Makefile**
-
-For environments where `azd` is not available or when you need more infrastructure control, use our streamlined Terraform + Makefile approach:
-
-#### **Prerequisites**
-- Azure CLI installed and authenticated (`az login`)
-- Terraform installed
-- Make utility available
-
-#### **Step-by-Step Deployment**
-
-##### 1. **Environment Setup**
-```bash
-# Set your Azure subscription ID
-export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-export AZURE_ENV_NAME="dev"  # Optional: defaults to 'dev'
-
-# Configure Terraform variables
-cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
-# Edit terraform.tfvars with your subscription and region preferences
-```
-
-##### 2. **Infrastructure Deployment**
-```bash
-cd infra/terraform
-terraform init
-terraform apply
-cd ../..  # Return to repo root
-```
-
-##### 3. **Environment Configuration**
-```bash
-# Generate .env file from Terraform outputs and Key Vault secrets
-make generate_env_from_terraform
-make update_env_with_secrets
-```
-##### 4. **Application Deployment**
-```bash
-# Deploy both backend and frontend apps to Azure App Service
-make deploy_backend
-make deploy_frontend
-```
-
-> **⚠️ IMPORTANT:**  
-> **Don't forget to purchase your ACS phone number and update configuration:**
-> **YOUR BACKEND WILL NOT WORK WITHOUT THIS NUMBER**
-> - For **local development**, purchase the number and add it to your `.env` file as `ACS_SOURCE_PHONE_NUMBER`.
-> - For **Azure App Service deployments**, update `acs_source_phone_number` in your `terraform.tfvars` and re-run `terraform apply` to propagate the change.
-> - Alternatively, you can set the ACS phone number manually using the Azure CLI if needed.
-
-##### 5. **REQUIRED: Phone Number Setup**
-```bash
-# Purchase an ACS phone number for voice calls via Python script
-make purchase_acs_phone_number
-```
-
-> To purchase a number via the Azure Portal:
-> https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/telephony/get-phone-number?tabs=windows&pivots=platform-azcli"
-
-> ⚠️ **Phone number issues?** If you encounter problems with ACS calling or phone number setup, see the [ACS troubleshooting section](docs/Troubleshooting.md#acs-azure-communication-services-issues) for detailed solutions.
-
-#### **🎯 One-Command Full Deployment**
-
-Once your environment variables are set, you can deploy everything with:
-
-```bash
-# Complete end-to-end deployment
-cd infra/terraform && terraform apply && cd ../.. && \
-make generate_env_from_terraform && \
-make update_env_with_secrets && \
-make deploy_backend && \
-make deploy_frontend
-```
-
-#### **📊 Deployment Monitoring**
-
-Our enhanced Makefile includes comprehensive deployment monitoring:
-
-```bash
-# Monitor any deployment in progress
-make monitor_deployment WEBAPP_NAME=<app-name>
-
-# Monitor specific apps using Terraform outputs
-make monitor_backend_deployment
-make monitor_frontend_deployment
-```
-
-**Deployment Timeouts:** Large deployments may take 10-15 minutes. If you see timeout messages, the deployment continues in the background. Use the monitoring commands above to check status.
-
-#### **🔧 Available Make Targets**
-
-**Quick Reference:**
-```bash
-make help                          # Show all available targets
-
-# Environment Management
-make generate_env_from_terraform   # Extract config from Terraform
-make update_env_with_secrets      # Add Key Vault secrets
-make show_env_file               # Display current environment
-
-# Application Deployment  
-make deploy_backend              # Deploy FastAPI backend
-make deploy_frontend             # Deploy Vite/React frontend
-make monitor_backend_deployment  # Monitor backend deployment
-make monitor_frontend_deployment # Monitor frontend deployment
-
-# ACS Phone Numbers
-make purchase_acs_phone_number   # Purchase phone number
-```
-
-#### **🪟 Windows Support**
-
-Windows users can use PowerShell equivalents:
-
-```powershell
-# Set environment variables
-$env:ARM_SUBSCRIPTION_ID = "<your-subscription-id>"
-$env:AZURE_ENV_NAME = "dev"
-
-# Use PowerShell-specific targets
-make generate_env_from_terraform_ps
-make update_env_with_secrets_ps
-make purchase_acs_phone_number_ps
-```
-
-#### **🚨 Troubleshooting**
-
-**Common Issues:**
-
-- **Timeout Errors:** Large frontend builds (Vite) take 5-15 minutes. Use `make monitor_frontend_deployment` to check status.
-- **Azure CLI Auth:** Run `az login` and `az account set --subscription "<subscription-id>"`
-- **Key Vault Access:** Ensure your user has Key Vault Secrets User role
-- **VS Code Integration:** Install 'Azure App Service' extension for easy log streaming
-
-**Getting Help:**
-- Run `make help` for all available commands
-- Use monitoring targets to check deployment progress
-- View deployment logs in Azure Portal or VS Code
-- **📖 For detailed troubleshooting steps, see [`docs/Troubleshooting.md`](docs/Troubleshooting.md)**
-
-#### **✨ Benefits of This Approach**
-
-- **🎯 Simplified:** Streamlined commands with intelligent defaults
-- **📊 Monitoring:** Built-in deployment monitoring and error handling  
-- **🔒 Secure:** Uses Azure Key Vault for all sensitive values
-- **⚡ Fast:** Optimized deployment artifacts with timeout handling
-- **🖥️ Cross-Platform:** Works on Windows, macOS, and Linux
-- **🔄 Resumable:** Failed deployments can be easily retried
-
-## **📚 Documentation**
-
-### **🌟 Beautiful API Documentation**
-
-We've created comprehensive, beautiful documentation using MkDocs Material that automatically generates from our enhanced docstrings:
-
-**🌐 [View Live Documentation](https://pablosalvador10.github.io/gbb-ai-audio-agent/)**
-
-### **📖 What's Included**
-
-- **🚀 Quick Start Guide:** Get up and running in minutes
-- **📋 Complete API Reference:** Auto-generated from docstrings with examples
-- **🏗️ Architecture Overview:** System design and component relationships  
-- **🔧 Configuration Guide:** Detailed setup and deployment options
-- **💡 Examples & Tutorials:** Real-world usage patterns
-- **🔍 Troubleshooting:** Common issues and solutions
-
-### **🛠️ Local Documentation Development**
-
-Build and serve documentation locally:
-
-```bash
-# Linux/macOS
-chmod +x serve-docs.sh
-./serve-docs.sh
-
-# Windows
-serve-docs.bat
-```
-
-This will:
-1. Install documentation dependencies
-2. Build the site with mkdocstrings
-3. Start a local server at `http://127.0.0.1:8000`
-4. Auto-reload when you make changes
-
-### **📝 Documentation Features**
-
-- **📱 Responsive Design:** Beautiful on desktop and mobile
-- **🔍 Full-Text Search:** Find anything instantly
-- **🎨 Syntax Highlighting:** Code examples with copy buttons
-- **🔗 Cross-References:** Navigate between related components
-- **📊 Interactive Examples:** Live code samples you can modify
-
-### **🤖 Auto-Generated API Docs**
-
-Our documentation automatically includes:
-
-#### SpeechSynthesizer
-- Complete method documentation with examples
-- Parameter descriptions and types
-- Return value specifications
-- Error handling patterns
-- Performance considerations
-
-#### StreamingSpeechRecognizer  
-- Real-time recognition capabilities
-- Callback system documentation
-- Language detection features
-- Session management patterns
-
-#### Utility Functions
-- Text processing helpers
-- SSML generation tools
-- Authentication utilities
-
-### **📚 Additional Resources**
-
-| Resource | Description |
-|----------|-------------|
-| [Architecture Guide](docs/Architecture.md) | System design and data flow |
-| [Azure Integration](docs/AzureIntegration.md) | Service dependencies and configuration |
-| [Troubleshooting](docs/Troubleshooting.md) | Common issues and solutions |
-| [Load Testing](docs/LoadTesting.md) | Performance testing guides |
-
-### **🔄 Documentation Deployment**
-
-Documentation automatically deploys to GitHub Pages when you push to `main`:
-
-1. **GitHub Actions** builds the site from your docstrings
-2. **mkdocstrings** extracts API documentation  
-3. **GitHub Pages** hosts the beautiful site
-4. **Auto-updates** whenever code changes
-
-## **Load & Chaos Testing**
-Worried about the solution’s ability to scale under your application’s load? Here’s a guide to help you with horizontal scaling tests...
-
-
-Targets: **<500 ms STT→TTS • 1k+ concurrent calls • >99.5 % success** (WIP)
-
-```bash
-az load test run --test-plan tests/load/azure-load-test.yaml
-```
-
-Additional load test scripts (Locust, Artillery) are available in [`docs/LoadTesting.md`](docs/LoadTesting.md).
-
-## **Roadmap**
-- Live Agent API integration
-- Multi-modal agents (documents, images)
-
 ## **Contributing**
-PRs & issues welcome—see `CONTRIBUTING.md` and run `make pre-commit` before pushing.
+PRs & issues welcome—see `CONTRIBUTING.md` before pushing.
 
 ## **License & Disclaimer**
 Released under MIT. This sample is **not** an official Microsoft product—validate compliance (HIPAA, PCI, GDPR, etc.) before production use.

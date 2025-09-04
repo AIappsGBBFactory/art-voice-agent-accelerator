@@ -1,103 +1,44 @@
-# **Real-Time Voice Agent Application**
+# **ARTVoice Applications**
 
-**Enterprise AI voice system** - Multi-agent orchestration with Azure Communication Services integration.
+**Real-time voice agents** with FastAPI backend and React frontend. Multi-agent orchestration with Azure Communication Services integration.
 
-## **🏗️ Architecture Overview**
+## **Architecture**
 
 ```
 Phone/Browser → ACS/WebSocket → FastAPI Backend → Multi-Agent AI → Azure Services
 ```
 
-**Core Components:**
-- **Frontend**: React client for voice interaction
-- **Backend**: Websocket -> FastAPI + ARTAgent framework for multi-agent orchestration  
-- **Infrastructure**: Azure ACS, Speech, OpenAI, Redis, CosmosDB
-
-## **📁 Project Structure & Navigation**
+## **Structure**
 
 ```
 apps/rtagent/
-├── backend/                    # FastAPI + ARTAgent framework
-│   ├── main.py                # 🚀 Backend entry point - START HERE
-│   ├── src/
-│   │   ├── agents/            # 🤖 Multi-agent system
-│   │   │   ├── agent_store/   # Agent YAML configurations
-│   │   │   ├── prompt_store/  # Agent prompt templates
-│   │   │   └── orchestrator/  # Agent routing logic
-│   │   ├── speech/            # 🎙️ Speech-to-Text/Text-to-Speech
-│   │   ├── redis/             # 💾 Session state management
-│   │   ├── aoai/              # 🧠 Azure OpenAI integration
-│   │   └── api/               # 🌐 REST/WebSocket endpoints
-│   ├── config/                # ⚙️ Configuration files
-│   ├── requirements.txt       # Python dependencies
-│   └── .env.sample           # Environment template
-├── frontend/                  # React + WebSocket client
-│   ├── src/
-│   │   ├── components/        # 🎨 UI components
-│   │   │   ├── App.jsx       # 🚀 Main React component - START HERE
-│   │   │   └── wip/          # Work-in-progress components
-│   │   ├── hooks/            # 🔗 WebSocket and audio hooks
-│   │   │   └── index.js      # Custom React hooks
-│   │   └── main.jsx          # React entry point
-│   ├── package.json          # Node.js dependencies
-│   └── .env.sample          # Frontend environment template
-└── scripts/                  # 🛠️ Setup and deployment utilities
-    ├── start_backend.py      # Backend startup with validation
-    ├── start_frontend.sh     # Frontend development server
-    └── start_devtunnel_host.sh  # ACS webhook tunnel
+├── backend/           # FastAPI + multi-agent framework
+│   ├── main.py       # 🚀 Entry point
+│   ├── src/agents/   # 🤖 ARTAgent, LVAgent, FoundryAgents
+│   ├── api/          # 🌐 REST/WebSocket endpoints
+│   └── config/       # ⚙️ Voice, features, limits
+├── frontend/         # React + WebSocket client
+│   ├── src/components/  # 🎨 UI and voice controls
+│   └── src/hooks/      # 🔗 WebSocket and audio hooks
+└── scripts/          # 🛠️ Development utilities
 ```
 
-### **🎯 Where to Find What**
+## **Quick Reference**
 
-| **What You Need** | **File Location** | **Purpose** |
-|-------------------|-------------------|-------------|
-| **Start backend** | `backend/main.py` | FastAPI app entry point |
-| **Start frontend** | `frontend/src/main.jsx` | React app entry point |
-| **Add new agent** | `backend/src/agents/agent_store/` | YAML agent configs |
-| **Modify prompts** | `backend/src/agents/prompt_store/` | Agent prompt templates |
-| **ACS integration** | `backend/src/acs/` | Phone call handling |
-| **WebSocket logic** | `backend/src/api/` | Real-time endpoints |
-| **React components** | `frontend/src/components/` | UI and voice controls |
-| **Audio processing** | `frontend/src/hooks/` | WebSocket and audio hooks |
-| **Configuration** | `backend/config/` | Voice, feature flags, limits |
-| **Environment setup** | `.env.sample` files | Required credentials |
+| **Task** | **Location** |
+|----------|--------------|
+| Start backend | `backend/main.py` |
+| Start frontend | `frontend/src/main.jsx` |
+| Agent configs | `backend/src/agents/*/agent_store/` |
+| Voice settings | `backend/config/voice_config.py` |
+| UI components | `frontend/src/components/` |
+| Environment setup | `.env.sample` files |
 
-### **🔍 Key Files**
+## **Key Endpoints**
 
-**Backend Core:**
-- `backend/main.py` - FastAPI app, WebSocket routes, startup logic
-- `backend/src/agents/orchestrator/` - Multi-agent routing and decisions
-- `backend/src/acs/call_handler.py` - Phone call lifecycle management
-- `backend/src/api/websocket.py` - Real-time audio streaming endpoints
-
-**Frontend Core:**
-- `frontend/src/components/App.jsx` - Main UI, WebSocket connection, audio processing
-- `frontend/src/hooks/index.js` - WebSocket management and audio capture hooks
-- `frontend/package.json` - Dependencies including @azure/communication-calling
-
-**Configuration:**
-- `backend/config/voice_config.py` - TTS voices, STT parameters
-- `backend/config/feature_flags.py` - Enable/disable functionality
-- `backend/.env` - Azure credentials and service endpoints
-
-
-## **📞 Azure Communication Services (ACS) Integration**
-
-### **Phone Call Flow**
-```
-PSTN Call → ACS Phone Number → Bidirectional Streaming → Media Streaming → FastAPI Backend
-```
-
-**ACS Components:**
-1. **Call Automation**: Handles incoming PSTN calls, call routing, and telephony controls
-2. **Media Streaming**: Real-time audio stream from caller to backend via WebSocket
-3. **Phone Numbers**: Azure-provisioned phone numbers for public access
-4. **Callback Webhooks**: ACS sends call events to backend for processing
-
-**Key Endpoints:**
-- `POST /api/v1/acs/events` - Receives ACS call events (answer, hangup, etc.)
-- `WS /api/v1/media/stream` - Real-time audio streaming from ACS to backend
-- `GET /api/v1/acs/health` - ACS service connectivity status
+- **WebSocket**: `/api/v1/media/stream` - Real-time audio
+- **ACS Events**: `/api/v1/acs/events` - Phone call handling
+- **Health**: `/health` - Service status
 
 ### **Call Processing Pipeline**
 1. **Caller dials Azure phone number** → ACS receives call

@@ -49,13 +49,21 @@ logger = get_logger("v1.api.handlers.acs_lifecycle")
 tracer = trace.get_tracer(__name__)
 
 
-def safe_set_span_attributes(span, attributes: dict):
+def safe_set_span_attributes(span, attributes: dict) -> None:
     """
-    Safely set span attributes without errors.
+    Safely set OpenTelemetry span attributes without raising exceptions.
 
-    :param span: OpenTelemetry span instance
-    :param attributes: Dictionary of attributes to set
-    :type attributes: dict
+    Defensive method that validates span state and recording status before
+    attempting to set attributes. Prevents span operation failures from
+    disrupting call processing in production environments.
+
+    Args:
+        span: OpenTelemetry span instance to update.
+        attributes: Dictionary of attribute key-value pairs to set on the span.
+
+    Note:
+        Logs debug messages on failure but does not raise exceptions to
+        maintain system stability when tracing is misconfigured.
     """
     try:
         if span and span.is_recording():
@@ -68,13 +76,20 @@ def _safe_get_event_data(event: CloudEvent) -> Dict[str, Any]:
     """
     Safely extract data from CloudEvent object as a dictionary.
 
-    CloudEvent.data can be various types (dict, str, bytes, etc.).
-    This function ensures we always get a dictionary we can call .get() on.
+    CloudEvent.data can be various types (dict, str, bytes, etc.). This function
+    ensures consistent dictionary access regardless of the original data format,
+    with comprehensive error handling for malformed event data.
 
-    :param event: CloudEvent object from Azure
-    :type event: CloudEvent
-    :return: Dictionary containing event data, empty dict if parsing fails
-    :rtype: Dict[str, Any]
+    Args:
+        event: CloudEvent object from Azure Communication Services.
+
+    Returns:
+        Dict[str, Any]: Dictionary containing event data, empty dict if
+        parsing fails or data format is unsupported.
+
+    Note:
+        Handles JSON strings, byte arrays, and object attributes gracefully.
+        Returns empty dictionary as fallback to prevent downstream errors.
     """
     try:
         data = event.data
@@ -110,16 +125,19 @@ def _safe_get_event_data(event: CloudEvent) -> Dict[str, Any]:
 
 def _get_event_field(event: CloudEvent, field_name: str, default: Any = None) -> Any:
     """
-    Safely get a field from CloudEvent data.
+    Safely extract a specific field from CloudEvent data with fallback handling.
 
-    :param event: CloudEvent object
-    :type event: CloudEvent
-    :param field_name: Name of field to extract
-    :type field_name: str
-    :param default: Default value if field not found
-    :type default: Any
-    :return: Field value or default
-    :rtype: Any
+    Convenience method that combines event data extraction with field access,
+    providing consistent error handling and default value support for
+    CloudEvent field processing.
+
+    Args:
+        event: CloudEvent object containing the data to extract from.
+        field_name: Name of the field to extract from the event data.
+        default: Default value to return if field is not found or extraction fails.
+
+    Returns:
+        Any: Field value if found, otherwise the default value.
     """
     data = _safe_get_event_data(event)
     return data.get(field_name, default)
@@ -150,15 +168,21 @@ class ACSLifecycleHandler:
         redis_mgr=None,
     ) -> None:
         """
-        Emit a call event through the V1 event system.
+        Emit a call event through the V1 event system for asynchronous processing.
 
-        :param event_type: Type of event to emit
-        :type event_type: str
-        :param call_connection_id: Call connection ID
-        :type call_connection_id: str
-        :param data: Event data
-        :type data: Dict[str, Any]
-        :param redis_mgr: Redis manager for state access
+        Creates and processes CloudEvent instances through the call event processor
+        to enable decoupled call lifecycle management. Provides error isolation
+        to prevent event processing failures from disrupting call operations.
+
+        Args:
+            event_type: Type of event to emit (e.g., 'call.initiated', 'call.ended').
+            call_connection_id: Unique call connection identifier for event correlation.
+            data: Additional event data payload to include with the base call information.
+            redis_mgr: Redis manager instance for state access during event processing.
+
+        Note:
+            Uses mock request state for event processing to maintain compatibility
+            with existing event processor interfaces while supporting new lifecycle patterns.
         """
         try:
             from azure.core.messaging import CloudEvent
