@@ -1,190 +1,219 @@
 # Changelog
 
-This file meticulously documents all noteworthy changes made to this project.
+This file documents all noteworthy changes made to the ARTVoice Accelerator project.
 
-> **Format Adherence**: This changelog is structured based on the principles outlined in [Keep a Changelog](https://keepachangelog.com/en/1.0.0). To comprehend the formatting and categorization of changes, readers are encouraged to familiarize themselves with this standard.
+> **Format Adherence**: This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0) principles for consistent change documentation.
 
-> **Versioning Protocol**: The project strictly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (SemVer). SemVer is a versioning scheme for software that aims to convey meaning about the underlying changes with each new release. For details on the version numbering convention, please refer to the [official SemVer specification](https://semver.org/spec/v2.0.0.html).
+> **Versioning Protocol**: The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (SemVer) for meaningful version numbering.
+
+## [1.0.1] - 2025-09-03
+
+Major architectural enhancement with Live Voice API integration and comprehensive development framework improvements.
+
+### Added
+- **Live Voice API Integration**: Complete Azure AI Speech Live Voice API support with real-time streaming capabilities
+- **Multi-Agent Architecture**: Restructured agent framework with ARTAgent, Live Voice Agent, and AI Foundry Agents support
+- **Enhanced Load Testing**: Comprehensive conversation-based load testing framework with Locust integration
+- **Developer Documentation**: Added local development quickstart guide with step-by-step setup instructions
+- **Audio Generation Tools**: Standalone audio file generators for testing and validation workflows
+- **GPT-4.1-mini Support**: Updated model routing to support latest OpenAI models with optimized performance
+
+### Enhanced
+- **Agent Organization**: Refactored agent structure into domain-specific modules (ARTAgent, LVAgent, FoundryAgents)
+- **WebSocket Debugging**: Advanced WebSocket response debugging and audio extraction capabilities
+- **Model Selection**: Intelligent model routing between O3-mini and GPT-4.1-mini based on complexity requirements
+- **DTMF Processing**: Improved dual-tone multi-frequency tone handling with enhanced error recovery
+- **Infrastructure Deployment**: Streamlined Terraform configurations with container app resource optimization
+- **Testing Framework**: Modernized load testing with conversation simulation and performance analytics
+
+### Fixed
+- **API Response Handling**: Resolved 400 error patterns in tool call processing and model interactions
+- **Audio Buffer Management**: Optimized audio processing pipeline to prevent race conditions and memory leaks
+- **Container App Configuration**: Fixed resource limits and scaling parameters for production workloads
+- **Deployment Scripts**: Enhanced error handling and validation in automated deployment processes
+
+### Infrastructure
+- **Azure AI Speech Integration**: Native support for Live Voice API streaming protocols
+- **Enhanced Monitoring**: Improved diagnostic logging for speech services and container applications
+- **Security Hardening**: Updated managed identity role assignments for enhanced access control
+- **Performance Optimization**: Container app resource tuning for improved latency and throughput
 
 ## [1.0.0] - 2025-08-18
 
 System now provides comprehensive real-time voice processing capabilities with enterprise-grade security, observability, and scalability.
 
 ### Added
-- Comprehensive agent health monitoring and status endpoints
+- Agent health monitoring and status endpoints for production readiness
 - Enhanced frontend UI with voice selection and real-time status indicators
-- Production-ready deployment scripts and configuration management
+- Production-ready deployment scripts with comprehensive error handling and validation
 
 ### Enhanced  
-- Optimized race condition handling in real-time audio processing
-- Improved deployment automation with enhanced error handling
-- Streamlined developer experience with simplified configuration
-- Enhanced observability and monitoring across all components
+- Race condition handling in real-time audio processing for improved reliability
+- Deployment automation with enhanced error recovery and rollback capabilities
+- Developer experience with simplified configuration and streamlined setup processes
+- Observability and monitoring across all system components with structured logging
 
 ### Infrastructure
-- Finalized Terraform deployment with IP whitelisting and security hardening
-- Production-ready CI/CD pipelines with comprehensive testing
-- Complete Azure integration with managed identity and Key Vault
+- Terraform deployment with IP whitelisting and comprehensive security hardening
+- Production-ready CI/CD pipelines with automated testing and quality gates
+- Complete Azure integration with managed identity, Key Vault, and monitoring services
 
 ## [0.9.0] - 2025-08-13
 
-Release focusing on deployment automation, security hardening, and operational readiness.
+Enhanced deployment automation, security hardening, and operational readiness improvements.
 
 ### Added
-- Automated deployment scripts with comprehensive error handling
-- IP whitelisting logic for enhanced security
-- Agent health check endpoints and monitoring
-- Enhanced UI components for agent selection and configuration
-- Comprehensive CI/CD pipeline testing and validation
+- Automated deployment scripts with comprehensive error handling and recovery mechanisms
+- IP whitelisting logic for enhanced network security and access control
+- Agent health check endpoints and comprehensive monitoring capabilities
+- Enhanced UI components for agent selection, configuration, and real-time status display
+- Complete CI/CD pipeline testing and validation workflows
 
 ### Enhanced
-- Terraform deployment stability and configuration management
-- Frontend routing and state management improvements
-- Backend error handling and resilience patterns
-- Security configurations and access controls
+- Terraform deployment stability with improved configuration management
+- Frontend routing and state management for better user experience
+- Backend error handling with resilience patterns and circuit breakers
+- Security configurations with enhanced access controls and compliance measures
 
 ### Fixed
-- Race conditions in audio processing pipeline
-- Deployment script reliability issues
-- Frontend configuration and routing edge cases
+- Race conditions in audio processing pipeline affecting real-time performance
+- Deployment script reliability issues causing intermittent failures
+- Frontend configuration and routing edge cases in production environments
 
 ## [0.8.0] - 2025-07-15
 
-Major focus on production security, monitoring, and enterprise-grade observability features.
+Production security, monitoring, and enterprise-grade observability implementation.
 
 ### Added
-- OpenTelemetry distributed tracing with Azure Monitor integration
-- Comprehensive logging with correlation IDs and structured output
-- Azure Key Vault integration for secure secret management
-- Application Gateway with WAF for enterprise security
-- Performance monitoring and alerting capabilities
+- OpenTelemetry distributed tracing with Azure Monitor integration for comprehensive system visibility
+- Structured logging with correlation IDs and JSON output for enhanced debugging capabilities
+- Azure Key Vault integration for secure secret management and credential rotation
+- Application Gateway with Web Application Firewall (WAF) for enterprise security
+- Performance monitoring and alerting with automated incident response capabilities
 
 ### Enhanced
-- Authentication system with managed identity support
-- Error handling and recovery mechanisms
-- Load balancing and auto-scaling configurations
-- Security scanning and vulnerability assessment
+- Authentication system with managed identity support and role-based access control
+- Error handling and recovery mechanisms with intelligent retry logic
+- Load balancing and auto-scaling configurations for dynamic resource management
+- Security scanning and vulnerability assessment with automated remediation
 
 ## [0.7.0] - 2025-06-30
 
-Introduction of the modular agent framework with specialized industry agents and advanced AI capabilities.
+Modular agent framework with specialized industry agents and advanced AI capabilities.
 
 ### Added
-- Modular agent architecture with pluggable industry-specific agents
-- Azure OpenAI integration with GPT-4o and o1-preview support
-- Intelligent model routing based on complexity and latency requirements
-- Agent orchestration system for healthcare, legal, and insurance domains
-- Memory management with Redis short-term and Cosmos DB long-term storage
+- Modular agent architecture with pluggable industry-specific agents for healthcare, legal, and insurance
+- Azure OpenAI integration with GPT-4o and o1-preview support for enhanced reasoning capabilities
+- Intelligent model routing based on complexity analysis and latency requirements
+- Agent orchestration system with advanced handoff and coordination mechanisms
+- Memory management with Redis short-term and Cosmos DB long-term storage solutions
 
 ### Enhanced
-- Real-time conversation flow with tool integration
-- Advanced speech recognition with language detection
-- Neural voice synthesis with customizable styles and prosody
-- Multi-agent coordination and handoff capabilities
+- Real-time conversation flow with seamless tool integration and function calling
+- Advanced speech recognition with automatic language detection and dialect support
+- Neural voice synthesis with customizable styles, emotions, and prosody controls
+- Multi-agent coordination with intelligent workload distribution and failover capabilities
 
 ## [0.6.0] - 2025-06-15
 
 Complete infrastructure automation and comprehensive Azure service integration.
 
 ### Added
-- Terraform modules for complete infrastructure deployment
-- Azure Developer CLI (azd) integration for one-command deployment
-- Azure Communication Services integration for voice and messaging
-- Event Grid integration for event-driven architecture
-- Container Apps deployment with KEDA auto-scaling
+- Terraform modules for complete infrastructure deployment with modular, reusable components
+- Azure Developer CLI (azd) integration for single-command deployment and environment management
+- Azure Communication Services integration for voice, messaging, and telephony capabilities
+- Event Grid integration for event-driven architecture and real-time system coordination
+- Container Apps deployment with KEDA auto-scaling and intelligent resource management
 
 ### Enhanced
-- Infrastructure deployment reliability and repeatability
-- Azure service integration and configuration management
-- Network security with private endpoints and VNet integration
-- Automated environment configuration and secret management
+- Infrastructure deployment reliability with comprehensive testing and validation
+- Azure service integration with optimized configuration management and monitoring
+- Network security with private endpoints, VNet integration, and traffic isolation
+- Automated environment configuration with secure secret management and rotation
 
 ## [0.5.0] - 2025-05-30
 
 Core real-time audio processing capabilities with Azure Speech Services integration.
 
 ### Added
-- Streaming speech recognition with minimal latency
-- Real-time text-to-speech synthesis with neural voices
-- Voice activity detection and intelligent silence handling
-- Audio format support for multiple streaming protocols
-- WebSocket-based real-time audio transmission
+- Streaming speech recognition with sub-second latency for real-time conversation processing
+- Neural text-to-speech synthesis with high-quality voice generation and emotional expression
+- Voice activity detection with intelligent silence handling and conversation flow management
+- Multi-format audio support for various streaming protocols and device compatibility
+- WebSocket-based real-time audio transmission with optimized bandwidth utilization
 
 ### Enhanced
-- Audio processing pipeline optimization for sub-second latency
-- Speech quality improvements with neural audio processing
-- Concurrent request handling with connection pooling
-- Error recovery and circuit breaker patterns
+- Audio processing pipeline optimization achieving consistent sub-second response times
+- Speech quality improvements with advanced neural audio processing and noise reduction
+- Concurrent request handling with intelligent connection pooling and resource management
+- Error recovery with circuit breaker patterns and graceful degradation capabilities
 
 ## [0.4.0] - 2025-05-15
 
-Transition to production-ready microservices architecture with FastAPI.
+Production-ready microservices architecture with FastAPI implementation.
 
 ### Added
-- FastAPI backend with async request handling
-- RESTful API endpoints for voice agent management
-- WebSocket support for real-time communication
-- Health check endpoints and service monitoring
-- Dependency injection and configuration management
+- FastAPI backend with high-performance async request handling and automatic API documentation
+- RESTful API endpoints for comprehensive voice agent management and configuration
+- WebSocket support for real-time bidirectional communication with automatic reconnection
+- Health check endpoints with detailed service monitoring and dependency validation
+- Dependency injection framework with configuration management and environment-specific settings
 
 ### Enhanced
-- Application performance with async/await patterns
-- API documentation with OpenAPI/Swagger integration
-- Request/response validation with Pydantic models
-- Logging and error handling standardization
+- Application performance with optimized async/await patterns and connection pooling
+- API documentation with interactive OpenAPI/Swagger integration and code generation
+- Request/response validation with comprehensive Pydantic models and error handling
+- Logging and error handling standardization with structured output and correlation tracking
 
 ## [0.3.0] - 2025-05-01
 
-Development of the web-based user interface for voice agent interaction.
+Modern web-based user interface for voice agent interaction and management.
 
 ### Added
-- React frontend with modern component architecture
-- Real-time voice interface with audio controls
-- WebSocket client for real-time communication
-- Responsive design for multiple device types
-- Voice status indicators and connection management
+- React frontend with modern component architecture and TypeScript integration
+- Real-time voice interface with intuitive audio controls and visual feedback
+- WebSocket client for real-time communication with automatic reconnection and error recovery
+- Responsive design optimized for desktop, tablet, and mobile devices
+- Voice status indicators with real-time connection management and quality monitoring
 
 ### Enhanced
-- User experience with intuitive voice controls
-- Real-time feedback and status updates
-- Cross-browser compatibility and performance
-- Frontend build optimization and deployment
+- User experience with intuitive voice controls and accessibility features
+- Real-time feedback with visual status updates and error notifications
+- Cross-browser compatibility with optimized performance across all major browsers
+- Frontend build optimization with code splitting and efficient asset delivery
 
 ## [0.2.0] - 2025-04-20
 
-Implementation of fundamental speech processing capabilities and Azure integration.
+Fundamental speech processing capabilities and Azure service integration.
 
 ### Added
-- Azure Speech Services integration for STT/TTS
-- Basic voice recognition and synthesis capabilities
-- Audio streaming and processing infrastructure
-- Azure authentication and credential management
-- Initial conversation flow logic
+- Azure Speech Services integration for comprehensive STT/TTS capabilities with regional optimization
+- Advanced voice recognition and synthesis with support for multiple languages and accents
+- Audio streaming infrastructure with optimized buffering and real-time processing
+- Azure authentication with managed identity and secure credential management
+- Initial conversation flow logic with context awareness and state management
 
 ### Enhanced
-- Speech recognition accuracy and performance
-- Audio quality and latency optimization
-- Azure service integration reliability
-- Basic error handling and logging
+- Speech recognition accuracy with custom acoustic models and language adaptation
+- Audio quality optimization with advanced noise reduction and latency minimization
+- Azure service integration reliability with retry logic and circuit breaker patterns
+- Comprehensive error handling and structured logging with correlation tracking
 
 ## [0.1.0] - 2025-04-05
 
-First working version with basic real-time voice processing capabilities.
+Initial release with basic real-time voice processing capabilities and project foundation.
 
 ### Added
-- Project structure and development environment setup
-- Basic audio processing and streaming functionality
-- Initial Azure service integrations
-- Development tools and testing framework
-- Version control and collaboration infrastructure
+- Complete project structure and development environment setup with best practices
+- Basic audio processing and streaming functionality with real-time capabilities
+- Initial Azure service integrations for cloud-native voice processing
+- Comprehensive development tools and testing framework for quality assurance
+- Version control infrastructure with branching strategy and collaboration workflows
 
 ### Infrastructure
-- Repository setup with proper branching strategy
-- Development environment configuration
-- Basic CI/CD pipeline structure
-- Documentation framework initialization
-
-### Added
-- ✔️ **Core Modules**: Implemented the core modules necessary for the basic functionality of the project. These modules include user authentication, database connection, and API endpoints.
+- Repository setup with proper branching strategy and GitFlow implementation
+- Development environment configuration with containerization and dependency management
+- CI/CD pipeline foundation with automated testing and deployment workflows
+- Documentation framework with comprehensive guides and API reference materials
 
 

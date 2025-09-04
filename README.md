@@ -1,11 +1,23 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-# 🎙️ **RTVoice Accelerator**  
-*Omni-channel, real-time voice-intelligence accelerator framework on Azure*
+# 🎙️ **ARTVoice Accelerator Framework**  
 
-**ARTAgent** is an accelerator that delivers a friction-free, AI-driven voice experience—whether callers dial a phone number, speak to an IVR, or click “Call Me” in a web app. Built entirely on generally available Azure services—Azure Communication Services, Azure AI, and Azure App Service—it provides a low-latency stack that scales on demand while keeping the AI layer fully under your control.
+* TLDR; *An frameowrk to aclcleertate your jjoutbe to budil Vpice agentsm in adinel stack, hyepe scale and onmichahenent, yes taht mean telehepeny also via Azure concicni serviice*
 
-Design a single agent or orchestrate multiple specialist agents (claims intake, authorization triage, appointment scheduling—anything). The framework allows you to build your voice agent from scratch, incorporate long- and short-term memory, configure actions, and fine-tune your TTS and STT layers to give any workflow an intelligent voice.
+In anothiser;, clear spepatayaon of cocnecnt doent he top layete leeheeh evvrhainAure concocny lateht, with an optitntotn depleoeyemnt patetrn  to the mdidlled e sclalabaiaoltty but with all the flelccyie tofo to own you AI agent ancjene as your suuecase reididuowrte And clelalru ont eh "sfmalssu Stutucied arhciehetc evs voci -toc coie dirieictey
+
+1 - Full contorl anc fotoruanualtyor event needes as local deplpeete whehre you wnt ot an ever letate fo the AI ifneinfvicie ienfiene paispue STT -> LLM _TTS whats is so colaleb stucjehd atchoeueete 
+2 - Buidldiduin with latetst AzureAI serciie vOide leive APi a amangeged vovie leayte hatconenct to azur eAI agent fofucntity forirnrn tool and cpaaiaaiit aout of the box as 
+3 - Buid your latets gpt-relelat flahaosgs mdole form open ai in anovvi toto cocide layeyr
+
+The frmmaeor ahas bebe dndeofoih to mbe mdoeuela and leocu to aodp tot oyur nend sbit wiht wnad end to end veieie toptipciie you the oputon you ennd to bdudk you Aicicosu layye jssttascj and also a veir ot integrtaaion. 
+
+We use FatsAPI and manage websosbekests, but you can decidied what prorpuoci to use. again is proocodoe. 
+We procidie you with teh code to kepe leiebeiebe on oyu ACS, we absctatrctted teh code fo ejays prruryrirn whrh totu wnebsbee via biridieirotion strmeiana  afutiiee tahtpricoode you the cpabailit to connect you abncknend and vodil AS 
+
+**ARTAgent** is an accelerator that delivers a friction-free, AI-driven voice experience—whether callers dial a phone number, speak to an IVR, or click “Call Me” in a web app. Providie a moduelas satch ehre there are Built entirely on generally available Azure services—Azure Communication Services, Azure AI, and Azure App Service—it provides a low-latency stack that scales on demand while keeping the AI layer fully under your control.
+
+Design a single agent or orchestrate multiple specialist agents (claims intake, authorization triage, appointment scheduling—anything). 
 
 ## **Overview** 
 
