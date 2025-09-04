@@ -1,17 +1,17 @@
 # Deployment Guide
 
-> A comprehensive guide to deploy your Real-Time Azure Voice Agentic App using Terraform infrastructure and Container Apps.
+> A comprehensive guide to deploy your ARTVoice Accelerator using Terraform infrastructure and Azure Container Apps.
 
 ## Infrastructure Overview
 
 This deployment guide uses **Terraform** as the Infrastructure as Code (IaC) provider with **Azure Container Apps** for hosting. The infrastructure provides:
 
-- **AI Services**: Azure OpenAI (GPT-4o models) + Speech Services
-- **Communication**: Azure Communication Services for real-time voice
-- **Data Layer**: Cosmos DB (MongoDB API) + Redis Enterprise + Blob Storage
-- **Security**: Managed Identity authentication with RBAC
-- **Hosting**: Azure Container Apps with auto-scaling and built-in TLS
-- **Monitoring**: Application Insights + Log Analytics integration
+- **AI Services**: Azure OpenAI (GPT-4.1-mini, O3-mini models) + Speech Services with Live Voice API support
+- **Communication**: Azure Communication Services for real-time voice and telephony integration
+- **Data Layer**: Cosmos DB (MongoDB API) + Redis Enterprise + Blob Storage for persistent and cached data
+- **Security**: Managed Identity authentication with role-based access control (RBAC)
+- **Hosting**: Azure Container Apps with auto-scaling, built-in TLS, and container orchestration
+- **Monitoring**: Application Insights + Log Analytics with OpenTelemetry distributed tracing
 
 > **Infrastructure Details**: See the complete [Terraform Infrastructure README](../infra/terraform/README.md) for resource specifications and configuration options.
 
@@ -62,8 +62,8 @@ The easiest and **recommended** way to deploy this application is using Azure De
 
 ### Step 1: Clone and Initialize
 ```bash
-git clone <repository-url>
-cd gbb-ai-audio-agent-migration-target
+git clone https://github.com/pablosalvador10/gbb-ai-audio-agent.git
+cd gbb-ai-audio-agent
 azd auth login
 azd init
 ```
@@ -81,6 +81,8 @@ azd up
 ```
 
 **Total deployment time**: ~15 minutes for complete infrastructure and application deployment.
+
+> **Note**: The deployment includes multi-agent architecture support (ARTAgent, Live Voice Agent, and AI Foundry Agents) with intelligent model routing between O3-mini and GPT-4.1-mini based on complexity requirements.
 
 ---
 
@@ -173,19 +175,19 @@ disable_local_auth = true
 # Redis Enterprise SKU (adjust based on your needs and regional availability)
 redis_sku = "MemoryOptimized_M10"
 
-# OpenAI model deployments
+# OpenAI model deployments with latest models
 openai_models = [
   {
-    name     = "gpt-4o"
+    name     = "gpt-4-1-mini"
     version  = "2024-11-20"
     sku_name = "DataZoneStandard"
     capacity = 50
   },
   {
-    name     = "gpt-4o-mini"
-    version  = "2024-07-18"
+    name     = "o3-mini"
+    version  = "2025-01-31"
     sku_name = "DataZoneStandard"
-    capacity = 50
+    capacity = 30
   }
 ]
 ```
@@ -212,16 +214,16 @@ terraform apply
 ```
 
 **Resources Created:**
-- Azure Container Apps Environment
-- Azure OpenAI Service (GPT-4o, GPT-4o-mini models)
-- Azure Communication Services
-- Redis Enterprise Cache
-- Key Vault with managed identity authentication
-- Azure Container Registry
-- Storage Account with blob containers
-- Cosmos DB (MongoDB API)
-- Application Insights & Log Analytics
-- User-assigned managed identities with RBAC
+- Azure Container Apps Environment with auto-scaling and ingress management
+- Azure OpenAI Service (GPT-4.1-mini, O3-mini models) with intelligent model routing
+- Azure Communication Services with Live Voice API integration
+- Redis Enterprise Cache for session management and real-time data
+- Key Vault with managed identity authentication and secure secret rotation
+- Azure Container Registry for application image management
+- Storage Account with blob containers for audio and conversation data
+- Cosmos DB (MongoDB API) for persistent conversation history and agent memory
+- Application Insights & Log Analytics with OpenTelemetry distributed tracing
+- User-assigned managed identities with comprehensive RBAC permissions
 
 > For detailed infrastructure information, see the [Terraform Infrastructure README](../infra/terraform/README.md).
 
@@ -263,11 +265,12 @@ azd env set ACS_SOURCE_PHONE_NUMBER "+1234567890"
 ```
 
 #### Via Azure Portal
-1. Navigate to your Azure Communication Services resource
-2. Go to **Phone numbers** → **Get**
-3. Select your country, number type, and features
-4. Complete the purchase process
-5. Update your environment configuration
+1. Navigate to your Azure Communication Services resource in the Azure Portal
+2. Go to **Phone numbers** → **Get** in the left navigation menu
+3. Select your country/region, number type (Geographic or Toll-free), and required features
+4. Complete the purchase process and wait for number provisioning
+5. Update your environment configuration with the purchased number
+6. Configure webhook endpoints for incoming call handling
 
 > **Detailed Guide**: [Get a phone number for Azure Communication Services](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/telephony/get-phone-number)
 
@@ -286,19 +289,23 @@ curl -I $BACKEND_URL/health
 
 #### WebSocket Testing
 ```bash
-# Install wscat
+# Install wscat for WebSocket testing
 npm install -g wscat
 
-# Test WebSocket connection
+# Test WebSocket connection with the media endpoint
 BACKEND_FQDN=$(azd env get-value BACKEND_CONTAINER_APP_FQDN)
+wscat -c wss://$BACKEND_FQDN/api/v1/media/stream
+
+# Test real-time communication endpoint
 wscat -c wss://$BACKEND_FQDN/api/v1/stream
 ```
 
 **Expected Behavior:**
-- Health endpoint returns 200 OK
-- WebSocket connection establishes successfully
-- Receives connection confirmation message
-- Use `Ctrl+C` to disconnect
+- Health endpoint returns 200 OK with service status information
+- WebSocket connection establishes successfully without errors
+- Receives connection confirmation message with session details
+- Real-time audio streaming capabilities are functional
+- Use `Ctrl+C` to disconnect gracefully
 
 > **Need help?** See our [troubleshooting section](#monitoring-and-troubleshooting) below.
 
@@ -498,28 +505,35 @@ az containerapp logs show \
 
 | Issue | Symptoms | Solution |
 |-------|----------|----------|
-| **Terraform Init Fails** | Backend configuration errors | Check storage account permissions, verify backend.tf configuration |
-| **Container Won't Start** | App unavailable, startup errors | Check environment variables, verify managed identity permissions |
-| **Redis Connection Issues** | Cache errors, timeout issues | Verify Redis Enterprise configuration, check access policies |
-| **Phone Number Issues** | ACS calling fails | Verify phone number is purchased and configured correctly |
-| **OpenAI Rate Limits** | API quota exceeded | Check deployment capacity, monitor usage in Azure Portal |
-| **WebSocket Connection Fails** | Connection refused, handshake errors | Check Container App ingress settings, test health endpoint |
+| **Terraform Init Fails** | Backend configuration errors, state lock issues | Check storage account permissions, verify backend.tf configuration, ensure unique state key |
+| **Container Won't Start** | App unavailable, startup errors, health check failures | Check environment variables, verify managed identity permissions, review container logs |
+| **Redis Connection Issues** | Cache connection timeouts, authentication failures | Verify Redis Enterprise configuration, check firewall rules, validate access policies |
+| **Phone Number Issues** | ACS calling fails, webhook errors | Verify phone number is purchased and configured correctly, check webhook endpoints |
+| **OpenAI Rate Limits** | API quota exceeded, throttling errors | Check deployment capacity, monitor usage in Azure Portal, consider scaling up |
+| **WebSocket Connection Fails** | Connection refused, handshake errors, timeout issues | Check Container App ingress settings, test health endpoint, verify CORS configuration |
+| **Live Voice API Issues** | Audio streaming problems, voice quality issues | Verify Azure Speech Live Voice API configuration, check network connectivity, review audio codecs |
+| **Agent Routing Problems** | Incorrect model selection, tool call failures | Check agent configuration, verify model deployments, validate tool registry setup |
 
 ### Health Check Commands
 
 ```bash
-# Basic health check
+# Basic health check with detailed output
 BACKEND_URL=$(azd env get-value BACKEND_CONTAINER_APP_URL)
-curl -I $BACKEND_URL/health
+curl -v $BACKEND_URL/health
 
-# Test WebSocket connection
+# Test specific agent endpoints
+curl $BACKEND_URL/api/v1/agents/health
+curl $BACKEND_URL/api/v1/media/health
+
+# Test WebSocket connection with timeout
 BACKEND_FQDN=$(azd env get-value BACKEND_CONTAINER_APP_FQDN)
-wscat -c wss://$BACKEND_FQDN/ws
+timeout 10s wscat -c wss://$BACKEND_FQDN/api/v1/stream
 
-# Check all service endpoints
+# Check all service endpoints with status
 echo "Backend: https://$BACKEND_FQDN"
 echo "Frontend: https://$(azd env get-value FRONTEND_CONTAINER_APP_FQDN)"
 echo "Health: $BACKEND_URL/health"
+echo "API Docs: $BACKEND_URL/docs"
 ```
 
 ### Advanced Debugging
@@ -598,21 +612,21 @@ container_apps_configuration = {
 
 ### Model Configuration
 
-Customize OpenAI model deployments:
+Customize OpenAI model deployments for the latest supported models:
 
 ```hcl
 openai_models = [
   {
-    name     = "gpt-4o"
+    name     = "gpt-4-1-mini"
     version  = "2024-11-20"
     sku_name = "DataZoneStandard"
     capacity = 100  # Increase for higher throughput
   },
   {
-    name     = "gpt-4o-mini"
-    version  = "2024-07-18"
+    name     = "o3-mini"
+    version  = "2025-01-31"
     sku_name = "DataZoneStandard"
-    capacity = 50
+    capacity = 50   # Adjust based on reasoning workload
   }
 ]
 ```
@@ -660,29 +674,36 @@ Having deployment issues? Follow this troubleshooting checklist:
 ### Quick Diagnostic Commands
 
 ```bash
-# Check deployment status
+# Check deployment status and health
 azd show
 
-# Verify backend health
-curl -I $(azd env get-value BACKEND_CONTAINER_APP_URL)/health
+# Verify backend health with detailed output
+curl -v $(azd env get-value BACKEND_CONTAINER_APP_URL)/health
 
-# Check container logs
+# Check container logs with error filtering
 az containerapp logs show \
     --name $(azd env get-value BACKEND_CONTAINER_APP_NAME) \
     --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) \
-    --tail 50
+    --tail 50 --grep "ERROR\|WARN\|Exception"
 
-# Verify managed identity permissions
+# Verify managed identity permissions and role assignments
 az role assignment list \
     --assignee $(azd env get-value BACKEND_UAI_PRINCIPAL_ID) \
     --output table
+
+# Test agent endpoints specifically
+BACKEND_URL=$(azd env get-value BACKEND_CONTAINER_APP_URL)
+curl $BACKEND_URL/api/v1/agents/artagent/health
+curl $BACKEND_URL/api/v1/agents/lvagent/health
 ```
 
 ### Additional Resources
 
 - [Terraform Infrastructure README](../infra/terraform/README.md) - Detailed infrastructure documentation
 - [Troubleshooting Guide](Troubleshooting.md) - Comprehensive problem-solving guide
-- [Azure Container Apps Documentation](https://learn.microsoft.com/en-us/azure/container-apps/) - Official Microsoft docs
-- [Azure Communication Services Docs](https://learn.microsoft.com/en-us/azure/communication-services/) - ACS specific guidance
+- [Azure Container Apps Documentation](https://learn.microsoft.com/en-us/azure/container-apps/) - Official Microsoft documentation
+- [Azure Communication Services Docs](https://learn.microsoft.com/en-us/azure/communication-services/) - ACS specific guidance and API reference
+- [Azure AI Speech Live Voice API](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/real-time-synthesis) - Live Voice API documentation
+- [ARTVoice Local Development Guide](quickstart-local-development.md) - Local setup and testing
 
-> **Pro Tip**: Always test locally first using the development setup in `apps/rtagent/scripts/` to isolate issues before deploying to Azure.
+> **Pro Tip**: Always test locally first using the development setup in `docs/quickstart-local-development.md` to isolate issues before deploying to Azure. Use the comprehensive load testing framework in `tests/load/` to validate performance under realistic conditions.

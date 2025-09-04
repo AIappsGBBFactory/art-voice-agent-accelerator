@@ -118,7 +118,7 @@ Pick one of three ways to run the voice inference layer—the rest of the framew
 - `utils/` — Logging/telemetry helpers and images
 
 > [!NOTE]
-> Need a deeper map (up to 5 levels) and exact local run steps? See `docs/repo-structure.md`.
+> Need a deeper map (up to 5 levels) and exact local run steps? See [`docs/repo-structure.md`](docs/repo-structure.md).
 
 ### **Deploy and Customize the Demo App Using the ARTAgent Framework**
 
