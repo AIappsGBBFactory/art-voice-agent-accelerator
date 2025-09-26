@@ -39,8 +39,8 @@ resource "azurerm_monitor_diagnostic_setting" "openai_diagnostics" {
 }
 
 # OpenAI model deployments
-resource "azurerm_cognitive_deployment" "openai_models" {
-  for_each = { for idx, model in var.openai_models : model.name => model }
+resource "azurerm_cognitive_deployment" "model_deployments" {
+  for_each = { for idx, model in var.model_deployments : model.name => model }
 
   name                 = each.value.name
   cognitive_account_id = azurerm_cognitive_account.openai.id

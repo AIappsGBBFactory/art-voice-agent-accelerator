@@ -172,7 +172,7 @@ The **domain endpoint** is specifically used for ACS integration, while the **re
 | `location` | Azure region | - | ✅ |
 | `name` | Application base name | `rtaudioagent` | |
 | `disable_local_auth` | Use managed identity only | `true` | |
-| `openai_models` | Model deployments | `[gpt-4o]` | |
+| `model_deployments` | Model deployments | `[gpt-4o]` | |
 | `redis_sku` | Redis Enterprise SKU | `MemoryOptimized_M10` | |
 
 ### 🚀 Container Apps Deployment
@@ -236,7 +236,7 @@ az containerapp create \
 | [azurerm_application_insights.main](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_insights) | resource |
 | [azurerm_cognitive_account.openai](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/cognitive_account) | resource |
 | [azurerm_cognitive_account.speech](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/cognitive_account) | resource |
-| [azurerm_cognitive_deployment.openai_models](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/cognitive_deployment) | resource |
+| [azurerm_cognitive_deployment.model_deployments](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/cognitive_deployment) | resource |
 | [azurerm_communication_service.main](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/communication_service) | resource |
 | [azurerm_container_app.backend](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/container_app) | resource |
 | [azurerm_container_app.frontend](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/container_app) | resource |
@@ -289,7 +289,7 @@ az containerapp create \
 | <a name="input_mongo_collection_name"></a> [mongo\_collection\_name](#input\_mongo\_collection\_name) | Name of the MongoDB collection | `string` | `"audioagentcollection"` | no |
 | <a name="input_mongo_database_name"></a> [mongo\_database\_name](#input\_mongo\_database\_name) | Name of the MongoDB database | `string` | `"audioagentdb"` | no |
 | <a name="input_name"></a> [name](#input\_name) | Base name for the real-time audio agent application | `string` | `"rtaudioagent"` | no |
-| <a name="input_openai_models"></a> [openai\_models](#input\_openai\_models) | Azure OpenAI model deployments | ```list(object({ name = string version = string sku_name = string capacity = number }))``` | ```[ { "capacity": 50, "name": "gpt-4o", "sku_name": "Standard", "version": "2024-11-20" } ]``` | no |
+| <a name="input_model_deployments"></a> [model_deployments](#input_model_deployments) | Azure OpenAI model deployments | ```list(object({ name = string version = string sku_name = string capacity = number }))``` | ```[ { "capacity": 50, "name": "gpt-4o", "sku_name": "Standard", "version": "2024-11-20" } ]``` | no |
 | <a name="input_principal_id"></a> [principal\_id](#input\_principal\_id) | Principal ID of the user or service principal to assign application roles | `string` | `null` | no |
 | <a name="input_principal_type"></a> [principal\_type](#input\_principal\_type) | Type of principal (User or ServicePrincipal) | `string` | `"User"` | no |
 | <a name="input_redis_port"></a> [redis\_port](#input\_redis\_port) | Port for Azure Managed Redis | `number` | `10000` | no |

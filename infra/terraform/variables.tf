@@ -122,7 +122,7 @@ variable "redis_port" {
   default     = 10000
 }
 
-variable "openai_models" {
+variable "model_deployments" {
   description = "Azure OpenAI model deployments optimized for high performance"
   type = list(object({
     name     = string

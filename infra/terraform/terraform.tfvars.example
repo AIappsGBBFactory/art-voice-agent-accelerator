@@ -21,7 +21,7 @@ disable_local_auth = true
 redis_sku = "MemoryOptimized_M10"
 
 # OpenAI model deployments
-openai_models = [
+model_deployments = [
     {
       name     = "gpt-4o"
       version  = "2024-11-20"

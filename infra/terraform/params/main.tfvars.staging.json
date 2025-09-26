@@ -10,7 +10,7 @@
   "enable_redis_ha": false,
   "redis_sku": "MemoryOptimized_M10",
   "redis_port": 10000,
-  "openai_models": [
+  "model_deployments": [
     {
       "name": "o3-mini",
       "version": "2025-01-31",

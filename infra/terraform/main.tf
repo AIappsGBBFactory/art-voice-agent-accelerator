@@ -70,12 +70,13 @@ locals {
 
   # Common tags
   tags = {
-    "azd-env-name" = var.environment_name
-    "hidden-title" = "Real Time Audio ${var.environment_name}"
-    "project"      = "gbb-ai-audio-agent"
-    "environment"  = var.environment_name
-    "deployment"   = "terraform"
-    "deployed_by"  = coalesce(var.deployed_by, local.principal_id)
+    "azd-env-name"    = var.environment_name
+    "hidden-title"    = "Real Time Audio ${var.environment_name}"
+    "project"         = "gbb-ai-audio-agent"
+    "environment"     = var.environment_name
+    "deployment"      = "terraform"
+    "deployed_by"     = coalesce(var.deployed_by, local.principal_id)
+    "SecurityControl" = "Ignore"
   }
 
   # Resource naming with Azure standard abbreviations
@@ -94,5 +95,10 @@ locals {
     log_analytics      = "log-${local.resource_token}"
     app_insights       = "ai-${local.resource_token}"
     container_env      = "cae-${var.name}-${var.environment_name}-${local.resource_token}"
+    foundry_account    = "aif${var.name}${var.environment_name}"
+    foundry_project    = "aif${var.name}${var.environment_name}proj"
   }
+
+  foundry_project_display = "AI Foundry ${var.environment_name}"
+  foundry_project_desc    = "AI Foundry project for ${var.environment_name} environment"
 }

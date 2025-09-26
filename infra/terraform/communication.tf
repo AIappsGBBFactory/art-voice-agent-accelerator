@@ -57,13 +57,6 @@ resource "azurerm_key_vault_secret" "acs_connection_string" {
 # - Enables real-time STT/TTS operations
 # - Required for Call Automation with speech features
 #
-resource "azurerm_role_assignment" "acs_speech_user" {
-  scope                = azurerm_cognitive_account.speech.id
-  role_definition_name = "Cognitive Services User"
-  principal_id         = azapi_resource.acs.identity[0].principal_id
-
-}
-
 
 # ============================================================================
 # DIAGNOSTIC SETTINGS FOR AZURE COMMUNICATION SERVICES
@@ -192,12 +185,12 @@ resource "azurerm_monitor_diagnostic_setting" "acs_diagnostics" {
 # ============================================================================
 
 resource "azurerm_eventgrid_system_topic" "acs" {
-  name                   = "eg-topic-acs-${local.resource_token}"
-  resource_group_name    = azurerm_resource_group.main.name
-  location               = "global"
-  source_arm_resource_id = azapi_resource.acs.id
-  topic_type             = "Microsoft.Communication.CommunicationServices"
-  tags                   = local.tags
+  name                = "eg-topic-acs-${local.resource_token}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = "global"
+  source_resource_id  = azapi_resource.acs.id
+  topic_type          = "Microsoft.Communication.CommunicationServices"
+  tags                = local.tags
 }
 
 # # Event Grid System Topic Event Subscription for Incoming Calls

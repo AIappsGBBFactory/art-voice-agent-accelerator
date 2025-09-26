@@ -61,27 +61,6 @@ resource "azurerm_role_assignment" "storage_principal_contributor" {
 # ============================================================================
 # COSMOS DB (MONGODB API)
 # ============================================================================
-# # Cosmos DB vCore MongoDB Cluster (M30 with 128GB disk)
-# resource "azurerm_mongo_cluster" "main" {
-#     name                = local.resource_names.cosmos
-#     resource_group_name = azurerm_resource_group.main.name
-#     location            = azurerm_resource_group.main.location
-
-#     administrator_username = "adminuser"
-#     administrator_password = random_password.cosmos_admin.result
-
-#     compute_tier    = "M30"
-#     high_availability_mode = "Disabled"
-#     public_network_access = "Enabled"
-#     shard_count     = 1
-#     storage_size_in_gb = 128
-#     version         = "5.0"
-
-
-
-#     tags = local.tags
-# }
-
 resource "azapi_resource" "mongoCluster" {
   type      = "Microsoft.DocumentDB/mongoClusters@2025-04-01-preview"
   parent_id = azurerm_resource_group.main.id

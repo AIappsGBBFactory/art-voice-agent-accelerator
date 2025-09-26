@@ -65,10 +65,9 @@ env:
   CI: true
   GITHUB_ACTIONS: true
 
+# Minimal permissions - OIDC handled conditionally per job
 permissions:
-  id-token: write   # Required for OIDC authentication
   contents: read    # Required to checkout repository
-  pull-requests: write  # Required to comment on PRs
 
 jobs:
   # ============================================================================
@@ -78,6 +77,8 @@ jobs:
     name: ${{ github.event_name == 'pull_request' && '📋 Preview Changes' || '🚀 Deploy with AZD' }}
     runs-on: ubuntu-latest
     
+    # Try to request OIDC permissions, fall back gracefully if denied
+
     # Environment selection logic
     environment: >-
       ${{
@@ -88,9 +89,14 @@ jobs:
       }}
     
     env:
+      # OIDC Authentication (preferred)
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # Service Principal Authentication (fallback)
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      # Authentication method detection
+      USE_OIDC: ${{ secrets.AZURE_CLIENT_SECRET == '' && 'true' || 'false' }}
       # Environment name logic
       AZURE_ENV_NAME: >-
         ${{
@@ -119,11 +125,63 @@ jobs:
         uses: actions/checkout@v4
         
       - name: 🔐 Azure Login (OIDC)
+        if: env.USE_OIDC == 'true'
         uses: azure/login@v2
+        continue-on-error: true  # Don't fail if OIDC permissions are denied
+        id: azure-login-oidc
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔐 Azure Login (Service Principal)
+        if: env.USE_OIDC == 'false'
+        uses: azure/login@v2
+        id: azure-login-sp
+        with:
+          creds: '{"clientId":"${{ env.AZURE_CLIENT_ID }}","clientSecret":"${{ env.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ env.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ env.AZURE_TENANT_ID }}"}'
+
+      - name: 🚨 Check Authentication Status
+        run: |
+          OIDC_OUTCOME="${{ steps.azure-login-oidc.outcome }}"
+          SP_OUTCOME="${{ steps.azure-login-sp.outcome }}"
+          
+          if [ "${{ env.USE_OIDC }}" = "true" ]; then
+            if [ "$OIDC_OUTCOME" = "failure" ] || [ "$OIDC_OUTCOME" = "skipped" ]; then
+              echo "⚠️ OIDC authentication failed - insufficient permissions or missing federated credentials"
+              echo "This is normal for:"
+              echo "  - Forked repositories"
+              echo "  - Repositories without 'id-token: write' permissions"
+              echo "  - Missing Azure AD federated identity credentials"
+              echo ""
+              echo "💡 Solutions:"
+              echo "  1. Add AZURE_CLIENT_SECRET to repository secrets for service principal auth"
+              echo "  2. Configure federated identity credentials in Azure AD"
+              echo "  3. Enable 'id-token: write' permissions in repository settings"
+              
+              if [ "${{ github.event_name }}" = "pull_request" ]; then
+                echo "ℹ️ For PR previews, functionality will be limited"
+                echo "auth_success=false" >> $GITHUB_OUTPUT
+              else
+                echo "❌ For deployments, authentication is required"
+                exit 1
+              fi
+            else
+              echo "✅ Azure OIDC authentication successful"
+              echo "auth_success=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            if [ "$SP_OUTCOME" = "success" ]; then
+              echo "✅ Azure Service Principal authentication successful"
+              echo "auth_success=true" >> $GITHUB_OUTPUT
+            else
+              echo "❌ Service Principal authentication failed"
+              if [ "${{ github.event_name }}" != "pull_request" ]; then
+                exit 1
+              fi
+              echo "auth_success=false" >> $GITHUB_OUTPUT
+            fi
+          fi
           
       - name: ⚙️ Setup Azure Developer CLI
         uses: Azure/setup-azd@v2
@@ -133,18 +191,33 @@ jobs:
         with:
           terraform_version: 1.9.0
 
-      - name: 🔐 Log in with Azure Developer CLI (OIDC)
+      - name: 🔐 Log in with Azure Developer CLI
+        continue-on-error: true  # Don't fail if authentication doesn't work
+        id: azd-login
         run: |
-          azd auth login `
-            --client-id "$Env:AZURE_CLIENT_ID" `
-            --federated-credential-provider "github" `
-            --tenant-id "$Env:AZURE_TENANT_ID"
+          if [ "${{ env.USE_OIDC }}" = "true" ] && [ "${{ steps.azure-login-oidc.outcome }}" = "success" ]; then
+            echo "🔐 Attempting azd authentication with OIDC..."
+            azd auth login `
+              --client-id "$Env:AZURE_CLIENT_ID" `
+              --federated-credential-provider "github" `
+              --tenant-id "$Env:AZURE_TENANT_ID"
+          elif [ "${{ env.USE_OIDC }}" = "false" ] && [ "${{ steps.azure-login-sp.outcome }}" = "success" ]; then
+            echo "🔐 Attempting azd authentication with Service Principal..."
+            azd auth login `
+              --client-id "$Env:AZURE_CLIENT_ID" `
+              --client-secret "$Env:AZURE_CLIENT_SECRET" `
+              --tenant-id "$Env:AZURE_TENANT_ID"
+          else
+            echo "⚠️ Skipping azd login due to failed Azure authentication"
+            exit 1
+          fi
         shell: pwsh
 
       # ========================================================================
       # SHARED CONFIGURATION STEPS
       # ========================================================================
       - name: ⚙️ Setup AZD Environment
+        if: (steps.azure-login-oidc.outcome == 'success') || (steps.azure-login-sp.outcome == 'success')
         run: |
           echo "🔧 Setting up azd environment: ${{ env.AZURE_ENV_NAME }}"
           
@@ -164,6 +237,7 @@ jobs:
           echo "✅ AZD environment configured"
 
       - name: ⚙️ Setup Terraform Parameters
+        if: (steps.azure-login-oidc.outcome == 'success') || (steps.azure-login-sp.outcome == 'success')
         run: |
           echo "🔧 Setting up Terraform parameters..."
           
@@ -177,21 +251,33 @@ jobs:
           BASE_PARAMS=$(cat "infra/terraform/params/main.tfvars.${TFVARS_ENV}.json")
           echo "Base: $(echo "$BASE_PARAMS" | jq -c .)"
           
+          # Determine authentication method for Terraform
+          if [ "${{ env.USE_OIDC }}" = "true" ]; then
+            PRINCIPAL_TYPE="ServicePrincipal"
+            AUTH_METHOD="OIDC"
+          else
+            PRINCIPAL_TYPE="ServicePrincipal"
+            AUTH_METHOD="ClientSecret"
+          fi
+          
           # Add dynamic parameters
           FINAL_PARAMS=$(echo "$BASE_PARAMS" | jq \
             --arg env "${{ env.AZURE_ENV_NAME }}" \
-            --arg principal_type "ServicePrincipal" \
+            --arg principal_type "$PRINCIPAL_TYPE" \
             --arg deployed_by "${GITHUB_ACTOR}" \
+            --arg auth_method "$AUTH_METHOD" \
             '. + {
               environment_name: $env,
               principal_type: $principal_type,
-              deployed_by: $deployed_by
+              deployed_by: $deployed_by,
+              auth_method: $auth_method
             }')
           
           echo "$FINAL_PARAMS" > infra/terraform/main.tfvars.json
-          echo "✅ Parameters configured for environment: ${{ env.AZURE_ENV_NAME }}"
+          echo "✅ Parameters configured for environment: ${{ env.AZURE_ENV_NAME }} (Auth: $AUTH_METHOD)"
 
       - name: 🔧 Configure Terraform Backend
+        if: (steps.azure-login-oidc.outcome == 'success') || (steps.azure-login-sp.outcome == 'success')
         run: |
           echo "🔧 Configuring Terraform backend..."
           echo "Backend: ${{ env.RS_STORAGE_ACCOUNT }}/${{ env.RS_CONTAINER_NAME }}/${{ env.AZURE_ENV_NAME }}.tfstate"
@@ -213,7 +299,8 @@ jobs:
           ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          ARM_USE_OIDC: true
+          ARM_USE_OIDC: ${{ env.USE_OIDC }}
+          ARM_CLIENT_SECRET: ${{ env.USE_OIDC == 'false' && env.AZURE_CLIENT_SECRET || '' }}
 
       # - name: Whitelist GitHub Runner IP
       #   uses: azure/CLI@v1
@@ -230,7 +317,7 @@ jobs:
       # PREVIEW MODE (for PRs)
       # ========================================================================
       - name: 📋 Run Infrastructure Preview
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && ((steps.azure-login-oidc.outcome == 'success') || (steps.azure-login-sp.outcome == 'success'))
         id: preview
         run: |
           echo "🔍 Running infrastructure preview via AZD..."
@@ -274,12 +361,41 @@ jobs:
           ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          ARM_USE_OIDC: true
-        
+          ARM_USE_OIDC: ${{ env.USE_OIDC }}
+          ARM_CLIENT_SECRET: ${{ env.USE_OIDC == 'false' && env.AZURE_CLIENT_SECRET || '' }}
+
+      - name: 📋 Handle Limited Preview (No Authentication)
+        if: github.event_name == 'pull_request' && !((steps.azure-login-oidc.outcome == 'success') || (steps.azure-login-sp.outcome == 'success'))
+        run: |
+          echo "⚠️ Limited preview mode - authentication not available" > "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "This may be due to:" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "- Running from a forked repository" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "- Missing 'id-token: write' permissions (for OIDC)" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "- Missing AZURE_CLIENT_SECRET (for Service Principal)" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "- Missing Azure service principal configuration" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "🔧 To enable full preview functionality:" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "Option 1 - OIDC Authentication (Preferred):" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "1. Enable 'id-token: write' permissions in repository settings" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "2. Configure federated identity credentials in Azure AD" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "3. Set secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "Option 2 - Service Principal Authentication (Fallback):" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "1. Create Azure service principal with appropriate permissions" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "2. Set secrets: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "Current configuration:" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "- USE_OIDC: ${{ env.USE_OIDC }}" >> "$GITHUB_WORKSPACE/azd-preview.txt"
+          echo "- Has CLIENT_SECRET: ${{ env.AZURE_CLIENT_SECRET != '' && 'Yes' || 'No' }}" >> "$GITHUB_WORKSPACE/azd-preview.txt"
           
+          echo "preview-success=false" >> $GITHUB_OUTPUT
+      
       - name: 💬 Comment PR with Plan Summary
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        continue-on-error: true  # Don't fail if permissions are denied
         with:
           script: |
             const fs = require('fs');
@@ -324,18 +440,56 @@ jobs:
             **Note:** This is a preview - no actual resources will be created until merged to main.
             ${previewSection}`;
 
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: output
-            });
+            try {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              });
+              console.log('✅ PR comment posted successfully');
+            } catch (error) {
+              console.log('⚠️ Could not post PR comment (insufficient permissions):', error.message);
+              console.log('📋 Preview content would have been:');
+              console.log(output);
+            }
+
+      - name: 📋 Add Preview to Job Summary
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "## 🏗️ Infrastructure Preview" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** dev (PR preview)" >> $GITHUB_STEP_SUMMARY
+          echo "**Action:** Infrastructure provision preview via Azure Developer CLI" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.preview.outputs.preview-success }}" = "true" ]; then
+            echo "**Status:** ✅ Preview completed successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Status:** ⚠️ Preview completed with warnings" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Changes Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- 🏗️ Infrastructure changes will be applied via \`azd provision\`" >> $GITHUB_STEP_SUMMARY
+          echo "- 🚀 Application changes will be deployed via \`azd deploy\`" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 Full deployment available via \`azd up\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** This is a preview - no actual resources will be created until merged to main." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🛠️ AZD Preview Output" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          if [ -f "azd-preview.txt" ]; then
+            head -n 100 azd-preview.txt >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Azure Developer CLI preview output not available." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       # ========================================================================
       # DEPLOYMENT MODE (for push/dispatch/call)
       # ========================================================================
       - name: 🚀 Execute AZD Command
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && ((steps.azure-login-oidc.outcome == 'success') || (steps.azure-login-sp.outcome == 'success'))
         run: |
           ACTION="${{ inputs.action || 'up' }}"
           
@@ -376,7 +530,8 @@ jobs:
           ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          ARM_USE_OIDC: true
+          ARM_USE_OIDC: ${{ env.USE_OIDC }}
+          ARM_CLIENT_SECRET: ${{ env.USE_OIDC == 'false' && env.AZURE_CLIENT_SECRET || '' }}
           
       - name: 📤 Extract Deployment Outputs
         id: extract-outputs

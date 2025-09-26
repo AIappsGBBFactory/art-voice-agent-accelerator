@@ -303,22 +303,25 @@ resource "azurerm_container_app" "backend" {
       # Azure Speech Services
       env {
         name  = "AZURE_SPEECH_ENDPOINT"
-        value = "https://${azurerm_cognitive_account.speech.custom_subdomain_name}.cognitiveservices.azure.com/"
+        value = module.ai_foundry.endpoint
+        # value = "https://${azurerm_cognitive_account.speech.custom_subdomain_name}.cognitiveservices.azure.com/"
       }
 
       env {
         name  = "AZURE_SPEECH_DOMAIN_ENDPOINT"
-        value = "https://${azurerm_cognitive_account.speech.custom_subdomain_name}.cognitiveservices.azure.com/"
+        value = module.ai_foundry.openai_endpoint
+        # value = "https://${azurerm_cognitive_account.speech.custom_subdomain_name}.cognitiveservices.azure.com/"
       }
 
       env {
         name  = "AZURE_SPEECH_RESOURCE_ID"
-        value = azurerm_cognitive_account.speech.id
+        value = module.ai_foundry.account_id
+        # value = azurerm_cognitive_account.speech.id
       }
 
       env {
         name  = "AZURE_SPEECH_REGION"
-        value = azurerm_cognitive_account.speech.location
+        value = module.ai_foundry.location
       }
 
       dynamic "env" {
@@ -357,7 +360,7 @@ resource "azurerm_container_app" "backend" {
       # Azure OpenAI
       env {
         name  = "AZURE_OPENAI_ENDPOINT"
-        value = azurerm_cognitive_account.openai.endpoint
+        value = module.ai_foundry.openai_endpoint
       }
 
       env {
