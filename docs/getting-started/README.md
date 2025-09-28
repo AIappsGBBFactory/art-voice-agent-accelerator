@@ -295,10 +295,10 @@ else:
     1. **[Configuration Guide](configuration.md)** - Advanced configuration options
     2. **[API Reference](../api/README.md)** - Complete API documentation
     3. **[Architecture Overview](../architecture/README.md)** - Understand the system design
-    4. **[Examples & Samples](../examples/README.md)** - Practical implementation examples
+    4. **[Examples & Samples](../samples/README.md)** - Practical implementation examples
     
     **Microsoft Learn Resources**:
-    
+
     - **[Build Speech Apps with Azure](https://learn.microsoft.com/en-us/training/paths/build-speech-applications/)** - Complete learning path
     - **[Speech Service SDK Quickstart](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/get-started-speech-to-text)** - Deep dive tutorials
 

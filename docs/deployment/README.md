@@ -239,18 +239,17 @@ azd provision
 ```
 **What happens during `azd up`:**
 
-1. **Pre-provision hooks** (configured in [`azure.yaml`](../../azure.yaml)) automatically set up Terraform backend storage
-2. **Infrastructure provisioning** uses Terraform modules in [`infra/terraform/`](../../infra/terraform/)
+1. **Pre-provision hooks** (configured in [`azure.yaml`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/azure.yaml)) automatically set up Terraform backend storage
+2. **Infrastructure provisioning** uses Terraform modules in [`infra/terraform/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/infra/terraform/)
 3. **Post-provision hooks** configure phone numbers and generate environment files
 4. **Application deployment** builds and deploys containers to Azure Container Apps
 
-**Automation scripts** (located in [`devops/scripts/azd/`](../../devops/scripts/azd/)):
-- [`pre-provision.sh`](../../devops/scripts/azd/pre-provision.sh) - Sets up Terraform backend storage and validates prerequisites
-- [`post-provision.sh`](../../devops/scripts/azd/post-provision.sh) - Configures ACS phone numbers and generates environment files
-- [`pre-deploy.sh`](../../devops/scripts/azd/pre-deploy.sh) - Builds container images and validates configurations
-- [`post-deploy.sh`](../../devops/scripts/azd/post-deploy.sh) - Runs health checks and connectivity tests
+**Automation scripts** (located in [`devops/scripts/azd/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/devops/scripts/azd/)):
 
-See [`azure.yaml`](../../azure.yaml) for the complete hook configuration and script orchestration.
+- [`preprovision.sh`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/devops/scripts/azd/preprovision.sh) - Sets up Terraform backend storage and validates prerequisites
+- [`postprovision.sh`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/devops/scripts/azd/postprovision.sh) - Configures ACS phone numbers and generates environment files
+
+See [`azure.yaml`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/azure.yaml) for the complete hook configuration and script orchestration.
 
 #### With Direct Terraform
 ```bash

@@ -314,4 +314,4 @@ When changing streaming modes, consider the following:
 - **Advanced AI**: Use `voice_live` mode for sophisticated conversational experiences
 - **Monitoring**: Always monitor resource usage and latency after mode changes
 
-For detailed implementation examples and handler-specific documentation, see the [API Overview](README.md) and [Architecture Overview](../architecture/README.md).
+For detailed implementation examples and handler-specific documentation, see the [API Overview](../api/README.md) and [Architecture Overview](../architecture/README.md).
