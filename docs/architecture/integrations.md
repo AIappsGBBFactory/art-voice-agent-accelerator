@@ -4,20 +4,27 @@
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Integration Scenarios](#integration-scenarios)
+1. [Overview](#1-overview)
+2. [Integration Scenarios](#2-integration-scenarios)
     - [2.1 AWS Connect with Azure Voice Backend](#21-aws-connect-with-azure-voice-backend)
     - [2.2 AWS Connect to Azure Communication Services](#22-aws-connect-to-azure-communication-services)
     - [2.3 Cross-Cloud General Considerations](#23-cross-cloud-general-considerations)
-3. [Service Mapping & Interchangeability](#service-mapping--interchangeability)
-4. [LLM Integration Patterns](#llm-integration-patterns)
-5. [Validation & Testing](#validation--testing)
+3. [Service Mapping & Interchangeability](#3-service-mapping-interchangeability)
+4. [LLM Integration Patterns](#4-llm-integration-patterns)
+5. [Validation & Testing](#5-validation-testing)
 
 ---
 
 ## 1. Overview
 
-This document outlines key integration points and scenarios for adopting the FastAPI-based Azure Voice Agent backend into existing AWS-based client environments, including AWS Connect and telephony backends.
+# Cross-Cloud Integrations: Azure & AWS
+
+This document outlines comprehensive integration patterns for Real-Time Voice Agent deployment across Azure and AWS cloud platforms, providing service equivalencies, data flows, and implementation strategies.
+
+> **📚 Microsoft Learn Resources:**
+> - [Unified Hybrid and Multicloud Operations](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/scenarios/hybrid/strategy) - Azure as central control plane for multi-cloud environments
+> - [Connectivity to Other Cloud Providers](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/connectivity-to-other-providers) - Cross-cloud networking and integration patterns
+> - [Azure for AWS Professionals](https://learn.microsoft.com/en-us/azure/architecture/aws-professional/) - Service mapping between Azure and AWS platforms
 
 ---
 
@@ -30,22 +37,22 @@ This document outlines key integration points and scenarios for adopting the Fas
 **Integration Points:**
 
 - **API Gateway:**
-  - Expose FastAPI endpoints (e.g., `/api/call`, `/call/stream`) via public API Gateway (AWS API Gateway or Azure API Management)
-  - Secure endpoints with OAuth2/JWT or AWS IAM roles
-  
+    - Expose FastAPI endpoints (e.g., `/api/call`, `/call/stream`) via public API Gateway (AWS API Gateway or Azure API Management)
+    - Secure endpoints with OAuth2/JWT or AWS IAM roles
+
 - **AWS Lambda / Step Functions:**
-  - Use Lambda functions to invoke FastAPI endpoints for call events, transcription, or agent actions
-  - Pass call metadata (session/correlation IDs) for traceability
+    - Use Lambda functions to invoke FastAPI endpoints for call events, transcription, or agent actions
+    - Pass call metadata (session/correlation IDs) for traceability
   
 - **WebSocket Streaming:**
-  - AWS Connect streams audio to Lambda or Kinesis; adapt to forward PCM audio frames to FastAPI `/call/stream` WebSocket endpoint
-  - Use AWS SDKs or custom connectors to bridge audio streams
-  
+    - AWS Connect streams audio to Lambda or Kinesis; adapt to forward PCM audio frames to FastAPI `/call/stream` WebSocket endpoint
+    - Use AWS SDKs or custom connectors to bridge audio streams
+    
 - **State Management:**
-  - Use Redis for ephemeral session state, accessible from both AWS and Azure (via VPC peering or managed Redis)
+    - Use Redis for ephemeral session state, accessible from both AWS and Azure (via VPC peering or managed Redis)
   
 - **Event Handling:**
-  - Integrate AWS EventBridge or SNS/SQS with FastAPI's event endpoints for cross-cloud event propagation
+    - Integrate AWS EventBridge or SNS/SQS with FastAPI's event endpoints for cross-cloud event propagation
 
 ### 2.2 AWS Connect to Azure Communication Services
 
@@ -256,7 +263,7 @@ The integration demonstrates a sophisticated call routing mechanism that seamles
 ## 3. Service Mapping & Interchangeability
 
 
-![AWS Service Mapping Architecture](assets/RTAudio_AWSMapped.png)
+![AWS Service Mapping Architecture](../assets/RTAudio_AWSMapped.png)
 
 
 | Azure Service | AWS Equivalent | Interchangeable? | Notes |
@@ -283,9 +290,18 @@ The integration demonstrates a sophisticated call routing mechanism that seamles
 - Voice/telephony and real-time media services may require significant integration work
 - LLM services (Azure OpenAI vs. Amazon Bedrock) may need prompt/response pattern adaptation
 
+> **📚 Microsoft Learn Resources:**
+> - [Azure Hybrid and Multicloud Services Mapping](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/scenarios/hybrid/strategy#6-map-azure-hybrid-and-multicloud-services-to-objectives) - Comprehensive service mapping for hybrid deployments
+> - [Cross-Cloud Connectivity Solutions](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/connectivity-to-other-providers#implement-connectivity-solutions) - Network integration patterns between Azure and AWS
+> - [Zero Trust for Multi-Cloud Scenarios](https://learn.microsoft.com/en-us/security/zero-trust/secure-iaas-apps#aws-and-aws-components) - Security integration across cloud providers
+
 ---
 
 ## 4. LLM Integration Patterns
+
+> **📚 Microsoft Learn Resources:**
+> - [Azure OpenAI Service Integration Guide](https://learn.microsoft.com/en-us/community/content/azure-openai-azure-speech-gpt-4) - Voice-enabled chatbot with GPT-4 and Azure Speech Services
+> - [GPT Realtime API for Speech and Audio](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/realtime-audio-quickstart) - Real-time voice interaction capabilities
 
 **Scenario:** FastAPI backend needs to invoke LLMs for chat intelligence, summarization, or agent decision-making.
 

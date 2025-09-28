@@ -1,7 +1,6 @@
+# Authentication Guide
 
-# Azure Communication Services Authentication Guide
-
-This document outlines the authentication and session management strategy for a real-time voice agent application that integrates Azure Communication Services (ACS) with external telephony systems.
+This document outlines the authentication and session management strategy for the real-time voice agent application that integrates Azure Communication Services (ACS) with external telephony systems.
 
 ## Table of Contents
 
@@ -11,8 +10,8 @@ This document outlines the authentication and session management strategy for a 
    - [PSTN Flow (with DTMF Authentication)](#pstn-flow)
    - [SIP Flow (with DTMF Authentication)](#sip-flow)  
    - [API Flow (with Direct Lookup)](#api-flow)
-4. [Session Key Management](#session-key-management)
-5. [Implementation Examples](#implementation-examples)
+4. [WebSocket Authentication](#websocket-authentication)
+5. [Session Key Management](#session-key-management)
 6. [Security Architecture](#security-architecture)
 7. [Technical References](#technical-references)
 
@@ -105,7 +104,6 @@ flowchart LR
   class Redis storage
 ```
 
-
 ## Call Flow Types
 
 ### PSTN Flow
@@ -134,6 +132,24 @@ flowchart LR
 3. **Authentication**: Direct lookup using known call connection ID
 4. **Validation**: No DTMF analysis required
 5. **Authorization**: WebSocket established with validated session
+
+---
+
+## WebSocket Authentication
+
+WebSocket connections require secure authentication for real-time media processing. The system implements custom token validation based on the established session.
+
+### WebSocket Security Implementation
+
+For detailed WebSocket authentication patterns, see the official Azure Communication Services documentation:
+[Secure Webhook Endpoint](https://learn.microsoft.com/en-us/azure/communication-services/how-tos/call-automation/secure-webhook-endpoint?pivots=programming-language-python)
+
+### Key Security Features
+
+- **Token-based Authentication**: Custom JWT tokens for WebSocket connections
+- **Session Correlation**: WebSocket sessions correlated with call sessions
+- **Real-time Validation**: Continuous validation during media streaming
+- **Secure Handshake**: Encrypted WebSocket handshake process
 
 ---
 
@@ -201,9 +217,7 @@ The authentication flow leverages **DTMF media analysis** for telephony calls (P
 
 ---
 
-### 🔐 **Authentication & Security Architecture**
-
-### Security Layers
+### 🔐 **Security Layers**
 
 | Layer | Method | Purpose |
 |-------|--------|---------|

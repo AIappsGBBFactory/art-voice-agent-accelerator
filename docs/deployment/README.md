@@ -1,34 +1,75 @@
-# Deployment Guide
+# :material-rocket: Deployment Guide
 
-> A comprehensive guide to deploy your ARTVoice Accelerator using Terraform infrastructure and Azure Container Apps.
+!!! success "Production-Ready Deployment"
+    Comprehensive guide to deploy your Real-Time Voice Agent using Terraform infrastructure and Azure Container Apps.
 
-## Infrastructure Overview
+## :material-cloud: Infrastructure Overview
 
-This deployment guide uses **Terraform** as the Infrastructure as Code (IaC) provider with **Azure Container Apps** for hosting. The infrastructure provides:
+This deployment uses **Terraform** as Infrastructure as Code with **Azure Container Apps** for hosting, providing:
 
-- **AI Services**: Azure OpenAI (GPT-4.1-mini, O3-mini models) + Speech Services with Live Voice API support
-- **Communication**: Azure Communication Services for real-time voice and telephony integration
-- **Data Layer**: Cosmos DB (MongoDB API) + Redis Enterprise + Blob Storage for persistent and cached data
-- **Security**: Managed Identity authentication with role-based access control (RBAC)
-- **Hosting**: Azure Container Apps with auto-scaling, built-in TLS, and container orchestration
-- **Monitoring**: Application Insights + Log Analytics with OpenTelemetry distributed tracing
+=== "Core Services"
+    - **:material-brain: AI Services**: Azure OpenAI (GPT-4 models) + Speech Services with Live Voice API
+    - **:material-phone: Communication**: Azure Communication Services for real-time voice and telephony
+    - **:material-database: Data Layer**: Cosmos DB (MongoDB API) + Redis Enterprise + Blob Storage
+    - **:material-security: Security**: Managed Identity with role-based access control (RBAC)
 
-> **Infrastructure Details**: See the complete [Terraform Infrastructure README](../infra/terraform/README.md) for resource specifications and configuration options.
+=== "Platform & Monitoring"
+    - **:material-docker: Hosting**: Azure Container Apps with auto-scaling and built-in TLS
+    - **:material-chart-line: Monitoring**: Application Insights + Log Analytics with OpenTelemetry tracing
+    - **:material-network: Networking**: Private endpoints and VNet integration for enhanced security
 
-## Table of Contents
+!!! info "Infrastructure Details"
+    See the complete **[Terraform Infrastructure README](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/infra/terraform/README.md)** for resource specifications and configuration options.
 
-- [Prerequisites](#prerequisites)
-- [Quick Start with Azure Developer CLI](#quick-start-with-azure-developer-cli)
-- [Alternative: Direct Terraform Deployment](#alternative-direct-terraform-deployment)
-- [Detailed Deployment Steps](#detailed-deployment-steps)
-    - [1. Environment Configuration](#1-environment-configuration)
-    - [2. Terraform Infrastructure Provisioning](#2-terraform-infrastructure-provisioning)
-    - [3. Application Deployment](#3-application-deployment)
-    - [4. Phone Number Configuration](#4-phone-number-configuration)
-    - [5. Connectivity Testing](#5-connectivity-testing)
-- [Environment Management](#environment-management)
-- [Backend Storage Configuration](#backend-storage-configuration)
-- [Monitoring and Troubleshooting](#monitoring-and-troubleshooting)
+## :material-format-list-checks: Prerequisites
+
+!!! warning "Before You Begin"
+    Ensure you have the following tools and permissions configured.
+
+### Required Tools
+
+=== "Development Tools"
+    ```bash title="Install required CLI tools"
+    # Azure Developer CLI
+    curl -fsSL https://aka.ms/install-azd.sh | bash
+    
+    # Azure CLI (if not already installed)
+    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+    
+    # Terraform
+    brew install terraform  # macOS
+    # or download from https://terraform.io/downloads
+    
+    # Docker (for local testing)
+    brew install docker  # macOS
+    ```
+
+=== "Verification"
+    ```bash title="Verify installations"
+    # Check tool versions
+    azd version        # Should be 1.5.0+
+    az --version      # Should be 2.50.0+
+    terraform --version  # Should be 1.6.0+
+    docker --version  # Should be 20.0+
+    ```
+
+### Azure Permissions
+
+!!! danger "Required Permissions"
+    Your Azure account needs these permissions in the target subscription:
+    
+    - **Owner** or **Contributor** + **User Access Administrator**
+    - Permission to create service principals and managed identities
+    - Permission to assign roles to resources
+
+```bash title="Verify Azure permissions"
+# Login to Azure
+az login
+
+# Check current subscription and permissions
+az account show
+az role assignment list --assignee $(az account show --query user.name -o tsv) --include-inherited
+```
 - [Cleanup](#cleanup)
 - [Advanced Configuration](#advanced-configuration)
 - [Support](#support)
@@ -62,8 +103,8 @@ The easiest and **recommended** way to deploy this application is using Azure De
 
 ### Step 1: Clone and Initialize
 ```bash
-git clone https://github.com/pablosalvador10/gbb-ai-audio-agent.git
-cd gbb-ai-audio-agent
+git clone https://github.com/Azure-Samples/art-voice-agent-accelerator.git
+cd art-voice-agent-accelerator
 azd auth login
 azd init
 ```
@@ -119,18 +160,11 @@ terraform plan
 terraform apply
 ```
 
-### Step 4: Generate Environment Files
-```bash
-cd ../../  # Return to repo root
-make generate_env_from_terraform
-make update_env_with_secrets
-```
+### Step 4: Deploy your application
 
-### Step 5: Deploy Applications
-```bash
-make deploy_backend
-make deploy_frontend
-```
+Review the deployment steps to deploy a container application after infrastructure is provisioned.
+
+[Quickstart: Deploy your first container app with containerapp up](https://learn.microsoft.com/en-us/azure/container-apps/get-started?tabs=bash)
 
 ---
 
@@ -195,7 +229,6 @@ model_deployments = [
 ### 2. Terraform Infrastructure Provisioning
 
 Deploy Azure resources using Terraform:
-
 #### With Azure Developer CLI (Recommended)
 ```bash
 # Full deployment (provisions infrastructure and deploys applications)
@@ -204,6 +237,20 @@ azd up
 # Infrastructure only
 azd provision
 ```
+**What happens during `azd up`:**
+
+1. **Pre-provision hooks** (configured in [`azure.yaml`](../../azure.yaml)) automatically set up Terraform backend storage
+2. **Infrastructure provisioning** uses Terraform modules in [`infra/terraform/`](../../infra/terraform/)
+3. **Post-provision hooks** configure phone numbers and generate environment files
+4. **Application deployment** builds and deploys containers to Azure Container Apps
+
+**Automation scripts** (located in [`devops/scripts/azd/`](../../devops/scripts/azd/)):
+- [`pre-provision.sh`](../../devops/scripts/azd/pre-provision.sh) - Sets up Terraform backend storage and validates prerequisites
+- [`post-provision.sh`](../../devops/scripts/azd/post-provision.sh) - Configures ACS phone numbers and generates environment files
+- [`pre-deploy.sh`](../../devops/scripts/azd/pre-deploy.sh) - Builds container images and validates configurations
+- [`post-deploy.sh`](../../devops/scripts/azd/post-deploy.sh) - Runs health checks and connectivity tests
+
+See [`azure.yaml`](../../azure.yaml) for the complete hook configuration and script orchestration.
 
 #### With Direct Terraform
 ```bash
@@ -214,6 +261,7 @@ terraform apply
 ```
 
 **Resources Created:**
+
 - Azure Container Apps Environment with auto-scaling and ingress management
 - Azure OpenAI Service (GPT-4.1-mini, O3-mini models) with intelligent model routing
 - Azure Communication Services with Live Voice API integration
@@ -225,7 +273,7 @@ terraform apply
 - Application Insights & Log Analytics with OpenTelemetry distributed tracing
 - User-assigned managed identities with comprehensive RBAC permissions
 
-> For detailed infrastructure information, see the [Terraform Infrastructure README](../infra/terraform/README.md).
+> For detailed infrastructure information, see the [Terraform Infrastructure README](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/infra/terraform/README.md).
 
 ### 3. Application Deployment
 
@@ -564,7 +612,7 @@ az keyvault show \
     --query "properties.accessPolicies"
 ```
 
-> **Need more help?** For detailed troubleshooting steps, diagnostic commands, and solutions to common issues, see the comprehensive [Troubleshooting Guide](Troubleshooting.md).
+> **Need more help?** For detailed troubleshooting steps, diagnostic commands, and solutions to common issues, see the comprehensive [Troubleshooting Guide](../operations/troubleshooting.md).
 
 ---
 
@@ -699,11 +747,11 @@ curl $BACKEND_URL/api/v1/agents/lvagent/health
 
 ### Additional Resources
 
-- [Terraform Infrastructure README](../infra/terraform/README.md) - Detailed infrastructure documentation
-- [Troubleshooting Guide](Troubleshooting.md) - Comprehensive problem-solving guide
+- [Terraform Infrastructure README](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/infra/terraform/README.md) - Detailed infrastructure documentation
+- [Troubleshooting Guide](../operations/troubleshooting.md) - Comprehensive problem-solving guide
 - [Azure Container Apps Documentation](https://learn.microsoft.com/en-us/azure/container-apps/) - Official Microsoft documentation
 - [Azure Communication Services Docs](https://learn.microsoft.com/en-us/azure/communication-services/) - ACS specific guidance and API reference
 - [Azure AI Speech Live Voice API](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/real-time-synthesis) - Live Voice API documentation
-- [ARTVoice Local Development Guide](quickstart-local-development.md) - Local setup and testing
+- [ARTVoice Local Development Guide](../getting-started/local-development.md) - Local setup and testing
 
-> **Pro Tip**: Always test locally first using the development setup in `docs/quickstart-local-development.md` to isolate issues before deploying to Azure. Use the comprehensive load testing framework in `tests/load/` to validate performance under realistic conditions.
+> **Pro Tip**: Always test locally first using the development setup in `docs/../getting-started/local-development.md` to isolate issues before deploying to Azure. Use the comprehensive load testing framework in `tests/load/` to validate performance under realistic conditions.

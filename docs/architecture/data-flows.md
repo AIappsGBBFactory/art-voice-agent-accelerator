@@ -1,5 +1,10 @@
 # ARTAgent Voice AI - Data Architecture & Redis Implementation
 
+> **📚 Microsoft Learn Resources:**
+> - [Azure Cache for Redis Overview](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-overview) - High-performance in-memory data store
+> - [Azure Cosmos DB Use Cases](https://learn.microsoft.com/en-us/azure/cosmos-db/use-cases) - NoSQL database for modern applications
+> - [Azure Redis Key Scenarios](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-overview#key-scenarios) - Session store and caching patterns
+
 ## Overview
 
 The ARTAgent Voice AI Backend employs a sophisticated three-tier data architecture optimized for real-time voice processing at scale. This system provides hierarchical key organization, intelligent caching, and seamless data persistence for Azure Communication Services (ACS) calls and conversation sessions.
@@ -78,12 +83,20 @@ flowchart TD
 - **Access**: 10-50 ops/second per call
 - **Recovery**: Critical, survives restarts
 
+> **📚 Microsoft Learn Resources:**
+> - [Azure Cache for Redis Reliability](https://learn.microsoft.com/en-us/azure/well-architected/service-guides/azure-cache-redis/reliability) - Best practices for enterprise Redis deployment
+> - [Redis Session Store Pattern](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-overview#key-scenarios) - Session management and caching strategies
+
 #### 💾 Cosmos DB (Permanent)
 - **Purpose**: Long-term storage, analytics, compliance
 - **Examples**: Call transcripts, user profiles, audit logs
 - **Lifespan**: Days to years (policy-driven retention)
 - **Access**: 1-10 ops/minute for active calls
 - **Recovery**: Permanent system of record
+
+> **📚 Microsoft Learn Resources:**
+> - [Global Data Distribution with Cosmos DB](https://learn.microsoft.com/en-us/azure/cosmos-db/distribute-data-globally) - Multi-region replication and consistency
+> - [Azure Cosmos DB for NoSQL](https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/overview) - Document storage with SQL-like queries
 
 ## Redis Key Architecture
 
@@ -207,12 +220,14 @@ TTL_MULTIPLIER: 0.5  # Shorter TTLs for testing
 #### Key Performance Metrics & Baselines
 
 **Latency Baselines (Production SLA)**:
+
 - Redis operations: p99 < 5ms, p95 < 2ms
 - Memory-to-Redis persistence: < 10ms
 - Redis-to-Cosmos archival: < 100ms
 - End-to-end call setup: < 500ms
 
 **Operational Metrics**:
+
 - Key creation rate: Monitor spikes (>1000 keys/min indicates issues)
 - TTL distribution: Alert on keys without TTL (potential memory leaks)
 - Memory usage: Alert at 70% Redis memory capacity
@@ -253,6 +268,7 @@ performance_degradation:
 #### Security & Compliance Framework
 
 **Infrastructure Security**:
+
 - **Network**: Private endpoints, VNet integration, no public Redis access
 - **Authentication**: Azure Managed Identity for service-to-service auth
 - **Encryption**: TLS 1.3 in transit, customer-managed keys at rest
@@ -301,12 +317,13 @@ async def store_conversation_context(context: dict):
    ```
 
 2. **Security Incident Response**:
-   - Immediate: Rotate Redis access keys
-   - Within 1 hour: Audit all active sessions
-   - Within 24 hours: Security assessment report
-   - Within 72 hours: Compliance notification if required
+    - Immediate: Rotate Redis access keys
+    - Within 1 hour: Audit all active sessions
+    - Within 24 hours: Security assessment report
+    - Within 72 hours: Compliance notification if required
 
-**Capacity Planning**:
+#### Capacity Planning
+
 - **Memory**: Scale Redis cluster at 70% utilization
 - **Connections**: Monitor connection pool metrics, scale at 80%
 - **Throughput**: Baseline 10K ops/sec per shard, alert on degradation
@@ -331,6 +348,7 @@ async def comprehensive_health_check():
 ```
 
 **Production Deployment Checklist**:
+
 - [ ] Redis cluster provisioned with HA configuration
 - [ ] Private endpoints configured (no public access)
 - [ ] Monitoring dashboards deployed (Azure Monitor + custom metrics)

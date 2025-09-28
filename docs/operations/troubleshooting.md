@@ -6,7 +6,7 @@ This guide provides quick solutions for common issues with the Real-Time Audio A
 
 - [ACS (Azure Communication Services) Issues](#acs-azure-communication-services-issues)
 - [WebSocket Connection Issues](#websocket-connection-issues)
-- [Networking & Connectivity](#networking--connectivity)
+- [Networking & Connectivity](#networking-connectivity)
 - [Backend API Issues](#backend-api-issues)
 - [Frontend Issues](#frontend-issues)
 - [Azure AI Services Issues](#azure-ai-services-issues)

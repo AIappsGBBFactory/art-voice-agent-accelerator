@@ -37,8 +37,8 @@ If you only want a browser demo (no phone), ACS variables are optional.
 ## 3. Clone Repository
 
 ```bash
-git clone https://github.com/pablosalvador10/gbb-ai-audio-agent.git
-cd gbb-ai-audio-agent
+git clone https://github.com/Azure-Samples/art-voice-agent-accelerator.git
+cd art-voice-agent-accelerator
 ```
 
 ---

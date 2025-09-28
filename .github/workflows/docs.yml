@@ -76,17 +76,17 @@ jobs:
         with:
           path: ./site
 
-#   deploy:
-#     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/improve_docs'
-#     environment:
-#       name: github-pages
-#       url: ${{ steps.deployment.outputs.page_url }}
-#     runs-on: ubuntu-latest
-#     needs: build
-#     permissions:
-#       pages: write
-#       id-token: write
-#     steps:
-#       - name: Deploy to GitHub Pages
-#         id: deployment
-#         uses: actions/deploy-pages@v3
+  deploy:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/cleanup/pybackend'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v3

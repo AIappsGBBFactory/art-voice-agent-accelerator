@@ -18,7 +18,7 @@ The repository follows a modular, microservice-oriented structure with clear sep
 ## Complete Repository Map (5 Levels Deep)
 
 ```
-📁 gbb-ai-audio-agent/
+📁 art-voice-agent-accelerator/
 ├── 📄 azure.yaml                          # Azure Developer CLI configuration
 ├── 📄 CHANGELOG.md                        # Release notes and version history
 ├── 📄 CONTRIBUTING.md                     # Contribution guidelines
@@ -291,7 +291,7 @@ The repository follows a modular, microservice-oriented structure with clear sep
 │               └── 📄 terraform.tfvars
 │
 ├── 📁 docs/                               # Documentation
-│   ├── 📄 README.md                       # Documentation index
+│   ├── 📄 docs-overview.md                # Documentation index
 │   ├── 📄 Architecture.md                 # System architecture
 │   ├── 📄 AuthForHTTPandWSS.md           # Authentication guide
 │   ├── 📄 CICDGuide.md                   # CI/CD setup
@@ -308,7 +308,7 @@ The repository follows a modular, microservice-oriented structure with clear sep
 │   ├── 📄 repo-structure.md              # This document
 │   ├── 📁 api/                           # API documentation
 │   │   ├── 📄 overview.md                # API overview
-│   │   ├── 📄 speech-synthesis.md        # Speech API docs
+│   │   ├── 📄 architecture.md        # Speech API docs
 │   │   └── 📁 endpoints/                 # Endpoint documentation
 │   │       ├── 📄 calls.md               # Call endpoints
 │   │       └── 📄 speech.md              # Speech endpoints

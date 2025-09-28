@@ -1,5 +1,5 @@
 ############################################################
-# Makefile for gbb-ai-audio-agent
+# Makefile for art-voice-agent-accelerator
 # Purpose: Manage code quality, environment, and app tasks
 # Each target is documented for clarity and maintainability
 ############################################################
@@ -214,10 +214,10 @@ connect_redis:
 	@echo "   Username: $(USER_OBJECT_ID)"
 	@echo "   Password: [Azure Access Token]"
 	@echo ""
-	@echo "� Debug: Using command:"
+	@echo " Debug: Using command:"
 	@echo "   redis-cli -h $(REDIS_HOST) -p $(REDIS_PORT) --tls -u $(USER_OBJECT_ID) -a [ACCESS_TOKEN]"
 	@echo ""
-	@echo "�📝 Note: You are now connected to Redis. Use Redis commands as needed."
+	@echo "📝 Note: You are now connected to Redis. Use Redis commands as needed."
 	@echo "   Example commands: PING, INFO, KEYS *, GET <key>, SET <key> <value>"
 	@echo "   Type 'quit' or 'exit' to disconnect."
 	@echo ""
@@ -307,7 +307,7 @@ test_redis_connection:
 # Show help information
 help:
 	@echo ""
-	@echo "🛠️  gbb-ai-audio-agent Makefile"
+	@echo "🛠️  art-voice-agent-accelerator Makefile"
 	@echo "=============================="
 	@echo ""
 	@echo "📋 Code Quality:"
@@ -346,13 +346,6 @@ help:
 	@echo "  export AZURE_ENV_NAME=dev"
 	@echo "  make generate_env_from_terraform"
 	@echo "  make update_env_with_secrets"
-	@echo ""
-	@echo "💡 Quick Start for Full Terraform Deployment (Alternative to azd):"
-	@echo "  1. cd infra/terraform && terraform init && terraform apply"
-	@echo "  2. cd ../.. && make generate_env_from_terraform"
-	@echo "  3. make update_env_with_secrets"
-	@echo "  4. make generate_backend_deployment && make deploy_backend"
-	@echo "  5. make generate_frontend_deployment && make deploy_frontend"
 	@echo ""
 	@echo "💡 Deployment Monitoring Tips:"
 	@echo "  • Large deployments may timeout after 15 minutes but continue in background"
