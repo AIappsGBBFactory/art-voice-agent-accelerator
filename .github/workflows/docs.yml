@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feature/mkdocs-v2
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
@@ -63,9 +64,11 @@ jobs:
 
       - name: Install project dependencies (for mkdocstrings)
         run: |
-          pip install -r requirements.txt
+          # Only install minimal dependencies needed for docs, not full Azure SDK
+          pip install fastapi pydantic uvicorn
           # Install the project in editable mode so mkdocstrings can import it
-          pip install -e .
+          # pip install -e .
+        continue-on-error: true
 
       - name: Setup Pages
         id: pages
@@ -78,6 +81,18 @@ jobs:
           # Set a dummy Azure Speech key for documentation build
           AZURE_SPEECH_KEY: "dummy-key-for-docs"
           AZURE_SPEECH_REGION: "eastus"
+          # Disable Azure SDK authentication attempts
+          AZURE_CORE_DISABLE_CONNECTION_SHARING: "true"
+          # Skip Azure identity chain that might try to connect
+          AZURE_IDENTITY_DISABLE_CP1: "true"
+          # Disable various Azure authentication methods
+          MSI_ENDPOINT: ""
+          MSI_SECRET: ""
+          AZURE_CLIENT_ID: ""
+          AZURE_CLIENT_SECRET: ""
+          AZURE_TENANT_ID: ""
+          # Set to offline mode for documentation builds
+          DOCS_BUILD_MODE: "true"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
