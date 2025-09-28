@@ -1,5 +1,5 @@
 module "ai_foundry" {
-  source = "./modules/ai"
+  source = "./modules/aifoundry"
 
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
