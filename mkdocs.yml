@@ -34,8 +34,6 @@ theme:
 plugins:
   - search
   - mermaid2
-  - neoteroi.mkdocsoad:
-      use_pymdownx: true
   - mkdocstrings:
       handlers:
         python:
