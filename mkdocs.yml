@@ -59,9 +59,12 @@ nav:
   - Architecture:
     - Overview: architecture/README.md
     - LLM Orchestration: architecture/llm-orchestration.md
-    - Data Flows: architecture/data-flows.md
-    - Integrations: architecture/integrations.md
     - ACS Flows: architecture/acs-flows.md
+    - Data Flows: architecture/data-flows.md
+    - Speech Recognition: architecture/speech-recognition.md
+    - Speech Synthesis: architecture/speech-synthesis.md
+    - Streaming Modes: architecture/streaming-modes.md
+    - Integrations: architecture/integrations.md
   - Deployment:
     - Deployment Guide: deployment/README.md
     - Production: deployment/production.md
@@ -80,13 +83,9 @@ nav:
     - Healthcare: industry/healthcare.md
   - Samples & Labs:
     - Overview: samples/README.md
-  - Reference:
-    - Overview: reference/README.md
-    - Repository Structure: reference/repository-structure.md
-    - Speech Recognition: reference/speech-recognition.md
-    - Speech Synthesis: reference/speech-synthesis.md
-    - Streaming Modes: reference/streaming-modes.md
-    - Utilities: reference/utilities.md
+  - Guides:
+    - Repository Structure: guides/repository-structure.md
+    - Utilities & Services: guides/utilities.md
 extra_css:
   - assets/oad-styles.css
 markdown_extensions:

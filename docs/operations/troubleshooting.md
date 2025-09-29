@@ -1,428 +1,188 @@
-# Troubleshooting Guide
+# :material-wrench: Troubleshooting Guide
 
-This guide provides quick solutions for common issues with the Real-Time Audio Agent application.
-
-## Table of Contents
-
-- [ACS (Azure Communication Services) Issues](#acs-azure-communication-services-issues)
-- [WebSocket Connection Issues](#websocket-connection-issues)
-- [Networking & Connectivity](#networking-connectivity)
-- [Backend API Issues](#backend-api-issues)
-- [Frontend Issues](#frontend-issues)
-- [Azure AI Services Issues](#azure-ai-services-issues)
-- [Redis Connection Issues](#redis-connection-issues)
-- [Deployment Issues](#deployment-issues)
-- [Performance Issues](#performance-issues)
-- [Debugging Tools](#debugging-tools)
+!!! abstract "Quick Solutions for Common Issues"
+    This guide provides solutions for common issues encountered with the Real-Time Voice Agent application, covering deployment, connectivity, and performance.
 
 ---
 
-## ACS (Azure Communication Services) Issues
+## :material-phone: ACS & WebSocket Issues
 
-### Problem: ACS not making outbound calls
+!!! question "Problem: ACS is not making outbound calls or audio quality is poor"
+    **Symptoms:**
+    - Call fails to initiate or no audio connection is established.
+    - ACS callback events are not received.
+    - Audio quality is choppy or has high latency.
 
-**Symptoms:**
-- Call fails to initiate
-- No audio connection established
-- ACS callback events not received
+    **Solutions:**
+    1.  **Check Container App Logs:**
+        ```bash
+        # Monitor backend logs for errors
+        make monitor_backend_deployment
+        # Or directly query Azure Container Apps
+        az containerapp logs show --name <your-app-name> --resource-group <rg-name>
+        ```
+    2.  **Verify Webhook Accessibility:** Ensure your webhook URL is public and uses `https`. For local development, use a tunnel:
+        ```bash
+        # Use devtunnel for local development
+        devtunnel host -p 8010 --allow-anonymous
+        ```
+    3.  **Test WebSocket Connectivity:**
+        ```bash
+        # Install wscat (npm install -g wscat) and test the connection
+        wscat -c wss://your-domain.com/ws/call/{callConnectionId}
+        ```
+    4.  **Check ACS & Speech Resources:** Verify that your ACS connection string and Speech service keys are correctly configured in your environment variables.
 
-**Solutions:**
-1. **Check App Service Logs:**
-   ```bash
-   make monitor_backend_deployment
-   # Or check Azure Container Apps logs
-   az containerapp logs show --name <your-app-name> --resource-group <rg-name>
-   ```
+!!! question "Problem: WebSocket connection fails or drops frequently"
+    **Symptoms:**
+    - `WebSocket connection failed` errors in the browser console.
+    - Frequent reconnections or missing real-time updates.
 
-2. **Verify Webhook URL is publicly accessible:**
-   - Must use HTTPS (not HTTP)
-   - Use devtunnel for local development:
-     ```bash
-     devtunnel host -p 8010 --allow-anonymous
-     ```
-   - Or use ngrok:
-     ```bash
-     ngrok http 8010
-     ```
-
-3. **Test WebSocket connectivity:**
-   ```bash
-   # Install wscat if not available
-   npm install -g wscat
-   
-   # Test WebSocket connection
-   wscat -c wss://your-domain.com/ws/call/{callConnectionId}
-   ```
-
-4. **Check ACS Resource Configuration:**
-   - Verify ACS connection string in environment variables
-   - Ensure phone number is properly configured
-   - Check PSTN calling is enabled
-
-### Problem: Audio quality issues or dropouts
-
-**Solutions:**
-1. Check network latency to Azure region
-2. Verify TTS/STT service health
-3. Monitor Redis connection stability
-4. Check container resource limits
+    **Solutions:**
+    1.  **Test WebSocket Endpoint Directly:**
+        ```bash
+        wscat -c wss://<backend-domain>/api/v1/media/stream
+        ```
+    2.  **Check CORS Configuration:** Ensure your frontend's origin is allowed in the backend's CORS settings, especially for WebSocket upgrade headers.
+    3.  **Monitor Connection Lifecycle:** Review backend logs for WebSocket connection and disconnection events to identify patterns.
 
 ---
 
-## WebSocket Connection Issues
+## :material-api: Backend & API Issues
 
-### Problem: WebSocket connection fails or drops frequently
+!!! question "Problem: FastAPI server won't start or endpoints return 500 errors"
+    **Symptoms:**
+    - Import errors, "port already in use," or environment variable errors on startup.
+    - API endpoints respond with `500 Internal Server Error`.
 
-**Symptoms:**
-- `WebSocket connection failed` errors
-- Frequent reconnections
-- Missing real-time updates
-
-**Solutions:**
-1. **Test WebSocket endpoint directly:**
-   ```bash
-   wscat -c wss://<backend-domain>:8010/call/stream
-   ```
-
-2. **Check CORS configuration:**
-   - Verify frontend origin is allowed
-   - Ensure WebSocket upgrade headers are supported
-
-3. **Monitor connection lifecycle:**
-   ```bash
-   # Check backend logs for WebSocket events
-   tail -f logs/app.log | grep -i websocket
-   ```
-
-4. **Verify environment variables:**
-   ```bash
-   # Check if required vars are set
-   echo $AZURE_ACS_CONNECTION_STRING
-   echo $REDIS_URL
-   ```
+    **Solutions:**
+    1.  **Check Python Environment & Dependencies:**
+        ```bash
+        # Ensure you are in the correct conda environment
+        conda activate audioagent
+        # Reinstall dependencies
+        pip install -r requirements.txt
+        ```
+    2.  **Free Up Port:** If port `8010` is in use, find and terminate the process:
+        ```bash
+        # Find and kill the process on macOS or Linux
+        lsof -ti:8010 | xargs kill -9
+        ```
+    3.  **Run with Debug Logging:**
+        ```bash
+        uvicorn apps.rtagent.backend.main:app --reload --port 8010 --log-level debug
+        ```
+    4.  **Verify Environment File (`.env`):** Ensure the file exists and all required variables for Azure, Redis, and OpenAI are correctly set.
 
 ---
 
-## Networking & Connectivity
+## :material-cloud-alert: Azure AI & Redis Issues
 
-### Problem: Cannot access application from external networks
+!!! question "Problem: Speech-to-Text or OpenAI API errors"
+    **Symptoms:**
+    - Transcription is not appearing or is inaccurate.
+    - AI-generated responses are missing or failing.
+    - `401 Unauthorized` or `429 Too Many Requests` errors.
 
-**Solutions:**
-1. **For local development:**
-   ```bash
-   # Start devtunnel
-   devtunnel host -p 8010 --allow-anonymous
-   
-   # Or use ngrok
-   ngrok http 8010
-   ```
+    **Solutions:**
+    1.  **Check Keys and Endpoints:** Verify that `AZURE_COGNITIVE_SERVICES_KEY`, `AZURE_OPENAI_ENDPOINT`, and other related variables are correct.
+    2.  **Test Service Connectivity Directly:**
+        ```bash
+        # Test Azure Speech API (replace with a valid audio file)
+        curl -X POST "https://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1" \
+          -H "Ocp-Apim-Subscription-Key: {key}" -H "Content-Type: audio/wav" --data-binary @test.wav
 
-2. **Check firewall rules:**
-   - Ensure ports 8010 (backend) and 5173 (frontend) are open
-   - Verify Azure NSG rules if deployed
+        # Test OpenAI API
+        curl -X GET "{endpoint}/openai/deployments?api-version=2023-12-01-preview" -H "api-key: {key}"
+        ```
+    3.  **Check Quotas and Model Names:** Ensure your service quotas have not been exceeded and that the model deployment names in your code match those in the Azure portal.
 
-3. **Verify DNS resolution:**
-   ```bash
-   nslookup your-domain.com
-   dig your-domain.com
-   ```
+!!! question "Problem: Redis connection timeouts or failures"
+    **Symptoms:**
+    - High latency in agent responses.
+    - Errors related to reading or writing session state.
+    - `ConnectionTimeoutError` in backend logs.
 
-### Problem: SSL/TLS certificate issues
-
-**Solutions:**
-1. **For development with self-signed certs:**
-   ```bash
-   # Accept self-signed certificates in browser
-   # Or configure proper SSL certificates
-   ```
-
-2. **Check certificate validity:**
-   ```bash
-   openssl s_client -connect your-domain.com:443 -servername your-domain.com
-   ```
+    **Solutions:**
+    1.  **Test Redis Connectivity:**
+        ```bash
+        # Use redis-cli to ping the server
+        redis-cli -u $REDIS_URL ping
+        ```
+    2.  **Verify Configuration:** For Azure Cache for Redis, check the connection string, firewall rules, and whether SSL/TLS is required.
 
 ---
 
-## Backend API Issues
+## :material-rocket-launch: Deployment & Performance
 
-### Problem: FastAPI server won't start
+!!! question "Problem: `azd` deployment fails or containers won't start"
+    **Symptoms:**
+    - `azd up` or `azd provision` command fails with an error.
+    - Container Apps show a status of "unhealthy" or are stuck in a restart loop.
 
-**Symptoms:**
-- Import errors
-- Port already in use
-- Environment variable errors
+    **Solutions:**
+    1.  **Check Azure Authentication & Permissions:**
+        ```bash
+        # Ensure you are logged into the correct account
+        az account show
+        # Verify you have Contributor/Owner rights on the subscription
+        ```
+    2.  **Review Deployment Logs:**
+        ```bash
+        # Use the 'logs' command for detailed output
+        azd logs
+        # For container-specific issues
+        az containerapp logs show --name <app-name> --resource-group <rg-name> --follow
+        ```
+    3.  **Purge and Redeploy:** As a last resort, a clean deployment can resolve state issues:
+        ```bash
+        azd down --force --purge
+        azd up
+        ```
 
-**Solutions:**
-1. **Check Python environment:**
-   ```bash
-   conda activate audioagent
-   pip install -r requirements.txt
-   ```
+!!! question "Problem: High latency or memory usage"
+    **Symptoms:**
+    - Slow audio processing or delayed AI responses.
+    - Backend container memory usage grows over time and leads to restarts.
 
-2. **Kill processes using port 8010:**
-   ```bash
-   lsof -ti:8010 | xargs kill -9
-   ```
-
-3. **Run with detailed logging:**
-   ```bash
-   uvicorn apps.rtagent.backend.main:app --reload --port 8010 --log-level debug
-   ```
-
-4. **Check environment file:**
-   ```bash
-   # Ensure .env file exists and has required variables
-   cat .env | grep -E "(AZURE_|REDIS_|OPENAI_)"
-   ```
-
-### Problem: API endpoints returning 500 errors
-
-**Solutions:**
-1. **Check backend logs:**
-   ```bash
-   tail -f logs/app.log
-   ```
-
-2. **Test individual endpoints:**
-   ```bash
-   curl -X GET http://localhost:8010/health
-   curl -X POST http://localhost:8010/api/v1/calls/start -H "Content-Type: application/json" -d '{}'
-   ```
-
-3. **Verify database connections:**
-   ```bash
-   # Test Redis connection
-   redis-cli -u $REDIS_URL ping
-   ```
+    **Solutions:**
+    1.  **Monitor Resources:** Use `htop` or `docker stats` locally, and Application Insights in Azure to monitor CPU and memory usage.
+    2.  **Profile Memory Usage:** Add lightweight profiling to your Python code to track object allocation and identify potential leaks.
+        ```python
+        import psutil
+        process = psutil.Process()
+        print(f"Memory usage: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+        ```
+    3.  **Check for Connection Leaks:** Ensure that database and WebSocket connections are properly closed and managed.
 
 ---
 
-## Frontend Issues
+## :material-toolbox-outline: Debugging Tools & Commands
 
-### Problem: React app won't start or compile errors
+!!! tip "Essential Commands for Quick Diagnostics"
 
-**Solutions:**
-1. **Clear node modules and reinstall:**
-   ```bash
-   cd apps/rtagent/frontend
-   rm -rf node_modules package-lock.json
-   npm install
-   ```
+    - **Health Check:**
+      ```bash
+      make health_check
+      ```
+    - **Monitor Backend Deployment:**
+      ```bash
+      make monitor_backend_deployment
+      ```
+    - **View Logs:**
+      ```bash
+      tail -f logs/app.log
+      ```
+    - **Test WebSocket Connection:**
+      ```bash
+      wscat -c ws://localhost:8010/ws/call/test-id
+      ```
+    - **Check Network Connectivity:**
+      ```bash
+      curl -v http://localhost:8010/health
+      ```
 
-2. **Check Node.js version:**
-   ```bash
-   node --version  # Should be >= 18
-   npm --version
-   ```
-
-3. **Start with verbose logging:**
-   ```bash
-   npm run dev -- --verbose
-   ```
-
-### Problem: Frontend can't connect to backend
-
-**Solutions:**
-1. **Check proxy configuration in vite.config.js**
-2. **Verify backend is running:**
-   ```bash
-   curl http://localhost:8010/health
-   ```
-
-3. **Check network tab in browser dev tools**
-4. **Verify CORS settings in backend**
-
----
-
-## Azure AI Services Issues
-
-### Problem: Speech-to-Text not working
-
-**Solutions:**
-1. **Check Azure Cognitive Services key:**
-   ```bash
-   echo $AZURE_COGNITIVE_SERVICES_KEY
-   echo $AZURE_COGNITIVE_SERVICES_REGION
-   ```
-
-2. **Test STT service directly:**
-   ```bash
-   # Use curl to test Azure Speech API
-   curl -X POST "https://$AZURE_COGNITIVE_SERVICES_REGION.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1" \
-     -H "Ocp-Apim-Subscription-Key: $AZURE_COGNITIVE_SERVICES_KEY" \
-     -H "Content-Type: audio/wav" \
-     --data-binary @test.wav
-   ```
-
-3. **Check service quotas and limits**
-4. **Verify region availability for your subscription**
-
-### Problem: OpenAI API errors
-
-**Solutions:**
-1. **Check API key and endpoint:**
-   ```bash
-   echo $AZURE_OPENAI_ENDPOINT
-   echo $AZURE_OPENAI_API_KEY
-   ```
-
-2. **Test API connectivity:**
-   ```bash
-   curl -X GET "$AZURE_OPENAI_ENDPOINT/openai/deployments?api-version=2023-12-01-preview" \
-     -H "api-key: $AZURE_OPENAI_API_KEY"
-   ```
-
-3. **Verify model deployment names match configuration**
-
----
-
-## Redis Connection Issues
-
-### Problem: Redis connection timeouts or failures
-
-**Solutions:**
-1. **Test Redis connectivity:**
-   ```bash
-   redis-cli -u $REDIS_URL ping
-   redis-cli -u $REDIS_URL info server
-   ```
-
-2. **Check Redis configuration:**
-   ```bash
-   # For local Redis
-   redis-server --version
-   
-   # Check if Redis is running
-   ps aux | grep redis
-   ```
-
-3. **For Azure Redis Cache:**
-   - Verify connection string format
-   - Check firewall rules
-   - Ensure SSL is enabled if required
-
----
-
-## Deployment Issues
-
-### Problem: azd deployment fails
-
-**Solutions:**
-1. **Check Azure authentication:**
-   ```bash
-   az account show
-   az account list-locations
-   ```
-
-2. **Verify subscription and resource group:**
-   ```bash
-   azd env get-values
-   ```
-
-3. **Check deployment logs:**
-   ```bash
-   azd logs
-   ```
-
-4. **Common fixes:**
-   ```bash
-   # Clean and redeploy
-   azd down --force --purge
-   azd up
-   ```
-
-### Problem: Container deployment issues
-
-**Solutions:**
-1. **Check container logs:**
-   ```bash
-   az containerapp logs show --name <app-name> --resource-group <rg-name> --follow
-   ```
-
-2. **Verify container registry access:**
-   ```bash
-   az acr repository list --name <registry-name>
-   ```
-
-3. **Check resource quotas:**
-   ```bash
-   az vm list-usage --location <region>
-   ```
-
----
-
-## Performance Issues
-
-### Problem: High latency in audio processing
-
-**Solutions:**
-1. **Monitor resource usage:**
-   ```bash
-   # Check CPU and memory
-   top
-   htop  # if available
-   ```
-
-2. **Check Azure region proximity**
-3. **Monitor Redis performance**
-4. **Review container resource limits**
-
-### Problem: Memory leaks or high memory usage
-
-**Solutions:**
-1. **Profile Python memory usage:**
-   ```python
-   # Add to your code for debugging
-   import psutil
-   process = psutil.Process()
-   print(f"Memory usage: {process.memory_info().rss / 1024 / 1024:.1f} MB")
-   ```
-
-2. **Check for connection leaks**
-3. **Monitor WebSocket connections**
-
----
-
-## Debugging Tools
-
-### Essential Commands
-
-```bash
-# Check all services health
-make health_check
-
-# Monitor backend deployment
-make monitor_backend_deployment
-
-# View logs
-tail -f logs/app.log
-
-# Test WebSocket connection
-wscat -c ws://localhost:8010/ws/call/test-id
-
-# Check network connectivity
-curl -v http://localhost:8010/health
-
-# Monitor system resources
-htop
-iotop  # for disk I/O
-```
-
-### Log Locations
-
-- **Backend logs:** container logs
-- **Frontend logs:** Browser console (F12)
-- **Azure logs:** Azure Monitor / Application Insights
-- **System logs:** `/var/log/` (Linux) or Console.app (macOS)
-
----
-
-## Getting Help
-
-If you're still experiencing issues:
-
-1. **Check GitHub Issues:** Look for similar problems in the repository
-2. **Enable debug logging:** Set `LOG_LEVEL=DEBUG` in your environment
-3. **Collect logs:** Gather relevant logs before reporting issues
-4. **Test with minimal setup:** Try with basic configuration first
-5. **Check Azure service health:** Visit Azure status page
+!!! info "Log Locations"
+    - **Backend:** Container logs in Azure or `logs/app.log` locally.
+    - **Frontend:** Browser developer console (F12).
+    - **Azure Services:** Azure Monitor and Application Insights.

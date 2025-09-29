@@ -1,258 +1,111 @@
-# Application Insights Integration Guide
+# :material-monitor-dashboard: Monitoring & Observability Guide
 
-This guide explains how to configure and troubleshoot Azure Application Insights telemetry for the real-time audio agent application.
+!!! abstract "Application Insights Integration"
+    This guide explains how to configure, use, and troubleshoot Azure Application Insights for comprehensive telemetry in the real-time audio agent application.
 
-## Overview
-
-The application uses Azure Monitor OpenTelemetry to send telemetry data to Application Insights, including:
-
+The application uses the **Azure Monitor OpenTelemetry Distro** to automatically collect and send telemetry data to Application Insights, including:
 - Structured logging
-- Request tracing
+- Distributed request tracing
 - Performance metrics
-- Live metrics (when permissions allow)
+- Live Metrics
 
-## Quick Fix for Permission Errors
+---
 
-If you're seeing "Forbidden" errors related to Application Insights telemetry, apply this immediate fix:
-
-```bash
-# Set environment variable to disable live metrics
-export AZURE_MONITOR_DISABLE_LIVE_METRICS=true
-
-# Set development environment
-export ENVIRONMENT=dev
-```
-
-Or add to your `.env` file:
-```bash
-AZURE_MONITOR_DISABLE_LIVE_METRICS=true
-ENVIRONMENT=dev
-```
-
-## Configuration
+## :material-cogs: Configuration & Authentication
 
 ### Environment Variables
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Application Insights connection string | None | Yes |
-| `AZURE_MONITOR_DISABLE_LIVE_METRICS` | Disable live metrics to reduce permission requirements | `false` | No |
-| `ENVIRONMENT` | Environment type (dev/staging/prod) | None | No |
-| `AZURE_MONITOR_LOGGER_NAME` | Custom logger name | `default` | No |
+| Variable                                | Description                                      | Default   | Required |
+| --------------------------------------- | ------------------------------------------------ | --------- | -------- |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | The connection string for your App Insights resource. | None      | **Yes**  |
+| `AZURE_MONITOR_DISABLE_LIVE_METRICS`    | Disables Live Metrics to reduce permissions.     | `false`   | No       |
+| `ENVIRONMENT`                           | Sets the environment (`dev`, `prod`).            | `dev`     | No       |
 
-### Connection String Format
+### Authentication
 
-```
-InstrumentationKey=your-instrumentation-key;IngestionEndpoint=https://your-region.in.applicationinsights.azure.com/;LiveEndpoint=https://your-region.livediagnostics.monitor.azure.com/
-```
+The telemetry configuration uses the `DefaultAzureCredential` chain, which automatically handles authentication in both local and deployed environments:
+1.  **Managed Identity (in Azure):** Automatically uses the system-assigned or user-assigned managed identity of the hosting service (e.g., Container Apps).
+2.  **Local Development:** Falls back to credentials from Azure CLI, Visual Studio Code, or environment variables.
 
-## Authentication
+---
 
-The telemetry configuration uses Azure credential chain in this order:
+## :material-lock-check: Permissions & Troubleshooting
 
-1. **Managed Identity** (for Azure-hosted applications)
-   - App Service: System-assigned or user-assigned managed identity
-   - Container Apps: System-assigned or user-assigned managed identity
+!!! question "Problem: 'Forbidden' errors or 'The Agent/SDK does not have permissions to send telemetry'"
+    **Symptoms:**
+    ```
+    azure.core.exceptions.HttpResponseError: Operation returned an invalid status 'Forbidden'
+    Content: {"Code":"InvalidOperation","Message":"The Agent/SDK does not have permissions to send telemetry..."}
+    ```
+    This error typically occurs because the identity running the application (your user account locally, or a managed identity in Azure) lacks the necessary permissions to write telemetry, especially for the **Live Metrics** feature.
 
-2. **DefaultAzureCredential** (for local development)
-   - Azure CLI credentials
-   - Visual Studio Code credentials
-   - Environment variables (if configured)
+    **Solutions:**
+    1.  **Immediate Fix (Disable Live Metrics):** The simplest solution is to disable the Live Metrics feature, which requires elevated permissions.
+        ```bash
+        # Add this to your .env file or export it
+        AZURE_MONITOR_DISABLE_LIVE_METRICS=true
+        ```
+    2.  **Grant Permissions (Local Development):** Grant your user account the `Application Insights Component Contributor` role on the App Insights resource.
+        ```bash
+        # Grant permissions to your Azure CLI user
+        az role assignment create \
+          --assignee $(az account show --query user.name -o tsv) \
+          --role "Application Insights Component Contributor" \
+          --scope <your-app-insights-resource-id>
+        ```
+    3.  **Configure Managed Identity (Production):** In Azure, ensure the managed identity of your Container App has the `Application Insights Component Contributor` role. This is handled automatically by the provided Bicep and Terraform templates.
 
-## Permissions Required
+---
 
-### Basic Telemetry (Logs, Traces, Metrics)
-- `Microsoft.Insights/components/read`
-- `Microsoft.Insights/telemetry/write`
+## :material-magnify: Viewing Telemetry & Logs
 
-### Live Metrics (Real-time monitoring)
-- `Microsoft.Insights/components/write`
-- Additional live metrics API permissions
+Once configured, you can explore your application's telemetry in the Azure portal.
 
-### Recommended Roles
+### Log Analytics Queries
+Navigate to your Application Insights resource, select **Logs**, and run Kusto (KQL) queries.
 
-1. **Application Insights Component Contributor**
-   ```bash
-   az role assignment create \
-     --assignee <user-or-managed-identity> \
-     --role "Application Insights Component Contributor" \
-     --scope "/subscriptions/{subscription}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}"
-   ```
+!!! example "Kusto Query Examples"
+    === "View Recent Errors"
+        ```kusto
+        traces
+        | where timestamp > ago(1h)
+        | where severityLevel >= 3 // 3 for Error, 4 for Critical
+        | order by timestamp desc
+        ```
+    === "Trace a Specific Call"
+        ```kusto
+        requests
+        | where url contains "start_call"
+        | project timestamp, url, resultCode, duration, operation_Id
+        | join kind=inner (
+            traces | extend operation_Id = tostring(customDimensions.operation_Id)
+        ) on operation_Id
+        ```
+    === "Custom Metrics"
+        ```kusto
+        customMetrics
+        | where name == "custom_requests_total"
+        | extend endpoint = tostring(customDimensions.endpoint)
+        | summarize sum(value) by endpoint
+        ```
 
-2. **Monitoring Contributor** (broader access)
-   ```bash
-   az role assignment create \
-     --assignee <user-or-managed-identity> \
-     --role "Monitoring Contributor" \
-     --scope "/subscriptions/{subscription}/resourceGroups/{rg}"
-   ```
+### Key Monitoring Features
+- **Application Map:** Visualizes the dependencies and communication between your services.
+- **Live Metrics:** Real-time performance data (if permissions are granted).
+- **Performance:** Analyze request latency, dependency calls, and identify bottlenecks.
+- **Failures:** Investigate exceptions and failed requests with detailed stack traces.
 
-## Troubleshooting
+---
 
-### Common Error: "The Agent/SDK does not have permissions to send telemetry"
+## :material-hammer-wrench: Production Best Practices
 
-**Symptoms:**
-```
-azure.core.exceptions.HttpResponseError: Operation returned an invalid status 'Forbidden'
-Content: {"Code":"InvalidOperation","Message":"The Agent/SDK does not have permissions to send telemetry to this resource."}
-```
+- **Use Managed Identity:** Always prefer managed identities for authentication in Azure.
+- **Use Key Vault:** Store the Application Insights connection string in Azure Key Vault and reference it in your application configuration.
+- **Grant Minimal Permissions:** Assign the most restrictive role necessary. If you don't need Live Metrics, the `Monitoring Metrics Publisher` role may be sufficient.
+- **Enable Alerts:** Configure alert rules in Azure Monitor to be notified of high error rates, performance degradation, or other critical events.
+- **Sample Telemetry:** For high-traffic applications, configure sampling to reduce costs while still collecting representative data.
 
-**Solutions:**
-
-1. **Immediate Fix (Disable Live Metrics):**
-   ```bash
-   export AZURE_MONITOR_DISABLE_LIVE_METRICS=true
-   ```
-
-2. **Grant Permissions for Local Development:**
-   ```bash
-   # Get your user principal name
-   az account show --query user.name -o tsv
-   
-   # Grant Application Insights permissions
-   az role assignment create \
-     --assignee $(az account show --query user.name -o tsv) \
-     --role "Application Insights Component Contributor" \
-     --scope <your-app-insights-resource-id>
-   ```
-
-3. **Configure Managed Identity for Production:**
-   ```bash
-   # Enable system-assigned managed identity (App Service example)
-   az webapp identity assign --resource-group <rg> --name <app-name>
-   
-   # Grant permissions to the managed identity
-   az role assignment create \
-     --assignee <managed-identity-principal-id> \
-     --assignee-principal-type ServicePrincipal \
-     --role "Application Insights Component Contributor" \
-     --scope <your-app-insights-resource-id>
-   ```
-
-### Environment-Specific Behavior
-
-The telemetry configuration automatically adjusts based on environment:
-
-- **Development (`dev`, `development`, `local`)**: Live metrics disabled by default
-- **Production (`prod`, `production`)**: Live metrics enabled if permissions allow
-- **Azure-hosted**: Attempts to use managed identity credentials
-
-## Testing
-
-### Test Basic Telemetry
-```python
-import logging
-from utils.telemetry_config import setup_azure_monitor
-
-# Configure telemetry
-setup_azure_monitor("test-logger")
-
-# Test logging
-logger = logging.getLogger("test-logger")
-logger.info("Test message", extra={"custom_property": "test_value"})
-```
-
-### Run Diagnostics
-```bash
-python utils/fix_appinsights.py
-```
-
-## Integration with FastAPI
-
-The telemetry is automatically configured when the application starts:
-
-```python
-from utils.telemetry_config import setup_azure_monitor
-
-# In your main.py or startup code
-setup_azure_monitor("audioagent")
-```
-
-OpenTelemetry will automatically instrument:
-- FastAPI requests and responses
-- Azure SDK calls
-- HTTP client requests (aiohttp, requests)
-- Custom logging
-
-## Production Deployment
-
-For production deployment with Azure Container Apps or App Service:
-
-1. **Enable Managed Identity:**
-   ```bicep
-   identity: {
-     type: 'SystemAssigned'
-   }
-   ```
-
-2. **Grant Permissions in Bicep:**
-   ```bicep
-   resource appInsightsRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-     name: guid(appInsights.id, containerApp.id, 'ae349356-3a1b-4a5e-921d-050484c6347e')
-     scope: appInsights
-     properties: {
-       roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ae349356-3a1b-4a5e-921d-050484c6347e') // Application Insights Component Contributor
-       principalId: containerApp.identity.principalId
-       principalType: 'ServicePrincipal'
-     }
-   }
-   ```
-
-3. **Configure Environment Variables:**
-   ```bicep
-   environmentVariables: [
-     {
-       name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-       value: appInsights.properties.ConnectionString
-     }
-     {
-       name: 'ENVIRONMENT'
-       value: 'production'
-     }
-   ]
-   ```
-
-## Monitoring and Alerting
-
-Once properly configured, you can monitor your application through:
-
-1. **Application Insights Portal**
-   - Live metrics (if enabled)
-   - Application map
-   - Performance counters
-   - Custom telemetry
-
-2. **Log Analytics Queries**
-   ```kusto
-   traces
-   | where timestamp > ago(1h)
-   | where severityLevel >= 2
-   | order by timestamp desc
-   ```
-
-3. **Custom Metrics**
-   ```python
-   from azure.monitor.opentelemetry import configure_azure_monitor
-   from opentelemetry import metrics
-   
-   # Get meter
-   meter = metrics.get_meter(__name__)
-   
-   # Create custom counter
-   request_counter = meter.create_counter("custom_requests_total")
-   request_counter.add(1, {"endpoint": "/api/health"})
-   ```
-
-## Security Considerations
-
-- Never hardcode connection strings in source code
-- Use Key Vault to store connection strings in production
-- Grant minimal required permissions
-- Regularly audit role assignments
-- Enable diagnostic settings for audit logging
-
-## Support and Resources
-
-- [Azure Monitor OpenTelemetry Documentation](https://docs.microsoft.com/en-us/azure/azure-monitor/app/opentelemetry-overview)
-- [Application Insights Troubleshooting](https://docs.microsoft.com/en-us/azure/azure-monitor/app/troubleshoot)
-- [Azure RBAC Documentation](https://docs.microsoft.com/en-us/azure/role-based-access-control/)
+!!! info "Additional Resources"
+    - **[Azure Monitor OpenTelemetry Documentation](https://learn.microsoft.com/en-us/azure/azure-monitor/app/opentelemetry-overview)**
+    - **[Application Insights Troubleshooting](https://learn.microsoft.com/en-us/azure/azure-monitor/app/troubleshoot)**
+    - **[Azure RBAC Documentation](https://learn.microsoft.com/en-us/azure/role-based-access-control/)**

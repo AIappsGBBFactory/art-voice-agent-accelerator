@@ -26,32 +26,14 @@ This deployment uses **Terraform** as Infrastructure as Code with **Azure Contai
 !!! warning "Before You Begin"
     Ensure you have the following tools and permissions configured.
 
-### Required Tools
-
-=== "Development Tools"
-    ```bash title="Install required CLI tools"
-    # Azure Developer CLI
-    curl -fsSL https://aka.ms/install-azd.sh | bash
-    
-    # Azure CLI (if not already installed)
-    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-    
-    # Terraform
-    brew install terraform  # macOS
-    # or download from https://terraform.io/downloads
-    
-    # Docker (for local testing)
-    brew install docker  # macOS
-    ```
-
-=== "Verification"
-    ```bash title="Verify installations"
-    # Check tool versions
-    azd version        # Should be 1.5.0+
-    az --version      # Should be 2.50.0+
-    terraform --version  # Should be 1.6.0+
-    docker --version  # Should be 20.0+
-    ```
+| Tool                                                                                             | Version          | Purpose                                |
+| ------------------------------------------------------------------------------------------------ | ---------------- | -------------------------------------- |
+| [Azure CLI](https://docs.microsoft.com/cli/azure/install-azure-cli)                              | >=2.50.0         | Azure resource management              |
+| [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) | Latest           | Simplified deployment                  |
+| [Terraform](https://developer.hashicorp.com/terraform/downloads)                                 | >=1.1.7, <2.0.0   | Infrastructure as Code                 |
+| [Docker](https://docs.docker.com/get-docker/)                                                    | 20.10+           | Containerization and local testing     |
+| Node.js                                                                                          | 18+              | Frontend development                   |
+| Python                                                                                           | 3.11+            | Backend development                    |
 
 ### Azure Permissions
 
@@ -70,36 +52,12 @@ az login
 az account show
 az role assignment list --assignee $(az account show --query user.name -o tsv) --include-inherited
 ```
-- [Cleanup](#cleanup)
-- [Advanced Configuration](#advanced-configuration)
-- [Support](#support)
 
 ---
 
-## Prerequisites
+## :material-rocket: Quick Start with Azure Developer CLI
 
-Before you begin, ensure you have the following installed and configured:
-
-| Tool | Version | Purpose |
-|------|---------|---------|
-| [Azure CLI](https://docs.microsoft.com/cli/azure/install-azure-cli) | >=2.50.0 | Azure resource management |
-| [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) | Latest | Simplified deployment |
-| [Terraform](https://developer.hashicorp.com/terraform/downloads) | >=1.1.7, <2.0.0 | Infrastructure as Code |
-| [Docker](https://docs.docker.com/get-docker/) | 20.10+ | Containerization and local testing |
-| Node.js | 18+ | Frontend development |
-| Python | 3.11+ | Backend development |
-
-**Additional Requirements:**
-- Azure subscription with appropriate permissions (Contributor role)
-- Terraform state storage (see [Backend Storage Configuration](#backend-storage-configuration))
-
-> **Note**: This deployment uses Azure Container Apps which provides built-in TLS termination with public endpoints, eliminating the need for custom SSL certificate management.
-
----
-
-## Quick Start with Azure Developer CLI
-
-The easiest and **recommended** way to deploy this application is using Azure Developer CLI with Terraform backend:
+The easiest and **recommended** way to deploy this application is using the Azure Developer CLI with its Terraform backend.
 
 ### Step 1: Clone and Initialize
 ```bash
@@ -123,7 +81,12 @@ azd up
 
 **Total deployment time**: ~15 minutes for complete infrastructure and application deployment.
 
-> **Note**: The deployment includes multi-agent architecture support (ARTAgent, Live Voice Agent, and AI Foundry Agents) with intelligent model routing between O3-mini and GPT-4.1-mini based on complexity requirements.
+!!! info "Additional Resources"
+    For more comprehensive guidance on development and operations:
+    
+    - **[Repository Structure](../guides/repository-structure.md)** - Understand the codebase layout
+    - **[Utilities & Services](../guides/utilities.md)** - Core infrastructure components
+    - **[Local Development Guide](../getting-started/local-development.md)** - Set up and test on your local machine
 
 ---
 
@@ -707,50 +670,13 @@ cosmosdb_location = "westus"
 
 ---
 
-## Support
+## Support & Next Steps
 
-Having deployment issues? Follow this troubleshooting checklist:
+!!! tip "Additional Resources & Best Practices"
+    Always test locally first to isolate issues before deploying to Azure. Use the comprehensive load testing framework in `tests/load/` to validate performance under realistic conditions.
 
-1. **Check Azure Portal** for resource status
-2. **Review container app logs** for error details
-3. **Verify Terraform state** and resource configuration
-4. **Check managed identity permissions** and RBAC assignments
-5. **Verify environment variables** in Container Apps
-6. **Test connectivity** to Azure services (OpenAI, Speech, Redis)
-
-### Quick Diagnostic Commands
-
-```bash
-# Check deployment status and health
-azd show
-
-# Verify backend health with detailed output
-curl -v $(azd env get-value BACKEND_CONTAINER_APP_URL)/health
-
-# Check container logs with error filtering
-az containerapp logs show \
-    --name $(azd env get-value BACKEND_CONTAINER_APP_NAME) \
-    --resource-group $(azd env get-value AZURE_RESOURCE_GROUP) \
-    --tail 50 --grep "ERROR\|WARN\|Exception"
-
-# Verify managed identity permissions and role assignments
-az role assignment list \
-    --assignee $(azd env get-value BACKEND_UAI_PRINCIPAL_ID) \
-    --output table
-
-# Test agent endpoints specifically
-BACKEND_URL=$(azd env get-value BACKEND_CONTAINER_APP_URL)
-curl $BACKEND_URL/api/v1/agents/artagent/health
-curl $BACKEND_URL/api/v1/agents/lvagent/health
-```
-
-### Additional Resources
-
-- [Terraform Infrastructure README](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/infra/terraform/README.md) - Detailed infrastructure documentation
-- [Troubleshooting Guide](../operations/troubleshooting.md) - Comprehensive problem-solving guide
-- [Azure Container Apps Documentation](https://learn.microsoft.com/en-us/azure/container-apps/) - Official Microsoft documentation
-- [Azure Communication Services Docs](https://learn.microsoft.com/en-us/azure/communication-services/) - ACS specific guidance and API reference
-- [Azure AI Speech Live Voice API](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/real-time-synthesis) - Live Voice API documentation
-- [ARTVoice Local Development Guide](../getting-started/local-development.md) - Local setup and testing
-
-> **Pro Tip**: Always test locally first using the development setup in `docs/../getting-started/local-development.md` to isolate issues before deploying to Azure. Use the comprehensive load testing framework in `tests/load/` to validate performance under realistic conditions.
+    - **[Local Development Guide](../getting-started/local-development.md)** - Set up and test on your local machine
+    - **[Troubleshooting Guide](../operations/troubleshooting.md)** - Comprehensive problem-solving guide
+    - **[Repository Structure](../guides/repository-structure.md)** - Understand the codebase layout
+    - **[Utilities & Services](../guides/utilities.md)** - Core infrastructure components
+    - **[Terraform Infrastructure README](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/infra/terraform/README.md)** - Detailed infrastructure documentation

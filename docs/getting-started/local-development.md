@@ -7,6 +7,7 @@ Run the ARTVoice Accelerator locally with raw commands. No Makefile usage. Keep 
 ## 1. Scope
 
 What this covers:
+
 - Local backend (FastAPI + Uvicorn) and frontend (Vite/React)
 - Dev tunnel for inbound [Azure Communication Services](https://learn.microsoft.com/en-us/azure/communication-services/) callbacks
 - Environment setup via venv OR Conda
@@ -26,7 +27,7 @@ What this does NOT cover:
 | Python 3.11 | Required runtime |
 | Node.js ≥ 22 | Frontend |
 | Azure CLI | `az login` first |
-| Dev Tunnels | `az extension add --name dev-tunnel` |
+| Dev Tunnels | [Getting Started Guide](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started) |
 | (Optional) Conda | If using `environment.yaml` |
 | Provisioned Azure resources | For real STT/TTS/LLM/ACS |
 
@@ -64,7 +65,24 @@ pip install -r requirements.txt   # sync with lock
 
 ## 5. Root `.env` (Create in repo root)
 
-Minimal template (edit placeholders; DO NOT commit real values):
+!!! tip "Sample Configuration"
+    Use [`.env.sample`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/.env.sample) as a starting template and customize with your Azure resource values.
+
+!!! info "Using Azure Developer CLI (azd)"
+    If you provisioned infrastructure using `azd provision`, an environment file will be automatically generated for you in the format `.env.<azd-env-name>`. 
+    
+    **To use the azd-generated configuration:**
+    ```bash
+    # Copy the azd-generated environment file
+    cp .env.<your-azd-env-name> .env
+    
+    # Example: if your azd environment is named "dev"
+    cp .env.dev .env
+    ```
+    
+    The azd-generated file contains all the Azure resource endpoints and configuration needed for local development.
+
+**Manual Configuration Template** (edit placeholders; DO NOT commit real values):
 
 ```
 # ===== Azure OpenAI =====
@@ -119,6 +137,18 @@ The Dev Tunnel URL will look similar to:
 https://abc123xy-8010.usw3.devtunnels.ms
 ```
 
+!!! warning "Security Considerations for Operations Teams"
+    **Dev Tunnels create public endpoints** that expose your local development environment to the internet. Review the following security guidelines:
+    
+    - **[Azure Dev Tunnels Security](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security)** - Comprehensive security guidance
+    - **Access Control**: Use `--allow-anonymous` only for development; consider authentication for sensitive environments
+    - **Network Policies**: Ensure dev tunnels comply with organizational network security policies
+    - **Monitoring**: Dev tunnels should be monitored and logged like any public endpoint
+    - **Temporary Usage**: Tunnels are for development only; use proper Azure services for production
+    - **Credential Protection**: Never expose production credentials through dev tunnels
+    
+    **InfoSec Recommendation**: Review tunnel usage with your security team before use in corporate environments.
+
 ---
 
 ## 7. Run Backend
@@ -133,6 +163,9 @@ uvicorn apps.rtagent.backend.main:app --host 0.0.0.0 --port 8010 --reload
 ## 8. Frontend Environment
 
 Create or edit `apps/rtagent/frontend/.env`:
+
+!!! tip "Sample Configuration"
+    Use [`apps/rtagent/frontend/.env.sample`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/frontend/.env.sample) as a starting template.
 
 Use the dev tunnel URL by default so the frontend (and any external device or ACS-related flows) reaches your backend consistently—even if you open the UI on another machine or need secure HTTPS.
 
@@ -159,7 +192,68 @@ WebSocket URL is auto-derived by replacing `http/https` with `ws/wss`.
 
 ---
 
-## 10. Optional: Phone (PSTN) Flow
+## 10. Alternative: VS Code Debugging
+
+**Built-in debugger configurations** are available in [`.vscode/launch.json`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/.vscode/launch.json):
+
+### Backend Debugging
+1. **Set breakpoints** in Python code
+2. **Press F5** or go to Run & Debug view
+3. **Select "[RT Agent] Python Debugger: FastAPI"**
+4. **Debug session starts** with hot reload enabled
+
+### Frontend Debugging  
+1. **Start the React dev server** (`npm run dev`)
+2. **Press F5** or go to Run & Debug view
+3. **Select "[RT Agent] React App: Browser Debug"**
+4. **Browser opens** with debugger attached
+
+**Benefits:**
+- Set breakpoints in both Python and TypeScript/React code
+- Step through code execution
+- Inspect variables and call stacks
+- Hot reload for both frontend and backend
+
+---
+
+## 11. Alternative: Docker Compose
+
+**For containerized local development**, use the provided [`docker-compose.yml`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/docker-compose.yml):
+
+```bash
+# Ensure .env files are configured (see sections 5 & 8 above)
+
+# Build and run both frontend and backend containers
+docker-compose up --build
+
+# Or run in detached mode
+docker-compose up --build -d
+
+# View logs
+docker-compose logs -f
+
+# Stop containers
+docker-compose down
+```
+
+**Container Ports:**
+
+- **Frontend**: http://localhost:8080 (containerized)
+- **Backend**: http://localhost:8010 (same as manual setup)
+
+**When to use Docker Compose:**
+
+- Consistent environment across team members
+- Testing containerized deployment locally
+- Isolating dependencies from host system
+- Matching production container behavior
+
+!!! note "Dev Tunnel with Docker"
+    You still need to run `devtunnel host -p 8010 --allow-anonymous` for ACS callbacks, as the containers need external access for webhook endpoints.
+
+---
+
+## 12. Optional: Phone (PSTN) Flow
 
 1. Purchase ACS phone number (Portal or CLI).
 
@@ -190,7 +284,7 @@ WebSocket URL is auto-derived by replacing `http/https` with `ws/wss`.
 
 ---
 
-## 11. Quick Browser Test
+## 13. Quick Browser Test
 
 1. Backend + frontend running.
 2. Open app, allow microphone.
@@ -201,7 +295,7 @@ WebSocket URL is auto-derived by replacing `http/https` with `ws/wss`.
 
 ---
 
-## 12. Troubleshooting
+## 14. Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
@@ -211,6 +305,51 @@ WebSocket URL is auto-derived by replacing `http/https` with `ws/wss`.
 | Slow first reply | Cold pool warm-up | Keep process running |
 | Phone call no events | ACS callback not updated to tunnel | Reconfigure Event Grid subscription |
 | Import errors | Missing dependencies | Re-run `pip install -r requirements.txt` |
+
+---
+
+## 15. Testing Your Setup
+
+### Quick Unit Tests
+Validate your local setup with the comprehensive test suite:
+
+```bash
+# Run core component tests
+python -m pytest tests/test_acs_media_lifecycle.py -v
+
+# Test event handling and WebSocket integration
+python -m pytest tests/test_acs_events_handlers.py -v
+
+# Validate DTMF processing (if using phone features)
+python -m pytest tests/test_dtmf_validation.py -v
+```
+
+### Load Testing (Advanced)
+Test WebSocket performance with realistic conversation scenarios:
+
+```bash
+# Generate realistic audio for testing
+make generate_audio
+
+# Run WebSocket load test locally
+locust -f tests/load/locustfile.py --web-host 127.0.0.1 --web-port 8089
+```
+
+**What the load tests validate:**
+- ✅ **Real-time audio streaming** - 20ms PCM chunks via WebSocket
+- ✅ **Multi-turn conversations** - Insurance inquiries and quick questions
+- ✅ **Response timing** - TTFB (Time-to-First-Byte) measurement
+- ✅ **Barge-in handling** - Response interruption simulation
+- ✅ **Connection stability** - Automatic WebSocket reconnection
+
+!!! info "Additional Resources"
+    For more comprehensive guidance on development and operations:
+    
+    - **[Troubleshooting Guide](../operations/troubleshooting.md)** - Detailed problem resolution for common issues
+    - **[Testing Guide](../operations/testing.md)** - Comprehensive unit and integration testing (85%+ coverage)
+    - **[Load Testing](../operations/load-testing.md)** - WebSocket performance testing and Azure Load Testing integration
+    - **[Repository Structure](../guides/repository-structure.md)** - Understand the codebase layout
+    - **[Utilities & Services](../guides/utilities.md)** - Core infrastructure components
 
 ---
 
