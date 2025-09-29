@@ -12,7 +12,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-from utils.load_test_conversations import ConversationLoadTester, LoadTestConfig
+from tests.load.utils.load_test_conversations import ConversationLoadTester, LoadTestConfig
 
 
 class MultiTurnLoadTest:

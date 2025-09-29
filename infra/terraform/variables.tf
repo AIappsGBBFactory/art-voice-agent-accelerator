@@ -221,7 +221,7 @@ variable "container_memory_gb" {
 variable "aoai_pool_size" {
   description = "Size of the Azure OpenAI client pool for optimal performance"
   type        = number
-  default     = 50
+  default     = 5
   validation {
     condition     = var.aoai_pool_size >= 5 && var.aoai_pool_size <= 200
     error_message = "AOAI pool size must be between 5 and 200."
@@ -231,7 +231,7 @@ variable "aoai_pool_size" {
 variable "tts_pool_size" {
   description = "Size of the TTS client pool for optimal performance"
   type        = number
-  default     = 100
+  default     = 10
   validation {
     condition     = var.tts_pool_size >= 10 && var.tts_pool_size <= 500
     error_message = "TTS pool size must be between 10 and 500."
@@ -241,7 +241,7 @@ variable "tts_pool_size" {
 variable "stt_pool_size" {
   description = "Size of the STT client pool for optimal performance"
   type        = number
-  default     = 100
+  default     = 10
   validation {
     condition     = var.stt_pool_size >= 10 && var.stt_pool_size <= 500
     error_message = "STT pool size must be between 10 and 500."

@@ -1,16 +1,26 @@
-from opentelemetry import trace
-from opentelemetry.trace import SpanKind
 import asyncio
+import ipaddress
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
-from utils.azure_auth import get_credential
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 
 import redis
-from redis.exceptions import AuthenticationError
+from redis.exceptions import AuthenticationError, MovedError
+
+from utils.azure_auth import get_credential
 from utils.ml_logging import get_logger
+
+try:  # redis-py always provides cluster module from v5+, keep guard for safety
+    from redis.cluster import RedisCluster
+except ImportError:  # pragma: no cover - only in legacy environments
+    RedisCluster = None  # type: ignore[assignment]
+
+
+T = TypeVar("T")
 
 
 class AzureRedisManager:
@@ -68,6 +78,15 @@ class AzureRedisManager:
         )
         self.user_name = user_name or os.getenv("REDIS_USER_NAME") or "user"
         self._auth_expires_at = 0  # For AAD token refresh tracking
+        self.token_expiry = 0
+
+        # Cluster configuration
+        self._cluster_preference = self._parse_optional_bool(
+            os.getenv("REDIS_USE_CLUSTER")
+        )
+        self._cluster_auto = self._cluster_preference is True
+        self._using_cluster = False
+        self._client_lock = threading.RLock()
 
         # Build initial client and, if using AAD, start a refresh thread
         self._create_client()
@@ -84,15 +103,30 @@ class AzureRedisManager:
         """
         try:
             self.logger.info(f"Validating Redis connection to {self.host}:{self.port}")
-
-            # Validate connection with health check
-            loop = asyncio.get_event_loop()
-            ping_result = await loop.run_in_executor(None, self._health_check)
-
-            if ping_result:
-                self.logger.info("✅ Redis connection validated successfully")
-            else:
-                raise ConnectionError("Redis health check failed")
+            # Ensure a client exists and perform a quick ping; recreate on failure.
+            try:
+                if not getattr(self, "redis_client", None):
+                    self.logger.info("Redis client not present during initialize — creating client.")
+                    self.__init__()
+                else:
+                    try:
+                        # use a short timeout to avoid blocking startup
+                        ok = self._health_check()
+                    except asyncio.TimeoutError:
+                        self.logger.warning("Redis ping timed out during initialize; recreating client.")
+                        self._create_client()
+                    except AuthenticationError:
+                        self.logger.info("Redis authentication failed during initialize; recreating client.")
+                        self._create_client()
+                    except Exception as e:
+                        # Non-fatal here; let the subsequent health check determine final status
+                        self.logger.debug("Non-fatal error during quick ping check: %s", e)
+                    else:
+                        if not ok:
+                            self.logger.info("Redis ping returned False during initialize; recreating client.")
+                            self._create_client()
+            except Exception as e:
+                self.logger.error("Unexpected error during Redis pre-initialization check: %s", e)
 
         except Exception as e:
             self.logger.error(f"Redis initialization failed: {e}")
@@ -104,14 +138,16 @@ class AzureRedisManager:
         """
         try:
             # Basic connectivity test
-            if not self.redis_client.ping():
+            if not self._execute_with_redirect("PING", lambda client: client.ping()):
                 return False
 
             # Test basic operations
             test_key = "health_check_test"
-            self.redis_client.set(test_key, "test_value", ex=5)
-            result = self.redis_client.get(test_key)
-            self.redis_client.delete(test_key)
+            self._execute_with_redirect(
+                "SET", lambda client: client.set(test_key, "test_value", ex=5)
+            )
+            result = self._execute_with_redirect("GET", lambda client: client.get(test_key))
+            self._execute_with_redirect("DEL", lambda client: client.delete(test_key))
 
             return result == "test_value"
 
@@ -133,42 +169,210 @@ class AzureRedisManager:
             },
         )
 
-    def _create_client(self):
-        """(Re)create self.redis_client and record expiry for AAD."""
+    @staticmethod
+    def _parse_optional_bool(value: Optional[str]) -> Optional[bool]:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        return None
+
+    def _resolve_cluster(self, force_cluster: Optional[bool]) -> bool:
+        if force_cluster is not None:
+            return force_cluster
+        if self._cluster_preference is not None:
+            return self._cluster_preference
+        return self._cluster_auto
+
+    def _build_auth_kwargs(self) -> Dict[str, Any]:
         if self.access_key:
-            # static key-based auth
-            self.redis_client = redis.Redis(
-                host=self.host,
-                port=self.port,
-                db=self.db,
-                password=self.access_key,
-                ssl=self.ssl,
-                decode_responses=True,
-                socket_keepalive=True,
-                health_check_interval=30,
-                socket_connect_timeout=0.2,
-                socket_timeout=1.0,
-                max_connections=200,
-                client_name="rtagent-api",
-            )
+            return {"password": self.access_key}
+
+        token = self.credential.get_token(self.scope)
+        self.token_expiry = token.expires_on
+        return {"username": self.user_name, "password": token.token}
+
+    def _build_standard_client(
+        self, host: str, port: Optional[int], auth_kwargs: Dict[str, Any]
+    ) -> redis.Redis:
+        client = redis.Redis(
+            host=host,
+            port=port,
+            db=self.db,
+            ssl=self.ssl,
+            decode_responses=True,
+            socket_keepalive=True,
+            health_check_interval=30,
+            socket_connect_timeout=2.0,
+            socket_timeout=1.0,
+            max_connections=200,
+            client_name="rtagent-api",
+            **auth_kwargs,
+        )
+        if self.access_key:
             self.logger.info("Azure Redis connection initialized with access key.")
         else:
-            # get fresh AAD token
-            token = self.credential.get_token(self.scope)
-            self.token_expiry = token.expires_on
-            self.redis_client = redis.Redis(
-                host=self.host,
-                port=self.port,
-                db=self.db,
-                username=self.user_name,
-                password=token.token,
-                ssl=self.ssl,
-                decode_responses=True,
-            )
             self.logger.info(
                 "Azure Redis connection initialized with AAD token (expires at %s).",
                 self.token_expiry,
             )
+        return client
+
+    def _build_cluster_client(
+        self, host: str, port: Optional[int], auth_kwargs: Dict[str, Any]
+    ) -> "RedisCluster":
+        if RedisCluster is None:
+            raise RuntimeError("redis-py cluster support unavailable")
+
+        client = RedisCluster(
+            host=host,
+            port=port or 6379,
+            ssl=self.ssl,
+            decode_responses=True,
+            socket_keepalive=True,
+            health_check_interval=30,
+            socket_connect_timeout=2.0,
+            socket_timeout=1.0,
+            max_connections=200,
+            client_name="rtagent-api",
+            require_full_coverage=False,
+            address_remap=self._remap_cluster_address,
+            **auth_kwargs,
+        )
+        if self.access_key:
+            self.logger.info(
+                "Azure Redis cluster client initialized with access key (startup %s:%s).",
+                host,
+                port,
+            )
+        else:
+            self.logger.info(
+                "Azure Redis cluster client initialized with AAD token (expires at %s).",
+                self.token_expiry,
+            )
+        return client
+
+    def _execute_with_redirect(
+        self, command: str, operation: Callable[[redis.Redis], T]
+    ) -> T:
+        try:
+            return operation(self.redis_client)
+        except MovedError as err:
+            return self._handle_cluster_redirect(command, operation, err)
+
+    @staticmethod
+    def _is_ip_address(value: str) -> bool:
+        try:
+            ipaddress.ip_address(value)
+        except ValueError:
+            return False
+        return True
+
+    def _remap_cluster_address(self, address: Tuple[str, int]) -> Tuple[str, int]:
+        host, port = address
+        if self._is_ip_address(host):
+            return (self.host, port)
+        return address
+
+    def _handle_cluster_redirect(
+        self,
+        command: str,
+        operation: Callable[[redis.Redis], T],
+        err: MovedError,
+    ) -> T:
+        details = f"slot {err.slot_id} -> {err.host}:{err.port}"
+        self.logger.warning(
+            "Redis MOVED error on %s (%s). Switching to cluster-aware client.",
+            command,
+            details,
+        )
+        if RedisCluster is None:
+            self.logger.error(
+                "redis-py cluster support is unavailable; unable to honor MOVED redirect."
+            )
+            raise err
+
+        attempts: List[Tuple[Optional[str], Optional[int]]] = []
+        if getattr(err, "port", None) is not None:
+            attempts.append((self.host, int(err.port)))
+        attempts.append((self.host, self.port))
+
+        last_exc: Optional[Exception] = None
+        tried: set[tuple[str, Optional[int]]] = set()
+        for host, port in attempts:
+            key = (host, port)
+            if key in tried or host is None or port is None:
+                continue
+            tried.add(key)
+            try:
+                self._create_client(
+                    force_cluster=True, host_override=host, port_override=port
+                )
+                break
+            except Exception as exc:  # pragma: no cover - dependent on runtime config
+                last_exc = exc
+                self.logger.debug(
+                    "Redis cluster initialization attempt using %s:%s failed: %s",
+                    host,
+                    port,
+                    exc,
+                )
+        else:
+            if last_exc:
+                raise last_exc
+            raise err
+
+        return operation(self.redis_client)
+
+    def _create_client(
+        self,
+        force_cluster: Optional[bool] = None,
+        host_override: Optional[str] = None,
+        port_override: Optional[int] = None,
+    ) -> None:
+        host = host_override or self.host
+        port = port_override if port_override is not None else self.port
+
+        with self._client_lock:
+            use_cluster = self._resolve_cluster(force_cluster)
+            if use_cluster and RedisCluster is None:
+                if force_cluster:
+                    raise RuntimeError(
+                        "redis-py cluster support unavailable"
+                    )
+                self.logger.warning(
+                    "Redis cluster requested but redis-py cluster support unavailable; using single-node client."
+                )
+                use_cluster = False
+
+            auth_kwargs = self._build_auth_kwargs()
+            client: Optional[redis.Redis] = None
+            if use_cluster:
+                try:
+                    client = self._build_cluster_client(host, port, auth_kwargs)
+                    self._using_cluster = True
+                except Exception as exc:
+                    if force_cluster:
+                        raise
+                    self.logger.warning(
+                        "Failed to initialize Redis cluster client (%s); falling back to single-node client.",
+                        exc,
+                    )
+                    use_cluster = False
+
+            if not use_cluster:
+                client = self._build_standard_client(host, port, auth_kwargs)
+                self._using_cluster = False
+
+            if client is None:  # pragma: no cover - defensive guard
+                raise RuntimeError("Failed to create Redis client")
+
+            self.redis_client = client
+            if self._cluster_preference is None:
+                self._cluster_auto = self._using_cluster
 
     def _refresh_loop(self):
         """Background thread: sleep until just before expiry, then refresh token."""
@@ -188,7 +392,9 @@ class AzureRedisManager:
     def publish_event(self, stream_key: str, event_data: Dict[str, Any]) -> str:
         """Append an event to a Redis stream."""
         with self._redis_span("Redis.XADD"):
-            return self.redis_client.xadd(stream_key, event_data)
+            return self._execute_with_redirect(
+                "XADD", lambda client: client.xadd(stream_key, event_data)
+            )
 
     def read_events_blocking(
         self,
@@ -202,8 +408,11 @@ class AzureRedisManager:
         Returns list of new events (or None on timeout).
         """
         with self._redis_span("Redis.XREAD"):
-            streams = self.redis_client.xread(
-                {stream_key: last_id}, block=block_ms, count=count
+            streams = self._execute_with_redirect(
+                "XREAD",
+                lambda client: client.xread(
+                    {stream_key: last_id}, block=block_ms, count=count
+                ),
             )
             return streams if streams else None
 
@@ -231,13 +440,15 @@ class AzureRedisManager:
         """Check Redis connectivity."""
         try:
             with self._redis_span("Redis.PING"):
-                return self.redis_client.ping()
+                return self._execute_with_redirect("PING", lambda client: client.ping())
         except AuthenticationError:
             # token might have expired early: rebuild & retry once
             self.logger.info("Redis auth error on ping, refreshing token")
-            self._create_client()
+            self._create_client(force_cluster=self._using_cluster)
             with self._redis_span("Redis.PING"):
-                return self.redis_client.ping()
+                return self._execute_with_redirect(
+                    "PING", lambda client: client.ping()
+                )
 
     def set_value(
         self, key: str, value: str, ttl_seconds: Optional[int] = None
@@ -245,40 +456,60 @@ class AzureRedisManager:
         """Set a string value in Redis (optionally with TTL)."""
         with self._redis_span("Redis.SET"):
             if ttl_seconds is not None:
-                return self.redis_client.setex(key, ttl_seconds, str(value))
-            return self.redis_client.set(key, str(value))
+                return self._execute_with_redirect(
+                    "SETEX",
+                    lambda client: client.setex(key, ttl_seconds, str(value)),
+                )
+            return self._execute_with_redirect(
+                "SET", lambda client: client.set(key, str(value))
+            )
 
     def get_value(self, key: str) -> Optional[str]:
         """Get a string value from Redis."""
         with self._redis_span("Redis.GET"):
-            value = self.redis_client.get(key)
+            value = self._execute_with_redirect("GET", lambda client: client.get(key))
             return value.decode() if isinstance(value, bytes) else value
 
     def store_session_data(self, session_id: str, data: Dict[str, Any]) -> bool:
         """Store session data using a Redis hash."""
         with self._redis_span("Redis.HSET"):
-            return bool(self.redis_client.hset(session_id, mapping=data))
+            return bool(
+                self._execute_with_redirect(
+                    "HSET", lambda client: client.hset(session_id, mapping=data)
+                )
+            )
 
     def get_session_data(self, session_id: str) -> Dict[str, str]:
         """Retrieve all session data for a given session ID."""
         with self._redis_span("Redis.HGETALL"):
-            raw = self.redis_client.hgetall(session_id)
+            raw = self._execute_with_redirect(
+                "HGETALL", lambda client: client.hgetall(session_id)
+            )
             return dict(raw)
 
     def update_session_field(self, session_id: str, field: str, value: str) -> bool:
         """Update a single field in the session hash."""
         with self._redis_span("Redis.HSET"):
-            return bool(self.redis_client.hset(session_id, field, value))
+            return bool(
+                self._execute_with_redirect(
+                    "HSET",
+                    lambda client: client.hset(session_id, field, value),
+                )
+            )
 
     def delete_session(self, session_id: str) -> int:
         """Delete a session from Redis."""
         with self._redis_span("Redis.DEL"):
-            return self.redis_client.delete(session_id)
+            return self._execute_with_redirect(
+                "DEL", lambda client: client.delete(session_id)
+            )
 
     def list_connected_clients(self) -> List[Dict[str, str]]:
         """List currently connected clients."""
         with self._redis_span("Redis.CLIENTLIST"):
-            return self.redis_client.client_list()
+            return self._execute_with_redirect(
+                "CLIENT LIST", lambda client: client.client_list()
+            )
 
     async def store_session_data_async(
         self, session_id: str, data: Dict[str, Any]

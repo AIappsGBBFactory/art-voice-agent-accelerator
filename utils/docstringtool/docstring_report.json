@@ -10,7 +10,7 @@
   },
   "files": [
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\docstring_standardizer.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\docstring_standardizer.py",
       "functions": [
         {
           "name": "main",
@@ -925,13 +925,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\utils\\azure_auth.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\utils\\azure_auth.py",
       "functions": [
         {
           "name": "_using_managed_identity",
@@ -964,7 +964,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\utils\\ml_logging.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\utils\\ml_logging.py",
       "functions": [
         {
           "name": "keyinfo",
@@ -1353,7 +1353,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\utils\\telemetry_config.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\utils\\telemetry_config.py",
       "functions": [
         {
           "name": "suppress_azure_credential_logs",
@@ -1446,7 +1446,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\utils\\trace_context.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\utils\\trace_context.py",
       "functions": [
         {
           "name": "create_trace_context",
@@ -2216,13 +2216,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\utils\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\utils\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\main.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\main.py",
       "functions": [
         {
           "name": "create_app",
@@ -2278,7 +2278,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\settings.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\settings.py",
       "functions": [
         {
           "name": "get_agent_voice",
@@ -2306,13 +2306,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\scripts\\start_backend.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\scripts\\start_backend.py",
       "functions": [
         {
           "name": "find_project_root",
@@ -2395,13 +2395,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\scripts\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\scripts\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\swagger_docs.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\swagger_docs.py",
       "functions": [
         {
           "name": "get_tags",
@@ -2594,13 +2594,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\helpers.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\helpers.py",
       "error": "unexpected indent (<unknown>, line 7)",
       "functions": [],
       "classes": [],
@@ -2609,25 +2609,25 @@
       ]
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\shared_ws.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\shared_ws.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\router.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\router.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\dependencies\\orchestrator.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\dependencies\\orchestrator.py",
       "functions": [
         {
           "name": "get_orchestrator",
@@ -2648,7 +2648,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\endpoints\\calls.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\calls.py",
       "functions": [
         {
           "name": "create_call_event",
@@ -2684,7 +2684,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\endpoints\\health.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\health.py",
       "functions": [
         {
           "name": "_validate_phone_number",
@@ -2806,7 +2806,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\endpoints\\media.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\media.py",
       "functions": [
         {
           "name": "_log_websocket_disconnect",
@@ -2871,7 +2871,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\endpoints\\realtime.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\realtime.py",
       "functions": [
         {
           "name": "_log_dashboard_disconnect",
@@ -3022,13 +3022,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\endpoints\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\events\\demo.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\demo.py",
       "functions": [
         {
           "name": "create_webhook_handler_example",
@@ -3098,7 +3098,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\events\\handlers.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\handlers.py",
       "functions": [
         {
           "name": "_extract_caller_id",
@@ -3787,7 +3787,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\events\\processor.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\processor.py",
       "functions": [
         {
           "name": "get_call_event_processor",
@@ -4283,7 +4283,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\events\\registration.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\registration.py",
       "functions": [
         {
           "name": "register_default_handlers",
@@ -4335,7 +4335,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\events\\types.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\types.py",
       "functions": [
         {
           "name": "get_event_data",
@@ -4518,13 +4518,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\events\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\handlers\\acs_call_lifecycle.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\acs_call_lifecycle.py",
       "functions": [
         {
           "name": "safe_set_span_attributes",
@@ -5089,7 +5089,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\handlers\\acs_media_lifecycle.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\acs_media_lifecycle.py",
       "functions": [
         {
           "name": "__init__",
@@ -6441,7 +6441,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\handlers\\realtime.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\realtime.py",
       "functions": [
         {
           "name": "create_v1_realtime_handler",
@@ -6632,7 +6632,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\models\\base.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\base.py",
       "functions": [
         {
           "name": "update_timestamp",
@@ -6721,7 +6721,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\models\\call.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\call.py",
       "functions": [],
       "classes": [
         {
@@ -6778,7 +6778,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\models\\event.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\event.py",
       "functions": [],
       "classes": [
         {
@@ -6835,7 +6835,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\models\\participant.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\participant.py",
       "functions": [],
       "classes": [
         {
@@ -6878,13 +6878,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\models\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\schemas\\call.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\call.py",
       "functions": [],
       "classes": [
         {
@@ -7029,7 +7029,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\schemas\\event.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\event.py",
       "functions": [],
       "classes": [
         {
@@ -7198,7 +7198,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\schemas\\health.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\health.py",
       "functions": [],
       "classes": [
         {
@@ -7274,7 +7274,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\schemas\\media.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\media.py",
       "functions": [],
       "classes": [
         {
@@ -7488,7 +7488,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\schemas\\participant.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\participant.py",
       "functions": [],
       "classes": [
         {
@@ -7610,7 +7610,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\schemas\\realtime.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\realtime.py",
       "functions": [],
       "classes": [
         {
@@ -7737,7 +7737,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\schemas\\webhook.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\webhook.py",
       "functions": [],
       "classes": [
         {
@@ -7882,13 +7882,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\schemas\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\utils\\simple_events.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\utils\\simple_events.py",
       "functions": [
         {
           "name": "get_simple_health_status",
@@ -7927,7 +7927,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\handlers\\back\\acs_media_handler.back.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\back\\acs_media_handler.back.py",
       "functions": [
         {
           "name": "get_current_time",
@@ -9004,7 +9004,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\api\\v1\\handlers\\back\\legacy_acs_lifecycle.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\back\\legacy_acs_lifecycle.py",
       "functions": [
         {
           "name": "get_current_time",
@@ -9365,7 +9365,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\base.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\base.py",
       "functions": [
         {
           "name": "__init__",
@@ -9559,13 +9559,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\factories\\stt_factory.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\factories\\stt_factory.py",
       "functions": [
         {
           "name": "create_stt_recognizer",
@@ -9585,7 +9585,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\handlers\\acs_handler.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\handlers\\acs_handler.py",
       "functions": [
         {
           "name": "_get_participant_phone",
@@ -10151,7 +10151,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\handlers\\acs_media_handler.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\handlers\\acs_media_handler.py",
       "functions": [
         {
           "name": "__init__",
@@ -10931,7 +10931,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\handlers\\acs_transcript_handler.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\handlers\\acs_transcript_handler.py",
       "functions": [
         {
           "name": "__init__",
@@ -11151,13 +11151,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\handlers\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\handlers\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\latency\\latency_tool.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\latency\\latency_tool.py",
       "functions": [
         {
           "name": "__init__",
@@ -11365,13 +11365,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\latency\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\latency\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\orchestration\\gpt_flow.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\orchestration\\gpt_flow.py",
       "functions": [
         {
           "name": "_get_agent_voice_config",
@@ -11481,7 +11481,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\orchestration\\orchestrator.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\orchestration\\orchestrator.py",
       "functions": [
         {
           "name": "configure_entry_and_specialists",
@@ -11812,13 +11812,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\orchestration\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\orchestration\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\routers\\acs.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\routers\\acs.py",
       "functions": [],
       "classes": [
         {
@@ -11836,7 +11836,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\routers\\health.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\routers\\health.py",
       "functions": [
         {
           "name": "_validate_phone_number",
@@ -11865,7 +11865,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\routers\\realtime.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\routers\\realtime.py",
       "functions": [
         {
           "name": "on_partial",
@@ -11916,19 +11916,19 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\routers\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\routers\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\cosmosdb_services.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\cosmosdb_services.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\openai_services.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\openai_services.py",
       "functions": [
         {
           "name": "create_azure_openai_client",
@@ -11949,25 +11949,25 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\redis_services.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\redis_services.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\speech_services.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\speech_services.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\utils\\auth.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\utils\\auth.py",
       "functions": [
         {
           "name": "get_jwks",
@@ -12095,7 +12095,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\utils\\auth_utils.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\utils\\auth_utils.py",
       "functions": [
         {
           "name": "decode_jwt_payload",
@@ -12195,7 +12195,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\utils\\tracing.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\utils\\tracing.py",
       "functions": [
         {
           "name": "create_span_attrs",
@@ -12829,7 +12829,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\utils\\tracing_utils.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\utils\\tracing_utils.py",
       "functions": [
         {
           "name": "create_span_attrs",
@@ -12957,7 +12957,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\prompt_store\\prompt_manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\prompt_store\\prompt_manager.py",
       "functions": [
         {
           "name": "__init__",
@@ -13075,13 +13075,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\prompt_store\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\prompt_store\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\auth.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\auth.py",
       "functions": [],
       "classes": [
         {
@@ -13112,7 +13112,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\emergency.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\emergency.py",
       "functions": [],
       "classes": [
         {
@@ -13130,7 +13130,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\fnol.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\fnol.py",
       "functions": [
         {
           "name": "_new_claim_id",
@@ -13238,7 +13238,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\functions_helper.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\functions_helper.py",
       "functions": [
         {
           "name": "_json",
@@ -13267,7 +13267,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\handoffs.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\handoffs.py",
       "functions": [],
       "classes": [
         {
@@ -13310,7 +13310,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\policies.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\policies.py",
       "functions": [
         {
           "name": "_best_attr",
@@ -13380,13 +13380,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\schemas.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\schemas.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\tools_helper.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\tools_helper.py",
       "functions": [
         {
           "name": "_frame",
@@ -13419,19 +13419,19 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\tool_registry.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\tool_registry.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\agents\\tool_store\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\acs\\acs_caller.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\acs\\acs_caller.py",
       "functions": [
         {
           "name": "initialize_acs_caller_instance",
@@ -13453,7 +13453,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\acs\\acs_helpers.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\acs\\acs_helpers.py",
       "functions": [
         {
           "name": "construct_websocket_url",
@@ -13513,7 +13513,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\acs\\session_terminator.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\acs\\session_terminator.py",
       "functions": [
         {
           "name": "_get_disconnect_event",
@@ -13616,13 +13616,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\apps\\rtagent\\backend\\src\\services\\acs\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\acs\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\devops\\security\\bandit_to_sarif.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\devops\\security\\bandit_to_sarif.py",
       "functions": [
         {
           "name": "bandit_to_sarif",
@@ -13667,7 +13667,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\devops\\security\\run_bandit.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\devops\\security\\run_bandit.py",
       "functions": [
         {
           "name": "utc_stamp",
@@ -13718,7 +13718,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\devops\\scripts\\azd\\helpers\\acs_phone_number_manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\devops\\scripts\\azd\\helpers\\acs_phone_number_manager.py",
       "functions": [
         {
           "name": "get_azd_env_value",
@@ -13807,7 +13807,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\acs\\acs_helper.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\acs\\acs_helper.py",
       "functions": [
         {
           "name": "_endpoint_host_from_client",
@@ -14278,13 +14278,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\acs\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\acs\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\agenticmemory\\memoriesbuilder.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\agenticmemory\\memoriesbuilder.py",
       "functions": [
         {
           "name": "__init__",
@@ -14442,7 +14442,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\agenticmemory\\playback_queue.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\agenticmemory\\playback_queue.py",
       "functions": [
         {
           "name": "__init__",
@@ -14774,7 +14774,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\agenticmemory\\types.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\agenticmemory\\types.py",
       "functions": [
         {
           "name": "__init__",
@@ -15510,7 +15510,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\agenticmemory\\utils.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\agenticmemory\\utils.py",
       "functions": [
         {
           "name": "__init__",
@@ -15663,13 +15663,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\agenticmemory\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\agenticmemory\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\aoai\\audio_util.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\aoai\\audio_util.py",
       "functions": [
         {
           "name": "audio_to_pcm16_base64",
@@ -16071,7 +16071,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\aoai\\manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\aoai\\manager.py",
       "functions": [
         {
           "name": "_is_aoai_tracing_enabled",
@@ -16987,7 +16987,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\aoai\\manager_transcribe.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\aoai\\manager_transcribe.py",
       "functions": [
         {
           "name": "__init__",
@@ -17721,7 +17721,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\aoai\\push_to_talk.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\aoai\\push_to_talk.py",
       "functions": [
         {
           "name": "render",
@@ -18047,13 +18047,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\aoai\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\aoai\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\blob\\blob_helper.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\blob\\blob_helper.py",
       "functions": [
         {
           "name": "get_blob_helper",
@@ -18583,13 +18583,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\blob\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\blob\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\cosmosdb\\manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\cosmosdb\\manager.py",
       "functions": [
         {
           "name": "__init__",
@@ -19097,13 +19097,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\cosmosdb\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\cosmosdb\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\enums\\monitoring.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\enums\\monitoring.py",
       "functions": [],
       "classes": [
         {
@@ -19121,7 +19121,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\enums\\stream_modes.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\enums\\stream_modes.py",
       "functions": [
         {
           "name": "__str__",
@@ -19327,13 +19327,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\enums\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\enums\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\pools\\async_pool.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\pools\\async_pool.py",
       "functions": [
         {
           "name": "__init__",
@@ -19490,7 +19490,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\pools\\session_manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\pools\\session_manager.py",
       "functions": [
         {
           "name": "__init__",
@@ -19697,7 +19697,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\pools\\session_metrics.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\pools\\session_metrics.py",
       "functions": [
         {
           "name": "__init__",
@@ -19839,7 +19839,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\pools\\websocket_manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\pools\\websocket_manager.py",
       "functions": [
         {
           "name": "__init__",
@@ -20009,13 +20009,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\pools\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\pools\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\postcall\\push.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\postcall\\push.py",
       "functions": [
         {
           "name": "build_and_flush",
@@ -20046,13 +20046,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\postcall\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\postcall\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\prompts\\prompt_manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\prompts\\prompt_manager.py",
       "functions": [
         {
           "name": "__init__",
@@ -20252,13 +20252,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\prompts\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\prompts\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\redis\\manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\redis\\manager.py",
       "functions": [
         {
           "name": "is_connected",
@@ -21130,13 +21130,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\redis\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\redis\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\speech\\conversation_recognizer.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\speech\\conversation_recognizer.py",
       "functions": [
         {
           "name": "__init__",
@@ -21832,7 +21832,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\speech\\speech_recognizer.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\speech\\speech_recognizer.py",
       "functions": [
         {
           "name": "__init__",
@@ -22732,7 +22732,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\speech\\text_to_speech.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\speech\\text_to_speech.py",
       "functions": [
         {
           "name": "split_sentences",
@@ -23810,7 +23810,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\speech\\utils_audio.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\speech\\utils_audio.py",
       "functions": [
         {
           "name": "check_audio_file",
@@ -23858,13 +23858,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\speech\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\speech\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\stateful\\state_managment.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\stateful\\state_managment.py",
       "functions": [
         {
           "name": "__init__",
@@ -26123,13 +26123,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\stateful\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\stateful\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\vad\\vad_iterator.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\vad\\vad_iterator.py",
       "functions": [
         {
           "name": "int2float",
@@ -26359,19 +26359,19 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\agenticmemory\\prompts\\prompt_gpt_summarize.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\agenticmemory\\prompts\\prompt_gpt_summarize.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\agenticmemory\\prompts\\prompt_voice_chat.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\agenticmemory\\prompts\\prompt_voice_chat.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\redis\\legacy\\async_manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\redis\\legacy\\async_manager.py",
       "functions": [
         {
           "name": "__init__",
@@ -26804,7 +26804,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\redis\\legacy\\key_manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\redis\\legacy\\key_manager.py",
       "functions": [
         {
           "name": "get_key_manager",
@@ -27440,7 +27440,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\redis\\legacy\\models.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\redis\\legacy\\models.py",
       "functions": [],
       "classes": [
         {
@@ -27480,7 +27480,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\gbb-ai-audio-agent\\src\\redis\\legacy\\__backup.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\src\\redis\\legacy\\__backup.py",
       "functions": [
         {
           "name": "__init__",

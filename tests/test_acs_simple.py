@@ -19,7 +19,7 @@ import json
 import base64
 import threading
 import time
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, MagicMock, AsyncMock, patch
 
 
 # Test the basic functionality without complex logging
@@ -64,12 +64,14 @@ async def test_main_event_loop_basic():
     mock_websocket = Mock()
     mock_websocket.send_text = AsyncMock()
 
-    mock_route_turn_thread = Mock()
+    mock_route_turn_thread = MagicMock()
+    mock_route_turn_thread.cancel_current_processing = AsyncMock()
 
     main_loop = MainEventLoop(mock_websocket, "test-call", mock_route_turn_thread)
 
     # Test barge-in handling
     await main_loop.handle_barge_in()
+    await asyncio.sleep(0.11)
 
     # Verify WebSocket was called (stop audio command)
     mock_websocket.send_text.assert_called()
@@ -77,11 +79,13 @@ async def test_main_event_loop_basic():
 
 
 class MockRecognizer:
-    """Simple mock recognizer."""
+    """Simple mock recognizer that mirrors the current interface."""
 
     def __init__(self):
         self.started = False
+        self.stopped = False
         self.callbacks = {}
+        self.push_stream = None
 
     def set_partial_result_callback(self, callback):
         self.callbacks["partial"] = callback
@@ -92,8 +96,20 @@ class MockRecognizer:
     def set_cancel_callback(self, callback):
         self.callbacks["cancel"] = callback
 
+    def create_push_stream(self):
+        self.push_stream = object()
+
+    def prepare_stream(self):
+        self.push_stream = object()
+
+    def prepare_start(self):
+        self.push_stream = object()
+
     def start(self):
         self.started = True
+
+    def stop(self):
+        self.stopped = True
 
     def write_bytes(self, data):
         pass

@@ -16,14 +16,14 @@ except FileNotFoundError:
     long_description = "Real-time voice agent with Azure AI and Apps Service"
 
 setup(
-    name="gbb-ai-audio-agent",
+    name="art-voice-agent-accelerator",
     version="1.0.0",
     description="Real-time voice agent with Azure AI and Apps Service",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Pablo Salvador, Jin Lee",
     author_email="pablosalvador11@gmail.com",
-    url="https://github.com/pablosalvador10/gbb-ai-audio-agent",
+    url="https://github.com/Azure-Samples/art-voice-agent-accelerator",
     packages=find_packages(),
     python_requires=">=3.11",
     install_requires=requirements,
@@ -56,8 +56,8 @@ setup(
     ],
     keywords="azure speech voice tts stt real-time audio ai and apps-services",
     project_urls={
-        "Documentation": "https://pablosalvador10.github.io/gbb-ai-audio-agent/",
-        "Source": "https://github.com/pablosalvador10/gbb-ai-audio-agent",
-        "Tracker": "https://github.com/pablosalvador10/gbb-ai-audio-agent/issues",
+        "Documentation": "https://github.com/Azure-Samples/art-voice-agent-accelerator/",
+        "Source": "https://github.com/pablosalvador10/art-voice-agent-accelerator",
+        "Tracker": "https://github.com/Azure-Samples/art-voice-agent-accelerator/issues",
     },
 )

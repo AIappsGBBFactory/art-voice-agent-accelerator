@@ -2,9 +2,24 @@
 
 # **ARTVoice Accelerator Framework**
 
+<div align="center" style="margin: 25px 0;">
+  <div style="background: linear-gradient(135deg, #0078d4 0%, #106ebe 100%); padding: 20px; border-radius: 15px; border: 3px solid #ffffff; box-shadow: 0 8px 25px rgba(0,120,212,0.4); max-width: 500px; margin: 0 auto; position: relative;">
+    <div style="color: white; font-size: 1.1em; font-weight: bold; margin-bottom: 8px;">📚 COMPLETE DOCUMENTATION PORTAL</div>
+    <div style="color: #e8f4fd; font-size: 0.85em; margin-bottom: 12px;">Everything you need: tutorials, API references, deployment guides & more</div>
+    <a href="https://azure-samples.github.io/art-voice-agent-accelerator/" 
+       style="display: inline-block; background: white; color: #0078d4; padding: 12px 24px; border-radius: 25px; text-decoration: none; font-weight: bold; font-size: 0.9em; transition: all 0.3s ease; border: 2px solid #0078d4; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
+       onmouseover="this.style.backgroundColor='#f8f9fa'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(0,0,0,0.25)'"
+       onmouseout="this.style.backgroundColor='white'; this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)'">
+      🚀 EXPLORE FULL DOCS →
+    </a>
+    <div style="position: absolute; top: -5px; right: -5px; background: #ff6b35; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 0.7em; font-weight: bold; animation: pulse 2s infinite;">!</div>
+  </div>
+</div>
+
 > **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
 
-<img src="utils/images/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
+
+<img src="docs/assets/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
 
 You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
 
@@ -43,7 +58,7 @@ We ship the scaffolding to make that last mile fast: structured logging, metrics
 
 <div align="center">
   <a href="https://vimeo.com/1115976100">
-    <img src="utils/images/ARTAgentVimeoDemo.png" alt="Demo Video - ARTAgent in Action" style="max-width:95%; border-radius:20px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); border: 3px solid #e0e0e0;">
+    <img src="docs/assets/ARTAgentVimeoDemo.png" alt="Demo Video - ARTAgent in Action" style="max-width:95%; border-radius:20px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); border: 3px solid #e0e0e0;">
   </a>
   <p style="font-size: smaller; font-family: cursive; font-style: italic; margin-top: 8px;">
     Click the image to watch the ARTAgent Demo.
@@ -63,7 +78,7 @@ Pick one of three ways to run the voice inference layer—the rest of the framew
 <details>
 <summary><strong>Build the AI voice pipeline from scratch (maximum control)</strong></summary>
 <br>
-<img src="utils/images/ARTAgentarch.png" alt="ARTAgent Arch" />
+<img src="docs/assets/ARTAgentarch.png" alt="ARTAgent Arch" />
 
 - **Own the event loop**: STT → LLM/Tools → TTS, with granular hooks.
 - **Swap services per stage**: Azure Speech, Azure OpenAI, etc.
@@ -82,7 +97,7 @@ Pick one of three ways to run the voice inference layer—the rest of the framew
 
 <br>
 
-<img src="utils/images/LIVEVOICEApi.png" alt="LIVEVOICEApi" />
+<img src="docs/assets/LIVEVOICEApi.png" alt="LIVEVOICEApi" />
 
  - **Enterprise Managed voice-to-voice**: barge-in, noise suppression, elastic scale.
  - **Agent runtime**: connect to Azure AI Foundry Agents for built-in tool/function calling and orchestration.

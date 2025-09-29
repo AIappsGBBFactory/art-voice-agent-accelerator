@@ -141,7 +141,7 @@ async def lifespan(app: FastAPI):
         try:
             app.state.redis = AzureRedisManager()
             await app.state.redis.initialize()
-            logger.info("Redis initialized successfully")
+            logger.info("Redis initialized successfully with cluster support and retry logic")
         except Exception as e:
             logger.error(f"Redis initialization failed: {e}")
             raise RuntimeError(f"Redis initialization failed: {e}")
@@ -244,10 +244,10 @@ async def lifespan(app: FastAPI):
 
         if os.getenv("AOAI_POOL_ENABLED", "true").lower() == "true":
             logger.info("Initializing AOAI client pool during startup...")
-            start_time = time.time()
+            aoai_start = time.perf_counter()
             aoai_pool = await get_aoai_pool()
             if aoai_pool:
-                init_time = time.time() - start_time
+                init_time = time.perf_counter() - aoai_start
                 logger.info(
                     f"AOAI client pool pre-initialized in {init_time:.2f}s with {len(aoai_pool.clients)} clients"
                 )
@@ -255,16 +255,6 @@ async def lifespan(app: FastAPI):
                 logger.warning("AOAI pool initialization returned None")
         else:
             logger.info("AOAI pool disabled, skipping startup initialization")
-
-        # if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
-        #     # Initialize Voice Live warm pool (pre-connect agents)
-        #     span.set_attribute("startup.stage", "voice_live_pool")
-        #     try:
-        #         # Use background prewarm to avoid blocking startup time
-        #         app.state.voice_live_pool = await get_voice_live_pool(background_prewarm=True)
-        #         logger.info("Voice Live pool initialization scheduled (background prewarm)")
-        #     except Exception as e:
-        #         logger.error(f"Voice Live pool initialization failed: {e}")
 
         # ------------------------ Other singletons ---------------------------
         span.set_attribute("startup.stage", "cosmos_db")

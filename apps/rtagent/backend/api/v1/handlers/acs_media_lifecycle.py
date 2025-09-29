@@ -90,7 +90,7 @@ class ThreadBridge:
     Implements the non-blocking patterns described in the documentation.
     """
 
-    def __init__(self):
+    def __init__(self, call_connection_id: Optional[str] = None):
         """
         Initialize cross-thread communication bridge.
 
@@ -98,8 +98,9 @@ class ThreadBridge:
         :type main_loop: Optional[asyncio.AbstractEventLoop]
         """
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.call_connection_id = call_connection_id
         # Create shorthand for call connection ID (last 8 chars)
-        self.call_id_short = "unknown"
+        self.call_id_short = call_connection_id[-8:] if call_connection_id else "unknown"
 
     def set_main_loop(
         self, loop: asyncio.AbstractEventLoop, call_connection_id: str = None
@@ -454,6 +455,7 @@ class RouteTurnThread:
 
     def __init__(
         self,
+        call_connection_id: Optional[str],
         speech_queue: asyncio.Queue,
         orchestrator_func: Callable,
         memory_manager: Optional[MemoManager],
@@ -468,11 +470,8 @@ class RouteTurnThread:
         self.running = False
         self._stopped = False
         # Get call ID shorthand from websocket if available
-        self.call_id_short = (
-            getattr(websocket, "_call_connection_id", "unknown")[-8:]
-            if hasattr(websocket, "_call_connection_id")
-            else "unknown"
-        )
+        self.call_connection_id = call_connection_id
+        self.call_id_short = call_connection_id[-8:] if call_connection_id else "unknown"
 
     async def start(self):
         """Start the route turn processing loop."""
@@ -917,10 +916,11 @@ class ACSMediaHandler:
 
         # Cross-thread communication
         self.speech_queue = asyncio.Queue(maxsize=10)
-        self.thread_bridge = ThreadBridge()
+        self.thread_bridge = ThreadBridge(call_connection_id=self.call_connection_id)
 
         # Initialize threads
         self.route_turn_thread = RouteTurnThread(
+            call_connection_id=self.call_connection_id,
             speech_queue=self.speech_queue,
             orchestrator_func=orchestrator_func,
             memory_manager=memory_manager,
