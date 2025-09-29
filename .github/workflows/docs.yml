@@ -76,6 +76,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false     # critical: disables GITHUB_TOKEN for git
+
 
       - name: Setup Python
         uses: actions/setup-python@v5
