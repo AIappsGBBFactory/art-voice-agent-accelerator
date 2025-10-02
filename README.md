@@ -2,26 +2,14 @@
 
 # **ARTVoice Accelerator Framework**
 
-<div align="center" style="margin: 25px 0;">
-  <div style="background: linear-gradient(135deg, #0078d4 0%, #106ebe 100%); padding: 20px; border-radius: 15px; border: 3px solid #ffffff; box-shadow: 0 8px 25px rgba(0,120,212,0.4); max-width: 500px; margin: 0 auto; position: relative;">
-    <div style="color: white; font-size: 1.1em; font-weight: bold; margin-bottom: 8px;">📚 COMPLETE DOCUMENTATION PORTAL</div>
-    <div style="color: #e8f4fd; font-size: 0.85em; margin-bottom: 12px;">Everything you need: tutorials, API references, deployment guides & more</div>
-    <a href="https://azure-samples.github.io/art-voice-agent-accelerator/" 
-       style="display: inline-block; background: white; color: #0078d4; padding: 12px 24px; border-radius: 25px; text-decoration: none; font-weight: bold; font-size: 0.9em; transition: all 0.3s ease; border: 2px solid #0078d4; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
-       onmouseover="this.style.backgroundColor='#f8f9fa'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(0,0,0,0.25)'"
-       onmouseout="this.style.backgroundColor='white'; this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)'">
-      🚀 EXPLORE FULL DOCS →
-    </a>
-    <div style="position: absolute; top: -5px; right: -5px; background: #ff6b35; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 0.7em; font-weight: bold; animation: pulse 2s infinite;">!</div>
-  </div>
-</div>
-
 > **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
-
 
 <img src="docs/assets/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
 
 You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
+
+*Explore the full docs for tutorials, API, deployment guides & architecture patterns* -> https://azure-samples.github.io/art-voice-agent-accelerator/
+
 
 <details closed>
 <summary><h3>The what and why behind this accelerator</h3></summary>
