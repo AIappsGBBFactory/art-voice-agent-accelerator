@@ -36,6 +36,7 @@ from azure.ai.voicelive.aio import connect
 if TYPE_CHECKING:
     # Only needed for type checking; avoids runtime import issues
     from azure.ai.voicelive.aio import VoiceLiveConnection
+import json
 
 from azure.ai.voicelive.models import (
     RequestSession,
@@ -370,7 +371,12 @@ class BasicVoiceAssistant:
         # Create strongly typed session configuration
         session_config = RequestSession(
             modalities=[Modality.TEXT, Modality.AUDIO],
-            instructions=self.instructions,
+            instructions="You are a professional call center agent. You are helpful, courteous, and efficient. "
+            "You handle customer inquiries, provide information, and assist with problem resolution. "
+            "Always maintain a professional tone, listen carefully to customer concerns, "
+            "and provide clear, accurate information. If you cannot resolve an issue, "
+            "politely explain the limitations and offer to escalate or provide alternative solutions. "
+            "Keep responses concise but thorough.",
             voice=voice_config,
             input_audio_format=InputAudioFormat.PCM16,
             output_audio_format=OutputAudioFormat.PCM16,
@@ -388,7 +394,7 @@ class BasicVoiceAssistant:
         logger.info("Switching to new conversation session...")
 
         # OpenAI voice (alloy, echo, fable, onyx, nova, shimmer)
-        voice_config = "shimmer"
+        voice_config = AzureStandardVoice(name="en-US-GuyNeural", type="azure-standard")
 
         # Create strongly typed turn detection configuration
         turn_detection_config = ServerVad(threshold=0.5, prefix_padding_ms=300, silence_duration_ms=500)
@@ -465,13 +471,40 @@ class BasicVoiceAssistant:
             # Restart playback system for response
             await ap.start_playback()
 
+        elif event.type == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DONE:
+            logger.info(f"Response Transcription Done: {event}")
+
         elif event.type == ServerEventType.RESPONSE_CREATED:
             logger.info("🤖 Assistant response created")
+            # Import json at the top of the file if not already imported
+
+            # Replace the selection with:
+            logger.info("🤖 Assistant response created")
+            try:
+                response_data = {
+                    "id": event.response.id,
+                    "conversation_id": event.response.conversation_id,
+                    "status": event.response.status,
+                    "status_details": getattr(event.response, 'status_details', None),
+                    "output": getattr(event.response, 'output', None),
+                    "usage": getattr(event.response, 'usage', None)
+                }
+                # Remove None values for cleaner output
+                response_data = {k: v for k, v in response_data.items() if v is not None}
+                
+                logger.info("Response details:\n" + json.dumps(response_data, indent=2, default=str))
+            except Exception as e:
+                logger.warning(f"Could not format response data: {e}")
+                logger.debug(f"Raw response object: {event.response}")
 
         elif event.type == ServerEventType.RESPONSE_AUDIO_DELTA:
             # Stream audio response to speakers
             logger.debug("Received audio delta")
             await ap.queue_audio(event.delta)
+
+        elif event.type == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
+            logger.info("CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED")
+            print("🎤 Ready for next input...")
 
         elif event.type == ServerEventType.RESPONSE_AUDIO_DONE:
             logger.info("🤖 Assistant finished speaking")
@@ -479,6 +512,7 @@ class BasicVoiceAssistant:
 
         elif event.type == ServerEventType.RESPONSE_DONE:
             logger.info("✅ Response complete")
+            logger.info(f"Response: {event.response.output}")
             await self._switch_session()
 
         elif event.type == ServerEventType.ERROR:
@@ -487,6 +521,7 @@ class BasicVoiceAssistant:
 
         elif event.type == ServerEventType.CONVERSATION_ITEM_CREATED:
             logger.debug(f"Conversation item created: {event.item.id}")
+            logger.info(f"Conversation Item Content: {event.item.content}")
 
         else:
             logger.debug(f"Unhandled event type: {event.type}")
