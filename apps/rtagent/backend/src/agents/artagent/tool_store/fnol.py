@@ -184,10 +184,13 @@ async def _send_with_azure_email(email_address: str, subject: str, plain_text_bo
         poller = client.begin_send(message)
         result = poller.result()
         
-        log.info("📧 Azure Email sent successfully to %s, message ID: %s", email_address, result.message_id)
+        # Extract message ID from result - Azure returns it as 'id' not 'message_id'
+        message_id = getattr(result, 'id', None) or getattr(result, 'message_id', 'unknown')
+        
+        log.info("📧 Azure Email sent successfully to %s, message ID: %s", email_address, message_id)
         return {
             "success": True,
-            "message_id": result.message_id,
+            "message_id": message_id,
             "service": "Azure Communication Services Email"
         }
         
