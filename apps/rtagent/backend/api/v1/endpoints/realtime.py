@@ -791,6 +791,10 @@ async def _process_conversation_messages(
                             await route_turn(
                                 memory_manager, prompt, websocket, is_acs=False
                             )
+                        except asyncio.CancelledError:
+                            logger.debug(
+                                f"[PERF] Orchestration task cancelled for session {session_id} (likely barge-in)"
+                            )
                         except Exception as e:
                             logger.error(
                                 f"[PERF] Orchestration task failed for session {session_id}: {e}"
