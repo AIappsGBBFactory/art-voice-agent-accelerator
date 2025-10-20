@@ -562,6 +562,24 @@ def setup_app_middleware_and_routes(app: FastAPI):
 
     # Health endpoints are now included in v1_router at /api/v1/health
 
+    # Add root endpoint to prevent 404s
+    @app.get("/", tags=["System"], include_in_schema=ENABLE_DOCS)
+    async def root():
+        """Root endpoint with API information."""
+        return {
+            "service": "Real-Time Voice Agent API",
+            "version": "1.0.0",
+            "status": "operational", 
+            "api_endpoints": {
+                "health": "/api/v1/health",
+                "readiness": "/api/v1/readiness", 
+                "calls": "/api/v1/calls",
+                "realtime": "/api/v1/realtime/conversation",
+                "docs": DOCS_URL if ENABLE_DOCS else "disabled"
+            },
+            "message": "Welcome to the Real-Time Voice Agent API. Use /api/v1/* endpoints for functionality."
+        }
+
     # Add environment and docs status info endpoint
     @app.get("/api/info", tags=["System"], include_in_schema=ENABLE_DOCS)
     async def get_system_info():
@@ -606,3 +624,6 @@ def main():
         port=port,
         reload=False,  # Don't use reload in production
     )
+
+if __name__ == "__main__":
+    main()

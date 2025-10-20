@@ -4,7 +4,7 @@ from __future__ import annotations
 Policy-lookup helper for XYMZ Insurance’s ARTAgent.
 
 Given a `policy_id` and a free-form `question`, returns a grounded,
-structured answer drawn from an in-memory mock database.
+structured answer drawn from Cosmos DB with MongoDB API.
 
 Usage pattern (LLM function-calling):
 
@@ -18,16 +18,32 @@ demonstrate grounding; in production you’d replace this with a proper
 retriever or vector search.
 """
 
+import asyncio
+import time
 from typing import Dict, List, Optional, TypedDict
 
 from rapidfuzz import fuzz, process
 
+from src.cosmosdb.manager import CosmosDBMongoCoreManager
 from utils.ml_logging import get_logger
 
 logger = get_logger("policy_lookup")
 
 # ────────────────────────────────────────────────────────────────
-# Mock database
+# Cosmos DB initialization
+# ────────────────────────────────────────────────────────────────
+try:
+    _cosmos_manager = CosmosDBMongoCoreManager(
+        database_name="voice_agent_db",
+        collection_name="policies"
+    )
+    logger.info("✅ Cosmos DB connection established for policies")
+except Exception as e:
+    logger.error("❌ Failed to initialize Cosmos DB for policies: %s", e)
+    _cosmos_manager = None
+
+# ────────────────────────────────────────────────────────────────
+# Legacy mock database (for reference/fallback)
 # ────────────────────────────────────────────────────────────────
 policy_db: Dict[str, Dict[str, str | int | bool]] = {
     "POL-A10001": {
@@ -147,6 +163,54 @@ def _render(rec: Dict[str, str | int | bool], key: str) -> Optional[str]:
     return None
 
 
+async def _get_policy_from_cosmos(policy_id: str) -> Optional[Dict[str, str | int | bool]]:
+    """
+    Retrieve policy data from Cosmos DB with timing instrumentation.
+    
+    Args:
+        policy_id: The policy ID to look up
+    
+    Returns:
+        Policy data if found, None otherwise
+    """
+    if not _cosmos_manager:
+        logger.error("Cosmos DB manager not available, falling back to mock data")
+        return policy_db.get(policy_id)
+    
+    start_time = time.time()
+    try:
+        # Query Cosmos DB for the policy
+        result = await asyncio.to_thread(
+            _cosmos_manager.read_document,
+            query={"policy_id": policy_id}
+        )
+        
+        elapsed_ms = (time.time() - start_time) * 1000
+        
+        if result:
+            logger.info("✅ Policy retrieved from Cosmos DB: %s (%.1fms)", policy_id, elapsed_ms)
+            # Map Cosmos DB fields to expected format
+            return {
+                "policyholder": result.get("policyholder_name", "Unknown"),
+                "zip": result.get("zip", "Unknown"),
+                "deductible": result.get("deductible", 0),
+                "coverage": result.get("coverage_type", "unknown"),
+                "roadside_assistance": result.get("roadside_assistance", False),
+                "glass_coverage": result.get("glass_coverage", False),
+                "rental_reimbursement": result.get("rental_reimbursement", 0),
+                "tow_limit_miles": result.get("tow_limit_miles", 0),
+            }
+        else:
+            logger.warning("❌ Policy not found in Cosmos DB: %s (%.1fms)", policy_id, elapsed_ms)
+            return None
+            
+    except Exception as e:
+        elapsed_ms = (time.time() - start_time) * 1000
+        logger.error("❌ Database error during policy lookup: %s (%.1fms) - %s", policy_id, elapsed_ms, e)
+        # Fallback to mock data on error
+        return policy_db.get(policy_id)
+
+
 async def _semantic_search(question: str, rec: Dict[str, str | int | bool]) -> str:
     logger.debug("Semantic lookup stub - Q=%s", question)
     return (
@@ -200,7 +264,7 @@ async def find_information_for_policy(
                 "raw_data": None,
             }
 
-        rec = policy_db.get(pid)
+        rec = await _get_policy_from_cosmos(pid)
         if rec is None:
             logger.warning("Policy not found: %s", pid)
             return {

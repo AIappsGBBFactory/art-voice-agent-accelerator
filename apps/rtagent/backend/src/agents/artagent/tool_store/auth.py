@@ -39,42 +39,73 @@ extra look-ups.  On **failure** these two keys are returned as ``null``.
 ```
 """
 
+import asyncio
+import time
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
+from src.cosmosdb.manager import CosmosDBMongoCoreManager
 from utils.ml_logging import get_logger
+from pymongo.errors import NetworkTimeout
 
 logger = get_logger("acme_auth")
 
 # ────────────────────────────────────────────────────────────────
-# In‑memory sample DB – replace with real store in prod
+# Cosmos DB manager for policyholder data
 # ────────────────────────────────────────────────────────────────
-policyholders_db: Dict[str, Dict[str, str]] = {
-    "Alice Brown": {
-        "zip": "60601",
-        "ssn4": "1234",
-        "policy4": "4321",
-        "claim4": "9876",
-        "phone4": "1078",
-        "policy_id": "POL-A10001",
-    },
-    "Amelia Johnson": {
-        "zip": "60601",
-        "ssn4": "5566",
-        "policy4": "2211",
-        "claim4": "3344",
-        "phone4": "4555",
-        "policy_id": "POL-B20417",
-    },
-    "Carlos Rivera": {
-        "zip": "60601",
-        "ssn4": "1234",
-        "policy4": "4455",
-        "claim4": "1122",
-        "phone4": "9200",
-        "policy_id": "POL-C88230",
-    },
-    # … add more as needed
-}
+def _get_cosmos_manager() -> CosmosDBMongoCoreManager:
+    """Get Cosmos DB manager for policyholder authentication data."""
+    return CosmosDBMongoCoreManager(
+        database_name="voice_agent_db",
+        collection_name="policyholders"
+    )
+
+async def _get_policyholder_by_credentials(
+    full_name: str, 
+    zip_code: Optional[str] = None, 
+    last4_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a policyholder by full name AND verification credentials from Cosmos DB.
+    This approach is more production-ready as it handles duplicate names properly.
+    """
+    query_start_time = time.time()
+    try:
+        cosmos = _get_cosmos_manager()
+        logger.info(f"Starting authentication query for {full_name} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Build compound query with name + verification data
+        query = {"full_name": full_name.strip().title()}
+        
+        # Add ZIP code to query if provided
+        if zip_code:
+            query["zip"] = zip_code.strip()
+        
+        # If last4_id provided, create OR query for all last4 fields
+        if last4_id:
+            last4_fields = ["ssn4", "policy4", "claim4", "phone4"]
+            # Use MongoDB $or operator to match any of the last4 fields
+            query["$or"] = [{field: last4_id.strip()} for field in last4_fields]
+        
+        db_query_start = time.time()
+        result = await asyncio.to_thread(
+            cosmos.read_document,
+            query=query
+        )
+        db_query_duration = time.time() - db_query_start
+        total_duration = time.time() - query_start_time
+        
+        logger.info(f"Database query completed in {db_query_duration:.3f}s, total function duration: {total_duration:.3f}s")
+        
+        return result  # read_document returns the document or None
+            
+    except NetworkTimeout as err:
+        error_duration = time.time() - query_start_time
+        logger.warning(f"Network timeout when querying for {full_name} after {error_duration:.3f}s: {err}")
+        return None
+    except Exception as e:
+        error_duration = time.time() - query_start_time
+        logger.error(f"Database error querying for {full_name} after {error_duration:.3f}s: {e}")
+        return None
 
 
 class AuthenticateArgs(TypedDict):
@@ -179,22 +210,31 @@ async def authenticate_caller(
     intent = args.get("intent", "general")
     claim_intent = args.get("claim_intent")
 
+    auth_start_time = time.time()
     logger.info(
-        "Attempt %d – Authenticating %s | ZIP=%s | last-4=%s | intent=%s | claim_intent=%s",
+        "Attempt %d – Authenticating %s | ZIP=%s | last-4=%s | intent=%s | claim_intent=%s | Started at: %s",
         attempt,
         full_name,
         zip_code or "<none>",
         last4 or "<none>",
         intent,
         claim_intent,
+        time.strftime('%H:%M:%S')
     )
 
-    rec = policyholders_db.get(full_name)
-    if not rec:
-        logger.warning("Name not found: %s", full_name)
+    # Query Cosmos DB for the policyholder using compound query
+    try:
+        rec = await _get_policyholder_by_credentials(
+            full_name=full_name,
+            zip_code=zip_code if zip_code else None,
+            last4_id=last4 if last4 else None
+        )
+    except Exception as e:
+        auth_duration = time.time() - auth_start_time
+        logger.error("Database error during authentication for %s after %s: %s", full_name, f"{auth_duration:.3f}s", e)
         return {
             "authenticated": False,
-            "message": f"Name '{full_name}' not found.",
+            "message": "Authentication service temporarily unavailable. Please try again.",
             "policy_id": None,
             "caller_name": None,
             "attempt": attempt,
@@ -202,34 +242,29 @@ async def authenticate_caller(
             "claim_intent": None,
         }
 
-    # ------------------------------------------------------------------
-    last4_fields: List[str] = ["ssn4", "policy4", "claim4", "phone4"]
-    last4_match = bool(last4) and last4 in (rec[f] for f in last4_fields)
-    zip_match = bool(zip_code) and rec["zip"] == zip_code
-
-    if zip_match or last4_match:
-        logger.info("Authentication succeeded for %s", full_name)
+    if not rec:
+        auth_duration = time.time() - auth_start_time
+        logger.warning("No matching policyholder found for %s with provided credentials (completed in %.3fs)", full_name, auth_duration)
         return {
-            "authenticated": True,
-            "message": f"Authenticated {full_name}.",
-            "policy_id": rec["policy_id"],
-            "caller_name": full_name,
+            "authenticated": False,
+            "message": f"Authentication failed - no matching record found for {full_name}.",
+            "policy_id": None,
+            "caller_name": None,
             "attempt": attempt,
-            "intent": intent,
-            "claim_intent": claim_intent,
+            "intent": None,
+            "claim_intent": None,
         }
 
-    # ------------------------------------------------------------------
-    # Authentication failed
-    # ------------------------------------------------------------------
-    logger.warning("ZIP and last-4 both mismatched for %s", full_name)
-
+    # If we reach here, the compound query already verified the credentials
+    # So we can directly return success
+    auth_duration = time.time() - auth_start_time
+    logger.info("Authentication succeeded for %s (total duration: %.3fs)", full_name, auth_duration)
     return {
-        "authenticated": False,
-        "message": "Authentication failed - ZIP and last-4 did not match.",
-        "policy_id": None,
-        "caller_name": None,
+        "authenticated": True,
+        "message": f"Authenticated {full_name}.",
+        "policy_id": rec["policy_id"],
+        "caller_name": full_name,
         "attempt": attempt,
-        "intent": None,
-        "claim_intent": None,
+        "intent": intent,
+        "claim_intent": claim_intent,
     }
