@@ -8,6 +8,7 @@ const API_BASE_URL = backendPlaceholder.startsWith('__')
   : backendPlaceholder;
 
 const WS_URL = API_BASE_URL.replace(/^https?/, "wss");
+const DEFAULT_TTS_SAMPLE_RATE = 16000;
 
 // Session management utilities
 const getOrCreateSessionId = () => {
@@ -254,17 +255,173 @@ const styles = {
   },
   
   assistantBubble: {
-    background: "#67d8ef",
-    color: "white",
+    background: "linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%)",
+    color: "#f8fafc",
     padding: "12px 16px",
     borderRadius: "20px",
     fontSize: "14px",
     lineHeight: "1.5",
-    boxShadow: "0 2px 8px rgba(103,216,239,0.3)",
+    boxShadow: "0 8px 18px rgba(30,58,138,0.25)",
     wordWrap: "break-word",
     overflowWrap: "break-word",
     hyphens: "auto",
     whiteSpace: "pre-wrap",
+  },
+  partialAssistantBubble: {
+    background: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
+    color: "#0f172a",
+    padding: "8px 12px",
+    borderRadius: "16px",
+    fontSize: "12px",
+    lineHeight: "1.4",
+    border: "1px dashed #94a3b8",
+    fontStyle: "italic",
+    boxShadow: "0 4px 12px rgba(148,163,184,0.2)",
+    wordWrap: "break-word",
+    overflowWrap: "break-word",
+    hyphens: "auto",
+    whiteSpace: "pre-wrap",
+  },
+  messageMeta: {
+    fontSize: "11px",
+    color: "#64748b",
+    marginTop: "6px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  messageMetaDetails: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+  },
+  busyRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    color: "#f59e0b",
+    fontWeight: "500",
+  },
+  metricChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    padding: "2px 8px",
+    borderRadius: "12px",
+    backgroundColor: "#e2e8f0",
+    color: "#475569",
+    fontSize: "10px",
+    fontWeight: "500",
+    letterSpacing: "0.01em",
+  },
+  metricLabel: {
+    fontWeight: "600",
+    color: "#1e293b",
+  },
+  metricValue: {
+    color: "#0f172a",
+  },
+  spokenText: {
+    opacity: 1,
+    fontWeight: 600,
+  },
+  typingContainer: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "6px",
+    minWidth: "32px",
+  },
+  typingDot: {
+    width: "6px",
+    height: "6px",
+    borderRadius: "50%",
+    backgroundColor: "rgba(15, 23, 42, 0.6)",
+    animation: "typingBounce 1.2s infinite",
+  },
+  agentStatusPanel: {
+    display: "flex",
+    gap: "16px",
+    alignItems: "center",
+    padding: "8px 12px",
+    borderRadius: "12px",
+    background: "linear-gradient(135deg, rgba(226,232,240,0.8), rgba(248,250,252,0.9))",
+    border: "1px solid rgba(148,163,184,0.4)",
+    marginBottom: "12px",
+    boxShadow: "0 6px 16px rgba(15,23,42,0.12)",
+    fontSize: "12px",
+    color: "#1e293b",
+  },
+  agentStatusItem: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  },
+  agentStatusLabel: {
+    fontSize: "11px",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    color: "#64748b",
+  },
+  agentStatusValue: {
+    fontSize: "13px",
+    fontWeight: 600,
+    color: "#0f172a",
+  },
+  toolProgressContainer: {
+    position: "relative",
+    width: "160px",
+    height: "6px",
+    borderRadius: "999px",
+    backgroundColor: "rgba(148,163,184,0.3)",
+    overflow: "hidden",
+  },
+  toolProgressBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    bottom: 0,
+    borderRadius: "999px",
+    background: "linear-gradient(135deg, #38bdf8, #2563eb)",
+    transition: "width 150ms ease-out",
+  },
+  toolStatusText: {
+    fontSize: "11px",
+    color: "#475569",
+  },
+  partialHint: {
+    marginTop: "8px",
+    fontSize: "11px",
+    color: "#64748b",
+    fontStyle: "italic",
+    opacity: 0.8,
+  },
+  sessionDividerWrapper: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    color: "#64748b",
+    fontSize: "10px",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+  },
+  sessionDividerLine: {
+    flex: 1,
+    height: "1px",
+    backgroundColor: "#e2e8f0",
+  },
+  sessionDividerContent: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "4px",
+    minWidth: "0",
+  },
+  sessionDividerSummary: {
+    color: "#94a3b8",
+    fontSize: "10px",
+    letterSpacing: "0.04em",
+    textTransform: "none",
   },
   
   // Agent name label (appears above specialist bubbles)
@@ -738,6 +895,17 @@ styleSheet.textContent = `
       box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
     }
   }
+
+  @keyframes typingBounce {
+    0%, 80%, 100% {
+      transform: translateY(0px);
+      opacity: 0.35;
+    }
+    40% {
+      transform: translateY(-4px);
+      opacity: 1;
+    }
+  }
 `;
 document.head.appendChild(styleSheet);
 
@@ -1169,7 +1337,7 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
       checkReadiness();
       checkAgents();
       checkHealth();
-    }, 30000);
+    }, 10000);
 
     return () => clearInterval(interval);
   }, [url]);
@@ -1786,25 +1954,25 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
   
   useEffect(() => {
     const animate = () => {
-      setWaveOffset(prev => (prev + (speaker ? 2 : 1)) % 1000);
+      setWaveOffset(prev => (prev + (speaker ? 1.2 : 0.6)) % 1000);
       
       setAmplitude(() => {
         // React to actual audio levels first, then fall back to speaker state
         if (audioLevel > 0.01) {
           // User is speaking - use real audio level
-          const scaledLevel = audioLevel * 25;
-          const smoothVariation = Math.sin(Date.now() * 0.002) * (scaledLevel * 0.2);
-          return Math.max(8, scaledLevel + smoothVariation);
+          const scaledLevel = audioLevel * 36;
+          const smoothVariation = Math.sin(Date.now() * 0.0015) * (scaledLevel * 0.3);
+          return Math.max(12, scaledLevel + smoothVariation);
         } else if (outputAudioLevel > 0.01) {
           // Assistant is speaking - use output audio level
-          const scaledLevel = outputAudioLevel * 20;
-          const smoothVariation = Math.sin(Date.now() * 0.0018) * (scaledLevel * 0.25);
-          return Math.max(6, scaledLevel + smoothVariation);
+          const scaledLevel = outputAudioLevel * 32;
+          const smoothVariation = Math.sin(Date.now() * 0.0014) * (scaledLevel * 0.3);
+          return Math.max(10, scaledLevel + smoothVariation);
         } else if (speaker) {
           // Active speaking fallback - gentle rhythmic movement
-          const time = Date.now() * 0.002;
-          const baseAmplitude = 10;
-          const rhythmicVariation = Math.sin(time) * 5;
+          const time = Date.now() * 0.0016;
+          const baseAmplitude = 14;
+          const rhythmicVariation = Math.sin(time) * 6;
           return baseAmplitude + rhythmicVariation;
         } else {
           // Idle state - gentle breathing pattern
@@ -1830,7 +1998,7 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
     const width = 750;
     const height = 100;
     const centerY = height / 2;
-    const frequency = 0.02;
+    const frequency = 0.018;
     const points = 100;
     
     let path = `M 0 ${centerY}`;
@@ -1849,7 +2017,7 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
     const width = 750;
     const height = 100;
     const centerY = height / 2;
-    const frequency = 0.025;
+    const frequency = 0.022;
     const points = 100;
     
     let path = `M 0 ${centerY}`;
@@ -1932,14 +2100,107 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
   );
 };
 
+const formatDuration = (ms) => {
+  if (ms === null || ms === undefined) {
+    return null;
+  }
+  if (ms < 1000) {
+    return `${ms.toFixed(0)}ms`;
+  }
+  return `${(ms / 1000).toFixed(2)}s`;
+};
+
 /* ------------------------------------------------------------------ *
  *  CHAT BUBBLE
  * ------------------------------------------------------------------ */
 const ChatBubble = ({ message }) => {
-  const { speaker, text, isTool, streaming } = message;
+  const {
+    id,
+    speaker,
+    text = "",
+    isTool,
+    streaming,
+    metrics = {},
+    kind,
+    summary = {},
+    timestamp,
+  } = message;
+
+  if (kind === "divider") {
+    const dividerTime = new Date(timestamp ?? Date.now());
+    const summaryParts = [];
+    if (typeof summary.userTurns === "number") {
+      summaryParts.push(`${summary.userTurns} user turn${summary.userTurns === 1 ? "" : "s"}`);
+    }
+    if (typeof summary.assistantTurns === "number") {
+      summaryParts.push(`${summary.assistantTurns} assistant turn${summary.assistantTurns === 1 ? "" : "s"}`);
+    }
+    if (typeof summary.durationMs === "number") {
+      const durationLabel = formatDuration(summary.durationMs);
+      if (durationLabel) {
+        summaryParts.push(`Duration ${durationLabel}`);
+      }
+    }
+
+    const dividerLabel = `Session stopped · ${dividerTime.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })}`;
+
+    return (
+      <div style={styles.sessionDividerWrapper}>
+        <div style={styles.sessionDividerLine} />
+        <div style={styles.sessionDividerContent}>
+          <div>{dividerLabel}</div>
+          {summaryParts.length > 0 ? (
+            <div style={styles.sessionDividerSummary}>{summaryParts.join(" • ")}</div>
+          ) : null}
+        </div>
+        <div style={styles.sessionDividerLine} />
+      </div>
+    );
+  }
+
   const isUser = speaker === "User";
   const isSpecialist = speaker?.includes("Specialist");
   const isAuthAgent = speaker === "Auth Agent";
+  const isPartial = Boolean(message.incomplete);
+  const awaitingResponse = metrics.awaitingResponse;
+  const playbackProgressRaw = metrics.playbackProgress;
+  const latencyText = formatDuration(metrics.responseLatencyMs);
+  const speechDurationText = formatDuration(metrics.speechDurationMs);
+  const bargeInText = formatDuration(metrics.bargeInMs);
+  const speechInterrupted = Boolean(metrics.speechInterrupted);
+  const playbackProgress =
+    playbackProgressRaw &&
+    (!playbackProgressRaw.messageId || playbackProgressRaw.messageId === id)
+      ? playbackProgressRaw
+      : null;
+  const shouldMaskUserText = isUser && awaitingResponse;
+
+  const assistantMetrics = [];
+  if (!isPartial && typeof playbackProgress?.ratio === "number") {
+    assistantMetrics.push({
+      label: "Playback",
+      value: `${Math.round(Math.min(playbackProgress.ratio, 1) * 100)}%`,
+    });
+  }
+  if (isPartial) {
+    assistantMetrics.unshift({ label: "Partial response" });
+  }
+  if (latencyText) assistantMetrics.push({ label: "Response latency", value: latencyText });
+  if (speechDurationText) assistantMetrics.push({ label: "Speech length", value: speechDurationText });
+  if (bargeInText) assistantMetrics.push({ label: "Barge stop", value: bargeInText });
+  if (speechInterrupted) assistantMetrics.push({ label: "Speech interrupted" });
+
+  const userMetrics = [];
+  if (bargeInText) {
+    userMetrics.push({ label: "Barge-in duration", value: bargeInText });
+  }
+
+  const metricItems = isUser ? userMetrics : assistantMetrics;
+  const showMetrics = metricItems.length > 0;
   
   if (isTool) {
     return (
@@ -1964,12 +2225,135 @@ const ChatBubble = ({ message }) => {
           {speaker}
         </div>
       )}
-      <div style={isUser ? styles.userBubble : styles.assistantBubble}>
-        {text.split("\n").map((line, i) => (
-          <div key={i}>{line}</div>
-        ))}
-        {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
+      <div
+        style={
+          isUser
+            ? styles.userBubble
+            : isPartial
+              ? styles.partialAssistantBubble
+              : styles.assistantBubble
+        }
+      >
+        {shouldMaskUserText ? (
+          <div style={styles.typingContainer} aria-label="Processing">
+            {[0, 1, 2].map((_, idx) => (
+              <span
+                key={idx}
+                style={{
+                  ...styles.typingDot,
+                  animationDelay: `${idx * 0.2}s`,
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <>
+            {(() => {
+              if (!text) {
+                return null;
+              }
+              const ratio = typeof playbackProgress?.ratio === "number" && !isPartial
+                ? Math.min(Math.max(playbackProgress.ratio, 0), 1)
+                : null;
+              if (ratio === null || streaming) {
+                return text.split("\n").map((line, i) => (
+                  <div key={i}>{line}</div>
+                ));
+              }
+
+              const totalChars = text.length;
+              const spokenChars = Math.min(totalChars, Math.floor(totalChars * ratio));
+              const spokenText = text.slice(0, spokenChars);
+              const remainingText = text.slice(spokenChars);
+
+              return (
+                <span style={{ whiteSpace: "pre-wrap" }}>
+                  <span style={styles.spokenText}>{spokenText}</span>
+                  <span>{remainingText}</span>
+                </span>
+              );
+            })()}
+            {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
+          </>
+        )}
+        {isPartial && (
+          <div style={styles.partialHint}>Awaiting continuation…</div>
+        )}
       </div>
+      {(awaitingResponse || showMetrics) && (
+        <div
+          style={{
+            ...styles.messageMeta,
+            alignItems: isUser ? "flex-end" : "flex-start",
+            textAlign: isUser ? "right" : "left",
+          }}
+        >
+          {awaitingResponse && (
+            <div style={styles.busyRow}>
+              <span role="img" aria-label="busy">⏳</span>
+              Awaiting assistant response...
+            </div>
+          )}
+          {showMetrics && (
+            <div style={styles.messageMetaDetails}>
+              {metricItems.map(({ label, value }, idx) => (
+                <span key={idx} style={styles.metricChip}>
+                  <span style={styles.metricLabel}>{value ? `${label}:` : label}</span>
+                  {value ? <span style={styles.metricValue}>{value}</span> : null}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AgentStatusPanel = ({ agentName, toolActivity }) => {
+  if (!agentName && !toolActivity) {
+    return null;
+  }
+
+  const toolProgress = toolActivity?.progress ?? null;
+  const boundedProgress = toolProgress == null ? null : Math.max(0, Math.min(toolProgress, 100));
+  const toolStatusText = toolActivity
+    ? `${toolActivity.status === "success" ? "Completed" : toolActivity.status === "failed" ? "Failed" : "Running"}` +
+      (toolActivity.elapsedMs != null ? ` · ${formatDuration(toolActivity.elapsedMs)}` : "")
+    : null;
+
+  return (
+    <div style={styles.agentStatusPanel}>
+      {agentName ? (
+        <div style={styles.agentStatusItem}>
+          <span style={styles.agentStatusLabel}>Active Agent</span>
+          <span style={styles.agentStatusValue}>{agentName}</span>
+        </div>
+      ) : null}
+      {toolActivity ? (
+        <div style={styles.agentStatusItem}>
+          <span style={styles.agentStatusLabel}>Tool Activity</span>
+          <span style={styles.agentStatusValue}>{toolActivity.tool}</span>
+          <div style={styles.toolProgressContainer}>
+            <div
+              style={{
+                ...styles.toolProgressBar,
+                width: boundedProgress == null ? "0%" : `${boundedProgress}%`,
+                background:
+                  toolActivity.status === "failed"
+                    ? "linear-gradient(135deg, #f97316, #ef4444)"
+                    : styles.toolProgressBar.background,
+              }}
+            />
+          </div>
+          <span style={styles.toolStatusText}>
+            {toolStatusText}
+            {toolActivity.status === "running" && boundedProgress != null
+              ? ` (${Math.round(boundedProgress)}%)`
+              : ""}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -2001,6 +2385,8 @@ function RealTimeVoiceApp() {
   const [targetPhoneNumber, setTargetPhoneNumber] = useState("");
   const [callActive, setCallActive] = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState(null);
+  const [activeAgentName, setActiveAgentName] = useState(null);
+  const [toolActivity, setToolActivity] = useState(null);
   const [showPhoneInput, setShowPhoneInput] = useState(false);
   const [systemStatus, setSystemStatus] = useState({
     status: "checking",
@@ -2075,23 +2461,192 @@ function RealTimeVoiceApp() {
   const [audioLevel, setAudioLevel] = useState(0);
   const audioLevelRef = useRef(0);
 
+  const messageCounterRef = useRef(0);
+  const pendingUserRef = useRef(null);
+  const activeAssistantRef = useRef({
+    messageId: null,
+    streaming: false,
+    speaking: false,
+    speechStartedAt: null,
+    respondedAt: null,
+    originUserMessageId: null,
+    originUserStartedAt: null,
+    bufferedText: "",
+    finalText: "",
+    incomplete: false,
+  });
+  const bargeInRef = useRef(null);
+  const assistantAudioProgressRef = useRef(new Map());
+  const workletMessageHandlerRef = useRef(null);
+
+  const createMessage = useCallback((message = {}) => {
+    const id = `msg-${Date.now()}-${messageCounterRef.current++}`;
+    const {
+      metrics: providedMetrics,
+      streaming: streamingFlag = false,
+      timestamp,
+      incomplete = false,
+      ...remaining
+    } = message;
+    return {
+      id,
+      streaming: streamingFlag,
+      timestamp: timestamp ?? Date.now(),
+      incomplete,
+      ...remaining,
+      metrics: { ...(providedMetrics || {}) },
+    };
+  }, [messageCounterRef]);
+
+  const appendMessage = useCallback((message) => {
+    const msg = createMessage(message);
+    setMessages((prev) => [...prev, msg]);
+    return msg;
+  }, [createMessage, setMessages]);
+
+  const updateMessage = useCallback((id, updater) => {
+    if (!id) return;
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== id) return msg;
+        const updates = updater(msg);
+        if (!updates) return msg;
+        const merged = { ...msg, ...updates };
+        if (updates.metrics) {
+          merged.metrics = { ...(msg.metrics || {}), ...updates.metrics };
+        }
+        return merged;
+      })
+    );
+  }, [setMessages]);
+
+  const mergeAssistantText = useCallback((existingText = "", incomingText = "") => {
+    if (!incomingText) {
+      return existingText;
+    }
+    if (!existingText) {
+      return incomingText;
+    }
+    if (incomingText === existingText) {
+      return existingText;
+    }
+    if (incomingText.startsWith(existingText)) {
+      return incomingText;
+    }
+    if (existingText.startsWith(incomingText)) {
+      return existingText;
+    }
+    const maxOverlap = Math.min(existingText.length, incomingText.length);
+    let overlap = 0;
+    for (let i = maxOverlap; i > 0; i--) {
+      if (existingText.endsWith(incomingText.slice(0, i))) {
+        overlap = i;
+        break;
+      }
+    }
+    if (overlap > 0) {
+      return `${existingText}${incomingText.slice(overlap)}`;
+    }
+    return `${existingText}${incomingText}`;
+  }, []);
+
+  const handleWorkletMessage = useCallback((data) => {
+    if (!data || typeof data !== 'object') {
+      return;
+    }
+
+    if (data.type === 'played') {
+      const { messageId, samples } = data;
+      if (!messageId || typeof samples !== 'number') {
+        return;
+      }
+
+      const progressMap = assistantAudioProgressRef.current;
+      const entry = progressMap.get(messageId);
+      if (!entry) {
+        return;
+      }
+
+      entry.playedSamples = (entry.playedSamples || 0) + samples;
+      if (!entry.startedAt) {
+        entry.startedAt = Date.now();
+        const ctx = activeAssistantRef.current;
+        if (ctx?.messageId === messageId && !ctx.speechStartedAt) {
+          activeAssistantRef.current = {
+            ...ctx,
+            speechStartedAt: entry.startedAt,
+          };
+        }
+      }
+
+      const totalSamples = entry.expectedSamples ?? entry.queuedSamples ?? 0;
+      const ratio = totalSamples > 0 ? Math.min(entry.playedSamples / totalSamples, 1) : 0;
+      const playedMs = entry.sampleRate ? (entry.playedSamples / entry.sampleRate) * 1000 : null;
+      const totalMs = entry.sampleRate && totalSamples > 0 ? (totalSamples / entry.sampleRate) * 1000 : null;
+
+      const lastRatio = entry.lastRatio ?? 0;
+      const shouldUpdate = Math.abs(ratio - lastRatio) >= 0.02 || ratio >= 0.999;
+      if (!shouldUpdate) {
+        return;
+      }
+
+      entry.lastRatio = ratio;
+      if (ratio >= 0.999) {
+        entry.completed = true;
+      }
+
+      updateMessage(messageId, (msg) => {
+        const existingMetrics = msg.metrics || {};
+        const nextMetrics = {
+          ...existingMetrics,
+          playbackProgress: {
+            messageId,
+            ratio,
+            playedMs,
+            totalMs: totalMs ?? existingMetrics.playbackProgress?.totalMs ?? null,
+          },
+        };
+        if (totalMs !== null) {
+          nextMetrics.speechDurationMs = totalMs;
+        }
+        return { metrics: nextMetrics };
+      });
+
+      if (entry.completed) {
+        setTimeout(() => {
+          const current = assistantAudioProgressRef.current.get(messageId);
+          if (current && current.completed) {
+            assistantAudioProgressRef.current.delete(messageId);
+          }
+        }, 1200);
+      }
+    } else if (data.type === 'cleared') {
+      assistantAudioProgressRef.current.clear();
+    }
+  }, [updateMessage]);
+
+  useEffect(() => {
+    workletMessageHandlerRef.current = handleWorkletMessage;
+  }, [handleWorkletMessage]);
+
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
       constructor() {
         super();
         this.queue = [];
-        this.readIndex = 0;
         this.samplesProcessed = 0;
         this.port.onmessage = (e) => {
-          if (e.data?.type === 'push') {
-            // payload is Float32Array
-            this.queue.push(e.data.payload);
-            console.log('AudioWorklet: Received audio chunk, queue length:', this.queue.length);
-          } else if (e.data?.type === 'clear') {
-            // Clear all queued audio data for immediate interruption
+          const data = e.data || {};
+          if (data.type === 'push' && data.payload) {
+            this.queue.push({
+              buffer: data.payload,
+              messageId: data.messageId || null,
+              offset: 0,
+            });
+          } else if (data.type === 'clear') {
             this.queue = [];
-            this.readIndex = 0;
-            console.log('AudioWorklet: Audio queue cleared for barge-in');
+            this.samplesProcessed = 0;
+            this.port.postMessage({ type: 'cleared' });
           }
         };
       }
@@ -2105,17 +2660,29 @@ function RealTimeVoiceApp() {
             break;
           }
           const chunk = this.queue[0];
-          const remain = chunk.length - this.readIndex;
-          const toCopy = Math.min(remain, out.length - i);
-          out.set(chunk.subarray(this.readIndex, this.readIndex + toCopy), i);
-          i += toCopy;
-          this.readIndex += toCopy;
-          if (this.readIndex >= chunk.length) {
+          const buffer = chunk.buffer;
+          const start = chunk.offset || 0;
+          const remain = buffer.length - start;
+          if (remain <= 0) {
             this.queue.shift();
-            this.readIndex = 0;
+            continue;
+          }
+          const toCopy = Math.min(remain, out.length - i);
+          out.set(buffer.subarray(start, start + toCopy), i);
+          i += toCopy;
+          chunk.offset = start + toCopy;
+          this.samplesProcessed += toCopy;
+          if (chunk.messageId) {
+            this.port.postMessage({
+              type: 'played',
+              messageId: chunk.messageId,
+              samples: toCopy,
+            });
+          }
+          if (chunk.offset >= buffer.length) {
+            this.queue.shift();
           }
         }
-        this.samplesProcessed += out.length;
         return true;
       }
     }
@@ -2143,6 +2710,12 @@ function RealTimeVoiceApp() {
         outputChannelCount: [1]
       });
       sink.connect(audioCtx.destination);
+      sink.port.onmessage = (event) => {
+        const handler = workletMessageHandlerRef.current;
+        if (handler) {
+          handler(event.data);
+        }
+      };
       
       // Resume on user gesture
       await audioCtx.resume();
@@ -2215,6 +2788,21 @@ function RealTimeVoiceApp() {
 
   const startRecognition = async () => {
       setMessages([]);
+      messageCounterRef.current = 0;
+      pendingUserRef.current = null;
+      activeAssistantRef.current = {
+        messageId: null,
+        streaming: false,
+        speaking: false,
+        speechStartedAt: null,
+        respondedAt: null,
+        originUserMessageId: null,
+        originUserStartedAt: null,
+        bufferedText: "",
+        finalText: "",
+        incomplete: false,
+      };
+      bargeInRef.current = null;
       appendLog("🎤 PCM streaming started");
 
       await initializeAudioPlayback();
@@ -2330,21 +2918,50 @@ function RealTimeVoiceApp() {
         socketRef.current = null;
       }
       
-      // Add session stopped message instead of clearing everything
-      setMessages(m => [...m, { 
-        speaker: "System", 
-        text: "🛑 Session stopped" 
-      }]);
-      setActiveSpeaker("System");
+      const summaryTimestamp = Date.now();
+      setMessages((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1]?.kind === "divider") {
+          return prev;
+        }
+        const userTurns = prev.filter((msg) => msg.speaker === "User").length;
+        const assistantTurns = prev.filter((msg) => msg.speaker === "Assistant").length;
+        const firstTimestamp = prev.find((msg) => typeof msg.timestamp === "number")?.timestamp;
+        const durationMs = firstTimestamp ? Math.max(summaryTimestamp - firstTimestamp, 0) : null;
+        const dividerMessage = createMessage({
+          kind: "divider",
+          timestamp: summaryTimestamp,
+          summary: {
+            userTurns,
+            assistantTurns,
+            durationMs,
+          },
+        });
+        return [...prev, dividerMessage];
+      });
+      setActiveSpeaker(null);
+      setActiveAgentName(null);
+      setToolActivity(null);
       setRecording(false);
+      const pendingUser = pendingUserRef.current;
+      if (pendingUser?.userMessageId) {
+        updateMessage(pendingUser.userMessageId, () => ({ metrics: { awaitingResponse: false } }));
+      }
+      pendingUserRef.current = null;
+      activeAssistantRef.current = {
+        messageId: null,
+        streaming: false,
+        speaking: false,
+        speechStartedAt: null,
+        respondedAt: null,
+        originUserMessageId: null,
+        originUserStartedAt: null,
+        bufferedText: "",
+        finalText: "",
+        incomplete: false,
+      };
+      bargeInRef.current = null;
+      assistantAudioProgressRef.current.clear();
       appendLog("🛑 PCM streaming stopped");
-    };
-
-    const pushIfChanged = (arr, msg) => {
-      if (arr.length === 0) return [...arr, msg];
-      const last = arr[arr.length - 1];
-      if (last.speaker === msg.speaker && last.text === msg.text) return arr;
-      return [...arr, msg];
     };
 
     const handleSocketMessage = async (event) => {
@@ -2353,7 +2970,7 @@ function RealTimeVoiceApp() {
         try {
           const msg = JSON.parse(event.data);
           console.log("📨 WebSocket message received:", msg.type || "unknown", msg);
-        } catch (e) {
+        } catch {
           console.log("📨 Non-JSON WebSocket message:", event.data);
         }
       } else {
@@ -2444,6 +3061,7 @@ function RealTimeVoiceApp() {
             data_length: payload.data.length,
             is_final: payload.is_final
           });
+          const audioTimestamp = Date.now();
 
           // Decode base64 -> Int16 -> Float32 [-1, 1]
           const bstr = atob(payload.data);
@@ -2454,12 +3072,73 @@ function RealTimeVoiceApp() {
           const float32 = new Float32Array(int16.length);
           for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x8000;
 
-          console.log(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`);
+          console.log(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || DEFAULT_TTS_SAMPLE_RATE}`);
           console.log("🔊 Audio data preview:", float32.slice(0, 10));
+
+          let assistantCtx = activeAssistantRef.current;
+
+          // Ensure a message container exists for this audio sequence even if
+          // streaming text has not yet arrived (some backends send audio first).
+          if (
+            payload.frame_index === 0 &&
+            (!assistantCtx?.messageId || !assistantCtx?.incomplete)
+          ) {
+            const placeholderSpeaker = payload.speaker || "Assistant";
+            const placeholder = appendMessage({
+              speaker: placeholderSpeaker,
+              text: "",
+              streaming: true,
+              incomplete: true,
+            });
+
+            setActiveAgentName(payload.agent || placeholderSpeaker || null);
+
+            const originUserMessageId =
+              pendingUserRef.current?.userMessageId ?? assistantCtx?.originUserMessageId ?? null;
+            const originUserStartedAt =
+              pendingUserRef.current?.startedAt ?? assistantCtx?.originUserStartedAt ?? null;
+
+            assistantCtx = {
+              messageId: placeholder.id,
+              streaming: true,
+              speaking: false,
+              speechStartedAt: null,
+              respondedAt: Date.now(),
+              originUserMessageId,
+              originUserStartedAt,
+              bufferedText: "",
+              finalText: "",
+              incomplete: true,
+            };
+            activeAssistantRef.current = assistantCtx;
+          }
+
+          const activeMessageId = assistantCtx?.messageId || null;
+          const sampleRate = payload.sample_rate || DEFAULT_TTS_SAMPLE_RATE;
+
+          if (activeMessageId) {
+            const progressMap = assistantAudioProgressRef.current;
+            const entry = progressMap.get(activeMessageId) || {
+              queuedSamples: 0,
+              playedSamples: 0,
+              sampleRate,
+              lastRatio: 0,
+            };
+            entry.sampleRate = sampleRate;
+            entry.queuedSamples = (entry.queuedSamples || 0) + float32.length;
+            if (payload.is_final) {
+              entry.expectedSamples = entry.queuedSamples;
+            }
+            progressMap.set(activeMessageId, entry);
+          }
 
           // Push to the worklet queue
           if (pcmSinkRef.current) {
-            pcmSinkRef.current.port.postMessage({ type: 'push', payload: float32 });
+            pcmSinkRef.current.port.postMessage({
+              type: 'push',
+              payload: float32,
+              messageId: activeMessageId,
+            });
             appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
           } else {
             console.warn("Audio playback not initialized, attempting init...");
@@ -2467,11 +3146,64 @@ function RealTimeVoiceApp() {
             // Try to initialize if not done yet
             await initializeAudioPlayback();
             if (pcmSinkRef.current) {
-              pcmSinkRef.current.port.postMessage({ type: 'push', payload: float32 });
+              pcmSinkRef.current.port.postMessage({
+                type: 'push',
+                payload: float32,
+                messageId: activeMessageId,
+              });
               appendLog("🔊 TTS audio playing (after init)");
             } else {
               console.error("Failed to initialize audio playback");
               appendLog("❌ Audio init failed");
+            }
+          }
+
+          if (assistantCtx?.messageId) {
+            const nextCtx = {
+              ...assistantCtx,
+              speaking: true,
+              speechStartedAt: assistantCtx.speechStartedAt ?? audioTimestamp,
+              streaming: false,
+              respondedAt: assistantCtx.respondedAt ?? audioTimestamp,
+              awaitingAudio: !payload.is_final,
+              bufferedText: assistantCtx?.bufferedText ?? "",
+              finalText: assistantCtx?.finalText ?? "",
+              incomplete: assistantCtx?.incomplete ?? false,
+            };
+            activeAssistantRef.current = nextCtx;
+
+            if (payload.is_final) {
+              const duration = nextCtx.speechStartedAt ? audioTimestamp - nextCtx.speechStartedAt : null;
+              const metricsUpdate = {};
+              const progressEntry = assistantAudioProgressRef.current.get(nextCtx.messageId || "");
+              if (progressEntry?.sampleRate && progressEntry?.expectedSamples) {
+                metricsUpdate.speechDurationMs = (progressEntry.expectedSamples / progressEntry.sampleRate) * 1000;
+              } else if (duration !== null && duration >= 0) {
+                metricsUpdate.speechDurationMs = duration;
+              }
+              if (bargeInRef.current && bargeInRef.current.assistantMessageId === nextCtx.messageId) {
+                const bargeDuration = audioTimestamp - bargeInRef.current.startedAt;
+                metricsUpdate.bargeInMs = bargeDuration;
+                if (bargeInRef.current.userMessageId) {
+                  updateMessage(bargeInRef.current.userMessageId, () => ({ metrics: { bargeInMs: bargeDuration } }));
+                }
+                bargeInRef.current = null;
+              }
+              if (Object.keys(metricsUpdate).length > 0) {
+                updateMessage(nextCtx.messageId, () => ({ metrics: metricsUpdate }));
+              }
+              activeAssistantRef.current = {
+                messageId: nextCtx.messageId,
+                streaming: false,
+                speaking: false,
+                speechStartedAt: null,
+                respondedAt: nextCtx.respondedAt ?? audioTimestamp,
+                originUserMessageId: nextCtx.originUserMessageId ?? null,
+                originUserStartedAt: nextCtx.originUserStartedAt ?? null,
+                bufferedText: nextCtx.bufferedText ?? "",
+                finalText: nextCtx.finalText ?? "",
+                incomplete: nextCtx.incomplete ?? false,
+              };
             }
           }
           return; // handled
@@ -2494,47 +3226,194 @@ function RealTimeVoiceApp() {
 
       if (msgType === "user" || speaker === "User") {
         setActiveSpeaker("User");
-        setMessages(prev => [...prev, { speaker: "User", text: txt }]);
-
+        const pending = pendingUserRef.current;
+        if (pending?.userMessageId) {
+          updateMessage(pending.userMessageId, () => ({ metrics: { awaitingResponse: false } }));
+        }
+        const userMsg = appendMessage({
+          speaker: "User",
+          text: txt,
+          metrics: { awaitingResponse: true },
+        });
+        const userTimestamp = Date.now();
+        pendingUserRef.current = {
+          userMessageId: userMsg.id,
+          startedAt: userTimestamp,
+          latencyMs: null,
+        };
+        const assistantCtx = activeAssistantRef.current;
+        if ((assistantCtx?.streaming || assistantCtx?.speaking) && assistantCtx?.messageId) {
+          bargeInRef.current = {
+            assistantMessageId: assistantCtx.messageId,
+            startedAt: userTimestamp,
+            userMessageId: userMsg.id,
+          };
+          updateMessage(assistantCtx.messageId, () => ({ incomplete: true }));
+          activeAssistantRef.current = {
+            ...assistantCtx,
+            incomplete: true,
+          };
+        }
         appendLog(`User: ${txt}`);
         return;
       }
 
-      if (type === "assistant_streaming") {
+      if (msgType === "assistant_streaming") {
         const streamingSpeaker = speaker || "Assistant";
         setActiveSpeaker(streamingSpeaker);
-        setMessages(prev => {
-          if (prev.at(-1)?.streaming && prev.at(-1)?.speaker === streamingSpeaker) {
-            return prev.map((m,i)=> i===prev.length-1 ? {...m, text: m.text + txt} : m);
+        setActiveAgentName(payload.agent || streamingSpeaker || null);
+        const streamingTimestamp = Date.now();
+        const prevCtx = activeAssistantRef.current;
+
+        let messageId = prevCtx?.messageId;
+        let updatedText = prevCtx?.bufferedText ?? "";
+        const incomingText = txt ?? "";
+        const hasIncomingText = incomingText.length > 0;
+
+        if (!messageId || !prevCtx?.streaming) {
+          const initialText = hasIncomingText ? incomingText : "";
+          const streamingMsg = appendMessage({
+            speaker: streamingSpeaker,
+            text: initialText,
+            streaming: true,
+            incomplete: true,
+          });
+          messageId = streamingMsg.id;
+          updatedText = initialText;
+        } else if (hasIncomingText) {
+          updatedText = mergeAssistantText(prevCtx?.bufferedText ?? "", incomingText);
+          const textForUpdate = updatedText;
+          updateMessage(messageId, () => ({
+            text: textForUpdate,
+            streaming: true,
+            incomplete: true,
+          }));
+        } else {
+          updateMessage(messageId, () => ({ streaming: true, incomplete: true }));
+        }
+
+        const originUserMessageId =
+          pendingUserRef.current?.userMessageId ?? prevCtx?.originUserMessageId ?? null;
+        const originUserStartedAt =
+          pendingUserRef.current?.startedAt ?? prevCtx?.originUserStartedAt ?? null;
+        const isSameMessage = prevCtx?.messageId === messageId;
+
+        activeAssistantRef.current = {
+          messageId,
+          streaming: true,
+          speaking: prevCtx?.speaking ?? false,
+          speechStartedAt: prevCtx?.speechStartedAt ?? null,
+          respondedAt: prevCtx?.respondedAt ?? streamingTimestamp,
+          originUserMessageId,
+          originUserStartedAt,
+          bufferedText: updatedText,
+          finalText: isSameMessage ? prevCtx?.finalText ?? "" : "",
+          incomplete: true,
+        };
+
+        if (pendingUserRef.current?.userMessageId) {
+          const pending = pendingUserRef.current;
+          if (pending.latencyMs == null) {
+            const latencyMs = streamingTimestamp - pending.startedAt;
+            pendingUserRef.current = { ...pending, latencyMs };
           }
-          return [...prev, { speaker:streamingSpeaker, text:txt, streaming:true }];
-        });
+          updateMessage(pending.userMessageId, () => ({ metrics: { awaitingResponse: true } }));
+        }
         return;
       }
 
       if (msgType === "assistant" || msgType === "status" || speaker === "Assistant") {
-        setActiveSpeaker("Assistant");
-        setMessages(prev => {
-          if (prev.at(-1)?.streaming) {
-            return prev.map((m,i)=> i===prev.length-1 ? {...m, text:txt, streaming:false} : m);
-          }
-          return pushIfChanged(prev, { speaker:"Assistant", text:txt });
-        });
+        const assistantSpeaker = speaker || "Assistant";
+        setActiveSpeaker(assistantSpeaker);
+        setActiveAgentName(payload.agent || assistantSpeaker || null);
+        const assistantTimestamp = Date.now();
+        const prevCtx = activeAssistantRef.current;
+
+        let assistantMessageId = prevCtx?.messageId;
+        const incomingText = txt ?? "";
+        const hasTextUpdate = incomingText.length > 0;
+        const previousFinalText = prevCtx?.finalText ?? "";
+        const previousBufferedText = prevCtx?.bufferedText ?? "";
+        let finalText = hasTextUpdate
+          ? incomingText
+          : previousFinalText || previousBufferedText || "";
+
+        if (!assistantMessageId) {
+          const finalMsg = appendMessage({
+            speaker: assistantSpeaker,
+            text: finalText,
+            streaming: false,
+            incomplete: false,
+          });
+          assistantMessageId = finalMsg.id;
+        } else {
+          const textForUpdate = finalText;
+          updateMessage(assistantMessageId, () => ({
+            ...(textForUpdate ? { text: textForUpdate } : {}),
+            streaming: false,
+            incomplete: false,
+          }));
+        }
+
+        const pending = pendingUserRef.current;
+        let latencyMs = null;
+        if (pending?.userMessageId) {
+          latencyMs = pending.latencyMs ?? (assistantTimestamp - pending.startedAt);
+          pendingUserRef.current = null;
+          updateMessage(pending.userMessageId, () => ({
+            metrics: {
+              awaitingResponse: false,
+              responseLatencyMs: latencyMs,
+            },
+          }));
+        }
+
+        if (latencyMs !== null) {
+          updateMessage(assistantMessageId, () => ({
+            streaming: false,
+            metrics: { responseLatencyMs: latencyMs },
+          }));
+        }
+
+        activeAssistantRef.current = {
+          messageId: assistantMessageId,
+          streaming: false,
+          speaking: false,
+          speechStartedAt: null,
+          respondedAt: assistantTimestamp,
+          originUserMessageId: prevCtx?.originUserMessageId ?? null,
+          originUserStartedAt: prevCtx?.originUserStartedAt ?? null,
+          bufferedText: "",
+          finalText,
+          incomplete: false,
+        };
 
         appendLog("🤖 Assistant responded");
         return;
       }
     
       if (type === "tool_start") {
+        const startedAt = Date.now();
+        const agentSource = payload.agent || payload.speaker || null;
+        if (agentSource) {
+          setActiveAgentName(agentSource);
+        }
+        setToolActivity({
+          tool: payload.tool,
+          status: "running",
+          progress: typeof payload.pct === "number" ? payload.pct : null,
+          startedAt,
+          agent: agentSource,
+          elapsedMs: null,
+        });
 
-      
         setMessages((prev) => [
           ...prev,
-          {
+          createMessage({
             speaker: "Assistant",
             isTool: true,
             text: `🛠️ tool ${payload.tool} started 🔄`,
-          },
+          }),
         ]);
       
         appendLog(`⚙️ ${payload.tool} started`);
@@ -2543,6 +3422,16 @@ function RealTimeVoiceApp() {
       
     
       if (type === "tool_progress") {
+        setToolActivity((prev) => {
+          if (!prev || prev.tool !== payload.tool) {
+            return prev;
+          }
+          return {
+            ...prev,
+            status: "running",
+            progress: typeof payload.pct === "number" ? payload.pct : prev.progress ?? null,
+          };
+        });
         setMessages((prev) =>
           prev.map((m, i, arr) =>
             i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
@@ -2555,8 +3444,28 @@ function RealTimeVoiceApp() {
       }
     
       if (type === "tool_end") {
+        const finishedAt = Date.now();
+        setToolActivity((prev) => {
+          if (!prev || prev.tool !== payload.tool) {
+            return {
+              tool: payload.tool,
+              status: payload.status === "success" ? "success" : "failed",
+              progress: payload.status === "success" ? 100 : prev?.progress ?? null,
+              startedAt: prev?.startedAt ?? finishedAt,
+              elapsedMs: payload.elapsedMs ??
+                (prev?.startedAt != null ? Math.max(finishedAt - prev.startedAt, 0) : null),
+              agent: prev?.agent ?? payload.agent ?? payload.speaker ?? null,
+            };
+          }
+          return {
+            ...prev,
+            status: payload.status === "success" ? "success" : "failed",
+            progress: payload.status === "success" ? 100 : prev.progress ?? null,
+            elapsedMs: payload.elapsedMs ??
+              (prev.startedAt != null ? Math.max(finishedAt - prev.startedAt, 0) : null),
+          };
+        });
 
-      
         const finalText =
           payload.status === "success"
             ? `🛠️ tool ${payload.tool} completed ✔️\n${JSON.stringify(
@@ -2580,6 +3489,7 @@ function RealTimeVoiceApp() {
 
       if (type === "control") {
         const { action } = payload;
+        const controlTimestamp = Date.now();
         console.log("🎮 Control message received:", action);
         
         if (action === "tts_cancelled") {
@@ -2589,7 +3499,39 @@ function RealTimeVoiceApp() {
           if (pcmSinkRef.current) {
             pcmSinkRef.current.port.postMessage({ type: 'clear' });
           }
-          
+          assistantAudioProgressRef.current.clear();
+
+          const assistantCtx = activeAssistantRef.current;
+          if (assistantCtx?.messageId) {
+            const updates = {};
+            if (assistantCtx.speechStartedAt) {
+              updates.speechDurationMs = controlTimestamp - assistantCtx.speechStartedAt;
+            }
+            updates.speechInterrupted = true;
+            if (bargeInRef.current && bargeInRef.current.assistantMessageId === assistantCtx.messageId) {
+              const bargeDuration = controlTimestamp - bargeInRef.current.startedAt;
+              updates.bargeInMs = bargeDuration;
+              if (bargeInRef.current.userMessageId) {
+                updateMessage(bargeInRef.current.userMessageId, () => ({ metrics: { bargeInMs: bargeDuration } }));
+              }
+              bargeInRef.current = null;
+            }
+            updateMessage(assistantCtx.messageId, () => ({ metrics: updates, incomplete: true }));
+          }
+
+          activeAssistantRef.current = {
+            messageId: assistantCtx?.messageId ?? null,
+            streaming: false,
+            speaking: false,
+            speechStartedAt: null,
+            respondedAt: assistantCtx?.respondedAt ?? controlTimestamp,
+            originUserMessageId: assistantCtx?.originUserMessageId ?? null,
+            originUserStartedAt: assistantCtx?.originUserStartedAt ?? null,
+            bufferedText: assistantCtx?.bufferedText ?? "",
+            finalText: assistantCtx?.finalText ?? "",
+            incomplete: true,
+          };
+
           setActiveSpeaker(null);
           return;
         }
@@ -2635,7 +3577,7 @@ function RealTimeVoiceApp() {
       // show in chat
       setMessages(m => [
         ...m,
-        { speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber}` }
+        createMessage({ speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber}` }),
       ]);
       appendLog("📞 Call initiated");
 
@@ -2686,7 +3628,7 @@ function RealTimeVoiceApp() {
           }
           const { sender, message } = processedObj;
           if (sender && message) {
-            setMessages(m => [...m, { speaker: sender, text: message }]);
+            setMessages(m => [...m, createMessage({ speaker: sender, text: message })]);
             setActiveSpeaker(sender);
             appendLog(`[Relay] ${sender}: ${message}`);
           }
@@ -2751,6 +3693,8 @@ function RealTimeVoiceApp() {
           <div style={styles.sectionDivider}></div>
         </div>
 
+        <AgentStatusPanel agentName={activeAgentName} toolActivity={toolActivity} />
+
         {/* Chat Messages */}
         <div style={styles.chatSection} ref={chatRef}>
           <div style={styles.chatSectionIndicator}></div>
@@ -2789,7 +3733,23 @@ function RealTimeVoiceApp() {
                   
                   // Reset UI state
                   setMessages([]);
+                  pendingUserRef.current = null;
+                  activeAssistantRef.current = {
+                    messageId: null,
+                    streaming: false,
+                    speaking: false,
+                    speechStartedAt: null,
+                    respondedAt: null,
+                    originUserMessageId: null,
+                    originUserStartedAt: null,
+                    bufferedText: "",
+                    finalText: "",
+                    incomplete: false,
+                  };
+                  bargeInRef.current = null;
                   setActiveSpeaker(null);
+                  setActiveAgentName(null);
+                  setToolActivity(null);
                   stopRecognition();
                   setCallActive(false);
                   setShowPhoneInput(false);
@@ -2797,10 +3757,10 @@ function RealTimeVoiceApp() {
                   
                   // Add welcome message
                   setTimeout(() => {
-                    setMessages([{ 
+                    setMessages([createMessage({ 
                       speaker: "System", 
                       text: "✅ Session restarted with new ID. Ready for a fresh conversation!" 
-                    }]);
+                    })]);
                   }, 500);
                 }}
               >
@@ -2887,10 +3847,10 @@ function RealTimeVoiceApp() {
                     // Hang up call
                     stopRecognition();
                     setCallActive(false);
-                    setMessages(prev => [...prev, { 
+                    setMessages(prev => [...prev, createMessage({ 
                       speaker: "System",
                       text: "📞 Call ended" 
-                    }]);
+                    })]);
                   } else {
                     // Show phone input
                     setShowPhoneInput(!showPhoneInput);
