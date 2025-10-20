@@ -66,6 +66,7 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
+    position: "relative",
   },
 
   appHeader: {
@@ -76,6 +77,8 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    gap: "16px",
+    flexWrap: "wrap",
     position: "relative",
   },
 
@@ -84,6 +87,8 @@ const styles = {
     flexDirection: "column",
     alignItems: "center",
     gap: "4px",
+    margin: "0 auto",
+    textAlign: "center",
   },
 
   appTitleWrapper: {
@@ -101,7 +106,7 @@ const styles = {
     fontSize: "18px",
     fontWeight: "600",
     color: "#334155",
-    textAlign: "center",
+    textAlign: "left",
     margin: 0,
     letterSpacing: "0.1px",
   },
@@ -116,6 +121,24 @@ const styles = {
     maxWidth: "350px",
     lineHeight: "1.3",
     opacity: 0.8,
+  },
+  appHeaderRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    position: "absolute",
+    top: "16px",
+    right: "24px",
+  },
+  statusOverlay: {
+    position: "absolute",
+    top: "64px",
+    right: "24px",
+    pointerEvents: "none",
+    zIndex: 5,
+  },
+  statusOverlayInner: {
+    pointerEvents: "auto",
   },
   waveformSection: {
     backgroundColor: "#f1f5f9",
@@ -267,21 +290,6 @@ const styles = {
     hyphens: "auto",
     whiteSpace: "pre-wrap",
   },
-  partialAssistantBubble: {
-    background: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
-    color: "#0f172a",
-    padding: "8px 12px",
-    borderRadius: "16px",
-    fontSize: "12px",
-    lineHeight: "1.4",
-    border: "1px dashed #94a3b8",
-    fontStyle: "italic",
-    boxShadow: "0 4px 12px rgba(148,163,184,0.2)",
-    wordWrap: "break-word",
-    overflowWrap: "break-word",
-    hyphens: "auto",
-    whiteSpace: "pre-wrap",
-  },
   messageMeta: {
     fontSize: "11px",
     color: "#64748b",
@@ -341,39 +349,40 @@ const styles = {
   },
   agentStatusPanel: {
     display: "flex",
-    gap: "16px",
-    alignItems: "center",
-    padding: "8px 12px",
-    borderRadius: "12px",
-    background: "linear-gradient(135deg, rgba(226,232,240,0.8), rgba(248,250,252,0.9))",
-    border: "1px solid rgba(148,163,184,0.4)",
-    marginBottom: "12px",
-    boxShadow: "0 6px 16px rgba(15,23,42,0.12)",
+    flexDirection: "column",
+    gap: "10px",
+    padding: "12px 16px",
+    borderRadius: "16px",
+    background: "rgba(255, 255, 255, 0.92)",
+    border: "1px solid rgba(148, 163, 184, 0.28)",
+    boxShadow: "0 12px 24px rgba(148,163,184,0.18)",
     fontSize: "12px",
-    color: "#1e293b",
+    color: "#1f2937",
+    minWidth: "220px",
+    backdropFilter: "blur(14px)",
   },
   agentStatusItem: {
     display: "flex",
     flexDirection: "column",
-    gap: "2px",
+    gap: "4px",
   },
   agentStatusLabel: {
-    fontSize: "11px",
+    fontSize: "10px",
     textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    color: "#64748b",
+    letterSpacing: "0.14em",
+    color: "rgba(100, 116, 139, 0.8)",
   },
   agentStatusValue: {
-    fontSize: "13px",
+    fontSize: "14px",
     fontWeight: 600,
     color: "#0f172a",
   },
   toolProgressContainer: {
     position: "relative",
     width: "160px",
-    height: "6px",
+    height: "5px",
     borderRadius: "999px",
-    backgroundColor: "rgba(148,163,184,0.3)",
+    backgroundColor: "rgba(203,213,225,0.35)",
     overflow: "hidden",
   },
   toolProgressBar: {
@@ -382,19 +391,22 @@ const styles = {
     left: 0,
     bottom: 0,
     borderRadius: "999px",
-    background: "linear-gradient(135deg, #38bdf8, #2563eb)",
+    background: "linear-gradient(135deg, #38bdf8, #0ea5e9)",
     transition: "width 150ms ease-out",
   },
   toolStatusText: {
-    fontSize: "11px",
-    color: "#475569",
+    fontSize: "10px",
+    color: "rgba(71, 85, 105, 0.82)",
   },
-  partialHint: {
-    marginTop: "8px",
-    fontSize: "11px",
-    color: "#64748b",
-    fontStyle: "italic",
-    opacity: 0.8,
+  toolStatusChip: {
+    alignSelf: "flex-start",
+    padding: "3px 9px",
+    borderRadius: "999px",
+    backgroundColor: "rgba(59, 130, 246, 0.18)",
+    color: "#2563eb",
+    fontSize: "10px",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
   },
   sessionDividerWrapper: {
     display: "flex",
@@ -1961,7 +1973,7 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
         if (audioLevel > 0.01) {
           // User is speaking - use real audio level
           const scaledLevel = audioLevel * 36;
-          const smoothVariation = Math.sin(Date.now() * 0.0015) * (scaledLevel * 0.3);
+          const smoothVariation = Math.sin(Date.now() * 0.0015) * (scaledLevel * 0.6);
           return Math.max(12, scaledLevel + smoothVariation);
         } else if (outputAudioLevel > 0.01) {
           // Assistant is speaking - use output audio level
@@ -2178,6 +2190,8 @@ const ChatBubble = ({ message }) => {
       ? playbackProgressRaw
       : null;
   const shouldMaskUserText = isUser && awaitingResponse;
+  const trimmedAssistantText = !isUser && typeof text === "string" ? text.trim() : "";
+  const hasAssistantText = !isUser && trimmedAssistantText.length > 0;
 
   const assistantMetrics = [];
   if (!isPartial && typeof playbackProgress?.ratio === "number") {
@@ -2217,23 +2231,17 @@ const ChatBubble = ({ message }) => {
     );
   }
   
+  if (!isUser && !hasAssistantText) {
+    return null;
+  }
+
   return (
     <div style={isUser ? styles.userMessage : styles.assistantMessage}>
       {/* Show agent name for specialist agents and auth agent */}
-      {!isUser && (isSpecialist || isAuthAgent) && (
-        <div style={styles.agentNameLabel}>
-          {speaker}
-        </div>
-      )}
-      <div
-        style={
-          isUser
-            ? styles.userBubble
-            : isPartial
-              ? styles.partialAssistantBubble
-              : styles.assistantBubble
-        }
-      >
+      <div style={styles.agentNameLabel}>
+        {speaker}
+      </div>
+      <div style={isUser ? styles.userBubble : styles.assistantBubble}>
         {shouldMaskUserText ? (
           <div style={styles.typingContainer} aria-label="Processing">
             {[0, 1, 2].map((_, idx) => (
@@ -2275,9 +2283,6 @@ const ChatBubble = ({ message }) => {
             })()}
             {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
           </>
-        )}
-        {isPartial && (
-          <div style={styles.partialHint}>Awaiting continuation…</div>
         )}
       </div>
       {(awaitingResponse || showMetrics) && (
@@ -2322,6 +2327,14 @@ const AgentStatusPanel = ({ agentName, toolActivity }) => {
       (toolActivity.elapsedMs != null ? ` · ${formatDuration(toolActivity.elapsedMs)}` : "")
     : null;
 
+  const statusChipLabel = toolActivity
+    ? toolActivity.status === "running"
+      ? "In progress"
+      : toolActivity.status === "failed"
+        ? "Failed"
+        : "Completed"
+    : null;
+
   return (
     <div style={styles.agentStatusPanel}>
       {agentName ? (
@@ -2331,27 +2344,27 @@ const AgentStatusPanel = ({ agentName, toolActivity }) => {
         </div>
       ) : null}
       {toolActivity ? (
-        <div style={styles.agentStatusItem}>
-          <span style={styles.agentStatusLabel}>Tool Activity</span>
+        <div style={{ ...styles.agentStatusItem, gap: "4px", minWidth: "180px" }}>
+          <span style={styles.agentStatusLabel}>Tool Call</span>
           <span style={styles.agentStatusValue}>{toolActivity.tool}</span>
-          <div style={styles.toolProgressContainer}>
-            <div
-              style={{
-                ...styles.toolProgressBar,
-                width: boundedProgress == null ? "0%" : `${boundedProgress}%`,
-                background:
-                  toolActivity.status === "failed"
-                    ? "linear-gradient(135deg, #f97316, #ef4444)"
-                    : styles.toolProgressBar.background,
-              }}
-            />
-          </div>
-          <span style={styles.toolStatusText}>
-            {toolStatusText}
-            {toolActivity.status === "running" && boundedProgress != null
-              ? ` (${Math.round(boundedProgress)}%)`
-              : ""}
-          </span>
+          <div style={styles.toolStatusText}>{toolStatusText}</div>
+          {toolActivity.status === "running" && boundedProgress != null ? (
+            <div style={styles.toolProgressContainer}>
+              <div
+                style={{
+                  ...styles.toolProgressBar,
+                  width: `${boundedProgress}%`,
+                  background:
+                    toolActivity.status === "failed"
+                      ? "linear-gradient(135deg, #f97316, #ef4444)"
+                      : styles.toolProgressBar.background,
+                }}
+              />
+            </div>
+          ) : null}
+          {statusChipLabel ? (
+            <span style={styles.toolStatusChip}>{statusChipLabel}</span>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -2378,8 +2391,15 @@ function RealTimeVoiceApp() {
     };
   }, []);
 
+  const USER_SPEECH_LEVEL_THRESHOLD = 0.08;
+  const USER_SILENCE_WINDOW_MS = 180;
+
   // Component state
   const [messages, setMessages] = useState([]);
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const [log, setLog] = useState("");
   const [recording, setRecording] = useState(false);
   const [targetPhoneNumber, setTargetPhoneNumber] = useState("");
@@ -2474,10 +2494,15 @@ function RealTimeVoiceApp() {
     bufferedText: "",
     finalText: "",
     incomplete: false,
+    agentName: null,
   });
   const bargeInRef = useRef(null);
   const assistantAudioProgressRef = useRef(new Map());
+  const toolMessageRef = useRef(new Map());
+  const lastToolMessageIdRef = useRef(null);
   const workletMessageHandlerRef = useRef(null);
+  const userSpeechDraftRef = useRef(null);
+  const assistantBacklogRef = useRef([]);
 
   const createMessage = useCallback((message = {}) => {
     const id = `msg-${Date.now()}-${messageCounterRef.current++}`;
@@ -2520,6 +2545,146 @@ function RealTimeVoiceApp() {
     );
   }, [setMessages]);
 
+  const repositionMessageAfter = useCallback((messageId, afterMessageId) => {
+    if (!messageId || !afterMessageId) {
+      return;
+    }
+    setMessages((prev) => {
+      const currentIdx = prev.findIndex((msg) => msg.id === messageId);
+      if (currentIdx === -1) {
+        return prev;
+      }
+      const afterIdx = prev.findIndex((msg) => msg.id === afterMessageId);
+      if (afterIdx === -1 || currentIdx === afterIdx + 1) {
+        return prev;
+      }
+      const reordered = [...prev];
+      const [message] = reordered.splice(currentIdx, 1);
+      const nextAfterIdx = reordered.findIndex((msg) => msg.id === afterMessageId);
+      const targetIdx = nextAfterIdx === -1 ? reordered.length : nextAfterIdx + 1;
+      reordered.splice(targetIdx, 0, message);
+      return reordered;
+    });
+  }, [setMessages]);
+
+  const anchorAssistantAfterTool = useCallback((assistantMessageId, originUserMessageId) => {
+    const toolSnapshot = lastToolMessageIdRef.current;
+    if (!assistantMessageId || !toolSnapshot?.messageId) {
+      return;
+    }
+    if (
+      toolSnapshot.userMessageId &&
+      originUserMessageId &&
+      toolSnapshot.userMessageId !== originUserMessageId
+    ) {
+      return;
+    }
+    const anchorAfterId = toolSnapshot.lastAssistantId || toolSnapshot.messageId;
+    repositionMessageAfter(assistantMessageId, anchorAfterId);
+    lastToolMessageIdRef.current = {
+      ...toolSnapshot,
+      lastAssistantId: assistantMessageId,
+    };
+  }, [repositionMessageAfter]);
+
+  const isUserTranscriptReady = useCallback(() => {
+    const pending = pendingUserRef.current;
+    if (!pending || !pending.userMessageId) {
+      return true;
+    }
+    if (pending.textReady) {
+      return true;
+    }
+    const currentMessages = messagesRef.current || [];
+    const target = currentMessages.find((msg) => msg.id === pending.userMessageId);
+    if (!target) {
+      return false;
+    }
+    const text = typeof target.text === "string" ? target.text.trim() : "";
+    const hasContent = text.length > 0;
+    if (hasContent && !pending.textReady) {
+      pendingUserRef.current = { ...pending, textReady: true };
+    }
+    return hasContent;
+  }, []);
+
+  const enqueueAssistantTask = useCallback((task) => {
+    if (typeof task !== "function") {
+      return;
+    }
+    assistantBacklogRef.current.push(task);
+  }, []);
+
+  const flushAssistantBacklog = useCallback(() => {
+    if (!assistantBacklogRef.current.length) {
+      return;
+    }
+    if (!isUserTranscriptReady()) {
+      return;
+    }
+    const backlog = assistantBacklogRef.current.slice();
+    assistantBacklogRef.current = [];
+    backlog.forEach((task) => {
+      try {
+        task();
+      } catch (error) {
+        console.error("Assistant backlog task failed", error);
+      }
+    });
+  }, [isUserTranscriptReady]);
+
+  const parseIsoTimestamp = (value) => {
+    if (!value || typeof value !== "string") {
+      return null;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const computePendingLatency = (pending, fallbackStopTs = null) => {
+    if (!pending) {
+      return null;
+    }
+
+    const stopCandidates = [pending.latencyStopAt, fallbackStopTs].filter(
+      (value) => typeof value === "number" && !Number.isNaN(value),
+    );
+    const startCandidates = [
+      pending.latencyStartAt,
+      pending.audioEndAt,
+      pending.audioLastChunkAt,
+      pending.audioStartedAt,
+    ].filter((value) => typeof value === "number" && !Number.isNaN(value));
+
+    if (!stopCandidates.length) {
+      return null;
+    }
+
+    const stopTs = stopCandidates[0];
+    const startTs = startCandidates[0];
+    const startedAt = typeof pending.startedAt === "number" && !Number.isNaN(pending.startedAt)
+      ? pending.startedAt
+      : null;
+
+    let latency = null;
+
+    if (typeof startTs === "number" && stopTs > startTs) {
+      latency = stopTs - startTs;
+    } else if (typeof startTs === "number") {
+      latency = Math.max(stopTs - startTs, 0);
+    }
+
+    if ((latency === null || latency <= 0) && typeof startedAt === "number" && stopTs > startedAt) {
+      latency = stopTs - startedAt;
+    }
+
+    if (latency !== null && latency < 0) {
+      latency = 0;
+    }
+
+    return latency;
+  };
+
   const mergeAssistantText = useCallback((existingText = "", incomingText = "") => {
     if (!incomingText) {
       return existingText;
@@ -2549,6 +2714,237 @@ function RealTimeVoiceApp() {
     }
     return `${existingText}${incomingText}`;
   }, []);
+
+  const processAssistantStreaming = ({ payload, text, speaker }) => {
+    const streamingSpeaker = speaker || "Assistant";
+    const prevCtx = activeAssistantRef.current;
+    const streamingAgentName = payload.agent || prevCtx?.agentName || streamingSpeaker || null;
+    setActiveSpeaker(streamingSpeaker);
+    setActiveAgentName(streamingAgentName);
+    const streamingTimestamp = Date.now();
+
+    let messageId = prevCtx?.messageId;
+    let updatedText = prevCtx?.bufferedText ?? "";
+    const incomingText = text ?? "";
+    const hasIncomingText = incomingText.length > 0;
+
+    const shouldCreateNewMessage = !messageId || !(prevCtx?.incomplete);
+
+    if (shouldCreateNewMessage) {
+      const initialText = hasIncomingText ? incomingText : "";
+      const streamingMsg = appendMessage({
+        speaker: streamingSpeaker,
+        text: initialText,
+        streaming: true,
+        incomplete: true,
+        agentName: streamingAgentName,
+      });
+      messageId = streamingMsg.id;
+      updatedText = initialText;
+    } else if (hasIncomingText) {
+      updatedText = mergeAssistantText(prevCtx?.bufferedText ?? "", incomingText);
+      const textForUpdate = updatedText;
+      updateMessage(messageId, () => ({
+        text: textForUpdate,
+        streaming: true,
+        incomplete: true,
+        agentName: prevCtx?.agentName ?? streamingAgentName,
+      }));
+    } else {
+      updatedText = prevCtx?.bufferedText ?? "";
+      updateMessage(messageId, () => ({
+        streaming: true,
+        incomplete: true,
+        agentName: prevCtx?.agentName ?? streamingAgentName,
+      }));
+    }
+
+    const originUserMessageId =
+      pendingUserRef.current?.userMessageId ?? prevCtx?.originUserMessageId ?? null;
+    const originUserStartedAt =
+      pendingUserRef.current?.startedAt ?? prevCtx?.originUserStartedAt ?? null;
+    const isSameMessage = prevCtx?.messageId === messageId;
+
+    activeAssistantRef.current = {
+      messageId,
+      streaming: true,
+      speaking: prevCtx?.speaking ?? false,
+      speechStartedAt: prevCtx?.speechStartedAt ?? null,
+      respondedAt: prevCtx?.respondedAt ?? streamingTimestamp,
+      originUserMessageId,
+      originUserStartedAt,
+      bufferedText: updatedText,
+      finalText: isSameMessage ? prevCtx?.finalText ?? "" : "",
+      incomplete: true,
+      agentName: prevCtx?.agentName ?? streamingAgentName,
+    };
+
+    if (originUserMessageId) {
+      repositionMessageAfter(messageId, originUserMessageId);
+    }
+    anchorAssistantAfterTool(messageId, originUserMessageId);
+
+    if (pendingUserRef.current?.userMessageId) {
+      const pending = pendingUserRef.current;
+      const latencyMs = computePendingLatency(pending);
+      if (latencyMs !== null && pending.latencyMs !== latencyMs) {
+        pendingUserRef.current = { ...pending, latencyMs };
+      }
+      updateMessage(pending.userMessageId, (msg) => ({
+        metrics: {
+          ...(msg.metrics || {}),
+          awaitingResponse: true,
+          ...(latencyMs !== null ? { responseLatencyMs: latencyMs } : {}),
+        },
+      }));
+    }
+  };
+
+  const processAssistantResponse = ({ payload, text, speaker }) => {
+    const assistantSpeaker = speaker || "Assistant";
+    const prevCtx = activeAssistantRef.current;
+    const assistantAgentName = payload.agent || prevCtx?.agentName || assistantSpeaker || null;
+    setActiveSpeaker(assistantSpeaker);
+    setActiveAgentName(assistantAgentName);
+    const assistantTimestamp = Date.now();
+
+    let assistantMessageId = prevCtx?.messageId;
+    if (!assistantMessageId) {
+      const currentMessages = messagesRef.current || [];
+      for (let idx = currentMessages.length - 1; idx >= 0; idx--) {
+        const candidate = currentMessages[idx];
+        if (
+          candidate?.speaker === assistantSpeaker &&
+          (candidate?.streaming || candidate?.incomplete)
+        ) {
+          assistantMessageId = candidate.id;
+          break;
+        }
+      }
+    }
+    const incomingText = text ?? "";
+    const hasTextUpdate = incomingText.length > 0;
+    const previousFinalText = prevCtx?.finalText ?? "";
+    const previousBufferedText = prevCtx?.bufferedText ?? "";
+    let finalText = hasTextUpdate
+      ? incomingText
+      : previousFinalText || previousBufferedText || "";
+
+    if (!assistantMessageId) {
+      const finalMsg = appendMessage({
+        speaker: assistantSpeaker,
+        text: finalText,
+        streaming: false,
+        incomplete: false,
+        agentName: assistantAgentName,
+      });
+      assistantMessageId = finalMsg.id;
+    } else {
+      const textForUpdate = finalText;
+      updateMessage(assistantMessageId, () => ({
+        ...(textForUpdate ? { text: textForUpdate } : {}),
+        streaming: false,
+        incomplete: false,
+        agentName: prevCtx?.agentName ?? assistantAgentName,
+      }));
+    }
+
+    const pending = pendingUserRef.current;
+    let latencyMs = null;
+    if (pending?.userMessageId) {
+      latencyMs = computePendingLatency(pending, assistantTimestamp);
+      pendingUserRef.current = null;
+      updateMessage(pending.userMessageId, (msg) => ({
+        metrics: {
+          ...(msg.metrics || {}),
+          awaitingResponse: false,
+          ...(latencyMs !== null ? { responseLatencyMs: latencyMs } : {}),
+        },
+      }));
+    }
+
+    if (latencyMs !== null) {
+      updateMessage(assistantMessageId, (msg) => ({
+        streaming: false,
+        metrics: {
+          ...(msg.metrics || {}),
+          responseLatencyMs: latencyMs,
+        },
+      }));
+    } else {
+      updateMessage(assistantMessageId, () => ({ streaming: false }));
+    }
+
+    activeAssistantRef.current = {
+      messageId: assistantMessageId,
+      streaming: false,
+      speaking: false,
+      speechStartedAt: null,
+      respondedAt: assistantTimestamp,
+      originUserMessageId: prevCtx?.originUserMessageId ?? null,
+      originUserStartedAt: prevCtx?.originUserStartedAt ?? null,
+      bufferedText: "",
+      finalText,
+      incomplete: false,
+      agentName: assistantAgentName,
+    };
+
+    if (prevCtx?.originUserMessageId) {
+      repositionMessageAfter(assistantMessageId, prevCtx.originUserMessageId);
+    }
+    anchorAssistantAfterTool(assistantMessageId, prevCtx?.originUserMessageId ?? null);
+
+    lastToolMessageIdRef.current = null;
+
+    appendLog("🤖 Assistant responded");
+  };
+
+  const previewValue = useCallback((value) => {
+    if (value === null || value === undefined) {
+      return "-";
+    }
+    if (typeof value === "string") {
+      return value.length > 120 ? `${value.slice(0, 117)}...` : value;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    try {
+      const json = JSON.stringify(value);
+      return json.length > 120 ? `${json.slice(0, 117)}...` : json;
+    } catch {
+      return String(value);
+    }
+  }, []);
+
+  const formatToolMessage = useCallback((toolName, { status, progress, error, result } = {}) => {
+    const trimmedStatus = status ? status.trim() : "";
+    const parts = [`🛠️ ${toolName}${trimmedStatus ? ` ${trimmedStatus}` : ""}`];
+
+    if (typeof progress === "number") {
+      parts[0] = `${parts[0]} · ${Math.round(progress)}%`;
+    }
+
+    if (error) {
+      parts.push(`Error: ${error}`);
+    } else if (result !== undefined) {
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        const entries = Object.entries(result).slice(0, 3);
+        if (entries.length === 0) {
+          parts.push("Result: (empty)");
+        } else {
+          const condensed = entries
+            .map(([key, value]) => `${key}=${previewValue(value)}`)
+            .join(" | ");
+          parts.push(`Result: ${condensed}`);
+        }
+      } else {
+        parts.push(`Result: ${previewValue(result)}`);
+      }
+    }
+
+    return parts.join("\n");
+  }, [previewValue]);
 
   const handleWorkletMessage = useCallback((data) => {
     if (!data || typeof data !== 'object') {
@@ -2628,6 +3024,40 @@ function RealTimeVoiceApp() {
   useEffect(() => {
     workletMessageHandlerRef.current = handleWorkletMessage;
   }, [handleWorkletMessage]);
+
+  useEffect(() => {
+    if (
+      recording &&
+      audioLevel > USER_SPEECH_LEVEL_THRESHOLD &&
+      !userSpeechDraftRef.current &&
+      (!pendingUserRef.current || !pendingUserRef.current.userMessageId)
+    ) {
+      const startedAt = Date.now();
+      const draft = appendMessage({
+        speaker: "User",
+        text: "",
+        streaming: true,
+        incomplete: true,
+        metrics: { awaitingResponse: true },
+      });
+      userSpeechDraftRef.current = {
+        messageId: draft.id,
+        startedAt,
+      };
+      setActiveSpeaker("User");
+      pendingUserRef.current = {
+        userMessageId: draft.id,
+        startedAt,
+        latencyMs: null,
+        textReady: false,
+        audioStartedAt: null,
+        audioLastChunkAt: null,
+        audioEndAt: null,
+        latencyStopAt: null,
+        latencyStartAt: null,
+      };
+    }
+  }, [USER_SPEECH_LEVEL_THRESHOLD, appendMessage, audioLevel, recording]);
 
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
@@ -2801,8 +3231,13 @@ function RealTimeVoiceApp() {
         bufferedText: "",
         finalText: "",
         incomplete: false,
+        agentName: null,
       };
       bargeInRef.current = null;
+      toolMessageRef.current.clear();
+      assistantBacklogRef.current = [];
+      userSpeechDraftRef.current = null;
+      lastToolMessageIdRef.current = null;
       appendLog("🎤 PCM streaming started");
 
       await initializeAudioPlayback();
@@ -2865,6 +3300,55 @@ function RealTimeVoiceApp() {
         
         audioLevelRef.current = level;
         setAudioLevel(level);
+
+        const chunkTimestamp = Date.now();
+        const pending = pendingUserRef.current;
+        if (pending?.userMessageId) {
+          const hasSpeech = level >= USER_SPEECH_LEVEL_THRESHOLD;
+          let nextPending = null;
+
+          if (hasSpeech) {
+            const audioStartedAt = pending.audioStartedAt ?? chunkTimestamp;
+            const resumedAfterSilence = pending.audioEndAt !== null || pending.latencyStartAt !== null;
+            if (
+              pending.audioStartedAt !== audioStartedAt ||
+              pending.audioLastChunkAt !== chunkTimestamp ||
+              pending.audioEndAt !== null
+            ) {
+              nextPending = {
+                ...pending,
+                audioStartedAt,
+                audioLastChunkAt: chunkTimestamp,
+                audioEndAt: null,
+                latencyStartAt: resumedAfterSilence ? null : pending.latencyStartAt,
+                latencyStopAt: resumedAfterSilence ? null : pending.latencyStopAt,
+                latencyMs: resumedAfterSilence ? null : pending.latencyMs,
+              };
+            }
+          } else if (pending.audioLastChunkAt) {
+            const silenceElapsed = chunkTimestamp - pending.audioLastChunkAt;
+            if (silenceElapsed >= USER_SILENCE_WINDOW_MS && pending.audioEndAt == null) {
+              nextPending = {
+                ...pending,
+                audioEndAt: pending.audioLastChunkAt,
+                latencyStartAt: pending.latencyStartAt ?? pending.audioLastChunkAt,
+              };
+            }
+          }
+
+          if (nextPending) {
+            const resolvedLatency = computePendingLatency(nextPending);
+            if (resolvedLatency !== null && nextPending.latencyMs !== resolvedLatency) {
+              nextPending = { ...nextPending, latencyMs: resolvedLatency };
+            }
+            pendingUserRef.current = nextPending;
+          } else if (pending.latencyMs == null) {
+            const resolvedLatency = computePendingLatency(pending);
+            if (resolvedLatency !== null) {
+              pendingUserRef.current = { ...pending, latencyMs: resolvedLatency };
+            }
+          }
+        }
 
         // Debug: Log a sample of mic data
         console.log("Mic data sample:", float32.slice(0, 10)); // Should show non-zero values if your mic is hot
@@ -2958,9 +3442,12 @@ function RealTimeVoiceApp() {
         bufferedText: "",
         finalText: "",
         incomplete: false,
+        agentName: null,
       };
       bargeInRef.current = null;
       assistantAudioProgressRef.current.clear();
+      toolMessageRef.current.clear();
+      assistantBacklogRef.current = [];
       appendLog("🛑 PCM streaming stopped");
     };
 
@@ -3010,6 +3497,8 @@ function RealTimeVoiceApp() {
         // Extract the actual message from the envelope
         const envelopeType = payload.type;
         const envelopeSender = payload.sender;
+        const envelopeTopic = payload.topic;
+        const envelopeTimestamp = payload.ts || null;
         const actualPayload = payload.payload;
         
         // Transform envelope back to legacy format for compatibility
@@ -3031,26 +3520,67 @@ function RealTimeVoiceApp() {
             content: actualPayload.content
           };
         } else if (envelopeType === "status" && actualPayload.message) {
-          // Status message in envelope
-          payload = {
-            type: "status",
-            sender: envelopeSender,
-            speaker: envelopeSender,
-            message: actualPayload.message,
-            content: actualPayload.message
-          };
+          const normalizedSender = envelopeSender || "System";
+          if (normalizedSender === "User") {
+            payload = {
+              type: "user",
+              sender: normalizedSender,
+              speaker: "User",
+              message: actualPayload.message,
+              content: actualPayload.message,
+            };
+          } else {
+            payload = {
+              type: "status",
+              sender: normalizedSender,
+              speaker: normalizedSender,
+              message: actualPayload.message,
+              content: actualPayload.message,
+            };
+          }
+        } else if (envelopeType === "event") {
+          const eventType = actualPayload?.event_type || actualPayload?.eventType || null;
+          const eventData = actualPayload?.data || actualPayload?.payload || actualPayload;
+          if (eventType === "transcription_final") {
+            const text = eventData?.text ?? eventData?.message ?? "";
+            const language = eventData?.language ?? eventData?.lang ?? null;
+            const timestampIso = eventData?.timestamp ?? null;
+            payload = {
+              type: "user_transcription_final",
+              sender: "User",
+              speaker: "User",
+              message: text,
+              content: text,
+              language,
+              transcriptionTimestamp: timestampIso,
+              transcriptionMeta: {
+                raw: actualPayload,
+                topic: envelopeTopic,
+                sender: envelopeSender,
+                envelopeTimestamp,
+              },
+            };
+          } else {
+            payload = {
+              ...actualPayload,
+              sender: envelopeSender,
+              speaker: envelopeSender,
+            };
+          }
         } else {
           // For other envelope types, use the payload directly
           payload = {
             ...actualPayload,
             sender: envelopeSender,
-            speaker: envelopeSender
+            speaker: envelopeSender,
           };
         }
         
         console.log("📨 Transformed envelope to legacy format:", payload);
       }
       
+      flushAssistantBacklog();
+
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data" && payload.data) {
         try {
@@ -3062,6 +3592,35 @@ function RealTimeVoiceApp() {
             is_final: payload.is_final
           });
           const audioTimestamp = Date.now();
+
+          const pendingUser = pendingUserRef.current;
+          if (pendingUser?.userMessageId && pendingUser.latencyStopAt == null) {
+            let nextPending = {
+              ...pendingUser,
+              latencyStopAt: audioTimestamp,
+              latencyStartAt:
+                pendingUser.latencyStartAt ??
+                pendingUser.audioEndAt ??
+                pendingUser.audioLastChunkAt ??
+                pendingUser.audioStartedAt ??
+                pendingUser.startedAt ??
+                null,
+            };
+            const resolvedLatency = computePendingLatency(nextPending, audioTimestamp);
+            if (resolvedLatency !== null && nextPending.latencyMs !== resolvedLatency) {
+              nextPending = { ...nextPending, latencyMs: resolvedLatency };
+            }
+            pendingUserRef.current = nextPending;
+            if (resolvedLatency !== null) {
+              updateMessage(nextPending.userMessageId, (msg) => ({
+                metrics: {
+                  ...(msg.metrics || {}),
+                  awaitingResponse: true,
+                  responseLatencyMs: resolvedLatency,
+                },
+              }));
+            }
+          }
 
           // Decode base64 -> Int16 -> Float32 [-1, 1]
           const bstr = atob(payload.data);
@@ -3084,14 +3643,16 @@ function RealTimeVoiceApp() {
             (!assistantCtx?.messageId || !assistantCtx?.incomplete)
           ) {
             const placeholderSpeaker = payload.speaker || "Assistant";
+            const placeholderAgent = payload.agent || placeholderSpeaker || null;
             const placeholder = appendMessage({
               speaker: placeholderSpeaker,
               text: "",
               streaming: true,
               incomplete: true,
+              agentName: placeholderAgent,
             });
 
-            setActiveAgentName(payload.agent || placeholderSpeaker || null);
+            setActiveAgentName(placeholderAgent);
 
             const originUserMessageId =
               pendingUserRef.current?.userMessageId ?? assistantCtx?.originUserMessageId ?? null;
@@ -3109,6 +3670,7 @@ function RealTimeVoiceApp() {
               bufferedText: "",
               finalText: "",
               incomplete: true,
+              agentName: placeholderAgent,
             };
             activeAssistantRef.current = assistantCtx;
           }
@@ -3169,6 +3731,7 @@ function RealTimeVoiceApp() {
               bufferedText: assistantCtx?.bufferedText ?? "",
               finalText: assistantCtx?.finalText ?? "",
               incomplete: assistantCtx?.incomplete ?? false,
+              agentName: assistantCtx?.agentName ?? payload.agent ?? null,
             };
             activeAssistantRef.current = nextCtx;
 
@@ -3181,6 +3744,11 @@ function RealTimeVoiceApp() {
               } else if (duration !== null && duration >= 0) {
                 metricsUpdate.speechDurationMs = duration;
               }
+              updateMessage(nextCtx.messageId, (msg) => ({
+                streaming: false,
+                incomplete: false,
+                agentName: msg.agentName || nextCtx.agentName || payload.agent || null,
+              }));
               if (bargeInRef.current && bargeInRef.current.assistantMessageId === nextCtx.messageId) {
                 const bargeDuration = audioTimestamp - bargeInRef.current.startedAt;
                 metricsUpdate.bargeInMs = bargeDuration;
@@ -3203,6 +3771,7 @@ function RealTimeVoiceApp() {
                 bufferedText: nextCtx.bufferedText ?? "",
                 finalText: nextCtx.finalText ?? "",
                 incomplete: nextCtx.incomplete ?? false,
+                agentName: nextCtx.agentName ?? payload.agent ?? null,
               };
             }
           }
@@ -3222,31 +3791,134 @@ function RealTimeVoiceApp() {
       }
       const { type, content = "", message = "", speaker } = payload;
       const txt = content || message;
+      const userTextReady = typeof txt === "string" && txt.trim().length > 0;
       const msgType = (type || "").toLowerCase();
+      const isTranscriptionFinal = msgType === "user_transcription_final";
+      const transcriptionMeta = isTranscriptionFinal ? payload.transcriptionMeta || {} : null;
+      const transcriptionTimestampIso = isTranscriptionFinal
+        ? payload.transcriptionTimestamp ||
+          transcriptionMeta?.timestamp ||
+          transcriptionMeta?.envelopeTimestamp ||
+          transcriptionMeta?.raw?.timestamp ||
+          transcriptionMeta?.raw?.data?.timestamp ||
+          transcriptionMeta?.raw?.payload?.timestamp ||
+          null
+        : null;
+      const finalTranscriptionTs = isTranscriptionFinal
+        ? parseIsoTimestamp(transcriptionTimestampIso)
+        : null;
 
-      if (msgType === "user" || speaker === "User") {
+      if (msgType === "user" || speaker === "User" || isTranscriptionFinal) {
         setActiveSpeaker("User");
+        lastToolMessageIdRef.current = null;
         const pending = pendingUserRef.current;
-        if (pending?.userMessageId) {
+        const draft = userSpeechDraftRef.current;
+        const existingDraftId = draft?.messageId ?? null;
+        if (pending?.userMessageId && pending.userMessageId !== existingDraftId) {
           updateMessage(pending.userMessageId, () => ({ metrics: { awaitingResponse: false } }));
         }
-        const userMsg = appendMessage({
-          speaker: "User",
-          text: txt,
-          metrics: { awaitingResponse: true },
-        });
-        const userTimestamp = Date.now();
-        pendingUserRef.current = {
-          userMessageId: userMsg.id,
-          startedAt: userTimestamp,
-          latencyMs: null,
-        };
+
+        const userTimestamp = finalTranscriptionTs ?? Date.now();
+        let userMessageId = existingDraftId;
+
+        if (existingDraftId) {
+          updateMessage(existingDraftId, () => ({
+            text: txt,
+            streaming: false,
+            incomplete: false,
+          }));
+          pendingUserRef.current = {
+            userMessageId: existingDraftId,
+            startedAt: pending?.startedAt ?? draft.startedAt ?? userTimestamp,
+            latencyMs: pending?.latencyMs ?? null,
+            textReady: userTextReady || pending?.textReady || false,
+            audioStartedAt: pending?.audioStartedAt ?? null,
+            audioLastChunkAt: pending?.audioLastChunkAt ?? null,
+            audioEndAt: pending?.audioEndAt ?? null,
+            latencyStopAt: pending?.latencyStopAt ?? null,
+            latencyStartAt: pending?.latencyStartAt ?? null,
+          };
+          userSpeechDraftRef.current = null;
+        } else {
+          const userMsg = appendMessage({
+            speaker: "User",
+            text: txt,
+            metrics: { awaitingResponse: true },
+          });
+          userMessageId = userMsg.id;
+          pendingUserRef.current = {
+            userMessageId,
+            startedAt: userTimestamp,
+            latencyMs: null,
+            textReady: userTextReady,
+            audioStartedAt: null,
+            audioLastChunkAt: null,
+            audioEndAt: null,
+            latencyStopAt: null,
+            latencyStartAt: null,
+          };
+        }
+
+        if (pendingUserRef.current) {
+          let nextPending = {
+            ...pendingUserRef.current,
+            textReady: userTextReady || pendingUserRef.current.textReady || false,
+          };
+
+          if (isTranscriptionFinal) {
+            nextPending = {
+              ...nextPending,
+              textReady: true,
+            };
+            if (!nextPending.audioStartedAt) {
+              nextPending.audioStartedAt = nextPending.startedAt ?? finalTranscriptionTs ?? userTimestamp;
+            }
+            if (finalTranscriptionTs !== null) {
+              if (!nextPending.audioLastChunkAt) {
+                nextPending.audioLastChunkAt = finalTranscriptionTs;
+              }
+              if (!nextPending.audioEndAt) {
+                nextPending.audioEndAt = finalTranscriptionTs;
+              }
+            }
+            if (!nextPending.latencyStartAt) {
+              nextPending.latencyStartAt =
+                nextPending.audioEndAt ??
+                nextPending.audioLastChunkAt ??
+                finalTranscriptionTs ??
+                nextPending.audioStartedAt ??
+                nextPending.startedAt ??
+                userTimestamp;
+            }
+          }
+
+          const resolvedLatency = computePendingLatency(nextPending);
+          if (resolvedLatency !== null && nextPending.latencyMs !== resolvedLatency) {
+            nextPending = { ...nextPending, latencyMs: resolvedLatency };
+          }
+
+          pendingUserRef.current = nextPending;
+
+          if (nextPending.userMessageId && (userTextReady || isTranscriptionFinal)) {
+            updateMessage(nextPending.userMessageId, (msg) => {
+              const baseMetrics = msg.metrics || {};
+              const awaitingResponse = true;
+              const metrics =
+                resolvedLatency !== null
+                  ? { ...baseMetrics, awaitingResponse, responseLatencyMs: resolvedLatency }
+                  : { ...baseMetrics, awaitingResponse };
+              return { metrics };
+            });
+          }
+        }
+
+        const activeUserMessageId = pendingUserRef.current?.userMessageId;
         const assistantCtx = activeAssistantRef.current;
         if ((assistantCtx?.streaming || assistantCtx?.speaking) && assistantCtx?.messageId) {
           bargeInRef.current = {
             assistantMessageId: assistantCtx.messageId,
             startedAt: userTimestamp,
-            userMessageId: userMsg.id,
+            userMessageId: activeUserMessageId,
           };
           updateMessage(assistantCtx.messageId, () => ({ incomplete: true }));
           activeAssistantRef.current = {
@@ -3254,141 +3926,37 @@ function RealTimeVoiceApp() {
             incomplete: true,
           };
         }
+        flushAssistantBacklog();
         appendLog(`User: ${txt}`);
         return;
       }
 
       if (msgType === "assistant_streaming") {
-        const streamingSpeaker = speaker || "Assistant";
-        setActiveSpeaker(streamingSpeaker);
-        setActiveAgentName(payload.agent || streamingSpeaker || null);
-        const streamingTimestamp = Date.now();
-        const prevCtx = activeAssistantRef.current;
-
-        let messageId = prevCtx?.messageId;
-        let updatedText = prevCtx?.bufferedText ?? "";
-        const incomingText = txt ?? "";
-        const hasIncomingText = incomingText.length > 0;
-
-        if (!messageId || !prevCtx?.streaming) {
-          const initialText = hasIncomingText ? incomingText : "";
-          const streamingMsg = appendMessage({
-            speaker: streamingSpeaker,
-            text: initialText,
-            streaming: true,
-            incomplete: true,
-          });
-          messageId = streamingMsg.id;
-          updatedText = initialText;
-        } else if (hasIncomingText) {
-          updatedText = mergeAssistantText(prevCtx?.bufferedText ?? "", incomingText);
-          const textForUpdate = updatedText;
-          updateMessage(messageId, () => ({
-            text: textForUpdate,
-            streaming: true,
-            incomplete: true,
-          }));
-        } else {
-          updateMessage(messageId, () => ({ streaming: true, incomplete: true }));
+        const executeStreaming = () => processAssistantStreaming({
+          payload,
+          text: txt,
+          speaker,
+        });
+        if (!isUserTranscriptReady()) {
+          enqueueAssistantTask(executeStreaming);
+          return;
         }
-
-        const originUserMessageId =
-          pendingUserRef.current?.userMessageId ?? prevCtx?.originUserMessageId ?? null;
-        const originUserStartedAt =
-          pendingUserRef.current?.startedAt ?? prevCtx?.originUserStartedAt ?? null;
-        const isSameMessage = prevCtx?.messageId === messageId;
-
-        activeAssistantRef.current = {
-          messageId,
-          streaming: true,
-          speaking: prevCtx?.speaking ?? false,
-          speechStartedAt: prevCtx?.speechStartedAt ?? null,
-          respondedAt: prevCtx?.respondedAt ?? streamingTimestamp,
-          originUserMessageId,
-          originUserStartedAt,
-          bufferedText: updatedText,
-          finalText: isSameMessage ? prevCtx?.finalText ?? "" : "",
-          incomplete: true,
-        };
-
-        if (pendingUserRef.current?.userMessageId) {
-          const pending = pendingUserRef.current;
-          if (pending.latencyMs == null) {
-            const latencyMs = streamingTimestamp - pending.startedAt;
-            pendingUserRef.current = { ...pending, latencyMs };
-          }
-          updateMessage(pending.userMessageId, () => ({ metrics: { awaitingResponse: true } }));
-        }
+        executeStreaming();
         return;
       }
 
       if (msgType === "assistant" || msgType === "status" || speaker === "Assistant") {
-        const assistantSpeaker = speaker || "Assistant";
-        setActiveSpeaker(assistantSpeaker);
-        setActiveAgentName(payload.agent || assistantSpeaker || null);
-        const assistantTimestamp = Date.now();
-        const prevCtx = activeAssistantRef.current;
-
-        let assistantMessageId = prevCtx?.messageId;
-        const incomingText = txt ?? "";
-        const hasTextUpdate = incomingText.length > 0;
-        const previousFinalText = prevCtx?.finalText ?? "";
-        const previousBufferedText = prevCtx?.bufferedText ?? "";
-        let finalText = hasTextUpdate
-          ? incomingText
-          : previousFinalText || previousBufferedText || "";
-
-        if (!assistantMessageId) {
-          const finalMsg = appendMessage({
-            speaker: assistantSpeaker,
-            text: finalText,
-            streaming: false,
-            incomplete: false,
-          });
-          assistantMessageId = finalMsg.id;
-        } else {
-          const textForUpdate = finalText;
-          updateMessage(assistantMessageId, () => ({
-            ...(textForUpdate ? { text: textForUpdate } : {}),
-            streaming: false,
-            incomplete: false,
-          }));
+        const executeAssistant = () => processAssistantResponse({
+          payload,
+          text: txt,
+          speaker,
+        });
+        if (!isUserTranscriptReady()) {
+          enqueueAssistantTask(executeAssistant);
+          return;
         }
-
-        const pending = pendingUserRef.current;
-        let latencyMs = null;
-        if (pending?.userMessageId) {
-          latencyMs = pending.latencyMs ?? (assistantTimestamp - pending.startedAt);
-          pendingUserRef.current = null;
-          updateMessage(pending.userMessageId, () => ({
-            metrics: {
-              awaitingResponse: false,
-              responseLatencyMs: latencyMs,
-            },
-          }));
-        }
-
-        if (latencyMs !== null) {
-          updateMessage(assistantMessageId, () => ({
-            streaming: false,
-            metrics: { responseLatencyMs: latencyMs },
-          }));
-        }
-
-        activeAssistantRef.current = {
-          messageId: assistantMessageId,
-          streaming: false,
-          speaking: false,
-          speechStartedAt: null,
-          respondedAt: assistantTimestamp,
-          originUserMessageId: prevCtx?.originUserMessageId ?? null,
-          originUserStartedAt: prevCtx?.originUserStartedAt ?? null,
-          bufferedText: "",
-          finalText,
-          incomplete: false,
-        };
-
-        appendLog("🤖 Assistant responded");
+        executeAssistant();
+        flushAssistantBacklog();
         return;
       }
     
@@ -3406,15 +3974,23 @@ function RealTimeVoiceApp() {
           agent: agentSource,
           elapsedMs: null,
         });
-
-        setMessages((prev) => [
-          ...prev,
-          createMessage({
-            speaker: "Assistant",
-            isTool: true,
-            text: `🛠️ tool ${payload.tool} started 🔄`,
-          }),
-        ]);
+        const toolName = payload.tool || "tool";
+        const toolMessage = appendMessage({
+          speaker: "Assistant",
+          isTool: true,
+          text: formatToolMessage(toolName, { status: "started" }),
+          agentName: agentSource,
+          tool: toolName,
+        });
+        toolMessageRef.current.set(toolName, toolMessage.id);
+        lastToolMessageIdRef.current = {
+          messageId: toolMessage.id,
+          userMessageId:
+            pendingUserRef.current?.userMessageId ??
+            activeAssistantRef.current?.originUserMessageId ??
+            null,
+          lastAssistantId: null,
+        };
       
         appendLog(`⚙️ ${payload.tool} started`);
         return;
@@ -3432,13 +4008,48 @@ function RealTimeVoiceApp() {
             progress: typeof payload.pct === "number" ? payload.pct : prev.progress ?? null,
           };
         });
-        setMessages((prev) =>
-          prev.map((m, i, arr) =>
-            i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
-              ? { ...m, text: `🛠️ tool ${payload.tool} ${payload.pct}% 🔄` }
-              : m,
-          ),
-        );
+
+        const toolName = payload.tool || "tool";
+        const messageId = toolMessageRef.current.get(toolName);
+        const progressValue = typeof payload.pct === "number" ? payload.pct : null;
+        const agentSource = payload.agent || payload.speaker || null;
+        if (messageId) {
+          updateMessage(messageId, (msg) => ({
+            text: formatToolMessage(toolName, {
+              status: progressValue != null ? "in progress" : "running",
+              progress: progressValue,
+            }),
+            agentName: msg.agentName || agentSource || null,
+            tool: msg.tool || toolName,
+            isTool: true,
+          }));
+          lastToolMessageIdRef.current = {
+            messageId,
+            userMessageId:
+              pendingUserRef.current?.userMessageId ??
+              activeAssistantRef.current?.originUserMessageId ??
+              null,
+          };
+        } else {
+          const replacement = appendMessage({
+            speaker: "Assistant",
+            isTool: true,
+            text: formatToolMessage(toolName, {
+              status: progressValue != null ? "in progress" : "running",
+              progress: progressValue,
+            }),
+            agentName: agentSource,
+            tool: toolName,
+          });
+          toolMessageRef.current.set(toolName, replacement.id);
+          lastToolMessageIdRef.current = {
+            messageId: replacement.id,
+            userMessageId:
+              pendingUserRef.current?.userMessageId ??
+              activeAssistantRef.current?.originUserMessageId ??
+              null,
+          };
+        }
         appendLog(`⚙️ ${payload.tool} ${payload.pct}%`);
         return;
       }
@@ -3466,23 +4077,51 @@ function RealTimeVoiceApp() {
           };
         });
 
-        const finalText =
-          payload.status === "success"
-            ? `🛠️ tool ${payload.tool} completed ✔️\n${JSON.stringify(
-                payload.result,
-                null,
-                2,
-              )}`
-            : `🛠️ tool ${payload.tool} failed ❌\n${payload.error}`;
-      
-        setMessages((prev) =>
-          prev.map((m, i, arr) =>
-            i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
-              ? { ...m, text: finalText }
-              : m,
-          ),
-        );
-      
+        const toolName = payload.tool || "tool";
+        const messageId = toolMessageRef.current.get(toolName);
+        const success = payload.status === "success";
+        const agentSource = payload.agent || payload.speaker || null;
+        const finalText = formatToolMessage(toolName, {
+          status: success ? "completed ✔️" : "failed ❌",
+          progress: success ? 100 : undefined,
+          error: success ? undefined : payload.error,
+          result: success ? payload.result : undefined,
+        });
+
+        if (messageId) {
+          updateMessage(messageId, (msg) => ({
+            text: finalText,
+            agentName: msg.agentName || agentSource || null,
+            tool: msg.tool || toolName,
+            isTool: true,
+          }));
+          lastToolMessageIdRef.current = {
+            messageId,
+            userMessageId:
+              pendingUserRef.current?.userMessageId ??
+              activeAssistantRef.current?.originUserMessageId ??
+              null,
+          };
+        } else {
+          const fallback = appendMessage({
+            speaker: "Assistant",
+            isTool: true,
+            text: finalText,
+            agentName: agentSource,
+            tool: toolName,
+          });
+          toolMessageRef.current.set(toolName, fallback.id);
+          lastToolMessageIdRef.current = {
+            messageId: fallback.id,
+            userMessageId:
+              pendingUserRef.current?.userMessageId ??
+              activeAssistantRef.current?.originUserMessageId ??
+              null,
+          };
+        }
+
+        toolMessageRef.current.delete(toolName);
+
         appendLog(`⚙️ ${payload.tool} ${payload.status} (${payload.elapsedMs} ms)`);
         return;
       }
@@ -3530,6 +4169,7 @@ function RealTimeVoiceApp() {
             bufferedText: assistantCtx?.bufferedText ?? "",
             finalText: assistantCtx?.finalText ?? "",
             incomplete: true,
+            agentName: assistantCtx?.agentName ?? null,
           };
 
           setActiveSpeaker(null);
@@ -3677,8 +4317,16 @@ function RealTimeVoiceApp() {
               <span>Session: {getOrCreateSessionId()}</span>
             </div>
           </div>
-          {/* Top Right Help Button */}
-          <HelpButton />
+          <div style={styles.appHeaderRight}>
+            <HelpButton />
+          </div>
+          {(activeAgentName || toolActivity) && (
+            <div style={styles.statusOverlay}>
+              <div style={styles.statusOverlayInner}>
+                {/* <AgentStatusPanel agentName={activeAgentName} toolActivity={toolActivity} /> */}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Waveform Section */}
@@ -3692,8 +4340,6 @@ function RealTimeVoiceApp() {
           />
           <div style={styles.sectionDivider}></div>
         </div>
-
-        <AgentStatusPanel agentName={activeAgentName} toolActivity={toolActivity} />
 
         {/* Chat Messages */}
         <div style={styles.chatSection} ref={chatRef}>
@@ -3745,8 +4391,10 @@ function RealTimeVoiceApp() {
                     bufferedText: "",
                     finalText: "",
                     incomplete: false,
+                    agentName: null,
                   };
                   bargeInRef.current = null;
+                  toolMessageRef.current.clear();
                   setActiveSpeaker(null);
                   setActiveAgentName(null);
                   setToolActivity(null);
@@ -3776,6 +4424,7 @@ function RealTimeVoiceApp() {
               >
                 Reset conversation & start fresh
               </div>
+
             </div>
 
             {/* MIDDLE: Microphone Button */}
@@ -3804,6 +4453,7 @@ function RealTimeVoiceApp() {
               >
                 {recording ? "Stop recording your voice" : "Start voice conversation"}
               </div>
+
             </div>
 
             {/* RIGHT: Phone Call Button */}
