@@ -122,6 +122,8 @@ function RealTimeVoiceApp() {
   const processorRef = useRef(null);
   const analyserRef = useRef(null);
   const micStreamRef = useRef(null);
+  const micStreamingActiveRef = useRef(false);
+  const micStartPromiseRef = useRef(null);
   const playbackAudioContextRef = useRef(null);
   const pcmSinkRef = useRef(null);
 
@@ -201,6 +203,46 @@ function RealTimeVoiceApp() {
       })
     );
   }, []);
+
+  const repositionMessageAfter = useCallback((messageId, afterMessageId) => {
+    if (!messageId || !afterMessageId || messageId === afterMessageId) {
+      return;
+    }
+    setMessages((prev) => {
+      const currentIdx = prev.findIndex((msg) => msg.id === messageId);
+      const afterIdx = prev.findIndex((msg) => msg.id === afterMessageId);
+      if (currentIdx === -1 || afterIdx === -1 || currentIdx === afterIdx + 1) {
+        return prev;
+      }
+      const reordered = [...prev];
+      const [message] = reordered.splice(currentIdx, 1);
+      const targetIdx = reordered.findIndex((msg) => msg.id === afterMessageId);
+      if (targetIdx === -1) {
+        return prev;
+      }
+      reordered.splice(targetIdx + 1, 0, message);
+      return reordered;
+    });
+  }, []);
+
+  const anchorAssistantAfterTool = useCallback((assistantMessageId, originUserMessageId) => {
+    const snapshot = lastToolMessageIdRef.current;
+    if (!assistantMessageId || !snapshot?.messageId) {
+      return;
+    }
+    if (
+      snapshot.userMessageId &&
+      originUserMessageId &&
+      snapshot.userMessageId !== originUserMessageId
+    ) {
+      return;
+    }
+    repositionMessageAfter(assistantMessageId, snapshot.lastAssistantId || snapshot.messageId);
+    lastToolMessageIdRef.current = {
+      ...snapshot,
+      lastAssistantId: assistantMessageId,
+    };
+  }, [repositionMessageAfter]);
 
   // Disabled to preserve natural message order
   // const repositionMessageAfter = useCallback((messageId, afterMessageId) => {
@@ -486,6 +528,7 @@ function RealTimeVoiceApp() {
       });
       messageId = streamingMsg.id;
       updatedText = initialText;
+      anchorAssistantAfterTool(messageId, originUserMessageId);
     } else if (hasIncomingText) {
       updatedText = mergeAssistantText(prevCtx?.bufferedText ?? "", incomingText);
       const textForUpdate = updatedText;
@@ -598,6 +641,11 @@ function RealTimeVoiceApp() {
         timestamp: assistantTimestamp,
       }));
     }
+
+    anchorAssistantAfterTool(
+      assistantMessageId,
+      activeAssistantRef.current?.originUserMessageId ?? null
+    );
 
     const pending = pendingUserRef.current;
     let latencyMs = null;
@@ -1024,7 +1072,18 @@ function RealTimeVoiceApp() {
       assistantBacklogRef.current = [];
       userSpeechDraftRef.current = null;
       lastToolMessageIdRef.current = null;
-      appendLog("🎤 PCM streaming started");
+      micStreamingActiveRef.current = false;
+      if (micStartPromiseRef.current) {
+        micStartPromiseRef.current = null;
+      }
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks()?.forEach((track) => track.stop());
+        micStreamRef.current = null;
+      }
+      setRecording(false);
+      audioLevelRef.current = 0;
+      setAudioLevel(0);
+      appendLog("🔈 Waiting for assistant audio before enabling microphone");
 
       await initializeAudioPlayback();
 
@@ -1049,117 +1108,163 @@ function RealTimeVoiceApp() {
       };
       socket.onmessage = handleSocketMessage;
       socketRef.current = socket;
-
-      // 2) setup Web Audio for raw PCM @16 kHz
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: 16000
-      });
-      audioContextRef.current = audioCtx;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.3;
-      analyserRef.current = analyser;
-      
-      source.connect(analyser);
-
-      const bufferSize = 512; 
-      const processor  = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-      processorRef.current = processor;
-
-      analyser.connect(processor);
-
-      processor.onaudioprocess = (evt) => {
-        const float32 = evt.inputBuffer.getChannelData(0);
-        
-        // Calculate real-time audio level
-        let sum = 0;
-        for (let i = 0; i < float32.length; i++) {
-          sum += float32[i] * float32[i];
-        }
-        const rms = Math.sqrt(sum / float32.length);
-        const level = Math.min(1, rms * 10); // Scale and clamp to 0-1
-        
-        audioLevelRef.current = level;
-        setAudioLevel(level);
-
-        const chunkTimestamp = Date.now();
-        const pending = pendingUserRef.current;
-        if (pending?.userMessageId) {
-          const hasSpeech = level >= USER_SPEECH_LEVEL_THRESHOLD;
-          let nextPending = null;
-
-          if (hasSpeech) {
-            const audioStartedAt = pending.audioStartedAt ?? chunkTimestamp;
-            const resumedAfterSilence = pending.audioEndAt !== null || pending.latencyStartAt !== null;
-            if (
-              pending.audioStartedAt !== audioStartedAt ||
-              pending.audioLastChunkAt !== chunkTimestamp ||
-              pending.audioEndAt !== null
-            ) {
-              nextPending = {
-                ...pending,
-                audioStartedAt,
-                audioLastChunkAt: chunkTimestamp,
-                audioEndAt: null,
-                latencyStartAt: resumedAfterSilence ? null : pending.latencyStartAt,
-                latencyStopAt: resumedAfterSilence ? null : pending.latencyStopAt,
-                latencyMs: resumedAfterSilence ? null : pending.latencyMs,
-              };
-            }
-          } else if (pending.audioLastChunkAt) {
-            const silenceElapsed = chunkTimestamp - pending.audioLastChunkAt;
-            if (silenceElapsed >= USER_SILENCE_WINDOW_MS && pending.audioEndAt == null) {
-              nextPending = {
-                ...pending,
-                audioEndAt: pending.audioLastChunkAt,
-                latencyStartAt: pending.latencyStartAt ?? pending.audioLastChunkAt,
-              };
-            }
-          }
-
-          if (nextPending) {
-            const resolvedLatency = computePendingLatency(nextPending);
-            if (resolvedLatency !== null && nextPending.latencyMs !== resolvedLatency) {
-              nextPending = { ...nextPending, latencyMs: resolvedLatency };
-            }
-            pendingUserRef.current = nextPending;
-          } else if (pending.latencyMs == null) {
-            const resolvedLatency = computePendingLatency(pending);
-            if (resolvedLatency !== null) {
-              pendingUserRef.current = { ...pending, latencyMs: resolvedLatency };
-            }
-          }
-        }
-
-        // Debug: Log a sample of mic data
-        // console.info("Mic data sample:", float32.slice(0, 10)); // Should show non-zero values if your mic is hot
-
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7fff;
-        }
-
-        // Debug: Show size before send
-        // console.info("Sending int16 PCM buffer, length:", int16.length);
-
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(int16.buffer);
-          // Debug: Confirm data sent
-          // console.info("PCM audio chunk sent to backend!");
-        } else {
-          console.error("WebSocket not open, did not send audio.");
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
-      setRecording(true);
     };
+
+  const beginMicStreaming = async () => {
+    if (micStreamingActiveRef.current) {
+      return;
+    }
+    if (micStartPromiseRef.current) {
+      return micStartPromiseRef.current;
+    }
+
+    const startPromise = (async () => {
+      try {
+        const socket = socketRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          appendLog("⚠️ Skipping mic start until WebSocket is ready");
+          return;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStreamRef.current = stream;
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: 16000,
+        });
+        audioContextRef.current = audioCtx;
+
+        const source = audioCtx.createMediaStreamSource(stream);
+
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.3;
+        analyserRef.current = analyser;
+        source.connect(analyser);
+
+        const bufferSize = 512;
+        const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+        processorRef.current = processor;
+        analyser.connect(processor);
+
+        processor.onaudioprocess = (evt) => {
+          const float32 = evt.inputBuffer.getChannelData(0);
+
+          let sum = 0;
+          for (let i = 0; i < float32.length; i++) {
+            sum += float32[i] * float32[i];
+          }
+          const rms = Math.sqrt(sum / float32.length);
+          const level = Math.min(1, rms * 10);
+
+          audioLevelRef.current = level;
+          setAudioLevel(level);
+
+          const chunkTimestamp = Date.now();
+          const pending = pendingUserRef.current;
+          if (pending?.userMessageId) {
+            const hasSpeech = level >= USER_SPEECH_LEVEL_THRESHOLD;
+            let nextPending = null;
+
+            if (hasSpeech) {
+              const audioStartedAt = pending.audioStartedAt ?? chunkTimestamp;
+              const resumedAfterSilence = pending.audioEndAt !== null || pending.latencyStartAt !== null;
+              if (
+                pending.audioStartedAt !== audioStartedAt ||
+                pending.audioLastChunkAt !== chunkTimestamp ||
+                pending.audioEndAt !== null
+              ) {
+                nextPending = {
+                  ...pending,
+                  audioStartedAt,
+                  audioLastChunkAt: chunkTimestamp,
+                  audioEndAt: null,
+                  latencyStartAt: resumedAfterSilence ? null : pending.latencyStartAt,
+                  latencyStopAt: resumedAfterSilence ? null : pending.latencyStopAt,
+                  latencyMs: resumedAfterSilence ? null : pending.latencyMs,
+                };
+              }
+            } else if (pending.audioLastChunkAt) {
+              const silenceElapsed = chunkTimestamp - pending.audioLastChunkAt;
+              if (silenceElapsed >= USER_SILENCE_WINDOW_MS && pending.audioEndAt == null) {
+                nextPending = {
+                  ...pending,
+                  audioEndAt: pending.audioLastChunkAt,
+                  latencyStartAt: pending.latencyStartAt ?? pending.audioLastChunkAt,
+                };
+              }
+            }
+
+            if (nextPending) {
+              const resolvedLatency = computePendingLatency(nextPending);
+              if (resolvedLatency !== null && nextPending.latencyMs !== resolvedLatency) {
+                nextPending = { ...nextPending, latencyMs: resolvedLatency };
+              }
+              pendingUserRef.current = nextPending;
+            } else if (pending.latencyMs == null) {
+              const resolvedLatency = computePendingLatency(pending);
+              if (resolvedLatency !== null) {
+                pendingUserRef.current = { ...pending, latencyMs: resolvedLatency };
+              }
+            }
+          }
+
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7fff;
+          }
+
+          const activeSocket = socketRef.current;
+          if (activeSocket && activeSocket.readyState === WebSocket.OPEN) {
+            activeSocket.send(int16.buffer);
+          } else {
+            console.error("WebSocket not open, did not send audio.");
+          }
+        };
+
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+
+        setRecording(true);
+        micStreamingActiveRef.current = true;
+        appendLog("🎤 PCM streaming started");
+      } catch (error) {
+        micStreamingActiveRef.current = false;
+        if (processorRef.current) {
+          try {
+            processorRef.current.disconnect();
+          } catch (processorError) {
+            console.warn("Cleanup error after mic start failure:", processorError);
+          }
+          processorRef.current = null;
+        }
+        if (audioContextRef.current) {
+          try {
+            audioContextRef.current.close();
+          } catch (ctxError) {
+            console.warn("Failed to close audio context after mic start failure:", ctxError);
+          }
+          audioContextRef.current = null;
+        }
+        if (micStreamRef.current) {
+          try {
+            micStreamRef.current.getTracks()?.forEach((track) => track.stop());
+          } catch (streamError) {
+            console.warn("Failed to stop mic stream after start failure:", streamError);
+          }
+          micStreamRef.current = null;
+        }
+        appendLog(`❌ Mic start failed: ${error?.message || error}`);
+        console.error("Failed to start microphone streaming:", error);
+        throw error;
+      } finally {
+        micStartPromiseRef.current = null;
+      }
+    })();
+
+    micStartPromiseRef.current = startPromise;
+    return startPromise;
+  };
 
     const stopRecognition = () => {
       if (processorRef.current) {
@@ -1178,6 +1283,22 @@ function RealTimeVoiceApp() {
         }
         audioContextRef.current = null;
       }
+
+      if (micStreamRef.current) {
+        try {
+          micStreamRef.current.getTracks()?.forEach((track) => track.stop());
+        } catch (e) {
+          console.warn("Error stopping mic stream:", e);
+        }
+        micStreamRef.current = null;
+      }
+
+      micStreamingActiveRef.current = false;
+      if (micStartPromiseRef.current) {
+        micStartPromiseRef.current = null;
+      }
+      audioLevelRef.current = 0;
+      setAudioLevel(0);
       
       if (socketRef.current) {
         try { 
@@ -1386,6 +1507,11 @@ function RealTimeVoiceApp() {
 
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data" && payload.data) {
+        if (!micStreamingActiveRef.current && !micStartPromiseRef.current) {
+          beginMicStreaming().catch((error) => {
+            console.error("Mic streaming initialization failed:", error);
+          });
+        }
         try {
           // console.info("🔊 Received audio_data message:", {
           //   frame_index: payload.frame_index,
@@ -1497,7 +1623,7 @@ function RealTimeVoiceApp() {
             };
             activeAssistantRef.current = assistantCtx;
             currentSpeechMessageRef.current = placeholder.id;
-            // anchorAssistantAfterTool(placeholder.id, originUserMessageId ?? null);
+            // anchorAssistantAfterTool(placeholder.id, originUserMessageId);
           } else {
             const originUserMessageId =
               assistantCtx?.originUserMessageId ??
@@ -2183,7 +2309,7 @@ function RealTimeVoiceApp() {
               status: success ? "success" : "failed",
               progress: success ? 100 : prev?.progress ?? null,
               startedAt,
-              elapsedMs: payload.elapsedMs ?? null,
+              elapsedMs: null,
               agent: agentSource ?? prev?.agent ?? null,
             };
           }

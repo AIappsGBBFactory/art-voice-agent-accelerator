@@ -863,6 +863,9 @@ class SpeechSynthesizer:
         
         return any(indicator.lower() in error_details.lower() for indicator in auth_error_indicators)
 
+    def _is_codec_start_timeout(self, error_details: str) -> bool:
+        return bool(error_details) and "codec decoding is not started within 2s" in error_details.lower()
+
     def _ensure_auth_token(self, *, force_refresh: bool = False) -> None:
         """Ensure the cached speech configuration has a valid Azure AD token."""
         if self.key:
@@ -1873,9 +1876,16 @@ class SpeechSynthesizer:
                 if (
                     attempt < max_attempts - 1
                     and getattr(cancellation, "reason", None) == speechsdk.CancellationReason.Error
-                    and error_details
-                    and "Codec decoding is not started within 2s" in error_details
+                    and self._is_codec_start_timeout(error_details)
                 ):
+                    logger.info("Reinitializing speech config after codec start timeout")
+                    try:
+                        self.cfg = self._create_speech_config()
+                        self._ensure_auth_token(force_refresh=True)
+                    except Exception as refresh_exc:
+                        logger.warning(
+                            "Failed to refresh speech config after timeout: %s", refresh_exc
+                        )
                     time.sleep(retry_delay * (attempt + 1))
                     continue
             else:
@@ -1894,8 +1904,15 @@ class SpeechSynthesizer:
             break
 
         if last_result and last_result.reason:
-            raise RuntimeError(f"TTS failed: {last_result.reason}")
-        raise RuntimeError(f"TTS failed: {last_error_details or 'unknown error'}")
+            logger.error(
+                "PCM synthesis failed after %s attempts (voice=%s, reason=%s)",
+                max_attempts,
+                voice,
+                last_result.reason,
+            )
+            return b""
+        logger.error("PCM synthesis failed: %s", last_error_details or "unknown error")
+        return b""
 
     @staticmethod
     def split_pcm_to_base64_frames(
