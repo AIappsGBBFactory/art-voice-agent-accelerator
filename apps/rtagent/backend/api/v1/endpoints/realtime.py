@@ -499,7 +499,6 @@ async def _initialize_conversation_session(
     # Send greeting message using new envelope format
     greeting_envelope = make_status_envelope(
         GREETING,
-        sender="System",
         topic="session",
         session_id=session_id,
     )
@@ -532,6 +531,33 @@ async def _initialize_conversation_session(
                 get_metadata("audio_playing", None),
                 get_metadata("tts_cancel_requested", None),
             )
+            text = txt.strip()
+            if not text:
+                return
+
+            envelope = make_event_envelope(
+                topic="transcription",
+                sender="STT",
+                session_id=session_id,
+                event_type="transcription_partial",
+                payload={
+                    "text": text,
+                    "language": lang,
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
+
+            async def _broadcast_transcription():
+                await websocket.app.state.conn_manager.broadcast_session(
+                    session_id, envelope
+                )
+
+            loop = getattr(websocket.state, "_loop", None)
+            if loop and loop.is_running():
+                loop.call_soon_threadsafe(asyncio.create_task, _broadcast_transcription())
+            else:
+                asyncio.create_task(_broadcast_transcription())
+            
             if is_synthesizing or audio_playing:
                 # Interrupt TTS synthesizer immediately
                 tts_client = get_metadata("tts_client")
@@ -608,8 +634,34 @@ async def _initialize_conversation_session(
 
     def on_final(txt: str, lang: str):
         logger.info(f"[{session_id}] User (final) in {lang}: {txt}")
+        trimmed = txt.strip()
+        if not trimmed:
+            return
         current_buffer = get_metadata("user_buffer", "")
-        set_metadata("user_buffer", current_buffer + txt.strip() + "\n")
+        set_metadata("user_buffer", current_buffer + trimmed + "\n")
+
+        envelope = make_event_envelope(
+            topic="transcription",
+            sender="STT",
+            session_id=session_id,
+            event_type="transcription_final",
+            payload={
+                "text": trimmed,
+                "language": lang,
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+
+        async def _broadcast_transcription():
+            await websocket.app.state.conn_manager.broadcast_session(
+                session_id, envelope
+            )
+
+        loop = getattr(websocket.state, "_loop", None)
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(asyncio.create_task, _broadcast_transcription())
+        else:
+            asyncio.create_task(_broadcast_transcription())
 
     # Acquire per-connection speech recognizer from pool
     stt_pool = websocket.app.state.stt_pool
@@ -790,6 +842,10 @@ async def _process_conversation_messages(
                         try:
                             await route_turn(
                                 memory_manager, prompt, websocket, is_acs=False
+                            )
+                        except asyncio.CancelledError:
+                            logger.debug(
+                                f"[PERF] Orchestration task cancelled for session {session_id} (likely barge-in)"
                             )
                         except Exception as e:
                             logger.error(

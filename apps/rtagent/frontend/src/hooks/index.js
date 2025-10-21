@@ -5,6 +5,8 @@
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { API_BASE_URL, WS_URL } from '../config/constants';
+export { default as useAuthSession } from './useAuthSession';
+export { default as useTelemetry } from './useTelemetry';
 
 /**
  * Hook for managing application state

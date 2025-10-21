@@ -10,6 +10,7 @@ The helpers also prefer semantic attributes for edges (e.g., `peer.service`,
 `net.peer.name`, `network.protocol.name`).
 """
 
+import asyncio
 import os
 from typing import Any, Dict, Optional
 
@@ -190,16 +191,27 @@ class TracedOperation:
         if self.span and hasattr(self.span, "set_status"):
             if exc_type:
                 try:
-                    self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
-                    self.log_error(f"Operation failed: {exc_val}")
+                    # Handle CancelledError specially - it's usually expected behavior
+                    if exc_type is asyncio.CancelledError:
+                        self.span.set_status(Status(StatusCode.OK))
+                        self.log_debug(f"Operation cancelled (likely due to barge-in or cleanup)")
+                    else:
+                        self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
+                        self.log_error(f"Operation failed: {exc_val}")
                 except AttributeError:
                     # Handle NonRecordingSpan which doesn't have set_status
-                    self.log_error(f"Operation failed (tracing disabled): {exc_val}")
+                    if exc_type is asyncio.CancelledError:
+                        self.log_debug(f"Operation cancelled (tracing disabled)")
+                    else:
+                        self.log_error(f"Operation failed (tracing disabled): {exc_val}")
             self.span.end()
         elif self.span:
             # Handle spans that don't support set_status
             if exc_type:
-                self.log_error(f"Operation failed (span without status): {exc_val}")
+                if exc_type is asyncio.CancelledError:
+                    self.log_debug(f"Operation cancelled (span without status)")
+                else:
+                    self.log_error(f"Operation failed (span without status): {exc_val}")
             try:
                 self.span.end()
             except AttributeError:
