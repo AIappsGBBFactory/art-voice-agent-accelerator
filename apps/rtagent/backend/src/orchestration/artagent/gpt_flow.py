@@ -502,6 +502,7 @@ async def _emit_streaming_text(
             envelope = make_assistant_streaming_envelope(
                 content=text,
                 session_id=session_id,
+                sender=_get_agent_sender_name(cm, include_autoauth=True)
             )
             if hasattr(ws.app.state, 'conn_manager') and hasattr(ws.state, 'conn_id'):
                 await ws.app.state.conn_manager.send_to_connection(

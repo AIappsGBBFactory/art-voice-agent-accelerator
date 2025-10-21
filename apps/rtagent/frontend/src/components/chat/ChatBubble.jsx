@@ -1,5 +1,6 @@
 import React from "react";
 import { formatDuration } from "../../utils/format";
+import ToolActivityCard from "./ToolActivityCard";
 
 const styles = {
   userMessage: {
@@ -104,40 +105,6 @@ const styles = {
     backgroundColor: "rgba(15, 23, 42, 0.6)",
     animation: "typingBounce 1.2s infinite",
   },
-  listeningIndicator: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    gap: "6px",
-    marginTop: "6px",
-  },
-  listeningDot: {
-    width: "6px",
-    height: "6px",
-    borderRadius: "50%",
-    backgroundColor: "#38bdf8",
-    animation: "typingBounce 1.2s infinite",
-  },
-  listeningStandalone: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    padding: "4px 0",
-    color: "#38bdf8",
-  },
-  speechLengthRow: {
-    marginTop: "6px",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    fontSize: "11px",
-    color: "#475569",
-    fontWeight: 500,
-  },
-  speechLengthLabel: {
-    fontWeight: 600,
-    color: "#1e293b",
-  },
   agentNameLabel: {
     fontSize: "10px",
     fontWeight: "400",
@@ -229,24 +196,13 @@ const ChatBubble = ({ message }) => {
   }
 
   const isUser = speaker === "User";
-  const isSpecialist = speaker?.includes("Specialist");
-  const isAuthAgent = speaker === "Auth Agent";
   const isPartial = Boolean(incomplete);
   const awaitingResponse = metrics.awaitingResponse;
-  const playbackProgressRaw = metrics.playbackProgress;
-  const latencyText = formatDuration(metrics.responseLatencyMs);
-  const speechDurationText = formatDuration(metrics.speechDurationMs);
+  const hasAudioDetected = metrics.audioDetected;
+  
   const bargeInText = formatDuration(metrics.bargeInMs);
   const speechInterrupted = Boolean(metrics.speechInterrupted);
-  const playbackProgress =
-    playbackProgressRaw &&
-    (!playbackProgressRaw.messageId || playbackProgressRaw.messageId === id)
-      ? playbackProgressRaw
-      : null;
   const shouldMaskUserText = isUser && awaitingResponse && (streaming || incomplete || !text);
-  const trimmedAssistantText = !isUser && typeof text === "string" ? text.trim() : "";
-  const hasAssistantText = !isUser && trimmedAssistantText.length > 0;
-  const showListeningWithoutBubble = !isUser && isPartial && !shouldMaskUserText && !hasAssistantText;
   const timestampLabel = (() => {
     if (!timestamp) return null;
     const parsed = new Date(timestamp);
@@ -261,16 +217,6 @@ const ChatBubble = ({ message }) => {
   })();
 
   const assistantMetrics = [];
-  if (!isPartial && typeof playbackProgress?.ratio === "number") {
-    assistantMetrics.push({
-      label: "Playback",
-      value: `${Math.round(Math.min(playbackProgress.ratio, 1) * 100)}%`,
-    });
-  }
-  if (isPartial) {
-    assistantMetrics.unshift({ label: "Partial response" });
-  }
-  if (latencyText) assistantMetrics.push({ label: "Response latency", value: latencyText });
   if (bargeInText) assistantMetrics.push({ label: "Barge stop", value: bargeInText });
   if (speechInterrupted) assistantMetrics.push({ label: "Speech interrupted" });
 
@@ -280,117 +226,122 @@ const ChatBubble = ({ message }) => {
   }
 
   const metricItems = isUser ? userMetrics : assistantMetrics;
-  const showMetrics = metricItems.length > 0 && !showListeningWithoutBubble;
-  const showSpeechDuration = !isUser && !isPartial && Boolean(speechDurationText);
-  const agentLabel = !isUser
-    ? message.agentName && message.agentName !== speaker
-      ? message.agentName
-      : (isSpecialist || isAuthAgent)
-        ? speaker
-        : null
-    : null;
+  const showMetrics = metricItems.length > 0 ;
+  const agentLabel = !isUser ? (message.agentName || speaker) : null;
 
   if (isTool) {
+    const toolState = message.toolState || {};
+    const toolName = message.tool || toolState.toolName || "Tool";
+    const effectiveAgent = agentLabel || toolState.agent || null;
     return (
-      <div style={{ ...styles.assistantMessage, alignSelf: "center" }}>
-        {agentLabel ? <div style={styles.agentNameLabel}>{agentLabel}</div> : null}
-        <div
-          style={{
-            ...styles.assistantBubble,
-            background: "#8b5cf6",
-            textAlign: "center",
-            fontSize: "14px",
-          }}
-        >
-          {text}
-        </div>
+      <div
+        style={{
+          ...styles.assistantMessage,
+          alignSelf: "center",
+          width: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "6px",
+        }}
+      >
+        <ToolActivityCard
+          toolName={toolName}
+          state={toolState}
+          agentName={effectiveAgent}
+          fallbackText={text}
+        />
+        {timestampLabel ? (
+          <div
+            style={{
+              ...styles.messageTimestamp,
+              textAlign: "center",
+              alignSelf: "center",
+            }}
+          >
+            {timestampLabel}
+          </div>
+        ) : null}
       </div>
     );
   }
 
+  const spinner = (
+    <div style={styles.typingContainer} aria-label="Processing">
+      {[0, 1, 2].map((_, idx) => (
+        <span
+          key={idx}
+          style={{
+            ...styles.typingDot,
+            animationDelay: `${idx * 0.2}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
+
+  let bubbleContent = null;
+  let shouldRenderBubble = false;
+
+  if (text && text.trim()) {
+    shouldRenderBubble = true;
+    bubbleContent = text.split("\n").map((line, i) => <div key={i}>{line || "\u00A0"}</div>);
+  } else if (isUser && !awaitingResponse) {
+    // Only show empty user bubbles if not awaiting response
+    shouldRenderBubble = true;
+    bubbleContent = <div style={{ minHeight: "1em" }}>&nbsp;</div>;
+  }
+
+  // Don't render empty assistant messages
+  if (!isUser && !text?.trim() && !shouldMaskUserText && !streaming) {
+    return null;
+  }
+
+  const bubble = shouldRenderBubble ? (
+    <div style={isUser ? styles.userBubble : styles.assistantBubble}>
+      {bubbleContent}
+      {streaming && bubbleContent !== null && <span style={{ opacity: 0.7 }}>▌</span>}
+    </div>
+  ) : null;
+
+  const showAgentLabel = !isUser && agentLabel && bubble !== null;
+
+    // Show floating animation when awaiting response and no bubble content
+  if (((isUser && awaitingResponse && hasAudioDetected && !text?.trim()) || (!isUser && awaitingResponse)) && !bubble) {
+    if (isUser) {
+      // User listening animation - just spinner, no text, no bubble
+      return (
+        <div style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          alignItems: "center",
+          margin: "8px 0",
+          paddingRight: "15px",
+        }}>
+          {spinner}
+        </div>
+      );
+    } else {
+      // Assistant thinking animation
+      return (
+        <div style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          margin: "16px 0",
+          gap: "8px",
+        }}>
+          {spinner}
+          <span style={{ fontSize: "12px", color: "#64748b", fontStyle: "italic" }}>Assistant is thinking...</span>
+        </div>
+      );
+    }
+  }
+
   return (
     <div style={isUser ? styles.userMessage : styles.assistantMessage}>
-      {!isUser && agentLabel ? <div style={styles.agentNameLabel}>{agentLabel}</div> : null}
-      {showListeningWithoutBubble ? (
-        <div style={styles.listeningStandalone} aria-label="Assistant listening">
-          {[0, 1, 2].map((_, idx) => (
-            <span
-              key={idx}
-              style={{
-                ...styles.listeningDot,
-                animationDelay: `${idx * 0.2}s`,
-              }}
-            />
-          ))}
-        </div>
-      ) : (
-        <div
-          style={isUser ? styles.userBubble : styles.assistantBubble}
-        >
-          {shouldMaskUserText ? (
-            <div style={styles.typingContainer} aria-label="Processing">
-              {[0, 1, 2].map((_, idx) => (
-                <span
-                  key={idx}
-                  style={{
-                    ...styles.typingDot,
-                    animationDelay: `${idx * 0.2}s`,
-                  }}
-                />
-              ))}
-            </div>
-          ) : (
-            <>
-              {(() => {
-                if (!text) {
-                  return !isUser ? (
-                    <span style={{ opacity: 0.75, fontStyle: "italic" }}>Audio response</span>
-                  ) : null;
-                }
-                const ratio =
-                  typeof playbackProgress?.ratio === "number" && !isPartial
-                    ? Math.min(Math.max(playbackProgress.ratio, 0), 1)
-                    : null;
-                if (ratio === null || streaming) {
-                  return text.split("\n").map((line, i) => <div key={i}>{line}</div>);
-                }
-
-                const totalChars = text.length;
-                const spokenChars = Math.min(totalChars, Math.floor(totalChars * ratio));
-                const spokenText = text.slice(0, spokenChars);
-                const remainingText = text.slice(spokenChars);
-
-                return (
-                  <span style={{ whiteSpace: "pre-wrap" }}>
-                    <span style={styles.spokenText}>{spokenText}</span>
-                    <span>{remainingText}</span>
-                  </span>
-                );
-              })()}
-              {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
-            </>
-          )}
-          {isPartial && hasAssistantText && (
-            <div style={styles.listeningIndicator} aria-label="Assistant listening">
-              {[0, 1, 2].map((_, idx) => (
-                <span
-                  key={idx}
-                  style={{
-                    ...styles.listeningDot,
-                    animationDelay: `${idx * 0.2}s`,
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      {showSpeechDuration && (
-        <div style={styles.speechLengthRow}>
-          <span style={styles.speechLengthLabel}>Speech length:</span>
-          <span>{speechDurationText}</span>
-        </div>
-      )}
+      {showAgentLabel ? <div style={styles.agentNameLabel}>{agentLabel}</div> : null}
+      {bubble}
       {timestampLabel && (
         <div
           style={{
@@ -402,7 +353,7 @@ const ChatBubble = ({ message }) => {
           {timestampLabel}
         </div>
       )}
-      {(awaitingResponse || showMetrics) && (
+      {showMetrics && (
         <div
           style={{
             ...styles.messageMeta,
@@ -410,24 +361,14 @@ const ChatBubble = ({ message }) => {
             textAlign: isUser ? "right" : "left",
           }}
         >
-          {awaitingResponse && (
-            <div style={styles.busyRow}>
-              <span role="img" aria-label="busy">
-                ⏳
+          <div style={styles.messageMetaDetails}>
+            {metricItems.map(({ label, value }, idx) => (
+              <span key={idx} style={styles.metricChip}>
+                <span style={styles.metricLabel}>{label}</span>
+                {value ? <span style={styles.metricValue}>{value}</span> : null}
               </span>
-              Awaiting assistant response...
-            </div>
-          )}
-          {showMetrics && (
-            <div style={styles.messageMetaDetails}>
-              {metricItems.map(({ label, value }, idx) => (
-                <span key={idx} style={styles.metricChip}>
-                  <span style={styles.metricLabel}>{label}</span>
-                  {value ? <span style={styles.metricValue}>{value}</span> : null}
-                </span>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
     </div>
