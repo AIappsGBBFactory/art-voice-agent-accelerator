@@ -127,38 +127,112 @@ generate_audio:
 
 # WebSocket endpoint load testing (current approach)
 # DEPLOYED_URL = 
-LOCAL_URL = localhost:8010
-run_load_test:
-	@echo "Running load test (override with e.g. make run_load_test URL=wss://host TURNS=10 CONVERSATIONS=50 CONCURRENT=5 RECORD=1 RECORD_RATE=0.1 EXTRA_ARGS='--verbose')"
-	$(eval URL ?= wss://$(LOCAL_URL)/api/v1/media/stream)
-	$(eval TURNS ?= 5)
-	$(eval CONVERSATIONS ?= 20)
-	$(eval CONCURRENT ?= 20)
-	$(eval RECORD ?= )
-	$(eval RECORD_RATE ?= 0.2)
-	@locust -f $(SCRIPTS_LOAD_DIR)/locustfile.py --headless -u $(CONVERSATIONS) -r $(CONCURRENT) --run-time 10m --host $(URL) --stop-timeout 60 --csv=locust_report --only-summary
-# 	@python $(SCRIPTS_LOAD_DIR)/detailed_statistics_analyzer.py \
-# 		--url $(URL) \
-# 		--turns $(TURNS) \
-# 		--conversations $(CONVERSATIONS) \
-# 		--concurrent $(CONCURRENT) \
-# 		$(if $(RECORD),--record) \
-# 		$(if $(RECORD_RATE),--record-rate $(RECORD_RATE)) \
-# 		$(EXTRA_ARGS)
+HOST = localhost:8010
+run_load_test_acs_media:
+	@echo "Running load test (override with e.g. make run_load_test URL=ws://host USERS=10 SPAWN_RATE=2 TIME=30s EXTRA_ARGS='--headless')"
+	$(eval WS_URL ?= ws://$(HOST)/api/v1/media/stream)
+	$(eval USERS ?= 15)
+	$(eval SPAWN_RATE ?= 2)
+	$(eval TIME ?= 90s)
+	@echo "🔍 Checking for audio files..."
+	@if [ ! -d "$(SCRIPTS_LOAD_DIR)/audio_cache" ] || [ -z "$$(find $(SCRIPTS_LOAD_DIR)/audio_cache -name '*.pcm' -print -quit 2>/dev/null)" ]; then \
+		echo "⚠️  No audio files found. Generating audio files first..."; \
+		$(MAKE) generate_audio; \
+	else \
+		echo "✅ Audio files found. Proceeding with load test..."; \
+	fi
+	@echo "🚀 Starting Locust load test..."
+	@echo "   Host: $(WS_URL)"
+	@echo "   Users: $(USERS)"
+	@echo "   Spawn Rate: $(SPAWN_RATE) users/sec"
+	@echo "   Duration: $(TIME)"
+	@echo ""
+	locust -f $(SCRIPTS_LOAD_DIR)/locustfile.acs_media.py \
+		--host=$(WS_URL) \
+		--users $(USERS) \
+		--spawn-rate $(SPAWN_RATE) \
+		--run-time $(TIME) \
+		--headless \
+		$(EXTRA_ARGS)
 
-# Conversation Analysis Targets
-list-conversations:
-	python $(SCRIPTS_LOAD_DIR)/conversation_playback.py --list
+run_load_test_realtime_conversation:
+	@echo "Running load test (override with e.g. make run_load_test URL=ws://host USERS=10 SPAWN_RATE=2 TIME=30s EXTRA_ARGS='--headless')"
+	$(eval WS_URL ?= ws://$(HOST)/api/v1/realtime/conversation)
+	$(eval USERS ?= 15)
+	$(eval SPAWN_RATE ?= 2)
+	$(eval TIME ?= 90s)
+	@echo "🔍 Checking for audio files..."
+	@if [ ! -d "$(SCRIPTS_LOAD_DIR)/audio_cache" ] || [ -z "$$(find $(SCRIPTS_LOAD_DIR)/audio_cache -name '*.pcm' -print -quit 2>/dev/null)" ]; then \
+		echo "⚠️  No audio files found. Generating audio files first..."; \
+		$(MAKE) generate_audio; \
+	else \
+		echo "✅ Audio files found. Proceeding with load test..."; \
+	fi
+	@echo "🚀 Starting Locust load test..."
+	@echo "   Host: $(WS_URL)"
+	@echo "   Users: $(USERS)"
+	@echo "   Spawn Rate: $(SPAWN_RATE) users/sec"
+	@echo "   Duration: $(TIME)"
+	@echo ""
+	locust -f $(SCRIPTS_LOAD_DIR)/locustfile.realtime_conversation.py \
+		--host=$(WS_URL) \
+		--users $(USERS) \
+		--spawn-rate $(SPAWN_RATE) \
+		--run-time $(TIME) \
+		--headless \
+		$(EXTRA_ARGS)
 
-FILE_TO_ANALYZE = tests\load\results\recorded_conversations_20250829_085350.json
+############################################################
+# Azure Communication Services Phone Number Management
+# Purpose: Purchase and manage ACS phone numbers
+############################################################
 
-playback-conversations:
-	python $(SCRIPTS_LOAD_DIR)/conversation_playback.py --conversation-file $(FILE_TO_ANALYZE)
+# Purchase ACS phone number and store in environment file
+# Usage: make purchase_acs_phone_number [ENV_FILE=custom.env] [COUNTRY_CODE=US] [AREA_CODE=833] [PHONE_TYPE=TOLL_FREE]
+purchase_acs_phone_number:
+	@echo "📞 Azure Communication Services - Phone Number Purchase"
+	@echo "======================================================"
+	@echo ""
+	# Set default parameters
+	$(eval ENV_FILE ?= .env.$(AZURE_ENV_NAME))
+	$(eval COUNTRY_CODE ?= US)
+	$(eval AREA_CODE ?= 866)
+	$(eval PHONE_TYPE ?= TOLL_FREE)
 
-# Run pylint on all Python files (excluding tests), output to report file
-run_pylint:
-	@echo "Running linter"
-	find . -type f -name "*.py" ! -path "./tests/*" | xargs pylint -disable=logging-fstring-interpolation > utils/pylint_report/pylint_report.txt
+	# Extract ACS endpoint from environment file
+	@echo "🔍 Extracting ACS endpoint from $(ENV_FILE)"
+	$(eval ACS_ENDPOINT := $(shell grep '^ACS_ENDPOINT=' $(ENV_FILE) | cut -d'=' -f2))
+
+	@if [ -z "$(ACS_ENDPOINT)" ]; then \
+		echo "❌ ACS_ENDPOINT not found in $(ENV_FILE). Please ensure the environment file contains ACS_ENDPOINT."; \
+		exit 1; \
+	fi
+
+	@echo "📞 Creating a new ACS phone number using Python script..."
+	python3 devops/scripts/azd/helpers/acs_phone_number_manager.py --endpoint $(ACS_ENDPOINT) purchase --country $(COUNTRY_CODE) --area $(AREA_CODE)  --phone-number-type $(PHONE_TYPE)
+
+# Purchase ACS phone number using PowerShell (Windows)	
+# Usage: make purchase_acs_phone_number_ps [ENV_FILE=custom.env] [COUNTRY_CODE=US] [AREA_CODE=833] [PHONE_TYPE=TOLL_FREE]
+purchase_acs_phone_number_ps:
+	@echo "📞 Azure Communication Services - Phone Number Purchase (PowerShell)"
+	@echo "=================================================================="
+	@echo ""
+	
+	# Set default parameters
+	$(eval ENV_FILE ?= .env.$(AZURE_ENV_NAME))
+	$(eval COUNTRY_CODE ?= US)
+	$(eval AREA_CODE ?= 866)
+	$(eval PHONE_TYPE ?= TOLL_FREE)
+	
+	# Execute the PowerShell script with parameters
+	@powershell -ExecutionPolicy Bypass -File devops/scripts/Purchase-AcsPhoneNumber.ps1 \
+		-EnvFile "$(ENV_FILE)" \
+		-AzureEnvName "$(AZURE_ENV_NAME)" \
+		-CountryCode "$(COUNTRY_CODE)" \
+		-AreaCode "$(AREA_CODE)" \
+		-PhoneType "$(PHONE_TYPE)" \
+		-TerraformDir "$(TF_DIR)"
+
 
 ############################################################
 # Azure Redis Management
@@ -326,7 +400,8 @@ help:
 	@echo "  check_code_quality               Run all code quality checks (pre-commit, bandit, etc.)"
 	@echo "  fix_code_quality                 Auto-fix code quality issues (black, isort, ruff)"
 	@echo "  run_unit_tests                   Run unit tests with coverage"
-	@echo "  run_pylint                       Run pylint analysis"
+	@echo "  check_and_fix_code_quality       Fix then check code quality"
+	@echo "  check_and_fix_test_quality       Run unit tests"
 	@echo "  set_up_precommit_and_prepush     Install git hooks"
 	@echo ""
 	@echo "🐍 Environment Management:"
@@ -335,8 +410,6 @@ help:
 	@echo "  remove_conda_env                 Remove conda environment"
 	@echo ""
 	@echo "🚀 Application:"
-	@echo "  starts_rtagent_server            Start backend server (FastAPI/Uvicorn)"
-	@echo "  starts_rtagent_browser           Start frontend dev server (Vite + React)"
 	@echo "  start_backend                    Start backend via script"
 	@echo "  start_frontend                   Start frontend via script"
 	@echo "  start_tunnel                     Start dev tunnel via script"
@@ -345,32 +418,39 @@ help:
 	@echo ""
 	@echo "⚡ Load Testing:"
 	@echo "  generate_audio                   Generate PCM audio files for load testing"
-	@echo "  run_load_test                    Run WebSocket endpoint load testing (safe)"
+	@echo "  run_load_test_acs_media          Run ACS media WebSocket load test (HOST=$(HOST))"
+	@echo "  run_load_test_realtime_conversation  Run realtime conversation WebSocket load test"
+	@echo ""
+	@echo "📞 Azure Communication Services:"
+	@echo "  purchase_acs_phone_number        Purchase ACS phone number and store in env file"
+	@echo "  purchase_acs_phone_number_ps     Purchase ACS phone number (PowerShell version)"
 	@echo ""
 	@echo "🔴 Azure Redis Management:"
 	@echo "  connect_redis                    Connect to Azure Redis using Azure AD authentication"
 	@echo "  test_redis_connection            Test Redis connection without interactive session"
 	@echo ""
-	@echo "📖 Required Environment Variables (for Terraform):"
-	@echo "  AZURE_SUBSCRIPTION_ID            Your Azure subscription ID"
-	@echo "  AZURE_ENV_NAME                   Environment name (default: dev)"
+	@echo "📖 Configuration Variables:"
+	@echo "  CONDA_ENV                        Conda environment name (default: audioagent)"
+	@echo "  HOST                             Host for load testing (default: localhost:8010)"
+	@echo "  PHONE                            Phone number for testing (default: +18165019907)"
 	@echo ""
-	@echo "💡 Quick Start for Environment Generation:"
-	@echo "  export AZURE_SUBSCRIPTION_ID=<your-subscription-id>"
-	@echo "  export AZURE_ENV_NAME=dev"
-	@echo "  make generate_env_from_terraform"
-	@echo "  make update_env_with_secrets"
+	@echo "💡 Load Testing Parameters:"
+	@echo "  Override with: make run_load_test_acs_media HOST=your-host USERS=10 SPAWN_RATE=2 TIME=30s"
+	@echo "  • WS_URL: WebSocket URL (derived from HOST)"
+	@echo "  • USERS: Number of concurrent users (default: 15)"
+	@echo "  • SPAWN_RATE: Users spawned per second (default: 2)"
+	@echo "  • TIME: Test duration (default: 90s)"
+	@echo "  • EXTRA_ARGS: Additional Locust arguments"
 	@echo ""
-	@echo "💡 Deployment Monitoring Tips:"
-	@echo "  • Large deployments may timeout after 15 minutes but continue in background"
-	@echo "  • Use monitor_deployment targets to check status during/after deployment"
-	@echo "  • Install 'Azure App Service' VS Code extension for easy log streaming"
-	@echo "  • Frontend builds (Vite/React) typically take 5-15 minutes"
+	@echo "💡 Quick Start for Load Testing:"
+	@echo "  1. make generate_audio           # Generate test audio files"
+	@echo "  2. make start_backend            # Start the backend server"
+	@echo "  3. make run_load_test_acs_media  # Run ACS media load test"
 	@echo ""
-	@echo "📝 Note: ACS endpoint will be retrieved from:"
-	@echo "  1. Environment file (ACS_ENDPOINT variable)"
-	@echo "  2. Terraform state output (acs_endpoint)"
-	@echo "  3. Manual input if not found above"
+	@echo "💡 Redis Connection:"
+	@echo "  • Requires Azure CLI login: az login"
+	@echo "  • Uses Azure AD authentication with access tokens"
+	@echo "  • ENV_FILE parameter for custom environment files"
 	@echo ""
 
 .PHONY: help

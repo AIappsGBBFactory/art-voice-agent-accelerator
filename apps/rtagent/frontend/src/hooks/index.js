@@ -5,6 +5,8 @@
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { API_BASE_URL, WS_URL } from '../config/constants';
+export { default as useAuthSession } from './useAuthSession';
+export { default as useTelemetry } from './useTelemetry';
 
 /**
  * Hook for managing application state
@@ -50,7 +52,7 @@ export const useWebSocket = (setConnectionState, setLastError, setDebugInfo) => 
     if (ws.current?.readyState === WebSocket.OPEN) return;
 
     setConnectionState('connecting');
-    ws.current = new WebSocket(WS_URL);
+    ws.current = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=session_${Date.now()}`);
 
     ws.current.onopen = () => {
       console.log('WebSocket connected');
@@ -165,7 +167,7 @@ export const useBackendAPI = () => {
 
   const makeCall = useCallback(async (phoneNumber) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/call`, {
+      const response = await fetch(`${API_BASE_URL}/calls`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -188,7 +190,7 @@ export const useBackendAPI = () => {
 
   const endCall = useCallback(async (callId) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/call/${callId}/end`, {
+      const response = await fetch(`${API_BASE_URL}/calls/${callId}/end`, {
         method: 'POST',
       });
 

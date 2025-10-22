@@ -39,7 +39,6 @@ provider "azurerm" {
 provider "azuread" {}
 
 provider "azapi" {
-  skip_provider_registration = false
 }
 
 # ============================================================================
@@ -72,11 +71,12 @@ locals {
   tags = {
     "azd-env-name"    = var.environment_name
     "hidden-title"    = "Real Time Audio ${var.environment_name}"
-    "project"         = "art-voice-agent-accelerator"
+    "project"         = "gbb-ai-audio-agent"
     "environment"     = var.environment_name
     "deployment"      = "terraform"
     "deployed_by"     = coalesce(var.deployed_by, local.principal_id)
-    "SecurityControl" = "Ignore"
+    # To bypass Azure policy which enforces private networking configuration for nonprod environments
+    "SecurityControl" = var.environment_name != "prod" ? "Ignore" : null
   }
 
   # Resource naming with Azure standard abbreviations
@@ -87,7 +87,7 @@ locals {
     key_vault          = "kv-${local.resource_token}"
     speech             = "spch-${var.environment_name}-${local.resource_token}"
     openai             = "oai-${local.resource_token}"
-    cosmos             = "cosmos-${local.resource_token}"
+    cosmos             = "cosmos-cluster-${local.resource_token}"
     storage            = "st${local.resource_token}"
     redis              = "redis${local.resource_token}"
     acs                = "acs-${var.name}-${var.environment_name}-${local.resource_token}"

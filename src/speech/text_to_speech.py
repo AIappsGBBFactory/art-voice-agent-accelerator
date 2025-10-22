@@ -14,7 +14,6 @@ import time
 from typing import Callable, Dict, List, Optional
 
 import azure.cognitiveservices.speech as speechsdk
-from utils.azure_auth import get_credential
 from dotenv import load_dotenv
 from langdetect import LangDetectException, detect
 
@@ -24,6 +23,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 
 # Import centralized span attributes enum
 from src.enums.monitoring import SpanAttr
+from src.speech.auth_manager import SpeechTokenManager, get_speech_token_manager
 from utils.ml_logging import get_logger
 
 # Load environment variables from a .env file if present
@@ -606,6 +606,7 @@ class SpeechSynthesizer:
         self.playback = playback
         self.enable_tracing = enable_tracing
         self.call_connection_id = call_connection_id or "unknown"
+        self._token_manager: Optional[SpeechTokenManager] = None
 
         # Initialize tracing components (matching speech_recognizer pattern)
         self.tracer = None
@@ -615,12 +616,12 @@ class SpeechSynthesizer:
             try:
                 # Use same pattern as speech_recognizer
                 self.tracer = trace.get_tracer(__name__)
-                logger.info("Azure Monitor tracing initialized for speech synthesizer")
+                logger.debug("Azure Monitor tracing initialized for speech synthesizer")
             except Exception as e:
                 logger.warning(f"Failed to initialize Azure Monitor tracing: {e}")
                 self.enable_tracing = False
                 # Temporarily disable to avoid startup errors
-                logger.info("Continuing without Azure Monitor tracing")
+                logger.debug("Continuing without Azure Monitor tracing")
 
         # DON'T initialize speaker synthesizer during __init__ to avoid audio library issues
         # Only create it when actually needed for speaker playback
@@ -630,7 +631,7 @@ class SpeechSynthesizer:
         self.cfg = None
         try:
             self.cfg = self._create_speech_config()
-            logger.info("Speech synthesizer initialized successfully")
+            logger.debug("Speech synthesizer initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize speech config: {e}")
             # Don't fail completely - allow for memory-only synthesis
@@ -774,43 +775,32 @@ class SpeechSynthesizer:
             should be cached at the instance level to avoid repeated auth calls.
         """
         if self.key:
-            # Use API key authentication if provided
             logger.info("Creating SpeechConfig with API key authentication")
             speech_config = speechsdk.SpeechConfig(
                 subscription=self.key, region=self.region
             )
         else:
-            # Use Azure Default Credentials (managed identity, service principal, etc.)
-            logger.info("Creating SpeechConfig with Azure Default Credentials")
+            logger.debug("Creating SpeechConfig with Azure AD credentials")
             if not self.region:
                 raise ValueError(
                     "Region must be specified when using Azure Default Credentials"
                 )
 
             endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
-            credential = get_credential()
+            if endpoint:
+                speech_config = speechsdk.SpeechConfig(endpoint=endpoint)
+            else:
+                speech_config = speechsdk.SpeechConfig(region=self.region)
 
-            # Use default Azure credential for authentication
-            # Get a fresh token each time to handle token expiration
             try:
-                logger.debug(
-                    "Attempting to use DefaultAzureCredential for Azure Speech"
-                )
-                credential = get_credential()
-                speech_resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
-                token = credential.get_token(
-                    "https://cognitiveservices.azure.com/.default"
-                )
-                auth_token = "aad#" + speech_resource_id + "#" + token.token
-                speech_config = speechsdk.SpeechConfig(
-                    auth_token=auth_token, region=self.region
-                )
-
-                logger.debug("Successfully authenticated with DefaultAzureCredential")
+                token_manager = get_speech_token_manager()
+                token_manager.apply_to_config(speech_config, force_refresh=True)
+                self._token_manager = token_manager
+                logger.debug("Successfully applied Azure AD token to SpeechConfig")
             except Exception as e:
-                logger.error(f"Failed to get Azure credential token: {e}")
+                logger.error(f"Failed to apply Azure AD speech token: {e}")
                 raise RuntimeError(
-                    f"Failed to authenticate with Azure Speech. Please set AZURE_SPEECH_KEY environment variable or ensure proper Azure credentials are configured: {e}"
+                    "Failed to authenticate with Azure Speech via Azure AD credentials"
                 )
 
         if not speech_config:
@@ -825,6 +815,72 @@ class SpeechSynthesizer:
             speechsdk.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm
         )
         return speech_config
+
+    def refresh_authentication(self) -> bool:
+        """Refresh authentication configuration when 401 errors occur.
+        
+        Returns:
+            bool: True if authentication refresh succeeded, False otherwise.
+        """
+        try:
+            logger.info(f"Refreshing authentication for call {self.call_connection_id}")
+            if self.key:
+                self.cfg = self._create_speech_config()
+            else:
+                self._ensure_auth_token(force_refresh=True)
+                self._speaker = None  # force re-creation with new token
+            
+            logger.info("Authentication refresh completed successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to refresh authentication: {e}")
+            return False
+
+    def _is_authentication_error(self, result) -> bool:
+        """Check if synthesis result indicates a 401 authentication error.
+        
+        Returns:
+            bool: True if this is a 401 authentication error, False otherwise.
+        """
+        if result.reason != speechsdk.ResultReason.Canceled:
+            return False
+            
+        if not hasattr(result, 'cancellation_details') or not result.cancellation_details:
+            return False
+            
+        error_details = getattr(result.cancellation_details, 'error_details', '')
+        if not error_details:
+            return False
+            
+        # Check for 401 authentication error patterns
+        auth_error_indicators = [
+            "401",
+            "Authentication error", 
+            "WebSocket upgrade failed: Authentication error",
+            "unauthorized",
+            "Please check subscription information"
+        ]
+        
+        return any(indicator.lower() in error_details.lower() for indicator in auth_error_indicators)
+
+    def _is_codec_start_timeout(self, error_details: str) -> bool:
+        return bool(error_details) and "codec decoding is not started within 2s" in error_details.lower()
+
+    def _ensure_auth_token(self, *, force_refresh: bool = False) -> None:
+        """Ensure the cached speech configuration has a valid Azure AD token."""
+        if self.key:
+            return
+
+        if not self.cfg:
+            self.cfg = self._create_speech_config()
+
+        if not self._token_manager:
+            self._token_manager = get_speech_token_manager()
+
+        if not self.cfg:
+            raise RuntimeError("Speech configuration unavailable for token refresh")
+
+        self._token_manager.apply_to_config(self.cfg, force_refresh=force_refresh)
 
     def _create_speaker_synthesizer(self):
         """Create audio output synthesizer with intelligent playback mode handling.
@@ -931,6 +987,7 @@ class SpeechSynthesizer:
 
         # 3. Create the speaker synthesizer according to playback mode
         try:
+            self._ensure_auth_token()
             speech_config = self.cfg
             headless = _is_headless()
 
@@ -1167,7 +1224,35 @@ class SpeechSynthesizer:
             if self._session_span:
                 self._session_span.add_event("tts_speaker_ssml_created")
 
-            speaker.speak_ssml_async(ssml)
+            # Perform synthesis and check result for authentication errors
+            result = speaker.speak_ssml_async(ssml).get()
+            
+            # Check for 401 authentication error and retry with refresh if needed
+            if self._is_authentication_error(result):
+                error_details = getattr(result.cancellation_details, 'error_details', '')
+                logger.warning(f"Authentication error detected in speaker synthesis: {error_details}")
+                
+                # Try to refresh authentication and retry once
+                if self.refresh_authentication():
+                    logger.info("Retrying speaker synthesis with refreshed authentication")
+                    
+                    if self._session_span:
+                        self._session_span.add_event(
+                            "tts_speaker_authentication_refreshed",
+                            {"retry_attempt": True}
+                        )
+                    
+                    # Create new speaker with refreshed config and retry
+                    self._speaker = None  # Clear cached speaker
+                    speaker = self._create_speaker_synthesizer()
+                    if speaker:
+                        result = speaker.speak_ssml_async(ssml).get()
+                        if self._session_span:
+                            self._session_span.add_event("tts_speaker_synthesis_retry_completed")
+                    else:
+                        logger.error("Failed to recreate speaker after authentication refresh")
+                else:
+                    logger.error("Failed to refresh authentication for speaker synthesis")
 
             if self._session_span:
                 self._session_span.add_event("tts_speaker_synthesis_initiated")
@@ -1245,6 +1330,7 @@ class SpeechSynthesizer:
     ) -> bytes:
         """Internal method to perform synthesis with tracing events"""
         voice = voice or self.voice
+        self._ensure_auth_token()
         try:
             # Add event for synthesis start
             if self._session_span:
@@ -1309,6 +1395,46 @@ class SpeechSynthesizer:
 
                 return bytes(wav_bytes)
             else:
+                # Check for 401 authentication error and retry with refresh if needed
+                if self._is_authentication_error(result):
+                    error_details = getattr(result.cancellation_details, 'error_details', '')
+                    logger.warning(f"Authentication error detected in speech synthesis: {error_details}")
+                    
+                    # Try to refresh authentication and retry once
+                    if self.refresh_authentication():
+                        logger.info("Retrying speech synthesis with refreshed authentication")
+                        
+                        if self._session_span:
+                            self._session_span.add_event(
+                                "tts_authentication_refreshed",
+                                {"retry_attempt": True}
+                            )
+                        
+                        # Retry synthesis with refreshed config
+                        speech_config = self.cfg
+                        speech_config.speech_synthesis_language = self.language
+                        speech_config.speech_synthesis_voice_name = voice
+                        speech_config.set_speech_synthesis_output_format(
+                            speechsdk.SpeechSynthesisOutputFormat.Riff48Khz16BitMonoPcm
+                        )
+                        synthesizer = speechsdk.SpeechSynthesizer(
+                            speech_config=speech_config, audio_config=None
+                        )
+                        result = synthesizer.speak_text_async(text).get()
+                        
+                        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                            wav_bytes = result.audio_data
+                            if self._session_span:
+                                self._session_span.add_event(
+                                    "tts_audio_data_extracted_retry", {"audio_size_bytes": len(wav_bytes)}
+                                )
+                                self._session_span.set_status(Status(StatusCode.OK))
+                                self._session_span.end()
+                                self._session_span = None
+                            return bytes(wav_bytes)
+                    else:
+                        logger.error("Failed to refresh authentication for speech synthesis")
+                
                 error_msg = f"Speech synthesis failed: {result.reason}"
                 logger.error(error_msg)
 
@@ -1398,6 +1524,7 @@ class SpeechSynthesizer:
     ) -> list[str]:
         """Internal method to perform frame synthesis with tracing events"""
         voice = voice or self.voice
+        self._ensure_auth_token()
         try:
             # Add event for synthesis start
             if self._session_span:
@@ -1471,21 +1598,75 @@ class SpeechSynthesizer:
                         {"audio_data_size": len(raw_bytes), "synthesis_success": True},
                     )
             else:
-                error_msg = f"TTS failed. Reason: {result.reason}"
-                if result.reason == speechsdk.ResultReason.Canceled:
-                    error_msg += f" Details: {result.cancellation_details.reason}"
+                # Check for 401 authentication error and retry with refresh if needed
+                if self._is_authentication_error(result):
+                    error_details = getattr(result.cancellation_details, 'error_details', '')
+                    logger.warning(f"Authentication error detected in frame synthesis: {error_details}")
+                    
+                    # Try to refresh authentication and retry once
+                    if self.refresh_authentication():
+                        logger.info("Retrying frame synthesis with refreshed authentication")
+                        
+                        if self._session_span:
+                            self._session_span.add_event(
+                                "tts_frame_authentication_refreshed",
+                                {"retry_attempt": True}
+                            )
+                        
+                        # Retry synthesis with refreshed config
+                        speech_config = self._create_speech_config()
+                        speech_config.speech_synthesis_language = self.language
+                        speech_config.speech_synthesis_voice_name = voice
+                        speech_config.set_speech_synthesis_output_format(sdk_format)
+                        
+                        synth = speechsdk.SpeechSynthesizer(
+                            speech_config=speech_config, audio_config=None
+                        )
+                        
+                        # Retry the synthesis operation
+                        if style or rate:
+                            result = synth.speak_ssml_async(ssml).get()
+                        else:
+                            result = synth.speak_text_async(text).get()
+                            
+                        # Check retry result
+                        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                            raw_bytes = result.audio_data
+                            if self._session_span:
+                                self._session_span.add_event(
+                                    "tts_frame_synthesis_completed_retry",
+                                    {"audio_data_size": len(raw_bytes), "synthesis_success": True},
+                                )
+                            # Continue with frame processing below
+                        else:
+                            error_msg = f"TTS retry failed. Reason: {result.reason}"
+                            if result.reason == speechsdk.ResultReason.Canceled:
+                                error_msg += f" Details: {result.cancellation_details.reason}"
+                            logger.error(error_msg)
+                            raise Exception(error_msg)
+                    else:
+                        logger.error("Failed to refresh authentication for frame synthesis")
+                        error_msg = f"TTS failed. Reason: {result.reason}"
+                        if result.reason == speechsdk.ResultReason.Canceled:
+                            error_msg += f" Details: {result.cancellation_details.reason}"
+                        logger.error(error_msg)
+                        raise Exception(error_msg)
+                else:
+                    error_msg = f"TTS failed. Reason: {result.reason}"
+                    if result.reason == speechsdk.ResultReason.Canceled:
+                        error_msg += f" Details: {result.cancellation_details.reason}"
 
-                if self._session_span:
-                    self._session_span.add_event(
-                        "tts_frame_synthesis_failed",
-                        {
-                            "error_reason": str(result.reason),
-                            "error_details": error_msg,
-                        },
-                    )
+                    if self._session_span:
+                        self._session_span.add_event(
+                            "tts_frame_synthesis_failed",
+                            {
+                                "error_reason": str(result.reason),
+                                "error_details": error_msg,
+                            },
+                        )
 
-                logger.error(error_msg)
-                raise Exception(error_msg)
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
 
             logger.debug(f"Got {len(raw_bytes)} bytes of raw audio data")
 
@@ -1548,15 +1729,13 @@ class SpeechSynthesizer:
                 return False
 
             if not self.key:
-                # Test DefaultAzureCredential
                 try:
-                    credential = get_credential()
-                    token = credential.get_token(
-                        "https://cognitiveservices.azure.com/.default"
-                    )
-                    logger.info("DefaultAzureCredential authentication successful")
+                    manager = self._token_manager or get_speech_token_manager()
+                    manager.get_token(force_refresh=True)
+                    self._token_manager = manager
+                    logger.info("Azure AD authentication successful")
                 except Exception as e:
-                    logger.error(f"DefaultAzureCredential authentication failed: {e}")
+                    logger.error(f"Azure AD authentication failed: {e}")
                     return False
 
             # Test a simple synthesis to validate configuration
@@ -1600,8 +1779,22 @@ class SpeechSynthesizer:
             rate: Speech rate
         """
         voice = voice or self.voice
-        style = style or "chat"
-        rate = rate or "+3%"
+
+        if style is None:
+            style_to_apply = "chat"
+        else:
+            style_to_apply = style.strip()
+            if not style_to_apply:
+                style_to_apply = None
+
+        if rate is None:
+            rate_to_apply = "+3%"
+        else:
+            rate_to_apply = rate.strip()
+            if not rate_to_apply:
+                rate_to_apply = None
+
+        self._ensure_auth_token()
 
         speech_config = self.cfg
         speech_config.speech_synthesis_voice_name = voice
@@ -1618,13 +1811,13 @@ class SpeechSynthesizer:
         inner_content = sanitized_text
 
         # Apply prosody rate if specified
-        if rate:
-            inner_content = f'<prosody rate="{rate}">{inner_content}</prosody>'
+        if rate_to_apply:
+            inner_content = f'<prosody rate="{rate_to_apply}">{inner_content}</prosody>'
 
         # Apply style if specified
-        if style:
+        if style_to_apply:
             inner_content = (
-                f'<mstts:express-as style="{style}">{inner_content}</mstts:express-as>'
+                f'<mstts:express-as style="{style_to_apply}">{inner_content}</mstts:express-as>'
             )
 
         ssml = f"""<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
@@ -1633,21 +1826,93 @@ class SpeechSynthesizer:
     </voice>
 </speak>"""
 
-        # Use audio_config=None for memory synthesis - NO AUDIO HARDWARE NEEDED
-        synthesizer = speechsdk.SpeechSynthesizer(
-            speech_config=speech_config, audio_config=None
-        )
-        result = synthesizer.speak_ssml_async(ssml).get()
+        max_attempts = 4
+        retry_delay = 0.1
+        last_result = None
+        last_error_details = ""
 
-        if result.reason == speechsdk.ResultReason.Canceled:
-            cancellation = result.cancellation_details
-            print("Cancellation reason:", cancellation.reason)
-            print("Error details:", cancellation.error_details)
+        for attempt in range(max_attempts):
+            synthesizer = speechsdk.SpeechSynthesizer(
+                speech_config=self.cfg, audio_config=None
+            )
 
-        if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
-            raise RuntimeError(f"TTS failed: {result.reason}")
+            result = synthesizer.speak_ssml_async(ssml).get()
+            last_result = result
 
-        return result.audio_data  # raw PCM bytes
+            # Check for 401 authentication error and retry with refresh if needed
+            if self._is_authentication_error(result):
+                error_details = getattr(result.cancellation_details, "error_details", "")
+                logger.warning(
+                    "Authentication error detected in PCM synthesis (attempt=%s): %s",
+                    attempt + 1,
+                    error_details,
+                )
+
+                if self.refresh_authentication():
+                    logger.info("Retrying PCM synthesis with refreshed authentication")
+                    continue
+
+                logger.error("Failed to refresh authentication for PCM synthesis")
+                break
+
+            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                if attempt:
+                    logger.info("PCM synthesis succeeded on retry attempt %s", attempt + 1)
+                return result.audio_data  # raw PCM bytes
+
+            if result.reason == speechsdk.ResultReason.Canceled:
+                cancellation = result.cancellation_details
+                error_details = getattr(cancellation, "error_details", "")
+                last_error_details = error_details or "canceled"
+                logger.warning(
+                    "PCM synthesis canceled (attempt=%s): reason=%s error=%s (voice=%s, text_preview=%s)",
+                    attempt + 1,
+                    getattr(cancellation, "reason", "unknown"),
+                    error_details,
+                    voice,
+                    (text[:60] + "...") if len(text) > 60 else text,
+                )
+
+                if (
+                    attempt < max_attempts - 1
+                    and getattr(cancellation, "reason", None) == speechsdk.CancellationReason.Error
+                    and self._is_codec_start_timeout(error_details)
+                ):
+                    logger.info("Reinitializing speech config after codec start timeout")
+                    try:
+                        self.cfg = self._create_speech_config()
+                        self._ensure_auth_token(force_refresh=True)
+                    except Exception as refresh_exc:
+                        logger.warning(
+                            "Failed to refresh speech config after timeout: %s", refresh_exc
+                        )
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+            else:
+                last_error_details = str(result.reason)
+                logger.warning(
+                    "PCM synthesis returned reason=%s (attempt=%s, voice=%s)",
+                    result.reason,
+                    attempt + 1,
+                    voice,
+                )
+
+            if attempt < max_attempts - 1:
+                time.sleep(retry_delay * (attempt + 1))
+                continue
+
+            break
+
+        if last_result and last_result.reason:
+            logger.error(
+                "PCM synthesis failed after %s attempts (voice=%s, reason=%s)",
+                max_attempts,
+                voice,
+                last_result.reason,
+            )
+            return b""
+        logger.error("PCM synthesis failed: %s", last_error_details or "unknown error")
+        return b""
 
     @staticmethod
     def split_pcm_to_base64_frames(
@@ -1656,8 +1921,35 @@ class SpeechSynthesizer:
         import base64
 
         frame_size = int(0.02 * sample_rate * 2)  # 20ms * sample_rate * 2 bytes/sample
-        return [
-            base64.b64encode(pcm_bytes[i : i + frame_size]).decode("utf-8")
-            for i in range(0, len(pcm_bytes), frame_size)
-            if len(pcm_bytes[i : i + frame_size]) == frame_size
-        ]
+        if frame_size <= 0:
+            raise ValueError("Frame size must be positive")
+
+        working_bytes = pcm_bytes
+        frames: list[str] = []
+
+        for attempt in range(2):
+            frames = []
+            for i in range(0, len(working_bytes), frame_size):
+                chunk = working_bytes[i : i + frame_size]
+                if not chunk:
+                    continue
+                if len(chunk) < frame_size:
+                    chunk = chunk + b"\x00" * (frame_size - len(chunk))
+                frames.append(base64.b64encode(chunk).decode("utf-8"))
+
+            if frames or not working_bytes:
+                break
+
+            remainder = len(working_bytes) % frame_size
+            if remainder == 0:
+                break
+
+            pad_length = frame_size - remainder
+            logger.debug(
+                "Padding PCM buffer to align frames (pad=%s, attempt=%s)",
+                pad_length,
+                attempt + 1,
+            )
+            working_bytes = working_bytes + b"\x00" * pad_length
+
+        return frames

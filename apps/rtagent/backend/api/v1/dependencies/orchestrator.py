@@ -6,6 +6,7 @@ Simple orchestrator injection for the V1 API with clean tracing.
 Provides a clean interface to the conversation orchestration logic.
 """
 
+import asyncio
 from typing import Optional
 from fastapi import WebSocket
 from websockets.exceptions import ConnectionClosedError
@@ -83,8 +84,12 @@ async def route_conversation_turn(
                 op.log_info("WebSocket connection closed during orchestration")
                 return
             except Exception as ws_error:
+                # Handle task cancellation specially (expected during barge-in)
+                if isinstance(ws_error, asyncio.CancelledError):
+                    op.log_debug("Orchestration cancelled (likely due to barge-in)")
+                    return
                 # Check if it's a WebSocket-related error
-                if (
+                elif (
                     "websocket" in str(ws_error).lower()
                     or "connection" in str(ws_error).lower()
                 ):

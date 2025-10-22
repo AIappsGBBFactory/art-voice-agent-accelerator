@@ -64,8 +64,7 @@ AZURE_SPEECH_RESOURCE_ID: str = os.getenv("AZURE_SPEECH_RESOURCE_ID", "")
 ACS_ENDPOINT: str = os.getenv("ACS_ENDPOINT", "")
 ACS_CONNECTION_STRING: str = os.getenv("ACS_CONNECTION_STRING", "")
 ACS_SOURCE_PHONE_NUMBER: str = os.getenv("ACS_SOURCE_PHONE_NUMBER", "")
-# Base application URL (ensure no trailing slash)
-BASE_URL: str = os.getenv("BASE_URL", "").rstrip("/")
+BASE_URL: str = os.getenv("BASE_URL", "")
 
 # ACS Streaming configuration
 ACS_STREAMING_MODE: StreamMode = StreamMode(

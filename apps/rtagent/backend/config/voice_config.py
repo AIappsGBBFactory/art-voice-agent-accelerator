@@ -93,6 +93,6 @@ RECOGNIZED_LANGUAGE = os.getenv(
 # AZURE VOICE LIVE SETTINGS
 # ==============================================================================
 
-AZURE_VOICE_LIVE_ENDPOINT = os.getenv("AZURE_SPEECH_ENDPOINT", "")
-AZURE_VOICE_API_KEY = os.getenv("AZURE_SPEECH_KEY", "")
+AZURE_VOICE_LIVE_ENDPOINT = os.getenv("AZURE_VOICE_LIVE_ENDPOINT", "")
+AZURE_VOICE_API_KEY = os.getenv("AZURE_VOICE_API_KEY", "")
 AZURE_VOICE_LIVE_MODEL = os.getenv("AZURE_VOICE_LIVE_MODEL", "gpt-4o")

@@ -5,14 +5,10 @@ Simplified Test for ACS Events Architecture
 Tests the core refactoring without heavy dependencies.
 """
 
+import pytest
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from azure.core.messaging import CloudEvent
-
-
-def run_async(coro):
-    """Execute coroutine in a fresh loop for pytest compatibility."""
-    return asyncio.run(coro)
 
 
 # Mock the modules to avoid import issues
@@ -253,7 +249,7 @@ class TestEventArchitecture:
         assert data["callConnectionId"] == "test_123"
         assert data["status"] == "connected"
 
-    def test_call_initiated_handler(self):
+    async def test_call_initiated_handler(self):
         """Test call initiated handler."""
         event = CloudEvent(
             source="api",
@@ -272,7 +268,7 @@ class TestEventArchitecture:
         )
         context.memo_manager = MagicMock()
 
-        run_async(MockCallEventHandlers.handle_call_initiated(context))
+        await MockCallEventHandlers.handle_call_initiated(context)
 
         # Verify context updates
         context.memo_manager.update_context.assert_called()
@@ -286,7 +282,7 @@ class TestEventArchitecture:
         assert updates["call_direction"] == "outbound"
         assert updates["target_number"] == "+1234567890"
 
-    def test_inbound_call_handler(self):
+    async def test_inbound_call_handler(self):
         """Test inbound call received handler."""
         event = CloudEvent(
             source="eventgrid",
@@ -307,7 +303,7 @@ class TestEventArchitecture:
         )
         context.memo_manager = MagicMock()
 
-        run_async(MockCallEventHandlers.handle_inbound_call_received(context))
+        await MockCallEventHandlers.handle_inbound_call_received(context)
 
         # Verify context updates
         calls = context.memo_manager.update_context.call_args_list
@@ -316,7 +312,7 @@ class TestEventArchitecture:
         assert updates["call_direction"] == "inbound"
         assert updates["caller_id"] == "+1987654321"
 
-    def test_event_processor_registration(self):
+    async def test_event_processor_registration(self):
         """Test event processor handler registration."""
         processor = MockCallEventProcessor()
 
@@ -329,7 +325,7 @@ class TestEventArchitecture:
         assert stats["handlers_registered"] == 1
         assert MockACSEventTypes.CALL_CONNECTED in stats["event_types"]
 
-    def test_event_processing_flow(self):
+    async def test_event_processing_flow(self):
         """Test end-to-end event processing."""
         processor = MockCallEventProcessor()
 
@@ -352,7 +348,7 @@ class TestEventArchitecture:
         mock_state.clients = []
 
         # Process event
-        result = run_async(processor.process_events([event], mock_state))
+        result = await processor.process_events([event], mock_state)
 
         assert result["status"] == "success"
         assert result["processed"] == 1
@@ -362,7 +358,7 @@ class TestEventArchitecture:
         active_calls = processor.get_active_calls()
         assert "test_789" in active_calls
 
-    def test_active_call_lifecycle(self):
+    async def test_active_call_lifecycle(self):
         """Test active call tracking through connect/disconnect."""
         processor = MockCallEventProcessor()
 
@@ -381,7 +377,7 @@ class TestEventArchitecture:
             data={"callConnectionId": "lifecycle_test"},
         )
 
-        run_async(processor.process_events([connect_event], mock_state))
+        await processor.process_events([connect_event], mock_state)
         assert "lifecycle_test" in processor.get_active_calls()
 
         # Disconnect event
@@ -391,10 +387,10 @@ class TestEventArchitecture:
             data={"callConnectionId": "lifecycle_test"},
         )
 
-        run_async(processor.process_events([disconnect_event], mock_state))
+        await processor.process_events([disconnect_event], mock_state)
         assert "lifecycle_test" not in processor.get_active_calls()
 
-    def test_error_handling_isolation(self):
+    async def test_error_handling_isolation(self):
         """Test that one failing handler doesn't stop others."""
         processor = MockCallEventProcessor()
 
@@ -415,7 +411,7 @@ class TestEventArchitecture:
         )
 
         # Should handle error gracefully
-        result = run_async(processor.process_events([event], MagicMock()))
+        result = await processor.process_events([event], MagicMock())
 
         # Event should still be processed despite one handler failing
         assert result["processed"] == 1

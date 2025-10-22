@@ -106,6 +106,10 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)({});
+
+      if (audioCtx.state === "suspended") {
+        await audioCtx.resume();
+      }
       
       await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob(
         [workletSource], { type: 'text/javascript' }
@@ -113,6 +117,10 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
       
       const pcmSink = new AudioWorkletNode(audioCtx, 'pcm-sink');
       pcmSink.connect(audioCtx.destination);
+
+      // Prime the playback queue with a short silence buffer to avoid clipped audio onset
+      const prerollSamples = Math.max(1, Math.floor((audioCtx.sampleRate || 16000) * 0.02));
+      pcmSink.port.postMessage({ type: 'push', payload: new Float32Array(prerollSamples) });
       
       playbackAudioContextRef.current = audioCtx;
       pcmSinkRef.current = pcmSink;
@@ -283,8 +291,8 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
       try {
         const msg = JSON.parse(event.data);
         console.log("📨 WebSocket message received:", msg.type || "unknown", msg);
-      } catch (e) {
-        console.log("📨 Non-JSON WebSocket message:", event.data);
+      } catch (error) {
+        console.log("📨 Non-JSON WebSocket message:", event.data, error);
       }
     } else {
       console.log("📨 Binary WebSocket message received, length:", event.data.byteLength);

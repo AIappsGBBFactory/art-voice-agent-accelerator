@@ -162,12 +162,8 @@ class AcsCaller:
 
                 logger.info("Using managed identity for ACS authentication")
 
-                # No need to create tokens via CommunicationIdentityClient
-                if "AZURE_CLIENT_ID" in os.environ:
-                    credentials = self._create_identity_and_get_token(acs_endpoint)
-                else:
-                    # Use system-assigned managed identity
-                    credentials = get_credential()
+                # Use system-assigned managed identity
+                credentials = get_credential()
 
                 self.client = CallAutomationClient(
                     endpoint=acs_endpoint, credential=credentials
@@ -192,14 +188,6 @@ class AcsCaller:
         # Validate configuration
         self._validate_configuration(websocket_url, acs_connection_string, acs_endpoint)
         logger.info("AcsCaller initialized")
-
-    def _create_identity_and_get_token(self, resource_endpoint):
-        client = CommunicationIdentityClient(resource_endpoint, get_credential())
-
-        user = client.create_user()
-        token_response = client.get_token(user, scopes=["voip"])
-
-        return token_response
 
     def _validate_configuration(
         self, websocket_url: str, acs_connection_string: str, acs_endpoint: str

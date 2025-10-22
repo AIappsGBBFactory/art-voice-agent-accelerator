@@ -26,40 +26,40 @@ classifiers = [
     "Topic :: Communications :: Telephony",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
-# Read dependencies from requirements.txt
-dynamic = ["dependencies"]
 
 [project.urls]
-Documentation = "https://github.com/Azure-Samples/art-voice-agent-accelerator/"
+Documentation = "https://azure-samples.github.io/art-voice-agent-accelerator/"
 Source = "https://github.com/Azure-Samples/art-voice-agent-accelerator"
 Tracker = "https://github.com/Azure-Samples/art-voice-agent-accelerator/issues"
 
+# Read dependencies from requirements.txt
+dynamic = ["dependencies"]
+
 [project.optional-dependencies]
+dev = [
+  # Code quality and tooling
+  "isort==5.9.3",
+  "black[jupyter]==25.1.0",
+  "flake8==3.9.2",
+  "interrogate==1.4.0",
+  "pre-commit==2.14.0",
+  "types-requests",
+  "ruff",
+  "bandit",
+  "pylint",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "types-PyYAML",
+  "uvicorn"
+]
+
 docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.0.0",
     "mkdocstrings[python]>=0.20.0",
     "pymdown-extensions>=10.0.0",
 ]
-dev = [
-    # Code quality and tooling
-    "isort==5.9.3",
-    "black[jupyter]==25.1.0",
-    "flake8==3.9.2",
-    "interrogate==1.4.0",
-    "pre-commit==2.14.0",
-    "types-requests",
-    "ruff",
-    "bandit",
-    "pylint",
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov",
-    "types-PyYAML",
-    "uvicorn",
-    "mypy>=1.0.0",
-]
-
 [project.scripts]
 # Define entry points for uv run
 rtagent-server = "apps.rtagent.backend.main:main"
@@ -150,6 +150,7 @@ exclude = [
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q -ra"
+asyncio_mode = "auto"
 filterwarnings = [
   "ignore::DeprecationWarning",
   "ignore::UserWarning"

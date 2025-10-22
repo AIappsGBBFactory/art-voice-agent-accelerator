@@ -98,10 +98,10 @@ class AOAIClientPool:
                 client = self._create_client()
                 self.clients.append(client)
                 self.client_metrics.append(ClientMetrics())
-                logger.info(f"AOAI client {i+1}/{self.pool_size} initialized")
+                logger.debug(f"AOAI client {i+1}/{self.pool_size} initialized")
 
             self._initialized = True
-            logger.info(
+            logger.debug(
                 f"AOAI client pool initialized successfully with {len(self.clients)} clients"
             )
 

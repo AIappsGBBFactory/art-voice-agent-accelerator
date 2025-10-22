@@ -11,11 +11,9 @@ Tests the integration between:
 
 import asyncio
 import json
-import sys
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-
-sys.modules.setdefault("sounddevice", MagicMock())
+from fastapi.testclient import TestClient
 from azure.core.messaging import CloudEvent
 from datetime import datetime
 
@@ -32,11 +30,6 @@ from apps.rtagent.backend.api.v1.events.types import (
 )
 from apps.rtagent.backend.api.v1.events.registration import register_default_handlers
 from apps.rtagent.backend.api.v1.handlers.acs_call_lifecycle import ACSLifecycleHandler
-
-
-def run_async(coro):
-    """Execute coroutine for pytest environments without asyncio plugin."""
-    return asyncio.run(coro)
 
 
 class TestV1EventsIntegration:
@@ -86,24 +79,15 @@ class TestV1EventsIntegration:
             },
         )
 
-        mock_call_conn = MagicMock()
-        mock_call_conn.list_participants.return_value = []
-        acs_caller = MagicMock()
-        acs_caller.get_call_connection.return_value = mock_call_conn
-
-        context = CallEventContext(
+        return CallEventContext(
             event=event,
             call_connection_id="test_call_123",
             event_type=ACSEventTypes.CALL_CONNECTED,
             memo_manager=mock_memo_manager,
             redis_mgr=mock_redis_mgr,
-            acs_caller=acs_caller,
         )
-        context.app_state = MagicMock()
-        context.app_state.redis_pool = None
-        return context
 
-    def test_event_processor_registration(self):
+    async def test_event_processor_registration(self):
         """Test that handlers can be registered and retrieved."""
         processor = CallEventProcessor()
 
@@ -118,7 +102,7 @@ class TestV1EventsIntegration:
         assert stats["handlers_registered"] == 1
         assert ACSEventTypes.CALL_CONNECTED in stats["event_types"]
 
-    def test_default_handlers_registration(self):
+    async def test_default_handlers_registration(self):
         """Test that default handlers are registered correctly."""
         register_default_handlers()
 
@@ -135,7 +119,7 @@ class TestV1EventsIntegration:
         assert V1EventTypes.CALL_INITIATED in stats["event_types"]
         assert ACSEventTypes.CALL_CONNECTED in stats["event_types"]
 
-    def test_call_initiated_handler(
+    async def test_call_initiated_handler(
         self, sample_call_event_context, mock_memo_manager
     ):
         """Test call initiated event handler."""
@@ -148,7 +132,7 @@ class TestV1EventsIntegration:
         }
 
         # Call handler
-        run_async(CallEventHandlers.handle_call_initiated(sample_call_event_context))
+        await CallEventHandlers.handle_call_initiated(sample_call_event_context)
 
         # Verify memo manager was updated
         mock_memo_manager.update_context.assert_called()
@@ -162,7 +146,7 @@ class TestV1EventsIntegration:
         assert call_args["call_direction"] == "outbound"
         assert call_args["target_number"] == "+1234567890"
 
-    def test_call_connected_handler(self, sample_call_event_context):
+    async def test_call_connected_handler(self, sample_call_event_context):
         """Test call connected event handler."""
         # Mock clients for broadcast
         mock_clients = [MagicMock(), MagicMock()]
@@ -170,13 +154,8 @@ class TestV1EventsIntegration:
 
         with patch(
             "apps.rtagent.backend.api.v1.events.handlers.broadcast_message"
-        ) as mock_broadcast, patch(
-            "apps.rtagent.backend.api.v1.events.handlers.DTMFValidationLifecycle.setup_aws_connect_validation_flow",
-            new=AsyncMock(),
-        ):
-            run_async(
-                CallEventHandlers.handle_call_connected(sample_call_event_context)
-            )
+        ) as mock_broadcast:
+            await CallEventHandlers.handle_call_connected(sample_call_event_context)
 
             # Verify broadcast was called
             mock_broadcast.assert_called_once()
@@ -188,7 +167,7 @@ class TestV1EventsIntegration:
             assert message_data["type"] == "call_connected"
             assert message_data["call_connection_id"] == "test_call_123"
 
-    def test_webhook_events_router(self, sample_call_event_context):
+    async def test_webhook_events_router(self, sample_call_event_context):
         """Test webhook events router delegates to specific handlers."""
         sample_call_event_context.event_type = V1EventTypes.WEBHOOK_EVENTS
 
@@ -196,24 +175,22 @@ class TestV1EventsIntegration:
             # Set the original event type in context
             sample_call_event_context.event_type = ACSEventTypes.CALL_CONNECTED
 
-            run_async(CallEventHandlers.handle_webhook_events(sample_call_event_context))
+            await CallEventHandlers.handle_webhook_events(sample_call_event_context)
 
             # Verify the specific handler was called
             mock_handle.assert_called_once_with(sample_call_event_context)
 
-    def test_acs_lifecycle_handler_event_emission(
+    async def test_acs_lifecycle_handler_event_emission(
         self, mock_acs_caller, mock_redis_mgr
     ):
         """Test that ACS lifecycle handler emits events correctly."""
         handler = ACSLifecycleHandler()
 
         with patch.object(handler, "_emit_call_event") as mock_emit:
-            result = run_async(
-                handler.start_outbound_call(
-                    acs_caller=mock_acs_caller,
-                    target_number="+1234567890",
-                    redis_mgr=mock_redis_mgr,
-                )
+            result = await handler.start_outbound_call(
+                acs_caller=mock_acs_caller,
+                target_number="+1234567890",
+                redis_mgr=mock_redis_mgr,
             )
 
             # Verify call was successful
@@ -228,7 +205,7 @@ class TestV1EventsIntegration:
             assert emit_args[1] == "test_call_123"  # call_connection_id
             assert emit_args[2]["target_number"] == "+1234567890"  # data
 
-    def test_process_call_events_delegation(self, mock_redis_mgr):
+    async def test_process_call_events_delegation(self, mock_redis_mgr):
         """Test that process_call_events delegates to V1 event system."""
         handler = ACSLifecycleHandler()
 
@@ -246,10 +223,8 @@ class TestV1EventsIntegration:
         ]
 
         with patch(
-            "apps.rtagent.backend.api.v1.events.get_call_event_processor"
-        ) as mock_get_processor, patch(
-            "apps.rtagent.backend.api.v1.events.register_default_handlers"
-        ):
+            "apps.rtagent.backend.api.v1.events.processor.get_call_event_processor"
+        ) as mock_get_processor:
             mock_processor = AsyncMock()
             mock_processor.process_events.return_value = {
                 "status": "success",
@@ -258,9 +233,7 @@ class TestV1EventsIntegration:
             }
             mock_get_processor.return_value = mock_processor
 
-            result = run_async(
-                handler.process_call_events(mock_events, mock_request)
-            )
+            result = await handler.process_call_events(mock_events, mock_request)
 
             # Verify delegation occurred
             assert result["status"] == "success"
@@ -268,9 +241,9 @@ class TestV1EventsIntegration:
             assert result["processed_events"] == 1
 
             # Verify processor was called
-            mock_processor.process_events.assert_awaited_once()
+            mock_processor.process_events.assert_called_once()
 
-    def test_event_context_data_extraction(self):
+    async def test_event_context_data_extraction(self):
         """Test event context data extraction methods."""
         # Test with dict data
         event = CloudEvent(
@@ -292,7 +265,7 @@ class TestV1EventsIntegration:
         assert context.get_event_field("field1") == "value1"
         assert context.get_event_field("nonexistent", "default") == "default"
 
-    def test_event_context_json_data_extraction(self):
+    async def test_event_context_json_data_extraction(self):
         """Test event context with JSON string data."""
         json_data = json.dumps({"callConnectionId": "test_123", "status": "connected"})
 
@@ -306,7 +279,7 @@ class TestV1EventsIntegration:
         assert data["callConnectionId"] == "test_123"
         assert data["status"] == "connected"
 
-    def test_processor_error_isolation(self):
+    async def test_processor_error_isolation(self):
         """Test that one failing handler doesn't stop others."""
         processor = CallEventProcessor()
 
@@ -332,13 +305,13 @@ class TestV1EventsIntegration:
         mock_state = MagicMock()
 
         # Process event - should not raise exception
-        result = run_async(processor.process_events([event], mock_state))
+        result = await processor.process_events([event], mock_state)
 
         # Should indicate partial success
         assert result["processed"] == 1  # One event processed
         assert "failed" in result or "status" in result  # Some indication of issues
 
-    def test_active_call_tracking(self):
+    async def test_active_call_tracking(self):
         """Test that processor tracks active calls correctly."""
         processor = CallEventProcessor()
 
@@ -352,7 +325,7 @@ class TestV1EventsIntegration:
             data={"callConnectionId": "test_123"},
         )
 
-        run_async(processor.process_events([connected_event], mock_state))
+        await processor.process_events([connected_event], mock_state)
 
         # Should track the active call
         active_calls = processor.get_active_calls()
@@ -365,7 +338,7 @@ class TestV1EventsIntegration:
             data={"callConnectionId": "test_123"},
         )
 
-        run_async(processor.process_events([disconnected_event], mock_state))
+        await processor.process_events([disconnected_event], mock_state)
 
         # Should no longer track the call
         active_calls = processor.get_active_calls()
@@ -380,7 +353,7 @@ class TestEndToEndIntegration:
         """Reset processor before each test."""
         reset_call_event_processor()
 
-    def test_outbound_call_flow(self):
+    async def test_outbound_call_flow(self):
         """Test complete outbound call flow through hybrid architecture."""
 
         # 1. Setup mocks
@@ -399,12 +372,10 @@ class TestEndToEndIntegration:
         handler = ACSLifecycleHandler()
 
         with patch.object(handler, "_emit_call_event") as mock_emit:
-            result = run_async(
-                handler.start_outbound_call(
-                    acs_caller=mock_acs_caller,
-                    target_number="+1234567890",
-                    redis_mgr=mock_redis_mgr,
-                )
+            result = await handler.start_outbound_call(
+                acs_caller=mock_acs_caller,
+                target_number="+1234567890",
+                redis_mgr=mock_redis_mgr,
             )
 
         # 4. Verify ACS operation succeeded
@@ -417,7 +388,7 @@ class TestEndToEndIntegration:
         assert emit_args[0] == "V1.Call.Initiated"
         assert emit_args[1] == "test_call_outbound"
 
-    def test_webhook_processing_flow(self):
+    async def test_webhook_processing_flow(self):
         """Test webhook event processing through the events system."""
 
         # 1. Register handlers
@@ -453,13 +424,13 @@ class TestEndToEndIntegration:
 
         processor = get_call_event_processor()
 
-        result = run_async(processor.process_events(webhook_events, mock_state))
+        result = await processor.process_events(webhook_events, mock_state)
 
         # 5. Verify processing
         assert result["processed"] == 2
         assert result["failed"] == 0
 
-    def test_error_handling_consistency(self):
+    async def test_error_handling_consistency(self):
         """Test that errors are handled consistently across the system."""
 
         # 1. Test ACS operation error
@@ -469,12 +440,10 @@ class TestEndToEndIntegration:
         handler = ACSLifecycleHandler()
 
         with pytest.raises(Exception):  # Should propagate as HTTPException
-            run_async(
-                handler.start_outbound_call(
-                    acs_caller=mock_acs_caller,
-                    target_number="+1234567890",
-                    redis_mgr=MagicMock(),
-                )
+            await handler.start_outbound_call(
+                acs_caller=mock_acs_caller,
+                target_number="+1234567890",
+                redis_mgr=MagicMock(),
             )
 
         # 2. Test event processing error
@@ -490,7 +459,7 @@ class TestEndToEndIntegration:
         processor = get_call_event_processor()
 
         # Should handle gracefully without raising
-        result = run_async(processor.process_events([bad_event], MagicMock()))
+        result = await processor.process_events([bad_event], MagicMock())
         assert "status" in result
 
 

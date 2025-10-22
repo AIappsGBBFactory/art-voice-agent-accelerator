@@ -8,10 +8,10 @@ os.environ.setdefault("DISABLE_CLOUD_TELEMETRY", "true")
 os.environ.pop("APPLICATIONINSIGHTS_CONNECTION_STRING", None)
 
 import asyncio
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
-
+import json
 import pytest
+from types import SimpleNamespace
+from unittest.mock import patch, AsyncMock
 
 from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
     DTMFValidationLifecycle,
@@ -21,122 +21,81 @@ from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
 class DummyMemo:
     def __init__(self):
         self._d = {}
-        self.persist_calls = 0
 
-    def get_context(self, key, default=None):
-        return self._d.get(key, default)
+    def get_context(self, k, default=None):
+        return self._d.get(k, default)
 
-    def set_context(self, key, value):
-        self._d[key] = value
+    def update_context(self, k, v):
+        self._d[k] = v
 
-    def update_context(self, key, value):
-        self._d[key] = value
+    def set_context(self, k, v):
+        self._d[k] = v
 
     async def persist_to_redis_async(self, redis_mgr):
-        self.persist_calls += 1
+        pass
 
 
-class DummyContext:
-    def __init__(self, event_data, memo_manager=None, redis_mgr=None, acs_caller=None):
-        self._event_data = event_data
-        self.memo_manager = memo_manager
-        self.redis_mgr = redis_mgr
-        self.acs_caller = acs_caller
-        self.call_connection_id = "call-123"
+class FakeAuthService:
+    def __init__(self, ok=True):
+        self.ok = ok
+        self.calls = []
 
-    def get_event_data(self):
-        return self._event_data
-
-
-class DummyRedis:
-    def __init__(self, result):
-        self._result = result
-
-    async def read_events_blocking_async(self, **kwargs):
-        return self._result
-
-
-def test_is_dtmf_validation_gate_open():
-    memo = DummyMemo()
-    memo.set_context("dtmf_validation_gate_open", True)
-
-    assert DTMFValidationLifecycle.is_dtmf_validation_gate_open(memo, "call")
-
-    memo.set_context("dtmf_validation_gate_open", False)
-    assert not DTMFValidationLifecycle.is_dtmf_validation_gate_open(memo, "call")
+    async def validate_pin(self, call_id, phone, pin):
+        self.calls.append((call_id, phone, pin))
+        # small delay to emulate I/O
+        await asyncio.sleep(0.01)
+        return {"ok": self.ok, "user_id": "u1"} if self.ok else {"ok": False}
 
 
 @pytest.mark.asyncio
-async def test_handle_dtmf_tone_received_updates_sequence():
+async def test_validate_sequence_success():
+    """Test successful DTMF sequence validation using centralized logic."""
     memo = DummyMemo()
-    redis_mgr = AsyncMock()
-    context = DummyContext(
-        {"tone": "5", "sequenceId": 1}, memo_manager=memo, redis_mgr=redis_mgr
+
+    context = SimpleNamespace(
+        call_connection_id="call-1",
+        memo_manager=memo,
+        redis_mgr=AsyncMock(),
+        clients=None,
+        acs_caller=None,
     )
 
-    await DTMFValidationLifecycle.handle_dtmf_tone_received(context)
-
-    assert memo.get_context("dtmf_tone") == "5"
-    assert memo.persist_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_handle_dtmf_tone_received_routes_to_validation_flow():
-    memo = DummyMemo()
-    memo.set_context("aws_connect_validation_pending", True)
-    context = DummyContext({"tone": "1", "sequenceId": 2}, memo_manager=memo)
-
+    # Mock the cancellation method to ensure it's not called on success
     with patch.object(
-        DTMFValidationLifecycle,
-        "_handle_aws_connect_validation_tone",
-        new=AsyncMock(),
-    ) as mock_handler:
-        await DTMFValidationLifecycle.handle_dtmf_tone_received(context)
+        DTMFValidationLifecycle, "_cancel_call_for_validation_failure"
+    ) as mock_cancel:
+        # Test a valid 4-digit sequence
+        await DTMFValidationLifecycle._validate_sequence(context, "1234")
 
-    mock_handler.assert_awaited_once()
+    # Assert success case
+    assert memo.get_context("dtmf_validated") is True
+    assert memo.get_context("entered_pin") == "1234"
+    assert memo.get_context("dtmf_validation_gate_open") is True
+    mock_cancel.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_setup_aws_connect_validation_flow_sets_context():
+async def test_validate_sequence_failure():
+    """Test failed DTMF sequence validation using centralized logic."""
     memo = DummyMemo()
-    redis_mgr = AsyncMock()
-    context = DummyContext({}, memo_manager=memo, redis_mgr=redis_mgr)
-    call_conn = MagicMock()
 
+    context = SimpleNamespace(
+        call_connection_id="call-2",
+        memo_manager=memo,
+        redis_mgr=AsyncMock(),
+        clients=None,
+        acs_caller=None,
+    )
+
+    # Mock the cancellation method to verify it's called on failure
     with patch.object(
-        DTMFValidationLifecycle,
-        "_start_dtmf_recognition",
-        new=AsyncMock(),
-    ) as mock_start:
-        await DTMFValidationLifecycle.setup_aws_connect_validation_flow(
-            context, call_conn
-        )
+        DTMFValidationLifecycle, "_cancel_call_for_validation_failure"
+    ) as mock_cancel:
+        # Test an invalid sequence (too short)
+        await DTMFValidationLifecycle._validate_sequence(context, "12")
 
-    assert memo.get_context("aws_connect_validation_pending") is True
-    assert memo.get_context("aws_connect_input_sequence") == ""
-    digits = memo.get_context("aws_connect_validation_digits")
-    assert isinstance(digits, str) and len(digits) == 3
-    assert memo.persist_calls == 1
-    mock_start.assert_awaited_once_with(context, call_conn)
-
-
-@pytest.mark.asyncio
-async def test_wait_for_dtmf_validation_completion_success():
-    redis_mgr = DummyRedis(result={"validation_status": "completed"})
-
-    result = await DTMFValidationLifecycle.wait_for_dtmf_validation_completion(
-        redis_mgr, "call-1"
-    )
-
-    assert result is True
-
-
-@pytest.mark.asyncio
-async def test_wait_for_dtmf_validation_completion_timeout():
-    redis_mgr = DummyRedis(result=None)
-
-    result = await DTMFValidationLifecycle.wait_for_dtmf_validation_completion(
-        redis_mgr, "call-1"
-    )
-
-    assert result is False
+    # Assert failure case
+    assert memo.get_context("dtmf_validated") is False
+    assert memo.get_context("entered_pin") is None
+    # Verify call cancellation was triggered
+    mock_cancel.assert_called_once_with(context)

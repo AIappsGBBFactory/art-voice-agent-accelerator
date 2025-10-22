@@ -19,7 +19,7 @@ import json
 import base64
 import threading
 import time
-from unittest.mock import Mock, MagicMock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock, patch
 
 
 # Test the basic functionality without complex logging
@@ -64,28 +64,26 @@ async def test_main_event_loop_basic():
     mock_websocket = Mock()
     mock_websocket.send_text = AsyncMock()
 
-    mock_route_turn_thread = MagicMock()
+    mock_route_turn_thread = Mock()
     mock_route_turn_thread.cancel_current_processing = AsyncMock()
 
     main_loop = MainEventLoop(mock_websocket, "test-call", mock_route_turn_thread)
 
     # Test barge-in handling
     await main_loop.handle_barge_in()
-    await asyncio.sleep(0.11)
 
-    # Verify WebSocket was called (stop audio command)
-    mock_websocket.send_text.assert_called()
+    # Verify cancel_current_processing was called instead of send_text
+    mock_route_turn_thread.cancel_current_processing.assert_called()
     print("✅ MainEventLoop basic test passed")
 
 
 class MockRecognizer:
-    """Simple mock recognizer that mirrors the current interface."""
+    """Simple mock recognizer."""
 
     def __init__(self):
         self.started = False
-        self.stopped = False
         self.callbacks = {}
-        self.push_stream = None
+        self.push_stream = Mock()  # Add mock push stream
 
     def set_partial_result_callback(self, callback):
         self.callbacks["partial"] = callback
@@ -96,20 +94,8 @@ class MockRecognizer:
     def set_cancel_callback(self, callback):
         self.callbacks["cancel"] = callback
 
-    def create_push_stream(self):
-        self.push_stream = object()
-
-    def prepare_stream(self):
-        self.push_stream = object()
-
-    def prepare_start(self):
-        self.push_stream = object()
-
     def start(self):
         self.started = True
-
-    def stop(self):
-        self.stopped = True
 
     def write_bytes(self, data):
         pass
@@ -130,6 +116,7 @@ def test_speech_sdk_thread_basic():
     # Mock logging to avoid OpenTelemetry issues
     with patch("apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
         thread = SpeechSDKThread(
+            call_connection_id="test-call",
             recognizer=recognizer,
             thread_bridge=bridge,
             barge_in_handler=barge_in_handler,
@@ -219,6 +206,7 @@ def test_callback_triggering():
 
     with patch("apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
         thread = SpeechSDKThread(
+            call_connection_id="test-call",
             recognizer=recognizer,
             thread_bridge=bridge,
             barge_in_handler=barge_in_handler,

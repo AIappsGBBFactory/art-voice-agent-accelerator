@@ -55,6 +55,18 @@ variable "cosmosdb_location" {
   default     = null
 }
 
+variable "cosmosdb_sku" {
+  description = "SKU for Azure Cosmos DB (MongoDB Cluster)"
+  type        = string
+  default     = "M30"
+}
+
+variable "cosmosdb_public_network_access_enabled" {
+  description = "Enable public network access for Cosmos DB (required for non-VNet deployments)"
+  type        = bool
+  default     = true
+}
+
 variable "principal_id" {
   description = "Principal ID of the user or service principal to assign application roles"
   type        = string
@@ -106,7 +118,7 @@ variable "enable_redis_ha" {
 variable "redis_sku" {
   description = "SKU for Azure Managed Redis (Enterprise) optimized for performance"
   type        = string
-  default     = "MemoryOptimized_M20"
+  default     = "MemoryOptimized_M10"
   validation {
     condition = contains([
       "MemoryOptimized_M10", "MemoryOptimized_M20", "MemoryOptimized_M50",
@@ -221,7 +233,7 @@ variable "container_memory_gb" {
 variable "aoai_pool_size" {
   description = "Size of the Azure OpenAI client pool for optimal performance"
   type        = number
-  default     = 5
+  default     = 50
   validation {
     condition     = var.aoai_pool_size >= 5 && var.aoai_pool_size <= 200
     error_message = "AOAI pool size must be between 5 and 200."
@@ -231,7 +243,7 @@ variable "aoai_pool_size" {
 variable "tts_pool_size" {
   description = "Size of the TTS client pool for optimal performance"
   type        = number
-  default     = 10
+  default     = 100
   validation {
     condition     = var.tts_pool_size >= 10 && var.tts_pool_size <= 500
     error_message = "TTS pool size must be between 10 and 500."
@@ -241,7 +253,7 @@ variable "tts_pool_size" {
 variable "stt_pool_size" {
   description = "Size of the STT client pool for optimal performance"
   type        = number
-  default     = 10
+  default     = 100
   validation {
     condition     = var.stt_pool_size >= 10 && var.stt_pool_size <= 500
     error_message = "STT pool size must be between 10 and 500."

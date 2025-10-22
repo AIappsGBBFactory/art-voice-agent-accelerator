@@ -1,5 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import "reactflow/dist/style.css";
+import BackendIndicator from './common/BackendIndicator';
+import HelpButton from './common/HelpButton';
+import ChatBubble from './chat/ChatBubble';
+import WaveformVisualization from './visualizations/WaveformVisualization';
+import { insertGlobalStyles, styles } from './AppStyles';
+import { createNewSessionId, getOrCreateSessionId } from '../utils/session';
 
 // Environment configuration
 const backendPlaceholder = '__BACKEND_URL__';
@@ -8,1961 +14,890 @@ const API_BASE_URL = backendPlaceholder.startsWith('__')
   : backendPlaceholder;
 
 const WS_URL = API_BASE_URL.replace(/^https?/, "wss");
+const DEFAULT_TTS_SAMPLE_RATE = 16000;
 
-// Session management utilities
-const getOrCreateSessionId = () => {
-  const sessionKey = 'voice_agent_session_id';
-  let sessionId = sessionStorage.getItem(sessionKey);
-  
-  if (!sessionId) {
-    const tabId = Math.random().toString(36).substr(2, 6);
-    sessionId = `session_${Date.now()}_${tabId}`;
-    sessionStorage.setItem(sessionKey, sessionId);
-    console.log('Created NEW tab-specific session ID:', sessionId);
-  } else {
-    console.log('Retrieved existing tab session ID:', sessionId);
+const resampleToSampleRate = (input, sourceRate, targetRate) => {
+  if (!input || input.length === 0 || !Number.isFinite(sourceRate) || !Number.isFinite(targetRate) || sourceRate <= 0 || targetRate <= 0 || sourceRate === targetRate) {
+    return input;
   }
-  
-  return sessionId;
+  const ratio = targetRate / sourceRate;
+  const outputLength = Math.max(1, Math.round(input.length * ratio));
+  const output = new Float32Array(outputLength);
+  for (let i = 0; i < outputLength; i++) {
+    const index = i / ratio;
+    const i0 = Math.floor(index);
+    const i1 = Math.min(i0 + 1, input.length - 1);
+    const weight = index - i0;
+    output[i] = input[i0] * (1 - weight) + input[i1] * weight;
+  }
+  return output;
 };
 
-const createNewSessionId = () => {
-  const sessionKey = 'voice_agent_session_id';
-  const tabId = Math.random().toString(36).substr(2, 6);
-  const sessionId = `session_${Date.now()}_${tabId}`;
-  sessionStorage.setItem(sessionKey, sessionId);
-  console.log('Created NEW session ID for reset:', sessionId);
-  return sessionId;
-};
-
-// Component styles
-const styles = {
-  root: {
-    width: "768px",
-    maxWidth: "768px",
-    fontFamily: "Segoe UI, Roboto, sans-serif",
-    background: "transparent",
-    minHeight: "100vh",
-    display: "flex",
-    flexDirection: "column",
-    color: "#1e293b",
-    position: "relative",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "8px",
-    border: "0px solid #0e4bf3ff",
-  },
-  
-  mainContainer: {
-    width: "100%",
-    maxWidth: "100%",
-    height: "90vh",
-    maxHeight: "900px",
-    background: "white",
-    borderRadius: "20px",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-    border: "0px solid #ce1010ff",
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-  },
-
-  appHeader: {
-    backgroundColor: "#f8fafc",
-    background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
-    padding: "16px 24px 12px 24px",
-    borderBottom: "1px solid #e2e8f0",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
-
-  appTitleContainer: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "4px",
-  },
-
-  appTitleWrapper: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-  },
-
-  appTitleIcon: {
-    fontSize: "20px",
-    opacity: 0.7,
-  },
-
-  appTitle: {
-    fontSize: "18px",
-    fontWeight: "600",
-    color: "#334155",
-    textAlign: "center",
-    margin: 0,
-    letterSpacing: "0.1px",
-  },
-
-  appSubtitle: {
-    fontSize: "12px",
-    fontWeight: "400",
-    color: "#64748b",
-    textAlign: "center",
-    margin: 0,
-    letterSpacing: "0.1px",
-    maxWidth: "350px",
-    lineHeight: "1.3",
-    opacity: 0.8,
-  },
-  waveformSection: {
-    backgroundColor: "#f1f5f9",
-    background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
-    padding: "12px 4px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    borderBottom: "1px solid #e2e8f0",
-    height: "22%",
-    minHeight: "90px",
-    position: "relative",
-  },
-  
-  waveformSectionTitle: {
-    fontSize: "12px",
-    fontWeight: "500",
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: "0.5px",
-    marginBottom: "8px",
-    opacity: 0.8,
-  },
-  
-  // Section divider line - more subtle
-  sectionDivider: {
-    position: "absolute",
-    bottom: "-1px",
-    left: "20%",
-    right: "20%",
-    height: "1px",
-    backgroundColor: "#cbd5e1",
-    borderRadius: "0.5px",
-    opacity: 0.6,
-  },
-  
-  waveformContainer: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    height: "60%",
-    padding: "0 10px",
-    background: "radial-gradient(ellipse at center, rgba(100, 116, 139, 0.05) 0%, transparent 70%)",
-    borderRadius: "6px",
-  },
-  
-  waveformSvg: {
-    width: "100%",
-    height: "60px",
-    filter: "drop-shadow(0 1px 2px rgba(100, 116, 139, 0.1))",
-    transition: "filter 0.3s ease",
-  },
-  
-  chatSection: {
-    flex: 1,
-    padding: "15px 20px 15px 5px",
-    width: "100%",
-    overflowY: "auto",
-    backgroundColor: "#ffffff",
-    borderBottom: "1px solid #e2e8f0",
-    display: "flex",
-    flexDirection: "column",
-    position: "relative",
-  },
-  
-  chatSectionHeader: {
-    textAlign: "center",
-    marginBottom: "30px",
-    paddingBottom: "20px",
-    borderBottom: "1px solid #f1f5f9",
-  },
-  
-  chatSectionTitle: {
-    fontSize: "14px",
-    fontWeight: "600",
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: "0.5px",
-    marginBottom: "5px",
-  },
-  
-  chatSectionSubtitle: {
-    fontSize: "12px",
-    color: "#94a3b8",
-    fontStyle: "italic",
-  },
-  
-  // Chat section visual indicator
-  chatSectionIndicator: {
-    position: "absolute",
-    left: "0",
-    top: "0",
-    bottom: "0",
-    width: "0px",
-    backgroundColor: "#3b82f6",
-  },
-  
-  messageContainer: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "16px",
-    flex: 1,
-    overflowY: "auto",
-    padding: "0",
-  },
-  
-  userMessage: {
-    alignSelf: "flex-end",
-    maxWidth: "75%",
-    marginRight: "15px",
-    marginBottom: "4px",
-  },
-  
-  userBubble: {
-    background: "#e0f2fe",
-    color: "#0f172a",
-    padding: "12px 16px",
-    borderRadius: "20px",
-    fontSize: "14px",
-    lineHeight: "1.5",
-    border: "1px solid #bae6fd",
-    boxShadow: "0 2px 8px rgba(14,165,233,0.15)",
-    wordWrap: "break-word",
-    overflowWrap: "break-word",
-    hyphens: "auto",
-    whiteSpace: "pre-wrap",
-  },
-  
-  // Assistant message (left aligned - teal bubble)
-  assistantMessage: {
-    alignSelf: "flex-start",
-    maxWidth: "80%", // Increased width for maximum space usage
-    marginLeft: "0px", // No left margin - flush to edge
-    marginBottom: "4px",
-  },
-  
-  assistantBubble: {
-    background: "#67d8ef",
-    color: "white",
-    padding: "12px 16px",
-    borderRadius: "20px",
-    fontSize: "14px",
-    lineHeight: "1.5",
-    boxShadow: "0 2px 8px rgba(103,216,239,0.3)",
-    wordWrap: "break-word",
-    overflowWrap: "break-word",
-    hyphens: "auto",
-    whiteSpace: "pre-wrap",
-  },
-  
-  // Agent name label (appears above specialist bubbles)
-  agentNameLabel: {
-    fontSize: "10px",
-    fontWeight: "400",
-    color: "#64748b",
-    opacity: 0.7,
-    marginBottom: "2px",
-    marginLeft: "8px",
-    letterSpacing: "0.5px",
-    textTransform: "none",
-    fontStyle: "italic",
-  },
-  
-  // Control section - blended footer design
-  controlSection: {
-    padding: "12px",
-    backgroundColor: "#f1f5f9",
-    background: "linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    height: "15%",
-    minHeight: "100px",
-    borderTop: "1px solid #e2e8f0",
-    position: "relative",
-  },
-  
-  controlContainer: {
-    display: "flex",
-    gap: "8px",
-    background: "white",
-    padding: "12px 16px",
-    borderRadius: "24px",
-    boxShadow: "0 4px 16px rgba(100, 116, 139, 0.08), 0 1px 4px rgba(100, 116, 139, 0.04)",
-    border: "1px solid #e2e8f0",
-    width: "fit-content",
-  },
-  
-  controlButton: (isActive, variant = 'default') => {
-    // Base styles for all buttons
-    return {
-      width: "56px",
-      height: "56px",
-      borderRadius: "50%",
-      border: "none",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      cursor: "pointer",
-      fontSize: "20px",
-      transition: "all 0.3s ease",
-      position: "relative",
-      background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-      color: isActive ? "#10b981" : "#64748b",
-      transform: isActive ? "scale(1.05)" : "scale(1)",
-      boxShadow: isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
-        "0 2px 8px rgba(0,0,0,0.08)",
-    };
-  },
-
-  // Enhanced button styles with hover effects
-  resetButton: (isActive, isHovered) => ({
-    width: "56px",
-    height: "56px",
-    borderRadius: "50%",
-    border: "none",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    fontSize: "20px",
-    transition: "all 0.3s ease",
-    position: "relative",
-    background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-    color: isActive ? "#10b981" : "#64748b",
-    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
-    boxShadow: isHovered ? 
-      "0 8px 24px rgba(100,116,139,0.3), 0 0 0 3px rgba(100,116,139,0.15)" :
-      (isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
-        "0 2px 8px rgba(0,0,0,0.08)"),
-  }),
-
-  micButton: (isActive, isHovered) => ({
-    width: "56px",
-    height: "56px",
-    borderRadius: "50%",
-    border: "none",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    fontSize: "20px",
-    transition: "all 0.3s ease",
-    position: "relative",
-    background: isHovered ? 
-      (isActive ? "linear-gradient(135deg, #10b981, #059669)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
-      "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-    color: isHovered ? 
-      (isActive ? "white" : "#16a34a") :
-      (isActive ? "#10b981" : "#64748b"),
-    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
-    boxShadow: isHovered ? 
-      "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
-      (isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
-        "0 2px 8px rgba(0,0,0,0.08)"),
-  }),
-
-  phoneButton: (isActive, isHovered) => ({
-    width: "56px",
-    height: "56px",
-    borderRadius: "50%",
-    border: "none",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    fontSize: "20px",
-    transition: "all 0.3s ease",
-    position: "relative",
-    background: isHovered ? 
-      (isActive ? "linear-gradient(135deg, #3f75a8ff, #2b5d8f)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
-      "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-    color: isHovered ? 
-      (isActive ? "white" : "#3f75a8ff") :
-      (isActive ? "#3f75a8ff" : "#64748b"),
-    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
-    boxShadow: isHovered ? 
-      "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
-      (isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
-        "0 2px 8px rgba(0,0,0,0.08)"),
-  }),
-
-  // Tooltip styles
-  buttonTooltip: {
-    position: 'absolute',
-    bottom: '-45px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    background: 'rgba(51, 65, 85, 0.95)',
-    color: '#f1f5f9',
-    padding: '8px 12px',
-    borderRadius: '8px',
-    fontSize: '11px',
-    fontWeight: '500',
-    whiteSpace: 'nowrap',
-    backdropFilter: 'blur(10px)',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    pointerEvents: 'none',
-    opacity: 0,
-    transition: 'opacity 0.2s ease, transform 0.2s ease',
-    zIndex: 1000,
-  },
-
-  buttonTooltipVisible: {
-    opacity: 1,
-    transform: 'translateX(-50%) translateY(-2px)',
-  },
-  
-  // Input section for phone calls
-  phoneInputSection: {
-    position: "absolute",
-    bottom: "60px", // Moved lower from 140px to 60px to avoid blocking chat bubbles
-    left: "500px", // Moved further to the right from 400px to 500px
-    background: "white",
-    padding: "20px",
-    borderRadius: "20px", // More rounded - changed from 16px to 20px
-    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-    border: "1px solid #e2e8f0",
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
-    minWidth: "240px",
-    zIndex: 90,
-  },
-  
-  phoneInput: {
-    padding: "12px 16px",
-    border: "1px solid #d1d5db",
-    borderRadius: "12px", // More rounded - changed from 8px to 12px
-    fontSize: "14px",
-    outline: "none",
-    transition: "border-color 0.2s ease, box-shadow 0.2s ease",
-    "&:focus": {
-      borderColor: "#10b981",
-      boxShadow: "0 0 0 3px rgba(16,185,129,0.1)"
-    }
-  },
-  
-
-  // Backend status indicator - enhanced for component health - relocated to bottom left
-  backendIndicator: {
-    position: "fixed",
-    bottom: "20px",
-    left: "20px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-    padding: "12px 16px",
-    backgroundColor: "rgba(255, 255, 255, 0.98)",
-    border: "1px solid #e2e8f0",
-    borderRadius: "12px",
-    fontSize: "11px",
-    color: "#64748b",
-    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-    zIndex: 1000,
-    minWidth: "280px",
-    maxWidth: "320px",
-    backdropFilter: "blur(8px)",
-  },
-
-  backendHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    marginBottom: "4px",
-    cursor: "pointer",
-  },
-
-  backendStatus: {
-    width: "8px",
-    height: "8px",
-    borderRadius: "50%",
-    backgroundColor: "#10b981",
-    animation: "pulse 2s ease-in-out infinite",
-    flexShrink: 0,
-  },
-
-  backendUrl: {
-    fontFamily: "monospace",
-    fontSize: "10px",
-    color: "#475569",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-
-  backendLabel: {
-    fontWeight: "600",
-    color: "#334155",
-    fontSize: "12px",
-    letterSpacing: "0.3px",
-  },
-
-  expandIcon: {
-    marginLeft: "auto",
-    fontSize: "12px",
-    color: "#94a3b8",
-    transition: "transform 0.2s ease",
-  },
-
-  componentGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr",
-    gap: "6px", // Reduced from 12px to half
-    marginTop: "6px", // Reduced from 12px to half
-    paddingTop: "6px", // Reduced from 12px to half
-    borderTop: "1px solid #f1f5f9",
-  },
-
-  componentItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: "4px", // Reduced from 8px to half
-    padding: "5px 7px", // Reduced from 10px 14px to half
-    backgroundColor: "#f8fafc",
-    borderRadius: "5px", // Reduced from 10px to half
-    fontSize: "9px", // Reduced from 11px
-    border: "1px solid #e2e8f0",
-    transition: "all 0.2s ease",
-    minHeight: "22px", // Reduced from 45px to half
-  },
-
-  componentDot: (status) => ({
-    width: "4px", // Reduced from 8px to half
-    height: "4px", // Reduced from 8px to half
-    borderRadius: "50%",
-    backgroundColor: status === "healthy" ? "#10b981" : 
-                     status === "degraded" ? "#f59e0b" : 
-                     status === "unhealthy" ? "#ef4444" : "#6b7280",
-    flexShrink: 0,
-  }),
-
-  componentName: {
-    fontWeight: "500",
-    color: "#475569",
-    textTransform: "capitalize",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    fontSize: "9px", // Reduced from 11px
-    letterSpacing: "0.01em", // Reduced letter spacing
-  },
-
-  responseTime: {
-    fontSize: "8px", // Reduced from 10px
-    color: "#94a3b8",
-    marginLeft: "auto",
-  },
-
-  errorMessage: {
-    fontSize: "10px",
-    color: "#ef4444",
-    marginTop: "4px",
-    fontStyle: "italic",
-  },
-
-  // Call Me button style (rectangular box)
-  callMeButton: (isActive) => ({
-    padding: "12px 24px",
-    background: isActive ? "#ef4444" : "#67d8ef",
-    color: "white",
-    border: "none",
-    borderRadius: "8px", // More box-like - less rounded
-    cursor: "pointer",
-    fontSize: "14px",
-    fontWeight: "600",
-    transition: "all 0.2s ease",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-    minWidth: "120px", // Ensure consistent width
-  }),
-
-  // Help button in top right corner
-  helpButton: {
-    position: "absolute",
-    top: "16px",
-    right: "16px",
-    width: "32px",
-    height: "32px",
-    borderRadius: "50%",
-    border: "1px solid #e2e8f0",
-    background: "#f8fafc",
-    color: "#64748b",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "14px",
-    transition: "all 0.2s ease",
-    zIndex: 1000,
-    boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-  },
-
-  helpButtonHover: {
-    background: "#f1f5f9",
-    color: "#334155",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-    transform: "scale(1.05)",
-  },
-
-  helpTooltip: {
-    position: "absolute",
-    top: "40px",
-    right: "0px",
-    background: "white",
-    border: "1px solid #e2e8f0",
-    borderRadius: "12px",
-    padding: "16px",
-    width: "280px",
-    boxShadow: "0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)",
-    fontSize: "12px",
-    lineHeight: "1.5",
-    color: "#334155",
-    zIndex: 1001,
-    opacity: 0,
-    transform: "translateY(-8px)",
-    pointerEvents: "none",
-    transition: "all 0.2s ease",
-  },
-
-  helpTooltipVisible: {
-    opacity: 1,
-    transform: "translateY(0px)",
-    pointerEvents: "auto",
-  },
-
-  helpTooltipTitle: {
-    fontSize: "13px",
-    fontWeight: "600",
-    color: "#1e293b",
-    marginBottom: "8px",
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-  },
-
-  helpTooltipText: {
-    marginBottom: "12px",
-    color: "#64748b",
-  },
-
-  helpTooltipContact: {
-    fontSize: "11px",
-    color: "#67d8ef",
-    fontFamily: "monospace",
-    background: "#f8fafc",
-    padding: "4px 8px",
-    borderRadius: "6px",
-    border: "1px solid #e2e8f0",
-  },
-};
-// Add keyframe animation for pulse effect
-const styleSheet = document.createElement("style");
-styleSheet.textContent = `
-  @keyframes pulse {
-    0% {
-      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
-    }
-    70% {
-      box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
-    }
-    100% {
-      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+const applyFadeEnvelope = (buffer, fadeInSamples = 0, fadeOutSamples = 0) => {
+  if (!buffer || typeof buffer.length !== "number" || buffer.length === 0) {
+    return buffer;
+  }
+  const length = buffer.length;
+  if (fadeInSamples > 0) {
+    const limit = Math.min(fadeInSamples, length);
+    for (let i = 0; i < limit; i++) {
+      const ratio = limit > 1 ? i / (limit - 1) : 1;
+      buffer[i] = buffer[i] * ratio;
     }
   }
-`;
-document.head.appendChild(styleSheet);
-
-/* ------------------------------------------------------------------ *
- *  BACKEND HELP BUTTON COMPONENT
- * ------------------------------------------------------------------ */
-const BackendHelpButton = () => {
-  const [isHovered, setIsHovered] = useState(false);
-  const [isClicked, setIsClicked] = useState(false);
-
-  const handleClick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsClicked(!isClicked);
-  };
-
-  const handleMouseLeave = () => {
-    setIsHovered(false);
-  };
-
-  return (
-    <div 
-      style={{
-        width: '14px',
-        height: '14px',
-        borderRadius: '50%',
-        backgroundColor: isHovered ? '#3b82f6' : '#64748b',
-        color: 'white',
-        fontSize: '9px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        transition: 'all 0.2s ease',
-        fontWeight: '600',
-        position: 'relative',
-        flexShrink: 0
-      }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={handleMouseLeave}
-      onClick={handleClick}
-    >
-      ?
-      <div style={{
-        visibility: (isHovered || isClicked) ? 'visible' : 'hidden',
-        opacity: (isHovered || isClicked) ? 1 : 0,
-        position: 'absolute',
-        bottom: '20px',
-        left: '0',
-        backgroundColor: 'rgba(0, 0, 0, 0.95)',
-        color: 'white',
-        padding: '12px',
-        borderRadius: '8px',
-        fontSize: '11px',
-        lineHeight: '1.4',
-        minWidth: '280px',
-        maxWidth: '320px',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-        zIndex: 10000,
-        transition: 'all 0.2s ease',
-        backdropFilter: 'blur(8px)'
-      }}>
-        <div style={{
-          fontSize: '12px',
-          fontWeight: '600',
-          color: '#67d8ef',
-          marginBottom: '8px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px'
-        }}>
-          🔧 Backend Status Monitor
-        </div>
-        <div style={{ marginBottom: '8px' }}>
-          Real-time health monitoring for all ARTAgent backend services including Redis cache, Azure OpenAI, Speech Services, and Communication Services.
-        </div>
-        <div style={{ marginBottom: '8px' }}>
-          <strong>Status Colors:</strong><br/>
-          🟢 Healthy - All systems operational<br/>
-          🟡 Degraded - Some performance issues<br/>
-          🔴 Unhealthy - Service disruption
-        </div>
-        <div style={{ fontSize: '10px', color: '#94a3b8', fontStyle: 'italic' }}>
-          Auto-refreshes every 30 seconds • Click to expand for details
-        </div>
-        {isClicked && (
-          <div style={{
-            textAlign: 'center',
-            marginTop: '8px',
-            fontSize: '9px',
-            color: '#94a3b8',
-            fontStyle: 'italic'
-          }}>
-            Click ? again to close
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-/* ------------------------------------------------------------------ *
- *  BACKEND STATISTICS BUTTON COMPONENT
- * ------------------------------------------------------------------ */
-const BackendStatisticsButton = ({ onToggle, isActive }) => {
-  const [isHovered, setIsHovered] = useState(false);
-
-  const handleClick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onToggle();
-  };
-
-  return (
-    <div 
-      style={{
-        width: '14px',
-        height: '14px',
-        borderRadius: '50%',
-        backgroundColor: isActive ? '#3b82f6' : (isHovered ? '#3b82f6' : '#64748b'),
-        color: 'white',
-        fontSize: '8px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        transition: 'all 0.2s ease',
-        fontWeight: '600',
-        position: 'relative',
-        flexShrink: 0
-      }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onClick={handleClick}
-      title="Toggle session statistics"
-    >
-      📊
-    </div>
-  );
-};
-
-/* ------------------------------------------------------------------ *
- *  HELP BUTTON COMPONENT
- * ------------------------------------------------------------------ */
-const HelpButton = () => {
-  const [isHovered, setIsHovered] = useState(false);
-  const [isClicked, setIsClicked] = useState(false);
-
-  const handleClick = (e) => {
-    // Don't prevent default for links
-    if (e.target.tagName !== 'A') {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsClicked(!isClicked);
+  if (fadeOutSamples > 0) {
+    const limit = Math.min(fadeOutSamples, length);
+    const start = length - limit;
+    for (let i = 0; i < limit; i++) {
+      const ratio = limit > 1 ? (limit - 1 - i) / (limit - 1) : 0;
+      const idx = start + i;
+      buffer[idx] = buffer[idx] * ratio;
     }
-  };
-
-  const handleMouseLeave = () => {
-    setIsHovered(false);
-    // Only hide if not clicked
-    if (!isClicked) {
-      // Tooltip will hide via CSS
-    }
-  };
-
-  return (
-    <div 
-      style={{
-        ...styles.helpButton,
-        ...(isHovered ? styles.helpButtonHover : {})
-      }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={handleMouseLeave}
-      onClick={handleClick}
-    >
-      ?
-      <div style={{
-        ...styles.helpTooltip,
-        ...((isHovered || isClicked) ? styles.helpTooltipVisible : {})
-      }}>
-        <div style={styles.helpTooltipTitle}>
-        </div>
-        <div style={{
-          ...styles.helpTooltipText,
-          color: '#dc2626',
-          fontWeight: '600',
-          fontSize: '12px',
-          marginBottom: '12px',
-          padding: '8px',
-          backgroundColor: '#fef2f2',
-          borderRadius: '4px',
-          border: '1px solid #fecaca'
-        }}>
-          This is a demo available for Microsoft employees only.
-        </div>
-        <div style={styles.helpTooltipTitle}>
-          🤖 ARTAgent Demo
-        </div>
-        <div style={styles.helpTooltipText}>
-          ARTAgent is an accelerator that delivers a friction-free, AI-driven voice experience—whether callers dial a phone number, speak to an IVR, or click "Call Me" in a web app. Built entirely on Azure services, it provides a low-latency stack that scales on demand while keeping the AI layer fully under your control.
-        </div>
-        <div style={styles.helpTooltipText}>
-          Design a single agent or orchestrate multiple specialist agents. The framework allows you to build your voice agent from scratch, incorporate memory, configure actions, and fine-tune your TTS and STT layers.
-        </div>
-        <div style={styles.helpTooltipText}>
-          🤔 <strong>Try asking about:</strong> Insurance claims, policy questions, authentication, or general inquiries.
-        </div>
-        <div style={styles.helpTooltipText}>
-         📑 <a 
-            href="https://microsoft.sharepoint.com/teams/rtaudioagent" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            style={{
-              color: '#3b82f6',
-              textDecoration: 'underline'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            Visit the Project Hub
-          </a> for instructions, deep dives and more.
-        </div>
-        <div style={styles.helpTooltipText}>
-          📧 Questions or feedback? <a 
-            href="mailto:rtvoiceagent@microsoft.com?subject=ARTAgent Feedback"
-            style={{
-              color: '#3b82f6',
-              textDecoration: 'underline'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            Contact the team
-          </a>
-        </div>
-        {isClicked && (
-          <div style={{
-            textAlign: 'center',
-            marginTop: '8px',
-            fontSize: '10px',
-            color: '#64748b',
-            fontStyle: 'italic'
-          }}>
-            Click ? again to close
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-/* ------------------------------------------------------------------ *
- *  ENHANCED BACKEND INDICATOR WITH HEALTH MONITORING & AGENT CONFIG
- * ------------------------------------------------------------------ */
-const BackendIndicator = ({ url, onConfigureClick }) => {
-  const [isConnected, setIsConnected] = useState(null);
-  const [displayUrl, setDisplayUrl] = useState(url);
-  const [readinessData, setReadinessData] = useState(null);
-  const [agentsData, setAgentsData] = useState(null);
-  const [error, setError] = useState(null);
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [isClickedOpen, setIsClickedOpen] = useState(false);
-  const [showComponentDetails, setShowComponentDetails] = useState(false);
-  const [screenWidth, setScreenWidth] = useState(window.innerWidth);
-  const [showAgentConfig, setShowAgentConfig] = useState(false);
-  const [selectedAgent, setSelectedAgent] = useState(null);
-  const [configChanges, setConfigChanges] = useState({});
-  const [updateStatus, setUpdateStatus] = useState({});
-  const [showStatistics, setShowStatistics] = useState(false);
-
-  // Track screen width for responsive positioning
-  useEffect(() => {
-    const handleResize = () => setScreenWidth(window.innerWidth);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  // Check readiness endpoint
-  const checkReadiness = async () => {
-    try {
-      const response = await fetch(`${url}/api/v1/readiness`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // Validate expected structure
-      if (data.status && data.checks && Array.isArray(data.checks)) {
-        setReadinessData(data);
-        setIsConnected(data.status === "ready");
-        setError(null);
-      } else {
-        throw new Error("Invalid response structure");
-      }
-    } catch (err) {
-      console.error("Readiness check failed:", err);
-      setIsConnected(false);
-      setError(err.message);
-      setReadinessData(null);
-    }
-  };
-
-  // Check agents endpoint
-  const checkAgents = async () => {
-    try {
-      const response = await fetch(`${url}/api/v1/agents`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.status === "success" && data.agents && Array.isArray(data.agents)) {
-        setAgentsData(data);
-      } else {
-        throw new Error("Invalid agents response structure");
-      }
-    } catch (err) {
-      console.error("Agents check failed:", err);
-      setAgentsData(null);
-    }
-  };
-
-  // Check health endpoint for session statistics
-  const [healthData, setHealthData] = useState(null);
-  const checkHealth = async () => {
-    try {
-      const response = await fetch(`${url}/api/v1/health`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.status) {
-        setHealthData(data);
-      } else {
-        throw new Error("Invalid health response structure");
-      }
-    } catch (err) {
-      console.error("Health check failed:", err);
-      setHealthData(null);
-    }
-  };
-
-  // Update agent configuration
-  const updateAgentConfig = async (agentName, config) => {
-    try {
-      setUpdateStatus({...updateStatus, [agentName]: 'updating'});
-      
-      const response = await fetch(`${url}/api/v1/agents/${agentName}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(config),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      setUpdateStatus({...updateStatus, [agentName]: 'success'});
-      
-      // Refresh agents data
-      checkAgents();
-      
-      // Clear success status after 3 seconds
-      setTimeout(() => {
-        setUpdateStatus(prev => {
-          const newStatus = {...prev};
-          delete newStatus[agentName];
-          return newStatus;
-        });
-      }, 3000);
-      
-      return data;
-    } catch (err) {
-      console.error("Agent config update failed:", err);
-      setUpdateStatus({...updateStatus, [agentName]: 'error'});
-      
-      // Clear error status after 5 seconds
-      setTimeout(() => {
-        setUpdateStatus(prev => {
-          const newStatus = {...prev};
-          delete newStatus[agentName];
-          return newStatus;
-        });
-      }, 5000);
-      
-      throw err;
-    }
-  };
-
-  useEffect(() => {
-    // Parse and format the URL for display
-    try {
-      const urlObj = new URL(url);
-      const host = urlObj.hostname;
-      const protocol = urlObj.protocol.replace(':', '');
-      
-      // Shorten Azure URLs
-      if (host.includes('.azurewebsites.net')) {
-        const appName = host.split('.')[0];
-        setDisplayUrl(`${protocol}://${appName}.azure...`);
-      } else if (host === 'localhost') {
-        setDisplayUrl(`${protocol}://localhost:${urlObj.port || '8000'}`);
-      } else {
-        setDisplayUrl(`${protocol}://${host}`);
-      }
-    } catch (e) {
-      setDisplayUrl(url);
-    }
-
-    // Initial check
-    checkReadiness();
-    checkAgents();
-    checkHealth();
-
-    // Set up periodic checks every 30 seconds
-    const interval = setInterval(() => {
-      checkReadiness();
-      checkAgents();
-      checkHealth();
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [url]);
-
-  // Get overall health status
-  const getOverallStatus = () => {
-    if (isConnected === null) return "checking";
-    if (!isConnected) return "unhealthy";
-    if (!readinessData?.checks) return "unhealthy";
-    
-    const hasUnhealthy = readinessData.checks.some(c => c.status === "unhealthy");
-    const hasDegraded = readinessData.checks.some(c => c.status === "degraded");
-    
-    if (hasUnhealthy) return "unhealthy";
-    if (hasDegraded) return "degraded";
-    return "healthy";
-  };
-
-  const overallStatus = getOverallStatus();
-  const statusColor = overallStatus === "healthy" ? "#10b981" : 
-                     overallStatus === "degraded" ? "#f59e0b" :
-                     overallStatus === "unhealthy" ? "#ef4444" : "#6b7280";
-
-  // Dynamic sizing based on screen width - keep in bottom left but adjust size to maintain separation
-  const getResponsiveStyle = () => {
-    const baseStyle = {
-      ...styles.backendIndicator,
-      transition: "all 0.3s ease",
-    };
-
-    // Calculate available space for the status box to avoid ARTAgent overlap
-    const containerWidth = 768;
-    const containerLeftEdge = (screenWidth / 2) - (containerWidth / 2);
-    const availableWidth = containerLeftEdge - 40 - 20; // 40px margin from container, 20px from screen edge
-    
-    // Adjust size based on available space
-    if (availableWidth < 200) {
-      // Very narrow - compact size
-      return {
-        ...baseStyle,
-        minWidth: "150px",
-        maxWidth: "180px",
-        padding: !shouldBeExpanded && overallStatus === "healthy" ? "8px 12px" : "10px 14px",
-        fontSize: "10px",
-      };
-    } else if (availableWidth < 280) {
-      // Medium space - reduced size
-      return {
-        ...baseStyle,
-        minWidth: "180px",
-        maxWidth: "250px",
-        padding: !shouldBeExpanded && overallStatus === "healthy" ? "10px 14px" : "12px 16px",
-      };
-    } else {
-      // Plenty of space - full size
-      return {
-        ...baseStyle,
-        minWidth: !shouldBeExpanded && overallStatus === "healthy" ? "200px" : "280px",
-        maxWidth: "320px",
-        padding: !shouldBeExpanded && overallStatus === "healthy" ? "10px 14px" : "12px 16px",
-      };
-    }
-  };
-
-  // Component icon mapping with descriptions
-  const componentIcons = {
-    redis: "💾",
-    azure_openai: "🧠",
-    speech_services: "🎙️",
-    acs_caller: "📞",
-    rt_agents: "🤖"
-  };
-
-  // Component descriptions
-  const componentDescriptions = {
-    redis: "Redis Cache - Session & state management",
-    azure_openai: "Azure OpenAI - GPT models & embeddings",
-    speech_services: "Speech Services - STT/TTS processing",
-    acs_caller: "Communication Services - Voice calling",
-    rt_agents: "RT Agents - Real-time Voice Agents"
-  };
-
-  const handleBackendClick = (e) => {
-    // Don't trigger if clicking on buttons
-    if (e.target.closest('div')?.style?.cursor === 'pointer' && e.target !== e.currentTarget) {
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    setIsClickedOpen(!isClickedOpen);
-    if (!isClickedOpen) {
-      setIsExpanded(true);
-    }
-  };
-
-  const handleMouseEnter = () => {
-    if (!isClickedOpen) {
-      setIsExpanded(true);
-    }
-  };
-
-  const handleMouseLeave = () => {
-    if (!isClickedOpen) {
-      setIsExpanded(false);
-    }
-  };
-
-  // Determine if should be expanded (either clicked open or hovered)
-  const shouldBeExpanded = isClickedOpen || isExpanded;
-
-  return (
-    <div 
-      style={getResponsiveStyle()} 
-      title={isClickedOpen ? `Click to close backend status` : `Click to pin open backend status`}
-      onClick={handleBackendClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
-      <div style={styles.backendHeader}>
-        <div style={{
-          ...styles.backendStatus,
-          backgroundColor: statusColor,
-        }}></div>
-        <span style={styles.backendLabel}>Backend Status</span>
-        <BackendHelpButton />
-        <span style={{
-          ...styles.expandIcon,
-          transform: shouldBeExpanded ? "rotate(180deg)" : "rotate(0deg)",
-          color: isClickedOpen ? "#3b82f6" : styles.expandIcon.color,
-          fontWeight: isClickedOpen ? "600" : "normal",
-        }}>▼</span>
-      </div>
-      
-      {/* Compact URL display when collapsed */}
-      {!shouldBeExpanded && (
-        <div style={{
-          ...styles.backendUrl,
-          fontSize: "9px",
-          opacity: 0.7,
-          marginTop: "2px",
-        }}>
-          {displayUrl}
-        </div>
-      )}
-
-      {/* Only show component health when expanded or when there's an issue */}
-      {(shouldBeExpanded || overallStatus !== "healthy") && (
-        <>
-          {/* Expanded information display */}
-          {shouldBeExpanded && (
-            <>
-              
-              {/* API Entry Point Info */}
-              <div style={{
-                padding: "8px 10px",
-                backgroundColor: "#f8fafc",
-                borderRadius: "8px",
-                marginBottom: "10px",
-                fontSize: "10px",
-                border: "1px solid #e2e8f0",
-              }}>
-                <div style={{
-                  fontWeight: "600",
-                  color: "#475569",
-                  marginBottom: "4px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                }}>
-                  🌐 Backend API Entry Point
-                </div>
-                <div style={{
-                  color: "#64748b",
-                  fontSize: "9px",
-                  fontFamily: "monospace",
-                  marginBottom: "6px",
-                  padding: "3px 6px",
-                  backgroundColor: "white",
-                  borderRadius: "4px",
-                  border: "1px solid #f1f5f9",
-                }}>
-                  {url}
-                </div>
-                <div style={{
-                  color: "#64748b",
-                  fontSize: "9px",
-                  lineHeight: "1.3",
-                }}>
-                  Main FastAPI server handling WebSocket connections, voice processing, and AI agent orchestration
-                </div>
-              </div>
-
-              {/* System status summary */}
-              {readinessData && (
-                <div 
-                  style={{
-                    padding: "6px 8px",
-                    backgroundColor: overallStatus === "healthy" ? "#f0fdf4" : 
-                                   overallStatus === "degraded" ? "#fffbeb" : "#fef2f2",
-                    borderRadius: "6px",
-                    marginBottom: "8px",
-                    fontSize: "10px",
-                    border: `1px solid ${overallStatus === "healthy" ? "#bbf7d0" : 
-                                        overallStatus === "degraded" ? "#fed7aa" : "#fecaca"}`,
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowComponentDetails(!showComponentDetails);
-                  }}
-                  title="Click to show/hide component details"
-                >
-                  <div style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}>
-                    <div>
-                      <div style={{
-                        fontWeight: "600",
-                        color: overallStatus === "healthy" ? "#166534" : 
-                              overallStatus === "degraded" ? "#92400e" : "#dc2626",
-                        marginBottom: "2px",
-                      }}>
-                        System Status: {overallStatus.charAt(0).toUpperCase() + overallStatus.slice(1)}
-                      </div>
-                      <div style={{
-                        color: "#64748b",
-                        fontSize: "9px",
-                      }}>
-                        {readinessData.checks.length} components monitored • 
-                        Last check: {new Date().toLocaleTimeString()}
-                      </div>
-                    </div>
-                    <div style={{
-                      fontSize: "12px",
-                      color: "#64748b",
-                      transform: showComponentDetails ? "rotate(180deg)" : "rotate(0deg)",
-                      transition: "transform 0.2s ease",
-                    }}>
-                      ▼
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {error ? (
-            <div style={styles.errorMessage}>
-              ⚠️ Connection failed: {error}
-            </div>
-          ) : readinessData?.checks && showComponentDetails ? (
-            <>
-              <div style={styles.componentGrid}>
-                {readinessData.checks.map((check, idx) => (
-                  <div 
-                    key={idx} 
-                    style={{
-                      ...styles.componentItem,
-                      flexDirection: "column",
-                      alignItems: "flex-start",
-                      padding: "6px 8px", // Reduced from 12px 16px to half
-                    }}
-                    title={check.details || `${check.component} status: ${check.status}`}
-                  >
-                    <div style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "5px", // Reduced from 10px to half
-                      width: "100%",
-                    }}>
-                      <span>{componentIcons[check.component] || "•"}</span>
-                      <div style={styles.componentDot(check.status)}></div>
-                      <span style={styles.componentName}>
-                        {check.component.replace(/_/g, ' ')}
-                      </span>
-                      {check.check_time_ms !== undefined && (
-                        <span style={styles.responseTime}>
-                          {check.check_time_ms.toFixed(0)}ms
-                        </span>
-                      )}
-                    </div>
-                    
-                    {/* Component description when expanded */}
-                    {shouldBeExpanded && (
-                      <div style={{
-                        fontSize: "8px", // Reduced from 10px
-                        color: "#64748b",
-                        marginTop: "3px", // Reduced from 6px to half
-                        lineHeight: "1.3", // Reduced line height
-                        fontStyle: "italic",
-                        paddingLeft: "9px", // Reduced from 18px to half
-                      }}>
-                        {componentDescriptions[check.component] || "Backend service component"}
-                      </div>
-                    )}
-                    
-                    {/* Status details removed per user request */}
-                  </div>
-                ))}
-              </div>
-              
-              {/* Component details section removed per user request */}
-            </>
-          ) : null}
-          
-          {readinessData?.response_time_ms && shouldBeExpanded && (
-            <div style={{
-              fontSize: "9px",
-              color: "#94a3b8",
-              marginTop: "8px",
-              paddingTop: "8px",
-              borderTop: "1px solid #f1f5f9",
-              textAlign: "center",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}>
-              <span>Health check latency: {readinessData.response_time_ms.toFixed(0)}ms</span>
-              <span title="Auto-refreshes every 30 seconds">🔄</span>
-            </div>
-          )}
-
-          {/* Session Statistics Section */}
-          {shouldBeExpanded && healthData && (
-            <div style={{
-              marginTop: "8px",
-              paddingTop: "8px",
-              borderTop: "1px solid #f1f5f9",
-            }}>
-              <div style={{
-                fontSize: "10px",
-                fontWeight: "600",
-                color: "#374151",
-                marginBottom: "6px",
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-              }}>
-                📊 Session Statistics
-              </div>
-              
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "8px",
-                fontSize: "9px",
-              }}>
-                {/* Active Sessions */}
-                <div style={{
-                  background: "#f8fafc",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: "6px",
-                  padding: "6px 8px",
-                  textAlign: "center",
-                }}>
-                  <div style={{
-                    fontWeight: "600",
-                    color: "#10b981",
-                    fontSize: "12px",
-                  }}>
-                    {healthData.active_sessions || 0}
-                  </div>
-                  <div style={{
-                    color: "#64748b",
-                    fontSize: "8px",
-                  }}>
-                    Active Sessions
-                  </div>
-                </div>
-
-                {/* Session Metrics */}
-                {healthData.session_metrics && (
-                  <div style={{
-                    background: "#f8fafc",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: "6px",
-                    padding: "6px 8px",
-                    textAlign: "center",
-                  }}>
-                    <div style={{
-                      fontWeight: "600",
-                      color: "#3b82f6",
-                      fontSize: "12px",
-                    }}>
-                      {healthData.session_metrics.connected || 0}
-                    </div>
-                    <div style={{
-                      color: "#64748b",
-                      fontSize: "8px",
-                    }}>
-                      Total Connected
-                    </div>
-                  </div>
-                )}
-                
-                {/* Disconnected Sessions */}
-                {healthData.session_metrics?.disconnected !== undefined && (
-                  <div style={{
-                    background: "#f8fafc",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: "6px",
-                    padding: "6px 8px",
-                    textAlign: "center",
-                    gridColumn: healthData.session_metrics ? "1 / -1" : "auto",
-                  }}>
-                    <div style={{
-                      fontWeight: "600",
-                      color: "#6b7280",
-                      fontSize: "12px",
-                    }}>
-                      {healthData.session_metrics.disconnected}
-                    </div>
-                    <div style={{
-                      color: "#64748b",
-                      fontSize: "8px",
-                    }}>
-                      Disconnected
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Last updated */}
-              <div style={{
-                fontSize: "8px",
-                color: "#94a3b8",
-                marginTop: "6px",
-                textAlign: "center",
-                fontStyle: "italic",
-              }}>
-                Updated: {new Date(healthData.timestamp * 1000).toLocaleTimeString()}
-              </div>
-            </div>
-          )}
-
-          {/* Agents Configuration Section */}
-          {shouldBeExpanded && agentsData?.agents && (
-            <div style={{
-              marginTop: "10px",
-              paddingTop: "10px",
-              borderTop: "2px solid #e2e8f0",
-            }}>
-              {/* Agents Header */}
-              <div style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                marginBottom: "8px",
-                padding: "6px 8px",
-                backgroundColor: "#f1f5f9",
-                borderRadius: "6px",
-              }}>
-                <div style={{
-                  fontWeight: "600",
-                  color: "#475569",
-                  fontSize: "11px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                }}>
-                  🤖 RT Agents ({agentsData.agents.length})
-                </div>
-              </div>
-
-              {/* Agents List */}
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "1fr",
-                gap: "6px",
-                fontSize: "10px",
-              }}>
-                {agentsData.agents.map((agent, idx) => (
-                  <div 
-                    key={idx} 
-                    style={{
-                      padding: "8px 10px",
-                      border: "1px solid #e2e8f0",
-                      borderRadius: "6px",
-                      backgroundColor: "white",
-                      cursor: showAgentConfig ? "pointer" : "default",
-                      transition: "all 0.2s ease",
-                      ...(showAgentConfig && selectedAgent === agent.name ? {
-                        borderColor: "#3b82f6",
-                        backgroundColor: "#f0f9ff",
-                      } : {}),
-                    }}
-                    onClick={() => showAgentConfig && setSelectedAgent(selectedAgent === agent.name ? null : agent.name)}
-                    title={agent.description || `${agent.name} - Real-time voice agent`}
-                  >
-                    <div style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      marginBottom: "4px",
-                    }}>
-                      <div style={{
-                        fontWeight: "600",
-                        color: "#374151",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                      }}>
-                        <span style={{
-                          width: "8px",
-                          height: "8px",
-                          borderRadius: "50%",
-                          backgroundColor: agent.status === "loaded" ? "#10b981" : "#ef4444",
-                          display: "inline-block",
-                        }}></span>
-                        {agent.name}
-                      </div>
-                      <div style={{
-                        fontSize: "9px",
-                        color: "#64748b",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                      }}>
-                        {agent.model?.deployment_id && (
-                          <span title={`Model: ${agent.model.deployment_id}`}>
-                            💭 {agent.model.deployment_id.replace('gpt-', '')}
-                          </span>
-                        )}
-                        {agent.voice?.current_voice && (
-                          <span title={`Voice: ${agent.voice.current_voice}`}>
-                            🔊 {agent.voice.current_voice.split('-').pop()?.replace('Neural', '')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Agents Info Footer */}
-              <div style={{
-                fontSize: "8px",
-                color: "#94a3b8",
-                marginTop: "8px",
-                textAlign: "center",
-                fontStyle: "italic",
-              }}>
-                Runtime configuration • Changes require restart for persistence • Contact rtvoiceagent@microsoft.com
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-};
-
-/* ------------------------------------------------------------------ *
- *  WAVEFORM COMPONENT - SIMPLE & SMOOTH
- * ------------------------------------------------------------------ */
-const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }) => {
-  const [waveOffset, setWaveOffset] = useState(0);
-  const [amplitude, setAmplitude] = useState(5);
-  const animationRef = useRef();
-  
-  useEffect(() => {
-    const animate = () => {
-      setWaveOffset(prev => (prev + (speaker ? 2 : 1)) % 1000);
-      
-      setAmplitude(() => {
-        // React to actual audio levels first, then fall back to speaker state
-        if (audioLevel > 0.01) {
-          // User is speaking - use real audio level
-          const scaledLevel = audioLevel * 25;
-          const smoothVariation = Math.sin(Date.now() * 0.002) * (scaledLevel * 0.2);
-          return Math.max(8, scaledLevel + smoothVariation);
-        } else if (outputAudioLevel > 0.01) {
-          // Assistant is speaking - use output audio level
-          const scaledLevel = outputAudioLevel * 20;
-          const smoothVariation = Math.sin(Date.now() * 0.0018) * (scaledLevel * 0.25);
-          return Math.max(6, scaledLevel + smoothVariation);
-        } else if (speaker) {
-          // Active speaking fallback - gentle rhythmic movement
-          const time = Date.now() * 0.002;
-          const baseAmplitude = 10;
-          const rhythmicVariation = Math.sin(time) * 5;
-          return baseAmplitude + rhythmicVariation;
-        } else {
-          // Idle state - gentle breathing pattern
-          const time = Date.now() * 0.0008;
-          const breathingAmplitude = 3 + Math.sin(time) * 1.5;
-          return breathingAmplitude;
-        }
-      });
-      
-      animationRef.current = requestAnimationFrame(animate);
-    };
-    
-    animationRef.current = requestAnimationFrame(animate);
-    
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, [speaker, audioLevel, outputAudioLevel]);
-  
-  const generateWavePath = () => {
-    const width = 750;
-    const height = 100;
-    const centerY = height / 2;
-    const frequency = 0.02;
-    const points = 100;
-    
-    let path = `M 0 ${centerY}`;
-    
-    for (let i = 0; i <= points; i++) {
-      const x = (i / points) * width;
-      const y = centerY + Math.sin((x * frequency + waveOffset * 0.1)) * amplitude;
-      path += ` L ${x} ${y}`;
-    }
-    
-    return path;
-  };
-
-  // Secondary wave
-  const generateSecondaryWave = () => {
-    const width = 750;
-    const height = 100;
-    const centerY = height / 2;
-    const frequency = 0.025;
-    const points = 100;
-    
-    let path = `M 0 ${centerY}`;
-    
-    for (let i = 0; i <= points; i++) {
-      const x = (i / points) * width;
-      const y = centerY + Math.sin((x * frequency + waveOffset * 0.12)) * (amplitude * 0.6);
-      path += ` L ${x} ${y}`;
-    }
-    
-    return path;
-  };
-
-  // Wave rendering
-  const generateMultipleWaves = () => {
-    const waves = [];
-    
-    let baseColor, opacity;
-    if (speaker === "User") {
-      baseColor = "#ef4444";
-      opacity = 0.8;
-    } else if (speaker === "Assistant") {
-      baseColor = "#67d8ef";
-      opacity = 0.8;
-    } else {
-      baseColor = "#3b82f6";
-      opacity = 0.4;
-    }
-    
-    // Main wave
-    waves.push(
-      <path
-        key="wave1"
-        d={generateWavePath()}
-        stroke={baseColor}
-        strokeWidth={speaker ? "3" : "2"}
-        fill="none"
-        opacity={opacity}
-        strokeLinecap="round"
-      />
-    );
-    
-    // Secondary wave
-    waves.push(
-      <path
-        key="wave2"
-        d={generateSecondaryWave()}
-        stroke={baseColor}
-        strokeWidth={speaker ? "2" : "1.5"}
-        fill="none"
-        opacity={opacity * 0.5}
-        strokeLinecap="round"
-      />
-    );
-    
-    return waves;
-  };
-  
-  return (
-    <div style={styles.waveformContainer}>
-      <svg style={styles.waveformSvg} viewBox="0 0 750 80" preserveAspectRatio="xMidYMid meet">
-        {generateMultipleWaves()}
-      </svg>
-      
-      {/* Audio level indicators for debugging */}
-      {window.location.hostname === 'localhost' && (
-        <div style={{
-          position: 'absolute',
-          bottom: '-25px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          fontSize: '10px',
-          color: '#666',
-          whiteSpace: 'nowrap'
-        }}>
-          Input: {(audioLevel * 100).toFixed(1)}% | Amp: {amplitude.toFixed(1)}
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ------------------------------------------------------------------ *
- *  CHAT BUBBLE
- * ------------------------------------------------------------------ */
-const ChatBubble = ({ message }) => {
-  const { speaker, text, isTool, streaming } = message;
-  const isUser = speaker === "User";
-  const isSpecialist = speaker?.includes("Specialist");
-  const isAuthAgent = speaker === "Auth Agent";
-  
-  if (isTool) {
-    return (
-      <div style={{ ...styles.assistantMessage, alignSelf: "center" }}>
-        <div style={{
-          ...styles.assistantBubble,
-          background: "#8b5cf6",
-          textAlign: "center",
-          fontSize: "14px",
-        }}>
-          {text}
-        </div>
-      </div>
-    );
   }
-  
-  return (
-    <div style={isUser ? styles.userMessage : styles.assistantMessage}>
-      {/* Show agent name for specialist agents and auth agent */}
-      {!isUser && (isSpecialist || isAuthAgent) && (
-        <div style={styles.agentNameLabel}>
-          {speaker}
-        </div>
-      )}
-      <div style={isUser ? styles.userBubble : styles.assistantBubble}>
-        {text.split("\n").map((line, i) => (
-          <div key={i}>{line}</div>
-        ))}
-        {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
-      </div>
-    </div>
-  );
+  return buffer;
 };
 
+//     if (typeof summary.assistantTurns === "number") {
 // Main voice application component
 function RealTimeVoiceApp() {
-  
-  // CSS animation for pulsing effect
-  React.useEffect(() => {
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-        70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-      }
-    `;
-    document.head.appendChild(style);
-    
-    return () => {
-      document.head.removeChild(style);
-    };
+  useEffect(() => {
+    insertGlobalStyles();
   }, []);
+
+  const USER_SPEECH_LEVEL_THRESHOLD = 0.08;
+  const USER_SILENCE_WINDOW_MS = 180;
 
   // Component state
   const [messages, setMessages] = useState([]);
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const [log, setLog] = useState("");
   const [recording, setRecording] = useState(false);
   const [targetPhoneNumber, setTargetPhoneNumber] = useState("");
   const [callActive, setCallActive] = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState(null);
+  const [activeAgentName, setActiveAgentName] = useState(null);
+  const [toolActivity, setToolActivity] = useState(null);
   const [showPhoneInput, setShowPhoneInput] = useState(false);
+  const [systemStatus, setSystemStatus] = useState({
+    status: "checking",
+    acsOnlyIssue: false,
+  });
 
-  // Tooltip states
+  const handleSystemStatus = useCallback((nextStatus) => {
+    setSystemStatus((prev) =>
+      prev.status === nextStatus.status && prev.acsOnlyIssue === nextStatus.acsOnlyIssue
+        ? prev
+        : nextStatus
+    );
+  }, []);
+
   const [showResetTooltip, setShowResetTooltip] = useState(false);
   const [showMicTooltip, setShowMicTooltip] = useState(false);
   const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
-
-  // Hover states
   const [resetHovered, setResetHovered] = useState(false);
   const [micHovered, setMicHovered] = useState(false);
   const [phoneHovered, setPhoneHovered] = useState(false);
+  const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
 
-  // Health monitoring (disabled)
-  /*
-  const { 
-    healthStatus = { isHealthy: null, lastChecked: null, responseTime: null, error: null },
-    readinessStatus = { status: null, timestamp: null, responseTime: null, checks: [], lastChecked: null, error: null },
-    overallStatus = { isHealthy: false, hasWarnings: false, criticalErrors: [] },
-    refresh = () => {} 
-  } = useHealthMonitor({
-    baseUrl: API_BASE_URL,
-    healthInterval: 30000,
-    readinessInterval: 15000,
-    enableAutoRefresh: true,
-  });
-  */
+  const isCallDisabled =
+    systemStatus.status === "degraded" && systemStatus.acsOnlyIssue;
 
-  // Function call state (disabled)
-  /*
-  const [functionCalls, setFunctionCalls] = useState([]);
-  const [callResetKey, setCallResetKey] = useState(0);
-  */
+  useEffect(() => {
+    if (isCallDisabled) {
+      setShowPhoneInput(false);
+    } else if (phoneDisabledPos) {
+      setPhoneDisabledPos(null);
+    }
+  }, [isCallDisabled, phoneDisabledPos]);
 
-  // Component refs
   const chatRef = useRef(null);
   const messageContainerRef = useRef(null);
   const socketRef = useRef(null);
+  const phoneButtonRef = useRef(null);
 
-  // Audio processing refs
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
   const analyserRef = useRef(null);
   const micStreamRef = useRef(null);
-  
-  // Audio playback refs for AudioWorklet
+  const micStreamingActiveRef = useRef(false);
+  const micStartPromiseRef = useRef(null);
   const playbackAudioContextRef = useRef(null);
   const pcmSinkRef = useRef(null);
-  
+
   const [audioLevel, setAudioLevel] = useState(0);
   const audioLevelRef = useRef(0);
+
+  const messageCounterRef = useRef(0);
+  const pendingUserRef = useRef(null);
+  const activeAssistantRef = useRef({
+    messageId: null,
+    streaming: false,
+    speaking: false,
+    speechStartedAt: null,
+    respondedAt: null,
+    originUserMessageId: null,
+    originUserStartedAt: null,
+    bufferedText: "",
+    finalText: "",
+    incomplete: false,
+    agentName: null,
+  });
+  const bargeInRef = useRef(null);
+  const assistantAudioProgressRef = useRef(new Map());
+  const currentSpeechMessageRef = useRef(null);
+  const toolMessageRef = useRef(new Map());
+  const lastToolMessageIdRef = useRef(null);
+  const workletMessageHandlerRef = useRef(null);
+  const userSpeechDraftRef = useRef(null);
+  const assistantBacklogRef = useRef([]);
+
+  const createMessage = useCallback((message = {}) => {
+    const id = `msg-${Date.now()}-${messageCounterRef.current++}`;
+    const {
+      metrics: providedMetrics,
+      streaming: streamingFlag = false,
+      timestamp,
+      incomplete = false,
+      ...remaining
+    } = message;
+    return {
+      id,
+      streaming: streamingFlag,
+      timestamp: timestamp ?? Date.now(),
+      incomplete,
+      ...remaining,
+      metrics: { ...(providedMetrics || {}) },
+    };
+  }, []);
+
+  const appendMessage = useCallback((message) => {
+    const msg = createMessage(message);
+    setMessages((prev) => [...prev, msg]);
+    return msg;
+  }, [createMessage]);
+
+  const updateMessage = useCallback((id, updater) => {
+    if (!id) {
+      return;
+    }
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== id) {
+          return msg;
+        }
+        const updates = updater(msg);
+        if (!updates) {
+          return msg;
+        }
+        const merged = { ...msg, ...updates };
+        if (updates.metrics) {
+          merged.metrics = { ...(msg.metrics || {}), ...updates.metrics };
+        }
+        if (updates.toolState) {
+          merged.toolState = { ...(msg.toolState || {}), ...updates.toolState };
+        }
+        return merged;
+      })
+    );
+  }, []);
+
+  const repositionMessageAfter = useCallback((messageId, afterMessageId) => {
+    if (!messageId || !afterMessageId || messageId === afterMessageId) {
+      return;
+    }
+    setMessages((prev) => {
+      const currentIdx = prev.findIndex((msg) => msg.id === messageId);
+      const afterIdx = prev.findIndex((msg) => msg.id === afterMessageId);
+      if (currentIdx === -1 || afterIdx === -1 || currentIdx === afterIdx + 1) {
+        return prev;
+      }
+      const reordered = [...prev];
+      const [message] = reordered.splice(currentIdx, 1);
+      const targetIdx = reordered.findIndex((msg) => msg.id === afterMessageId);
+      if (targetIdx === -1) {
+        return prev;
+      }
+      reordered.splice(targetIdx + 1, 0, message);
+      return reordered;
+    });
+  }, []);
+
+  const anchorAssistantAfterTool = useCallback((assistantMessageId, originUserMessageId) => {
+    const snapshot = lastToolMessageIdRef.current;
+    if (!assistantMessageId || !snapshot?.messageId) {
+      return;
+    }
+    if (
+      snapshot.userMessageId &&
+      originUserMessageId &&
+      snapshot.userMessageId !== originUserMessageId
+    ) {
+      return;
+    }
+    repositionMessageAfter(assistantMessageId, snapshot.lastAssistantId || snapshot.messageId);
+    lastToolMessageIdRef.current = {
+      ...snapshot,
+      lastAssistantId: assistantMessageId,
+    };
+  }, [repositionMessageAfter]);
+
+  // Disabled to preserve natural message order
+  // const repositionMessageAfter = useCallback((messageId, afterMessageId) => {
+  //   if (!messageId || !afterMessageId) {
+  //     return;
+  //   }
+  //   setMessages((prev) => {
+  //     const currentIdx = prev.findIndex((msg) => msg.id === messageId);
+  //     if (currentIdx === -1) {
+  //       return prev;
+  //     }
+  //     const afterIdx = prev.findIndex((msg) => msg.id === afterMessageId);
+  //     if (afterIdx === -1 || currentIdx === afterIdx + 1) {
+  //       return prev;
+  //     }
+  //     const reordered = [...prev];
+  //     const [message] = reordered.splice(currentIdx, 1);
+  //     const nextAfterIdx = reordered.findIndex((msg) => msg.id === afterMessageId);
+  //     const targetIdx = nextAfterIdx === -1 ? reordered.length : nextAfterIdx + 1;
+  //     reordered.splice(targetIdx, 0, message);
+  //     return reordered;
+  //   });
+  // }, [setMessages]);
+
+  // Disabled to preserve natural message order
+  // const anchorAssistantAfterTool = useCallback((assistantMessageId, originUserMessageId) => {
+  //   const toolSnapshot = lastToolMessageIdRef.current;
+  //   if (!assistantMessageId || !toolSnapshot?.messageId) {
+  //     return;
+  //   }
+  //   if (
+  //     toolSnapshot.userMessageId &&
+  //     originUserMessageId &&
+  //     toolSnapshot.userMessageId !== originUserMessageId
+  //   ) {
+  //     return;
+  //   }
+  //   const anchorAfterId = toolSnapshot.lastAssistantId || toolSnapshot.messageId;
+  //   repositionMessageAfter(assistantMessageId, anchorAfterId);
+  //   lastToolMessageIdRef.current = {
+  //     ...toolSnapshot,
+  //     lastAssistantId: assistantMessageId,
+  //   };
+  // }, [repositionMessageAfter]);
+
+  const finalizeActiveAssistantMessage = useCallback((reason = "unknown") => {
+    const current = activeAssistantRef.current;
+    if (!current?.messageId) {
+      return null;
+    }
+    console.info(`Finalizing assistant message (reason: ${reason}), messageId: ${current.messageId}`);
+    const timestamp = Date.now();
+    const summaryText = current.finalText || current.bufferedText || null;
+    const messageId = current.messageId;
+
+    updateMessage(messageId, (msg) => {
+      const nextText = summaryText || msg.text || "";
+      const nextMetrics = {
+        ...(msg.metrics || {}),
+        finalizedAt: timestamp,
+      };
+      const nextAgent = msg.agentName || current.agentName || null;
+      const updates = {
+        streaming: false,
+        incomplete: false,
+        agentName: nextAgent,
+        metrics: nextMetrics,
+        timestamp: timestamp,
+      };
+      if (nextText && nextText !== msg.text) {
+        updates.text = nextText;
+      }
+      return updates;
+    });
+
+    currentSpeechMessageRef.current = null;
+    assistantAudioProgressRef.current.delete(messageId);
+    
+    // Process any pending backlog tasks to preserve incomplete messages before clearing
+    if (assistantBacklogRef.current.length > 0) {
+      console.info(`Processing ${assistantBacklogRef.current.length} pending backlog tasks before finalization`);
+      const pendingTasks = assistantBacklogRef.current.slice();
+      assistantBacklogRef.current = [];
+      
+      // Execute pending tasks to ensure they create separate messages
+      pendingTasks.forEach((task, index) => {
+        try {
+          console.info(`Executing pending task ${index + 1}/${pendingTasks.length}`);
+          task();
+        } catch (error) {
+          console.error(`Pending task ${index + 1} failed during finalization:`, error);
+        }
+      });
+    } else {
+      assistantBacklogRef.current = [];
+    }
+
+    activeAssistantRef.current = {
+      messageId: null,
+      streaming: false,
+      speaking: false,
+      speechStartedAt: null,
+      respondedAt: current.respondedAt ?? timestamp,
+      originUserMessageId: current.originUserMessageId ?? null,
+      originUserStartedAt: current.originUserStartedAt ?? null,
+      bufferedText: "",
+      finalText: "",
+      incomplete: false,
+      agentName: null,
+    };
+
+    return messageId;
+  }, [updateMessage]);
+
+  const isUserTranscriptReady = useCallback(() => {
+    const pending = pendingUserRef.current;
+    if (!pending || !pending.userMessageId) {
+      return true;
+    }
+    if (pending.textReady && !(pending.requireFinal && !pending.finalReceived)) {
+      return true;
+    }
+    const currentMessages = messagesRef.current || [];
+    const target = currentMessages.find((msg) => msg.id === pending.userMessageId);
+    if (!target) {
+      return false;
+    }
+    const text = typeof target.text === "string" ? target.text.trim() : "";
+    const hasContent = text.length > 0;
+    if (hasContent && !pending.textReady) {
+      pendingUserRef.current = { ...pending, textReady: true };
+    }
+    const nextPending = pendingUserRef.current || pending;
+    if (nextPending.requireFinal && !nextPending.finalReceived) {
+      return false;
+    }
+    return hasContent;
+  }, []);
+
+  const enqueueAssistantTask = useCallback((task) => {
+    if (typeof task !== "function") {
+      return;
+    }
+    assistantBacklogRef.current.push(task);
+  }, []);
+
+  const flushAssistantBacklog = useCallback(() => {
+    if (!assistantBacklogRef.current.length) {
+      return;
+    }
+    if (!isUserTranscriptReady()) {
+      return;
+    }
+    const backlog = assistantBacklogRef.current.slice();
+    assistantBacklogRef.current = [];
+    backlog.forEach((task) => {
+      try {
+        task();
+      } catch (error) {
+        console.error("Assistant backlog task failed", error);
+      }
+    });
+  }, [isUserTranscriptReady]);
+
+  const parseIsoTimestamp = (value) => {
+    if (!value || typeof value !== "string") {
+      return null;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const computePendingLatency = (pending, fallbackStopTs = null) => {
+    if (!pending) {
+      return null;
+    }
+
+    const stopCandidates = [pending.latencyStopAt, fallbackStopTs].filter(
+      (value) => typeof value === "number" && !Number.isNaN(value),
+    );
+    const startCandidates = [
+      pending.latencyStartAt,
+      pending.audioEndAt,
+      pending.audioLastChunkAt,
+      pending.audioStartedAt,
+    ].filter((value) => typeof value === "number" && !Number.isNaN(value));
+
+    if (!stopCandidates.length) {
+      return null;
+    }
+
+    const stopTs = stopCandidates[0];
+    const startTs = startCandidates[0];
+    const startedAt = typeof pending.startedAt === "number" && !Number.isNaN(pending.startedAt)
+      ? pending.startedAt
+      : null;
+
+    let latency = null;
+
+    if (typeof startTs === "number" && stopTs > startTs) {
+      latency = stopTs - startTs;
+    } else if (typeof startTs === "number") {
+      latency = Math.max(stopTs - startTs, 0);
+    }
+
+    if ((latency === null || latency <= 0) && typeof startedAt === "number" && stopTs > startedAt) {
+      latency = stopTs - startedAt;
+    }
+
+    if (latency !== null && latency < 0) {
+      latency = 0;
+    }
+
+    return latency;
+  };
+
+  const mergeAssistantText = useCallback((existingText = "", incomingText = "") => {
+    if (!incomingText) {
+      return existingText;
+    }
+    if (!existingText) {
+      return incomingText;
+    }
+    if (incomingText === existingText) {
+      return existingText;
+    }
+    if (incomingText.startsWith(existingText)) {
+      return incomingText;
+    }
+    if (existingText.startsWith(incomingText)) {
+      return existingText;
+    }
+    const maxOverlap = Math.min(existingText.length, incomingText.length);
+    let overlap = 0;
+    for (let i = maxOverlap; i > 0; i--) {
+      if (existingText.endsWith(incomingText.slice(0, i))) {
+        overlap = i;
+        break;
+      }
+    }
+    if (overlap > 0) {
+      return `${existingText}${incomingText.slice(overlap)}`;
+    }
+    return `${existingText}${incomingText}`;
+  }, []);
+
+  const processAssistantStreaming = ({ payload, text, speaker }) => {
+    const streamingSpeaker = speaker || "Assistant";
+    const prevCtx = activeAssistantRef.current;
+    const streamingAgentName = payload.agent || streamingSpeaker || prevCtx?.agentName || null;
+    setActiveSpeaker(streamingSpeaker);
+    setActiveAgentName(streamingAgentName);
+    console.info("Current active agent: " + streamingAgentName)
+    const streamingTimestamp = Date.now();
+
+    let messageId = prevCtx?.messageId;
+    let updatedText = prevCtx?.bufferedText ?? "";
+    const incomingText = text ?? "";
+    const hasIncomingText = incomingText.length > 0;
+
+    // Force new message if agent changed, previous message was finalized, or speaker changed
+    // But don't create new message if same agent continues after tool call
+    const agentChanged = prevCtx?.agentName && prevCtx.agentName !== streamingAgentName;
+    const speakerChanged = prevCtx?.messageId && prevCtx.speaker && prevCtx.speaker !== streamingSpeaker;
+    const prevFinalized = prevCtx?.messageId && prevCtx.finalizedAt;
+    const isToolActive = toolActivity?.status === "running";
+    const shouldCreateNewMessage = !messageId || !(prevCtx?.incomplete) || 
+      (agentChanged && !isToolActive) || prevFinalized || speakerChanged;
+    
+    if ((agentChanged && !isToolActive) || speakerChanged) {
+      console.info(`Message boundary detected - Agent: ${prevCtx?.agentName} → ${streamingAgentName}, Speaker: ${prevCtx?.speaker} → ${streamingSpeaker}`);
+    }
+
+    if (shouldCreateNewMessage) {
+      const initialText = hasIncomingText ? incomingText : "";
+      const streamingMsg = appendMessage({
+        speaker: streamingSpeaker,
+        text: initialText,
+        streaming: true,
+        incomplete: true,
+        agentName: streamingAgentName,
+        timestamp: streamingTimestamp,
+      });
+      messageId = streamingMsg.id;
+      updatedText = initialText;
+      anchorAssistantAfterTool(messageId, originUserMessageId);
+    } else if (hasIncomingText) {
+      updatedText = mergeAssistantText(prevCtx?.bufferedText ?? "", incomingText);
+      const textForUpdate = updatedText;
+      updateMessage(messageId, () => ({
+        text: textForUpdate,
+        streaming: true,
+        incomplete: true,
+        agentName: streamingAgentName,
+      }));
+    } else {
+      updatedText = prevCtx?.bufferedText ?? "";
+      updateMessage(messageId, () => ({
+        streaming: true,
+        incomplete: true,
+        agentName: streamingAgentName,
+      }));
+    }
+
+    const originUserMessageId =
+      pendingUserRef.current?.userMessageId ?? prevCtx?.originUserMessageId ?? null;
+    const originUserStartedAt =
+      pendingUserRef.current?.startedAt ?? prevCtx?.originUserStartedAt ?? null;
+    const isSameMessage = prevCtx?.messageId === messageId;
+
+    activeAssistantRef.current = {
+      messageId,
+      streaming: true,
+      speaking: prevCtx?.speaking ?? false,
+      speechStartedAt: prevCtx?.speechStartedAt ?? null,
+      respondedAt: prevCtx?.respondedAt ?? streamingTimestamp,
+      originUserMessageId,
+      originUserStartedAt,
+      bufferedText: updatedText,
+      finalText: isSameMessage ? prevCtx?.finalText ?? "" : "",
+      incomplete: true,
+      agentName: streamingAgentName,
+      speaker: streamingSpeaker,
+    };
+
+    // Keep natural message order - disable repositioning
+    // if (originUserMessageId) {
+    //   repositionMessageAfter(messageId, originUserMessageId);
+    // }
+    // anchorAssistantAfterTool(messageId, originUserMessageId);
+
+    if (pendingUserRef.current?.userMessageId) {
+      const pending = pendingUserRef.current;
+      const latencyMs = computePendingLatency(pending);
+      if (latencyMs !== null && pending.latencyMs !== latencyMs) {
+        pendingUserRef.current = { ...pending, latencyMs };
+      }
+      updateMessage(pending.userMessageId, (msg) => ({
+        metrics: {
+          ...(msg.metrics || {}),
+          awaitingResponse: true,
+          ...(latencyMs !== null ? { responseLatencyMs: latencyMs } : {}),
+        },
+      }));
+    }
+  };
+
+  const processAssistantResponse = ({ payload, text, speaker }) => {
+    const assistantSpeaker = speaker || "Assistant";
+    const prevCtx = activeAssistantRef.current;
+    const assistantAgentName = payload.agent || assistantSpeaker || prevCtx?.agentName || null;
+    setActiveSpeaker(assistantSpeaker);
+    setActiveAgentName(assistantAgentName);
+    const assistantTimestamp = Date.now();
+
+    let assistantMessageId = prevCtx?.messageId;
+    if (!assistantMessageId) {
+      const currentMessages = messagesRef.current || [];
+      for (let idx = currentMessages.length - 1; idx >= 0; idx--) {
+        const candidate = currentMessages[idx];
+        if (
+          candidate?.speaker === assistantSpeaker &&
+          (candidate?.streaming || candidate?.incomplete) &&
+          (candidate?.agentName ? candidate.agentName === assistantAgentName : true)
+        ) {
+          assistantMessageId = candidate.id;
+          break;
+        }
+      }
+    }
+    const incomingText = text ?? "";
+    const hasTextUpdate = incomingText.length > 0;
+    const previousFinalText = prevCtx?.finalText ?? "";
+    const previousBufferedText = prevCtx?.bufferedText ?? "";
+    let finalText = hasTextUpdate
+      ? incomingText
+      : previousFinalText || previousBufferedText || "";
+
+    if (!assistantMessageId) {
+      const finalMsg = appendMessage({
+        speaker: assistantSpeaker,
+        text: finalText,
+        streaming: false,
+        incomplete: false,
+        agentName: assistantAgentName,
+        timestamp: assistantTimestamp,
+      });
+      assistantMessageId = finalMsg.id;
+    } else {
+      const textForUpdate = finalText;
+      updateMessage(assistantMessageId, () => ({
+        ...(textForUpdate ? { text: textForUpdate } : {}),
+        streaming: false,
+        incomplete: false,
+        agentName: assistantAgentName,
+        timestamp: assistantTimestamp,
+      }));
+    }
+
+    anchorAssistantAfterTool(
+      assistantMessageId,
+      activeAssistantRef.current?.originUserMessageId ?? null
+    );
+
+    const pending = pendingUserRef.current;
+    let latencyMs = null;
+    if (pending?.userMessageId) {
+      latencyMs = computePendingLatency(pending, assistantTimestamp);
+      pendingUserRef.current = null;
+      updateMessage(pending.userMessageId, (msg) => ({
+        metrics: {
+          ...(msg.metrics || {}),
+          awaitingResponse: false,
+          ...(latencyMs !== null ? { responseLatencyMs: latencyMs } : {}),
+        },
+      }));
+    }
+
+    if (latencyMs !== null) {
+      updateMessage(assistantMessageId, (msg) => ({
+        streaming: false,
+        metrics: {
+          ...(msg.metrics || {}),
+          responseLatencyMs: latencyMs,
+        },
+      }));
+    } else {
+      updateMessage(assistantMessageId, () => ({ streaming: false }));
+    }
+
+    activeAssistantRef.current = {
+      messageId: assistantMessageId,
+      streaming: false,
+      speaking: false,
+      speechStartedAt: null,
+      respondedAt: assistantTimestamp,
+      originUserMessageId: prevCtx?.originUserMessageId ?? null,
+      originUserStartedAt: prevCtx?.originUserStartedAt ?? null,
+      bufferedText: "",
+      finalText,
+      incomplete: false,
+      agentName: assistantAgentName,
+    };
+
+    currentSpeechMessageRef.current = assistantMessageId;
+
+    // Keep natural message order - disable repositioning
+    // if (prevCtx?.originUserMessageId) {
+    //   repositionMessageAfter(assistantMessageId, prevCtx.originUserMessageId);
+    // }
+    // anchorAssistantAfterTool(assistantMessageId, prevCtx?.originUserMessageId ?? null);
+
+    lastToolMessageIdRef.current = null;
+
+    appendLog("🤖 Assistant responded");
+  };
+
+  const previewValue = useCallback((value) => {
+    if (value === null || value === undefined) {
+      return "-";
+    }
+    if (typeof value === "string") {
+      return value.length > 120 ? `${value.slice(0, 117)}...` : value;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    try {
+      const json = JSON.stringify(value);
+      return json.length > 120 ? `${json.slice(0, 117)}...` : json;
+    } catch {
+      return String(value);
+    }
+  }, []);
+
+  const formatToolMessage = useCallback((toolName, { status, progress, error, result } = {}) => {
+    const trimmedStatus = status ? status.trim() : "";
+    const parts = [`🛠️ ${toolName}${trimmedStatus ? ` ${trimmedStatus}` : ""}`];
+
+    if (typeof progress === "number") {
+      parts[0] = `${parts[0]} · ${Math.round(progress)}%`;
+    }
+
+    if (error) {
+      parts.push(`Error: ${error}`);
+    } else if (result !== undefined) {
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        const entries = Object.entries(result).slice(0, 3);
+        if (entries.length === 0) {
+          parts.push("Result: (empty)");
+        } else {
+          const condensed = entries
+            .map(([key, value]) => `${key}=${previewValue(value)}`)
+            .join(" | ");
+          parts.push(`Result: ${condensed}`);
+        }
+      } else {
+        parts.push(`Result: ${previewValue(result)}`);
+      }
+    }
+
+    return parts.join("\n");
+  }, [previewValue]);
+
+  const handleWorkletMessage = useCallback((data) => {
+    if (!data || typeof data !== 'object') {
+      return;
+    }
+
+    if (data.type === 'played') {
+      const { messageId, samples } = data;
+      if (!messageId || typeof samples !== 'number') {
+        return;
+      }
+
+      const progressMap = assistantAudioProgressRef.current;
+      const entry = progressMap.get(messageId);
+      if (!entry) {
+        return;
+      }
+
+      entry.playedSamples = (entry.playedSamples || 0) + samples;
+      if (!entry.startedAt) {
+        entry.startedAt = Date.now();
+        const ctx = activeAssistantRef.current;
+        if (ctx?.messageId === messageId && !ctx.speechStartedAt) {
+          activeAssistantRef.current = {
+            ...ctx,
+            speechStartedAt: entry.startedAt,
+          };
+        }
+      }
+
+      const expectedSamples =
+        typeof entry.expectedSamples === "number" && entry.expectedSamples > 0
+          ? entry.expectedSamples
+          : null;
+      let ratio = 0;
+      if (expectedSamples) {
+        ratio = Math.min(entry.playedSamples / expectedSamples, 1);
+      } else if (entry.queuedSamples > 0) {
+        ratio = Math.min(entry.playedSamples / entry.queuedSamples, 0.95);
+      }
+      const playedMs = entry.sampleRate ? (entry.playedSamples / entry.sampleRate) * 1000 : null;
+      const totalMs =
+        entry.sampleRate && typeof entry.expectedSamples === "number"
+          ? (entry.expectedSamples / entry.sampleRate) * 1000
+          : null;
+
+      const lastRatio = entry.lastRatio ?? 0;
+      const hasExpectedUpdate = Boolean(expectedSamples) && !entry.expectedNotified;
+      const shouldUpdate = Math.abs(ratio - lastRatio) >= 0.02 || ratio >= 0.999 || hasExpectedUpdate;
+      if (!shouldUpdate) {
+        return;
+      }
+
+      entry.lastRatio = ratio;
+      if (hasExpectedUpdate) {
+        entry.expectedNotified = true;
+      }
+      if (expectedSamples && ratio >= 0.999) {
+        entry.completed = true;
+      }
+
+      updateMessage(messageId, (msg) => {
+        const existingMetrics = msg.metrics || {};
+        const nextMetrics = {
+          ...existingMetrics,
+          playbackProgress: {
+            messageId,
+            ratio,
+            playedMs,
+            totalMs: totalMs ?? existingMetrics.playbackProgress?.totalMs ?? null,
+          },
+        };
+        if (totalMs !== null) {
+          nextMetrics.speechDurationMs = totalMs;
+        }
+        return { metrics: nextMetrics };
+      });
+
+      if (entry.completed) {
+        setTimeout(() => {
+          const current = assistantAudioProgressRef.current.get(messageId);
+          if (current && current.completed) {
+            assistantAudioProgressRef.current.delete(messageId);
+          }
+        }, 1200);
+      }
+    } else if (data.type === 'cleared') {
+      assistantAudioProgressRef.current.clear();
+    }
+  }, [updateMessage]);
+
+  useEffect(() => {
+    workletMessageHandlerRef.current = handleWorkletMessage;
+  }, [handleWorkletMessage]);
+
+  useEffect(() => {
+    if (
+      recording &&
+      audioLevel > USER_SPEECH_LEVEL_THRESHOLD &&
+      !userSpeechDraftRef.current &&
+      (!pendingUserRef.current || !pendingUserRef.current.userMessageId)
+    ) {
+      const startedAt = Date.now();
+      const draft = appendMessage({
+        speaker: "User",
+        text: "",
+        streaming: true,
+        incomplete: true,
+        metrics: { awaitingResponse: true, audioDetected: true },
+      });
+      userSpeechDraftRef.current = {
+        messageId: draft.id,
+        startedAt,
+      };
+      setActiveSpeaker("User");
+      pendingUserRef.current = {
+        userMessageId: draft.id,
+        startedAt,
+        latencyMs: null,
+        textReady: false,
+        audioStartedAt: startedAt,
+        audioLastChunkAt: null,
+        audioEndAt: null,
+        latencyStopAt: null,
+        latencyStartAt: null,
+        requireFinal: true,
+        finalReceived: false,
+      };
+    }
+  }, [USER_SPEECH_LEVEL_THRESHOLD, appendMessage, audioLevel, recording]);
 
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
       constructor() {
         super();
         this.queue = [];
-        this.readIndex = 0;
         this.samplesProcessed = 0;
         this.port.onmessage = (e) => {
-          if (e.data?.type === 'push') {
-            // payload is Float32Array
-            this.queue.push(e.data.payload);
-            console.log('AudioWorklet: Received audio chunk, queue length:', this.queue.length);
-          } else if (e.data?.type === 'clear') {
-            // Clear all queued audio data for immediate interruption
+          const data = e.data || {};
+          if (data.type === 'push' && data.payload) {
+            this.queue.push({
+              buffer: new Float32Array(data.payload, 0, data.length || data.payload.byteLength / 4),
+              messageId: data.messageId || null,
+              offset: 0,
+              length: data.length || data.payload.byteLength / 4,
+              sourceSamples: data.sourceSamples != null ? data.sourceSamples : (data.length || data.payload.byteLength / 4),
+              sourceConsumed: 0,
+            });
+          } else if (data.type === 'clear') {
             this.queue = [];
-            this.readIndex = 0;
-            console.log('AudioWorklet: Audio queue cleared for barge-in');
+            this.samplesProcessed = 0;
+            this.port.postMessage({ type: 'cleared' });
           }
         };
       }
@@ -1976,17 +911,44 @@ function RealTimeVoiceApp() {
             break;
           }
           const chunk = this.queue[0];
-          const remain = chunk.length - this.readIndex;
-          const toCopy = Math.min(remain, out.length - i);
-          out.set(chunk.subarray(this.readIndex, this.readIndex + toCopy), i);
-          i += toCopy;
-          this.readIndex += toCopy;
-          if (this.readIndex >= chunk.length) {
+          const buffer = chunk.buffer;
+          const start = chunk.offset || 0;
+          const length = chunk.length != null ? chunk.length : buffer.length;
+          const remain = length - start;
+          if (remain <= 0) {
             this.queue.shift();
-            this.readIndex = 0;
+            continue;
+          }
+          const toCopy = Math.min(remain, out.length - i);
+          out.set(buffer.subarray(start, start + toCopy), i);
+          i += toCopy;
+          chunk.offset = start + toCopy;
+          this.samplesProcessed += toCopy;
+          if (chunk.messageId) {
+            const resampledLength = length || buffer.length || 1;
+            const sourceSamples = chunk.sourceSamples != null ? chunk.sourceSamples : resampledLength;
+            const ratio = sourceSamples / resampledLength;
+            let sourceAdvance = Math.round(toCopy * ratio);
+            const consumed = chunk.sourceConsumed || 0;
+            const remainingSource = Math.max(sourceSamples - consumed, 0);
+            if (sourceAdvance > remainingSource) {
+              sourceAdvance = remainingSource;
+            } else if (sourceAdvance <= 0 && remainingSource > 0 && toCopy > 0) {
+              sourceAdvance = Math.min(1, remainingSource);
+            }
+            chunk.sourceConsumed = consumed + sourceAdvance;
+            if (sourceAdvance > 0) {
+              this.port.postMessage({
+                type: 'played',
+                messageId: chunk.messageId,
+                samples: sourceAdvance,
+              });
+            }
+          }
+          if (chunk.offset >= buffer.length) {
+            this.queue.shift();
           }
         }
-        this.samplesProcessed += out.length;
         return true;
       }
     }
@@ -1998,9 +960,7 @@ function RealTimeVoiceApp() {
     if (playbackAudioContextRef.current) return; // Already initialized
     
     try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-        // Let browser use its native rate (usually 48kHz), worklet will handle resampling
-      });
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       
       // Add the worklet module
       await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob(
@@ -2014,6 +974,12 @@ function RealTimeVoiceApp() {
         outputChannelCount: [1]
       });
       sink.connect(audioCtx.destination);
+      sink.port.onmessage = (event) => {
+        const handler = workletMessageHandlerRef.current;
+        if (handler) {
+          handler(event.data);
+        }
+      };
       
       // Resume on user gesture
       await audioCtx.resume();
@@ -2022,7 +988,7 @@ function RealTimeVoiceApp() {
       pcmSinkRef.current = sink;
       
       appendLog("🔊 Audio playback initialized");
-      console.log("AudioWorklet playback system initialized, context sample rate:", audioCtx.sampleRate);
+      console.info("AudioWorklet playback system initialized, context sample rate:", audioCtx.sampleRate);
     } catch (error) {
       console.error("Failed to initialize audio playback:", error);
       appendLog("❌ Audio playback init failed");
@@ -2086,12 +1052,43 @@ function RealTimeVoiceApp() {
 
   const startRecognition = async () => {
       setMessages([]);
-      appendLog("🎤 PCM streaming started");
+      messageCounterRef.current = 0;
+      pendingUserRef.current = null;
+      activeAssistantRef.current = {
+        messageId: null,
+        streaming: false,
+        speaking: false,
+        speechStartedAt: null,
+        respondedAt: null,
+        originUserMessageId: null,
+        originUserStartedAt: null,
+        bufferedText: "",
+        finalText: "",
+        incomplete: false,
+        agentName: null,
+      };
+      bargeInRef.current = null;
+      toolMessageRef.current.clear();
+      assistantBacklogRef.current = [];
+      userSpeechDraftRef.current = null;
+      lastToolMessageIdRef.current = null;
+      micStreamingActiveRef.current = false;
+      if (micStartPromiseRef.current) {
+        micStartPromiseRef.current = null;
+      }
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks()?.forEach((track) => track.stop());
+        micStreamRef.current = null;
+      }
+      setRecording(false);
+      audioLevelRef.current = 0;
+      setAudioLevel(0);
+      appendLog("🔈 Waiting for assistant audio before enabling microphone");
 
       await initializeAudioPlayback();
 
       const sessionId = getOrCreateSessionId();
-      console.log('🔗 [FRONTEND] Starting conversation WebSocket with session_id:', sessionId);
+      console.info('🔗 [FRONTEND] Starting conversation WebSocket with session_id:', sessionId);
 
       // 1) open WS with session ID
       const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}`);
@@ -2099,11 +1096,11 @@ function RealTimeVoiceApp() {
 
       socket.onopen = () => {
         appendLog("🔌 WS open - Connected to backend!");
-        console.log("WebSocket connection OPENED to backend at:", `${WS_URL}/api/v1/realtime/conversation`);
+        console.info("WebSocket connection OPENED to backend at:", `${WS_URL}/api/v1/realtime/conversation`);
       };
       socket.onclose = (event) => {
         appendLog(`🔌 WS closed - Code: ${event.code}, Reason: ${event.reason}`);
-        console.log("WebSocket connection CLOSED. Code:", event.code, "Reason:", event.reason);
+        console.info("WebSocket connection CLOSED. Code:", event.code, "Reason:", event.reason);
       };
       socket.onerror = (err) => {
         appendLog("❌ WS error - Check if backend is running");
@@ -2111,68 +1108,163 @@ function RealTimeVoiceApp() {
       };
       socket.onmessage = handleSocketMessage;
       socketRef.current = socket;
-
-      // 2) setup Web Audio for raw PCM @16 kHz
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: 16000
-      });
-      audioContextRef.current = audioCtx;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.3;
-      analyserRef.current = analyser;
-      
-      source.connect(analyser);
-
-      const bufferSize = 512; 
-      const processor  = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-      processorRef.current = processor;
-
-      analyser.connect(processor);
-
-      processor.onaudioprocess = (evt) => {
-        const float32 = evt.inputBuffer.getChannelData(0);
-        
-        // Calculate real-time audio level
-        let sum = 0;
-        for (let i = 0; i < float32.length; i++) {
-          sum += float32[i] * float32[i];
-        }
-        const rms = Math.sqrt(sum / float32.length);
-        const level = Math.min(1, rms * 10); // Scale and clamp to 0-1
-        
-        audioLevelRef.current = level;
-        setAudioLevel(level);
-
-        // Debug: Log a sample of mic data
-        console.log("Mic data sample:", float32.slice(0, 10)); // Should show non-zero values if your mic is hot
-
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7fff;
-        }
-
-        // Debug: Show size before send
-        console.log("Sending int16 PCM buffer, length:", int16.length);
-
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(int16.buffer);
-          // Debug: Confirm data sent
-          console.log("PCM audio chunk sent to backend!");
-        } else {
-          console.log("WebSocket not open, did not send audio.");
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
-      setRecording(true);
     };
+
+  const beginMicStreaming = async () => {
+    if (micStreamingActiveRef.current) {
+      return;
+    }
+    if (micStartPromiseRef.current) {
+      return micStartPromiseRef.current;
+    }
+
+    const startPromise = (async () => {
+      try {
+        const socket = socketRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          appendLog("⚠️ Skipping mic start until WebSocket is ready");
+          return;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStreamRef.current = stream;
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: 16000,
+        });
+        audioContextRef.current = audioCtx;
+
+        const source = audioCtx.createMediaStreamSource(stream);
+
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.3;
+        analyserRef.current = analyser;
+        source.connect(analyser);
+
+        const bufferSize = 512;
+        const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+        processorRef.current = processor;
+        analyser.connect(processor);
+
+        processor.onaudioprocess = (evt) => {
+          const float32 = evt.inputBuffer.getChannelData(0);
+
+          let sum = 0;
+          for (let i = 0; i < float32.length; i++) {
+            sum += float32[i] * float32[i];
+          }
+          const rms = Math.sqrt(sum / float32.length);
+          const level = Math.min(1, rms * 10);
+
+          audioLevelRef.current = level;
+          setAudioLevel(level);
+
+          const chunkTimestamp = Date.now();
+          const pending = pendingUserRef.current;
+          if (pending?.userMessageId) {
+            const hasSpeech = level >= USER_SPEECH_LEVEL_THRESHOLD;
+            let nextPending = null;
+
+            if (hasSpeech) {
+              const audioStartedAt = pending.audioStartedAt ?? chunkTimestamp;
+              const resumedAfterSilence = pending.audioEndAt !== null || pending.latencyStartAt !== null;
+              if (
+                pending.audioStartedAt !== audioStartedAt ||
+                pending.audioLastChunkAt !== chunkTimestamp ||
+                pending.audioEndAt !== null
+              ) {
+                nextPending = {
+                  ...pending,
+                  audioStartedAt,
+                  audioLastChunkAt: chunkTimestamp,
+                  audioEndAt: null,
+                  latencyStartAt: resumedAfterSilence ? null : pending.latencyStartAt,
+                  latencyStopAt: resumedAfterSilence ? null : pending.latencyStopAt,
+                  latencyMs: resumedAfterSilence ? null : pending.latencyMs,
+                };
+              }
+            } else if (pending.audioLastChunkAt) {
+              const silenceElapsed = chunkTimestamp - pending.audioLastChunkAt;
+              if (silenceElapsed >= USER_SILENCE_WINDOW_MS && pending.audioEndAt == null) {
+                nextPending = {
+                  ...pending,
+                  audioEndAt: pending.audioLastChunkAt,
+                  latencyStartAt: pending.latencyStartAt ?? pending.audioLastChunkAt,
+                };
+              }
+            }
+
+            if (nextPending) {
+              const resolvedLatency = computePendingLatency(nextPending);
+              if (resolvedLatency !== null && nextPending.latencyMs !== resolvedLatency) {
+                nextPending = { ...nextPending, latencyMs: resolvedLatency };
+              }
+              pendingUserRef.current = nextPending;
+            } else if (pending.latencyMs == null) {
+              const resolvedLatency = computePendingLatency(pending);
+              if (resolvedLatency !== null) {
+                pendingUserRef.current = { ...pending, latencyMs: resolvedLatency };
+              }
+            }
+          }
+
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7fff;
+          }
+
+          const activeSocket = socketRef.current;
+          if (activeSocket && activeSocket.readyState === WebSocket.OPEN) {
+            activeSocket.send(int16.buffer);
+          } else {
+            console.error("WebSocket not open, did not send audio.");
+          }
+        };
+
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+
+        setRecording(true);
+        micStreamingActiveRef.current = true;
+        appendLog("🎤 PCM streaming started");
+      } catch (error) {
+        micStreamingActiveRef.current = false;
+        if (processorRef.current) {
+          try {
+            processorRef.current.disconnect();
+          } catch (processorError) {
+            console.warn("Cleanup error after mic start failure:", processorError);
+          }
+          processorRef.current = null;
+        }
+        if (audioContextRef.current) {
+          try {
+            audioContextRef.current.close();
+          } catch (ctxError) {
+            console.warn("Failed to close audio context after mic start failure:", ctxError);
+          }
+          audioContextRef.current = null;
+        }
+        if (micStreamRef.current) {
+          try {
+            micStreamRef.current.getTracks()?.forEach((track) => track.stop());
+          } catch (streamError) {
+            console.warn("Failed to stop mic stream after start failure:", streamError);
+          }
+          micStreamRef.current = null;
+        }
+        appendLog(`❌ Mic start failed: ${error?.message || error}`);
+        console.error("Failed to start microphone streaming:", error);
+        throw error;
+      } finally {
+        micStartPromiseRef.current = null;
+      }
+    })();
+
+    micStartPromiseRef.current = startPromise;
+    return startPromise;
+  };
 
     const stopRecognition = () => {
       if (processorRef.current) {
@@ -2191,6 +1283,22 @@ function RealTimeVoiceApp() {
         }
         audioContextRef.current = null;
       }
+
+      if (micStreamRef.current) {
+        try {
+          micStreamRef.current.getTracks()?.forEach((track) => track.stop());
+        } catch (e) {
+          console.warn("Error stopping mic stream:", e);
+        }
+        micStreamRef.current = null;
+      }
+
+      micStreamingActiveRef.current = false;
+      if (micStartPromiseRef.current) {
+        micStartPromiseRef.current = null;
+      }
+      audioLevelRef.current = 0;
+      setAudioLevel(0);
       
       if (socketRef.current) {
         try { 
@@ -2201,35 +1309,68 @@ function RealTimeVoiceApp() {
         socketRef.current = null;
       }
       
-      // Add session stopped message instead of clearing everything
-      setMessages(m => [...m, { 
-        speaker: "System", 
-        text: "🛑 Session stopped" 
-      }]);
-      setActiveSpeaker("System");
+      const summaryTimestamp = Date.now();
+      setMessages((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1]?.kind === "divider") {
+          return prev;
+        }
+        const userTurns = prev.filter((msg) => msg.speaker === "User").length;
+        const assistantTurns = prev.filter((msg) => msg.speaker && msg.speaker !== "User").length;
+        const firstTimestamp = prev.find((msg) => typeof msg.timestamp === "number")?.timestamp;
+        const durationMs = firstTimestamp ? Math.max(summaryTimestamp - firstTimestamp, 0) : null;
+        const dividerMessage = createMessage({
+          kind: "divider",
+          timestamp: summaryTimestamp,
+          summary: {
+            userTurns,
+            assistantTurns,
+            durationMs,
+          },
+        });
+        return [...prev, dividerMessage];
+      });
+      setActiveSpeaker(null);
+      setActiveAgentName(null);
+      setToolActivity(null);
       setRecording(false);
+      const pendingUser = pendingUserRef.current;
+      if (pendingUser?.userMessageId) {
+        updateMessage(pendingUser.userMessageId, () => ({ metrics: { awaitingResponse: false } }));
+      }
+      pendingUserRef.current = null;
+      activeAssistantRef.current = {
+        messageId: null,
+        streaming: false,
+        speaking: false,
+        speechStartedAt: null,
+        respondedAt: null,
+        originUserMessageId: null,
+        originUserStartedAt: null,
+        bufferedText: "",
+        finalText: "",
+        incomplete: false,
+        agentName: null,
+      };
+      bargeInRef.current = null;
+      assistantAudioProgressRef.current.clear();
+      currentSpeechMessageRef.current = null;
+      toolMessageRef.current.clear();
+      assistantBacklogRef.current = [];
       appendLog("🛑 PCM streaming stopped");
-    };
-
-    const pushIfChanged = (arr, msg) => {
-      if (arr.length === 0) return [...arr, msg];
-      const last = arr[arr.length - 1];
-      if (last.speaker === msg.speaker && last.text === msg.text) return arr;
-      return [...arr, msg];
     };
 
     const handleSocketMessage = async (event) => {
       // Log all incoming messages for debugging
-      if (typeof event.data === "string") {
-        try {
-          const msg = JSON.parse(event.data);
-          console.log("📨 WebSocket message received:", msg.type || "unknown", msg);
-        } catch (e) {
-          console.log("📨 Non-JSON WebSocket message:", event.data);
-        }
-      } else {
-        console.log("📨 Binary WebSocket message received, length:", event.data.byteLength);
-      }
+      // if (typeof event.data === "string") {
+      //   try {
+      //     const msg = JSON.parse(event.data);
+      //     console.info("📨 WebSocket message received:", msg.type || "unknown", msg);
+      //   } catch {
+      //     console.warn("📨 Non-JSON WebSocket message:", event.data);
+      //   }
+      // } else {
+      //   console.info("📨 Binary WebSocket message received, length:", event.data.byteLength);
+      // }
 
       if (typeof event.data !== "string") {
         const ctx = new AudioContext();
@@ -2254,16 +1395,27 @@ function RealTimeVoiceApp() {
       // --- NEW: Handle envelope format from backend ---
       // If message is in envelope format, extract the actual payload
       if (payload.type && payload.sender && payload.payload && payload.ts) {
-        console.log("📨 Received envelope message:", {
+        console.info("📨 Received envelope message:", {
           type: payload.type,
           sender: payload.sender,
           topic: payload.topic,
           session_id: payload.session_id
         });
         
+        // Check for agent/sender change and finalize current message
+        const currentAssistant = activeAssistantRef.current;
+        const envelopeSender = payload.sender;
+        if (currentAssistant?.messageId && currentAssistant.agentName && 
+            currentAssistant.agentName !== envelopeSender && 
+            (currentAssistant.streaming || currentAssistant.incomplete)) {
+          console.info(`Agent handoff detected: ${currentAssistant.agentName} → ${envelopeSender}`);
+          finalizeActiveAssistantMessage("envelope-agent-handoff");
+        }
+        
         // Extract the actual message from the envelope
         const envelopeType = payload.type;
-        const envelopeSender = payload.sender;
+        const envelopeTopic = payload.topic;
+        const envelopeTimestamp = payload.ts || null;
         const actualPayload = payload.payload;
         
         // Transform envelope back to legacy format for compatibility
@@ -2285,36 +1437,119 @@ function RealTimeVoiceApp() {
             content: actualPayload.content
           };
         } else if (envelopeType === "status" && actualPayload.message) {
-          // Status message in envelope
-          payload = {
-            type: "status",
-            sender: envelopeSender,
-            speaker: envelopeSender,
-            message: actualPayload.message,
-            content: actualPayload.message
-          };
+          const normalizedSender = envelopeSender || "System";
+          if (normalizedSender === "User") {
+            payload = {
+              type: "user",
+              sender: normalizedSender,
+              speaker: "User",
+              message: actualPayload.message,
+              content: actualPayload.message,
+            };
+          } else {
+            const agentName = actualPayload.agent || normalizedSender || "Assistant";
+            setActiveAgentName(agentName);
+            const statusSpeaker = normalizedSender === "System" ? "System" : "Assistant";
+            payload = {
+              type: "status",
+              sender: normalizedSender,
+              speaker: statusSpeaker,
+              agent: agentName,
+              message: actualPayload.message,
+              content: actualPayload.message,
+            };
+          }
+        } else if (envelopeType === "event") {
+          const eventType = actualPayload?.event_type || actualPayload?.eventType || null;
+          const eventData = actualPayload?.data || actualPayload?.payload || actualPayload;
+          if (eventType === "transcription_final" || eventType === "transcription_partial") {
+            const text = eventData?.text ?? eventData?.message ?? "";
+            const language = eventData?.language ?? eventData?.lang ?? null;
+            const timestampIso = eventData?.timestamp ?? null;
+            payload = {
+              type:
+                eventType === "transcription_final"
+                  ? "user_transcription_final"
+                  : "user_transcription_partial",
+              sender: "User",
+              speaker: "User",
+              message: text,
+              content: text,
+              language,
+              transcriptionTimestamp: timestampIso,
+              transcriptionMeta: {
+                raw: actualPayload,
+                topic: envelopeTopic,
+                sender: envelopeSender,
+                envelopeTimestamp,
+              },
+            };
+          } else {
+            payload = {
+              ...actualPayload,
+              sender: envelopeSender,
+              speaker: envelopeSender,
+            };
+          }
         } else {
           // For other envelope types, use the payload directly
           payload = {
             ...actualPayload,
             sender: envelopeSender,
-            speaker: envelopeSender
+            speaker: envelopeSender,
           };
         }
         
-        console.log("📨 Transformed envelope to legacy format:", payload);
+        // console.info("📨 Transformed envelope to legacy format:", payload);
       }
       
+      flushAssistantBacklog();
+
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data" && payload.data) {
-        try {
-          console.log("🔊 Received audio_data message:", {
-            frame_index: payload.frame_index,
-            total_frames: payload.total_frames,
-            sample_rate: payload.sample_rate,
-            data_length: payload.data.length,
-            is_final: payload.is_final
+        if (!micStreamingActiveRef.current && !micStartPromiseRef.current) {
+          beginMicStreaming().catch((error) => {
+            console.error("Mic streaming initialization failed:", error);
           });
+        }
+        try {
+          // console.info("🔊 Received audio_data message:", {
+          //   frame_index: payload.frame_index,
+          //   total_frames: payload.total_frames,
+          //   sample_rate: payload.sample_rate,
+          //   data_length: payload.data.length,
+          //   is_final: payload.is_final
+          // });
+          const audioTimestamp = Date.now();
+
+          const pendingUser = pendingUserRef.current;
+          if (pendingUser?.userMessageId && pendingUser.latencyStopAt == null) {
+            let nextPending = {
+              ...pendingUser,
+              latencyStopAt: audioTimestamp,
+              latencyStartAt:
+                pendingUser.latencyStartAt ??
+                pendingUser.audioEndAt ??
+                pendingUser.audioLastChunkAt ??
+                pendingUser.audioStartedAt ??
+                pendingUser.startedAt ??
+                null,
+            };
+            const resolvedLatency = computePendingLatency(nextPending, audioTimestamp);
+            if (resolvedLatency !== null && nextPending.latencyMs !== resolvedLatency) {
+              nextPending = { ...nextPending, latencyMs: resolvedLatency };
+            }
+            pendingUserRef.current = nextPending;
+            if (resolvedLatency !== null) {
+              updateMessage(nextPending.userMessageId, (msg) => ({
+                metrics: {
+                  ...(msg.metrics || {}),
+                  awaitingResponse: true,
+                  responseLatencyMs: resolvedLatency,
+                },
+              }));
+            }
+          }
 
           // Decode base64 -> Int16 -> Float32 [-1, 1]
           const bstr = atob(payload.data);
@@ -2325,24 +1560,255 @@ function RealTimeVoiceApp() {
           const float32 = new Float32Array(int16.length);
           for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x8000;
 
-          console.log(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`);
-          console.log("🔊 Audio data preview:", float32.slice(0, 10));
+          // console.info(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || DEFAULT_TTS_SAMPLE_RATE}`);
+          // console.info("🔊 Audio data preview:", float32.slice(0, 10));
 
-          // Push to the worklet queue
-          if (pcmSinkRef.current) {
-            pcmSinkRef.current.port.postMessage({ type: 'push', payload: float32 });
-            appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
+          let assistantCtx = activeAssistantRef.current;
+          const isFirstFrame = payload.frame_index === 0;
+          const currentMessages = messagesRef.current || [];
+
+          const getMessageById = (id) =>
+            id ? currentMessages.find((msg) => msg && msg.id === id) : null;
+
+          const findLatestAssistantMessage = () => {
+            for (let idx = currentMessages.length - 1; idx >= 0; idx--) {
+              const candidate = currentMessages[idx];
+              if (!candidate) continue;
+              if (candidate.isTool) continue;
+              if (candidate.speaker === "User") continue;
+              return candidate;
+            }
+            return null;
+          };
+
+          let playbackMessage = getMessageById(assistantCtx?.messageId);
+          if (!playbackMessage && currentSpeechMessageRef.current) {
+            playbackMessage = getMessageById(currentSpeechMessageRef.current);
+          }
+          if (!playbackMessage || playbackMessage.isTool || playbackMessage.speaker === "User") {
+            playbackMessage = findLatestAssistantMessage();
+          }
+
+          if (!playbackMessage) {
+            const placeholderSpeaker = payload.speaker || "Assistant";
+            const placeholderAgent = payload.agent || placeholderSpeaker || null;
+            const placeholder = appendMessage({
+              speaker: placeholderSpeaker,
+              text: "",
+              streaming: true,
+              incomplete: true,
+              agentName: placeholderAgent,
+            });
+
+            setActiveAgentName(placeholderAgent);
+
+            const originUserMessageId =
+              pendingUserRef.current?.userMessageId ?? assistantCtx?.originUserMessageId ?? null;
+            const originUserStartedAt =
+              pendingUserRef.current?.startedAt ?? assistantCtx?.originUserStartedAt ?? null;
+
+            playbackMessage = placeholder;
+            assistantCtx = {
+              messageId: placeholder.id,
+              streaming: true,
+              speaking: false,
+              speechStartedAt: null,
+              respondedAt: Date.now(),
+              originUserMessageId,
+              originUserStartedAt,
+              bufferedText: "",
+              finalText: "",
+              incomplete: true,
+              agentName: placeholderAgent,
+            };
+            activeAssistantRef.current = assistantCtx;
+            currentSpeechMessageRef.current = placeholder.id;
+            // anchorAssistantAfterTool(placeholder.id, originUserMessageId);
           } else {
+            const originUserMessageId =
+              assistantCtx?.originUserMessageId ??
+              pendingUserRef.current?.userMessageId ??
+              null;
+            const originUserStartedAt =
+              assistantCtx?.originUserStartedAt ??
+              pendingUserRef.current?.startedAt ??
+              null;
+            assistantCtx = {
+              messageId: playbackMessage.id,
+              streaming: assistantCtx?.streaming ?? playbackMessage.streaming ?? false,
+              speaking: true,
+              speechStartedAt: assistantCtx?.speechStartedAt ?? null,
+              respondedAt: assistantCtx?.respondedAt ?? Date.now(),
+              originUserMessageId,
+              originUserStartedAt,
+              bufferedText: assistantCtx?.bufferedText ?? playbackMessage.text ?? "",
+              finalText: assistantCtx?.finalText ?? playbackMessage.text ?? "",
+              incomplete: assistantCtx?.incomplete ?? playbackMessage.incomplete ?? false,
+              agentName:
+                assistantCtx?.agentName ??
+                playbackMessage.agentName ??
+                payload.agent ??
+                playbackMessage.speaker ??
+                null,
+            };
+            activeAssistantRef.current = assistantCtx;
+            if (isFirstFrame) {
+              currentSpeechMessageRef.current = playbackMessage.id;
+              // anchorAssistantAfterTool(playbackMessage.id, originUserMessageId ?? null);
+            }
+          }
+
+          const activeMessageId = assistantCtx?.messageId || playbackMessage?.id || null;
+          if (!activeMessageId) {
+            console.warn("Audio chunk without resolved assistant message");
+          }
+          const sampleRate = payload.sample_rate || DEFAULT_TTS_SAMPLE_RATE;
+
+          if (activeMessageId) {
+            const progressMap = assistantAudioProgressRef.current;
+            const entry = progressMap.get(activeMessageId) || {
+              queuedSamples: 0,
+              playedSamples: 0,
+              sampleRate,
+              lastRatio: 0,
+            };
+            entry.sampleRate = sampleRate;
+            const chunkSamples = float32.length;
+            entry.queuedSamples = (entry.queuedSamples || 0) + chunkSamples;
+            entry.completed = false;
+            if (payload.is_final) {
+              entry.expectedSamples = entry.queuedSamples;
+              entry.expectedNotified = false;
+            }
+            if (!entry.userMessageId && assistantCtx?.originUserMessageId) {
+              entry.userMessageId = assistantCtx.originUserMessageId;
+            }
+            progressMap.set(activeMessageId, entry);
+            if (payload.is_final) {
+              currentSpeechMessageRef.current = null;
+            }
+          }
+
+          const ensurePlaybackReady = async () => {
+            if (pcmSinkRef.current) {
+              return true;
+            }
             console.warn("Audio playback not initialized, attempting init...");
             appendLog("⚠️ Audio playback not ready, initializing...");
-            // Try to initialize if not done yet
             await initializeAudioPlayback();
-            if (pcmSinkRef.current) {
-              pcmSinkRef.current.port.postMessage({ type: 'push', payload: float32 });
-              appendLog("🔊 TTS audio playing (after init)");
-            } else {
-              console.error("Failed to initialize audio playback");
-              appendLog("❌ Audio init failed");
+            return Boolean(pcmSinkRef.current);
+          };
+
+          if (await ensurePlaybackReady()) {
+            const playbackRate = playbackAudioContextRef.current?.sampleRate || sampleRate;
+            let playbackChunk =
+              playbackRate === sampleRate
+                ? float32
+                : resampleToSampleRate(float32, sampleRate, playbackRate);
+
+            const fadeDurationMs = 20;
+            const fadeSamples = Math.max(8, Math.floor((playbackRate * fadeDurationMs) / 1000));
+            const entryForFade = assistantAudioProgressRef.current.get(activeMessageId);
+            const shouldFadeIn = Boolean(entryForFade && !entryForFade.hasAppliedFadeIn && payload.frame_index === 0);
+            const shouldFadeOut = payload.is_final === true;
+            
+            // Add buffer padding for smoother start
+            if (shouldFadeIn && playbackChunk.length > 0) {
+              const bufferPadding = new Float32Array(Math.min(64, fadeSamples));
+              const paddedChunk = new Float32Array(bufferPadding.length + playbackChunk.length);
+              paddedChunk.set(bufferPadding, 0);
+              paddedChunk.set(playbackChunk, bufferPadding.length);
+              playbackChunk = paddedChunk;
+            }
+            
+            if (shouldFadeIn || shouldFadeOut) {
+              playbackChunk = applyFadeEnvelope(
+                playbackChunk,
+                shouldFadeIn ? fadeSamples : 0,
+                shouldFadeOut ? fadeSamples : 0,
+              );
+              if (entryForFade) {
+                if (shouldFadeIn) {
+                  entryForFade.hasAppliedFadeIn = true;
+                }
+                if (shouldFadeOut) {
+                  entryForFade.hasAppliedFadeOut = true;
+                }
+                assistantAudioProgressRef.current.set(activeMessageId, entryForFade);
+              }
+            }
+
+            const payloadBuffer = playbackChunk.buffer;
+            const payloadLength = playbackChunk.length;
+            pcmSinkRef.current.port.postMessage(
+              {
+                type: 'push',
+                payload: payloadBuffer,
+                length: payloadLength,
+                messageId: activeMessageId,
+                sourceSamples: float32.length,
+              },
+              [payloadBuffer]
+            );
+            appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
+          } else {
+            console.error("Failed to initialize audio playback");
+            appendLog("❌ Audio init failed");
+          }
+
+          if (assistantCtx?.messageId) {
+            const nextCtx = {
+              ...assistantCtx,
+              speaking: true,
+              speechStartedAt: assistantCtx.speechStartedAt ?? audioTimestamp,
+              streaming: false,
+              respondedAt: assistantCtx.respondedAt ?? audioTimestamp,
+              awaitingAudio: !payload.is_final,
+              bufferedText: assistantCtx?.bufferedText ?? "",
+              finalText: assistantCtx?.finalText ?? "",
+              incomplete: assistantCtx?.incomplete ?? false,
+              agentName: assistantCtx?.agentName ?? payload.agent ?? null,
+            };
+            activeAssistantRef.current = nextCtx;
+
+            if (payload.is_final) {
+              const duration = nextCtx.speechStartedAt ? audioTimestamp - nextCtx.speechStartedAt : null;
+              const metricsUpdate = {};
+              const progressEntry = assistantAudioProgressRef.current.get(nextCtx.messageId || "");
+              if (progressEntry?.sampleRate && progressEntry?.expectedSamples) {
+                metricsUpdate.speechDurationMs = (progressEntry.expectedSamples / progressEntry.sampleRate) * 1000;
+              } else if (duration !== null && duration >= 0) {
+                metricsUpdate.speechDurationMs = duration;
+              }
+              updateMessage(nextCtx.messageId, (msg) => ({
+                streaming: false,
+                incomplete: false,
+                agentName: msg.agentName || nextCtx.agentName || payload.agent || null,
+              }));
+              if (bargeInRef.current && bargeInRef.current.assistantMessageId === nextCtx.messageId) {
+                const bargeDuration = audioTimestamp - bargeInRef.current.startedAt;
+                metricsUpdate.bargeInMs = bargeDuration;
+                if (bargeInRef.current.userMessageId) {
+                  updateMessage(bargeInRef.current.userMessageId, () => ({ metrics: { bargeInMs: bargeDuration } }));
+                }
+                bargeInRef.current = null;
+              }
+              if (Object.keys(metricsUpdate).length > 0) {
+                updateMessage(nextCtx.messageId, () => ({ metrics: metricsUpdate }));
+              }
+              activeAssistantRef.current = {
+                messageId: nextCtx.messageId,
+                streaming: false,
+                speaking: false,
+                speechStartedAt: null,
+                respondedAt: nextCtx.respondedAt ?? audioTimestamp,
+                originUserMessageId: nextCtx.originUserMessageId ?? null,
+                originUserStartedAt: nextCtx.originUserStartedAt ?? null,
+                bufferedText: nextCtx.bufferedText ?? "",
+                finalText: nextCtx.finalText ?? "",
+                incomplete: nextCtx.incomplete ?? false,
+                agentName: nextCtx.agentName ?? payload.agent ?? null,
+              };
             }
           }
           return; // handled
@@ -2361,52 +1827,379 @@ function RealTimeVoiceApp() {
       }
       const { type, content = "", message = "", speaker } = payload;
       const txt = content || message;
+      const userTextReady = typeof txt === "string" && txt.trim().length > 0;
       const msgType = (type || "").toLowerCase();
+      const isTranscriptionFinal = msgType === "user_transcription_final";
+      const isTranscriptionPartial = msgType === "user_transcription_partial";
+      const hasTranscription = isTranscriptionFinal || isTranscriptionPartial;
+      const transcriptionMeta = hasTranscription ? payload.transcriptionMeta || {} : null;
+      const transcriptionTimestampIso = hasTranscription
+        ? payload.transcriptionTimestamp ||
+          transcriptionMeta?.timestamp ||
+          transcriptionMeta?.envelopeTimestamp ||
+          transcriptionMeta?.raw?.timestamp ||
+          transcriptionMeta?.raw?.data?.timestamp ||
+          transcriptionMeta?.raw?.payload?.timestamp ||
+          null
+        : null;
+      const transcriptionTs = hasTranscription ? parseIsoTimestamp(transcriptionTimestampIso) : null;
+      const finalTranscriptionTs = isTranscriptionFinal ? transcriptionTs : null;
+      const partialTranscriptionTs = isTranscriptionPartial ? transcriptionTs : null;
+      const currentAssistant = activeAssistantRef.current;
+      const isSystemSpeaker = speaker === "System";
+      const isSystemStatus = msgType === "status" && isSystemSpeaker;
 
-      if (msgType === "user" || speaker === "User") {
+      if (isSystemStatus) {
+        if (currentAssistant?.messageId && (currentAssistant.streaming || currentAssistant.speaking || currentAssistant.incomplete)) {
+          finalizeActiveAssistantMessage("system-status-change");
+        }
+
+        setActiveSpeaker("System");
+        const agentSource = payload.agent || null;
+        if (agentSource) {
+          setActiveAgentName(agentSource);
+        }
+        lastToolMessageIdRef.current = null;
+
+        if (userTextReady) {
+          appendMessage({
+            speaker: "System",
+            text: txt,
+            agentName: agentSource,
+          });
+          appendLog(`System: ${txt}`);
+        }
+        return;
+      }
+
+      if (msgType === "user" || speaker === "User" || isTranscriptionFinal || isTranscriptionPartial) {
+        // Speaker change detected - finalize any active assistant message
+        const currentAssistant = activeAssistantRef.current;
+        if (currentAssistant?.messageId && (currentAssistant.streaming || currentAssistant.speaking)) {
+          finalizeActiveAssistantMessage("user-speaker-change");
+        }
+        
         setActiveSpeaker("User");
-        setMessages(prev => [...prev, { speaker: "User", text: txt }]);
+        lastToolMessageIdRef.current = null;
+        const pending = pendingUserRef.current;
+        const draft = userSpeechDraftRef.current;
+        const existingDraftId = draft?.messageId ?? null;
+        if (pending?.userMessageId && pending.userMessageId !== existingDraftId) {
+          updateMessage(pending.userMessageId, () => ({ metrics: { awaitingResponse: false } }));
+        }
 
+        const userTimestamp =
+          finalTranscriptionTs ??
+          partialTranscriptionTs ??
+          Date.now();
+        let userMessageId = existingDraftId;
+
+        if (isTranscriptionPartial) {
+          const partialText = typeof txt === "string" ? txt : "";
+          if (!partialText) {
+            return;
+          }
+
+          const currentMessages = messagesRef.current || [];
+          let targetMessageId = userMessageId || null;
+          if (!targetMessageId && pending?.userMessageId && !pending.finalReceived) {
+            targetMessageId = pending.userMessageId;
+          }
+          let startedAt = pending?.finalReceived ? userTimestamp : pending?.startedAt ?? draft?.startedAt ?? userTimestamp;
+
+          if (targetMessageId) {
+            const exists = currentMessages.some((msg) => msg.id === targetMessageId);
+            if (!exists) {
+              targetMessageId = null;
+            }
+          }
+
+          const carryPending = pending && !pending.finalReceived ? pending : null;
+
+          if (!targetMessageId) {
+            const userMsg = appendMessage({
+              speaker: "User",
+              text: partialText,
+              streaming: true,
+              incomplete: true,
+              metrics: { awaitingResponse: true },
+              timestamp: userTimestamp,
+            });
+            targetMessageId = userMsg.id;
+            startedAt = userTimestamp;
+          } else {
+            updateMessage(targetMessageId, (msg) => ({
+              text: partialText,
+              streaming: true,
+              incomplete: true,
+              timestamp: userTimestamp,
+              metrics: { ...(msg.metrics || {}), awaitingResponse: true },
+            }));
+          }
+
+          userSpeechDraftRef.current = {
+            messageId: targetMessageId,
+            startedAt,
+          };
+
+          pendingUserRef.current = {
+            userMessageId: targetMessageId,
+            startedAt,
+            latencyMs: carryPending?.latencyMs ?? null,
+            textReady: true,
+            audioStartedAt: carryPending?.audioStartedAt ?? startedAt,
+            audioLastChunkAt: userTimestamp,
+            audioEndAt: carryPending?.audioEndAt ?? null,
+            latencyStopAt: carryPending?.latencyStopAt ?? null,
+            latencyStartAt: carryPending?.latencyStartAt ?? null,
+            requireFinal: true,
+            finalReceived: false,
+          };
+
+          const activeUserMessageId = pendingUserRef.current.userMessageId;
+          const assistantCtx = activeAssistantRef.current;
+          if ((assistantCtx?.streaming || assistantCtx?.speaking) && assistantCtx?.messageId) {
+            bargeInRef.current = {
+              assistantMessageId: assistantCtx.messageId,
+              startedAt: userTimestamp,
+              userMessageId: activeUserMessageId,
+            };
+            updateMessage(assistantCtx.messageId, () => ({ incomplete: true }));
+            activeAssistantRef.current = {
+              ...assistantCtx,
+              incomplete: true,
+            };
+          }
+
+          appendLog(`User (partial): ${partialText}`);
+          return;
+        }
+
+        if (existingDraftId) {
+          updateMessage(existingDraftId, () => ({
+            text: txt,
+            streaming: false,
+            incomplete: false,
+            timestamp: userTimestamp,
+          }));
+          pendingUserRef.current = {
+            userMessageId: existingDraftId,
+            startedAt: pending?.startedAt ?? draft.startedAt ?? userTimestamp,
+            latencyMs: pending?.latencyMs ?? null,
+            textReady: userTextReady || pending?.textReady || false,
+            audioStartedAt: pending?.audioStartedAt ?? null,
+            audioLastChunkAt: pending?.audioLastChunkAt ?? null,
+            audioEndAt: pending?.audioEndAt ?? null,
+            latencyStopAt: pending?.latencyStopAt ?? null,
+            latencyStartAt: pending?.latencyStartAt ?? null,
+            requireFinal: false,
+            finalReceived: true,
+          };
+          userSpeechDraftRef.current = null;
+        } else {
+          const userMsg = appendMessage({
+            speaker: "User",
+            text: txt,
+            metrics: { awaitingResponse: true },
+          });
+          userMessageId = userMsg.id;
+          pendingUserRef.current = {
+            userMessageId,
+            startedAt: userTimestamp,
+            latencyMs: null,
+            textReady: userTextReady,
+            audioStartedAt: null,
+            audioLastChunkAt: null,
+            audioEndAt: null,
+            latencyStopAt: null,
+            latencyStartAt: null,
+            requireFinal: false,
+            finalReceived: true,
+          };
+        }
+
+        if (pendingUserRef.current) {
+          let nextPending = {
+            ...pendingUserRef.current,
+            textReady: userTextReady || pendingUserRef.current.textReady || false,
+          };
+
+          if (isTranscriptionFinal) {
+            nextPending = {
+              ...nextPending,
+              textReady: true,
+            };
+            if (!nextPending.audioStartedAt) {
+              nextPending.audioStartedAt = nextPending.startedAt ?? finalTranscriptionTs ?? userTimestamp;
+            }
+            if (finalTranscriptionTs !== null) {
+              if (!nextPending.audioLastChunkAt) {
+                nextPending.audioLastChunkAt = finalTranscriptionTs;
+              }
+              if (!nextPending.audioEndAt) {
+                nextPending.audioEndAt = finalTranscriptionTs;
+              }
+            }
+            if (!nextPending.latencyStartAt) {
+              nextPending.latencyStartAt =
+                nextPending.audioEndAt ??
+                nextPending.audioLastChunkAt ??
+                finalTranscriptionTs ??
+                nextPending.audioStartedAt ??
+                nextPending.startedAt ??
+                userTimestamp;
+            }
+            nextPending.requireFinal = false;
+            nextPending.finalReceived = true;
+          }
+
+          const resolvedLatency = computePendingLatency(nextPending);
+          if (resolvedLatency !== null && nextPending.latencyMs !== resolvedLatency) {
+            nextPending = { ...nextPending, latencyMs: resolvedLatency };
+          }
+
+          pendingUserRef.current = nextPending;
+
+          if (nextPending.userMessageId && (userTextReady || isTranscriptionFinal)) {
+            updateMessage(nextPending.userMessageId, (msg) => {
+              const baseMetrics = msg.metrics || {};
+              const awaitingResponse = true;
+              const metrics =
+                resolvedLatency !== null
+                  ? { ...baseMetrics, awaitingResponse, responseLatencyMs: resolvedLatency }
+                  : { ...baseMetrics, awaitingResponse };
+              return { metrics };
+            });
+          }
+        }
+
+        const activeUserMessageId = pendingUserRef.current?.userMessageId;
+        const assistantCtx = activeAssistantRef.current;
+        if ((assistantCtx?.streaming || assistantCtx?.speaking) && assistantCtx?.messageId) {
+          bargeInRef.current = {
+            assistantMessageId: assistantCtx.messageId,
+            startedAt: userTimestamp,
+            userMessageId: activeUserMessageId,
+          };
+          updateMessage(assistantCtx.messageId, () => ({ incomplete: true }));
+          activeAssistantRef.current = {
+            ...assistantCtx,
+            incomplete: true,
+          };
+        }
+        flushAssistantBacklog();
         appendLog(`User: ${txt}`);
         return;
       }
 
-      if (type === "assistant_streaming") {
-        const streamingSpeaker = speaker || "Assistant";
-        setActiveSpeaker(streamingSpeaker);
-        setMessages(prev => {
-          if (prev.at(-1)?.streaming && prev.at(-1)?.speaker === streamingSpeaker) {
-            return prev.map((m,i)=> i===prev.length-1 ? {...m, text: m.text + txt} : m);
-          }
-          return [...prev, { speaker:streamingSpeaker, text:txt, streaming:true }];
+      if (msgType === "assistant_streaming") {
+        // Check for agent handoff during streaming (but not during tool calls)
+        const currentAssistant = activeAssistantRef.current;
+        const incomingAgent = payload.agent || speaker || "Assistant";
+        const isToolActive = toolActivity?.status === "running";
+        if (currentAssistant?.messageId && currentAssistant.agentName && 
+            currentAssistant.agentName !== incomingAgent && 
+            (currentAssistant.streaming || currentAssistant.incomplete) &&
+            !isToolActive) {
+          console.info(`Agent handoff during streaming: ${currentAssistant.agentName} → ${incomingAgent}`);
+          finalizeActiveAssistantMessage("streaming-agent-handoff");
+        }
+        
+        const executeStreaming = () => processAssistantStreaming({
+          payload,
+          text: txt,
+          speaker,
         });
+        if (!isUserTranscriptReady()) {
+          enqueueAssistantTask(executeStreaming);
+          return;
+        }
+        executeStreaming();
         return;
       }
 
-      if (msgType === "assistant" || msgType === "status" || speaker === "Assistant") {
-        setActiveSpeaker("Assistant");
-        setMessages(prev => {
-          if (prev.at(-1)?.streaming) {
-            return prev.map((m,i)=> i===prev.length-1 ? {...m, text:txt, streaming:false} : m);
-          }
-          return pushIfChanged(prev, { speaker:"Assistant", text:txt });
+      if (
+        msgType === "assistant_streaming" ||
+        (msgType === "status" && speaker !== "System") ||
+        speaker === "Assistant"
+      ) {
+        // If we're getting a new assistant response but have an active different assistant, finalize it
+        // But not during tool calls, as the same agent continues after the tool
+        const currentAssistant = activeAssistantRef.current;
+        const incomingAgent = payload.agent || speaker || "Assistant";
+        const isToolActive = toolActivity?.status === "running";
+        if (currentAssistant?.messageId && currentAssistant.agentName && 
+            currentAssistant.agentName !== incomingAgent && 
+            (currentAssistant.streaming || currentAssistant.speaking) &&
+            !isToolActive) {
+          console.info(`Agent handoff in assistant response: ${currentAssistant.agentName} → ${incomingAgent}`);
+          finalizeActiveAssistantMessage("assistant-response-handoff");
+        }
+        
+        const executeAssistant = () => processAssistantResponse({
+          payload,
+          text: txt,
+          speaker,
         });
-
-        appendLog("🤖 Assistant responded");
+        if (!isUserTranscriptReady()) {
+          enqueueAssistantTask(executeAssistant);
+          return;
+        }
+        executeAssistant();
+        flushAssistantBacklog();
         return;
       }
     
       if (type === "tool_start") {
+        const startedAt = Date.now();
+        const agentSource = payload.agent || payload.speaker || null;
+        if (agentSource) {
+          setActiveAgentName(agentSource);
+        }
+        const toolName = payload.tool || "tool";
+        const progressValue = typeof payload.pct === "number" ? payload.pct : null;
+        setToolActivity({
+          tool: toolName,
+          status: "running",
+          progress: progressValue,
+          startedAt,
+          agent: agentSource,
+          elapsedMs: null,
+        });
 
-      
-        setMessages((prev) => [
-          ...prev,
-          {
-            speaker: "Assistant",
-            isTool: true,
-            text: `🛠️ tool ${payload.tool} started 🔄`,
-          },
-        ]);
+        const initialToolState = {
+          toolName,
+          status: "running",
+          statusLabel: progressValue != null ? `Running · ${Math.round(progressValue)}%` : "Running",
+          progress: progressValue,
+          startedAt,
+          updatedAt: startedAt,
+          elapsedMs: null,
+          agent: agentSource || null,
+          error: null,
+          result: null,
+          resultPreview: null,
+          detailText: payload.message || null,
+        };
+
+        const toolMessage = appendMessage({
+          speaker: speaker || "Assistant",
+          isTool: true,
+          text: formatToolMessage(toolName, { status: "started", progress: progressValue }),
+          agentName: agentSource,
+          tool: toolName,
+          toolState: initialToolState,
+        });
+
+        toolMessageRef.current.set(toolName, toolMessage.id);
+        lastToolMessageIdRef.current = {
+          messageId: toolMessage.id,
+          userMessageId:
+            pendingUserRef.current?.userMessageId ??
+            activeAssistantRef.current?.originUserMessageId ??
+            null,
+          lastAssistantId: null,
+        };
       
         appendLog(`⚙️ ${payload.tool} started`);
         return;
@@ -2414,58 +2207,264 @@ function RealTimeVoiceApp() {
       
     
       if (type === "tool_progress") {
-        setMessages((prev) =>
-          prev.map((m, i, arr) =>
-            i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
-              ? { ...m, text: `🛠️ tool ${payload.tool} ${payload.pct}% 🔄` }
-              : m,
-          ),
-        );
+        const toolName = payload.tool || "tool";
+        const now = Date.now();
+        const progressValue = typeof payload.pct === "number" ? Math.max(0, Math.min(100, payload.pct)) : null;
+        const agentSource = payload.agent || payload.speaker || null;
+
+        setToolActivity((prev) => {
+          if (!prev || prev.tool !== toolName) {
+            return prev;
+          }
+          return {
+            ...prev,
+            status: "running",
+            progress: progressValue ?? prev.progress ?? null,
+          };
+        });
+
+        const messageId = toolMessageRef.current.get(toolName);
+        const toolUpdatePayload = {
+          status: progressValue != null ? "in_progress" : "running",
+          progress: progressValue,
+        };
+
+        if (messageId) {
+          updateMessage(messageId, (msg) => {
+            const prevState = msg.toolState || {};
+            const nextState = {
+              ...prevState,
+              status: "running",
+              statusLabel: progressValue != null ? `Running · ${Math.round(progressValue)}%` : "Running",
+              progress: progressValue ?? prevState.progress ?? null,
+              updatedAt: now,
+              agent: agentSource || prevState.agent || null,
+              detailText: payload.message || prevState.detailText || null,
+            };
+            if (nextState.startedAt == null) {
+              nextState.startedAt = prevState.startedAt ?? now;
+            }
+            return {
+              text: formatToolMessage(toolName, toolUpdatePayload),
+              agentName: msg.agentName || agentSource || null,
+              tool: msg.tool || toolName,
+              isTool: true,
+              toolState: nextState,
+            };
+          });
+          lastToolMessageIdRef.current = {
+            messageId,
+            userMessageId:
+              pendingUserRef.current?.userMessageId ??
+              activeAssistantRef.current?.originUserMessageId ??
+              null,
+          };
+        } else {
+          const initialState = {
+            toolName,
+            status: "running",
+            statusLabel: progressValue != null ? `Running · ${Math.round(progressValue)}%` : "Running",
+            progress: progressValue,
+            startedAt: now,
+            updatedAt: now,
+            agent: agentSource || null,
+            elapsedMs: null,
+            error: null,
+            result: null,
+            resultPreview: null,
+            detailText: payload.message || null,
+          };
+          const replacement = appendMessage({
+            speaker: "Assistant",
+            isTool: true,
+            text: formatToolMessage(toolName, toolUpdatePayload),
+            agentName: agentSource,
+            tool: toolName,
+            toolState: initialState,
+          });
+          toolMessageRef.current.set(toolName, replacement.id);
+          lastToolMessageIdRef.current = {
+            messageId: replacement.id,
+            userMessageId:
+              pendingUserRef.current?.userMessageId ??
+              activeAssistantRef.current?.originUserMessageId ??
+              null,
+          };
+        }
         appendLog(`⚙️ ${payload.tool} ${payload.pct}%`);
         return;
       }
     
       if (type === "tool_end") {
+        const finishedAt = Date.now();
+        const toolName = payload.tool || "tool";
+        const success = payload.status === "success";
+        const agentSource = payload.agent || payload.speaker || null;
 
-      
-        const finalText =
-          payload.status === "success"
-            ? `🛠️ tool ${payload.tool} completed ✔️\n${JSON.stringify(
-                payload.result,
-                null,
-                2,
-              )}`
-            : `🛠️ tool ${payload.tool} failed ❌\n${payload.error}`;
-      
-        setMessages((prev) =>
-          prev.map((m, i, arr) =>
-            i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
-              ? { ...m, text: finalText }
-              : m,
-          ),
-        );
-      
+        setToolActivity((prev) => {
+          if (!prev || prev.tool !== toolName) {
+            const startedAt = finishedAt - (payload.elapsedMs ?? 0);
+            return {
+              tool: toolName,
+              status: success ? "success" : "failed",
+              progress: success ? 100 : prev?.progress ?? null,
+              startedAt,
+              elapsedMs: null,
+              agent: agentSource ?? prev?.agent ?? null,
+            };
+          }
+          return {
+            ...prev,
+            status: success ? "success" : "failed",
+            progress: success ? 100 : prev.progress ?? null,
+            elapsedMs: payload.elapsedMs ??
+              (prev.startedAt != null ? Math.max(finishedAt - prev.startedAt, 0) : null),
+          };
+        });
+
+        const messageId = toolMessageRef.current.get(toolName);
+        const finalText = formatToolMessage(toolName, {
+          status: success ? "completed ✔️" : "failed ❌",
+          progress: success ? 100 : undefined,
+          error: success ? undefined : payload.error,
+          result: success ? payload.result : undefined,
+        });
+
+        const resultPreview = success && payload.result !== undefined ? previewValue(payload.result) : null;
+        const errorMessage = success ? null : (payload.error || "Tool reported an error");
+
+        if (messageId) {
+          updateMessage(messageId, (msg) => {
+            const prevState = msg.toolState || {};
+            const startedAt = prevState.startedAt ?? (payload.elapsedMs != null ? finishedAt - payload.elapsedMs : finishedAt);
+            const elapsedMs = payload.elapsedMs ?? (startedAt != null ? Math.max(finishedAt - startedAt, 0) : null);
+            const nextState = {
+              ...prevState,
+              status: success ? "success" : "failed",
+              statusLabel: success ? "Completed" : "Failed",
+              progress: success ? 100 : prevState.progress ?? null,
+              updatedAt: finishedAt,
+              completedAt: finishedAt,
+              elapsedMs,
+              agent: agentSource || prevState.agent || null,
+              error: errorMessage,
+              result: success ? (payload.result ?? prevState.result ?? null) : null,
+              resultPreview: success ? (resultPreview ?? prevState.resultPreview ?? null) : null,
+              detailText: success
+                ? (resultPreview || prevState.detailText || null)
+                : (errorMessage || prevState.detailText || null),
+            };
+            if (nextState.startedAt == null) {
+              nextState.startedAt = startedAt;
+            }
+            return {
+              text: finalText,
+              agentName: msg.agentName || agentSource || null,
+              tool: msg.tool || toolName,
+              isTool: true,
+              toolState: nextState,
+            };
+          });
+          lastToolMessageIdRef.current = {
+            messageId,
+            userMessageId:
+              pendingUserRef.current?.userMessageId ??
+              activeAssistantRef.current?.originUserMessageId ??
+              null,
+          };
+        } else {
+          const startedAt = finishedAt - (payload.elapsedMs ?? 0);
+          const fallbackState = {
+            toolName,
+            status: success ? "success" : "failed",
+            statusLabel: success ? "Completed" : "Failed",
+            progress: success ? 100 : null,
+            startedAt,
+            updatedAt: finishedAt,
+            completedAt: finishedAt,
+            elapsedMs: payload.elapsedMs ?? null,
+            agent: agentSource || null,
+            error: errorMessage,
+            result: success ? payload.result ?? null : null,
+            resultPreview: success ? resultPreview : null,
+            detailText: success ? resultPreview : errorMessage,
+          };
+          const fallback = appendMessage({
+            speaker: "Assistant",
+            isTool: true,
+            text: finalText,
+            agentName: agentSource,
+            tool: toolName,
+            toolState: fallbackState,
+          });
+          toolMessageRef.current.set(toolName, fallback.id);
+          lastToolMessageIdRef.current = {
+            messageId: fallback.id,
+            userMessageId:
+              pendingUserRef.current?.userMessageId ??
+              activeAssistantRef.current?.originUserMessageId ??
+              null,
+          };
+        }
+
+        toolMessageRef.current.delete(toolName);
+
         appendLog(`⚙️ ${payload.tool} ${payload.status} (${payload.elapsedMs} ms)`);
         return;
       }
 
       if (type === "control") {
         const { action } = payload;
-        console.log("🎮 Control message received:", action);
+        const controlTimestamp = Date.now();
+        console.info("🎮 Control message received:", action);
         
         if (action === "tts_cancelled") {
-          console.log("🔇 TTS cancelled - clearing audio queue");
+          console.info("🔇 TTS cancelled - clearing audio queue");
           appendLog("🔇 Audio interrupted by user speech");
           
           if (pcmSinkRef.current) {
             pcmSinkRef.current.port.postMessage({ type: 'clear' });
           }
-          
+          assistantAudioProgressRef.current.clear();
+          currentSpeechMessageRef.current = null;
+
+          const assistantCtx = activeAssistantRef.current;
+          if (assistantCtx?.messageId) {
+            const updates = {};
+            if (assistantCtx.speechStartedAt) {
+              updates.speechDurationMs = controlTimestamp - assistantCtx.speechStartedAt;
+            }
+            updates.speechInterrupted = true;
+            if (bargeInRef.current && bargeInRef.current.assistantMessageId === assistantCtx.messageId) {
+              const bargeDuration = controlTimestamp - bargeInRef.current.startedAt;
+              updates.bargeInMs = bargeDuration;
+              if (bargeInRef.current.userMessageId) {
+                updateMessage(bargeInRef.current.userMessageId, () => ({ metrics: { bargeInMs: bargeDuration } }));
+              }
+              bargeInRef.current = null;
+            }
+            updateMessage(assistantCtx.messageId, () => ({ metrics: updates, incomplete: true }));
+          }
+
+          activeAssistantRef.current = {
+            messageId: assistantCtx?.messageId ?? null,
+            streaming: false,
+            speaking: false,
+            speechStartedAt: null,
+            respondedAt: assistantCtx?.respondedAt ?? controlTimestamp,
+            originUserMessageId: assistantCtx?.originUserMessageId ?? null,
+            originUserStartedAt: assistantCtx?.originUserStartedAt ?? null,
+            bufferedText: assistantCtx?.bufferedText ?? "",
+            finalText: assistantCtx?.finalText ?? "",
+            incomplete: true,
+            agentName: assistantCtx?.agentName ?? null,
+          };
+
           setActiveSpeaker(null);
           return;
         }
         
-        console.log("🎮 Unknown control action:", action);
+        console.error("🎮 Unknown control action:", action);
         return;
       }
     };
@@ -2474,6 +2473,10 @@ function RealTimeVoiceApp() {
    *  OUTBOUND ACS CALL
    * ------------------------------------------------------------------ */
   const startACSCall = async () => {
+    if (systemStatus.status === "degraded" && systemStatus.acsOnlyIssue) {
+      appendLog("🚫 Outbound calling disabled until ACS configuration is provided.");
+      return;
+    }
     if (!/^\+\d+$/.test(targetPhoneNumber)) {
       alert("Enter phone in E.164 format e.g. +15551234567");
       return;
@@ -2481,8 +2484,8 @@ function RealTimeVoiceApp() {
     try {
       // Get the current session ID for this browser session
       const currentSessionId = getOrCreateSessionId();
-      console.log('📞 [FRONTEND] Initiating phone call with session_id:', currentSessionId);
-      console.log('📞 [FRONTEND] This session_id will be sent to backend for call mapping');
+      console.info('📞 [FRONTEND] Initiating phone call with session_id:', currentSessionId);
+      console.info('📞 [FRONTEND] This session_id will be sent to backend for call mapping');
       
       const res = await fetch(`${API_BASE_URL}/api/v1/calls/initiate`, {
         method:"POST",
@@ -2502,12 +2505,12 @@ function RealTimeVoiceApp() {
       // show in chat
       setMessages(m => [
         ...m,
-        { speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber}` }
+        createMessage({ speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber}` }),
       ]);
       appendLog("📞 Call initiated");
 
       // relay WS WITH session_id to monitor THIS session (including phone calls)
-      console.log('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor session:', currentSessionId);
+      console.info('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor session:', currentSessionId);
       const relay = new WebSocket(`${WS_URL}/api/v1/realtime/dashboard/relay?session_id=${currentSessionId}`);
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({data}) => {
@@ -2517,7 +2520,7 @@ function RealTimeVoiceApp() {
           // Handle envelope format for relay messages
           let processedObj = obj;
           if (obj.type && obj.sender && obj.payload && obj.ts) {
-            console.log("📨 Relay received envelope message:", {
+            console.info("📨 Relay received envelope message:", {
               type: obj.type,
               sender: obj.sender,
               topic: obj.topic
@@ -2544,7 +2547,7 @@ function RealTimeVoiceApp() {
                 message: JSON.stringify(obj.payload)
               };
             }
-            console.log("📨 Transformed relay envelope:", processedObj);
+            console.info("📨 Transformed relay envelope:", processedObj);
           }
           
           if (processedObj.type?.startsWith("tool_")) {
@@ -2553,7 +2556,7 @@ function RealTimeVoiceApp() {
           }
           const { sender, message } = processedObj;
           if (sender && message) {
-            setMessages(m => [...m, { speaker: sender, text: message }]);
+            setMessages(m => [...m, createMessage({ speaker: sender, text: message })]);
             setActiveSpeaker(sender);
             appendLog(`[Relay] ${sender}: ${message}`);
           }
@@ -2579,7 +2582,7 @@ function RealTimeVoiceApp() {
     <div style={styles.root}>
       <div style={styles.mainContainer}>
         {/* Backend Status Indicator */}
-        <BackendIndicator url={API_BASE_URL} />
+        <BackendIndicator url={API_BASE_URL} onStatusChange={handleSystemStatus} />
 
         {/* App Header */}
         <div style={styles.appHeader}>
@@ -2602,8 +2605,16 @@ function RealTimeVoiceApp() {
               <span>Session: {getOrCreateSessionId()}</span>
             </div>
           </div>
-          {/* Top Right Help Button */}
-          <HelpButton />
+          <div style={styles.appHeaderRight}>
+            <HelpButton />
+          </div>
+          {(activeAgentName || toolActivity) && (
+            <div style={styles.statusOverlay}>
+              <div style={styles.statusOverlayInner}>
+                {/* <AgentStatusPanel agentName={activeAgentName} toolActivity={toolActivity} /> */}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Waveform Section */}
@@ -2623,7 +2634,7 @@ function RealTimeVoiceApp() {
           <div style={styles.chatSectionIndicator}></div>
           <div style={styles.messageContainer} ref={messageContainerRef}>
             {messages.map((message, index) => (
-              <ChatBubble key={index} message={message} />
+              <ChatBubble key={message.id || index} message={message} />
             ))}
           </div>
         </div>
@@ -2650,13 +2661,31 @@ function RealTimeVoiceApp() {
                   
                   // Close existing WebSocket if connected
                   if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-                    console.log('🔌 Closing WebSocket for session reset...');
+                    console.info('🔌 Closing WebSocket for session reset...');
                     socketRef.current.close();
                   }
                   
                   // Reset UI state
                   setMessages([]);
+                  pendingUserRef.current = null;
+                  activeAssistantRef.current = {
+                    messageId: null,
+                    streaming: false,
+                    speaking: false,
+                    speechStartedAt: null,
+                    respondedAt: null,
+                    originUserMessageId: null,
+                    originUserStartedAt: null,
+                    bufferedText: "",
+                    finalText: "",
+                    incomplete: false,
+                    agentName: null,
+                  };
+                  bargeInRef.current = null;
+                  toolMessageRef.current.clear();
                   setActiveSpeaker(null);
+                  setActiveAgentName(null);
+                  setToolActivity(null);
                   stopRecognition();
                   setCallActive(false);
                   setShowPhoneInput(false);
@@ -2664,10 +2693,10 @@ function RealTimeVoiceApp() {
                   
                   // Add welcome message
                   setTimeout(() => {
-                    setMessages([{ 
+                    setMessages([createMessage({ 
                       speaker: "System", 
                       text: "✅ Session restarted with new ID. Ready for a fresh conversation!" 
-                    }]);
+                    })]);
                   }, 500);
                 }}
               >
@@ -2683,6 +2712,7 @@ function RealTimeVoiceApp() {
               >
                 Reset conversation & start fresh
               </div>
+
             </div>
 
             {/* MIDDLE: Microphone Button */}
@@ -2711,29 +2741,54 @@ function RealTimeVoiceApp() {
               >
                 {recording ? "Stop recording your voice" : "Start voice conversation"}
               </div>
+
             </div>
 
             {/* RIGHT: Phone Call Button */}
-            <div style={{ position: 'relative' }}>
-              <button
-                style={styles.phoneButton(callActive, phoneHovered)}
-                onMouseEnter={() => {
-                  setShowPhoneTooltip(true);
+            <div 
+              style={{ position: 'relative' }}
+              onMouseEnter={() => {
+                setShowPhoneTooltip(true);
+                if (isCallDisabled && phoneButtonRef.current) {
+                  const rect = phoneButtonRef.current.getBoundingClientRect();
+                  setPhoneDisabledPos({
+                    top: rect.bottom + 12,
+                    left: rect.left + rect.width / 2,
+                  });
+                }
+                if (!isCallDisabled) {
                   setPhoneHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setShowPhoneTooltip(false);
-                  setPhoneHovered(false);
-                }}
+                }
+              }}
+              onMouseLeave={() => {
+                setShowPhoneTooltip(false);
+                setPhoneHovered(false);
+                setPhoneDisabledPos(null);
+              }}
+            >
+              <button
+                ref={phoneButtonRef}
+                style={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
+                disabled={isCallDisabled}
+                title={
+                  isCallDisabled
+                    ? undefined
+                    : callActive
+                      ? "Hang up the phone call"
+                      : "Make a phone call"
+                }
                 onClick={() => {
+                  if (isCallDisabled) {
+                    return;
+                  }
                   if (callActive) {
                     // Hang up call
                     stopRecognition();
                     setCallActive(false);
-                    setMessages(prev => [...prev, { 
+                    setMessages(prev => [...prev, createMessage({ 
                       speaker: "System",
                       text: "📞 Call ended" 
-                    }]);
+                    })]);
                   } else {
                     // Show phone input
                     setShowPhoneInput(!showPhoneInput);
@@ -2744,14 +2799,27 @@ function RealTimeVoiceApp() {
               </button>
               
               {/* Tooltip */}
-              <div 
-                style={{
-                  ...styles.buttonTooltip,
-                  ...(showPhoneTooltip ? styles.buttonTooltipVisible : {})
-                }}
-              >
-                {callActive ? "Hang up the phone call" : "Make a phone call"}
-              </div>
+              {!isCallDisabled && (
+                <div 
+                  style={{
+                    ...styles.buttonTooltip,
+                    ...(showPhoneTooltip ? styles.buttonTooltipVisible : {})
+                  }}
+                >
+                  {callActive ? "Hang up the phone call" : "Make a phone call"}
+                </div>
+              )}
+              {isCallDisabled && showPhoneTooltip && phoneDisabledPos && (
+                <div
+                  style={{
+                    ...styles.phoneDisabledDialog,
+                    top: phoneDisabledPos.top,
+                    left: phoneDisabledPos.left,
+                  }}
+                >
+                  ⚠️ Outbound calling is disabled. Update backend .env with Azure Communication Services settings (ACS_CONNECTION_STRING, ACS_SOURCE_PHONE_NUMBER, ACS_ENDPOINT) to enable this feature.
+                </div>
+              )}
             </div>
 
           </div>
@@ -2769,12 +2837,19 @@ function RealTimeVoiceApp() {
             onChange={(e) => setTargetPhoneNumber(e.target.value)}
             placeholder="+15551234567"
             style={styles.phoneInput}
-            disabled={callActive}
+            disabled={callActive || isCallDisabled}
           />
           <button
             onClick={callActive ? stopRecognition : startACSCall}
-            style={styles.callMeButton(callActive)}
-            title={callActive ? "🔴 Hang up call" : "📞 Start phone call"}
+            style={styles.callMeButton(callActive, isCallDisabled)}
+            title={
+              callActive
+                ? "🔴 Hang up call"
+                : isCallDisabled
+                  ? "Configure Azure Communication Services to enable calling"
+                  : "📞 Start phone call"
+            }
+            disabled={callActive || isCallDisabled}
           >
             {callActive ? "🔴 Hang Up" : "📞 Call Me"}
           </button>
