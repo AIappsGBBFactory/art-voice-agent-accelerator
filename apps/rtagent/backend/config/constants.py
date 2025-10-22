@@ -71,7 +71,7 @@ STOP_WORDS: List[str] = ["goodbye", "exit", "see you later", "bye"]
 # ==============================================================================
 
 # Default greeting message
-GREETING: str = "Hello from XYZ Insurance! How can I help?"
+GREETING: str = """Hi there from XYZ Insurance! This is ARTAgent. What can I help you with today?"""
 
 # ==============================================================================
 # FEATURE FLAGS (Default Values)

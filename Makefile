@@ -110,6 +110,18 @@ start_frontend:
 start_tunnel:
 	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
 
+start_voice_live_api_demo:
+	@echo "🎤 Starting Voice Live Multi-Agent Assistant (Windows Compatible)"
+	@echo "Make sure your microphone and speakers are working"
+	@echo "Press Ctrl+C to stop the assistant"
+	python samples/voice_live_sdk/voicelive-multiagent-windows.py
+
+start_voice_assistant_verbose:
+	@echo "🎤 Starting Voice Live Multi-Agent Assistant (Verbose Mode, Windows Compatible)"
+	@echo "Make sure your microphone and speakers are working"
+	@echo "Press Ctrl+C to stop the assistant"
+	python samples/voice_live_sdk/voicelive-multiagent-windows.py --verbose
+
 generate_audio:
 	python $(SCRIPTS_LOAD_DIR)/utils/audio_generator.py --max-turns 5
 
@@ -401,6 +413,8 @@ help:
 	@echo "  start_backend                    Start backend via script"
 	@echo "  start_frontend                   Start frontend via script"
 	@echo "  start_tunnel                     Start dev tunnel via script"
+	@echo "  start_voice_assistant            Start Voice Live Multi-Agent Assistant"
+	@echo "  start_voice_assistant_verbose    Start Voice Assistant with verbose logging"
 	@echo ""
 	@echo "⚡ Load Testing:"
 	@echo "  generate_audio                   Generate PCM audio files for load testing"
