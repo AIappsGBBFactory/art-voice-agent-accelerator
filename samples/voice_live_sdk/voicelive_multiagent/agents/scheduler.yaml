@@ -1,0 +1,38 @@
+# agents/scheduler.yaml
+# Healthcare Appointment Scheduling agent with custom voice and VAD settings
+
+agent:
+  name: Scheduler
+  greeting: "Hi! I'm your scheduling assistant. I can help you book, reschedule, or cancel appointments. What type of appointment do you need today?"
+  return_greeting: "Welcome back to scheduling! Do you need to schedule another appointment or modify an existing one?"
+
+prompts:
+  path: scheduler_agent.jinja
+
+# Per-agent session configuration (applied when this agent becomes active)
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+  
+  # Per-agent voice (changes when switching to this agent)
+  voice:
+    type: azure-standard
+    name: en-US-JennyNeural  # Warm, efficient voice for scheduling
+  
+  # Per-agent VAD settings (optimized for appointment booking conversations)
+  turn_detection:
+    threshold: 0.5              # Speech detection sensitivity (0.0-1.0)
+    prefix_padding_ms: 300      # Include 300ms before speech starts
+    silence_duration_ms: 500    # Wait 500ms of silence
+  
+  tool_choice: auto
+
+tools:
+  - check_availability
+  - schedule_appointment
+  - set_reminder
+  - authenticate_caller
+  - escalate_emergency
+  - escalate_human
+  - handoff_to_insurance  # Allow Scheduler to transfer to Insurance for benefits questions

@@ -1,0 +1,22 @@
+# requirements.txt for voicelive_multiagent sample
+# Production-ready multi-agent voice system
+
+# Azure SDK dependencies
+azure-ai-voicelive>=1.0.0
+azure-identity>=1.15.0
+azure-core>=1.29.0
+
+# Configuration management
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# Data handling
+pyyaml>=6.0
+
+# Audio support (optional, Windows)
+pyaudio>=0.2.13
+
+# Development dependencies (optional)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0

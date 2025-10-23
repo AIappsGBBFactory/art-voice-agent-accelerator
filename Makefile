@@ -116,11 +116,21 @@ start_voice_live_api_demo:
 	@echo "Press Ctrl+C to stop the assistant"
 	python samples/voice_live_sdk/voicelive-multiagent-windows.py
 
+# Alias for start_voice_live_api_demo
+start_voice_assistant: start_voice_live_api_demo
+
 start_voice_assistant_verbose:
 	@echo "🎤 Starting Voice Live Multi-Agent Assistant (Verbose Mode, Windows Compatible)"
 	@echo "Make sure your microphone and speakers are working"
 	@echo "Press Ctrl+C to stop the assistant"
 	python samples/voice_live_sdk/voicelive-multiagent-windows.py --verbose
+
+start_multiagent_voice:
+	python samples/voice_live_sdk/voicelive_multiagent/main.py
+
+test_multiagent_voice:
+	@echo "🧪 Testing Voice Live Multi-Agent System structure"
+	cd samples/voice_live_sdk/voicelive_multiagent && python test_structure.py
 
 generate_audio:
 	python $(SCRIPTS_LOAD_DIR)/utils/audio_generator.py --max-turns 5
@@ -415,6 +425,8 @@ help:
 	@echo "  start_tunnel                     Start dev tunnel via script"
 	@echo "  start_voice_assistant            Start Voice Live Multi-Agent Assistant"
 	@echo "  start_voice_assistant_verbose    Start Voice Assistant with verbose logging"
+	@echo "  start_multiagent_voice           Start Voice Live Multi-Agent (voicelive_multiagent)"
+	@echo "  test_multiagent_voice            Test Voice Live Multi-Agent structure"
 	@echo ""
 	@echo "⚡ Load Testing:"
 	@echo "  generate_audio                   Generate PCM audio files for load testing"

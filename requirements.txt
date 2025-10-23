@@ -20,6 +20,8 @@ azure-communication-identity>=1.5.0
 azure-communication-email>=1.0.0
 azure-keyvault-secrets>=4.7.0
 azure-eventgrid>=4.10.0
+azure-ai-voicelive>=1.0.0
+
 
 # Azure monitoring and telemetry
 azure-monitor-opentelemetry>=1.6.11
@@ -73,3 +75,6 @@ rapidfuzz>=3.13.0
 
 # Testing and linting tools
 locust
+
+# Experimental
+# agent-framework
