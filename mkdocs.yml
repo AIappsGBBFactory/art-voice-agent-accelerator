@@ -64,7 +64,11 @@ nav:
     - Speech Recognition: architecture/speech-recognition.md
     - Speech Synthesis: architecture/speech-synthesis.md
     - Streaming Modes: architecture/streaming-modes.md
-    - Integrations: architecture/integrations.md
+  - Integrations:
+    - Overview: integrations/README.md
+    - Direct Routing: integrations/directrouting.md
+    - Dynamics 365: integrations/dynamics.md
+    - Genesys Cloud: integrations/genesys.md
   - Deployment:
     - Deployment Guide: deployment/README.md
     - Production: deployment/production.md
