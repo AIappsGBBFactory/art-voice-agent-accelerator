@@ -1,3 +1,8 @@
+output "account_name" {
+  description = "Name of the AI Foundry Account"
+  value = azapi_resource.ai_foundry_account.name
+}
+
 output "account_id" {
   description = "Resource ID of the AI Foundry account."
   value       = azapi_resource.ai_foundry_account.id

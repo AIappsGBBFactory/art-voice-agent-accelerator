@@ -15,7 +15,7 @@
       "name": "o3-mini",
       "version": "2025-01-31",
       "sku_name": "GlobalStandard",
-      "capacity": 3000
+      "capacity": 300
     },
     {
       "name": "gpt-4o",
@@ -27,6 +27,12 @@
       "name": "gpt-4.1-mini",
       "version": "2025-04-14",
       "sku_name": "GlobalStandard",
+      "capacity": 500
+    },
+    {
+      "name": "gpt-4.1-nano",
+      "version": "2025-04-14",
+      "sku_name": "DataZoneStandard",
       "capacity": 500
     }
   ],
