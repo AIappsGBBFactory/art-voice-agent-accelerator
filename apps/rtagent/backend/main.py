@@ -18,12 +18,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from src.pools.async_pool import AsyncPool
-from utils.telemetry_config import setup_azure_monitor
+from src.utils.telemetry_config import setup_azure_monitor
 
 # ---------------- Monitoring ------------------------------------------------
 setup_azure_monitor(logger_name="rtagent")
 
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("main")
 
@@ -70,7 +70,7 @@ from config.app_settings import (
 
 from apps.rtagent.backend.src.agents.artagent.base import ARTAgent
 from apps.rtagent.backend.src.utils.auth import validate_entraid_token
-from apps.rtagent.backend.src.agents.artagent.prompt_store.prompt_manager import PromptManager
+from apps.rtagent.backend.src.agents.artagent.prompt_manager import PromptManager
 
 # from apps.rtagent.backend.src.routers import router as api_router
 from apps.rtagent.backend.api.v1.router import v1_router
@@ -403,9 +403,20 @@ async def lifespan(app: FastAPI):
     add_step("services", start_external_services)
 
     async def start_agents() -> None:
-        app.state.auth_agent = ARTAgent(config_path=AGENT_AUTH_CONFIG)
-        app.state.claim_intake_agent = ARTAgent(config_path=AGENT_CLAIM_INTAKE_CONFIG)
-        app.state.general_info_agent = ARTAgent(config_path=AGENT_GENERAL_INFO_CONFIG)
+        # Use the insurance agents template directory for all agents
+        insurance_template_dir = "insuranceagents/prompt_store/templates"
+        app.state.auth_agent = ARTAgent(
+            config_path=AGENT_AUTH_CONFIG,
+            template_dir=insurance_template_dir
+        )
+        app.state.claim_intake_agent = ARTAgent(
+            config_path=AGENT_CLAIM_INTAKE_CONFIG,
+            template_dir=insurance_template_dir
+        )
+        app.state.general_info_agent = ARTAgent(
+            config_path=AGENT_GENERAL_INFO_CONFIG,
+            template_dir=insurance_template_dir
+        )
         app.state.promptsclient = PromptManager()
         logger.info("agents initialized")
 

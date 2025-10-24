@@ -1097,6 +1097,16 @@ function RealTimeVoiceApp() {
       socket.onopen = () => {
         appendLog("🔌 WS open - Connected to backend!");
         console.info("WebSocket connection OPENED to backend at:", `${WS_URL}/api/v1/realtime/conversation`);
+        
+        // Always send insurance use case (hardcoded)
+        const initMessage = {
+          type: 'init',
+          use_case: 'insurance',
+          session_id: sessionId
+        };
+        socket.send(JSON.stringify(initMessage));
+        console.info('📤 [FRONTEND] Sent use case preselection: insurance');
+        appendLog('✅ Selected service: Insurance Services');
       };
       socket.onclose = (event) => {
         appendLog(`🔌 WS closed - Code: ${event.code}, Reason: ${event.reason}`);

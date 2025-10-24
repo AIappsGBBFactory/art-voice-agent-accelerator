@@ -56,7 +56,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from config import GREETING, ENABLE_AUTH_VALIDATION
 from apps.rtagent.backend.src.helpers import check_for_stopwords, receive_and_filter
 from src.tools.latency_tool import LatencyTool
-from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
+from apps.rtagent.backend.src.orchestration.factory import get_orchestrator as get_orchestrator_from_factory
 from apps.rtagent.backend.src.ws_helpers.shared_ws import send_tts_audio
 from apps.rtagent.backend.src.ws_helpers.envelopes import (
     make_envelope,
@@ -67,7 +67,7 @@ from apps.rtagent.backend.src.ws_helpers.envelopes import (
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.postcall.push import build_and_flush
 from src.stateful.state_managment import MemoManager
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 # V1 components
 from ..dependencies.orchestrator import get_orchestrator
@@ -790,6 +790,36 @@ async def _process_conversation_messages(
                 msg = await websocket.receive()
                 message_count += 1
 
+                # Handle JSON init message with use case preselection
+                if msg.get("type") == "websocket.receive" and msg.get("text") is not None:
+                    try:
+                        json_msg = json.loads(msg["text"])
+                        if json_msg.get("type") == "init" and json_msg.get("use_case"):
+                            use_case_value = json_msg.get("use_case")
+                            logger.info(f"[{session_id}] Received use case preselection from UI: {use_case_value}")
+                            
+                            # Store use case selection in memory (session-scoped)
+                            from apps.rtagent.backend.src.config.use_cases import (
+                                USE_CASE_SELECTED_KEY,
+                                USE_CASE_TYPE_KEY,
+                                USE_CASE_GREETING_SENT_KEY,
+                            )
+                            memory_manager.set_context(USE_CASE_SELECTED_KEY, True)
+                            memory_manager.set_context(USE_CASE_TYPE_KEY, use_case_value)
+                            memory_manager.set_context(USE_CASE_GREETING_SENT_KEY, True)
+                            memory_manager.set_context("ui_use_case_preselection", True)
+                            
+                            # Persist to Redis
+                            await memory_manager.persist_to_redis_async(websocket.app.state.redis)
+                            
+                            logger.info(
+                                f"[{session_id}] ✅ Use case preselected via UI: {use_case_value}. "
+                                "Skipping DTMF selection greeting."
+                            )
+                            continue  # Skip to next message
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.debug(f"[{session_id}] Received non-init or invalid JSON message: {e}")
+
                 # Handle audio bytes
                 if (
                     msg.get("type") == "websocket.receive"
@@ -840,7 +870,9 @@ async def _process_conversation_messages(
                     # This prevents blocking the WebSocket receive loop, allowing true parallelism
                     async def run_orchestration():
                         try:
-                            await route_turn(
+                            # Get the orchestrator for the selected use case
+                            orchestrator = get_orchestrator_from_factory(memory_manager)
+                            await orchestrator(
                                 memory_manager, prompt, websocket, is_acs=False
                             )
                         except asyncio.CancelledError:

@@ -103,6 +103,7 @@
 
 | Document | Focus | What You'll Learn |
 |----------|-------|-------------------|
+| **[Multi-Use-Case Orchestration](multi-use-case-orchestration.md)** | DTMF-based use case selection | Dynamic orchestrator routing, factory pattern, insurance/healthcare/finance use cases |
 | **[LLM Orchestration](llm-orchestration.md)** | AI routing and conversation management | Multi-agent coordination, dependency injection patterns, orchestrator design |
 | **[Speech Recognition](speech-recognition.md)** | Real-time STT processing | Azure Speech integration, WebSocket handling, and transcription accuracy |
 | **[Speech Synthesis](speech-synthesis.md)** | Dynamic TTS generation | Low-latency audio synthesis, voice font customization, and output streaming |

@@ -6,7 +6,7 @@ from typing import Any, Dict, TYPE_CHECKING
 from fastapi import WebSocket
 
 from .bindings import get_agent_instance
-from .cm_utils import cm_get, cm_set, get_correlation_context
+from ..cm_utils import cm_get, cm_set, get_correlation_context
 from .config import LAST_ANNOUNCED_KEY, APP_GREETS_ATTR
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
@@ -14,7 +14,7 @@ from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     send_response_to_acs,
 )
 from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
 

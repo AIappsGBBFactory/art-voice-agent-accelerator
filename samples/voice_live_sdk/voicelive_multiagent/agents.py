@@ -22,7 +22,7 @@ from azure.ai.voicelive.models import (
 )
 from prompts import PromptManager
 from tools import build_function_tools
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.agents")
 

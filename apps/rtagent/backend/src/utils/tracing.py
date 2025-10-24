@@ -15,7 +15,7 @@ import os
 from typing import Any, Dict, Optional
 
 from opentelemetry.trace import SpanKind, Status, StatusCode
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 # Default logger for fallback usage
 _default_logger = get_logger(__name__)
@@ -246,6 +246,18 @@ class TracedOperation:
         log_with_context(
             self.logger,
             "debug",
+            message,
+            operation=self.operation,
+            call_connection_id=self.call_connection_id,
+            session_id=self.session_id,
+            **kwargs,
+        )
+
+    def log_warning(self, message: str, **kwargs):
+        """Log warning with consistent context."""
+        log_with_context(
+            self.logger,
+            "warning",
             message,
             operation=self.operation,
             call_connection_id=self.call_connection_id,

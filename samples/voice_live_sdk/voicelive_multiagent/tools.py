@@ -23,7 +23,7 @@ project_root = Path(__file__).resolve().parents[3]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.tools")
 

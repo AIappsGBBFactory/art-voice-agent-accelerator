@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, TypedDict
 from rapidfuzz import fuzz, process
 
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("policy_lookup")
 

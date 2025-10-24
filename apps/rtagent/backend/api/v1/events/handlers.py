@@ -22,7 +22,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
 from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 from .types import CallEventContext, ACSEventTypes
 
 from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
@@ -761,6 +761,100 @@ class CallEventHandlers:
             context.memo_manager.persist_to_redis(context.redis_mgr)
 
         logger.info(f"🔢 DTMF sequence updated: {new_sequence}")
+        
+        # Check if this is a use case selection DTMF (schedule as task to avoid blocking)
+        import asyncio
+        asyncio.create_task(CallEventHandlers._handle_use_case_selection(context, tone))
+
+    @staticmethod
+    async def _handle_use_case_selection(context: CallEventContext, tone: str) -> None:
+        """
+        Handle use case selection via DTMF tone.
+        
+        If the tone matches a use case (1, 2, or 3), set the use case and stop any playing audio.
+        
+        :param context: Call event context containing connection details and managers
+        :type context: CallEventContext
+        :param tone: DTMF tone pressed by user
+        :type tone: str
+        """
+        from apps.rtagent.backend.src.config.use_cases import (
+            get_use_case_from_dtmf,
+            get_use_case_config,
+            USE_CASE_SELECTED_KEY,
+            USE_CASE_TYPE_KEY,
+        )
+        
+        if not context.memo_manager:
+            return
+        
+        # Check if use case already selected
+        if context.memo_manager.get_context(USE_CASE_SELECTED_KEY, False):
+            return
+        
+        # Try to map DTMF to use case
+        use_case = get_use_case_from_dtmf(tone)
+        if not use_case:
+            return
+        
+        # Get configuration
+        config = get_use_case_config(use_case)
+        
+        # Set use case in memory
+        context.memo_manager.update_context(USE_CASE_SELECTED_KEY, True)
+        context.memo_manager.update_context(USE_CASE_TYPE_KEY, use_case.value)
+        context.memo_manager.update_context("active_agent", config.entry_agent)
+        
+        # Persist to Redis
+        if context.redis_mgr:
+            context.memo_manager.persist_to_redis(context.redis_mgr)
+        
+        logger.info(
+            f"✅ Use case selected via DTMF: {config.display_name} (tone={tone}, "
+            f"call={context.call_connection_id}, entry_agent={config.entry_agent})"
+        )
+        
+        # Stop any playing TTS audio to prevent overlap
+        if context.acs_client and context.call_connection_id:
+            try:
+                import asyncio
+                call_connection_client = context.acs_client.get_call_connection(
+                    context.call_connection_id
+                )
+                # Cancel any ongoing play operations
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    call_connection_client.cancel_all_media_operations
+                )
+                logger.info(f"🛑 Stopped TTS audio playback after DTMF selection (call={context.call_connection_id})")
+            except Exception as e:
+                logger.warning(f"Failed to stop audio playback: {e}")
+        
+        # Send confirmation and welcome message for the selected use case
+        try:
+            greeting = f"You selected {config.display_name}. Please wait while we connect you."
+            
+            # Try to get WebSocket from connections to send greeting
+            from src.pools.connection_manager import get_connection_manager
+            conn_mgr = get_connection_manager()
+            if conn_mgr:
+                session_connections = conn_mgr.get_connections_for_session(context.memo_manager.session_id)
+                if session_connections:
+                    # Use the first available WebSocket
+                    ws = session_connections[0]
+                    from apps.rtagent.backend.src.ws_helpers.shared_ws import send_response_to_acs
+                    await send_response_to_acs(
+                        ws=ws,
+                        text=greeting,
+                        blocking=False,
+                        latency_tool=getattr(ws.state, 'lt', None),
+                        voice_name="en-US-JennyNeural",
+                        voice_style="chat",
+                        rate="+3%",
+                    )
+                    logger.info(f"✅ Sent use case confirmation: {greeting}")
+        except Exception as e:
+            logger.warning(f"Failed to send use case confirmation greeting: {e}")
 
     @staticmethod
     def _validate_sequence(context: CallEventContext, sequence: str) -> None:

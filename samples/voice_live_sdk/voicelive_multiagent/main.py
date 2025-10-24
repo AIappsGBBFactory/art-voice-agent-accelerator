@@ -20,7 +20,7 @@ settings = get_settings()
 
 # Import get_logger from utils (handles both console and telemetry)
 sys.path.insert(0, str(__file__.rsplit('/', 4)[0] if '/' in __file__ else __file__.rsplit('\\', 4)[0]))
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 log = get_logger("voicelive.main", level=getattr(logging, settings.log_level.upper()))
 

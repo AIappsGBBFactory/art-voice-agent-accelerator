@@ -15,8 +15,8 @@ from typing import Optional
 import azure.cognitiveservices.speech as speechsdk
 from azure.core.credentials import AccessToken, TokenCredential
 
-from utils.azure_auth import get_credential
-from utils.ml_logging import get_logger
+from src.utils.azure_auth import get_credential
+from src.utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
 

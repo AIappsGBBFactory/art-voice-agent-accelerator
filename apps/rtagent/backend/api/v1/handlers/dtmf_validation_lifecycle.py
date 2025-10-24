@@ -26,7 +26,7 @@ from azure.communication.callautomation import CallConnectionClient
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 from ..events.types import CallEventContext
 
 logger = get_logger("v1.handlers.dtmf_validation_lifecycle")
@@ -177,6 +177,20 @@ class DTMFValidationLifecycle:
 
             if tone:
                 tone = DTMFValidationLifecycle._normalize_tone(tone)
+
+            # Check if this is a use case selection (1, 2, or 3 pressed before any use case selected)
+            from apps.rtagent.backend.src.config.use_cases import USE_CASE_SELECTED_KEY, get_use_case_from_dtmf
+            
+            use_case_selected = context.memo_manager.get_context(USE_CASE_SELECTED_KEY, False)
+            
+            if not use_case_selected and tone in ["1", "2", "3"]:
+                # This is a use case selection
+                use_case = get_use_case_from_dtmf(tone)
+                if use_case:
+                    logger.info(f"✅ Use case selection detected via DTMF: {tone} -> {use_case.value}")
+                    context.memo_manager.set_context("dtmf_use_case_selection", tone)
+                    await context.memo_manager.persist_to_redis_async(context.redis_mgr)
+                    return
 
             # Handle the tone based on the current validation state
             if context.memo_manager.get_context(

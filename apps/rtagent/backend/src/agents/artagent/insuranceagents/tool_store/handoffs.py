@@ -21,8 +21,8 @@ robust error handling, and JSON responses via ``_json``).
 from datetime import datetime, timezone
 from typing import Any, Dict, TypedDict
 
-from apps.rtagent.backend.src.agents.artagent.tool_store.functions_helper import _json
-from utils.ml_logging import get_logger
+from apps.rtagent.backend.src.agents.artagent.functions_helper import _json
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("fnol_escalations")
 

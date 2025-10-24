@@ -44,7 +44,7 @@ import time
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 from pymongo.errors import NetworkTimeout
 
 logger = get_logger("acme_auth")

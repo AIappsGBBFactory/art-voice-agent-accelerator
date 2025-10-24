@@ -1,24 +1,25 @@
 from __future__ import annotations
 
 """
-Modular orchestration package.
+Shared Orchestration Utilities Package
+=======================================
 
-Exports:
-- route_turn: main per-turn entry point
-- registration helpers: register_specialist, register_specialists, get_specialist, list_specialists
-- configure_entry_and_specialists: tweak entry/specialist list (entry is coerced to AutoAuth)
-- SPECIALIST_MAP: backward-compatible alias of the internal registry
+This package contains shared utilities used by all use case orchestrators:
+- cm_utils: Context management helpers
+- gpt_flow: GPT streaming logic
+- latency: Latency tracking
+- termination: Termination/escalation logic
+
+Use case-specific orchestrators are in:
+- insuranceagents.orchestrator
+- healthcareagents.orchestrator  
+- financeagents.orchestrator
+
+These are loaded dynamically by the factory based on DTMF/UI selection.
 """
 
-from .orchestrator import route_turn, bind_default_handlers  # noqa: F401
-from .config import configure_entry_and_specialists  # noqa: F401
-from .registry import (  # noqa: F401
-    register_specialist,
-    register_specialists,
-    get_specialist,
-    list_specialists,
-    SPECIALIST_MAP,
-)
-
-# Bind defaults immediately (AutoAuth, General, Claims) to preserve behavior.
-bind_default_handlers()
+# This __init__.py intentionally does not import use-case-specific modules
+# to avoid circular dependencies and maintain clean separation.
+# 
+# Use the factory.py to dynamically load orchestrators:
+#   from apps.rtagent.backend.src.orchestration.factory import get_orchestrator

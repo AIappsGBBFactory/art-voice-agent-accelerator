@@ -12,10 +12,10 @@ from typing import Any, Dict, Optional
 import yaml
 from fastapi import WebSocket
 
-from apps.rtagent.backend.src.agents.artagent.prompt_store.prompt_manager import PromptManager
-from apps.rtagent.backend.src.agents.artagent.tool_store import tool_registry as tool_store
+from apps.rtagent.backend.src.agents.artagent.prompt_manager import PromptManager
+from apps.rtagent.backend.src.agents.artagent import tool_registry as tool_store
 from apps.rtagent.backend.src.orchestration.artagent.gpt_flow import process_gpt_response
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("rt_agent")
 

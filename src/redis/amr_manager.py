@@ -6,11 +6,11 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from utils.azure_auth import get_credential
+from src.utils.azure_auth import get_credential
 
 import redis
 from redis.exceptions import AuthenticationError
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 # Import Azure managed identity dependencies for AMR
 try:

@@ -13,7 +13,7 @@ if str(project_root) not in sys.path:
 
 from azure.ai.voicelive.models import ServerEventType, ResponseCreateParams, FunctionCallOutputItem
 from tools import execute_tool, is_handoff_tool
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.orchestrator")
 

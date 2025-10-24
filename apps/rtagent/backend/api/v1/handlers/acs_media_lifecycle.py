@@ -39,11 +39,11 @@ from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     send_response_to_acs,
     broadcast_message,
 )
-from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
+from apps.rtagent.backend.src.orchestration.factory import get_orchestrator
 from src.enums.stream_modes import StreamMode
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.stateful.state_managment import MemoManager
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("v1.handlers.acs_media_lifecycle")
 tracer = trace.get_tracer(__name__)
@@ -595,7 +595,9 @@ class RouteTurnThread:
                         is_acs=True,
                     )
                 else:
-                    coro = route_turn(
+                    # Get orchestrator from factory based on use case selection
+                    orchestrator = get_orchestrator(self.memory_manager)
+                    coro = orchestrator(
                         cm=self.memory_manager,
                         transcript=event.text,
                         ws=self.websocket,

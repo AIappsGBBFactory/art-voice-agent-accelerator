@@ -1,6 +1,6 @@
 import wave
 
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
 

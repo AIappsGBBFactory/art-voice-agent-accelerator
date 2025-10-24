@@ -235,7 +235,7 @@ except AuthError as e:
 ### OpenTelemetry Integration (`utils.telemetry_config`)
 
 ```python
-from utils.telemetry_config import configure_tracing
+from src.utils.telemetry_config import configure_tracing
 
 # Comprehensive distributed tracing
 configure_tracing(
@@ -255,7 +255,7 @@ configure_tracing(
 ### Structured Logging (`utils.ml_logging`)
 
 ```python
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger("api.v1.media")
 

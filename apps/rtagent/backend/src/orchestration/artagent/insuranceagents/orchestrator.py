@@ -7,19 +7,19 @@ from fastapi import WebSocket
 from opentelemetry import trace
 
 from .auth import run_auth_agent
-from .cm_utils import cm_get, cm_set, get_correlation_context
+from ..cm_utils import cm_get, cm_set, get_correlation_context
 from .config import ENTRY_AGENT
 from .registry import (
     get_specialist,
     register_specialist,
 )
 from .specialists import run_claims_agent, run_general_agent
-from .termination import maybe_terminate_if_escalated
+from ..termination import maybe_terminate_if_escalated
 from apps.rtagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
     create_service_handler_attrs,
 )
-from utils.ml_logging import get_logger
+from src.utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -128,3 +128,7 @@ def bind_default_handlers() -> None:
     register_specialist("AutoAuth", run_auth_agent)
     register_specialist("General", run_general_agent)
     register_specialist("Claims", run_claims_agent)
+
+
+# Initialize default handlers at module load time
+bind_default_handlers()
