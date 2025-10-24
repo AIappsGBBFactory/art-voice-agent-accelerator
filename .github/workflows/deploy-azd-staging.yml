@@ -25,7 +25,7 @@ on:
 
   push:
     branches:
-      - feature/add_docs-voicelive_integration
+      - feature/staging-tf-env
       - useacases/finance_capitalmarkets
     paths:
       - 'infra/terraform/**'
