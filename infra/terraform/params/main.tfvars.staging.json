@@ -15,7 +15,7 @@
       "name": "o3-mini",
       "version": "2025-01-31",
       "sku_name": "DataZoneStandard",
-      "capacity": 300
+      "capacity": 200
     },
     {
       "name": "gpt-4o",
