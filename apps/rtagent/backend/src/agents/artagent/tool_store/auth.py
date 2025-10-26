@@ -30,7 +30,7 @@ extra look-ups.  On **failure** these two keys are returned as ``null``.
 {
   "authenticated": false,
   "message": "Authentication failed - ZIP and last-4 did not match.",
-  "policy_id": null,
+  "client_id": null,
   "caller_name": null,
   "attempt": 2,
   "intent": null,
@@ -124,7 +124,7 @@ class AuthenticateResult(TypedDict):
 
     authenticated: bool
     message: str
-    policy_id: Optional[str]
+    client_id: Optional[str]
     caller_name: Optional[str]
     attempt: int
     intent: Optional[Literal["claims", "general"]]
@@ -156,7 +156,7 @@ async def authenticate_caller(
         return {
             "authenticated": False,
             "message": "Invalid request format. Please provide authentication details.",
-            "policy_id": None,
+            "client_id": None,
             "caller_name": None,
             "attempt": 1,
             "intent": None,
@@ -178,7 +178,7 @@ async def authenticate_caller(
         return {
             "authenticated": False,
             "message": msg,
-            "policy_id": None,
+            "client_id": None,
             "caller_name": None,
             "attempt": attempt,
             "intent": None,
@@ -200,7 +200,7 @@ async def authenticate_caller(
         return {
             "authenticated": False,
             "message": "Full name is required for authentication.",
-            "policy_id": None,
+            "client_id": None,
             "caller_name": None,
             "attempt": attempt,
             "intent": None,
@@ -235,7 +235,7 @@ async def authenticate_caller(
         return {
             "authenticated": False,
             "message": "Authentication service temporarily unavailable. Please try again.",
-            "policy_id": None,
+            "client_id": None,
             "caller_name": None,
             "attempt": attempt,
             "intent": None,
@@ -248,7 +248,7 @@ async def authenticate_caller(
         return {
             "authenticated": False,
             "message": f"Authentication failed - no matching record found for {full_name}.",
-            "policy_id": None,
+            "client_id": None,
             "caller_name": None,
             "attempt": attempt,
             "intent": None,
@@ -262,7 +262,7 @@ async def authenticate_caller(
     return {
         "authenticated": True,
         "message": f"Authenticated {full_name}.",
-        "policy_id": rec["policy_id"],
+        "client_id": rec["client_id"],
         "caller_name": full_name,
         "attempt": attempt,
         "intent": intent,

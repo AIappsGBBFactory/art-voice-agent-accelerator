@@ -180,7 +180,7 @@ authenticate_caller_schema: Dict[str, Any] = {
         "Verify the caller’s identity by matching their full legal name, ZIP code, "
         "and the last 4 digits of a key identifier (SSN, policy number, claim "
         "number, or phone number). "
-        "Returns: {authenticated: bool, message: str, policy_id: str | null, "
+        "Returns: {authenticated: bool, message: str, client_id: str | null, "
         "caller_name: str | null, attempt: int, intent: str | null, "
         "claim_intent: str | null}. "
         "At least one of ZIP code or last‑4 must be provided."
@@ -469,6 +469,25 @@ verify_mfa_code_schema: Dict[str, Any] = {
     },
 }
 
+resend_mfa_code_schema: Dict[str, Any] = {
+    "name": "resend_mfa_code", 
+    "description": (
+        "Resend the MFA verification code to client if they didn't receive it "
+        "or it expired. Uses the same session_id as original MFA request."
+    ),
+    "parameters": {
+        "type": "object", 
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Session ID from original MFA code sending.",
+            },
+        },
+        "required": ["session_id"],
+        "additionalProperties": False,
+    },
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Fraud Detection Tool Schemas
 # ──────────────────────────────────────────────────────────────────────────────
@@ -598,6 +617,39 @@ send_fraud_case_email_schema: Dict[str, Any] = {
     },
 }
 
+create_transaction_dispute_schema: Dict[str, Any] = {
+    "name": "create_transaction_dispute",
+    "description": (
+        "Create a transaction dispute case for billing errors, merchant issues, or service problems "
+        "(NOT fraud cases). Use when customer disputes charges but card doesn't need blocking."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Authenticated client identifier.",
+            },
+            "transaction_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of transaction IDs being disputed by the customer.",
+            },
+            "dispute_reason": {
+                "type": "string",
+                "enum": ["merchant_error", "billing_error", "service_not_received", "duplicate_charge", "authorization_issue"],
+                "description": "Primary reason for the transaction dispute.",
+            },
+            "description": {
+                "type": "string",
+                "description": "Detailed description of the dispute issue from the customer.",
+            },
+        },
+        "required": ["client_id", "transaction_ids", "dispute_reason", "description"],
+        "additionalProperties": False,
+    },
+}
+
 block_card_emergency_schema: Dict[str, Any] = {
     "name": "block_card_emergency",
     "description": (
@@ -670,10 +722,9 @@ ship_replacement_card_schema: Dict[str, Any] = {
                 "enum": ["fraud_detected", "card_theft", "card_compromise", "suspicious_activity"],
                 "description": "Reason for replacement card shipment.",
             },
-            "shipping_priority": {
-                "type": "string",
-                "enum": ["standard", "expedited", "overnight"],
-                "description": "Shipping speed preference (default: expedited for fraud cases).",
+            "expedited_shipping": {
+                "type": "boolean",
+                "description": "Whether to use expedited shipping (default: true for fraud cases).",
             },
             "fraud_case_id": {
                 "type": "string",

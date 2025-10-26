@@ -152,6 +152,7 @@ class VerifyMfaCodeResult(TypedDict):
     verified: bool
     message: str
     authenticated: bool
+    client_id: Optional[str]  # ← Added for orchestration compatibility
     client_name: Optional[str]
     institution_name: Optional[str]
     authorization_level: Optional[str]
@@ -557,8 +558,9 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
         if not session_data:
             return {
                 "verified": False,
-                "message": "Invalid or expired session. Please request a new verification code.",
+                "message": "Session not found or expired. Please request a new verification code.",
                 "authenticated": False,
+                "client_id": None,
                 "client_name": None,
                 "institution_name": None,
                 "authorization_level": None,
@@ -596,6 +598,7 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
                 "verified": False,
                 "message": "Maximum verification attempts exceeded. For your security, I'm connecting you to a specialist who can authenticate you.",
                 "authenticated": False,
+                "client_id": None,
                 "client_name": None,
                 "institution_name": None,
                 "authorization_level": None,
@@ -630,6 +633,7 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
                 "verified": False,
                 "message": message,
                 "authenticated": False,
+                "client_id": None,
                 "client_name": None,
                 "institution_name": None,
                 "authorization_level": None,
@@ -646,6 +650,7 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
                 "verified": False,
                 "message": "Client data not found.",
                 "authenticated": False,
+                "client_id": None,
                 "client_name": None,
                 "institution_name": None,
                 "authorization_level": None,
@@ -683,6 +688,7 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
             "verified": False,
             "message": "Verification service temporarily unavailable. Please try again.",
             "authenticated": False,
+            "client_id": None,
             "client_name": None,
             "institution_name": None,
             "authorization_level": None,

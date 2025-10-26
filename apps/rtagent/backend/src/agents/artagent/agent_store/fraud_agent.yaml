@@ -32,6 +32,9 @@ tools:
   - block_card_emergency          # ← Emergency card blocking
   - create_fraud_case             # ← Formal investigation case creation
   - ship_replacement_card         # ← Emergency card replacement & shipping
+  # Transaction Disputes & Case Management
+  - create_transaction_dispute    # ← Billing errors, merchant issues (NOT fraud)
+  - send_fraud_case_email         # ← Send comprehensive fraud case email to customer
   # Customer Education & Prevention
   - provide_fraud_education       # ← Fraud prevention tips & warning signs
   # Escalation Tools

@@ -27,6 +27,7 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.fraud_detection import 
     provide_fraud_education,
     ship_replacement_card,
     send_fraud_case_email,
+    create_transaction_dispute,
 )
 from utils.ml_logging import get_logger
 
@@ -44,6 +45,7 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.schemas import (
     verify_fraud_client_identity_schema,
     send_mfa_code_schema,
     verify_mfa_code_schema,
+    resend_mfa_code_schema,
     check_transaction_authorization_schema,
     analyze_recent_transactions_schema,
     check_suspicious_activity_schema,
@@ -52,6 +54,7 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.schemas import (
     provide_fraud_education_schema,
     ship_replacement_card_schema,
     send_fraud_case_email_schema,
+    create_transaction_dispute_schema,
 )
 
 function_mapping: Dict[str, Callable[..., Any]] = {
@@ -76,6 +79,7 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "provide_fraud_education": provide_fraud_education,
     "ship_replacement_card": ship_replacement_card,
     "send_fraud_case_email": send_fraud_case_email,
+    "create_transaction_dispute": create_transaction_dispute,
 }
 
 
@@ -92,7 +96,7 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": send_mfa_code_schema},
     {"type": "function", "function": verify_mfa_code_schema},
     {"type": "function", "function": check_transaction_authorization_schema},
-    {"type": "function", "function": send_mfa_code_schema},  # resend_mfa_code uses same schema
+    {"type": "function", "function": resend_mfa_code_schema},
     # Fraud Detection Tools
     {"type": "function", "function": analyze_recent_transactions_schema},
     {"type": "function", "function": check_suspicious_activity_schema},
@@ -101,6 +105,7 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": provide_fraud_education_schema},
     {"type": "function", "function": ship_replacement_card_schema},
     {"type": "function", "function": send_fraud_case_email_schema},
+    {"type": "function", "function": create_transaction_dispute_schema},
 ]
 
 TOOL_REGISTRY: dict[str, dict] = {t["function"]["name"]: t for t in available_tools}
