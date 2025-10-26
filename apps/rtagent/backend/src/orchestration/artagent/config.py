@@ -14,7 +14,7 @@ APP_GREETS_ATTR = "greet_counts"
 
 # Orchestration pattern (entry + specialists). Defaults preserve your flow.
 ENTRY_AGENT: str = "AutoAuth"
-SPECIALISTS: list[str] = ["General", "Claims"]
+SPECIALISTS: list[str] = ["Fraud", "Claims"]
 
 
 def configure_entry_and_specialists(
@@ -33,4 +33,4 @@ def configure_entry_and_specialists(
     if entry_agent != "AutoAuth":
         logger.warning("Entry agent overridden to 'AutoAuth' (requested '%s')", entry_agent)
     ENTRY_AGENT = "AutoAuth"
-    SPECIALISTS = list(specialists or ["General", "Claims"])
+    SPECIALISTS = list(specialists or ["Fraud", "Claims"])

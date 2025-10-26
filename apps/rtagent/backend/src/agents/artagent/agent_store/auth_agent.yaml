@@ -22,9 +22,15 @@ voice:
   rate: "+5%" # Speech rate (slower for authentication)
 
 prompts:
-  path: voice_agent_authentication.jinja # imput prompt
+  path: voice_agent_authentication.jinja # input prompt
 
 tools:
-  - authenticate_caller
+  # Financial Services MFA Authentication
+  - verify_client_identity     # ← Full identity verification (Transfer Agency)
+  - verify_fraud_client_identity # ← Simplified fraud verification (name + SSN)
+  - send_mfa_code             # ← Send OTP via email/SMS  
+  - verify_mfa_code           # ← Verify OTP code
+  - check_transaction_authorization # ← Check operation permissions
+  # Escalation Tools
   - escalate_emergency         # ← 911-type escalation
   - escalate_human             # ← non-emergency live-agent transfer

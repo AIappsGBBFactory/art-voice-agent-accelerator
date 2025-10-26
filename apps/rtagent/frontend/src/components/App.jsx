@@ -673,6 +673,28 @@ const styles = {
     transform: "scale(1.05)",
   },
 
+  industryTag: {
+    position: "absolute",
+    top: "40px",
+    left: "20px",
+    padding: "8px 14px",
+    borderRadius: "18px",
+    border: "none",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    fontSize: "10px",
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: "0.8px",
+    boxShadow: "0 4px 15px rgba(102, 126, 234, 0.4), 0 2px 4px rgba(0,0,0,0.1)",
+    zIndex: 1000,
+    userSelect: "none",
+    backdropFilter: "blur(10px)",
+    transition: "all 0.3s ease",
+    whiteSpace: "nowrap",
+    maxWidth: "fit-content",
+  },
+
   helpTooltip: {
     position: "absolute",
     top: "40px",
@@ -983,6 +1005,33 @@ const HelpButton = () => {
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ *
+ *  INDUSTRY TAG COMPONENT
+ * ------------------------------------------------------------------ */
+const IndustryTag = () => {
+  // Determine branch-based industry tag
+  const getIndustryTag = () => {
+    const currentBranch = import.meta.env.VITE_BRANCH_NAME || 'finance';
+    
+    // When promoted to production (main branch) → Insurance Edition
+    if (currentBranch === 'main') {
+      return 'Insurance Edition';
+    } 
+    // Current branch (finance/capitalmarkets) → Finance Edition
+    else if (currentBranch.includes('finance') || currentBranch.includes('capitalmarkets')) {
+      return 'Finance Edition';
+    }
+    
+    return 'Finance Edition'; // Default fallback
+  };
+
+  return (
+    <div style={styles.industryTag}>
+      {getIndustryTag()}
     </div>
   );
 };
@@ -2716,6 +2765,8 @@ function RealTimeVoiceApp() {
 
         {/* App Header */}
         <div style={styles.appHeader}>
+          {/* Top Left Industry Tag */}
+          <IndustryTag />
           <div style={styles.appTitleContainer}>
             <div style={styles.appTitleWrapper}>
               <span style={styles.appTitleIcon}>🎙️</span>

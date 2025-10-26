@@ -28,7 +28,7 @@ SERVICE_NAMES = {
     "acs_media_ws": "acs-websocket",
     "acs_media_handler": "acs-media-handler",
     "orchestrator": "orchestration-engine",
-    "general_info_agent": "general-info-service",
+    "fraud_agent": "fraud-detection-service",
     "claim_intake_agent": "claims-service",
     "gpt_flow": "gpt-completion-service",
     "azure_openai": "azure-openai-service",

@@ -46,7 +46,7 @@ from config.app_config import AppConfig
 from config.app_settings import (
     AGENT_AUTH_CONFIG,
     AGENT_CLAIM_INTAKE_CONFIG,
-    AGENT_GENERAL_INFO_CONFIG,
+    AGENT_FRAUD_CONFIG,
     ALLOWED_ORIGINS,
     ACS_CONNECTION_STRING,
     ACS_ENDPOINT,
@@ -168,7 +168,7 @@ def _build_startup_dashboard(
     agent_configs = [
         ("auth", "auth_agent", AGENT_AUTH_CONFIG),
         ("claim-intake", "claim_intake_agent", AGENT_CLAIM_INTAKE_CONFIG),
-        ("general-info", "general_info_agent", AGENT_GENERAL_INFO_CONFIG),
+        ("fraud", "fraud_agent", AGENT_FRAUD_CONFIG),
     ]
     loaded_agents: List[str] = []
     for label, attr, config_path in agent_configs:
@@ -405,7 +405,7 @@ async def lifespan(app: FastAPI):
     async def start_agents() -> None:
         app.state.auth_agent = ARTAgent(config_path=AGENT_AUTH_CONFIG)
         app.state.claim_intake_agent = ARTAgent(config_path=AGENT_CLAIM_INTAKE_CONFIG)
-        app.state.general_info_agent = ARTAgent(config_path=AGENT_GENERAL_INFO_CONFIG)
+        app.state.fraud_agent = ARTAgent(config_path=AGENT_FRAUD_CONFIG)
         app.state.promptsclient = PromptManager()
         logger.info("agents initialized")
 
@@ -606,3 +606,7 @@ def main():
         port=port,
         reload=False,  # Don't use reload in production
     )
+
+
+if __name__ == "__main__":
+    main()

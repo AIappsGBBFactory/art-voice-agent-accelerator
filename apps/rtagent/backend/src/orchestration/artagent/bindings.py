@@ -26,7 +26,7 @@ class AgentBinding:
 AGENT_BINDINGS: Dict[str, AgentBinding] = {
     "AutoAuth": AgentBinding(name="AutoAuth", ws_attr="auth_agent"),
     "Claims": AgentBinding(name="Claims", ws_attr="claim_intake_agent"),
-    "General": AgentBinding(name="General", ws_attr="general_info_agent"),
+    "Fraud": AgentBinding(name="Fraud", ws_attr="fraud_agent"),
 }
 
 

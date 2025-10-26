@@ -33,15 +33,31 @@ except ImportError:
 
 def json_safe_wrapper(func: Callable) -> Callable:
     """Wrap tool functions to return JSON strings - required for Azure AI Foundry."""
+    import asyncio
+    
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    async def async_wrapper(*args, **kwargs):
+        result = await func(*args, **kwargs)
+        # Always return JSON string for Azure AI Foundry
+        if isinstance(result, dict):
+            return json.dumps(result)
+        else:
+            return json.dumps({"value": result, "type": type(result).__name__})
+    
+    @functools.wraps(func)
+    def sync_wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
         # Always return JSON string for Azure AI Foundry
         if isinstance(result, dict):
             return json.dumps(result)
         else:
             return json.dumps({"value": result, "type": type(result).__name__})
-    return wrapper
+    
+    # Check if the function is async and return appropriate wrapper
+    if asyncio.iscoroutinefunction(func):
+        return async_wrapper
+    else:
+        return sync_wrapper
 
 
 class AzureFoundryAgentBuilder:

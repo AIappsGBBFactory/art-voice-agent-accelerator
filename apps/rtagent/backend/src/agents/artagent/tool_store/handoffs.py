@@ -129,12 +129,12 @@ async def handoff_claim_agent(args: HandoffClaimArgs) -> Dict[str, Any]:
 # ────────────────────────────────────────────────────────────────
 # Human escalation
 # ────────────────────────────────────────────────────────────────
-class EscalateHumanArgs(TypedDict):
+class EscalateHumanArgs(TypedDict, total=False):
     """Input schema for :pyfunc:`escalate_human`."""
 
-    route_reason: str  # e.g. "validation_loop", "backend_error", "fraud_flags"
-    caller_name: str
-    policy_id: str
+    route_reason: str  # Required
+    caller_name: str   # Required  
+    policy_id: str     # Optional for financial services
 
 
 async def escalate_human(args: EscalateHumanArgs) -> Dict[str, Any]:
@@ -151,22 +151,25 @@ async def escalate_human(args: EscalateHumanArgs) -> Dict[str, Any]:
         caller_name = (args.get("caller_name") or "").strip()
         policy_id = (args.get("policy_id") or "").strip()
         
-        # Check for missing required fields
+        # Check for required fields
         if not route_reason:
             return _json(False, "'route_reason' is required for human escalation.")
         if not caller_name:
             return _json(False, "'caller_name' is required for human escalation.")
-        if not policy_id:
-            return _json(False, "'policy_id' is required for human escalation.")
 
-        logger.info(
-            "🤝 Human hand-off – %s (%s) reason=%s", caller_name, policy_id, route_reason
-        )
+        # Log with or without policy_id
+        if policy_id:
+            logger.info("🤝 Human hand-off – %s (%s) reason=%s", caller_name, policy_id, route_reason)
+        else:
+            logger.info("🤝 Human hand-off – %s (financial services) reason=%s", caller_name, route_reason)
+        
         return _json(
             True,
-            "Caller transferred to human insurance agent.",
+            "Caller transferred to specialist.",
             handoff="human_agent",
             route_reason=route_reason,
+            caller_name=caller_name,
+            policy_id=policy_id or "financial_services",
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
     except Exception as exc:

@@ -389,8 +389,8 @@ def _get_agent_sender_name(cm: "MemoManager", *, include_autoauth: bool = True) 
 
         if active_agent == "Claims":
             return "Claims Specialist"
-        if active_agent == "General":
-            return "General Info"
+        if active_agent == "Fraud":
+            return "Fraud Specialist"
         if include_autoauth and active_agent == "AutoAuth":
             return "Auth Agent"
         if not authenticated:

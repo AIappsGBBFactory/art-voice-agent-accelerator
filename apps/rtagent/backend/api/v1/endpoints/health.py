@@ -764,7 +764,7 @@ async def get_agents_info(request: Request):
         # Get agents from app state
         auth_agent = getattr(request.app.state, "auth_agent", None)
         claim_intake_agent = getattr(request.app.state, "claim_intake_agent", None)
-        general_info_agent = getattr(request.app.state, "general_info_agent", None)
+        fraud_agent = getattr(request.app.state, "fraud_agent", None)
 
         # Helper function to extract agent info
         def extract_agent_info(agent, config_path: str = None):
@@ -841,11 +841,11 @@ async def get_agents_info(request: Request):
             if agent_info:
                 agents_info.append(agent_info)
 
-        if general_info_agent:
-            from config import AGENT_GENERAL_INFO_CONFIG
+        if fraud_agent:
+            from config import AGENT_FRAUD_CONFIG
 
             agent_info = extract_agent_info(
-                general_info_agent, AGENT_GENERAL_INFO_CONFIG
+                fraud_agent, AGENT_FRAUD_CONFIG
             )
             if agent_info:
                 agents_info.append(agent_info)
@@ -933,16 +933,16 @@ async def update_agent_config(
         ]:
             agent = getattr(request.app.state, "claim_intake_agent", None)
         elif agent_name.lower() in [
-            "generalinfoagent",
-            "general_info_agent",
-            "general",
+            "fraudagent",
+            "fraud_agent", 
+            "fraud",
         ]:
-            agent = getattr(request.app.state, "general_info_agent", None)
+            agent = getattr(request.app.state, "fraud_agent", None)
 
         if not agent:
             raise HTTPException(
                 status_code=404,
-                detail=f"Agent '{agent_name}' not found. Available agents: auth, claim, general",
+                detail=f"Agent '{agent_name}' not found. Available agents: auth, claim, fraud",
             )
 
         updated_fields = []

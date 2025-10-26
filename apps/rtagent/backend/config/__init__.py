@@ -75,7 +75,7 @@ from .app_settings import (
     # Agent configurations
     AGENT_AUTH_CONFIG,
     AGENT_CLAIM_INTAKE_CONFIG,
-    AGENT_GENERAL_INFO_CONFIG,
+    AGENT_FRAUD_CONFIG,
     # Speech service settings
     POOL_SIZE_TTS,
     POOL_SIZE_STT,
@@ -265,7 +265,7 @@ __all__ = [
     # Agent configs
     "AGENT_AUTH_CONFIG",
     "AGENT_CLAIM_INTAKE_CONFIG",
-    "AGENT_GENERAL_INFO_CONFIG",
+    "AGENT_FRAUD_CONFIG",
     # API paths
     "ACS_CALL_OUTBOUND_PATH",
     "ACS_CALL_INBOUND_PATH",
