@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------
+# ARTAgent – Fraud Detection & Investigation Agent
+# ---------------------------------------------------------------------
+agent:
+  name: FraudAgent
+  creator: Pablo Salvador
+  organization: GBB AI
+  description: |
+    Post-authentication fraud detection specialist handling credit card fraud,
+    identity theft, account takeover, and suspicious activity investigation.
+    Provides immediate protection actions and comprehensive case management.
+
+model:
+  deployment_id: gpt-4o
+  temperature: 0.7 # Lower temperature for consistent fraud investigation
+  top_p: 0.9
+  max_completion_tokens: 2040
+
+voice:
+  name: en-US-Andrew2:DragonHDLatestNeural # Professional, reassuring voice
+  style: professional # Professional style for fraud concerns
+  rate: "+0%" # Normal rate for clear communication
+
+prompts:
+  path: voice_agent_fraud_detection.jinja # Specialized fraud detection prompt
+
+tools:
+  # Core Fraud Detection & Analysis
+  - analyze_recent_transactions    # ← Transaction pattern analysis & risk scoring
+  - check_suspicious_activity      # ← Account monitoring & anomaly detection
+  # Immediate Protection Actions  
+  - block_card_emergency          # ← Emergency card blocking
+  - create_fraud_case             # ← Formal investigation case creation
+  - ship_replacement_card         # ← Emergency card replacement & shipping
+  # Customer Education & Prevention
+  - provide_fraud_education       # ← Fraud prevention tips & warning signs
+  # Escalation Tools
+  - escalate_emergency            # ← Life-threatening situations
+  - escalate_human               # ← Complex cases requiring specialists

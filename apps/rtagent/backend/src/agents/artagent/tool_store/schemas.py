@@ -340,7 +340,7 @@ find_information_schema: Dict[str, Any] = {
 escalate_human_schema: Dict[str, Any] = {
     "name": "escalate_human",
     "description": (
-        "Escalate the call to a live human adjuster for non-emergency but complex scenarios. "
+        "Escalate the call to a live human specialist for non-emergency but complex scenarios. "
         "Use this tool for backend errors, repeated validation failures, suspected fraud, or caller requests for human assistance."
     ),
     "parameters": {
@@ -348,7 +348,7 @@ escalate_human_schema: Dict[str, Any] = {
         "properties": {
             "route_reason": {
                 "type": "string",
-                "description": "Reason for escalation to a human adjuster (e.g., 'fraud flag', 'validation loop', 'caller request').",
+                "description": "Reason for escalation (e.g., 'mfa_authentication_failed', 'backend_unavailable', 'caller_request').",
             },
             "caller_name": {
                 "type": "string",
@@ -356,10 +356,358 @@ escalate_human_schema: Dict[str, Any] = {
             },
             "policy_id": {
                 "type": "string",
-                "description": "Unique policy identifier for the caller.",
+                "description": "Policy identifier for insurance, optional for financial services.",
             },
         },
-        "required": ["route_reason", "caller_name", "policy_id"],
+        "required": ["route_reason", "caller_name"],
+        "additionalProperties": False,
+    },
+}
+
+verify_client_identity_schema: Dict[str, Any] = {
+    "name": "verify_client_identity",
+    "description": (
+        "Verify client identity using name, institution, and company code for financial services. "
+        "First step in multi-factor authentication process."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "full_name": {
+                "type": "string",
+                "description": "Client's full legal name.",
+            },
+            "institution_name": {
+                "type": "string", 
+                "description": "Name of the financial institution.",
+            },
+            "company_code_last4": {
+                "type": "string",
+                "description": "Last 4 digits of company code.",
+            },
+        },
+        "required": ["full_name", "institution_name", "company_code_last4"],
+        "additionalProperties": False,
+    },
+}
+
+verify_fraud_client_identity_schema: Dict[str, Any] = {
+    "name": "verify_fraud_client_identity",
+    "description": (
+        "Verify fraud client identity using simplified authentication (name + SSN last 4). "
+        "Used for urgent fraud reporting cases. Faster than full institutional verification."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "full_name": {
+                "type": "string",
+                "description": "Client's full legal name.",
+            },
+            "ssn_last4": {
+                "type": "string",
+                "description": "Last 4 digits of Social Security Number.",
+            },
+        },
+        "required": ["full_name", "ssn_last4"],
+        "additionalProperties": False,
+    },
+}
+
+send_mfa_code_schema: Dict[str, Any] = {
+    "name": "send_mfa_code",
+    "description": (
+        "Send MFA verification code via email or SMS to authenticated client. "
+        "Used after successful identity verification."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique client identifier from verification.",
+            },
+            "delivery_method": {
+                "type": "string",
+                "enum": ["email", "sms"],
+                "description": "Delivery method for verification code.",
+            },
+            "transaction_amount": {
+                "type": "number",
+                "description": "Transaction amount if applicable.",
+            },
+            "transaction_type": {
+                "type": "string",
+                "description": "Type of transaction if applicable.",
+            },
+        },
+        "required": ["client_id", "delivery_method"],
+        "additionalProperties": False,
+    },
+}
+
+verify_mfa_code_schema: Dict[str, Any] = {
+    "name": "verify_mfa_code",
+    "description": (
+        "Verify the MFA code provided by client. "
+        "Completes the authentication process."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Session ID from MFA code sending.",
+            },
+            "otp_code": {
+                "type": "string",
+                "description": "6-digit verification code provided by client.",
+            },
+        },
+        "required": ["session_id", "otp_code"],
+        "additionalProperties": False,
+    },
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fraud Detection Tool Schemas
+# ──────────────────────────────────────────────────────────────────────────────
+
+analyze_recent_transactions_schema: Dict[str, Any] = {
+    "name": "analyze_recent_transactions",
+    "description": (
+        "Analyze recent transactions for fraud patterns, suspicious activity, and risk assessment. "
+        "Provides comprehensive fraud indicators and recommended actions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Authenticated client identifier.",
+            },
+            "days_back": {
+                "type": "integer",
+                "description": "Number of days to analyze (default: 30).",
+                "minimum": 1,
+                "maximum": 90,
+            },
+            "transaction_limit": {
+                "type": "integer", 
+                "description": "Maximum transactions to analyze (default: 50).",
+                "minimum": 10,
+                "maximum": 200,
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+check_suspicious_activity_schema: Dict[str, Any] = {
+    "name": "check_suspicious_activity",
+    "description": (
+        "Check for suspicious account activity patterns including login anomalies, "
+        "transaction patterns, and geographic inconsistencies. Provides risk assessment."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Authenticated client identifier.",
+            },
+            "activity_type": {
+                "type": "string",
+                "enum": ["all", "login", "transaction", "profile_change"],
+                "description": "Type of activity to check (default: 'all').",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+create_fraud_case_schema: Dict[str, Any] = {
+    "name": "create_fraud_case",
+    "description": (
+        "Create formal fraud investigation case with case number, priority assignment, "
+        "and investigation timeline. Used for documented fraud incidents."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Authenticated client identifier.",
+            },
+            "fraud_type": {
+                "type": "string",
+                "enum": ["card_fraud", "identity_theft", "account_takeover", "phishing", "unauthorized_transactions", "other"],
+                "description": "Type of fraud being reported.",
+            },
+            "description": {
+                "type": "string",
+                "description": "Detailed description of the fraud incident.",
+            },
+            "reported_transactions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of transaction IDs involved in the fraud (optional).",
+            },
+            "estimated_loss": {
+                "type": "number",
+                "description": "Estimated financial loss in USD (optional).",
+                "minimum": 0,
+            },
+        },
+        "required": ["client_id", "fraud_type", "description"],
+        "additionalProperties": False,
+    },
+}
+
+send_fraud_case_email_schema: Dict[str, Any] = {
+    "name": "send_fraud_case_email",
+    "description": (
+        "Send comprehensive email notification with fraud case details including case number, "
+        "blocked card information, provisional credits, next steps, and investigation timeline."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Authenticated client identifier.",
+            },
+            "fraud_case_id": {
+                "type": "string",
+                "description": "The fraud case number to include in email.",
+            },
+            "email_type": {
+                "type": "string",
+                "enum": ["case_created", "card_blocked", "investigation_update", "resolution"],
+                "description": "Type of email notification to send.",
+            },
+            "additional_details": {
+                "type": "string",
+                "description": "Optional extra information to include in email.",
+            },
+        },
+        "required": ["client_id", "fraud_case_id", "email_type"],
+        "additionalProperties": False,
+    },
+}
+
+block_card_emergency_schema: Dict[str, Any] = {
+    "name": "block_card_emergency",
+    "description": (
+        "Immediately block credit/debit card to prevent further fraudulent use. "
+        "Provides replacement timeline and temporary access options."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Authenticated client identifier.",
+            },
+            "card_last_4": {
+                "type": "string",
+                "description": "Last 4 digits of card to block.",
+                "pattern": "^[0-9]{4}$",
+            },
+            "block_reason": {
+                "type": "string",
+                "enum": ["fraud_suspected", "card_lost", "card_stolen", "unauthorized_use", "compromised"],
+                "description": "Reason for blocking the card.",
+            },
+        },
+        "required": ["client_id", "card_last_4", "block_reason"],
+        "additionalProperties": False,
+    },
+}
+
+provide_fraud_education_schema: Dict[str, Any] = {
+    "name": "provide_fraud_education",
+    "description": (
+        "Provide fraud prevention education, warning signs, and best practices "
+        "tailored to specific fraud types. Helps customers protect themselves."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Authenticated client identifier.",
+            },
+            "fraud_type": {
+                "type": "string",
+                "enum": ["phishing", "identity_theft", "card_skimming", "general"],
+                "description": "Type of fraud education to provide (default: 'general').",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+ship_replacement_card_schema: Dict[str, Any] = {
+    "name": "ship_replacement_card",
+    "description": (
+        "Ship a replacement card to the client in case of fraud, theft, or card compromise. "
+        "This tool blocks the current card, generates a new card number, and arranges expedited shipping "
+        "with tracking notification. Creates a comprehensive audit trail in Cosmos DB."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Authenticated client identifier from previous auth step.",
+            },
+            "reason": {
+                "type": "string",
+                "enum": ["fraud_detected", "card_theft", "card_compromise", "suspicious_activity"],
+                "description": "Reason for replacement card shipment.",
+            },
+            "shipping_priority": {
+                "type": "string",
+                "enum": ["standard", "expedited", "overnight"],
+                "description": "Shipping speed preference (default: expedited for fraud cases).",
+            },
+            "fraud_case_id": {
+                "type": "string",
+                "description": "Optional fraud case ID to link this card replacement to an existing fraud investigation.",
+            },
+        },
+        "required": ["client_id", "reason"],
+        "additionalProperties": False,
+    },
+}
+
+check_transaction_authorization_schema: Dict[str, Any] = {
+    "name": "check_transaction_authorization",
+    "description": (
+        "Check if client is authorized for specific transaction type and amount. "
+        "Validates operations before execution."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique client identifier.",
+            },
+            "operation": {
+                "type": "string",
+                "description": "Type of operation to authorize.",
+            },
+            "amount": {
+                "type": "number",
+                "description": "Transaction amount to validate.",
+            },
+        },
+        "required": ["client_id", "operation"],
         "additionalProperties": False,
     },
 }

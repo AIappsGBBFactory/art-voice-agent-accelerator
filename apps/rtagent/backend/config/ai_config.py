@@ -22,9 +22,9 @@ AGENT_CLAIM_INTAKE_CONFIG = os.getenv(
     "apps/rtagent/backend/src/agents/artagent/agent_store/claim_intake_agent.yaml",
 )
 
-AGENT_GENERAL_INFO_CONFIG = os.getenv(
-    "AGENT_GENERAL_INFO_CONFIG",
-    "apps/rtagent/backend/src/agents/artagent/agent_store/general_info_agent.yaml",
+AGENT_FRAUD_CONFIG = os.getenv(
+    "AGENT_FRAUD_CONFIG",
+    "apps/rtagent/backend/src/agents/artagent/agent_store/fraud_agent.yaml",
 )
 
 # ==============================================================================

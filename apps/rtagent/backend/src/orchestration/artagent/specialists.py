@@ -109,3 +109,44 @@ async def run_claims_agent(
         respond_kwargs={"caller_name": caller_name, "claim_intent": claim_intent, "policy_id": policy_id},
         latency_label="claim_agent",
     )
+
+
+async def run_fraud_agent(
+    cm: "MemoManager",
+    utterance: str,
+    ws: WebSocket,
+    *,
+    is_acs: bool,
+) -> None:
+    """
+    Handle a turn with the FraudAgent for post-authentication fraud investigation.
+    """
+    if cm is None:
+        logger.error("MemoManager is None in run_fraud_agent")
+        raise ValueError("MemoManager (cm) parameter cannot be None in run_fraud_agent")
+
+    caller_name = cm_get(cm, "caller_name")
+    client_id = cm_get(cm, "client_id")
+    institution_name = cm_get(cm, "institution_name")
+    fraud_type = cm_get(cm, "fraud_type", "general_inquiry")
+    customer_intelligence = cm_get(cm, "customer_intelligence") or {}
+
+    context_msg = (
+        f"Authenticated client: {caller_name} (ID: {client_id}) | Institution: {institution_name} | Fraud Type: {fraud_type}"
+    )
+    await _run_specialist_base(
+        agent_key="Fraud",
+        cm=cm,
+        utterance=utterance,
+        ws=ws,
+        is_acs=is_acs,
+        context_message=context_msg,
+        respond_kwargs={
+            "caller_name": caller_name, 
+            "client_id": client_id, 
+            "institution_name": institution_name,
+            "fraud_type": fraud_type,
+            "customer_intelligence": customer_intelligence
+        },
+        latency_label="fraud_agent",
+    )

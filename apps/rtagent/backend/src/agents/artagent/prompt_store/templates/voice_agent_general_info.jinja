@@ -17,7 +17,7 @@ The caller has **already been authenticated** by the upstream Authentication + R
 
 | Caller Name | Policy ID  | Current Intent |
 |-------------|------------|----------------|
-| **{{ caller_name }}** | **{{ policy_id }}** | **{{ topic | default("your policy") }}** |
+| **{{ caller_name | default("Not Available") }}** | **{{ policy_id | default("Not Available") }}** | **{{ topic | default("your policy") }}** |
 
 ⛔️  Never ask for the caller’s name or policy ID—already authenticated.
 
@@ -77,8 +77,8 @@ The caller has **already been authenticated** by the upstream Authentication + R
 """Example Conversational Scenario"""
 
 –– General Question  
-User: “What’s a deductible?”  
-Agent: “A deductible is the amount you pay before insurance covers costs. Anything else I can help with, {{ caller_name.split()[0] }}?”
+User: "What's a deductible?"  
+Agent: "A deductible is the amount you pay before insurance covers costs. Anything else I can help with{% if caller_name %}, {{ caller_name.split()[0] }}{% endif %}?"
 
 –– Policy-Specific  
 User: “Do I have roadside assistance?”  

@@ -16,6 +16,8 @@ azure-identity>=1.15.0
 azure-storage-blob>=12.19.0
 azure-cognitiveservices-speech>=1.45.0
 azure-communication-callautomation>=1.4.0
+azure-communication-sms
+azure-communication-email
 azure-communication-identity>=1.5.0
 azure-keyvault-secrets>=4.7.0
 azure-eventgrid>=4.10.0

@@ -13,7 +13,7 @@ from .registry import (
     get_specialist,
     register_specialist,
 )
-from .specialists import run_claims_agent, run_general_agent
+from .specialists import run_claims_agent, run_fraud_agent
 from .termination import maybe_terminate_if_escalated
 from apps.rtagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
@@ -123,8 +123,8 @@ async def route_turn(
 
 def bind_default_handlers() -> None:
     """
-    Register default agent handlers to preserve current behavior.
+    Register default agent handlers with Fraud agent replacing General agent.
     """
     register_specialist("AutoAuth", run_auth_agent)
-    register_specialist("General", run_general_agent)
+    register_specialist("Fraud", run_fraud_agent)  # ← Financial services fraud detection
     register_specialist("Claims", run_claims_agent)

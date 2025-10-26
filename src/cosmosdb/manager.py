@@ -4,6 +4,7 @@ import re
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta
 
 import pymongo
 import yaml
@@ -225,6 +226,131 @@ class CosmosDBMongoCoreManager:
         except PyMongoError as e:
             logger.error(f"Failed to delete document: {e}")
             return False
+
+    def ensure_ttl_index(self, field_name: str = "ttl", expire_seconds: int = 0) -> bool:
+        """
+        Create TTL index on collection for automatic document expiration.
+        
+        Args:
+            field_name: Field name to create TTL index on (default: 'ttl')
+            expire_seconds: Collection-level expiration (0 = use document-level TTL)
+        
+        Returns:
+            True if index was created successfully, False otherwise
+        """
+        try:
+            # Create TTL index - documents will expire based on the ttl field value
+            index_def = {field_name: 1}
+            options = {"expireAfterSeconds": expire_seconds}
+            
+            result = self.collection.create_index(index_def, **options)
+            logger.info(f"TTL index created on '{field_name}' field: {result}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to create TTL index: {e}")
+            return False
+
+    def upsert_document_with_ttl(
+        self, document: Dict[str, Any], query: Dict[str, Any], ttl_seconds: int
+    ) -> Optional[Any]:
+        """
+        Upsert document with TTL for automatic expiration.
+        
+        Args:
+            document: Document data to upsert
+            query: Query to find existing document
+            ttl_seconds: TTL in seconds (e.g., 300 for 5 minutes)
+        
+        Returns:
+            The upserted document's ID if a new document is inserted, None otherwise
+        """
+        try:
+            # Add TTL field to document (must be int32 as per Azure Cosmos DB requirements)
+            document_with_ttl = document.copy()
+            document_with_ttl["ttl"] = int(ttl_seconds)  # Ensure it's int32
+            document_with_ttl["expires_at"] = (datetime.utcnow() + timedelta(seconds=ttl_seconds)).isoformat() + "Z"
+            
+            # Use the existing upsert method
+            result = self.upsert_document(document_with_ttl, query)
+            
+            if result:
+                logger.info(f"Document upserted with TTL ({ttl_seconds}s): {result}")
+            else:
+                logger.info(f"Document updated with TTL ({ttl_seconds}s)")
+                
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to upsert document with TTL: {e}")
+            raise
+
+    def insert_document_with_ttl(self, document: Dict[str, Any], ttl_seconds: int) -> Optional[Any]:
+        """
+        Insert document with TTL for automatic expiration.
+        
+        Args:
+            document: Document data to insert
+            ttl_seconds: TTL in seconds (e.g., 300 for 5 minutes)
+        
+        Returns:
+            The inserted document's ID or None if an error occurred
+        """
+        try:
+            # Add TTL field to document (must be int32 as per Azure Cosmos DB requirements)
+            document_with_ttl = document.copy()
+            document_with_ttl["ttl"] = int(ttl_seconds)  # Ensure it's int32
+            document_with_ttl["expires_at"] = (datetime.utcnow() + timedelta(seconds=ttl_seconds)).isoformat() + "Z"
+            
+            # Use the existing insert method
+            result = self.insert_document(document_with_ttl)
+            
+            logger.info(f"Document inserted with TTL ({ttl_seconds}s): {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to insert document with TTL: {e}")
+            raise
+
+    def query_active_documents(self, query: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Query documents that are still active (not expired).
+        This method doesn't rely on TTL cleanup and manually filters expired docs as backup.
+        
+        Args:
+            query: The query to match documents
+            
+        Returns:
+            A list of active (non-expired) documents
+        """
+        try:
+            # Get all matching documents
+            documents = self.query_documents(query)
+            
+            # Filter out manually expired documents (backup for TTL)
+            active_documents = []
+            current_time = datetime.utcnow()
+            
+            for doc in documents:
+                expires_at_str = doc.get("expires_at")
+                if expires_at_str:
+                    try:
+                        expires_at = datetime.fromisoformat(expires_at_str.replace('Z', '+00:00'))
+                        if expires_at > current_time:
+                            active_documents.append(doc)
+                    except ValueError:
+                        # If parsing fails, include the document (safer approach)
+                        active_documents.append(doc)
+                else:
+                    # No expiration time, include the document
+                    active_documents.append(doc)
+            
+            logger.info(f"Found {len(active_documents)}/{len(documents)} active documents")
+            return active_documents
+            
+        except PyMongoError as e:
+            logger.error(f"Failed to query active documents: {e}")
+            return []
 
     def close_connection(self):
         """Close the connection to Cosmos DB."""
