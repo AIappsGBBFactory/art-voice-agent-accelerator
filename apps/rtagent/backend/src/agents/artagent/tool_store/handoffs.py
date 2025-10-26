@@ -176,3 +176,91 @@ async def escalate_human(args: EscalateHumanArgs) -> Dict[str, Any]:
         # Catch all exceptions to prevent 400 errors
         logger.error("Human escalation failed: %s", exc, exc_info=True)
         return _json(False, "Technical error during human escalation. Please try again.")
+
+
+# ────────────────────────────────────────────────────────────────
+# Financial Services Agent Handoffs  🆕
+# ────────────────────────────────────────────────────────────────
+class HandoffFraudArgs(TypedDict):
+    """Input schema for fraud agent handoff."""
+    caller_name: str
+    client_id: str
+    institution_name: str
+    service_type: str  # "fraud_reporting"
+
+class HandoffTransferAgencyArgs(TypedDict):
+    """Input schema for transfer agency handoff."""
+    caller_name: str
+    client_id: str
+    institution_name: str
+    service_type: str  # "transfer_agency"
+    
+
+async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
+    """Transfer caller to Fraud Detection specialist after MFA authentication."""
+    if not isinstance(args, dict):
+        logger.error("Invalid args type: %s. Expected dict.", type(args))
+        return _json(False, "Invalid request format. Please provide handoff details.")
+    
+    try:
+        caller_name = (args.get("caller_name") or "").strip()
+        client_id = (args.get("client_id") or "").strip()
+        institution_name = (args.get("institution_name") or "").strip()
+        service_type = (args.get("service_type") or "fraud_reporting").strip()
+
+        if not caller_name or not client_id:
+            return _json(False, "Both 'caller_name' and 'client_id' must be provided.")
+
+        logger.info(
+            "🛡️ Hand-off to Fraud agent – client_id=%s caller=%s institution=%s", 
+            client_id, caller_name, institution_name
+        )
+        
+        return _json(
+            True,
+            "Caller transferred to Fraud Detection specialist.",
+            handoff="Fraud",
+            target_agent="Fraud Detection",
+            caller_name=caller_name,
+            client_id=client_id,
+            institution_name=institution_name,
+            service_type=service_type,
+        )
+    except Exception as exc:
+        logger.error("Fraud agent handoff failed: %s", exc, exc_info=True)
+        return _json(False, "Technical error during handoff. Please try again.")
+
+
+async def handoff_transfer_agency_agent(args: HandoffTransferAgencyArgs) -> Dict[str, Any]:
+    """Transfer caller to Transfer Agency specialist after MFA authentication."""
+    if not isinstance(args, dict):
+        logger.error("Invalid args type: %s. Expected dict.", type(args))
+        return _json(False, "Invalid request format. Please provide handoff details.")
+    
+    try:
+        caller_name = (args.get("caller_name") or "").strip()
+        client_id = (args.get("client_id") or "").strip()
+        institution_name = (args.get("institution_name") or "").strip()
+        service_type = (args.get("service_type") or "transfer_agency").strip()
+
+        if not caller_name or not client_id:
+            return _json(False, "Both 'caller_name' and 'client_id' must be provided.")
+
+        logger.info(
+            "🏦 Hand-off to Transfer Agency – client_id=%s caller=%s institution=%s", 
+            client_id, caller_name, institution_name
+        )
+        
+        return _json(
+            True,
+            "Caller transferred to Transfer Agency specialist.",
+            handoff="Transfer",  # Maps to orchestration agent binding
+            target_agent="Transfer Agency",
+            caller_name=caller_name,
+            client_id=client_id,
+            institution_name=institution_name,
+            service_type=service_type,
+        )
+    except Exception as exc:
+        logger.error("Transfer Agency handoff failed: %s", exc, exc_info=True)
+        return _json(False, "Technical error during handoff. Please try again.")
