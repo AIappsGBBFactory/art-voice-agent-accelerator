@@ -463,18 +463,13 @@ main() {
         export AZURE_COSMOS_CLUSTER_NAME="$(get_azd_env_value "AZURE_COSMOS_CLUSTER_NAME")"
 
         # Install Python requirements for Cosmos DB initialization
-        if [ -f "$SCRIPT_DIR/../../requirements.txt" ]; then
-            log_info "Installing Python requirements for Cosmos DB setup..."
-            pip3 install -q -r "$SCRIPT_DIR/../../requirements.txt" || {
-            log_warning "Failed to install requirements.txt; Cosmos DB init may fail"
-            }
-        elif [ -f "requirements.txt" ]; then
-            log_info "Installing Python requirements from current directory..."
-            pip3 install -q -r requirements.txt || {
-            log_warning "Failed to install requirements.txt; Cosmos DB init may fail"
+        if [ -f "$HELPERS_DIR/requirements-cosmos.txt" ]; then
+            log_info "Installing Cosmos DB specific Python requirements..."
+            pip3 install -q -r "$HELPERS_DIR/requirements-cosmos.txt" || {
+                log_warning "Failed to install requirements-cosmos.txt; Cosmos DB init may fail"
             }
         else
-            log_warning "No requirements.txt found; proceeding with Cosmos DB init"
+            log_warning "No requirements-cosmos.txt found in helpers directory; proceeding with Cosmos DB init"
         fi
         
         if python3 "$HELPERS_DIR/cosmos_init.py"; then
