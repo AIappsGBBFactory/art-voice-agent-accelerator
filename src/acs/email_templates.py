@@ -388,3 +388,288 @@ def _get_call_context(transaction_type: str) -> str:
     }
     
     return call_reasons.get(transaction_type, "financial services assistance")
+
+
+class FraudEmailTemplates:
+    """Professional fraud case email templates matching MFA style."""
+    
+    @staticmethod
+    def create_fraud_case_email(
+        case_number: str,
+        client_name: str, 
+        institution_name: str,
+        email_type: str = "case_created",
+        blocked_card_last_4: str = None,
+        estimated_loss: float = 0,
+        provisional_credits: List[Dict] = None,
+        additional_details: str = ""
+    ) -> tuple[str, str, str]:
+        """
+        Create professional fraud case notification email.
+        
+        Args:
+            case_number: Fraud case ID
+            client_name: Name of the client
+            institution_name: Financial institution name
+            email_type: Type of email (case_created, card_blocked, etc.)
+            blocked_card_last_4: Last 4 digits of blocked card
+            estimated_loss: Total estimated loss amount
+            provisional_credits: List of provisional credit transactions
+            additional_details: Additional information to include
+            
+        Returns:
+            Tuple of (subject, plain_text_body, html_body)
+        """
+        from datetime import datetime
+        
+        # Email subjects by type
+        subject_map = {
+            "case_created": f"🛡️ Fraud Protection Activated - Case {case_number}",
+            "card_blocked": f"🔒 Card Security Alert - Immediate Protection",
+            "investigation_update": f"📋 Fraud Investigation Update - Case {case_number}",
+            "resolution": f"✅ Fraud Case Resolved - Case {case_number}"
+        }
+        
+        subject = subject_map.get(email_type, f"Security Notification - Case {case_number}")
+        
+        # Calculate total provisional credits
+        total_credits = sum(credit.get('amount', 0) for credit in (provisional_credits or []))
+        
+        # Plain text version
+        plain_text_body = f"""Dear {client_name},
+
+FRAUD PROTECTION CONFIRMATION
+Case Number: {case_number}
+Institution: {institution_name}
+Date: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
+
+IMMEDIATE ACTIONS TAKEN:
+✓ Card ending in {blocked_card_last_4 or 'XXXX'} has been BLOCKED
+✓ Fraud case opened with high priority investigation team
+✓ Replacement card expedited for 1-2 business day delivery
+✓ Enhanced account monitoring activated
+✓ Provisional credits being processed: ${total_credits:.2f}
+
+NEXT STEPS:
+• Investigation team will contact you within 24 hours
+• New card will arrive with tracking information via SMS/Email  
+• Update automatic payments with new card when received
+• Monitor account for any additional suspicious activity
+
+REPLACEMENT CARD DETAILS:
+• Shipping: Expedited (1-2 business days)
+• Tracking: Provided via SMS and email
+• Activation: Required upon receipt
+
+TEMPORARY ACCESS:
+• Mobile wallet (Apple Pay, Google Pay) remains active if set up
+• Online banking and bill pay available
+• Branch visits with valid ID for emergency cash
+
+IMPORTANT: Always reference case number {case_number} in communications.
+
+24/7 Fraud Hotline: 1-800-555-FRAUD
+
+{additional_details}
+
+We sincerely apologize for this inconvenience and appreciate your prompt reporting. Your security is our highest priority.
+
+Best regards,
+Fraud Protection Team
+{institution_name}
+"""
+
+        # Beautiful HTML version
+        html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        {EmailTemplates.get_base_html_styles()}
+        .fraud-alert {{
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+            border-radius: 12px;
+            box-shadow: 0 4px 8px rgba(220,53,69,0.3);
+        }}
+        .case-number {{
+            background: #f8f9fa;
+            border: 2px solid #0066cc;
+            padding: 15px;
+            text-align: center;
+            margin: 20px 0;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #0066cc;
+        }}
+        .actions-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }}
+        .action-item {{
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            border-radius: 8px;
+        }}
+        .action-item h4 {{
+            margin: 0 0 5px 0;
+            color: #155724;
+        }}
+        .credits-section {{
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }}
+        .next-steps {{
+            background: #f8f9fa;
+            border-left: 4px solid #6c757d;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }}
+        .contact-info {{
+            background: linear-gradient(135deg, #0066cc, #004499);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+            border-radius: 12px;
+        }}
+        .hotline {{
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header" style="background: linear-gradient(135deg, #dc3545, #c82333);">
+        <h1>🛡️ Fraud Protection Activated</h1>
+        <h2>Your Account is Now Secure</h2>
+    </div>
+    
+    <div class="content">
+        <div class="fraud-alert">
+            <h2>🚨 IMMEDIATE PROTECTION MEASURES ACTIVATED 🚨</h2>
+            <p>We've taken swift action to protect your account from unauthorized activity.</p>
+        </div>
+        
+        <p>Dear <strong>{client_name}</strong>,</p>
+        
+        <p>This email confirms the comprehensive fraud protection measures we've implemented on your account today.</p>
+        
+        <div class="case-number">
+            <div>📋 Your Fraud Case Number</div>
+            <div style="font-size: 24px; margin-top: 10px;">{case_number}</div>
+            <div style="font-size: 14px; color: #666; margin-top: 5px;">Reference this number in all communications</div>
+        </div>
+        
+        <h3>🚀 IMMEDIATE ACTIONS COMPLETED</h3>
+        <div class="actions-grid">
+            <div class="action-item">
+                <h4>🔒 Card Secured</h4>
+                <p>Card ending in {blocked_card_last_4 or 'XXXX'} blocked immediately</p>
+            </div>
+            <div class="action-item">
+                <h4>📦 Replacement Ordered</h4>
+                <p>Expedited delivery (1-2 business days)</p>
+            </div>
+            <div class="action-item">
+                <h4>👥 Investigation Started</h4>
+                <p>High priority fraud team assigned</p>
+            </div>
+            <div class="action-item">
+                <h4>🔍 Monitoring Enhanced</h4>
+                <p>Advanced security alerts activated</p>
+            </div>
+        </div>"""
+
+        # Add provisional credits section if applicable
+        if provisional_credits and total_credits > 0:
+            html_body += f"""
+        <div class="credits-section">
+            <h4>💰 PROVISIONAL CREDITS PROCESSING</h4>
+            <p>The following unauthorized transactions are being provisionally credited:</p>
+            <ul>"""
+            
+            for credit in provisional_credits:
+                merchant = credit.get('merchant', 'Unknown Merchant')
+                amount = credit.get('amount', 0)
+                date = credit.get('date', 'Recent')
+                html_body += f"<li><strong>${amount:.2f}</strong> - {merchant} ({date})</li>"
+            
+            html_body += f"""
+            </ul>
+            <p><strong>Total Provisional Credit: ${total_credits:.2f}</strong></p>
+            <p><em>These credits will appear in your account within 2-3 business days.</em></p>
+        </div>"""
+
+        # Continue with next steps
+        html_body += f"""
+        <div class="next-steps">
+            <h4>📋 YOUR NEXT STEPS</h4>
+            <ul>
+                <li><strong>Investigation Contact:</strong> Our team will reach out within 24 hours</li>
+                <li><strong>New Card Arrival:</strong> 1-2 business days with tracking notifications</li>
+                <li><strong>Update Payments:</strong> Replace card info for automatic payments when received</li>
+                <li><strong>Stay Vigilant:</strong> Monitor account for any additional suspicious activity</li>
+            </ul>
+        </div>
+        
+        <h3>💳 REPLACEMENT CARD DETAILS</h3>
+        <div style="background: #e7f3ff; padding: 15px; border-radius: 8px; margin: 15px 0;">
+            <p><strong>📦 Shipping Method:</strong> Expedited (1-2 business days)<br>
+            <strong>📱 Tracking:</strong> SMS and email notifications provided<br>
+            <strong>🔑 Activation:</strong> Required upon receipt<br>
+            <strong>🏠 Delivery:</strong> Your address on file</p>
+        </div>
+        
+        <h3>🔓 TEMPORARY ACCESS OPTIONS</h3>
+        <div style="background: #f0f8f0; padding: 15px; border-radius: 8px; margin: 15px 0;">
+            <p>While waiting for your new card:</p>
+            <ul>
+                <li><strong>📱 Mobile Wallet:</strong> Apple Pay, Google Pay remain active if set up</li>
+                <li><strong>💻 Online Banking:</strong> Full access to account and bill pay</li>
+                <li><strong>🏛️ Branch Access:</strong> Visit with valid ID for emergency cash</li>
+                <li><strong>📞 Phone Support:</strong> 24/7 customer service available</li>
+            </ul>
+        </div>
+        
+        <div class="contact-info">
+            <h3>🆘 24/7 FRAUD PROTECTION HOTLINE</h3>
+            <div class="hotline">📞 1-800-555-FRAUD</div>
+            <p>Always reference case number: <strong>{case_number}</strong></p>
+        </div>
+        
+        {f'<div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0;"><h4>📝 Additional Information</h4><p>{additional_details}</p></div>' if additional_details else ''}
+        
+        <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+        
+        <p style="text-align: center; color: #666;">
+            <strong>We sincerely apologize for any inconvenience and appreciate your prompt reporting.</strong><br>
+            Your security is our highest priority, and we're committed to resolving this matter quickly and completely.
+        </p>
+        
+        <div style="text-align: center; margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+            <p><strong>Best regards,</strong><br>
+            Fraud Protection Team<br>
+            {institution_name}</p>
+        </div>
+    </div>
+    
+    <div class="footer">
+        <p><em>This email contains confidential information. If you received this in error, please delete immediately and contact us.</em></p>
+        <p>© {datetime.now().year} {institution_name}. All rights reserved.</p>
+    </div>
+</body>
+</html>"""
+
+        return subject, plain_text_body, html_body
