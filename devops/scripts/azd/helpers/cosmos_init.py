@@ -6,6 +6,10 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 try:
     from seed_data import SeedTask, list_datasets, load_seed_tasks
 except ImportError:  # pragma: no cover
@@ -15,10 +19,6 @@ from src.cosmosdb.manager import CosmosDBMongoCoreManager
 
 logger = logging.getLogger("cosmos_init")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-REPO_ROOT = Path(__file__).resolve().parents[4]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 async def upsert_documents(
     manager: CosmosDBMongoCoreManager,
