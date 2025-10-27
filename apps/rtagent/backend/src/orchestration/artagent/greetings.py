@@ -56,12 +56,13 @@ def create_personalized_greeting(
         
         # Use custom greeting if available
         custom_greeting = conversation_context.get("greeting_style", "")
-        if custom_greeting and caller_name.split()[0] in custom_greeting:
+        first_name = caller_name.split()[0] if caller_name and caller_name.strip() else "there"
+        if custom_greeting and first_name in custom_greeting:
             # Use the pre-generated personalized greeting
             base_greeting = custom_greeting
         else:
             # Create greeting based on relationship tier and communication style
-            first_name = caller_name.split()[0] if caller_name else "there"
+            # first_name already set above with null safety
             
             if "Direct" in communication_style or "Business" in communication_style:
                 base_greeting = f"Good morning {first_name}. This is your {agent_name} specialist at {institution_name}"
@@ -193,10 +194,14 @@ async def send_agent_greeting(
 
     if is_acs:
         logger.info("ACS greeting #%s for %s (voice: %s): %s", counter + 1, agent_name, voice_name or "default", greeting)
-        if agent_name == "Claims":
-            agent_sender = "Claims Specialist"
-        elif agent_name == "Fraud":
+        if agent_name == "Fraud":
             agent_sender = "Fraud Specialist"
+        elif agent_name == "Agency":
+            agent_sender = "Transfer Agency Specialist"
+        elif agent_name == "Compliance":
+            agent_sender = "Compliance Specialist"
+        elif agent_name == "Trading":
+            agent_sender = "Trading Specialist"
         else:
             agent_sender = "Assistant"
 

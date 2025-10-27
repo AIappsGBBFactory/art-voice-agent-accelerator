@@ -22,65 +22,29 @@ class FXRateLock(str, Enum):
     NOW = "lock_now"
     MARKET_CLOSE = "market_close"
 
-# Mock client database
-MOCK_CLIENT_DATA = {
-    "GCA-48273": {
-        "client_id": "GCA-48273",
-        "institution_name": "Global Capital Advisors",
-        "contact_name": "Emily Rivera",
-        "account_currency": "EUR",
-        "custodial_account": "****4821",
-        "aml_expiry": "2025-10-31",  # Expires in 5 days from 2025-10-26
-        "fatca_status": "compliant",
-        "w8ben_expiry": "2026-03-15",
-        "risk_profile": "institutional",
-        "dual_auth_approver": "James Carter",
-        "email": "erivera@globalcapital.com"
-    }
-}
+# Database Integration
+import sys
+import os
 
-# Mock DRIP positions
-MOCK_DRIP_POSITIONS = {
-    "GCA-48273": {
-        "PLTR": {
-            "symbol": "PLTR",
-            "company_name": "Palantir Technologies",
-            "shares": 1078.42,
-            "cost_basis_per_share": 11.42,
-            "last_dividend": 0.08,
-            "dividend_date": "2024-08-30",
-            "current_price": 12.85,  # Mock current price
-            "market_value": 13857.70
-        },
-        "MSFT": {
-            "symbol": "MSFT", 
-            "company_name": "Microsoft Corporation",
-            "shares": 542.0,
-            "cost_basis_per_share": 280.15,
-            "last_dividend": 3.00,
-            "dividend_date": "2024-09-15",
-            "current_price": 415.50,
-            "market_value": 225201.00
-        },
-        "TSLA": {
-            "symbol": "TSLA",
-            "company_name": "Tesla Inc",
-            "shares": 12.75,
-            "cost_basis_per_share": 195.80,
-            "last_dividend": 0.0,  # Tesla doesn't pay dividends
-            "dividend_date": None,
-            "current_price": 248.90,
-            "market_value": 3173.48
-        }
-    }
-}
+# Add the parent directory to the path to import CosmosDB manager
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 
-# Mock FX rates
-CURRENT_FX_RATES = {
-    "USD_EUR": 1.0725,
-    "USD_GBP": 0.8150,
-    "USD_CHF": 0.9050
-}
+from src.cosmosdb.manager import CosmosDBMongoCoreManager
+from .transfer_agency_constants import (
+    CURRENT_FX_RATES, PROCESSING_FEES, TAX_WITHHOLDING_RATES,
+    SPECIALIST_QUEUES, get_fx_rate, get_processing_fee, get_tax_rate,
+    get_specialist_queue_info, format_currency_amount
+)
+
+# Database configuration
+DATABASE_NAME = "financial_services_db"
+
+def get_ta_collection_manager(collection_name: str) -> CosmosDBMongoCoreManager:
+    """Get a manager for transfer agency collections"""
+    return CosmosDBMongoCoreManager(
+        database_name=DATABASE_NAME,
+        collection_name=collection_name
+    )
 
 class GetClientDataArgs(BaseModel):
     """Get client institutional data and account details"""
@@ -93,18 +57,37 @@ class GetClientDataResult(BaseModel):
     error_message: Optional[str] = None
 
 def get_client_data(args: GetClientDataArgs) -> GetClientDataResult:
-    """Retrieve client institutional data and account details"""
+    """Retrieve client institutional data and account details from database"""
     try:
-        client_data = MOCK_CLIENT_DATA.get(args.client_code)
+        ta_client_manager = get_ta_collection_manager("transfer_agency_clients")
+        
+        # Query by client_code
+        client_data = ta_client_manager.read_document({"client_code": args.client_code})
+        
         if not client_data:
             return GetClientDataResult(
                 success=False,
                 error_message=f"Client code {args.client_code} not found"
             )
         
+        # Transform database format to expected format for compatibility
+        transformed_data = {
+            "client_id": client_data.get("client_code"),
+            "institution_name": client_data.get("institution_name"),
+            "contact_name": client_data.get("contact_name"),
+            "account_currency": client_data.get("account_currency"),
+            "custodial_account": client_data.get("custodial_account"),
+            "aml_expiry": client_data.get("aml_expiry"),
+            "fatca_status": client_data.get("fatca_status"),
+            "w8ben_expiry": client_data.get("w8ben_expiry"),
+            "risk_profile": client_data.get("risk_profile"),
+            "dual_auth_approver": client_data.get("dual_auth_approver"),
+            "email": client_data.get("email")
+        }
+        
         return GetClientDataResult(
             success=True,
-            client_data=client_data
+            client_data=transformed_data
         )
     except Exception as e:
         return GetClientDataResult(
@@ -124,17 +107,36 @@ class GetDripPositionsResult(BaseModel):
     error_message: Optional[str] = None
 
 def get_drip_positions(args: GetDripPositionsArgs) -> GetDripPositionsResult:
-    """Get client's current DRIP positions and valuations"""
+    """Get client's current DRIP positions and valuations from database"""
     try:
-        positions = MOCK_DRIP_POSITIONS.get(args.client_code)
-        if not positions:
+        drip_manager = get_ta_collection_manager("drip_positions")
+        
+        # Query by client_code
+        drip_positions = drip_manager.query_documents({"client_code": args.client_code})
+        
+        if not drip_positions:
             return GetDripPositionsResult(
                 success=False,
                 error_message=f"No DRIP positions found for client {args.client_code}"
             )
         
-        # Calculate total value
-        total_value = sum(pos["market_value"] for pos in positions.values())
+        # Transform database format to expected format (symbol as key)
+        positions = {}
+        total_value = 0
+        
+        for pos in drip_positions:
+            symbol = pos.get("symbol")
+            positions[symbol] = {
+                "symbol": pos.get("symbol"),
+                "company_name": pos.get("company_name"),
+                "shares": pos.get("shares"),
+                "cost_basis_per_share": pos.get("cost_basis_per_share"),
+                "last_dividend": pos.get("last_dividend"),
+                "dividend_date": pos.get("dividend_date"),
+                "current_price": pos.get("current_price"),
+                "market_value": pos.get("market_value")
+            }
+            total_value += pos.get("market_value", 0)
         
         return GetDripPositionsResult(
             success=True,
@@ -161,34 +163,52 @@ class CheckComplianceResult(BaseModel):
     error_message: Optional[str] = None
 
 def check_compliance_status(args: CheckComplianceArgs) -> CheckComplianceResult:
-    """Check AML and FATCA compliance status"""
+    """Check AML and FATCA compliance status from database"""
     try:
-        client_data = MOCK_CLIENT_DATA.get(args.client_code)
-        if not client_data:
+        compliance_manager = get_ta_collection_manager("compliance_records")
+        
+        # Get current year compliance record
+        from datetime import datetime, date
+        current_year = datetime.now().year
+        
+        compliance_data = compliance_manager.read_document({
+            "client_code": args.client_code,
+            "compliance_year": current_year
+        })
+        
+        if not compliance_data:
             return CheckComplianceResult(
                 success=False,
-                error_message=f"Client code {args.client_code} not found"
+                error_message=f"No compliance record found for client {args.client_code} in {current_year}"
             )
         
         # Calculate AML days remaining
-        from datetime import datetime, date
-        aml_expiry = datetime.strptime(client_data["aml_expiry"], "%Y-%m-%d").date()
+        aml_expiry = datetime.strptime(compliance_data["aml_expiry"], "%Y-%m-%d").date()
         today = date.today()
         days_remaining = (aml_expiry - today).days
         
-        # Determine AML status
-        if days_remaining <= 0:
-            aml_status = ComplianceStatus.NON_COMPLIANT
-        elif days_remaining <= 5:
-            aml_status = ComplianceStatus.EXPIRING_SOON
-        else:
-            aml_status = ComplianceStatus.COMPLIANT
+        # Get AML status from database
+        aml_status_str = compliance_data.get("aml_status", "compliant")
         
-        # FATCA status (simplified)
-        fatca_status = ComplianceStatus.COMPLIANT
+        # Map database status to enum
+        status_map = {
+            "compliant": ComplianceStatus.COMPLIANT,
+            "expiring_soon": ComplianceStatus.EXPIRING_SOON,
+            "non_compliant": ComplianceStatus.NON_COMPLIANT,
+            "requires_review": ComplianceStatus.REQUIRES_REVIEW
+        }
         
-        requires_review = (aml_status != ComplianceStatus.COMPLIANT or 
-                          client_data["risk_profile"] == "high_risk")
+        aml_status = status_map.get(aml_status_str, ComplianceStatus.COMPLIANT)
+        
+        # FATCA status from database
+        fatca_status_str = compliance_data.get("fatca_status", "compliant")
+        fatca_status = status_map.get(fatca_status_str, ComplianceStatus.COMPLIANT)
+        
+        requires_review = (
+            compliance_data.get("requires_review", False) or
+            aml_status != ComplianceStatus.COMPLIANT or
+            compliance_data.get("risk_assessment") == "high_risk"
+        )
         
         return CheckComplianceResult(
             success=True,
@@ -224,48 +244,55 @@ class CalculateTradeResult(BaseModel):
     error_message: Optional[str] = None
 
 def calculate_liquidation_proceeds(args: CalculateTradeArgs) -> CalculateTradeResult:
-    """Calculate liquidation proceeds, fees, and taxes"""
+    """Calculate liquidation proceeds, fees, and taxes using database data"""
     try:
-        # Get position data
-        positions = MOCK_DRIP_POSITIONS.get(args.client_code, {})
-        position = positions.get(args.symbol)
-        if not position:
+        # Get position data from database
+        drip_manager = get_ta_collection_manager("drip_positions")
+        position_data = drip_manager.read_document({
+            "client_code": args.client_code,
+            "symbol": args.symbol
+        })
+        
+        if not position_data:
             return CalculateTradeResult(
                 success=False,
                 error_message=f"No {args.symbol} position found for client {args.client_code}"
             )
         
         # Calculate shares to liquidate
-        shares_to_liquidate = args.shares or position["shares"]
-        if shares_to_liquidate > position["shares"]:
+        shares_to_liquidate = args.shares or position_data["shares"]
+        if shares_to_liquidate > position_data["shares"]:
             return CalculateTradeResult(
                 success=False,
-                error_message=f"Cannot liquidate {shares_to_liquidate} shares, only {position['shares']} available"
+                error_message=f"Cannot liquidate {shares_to_liquidate} shares, only {position_data['shares']} available"
             )
         
         # Calculate gross proceeds
-        current_price = position["current_price"]
+        current_price = position_data["current_price"]
         gross_proceeds = shares_to_liquidate * current_price
         
-        # Calculate fees
-        processing_fee = 250.0 if args.settlement_speed == SettlementSpeed.EXPEDITED else 50.0
+        # Calculate fees using constants
+        processing_fee = get_processing_fee(args.settlement_speed.value)
         
-        # Calculate tax withholding (15% on dividend gains)
-        dividend_income = shares_to_liquidate * position["last_dividend"] if position["last_dividend"] else 0
-        tax_withholding = dividend_income * 0.15
+        # Calculate tax withholding using constants
+        dividend_income = shares_to_liquidate * (position_data.get("last_dividend", 0) or 0)
+        tax_rate = get_tax_rate("US", "dividend_tax")  # Default to US rates
+        tax_withholding = dividend_income * tax_rate
         
         # Calculate net USD proceeds
         net_proceeds_usd = gross_proceeds - processing_fee - tax_withholding
         
-        # Get client currency and FX rate
-        client_data = MOCK_CLIENT_DATA.get(args.client_code, {})
-        client_currency = client_data.get("account_currency", "USD")
+        # Get client currency from transfer agency client data
+        ta_client_manager = get_ta_collection_manager("transfer_agency_clients")
+        client_data = ta_client_manager.read_document({"client_code": args.client_code})
+        client_currency = client_data.get("account_currency", "USD") if client_data else "USD"
         
+        # Calculate FX conversion
         if client_currency == "USD":
             fx_rate = 1.0
             net_proceeds_client_currency = net_proceeds_usd
         else:
-            fx_rate = CURRENT_FX_RATES.get(f"USD_{client_currency}", 1.0)
+            fx_rate = get_fx_rate("USD", client_currency)
             net_proceeds_client_currency = net_proceeds_usd * fx_rate
         
         return CalculateTradeResult(
@@ -292,49 +319,41 @@ class HandoffComplianceArgs(BaseModel):
     compliance_issue: str
     urgency: str = "normal"  # normal, high, expedited
 
-class HandoffComplianceResult(BaseModel):
-    """Compliance handoff result"""
-    success: bool
-    handoff_id: str
-    specialist_queue: str
-    estimated_wait: str
-    message: str
-
-def handoff_to_compliance(args: HandoffComplianceArgs) -> HandoffComplianceResult:
-    """Hand off client to compliance specialist for AML/FATCA review"""
+def handoff_to_compliance(args: HandoffComplianceArgs) -> Dict[str, Any]:
+    """Hand off client to compliance specialist for AML/FATCA review using queue constants"""
     try:
         # Generate handoff ID
         import uuid
         handoff_id = f"COMP-{uuid.uuid4().hex[:8].upper()}"
         
-        # Determine queue based on urgency
-        if args.urgency == "expedited":
-            queue = "Expedited Compliance Review"
-            wait_time = "2-3 minutes"
-        elif args.urgency == "high":
-            queue = "Priority Compliance Review" 
-            wait_time = "5-7 minutes"
-        else:
-            queue = "Standard Compliance Review"
-            wait_time = "10-15 minutes"
+        # Get queue information from constants
+        queue_info = get_specialist_queue_info("compliance", args.urgency)
+        queue_name = queue_info.get("queue_name", "Standard Compliance Review")
+        wait_time = queue_info.get("wait_time", "10-15 minutes")
         
-        message = f"Transferring {args.client_name} to {queue} for {args.compliance_issue}. Handoff ID: {handoff_id}"
+        message = f"Transferring {args.client_name} to {queue_name} for {args.compliance_issue}. Handoff ID: {handoff_id}"
         
-        return HandoffComplianceResult(
-            success=True,
-            handoff_id=handoff_id,
-            specialist_queue=queue,
-            estimated_wait=wait_time,
-            message=message
-        )
+        # Return orchestrator-compatible handoff format
+        return {
+            "success": True,
+            "message": message,
+            "handoff": "Compliance",
+            "target_agent": "Compliance",
+            "handoff_id": handoff_id,
+            "specialist_queue": queue_name,
+            "estimated_wait": wait_time,
+            "client_name": args.client_name,
+            "compliance_issue": args.compliance_issue,
+            "urgency": args.urgency
+        }
     except Exception as e:
-        return HandoffComplianceResult(
-            success=False,
-            handoff_id="",
-            specialist_queue="",
-            estimated_wait="",
-            message=f"Error creating compliance handoff: {str(e)}"
-        )
+        return {
+            "success": False,
+            "message": f"Error creating compliance handoff: {str(e)}",
+            "handoff_id": "",
+            "specialist_queue": "",
+            "estimated_wait": ""
+        }
 
 class HandoffTradingArgs(BaseModel):
     """Hand off to trading specialist"""
@@ -343,46 +362,39 @@ class HandoffTradingArgs(BaseModel):
     trade_details: Dict[str, Any]
     complexity: str = "standard"  # standard, complex, institutional
 
-class HandoffTradingResult(BaseModel):
-    """Trading handoff result"""
-    success: bool
-    handoff_id: str
-    specialist_queue: str
-    estimated_wait: str
-    message: str
-
-def handoff_to_trading(args: HandoffTradingArgs) -> HandoffTradingResult:
-    """Hand off client to trading specialist for execution"""
+def handoff_to_trading(args: HandoffTradingArgs) -> Dict[str, Any]:
+    """Hand off client to trading specialist for execution using queue constants"""
     try:
         # Generate handoff ID
         import uuid
         handoff_id = f"TRADE-{uuid.uuid4().hex[:8].upper()}"
         
-        # Determine queue based on complexity
-        if args.complexity == "institutional":
-            queue = "Institutional Trading Desk"
-            wait_time = "1-2 minutes"
-        elif args.complexity == "complex":
-            queue = "Complex Derivatives Desk"
-            wait_time = "3-5 minutes"
-        else:
-            queue = "Standard Trading Desk"
-            wait_time = "2-4 minutes"
+        # Get queue information from constants
+        queue_info = get_specialist_queue_info("trading", args.complexity)
+        queue_name = queue_info.get("queue_name", "Standard Trading Desk")
+        wait_time = queue_info.get("wait_time", "2-4 minutes")
         
-        message = f"Transferring {args.client_name} to {queue} for trade execution. Handoff ID: {handoff_id}"
+        message = f"Transferring {args.client_name} to {queue_name} for trade execution. Handoff ID: {handoff_id}"
         
-        return HandoffTradingResult(
-            success=True,
-            handoff_id=handoff_id,
-            specialist_queue=queue,
-            estimated_wait=wait_time,
-            message=message
-        )
+        # Return orchestrator-compatible handoff format
+        return {
+            "success": True,
+            "message": message,
+            "handoff": "Trading",
+            "target_agent": "Trading", 
+            "handoff_id": handoff_id,
+            "specialist_queue": queue_name,
+            "estimated_wait": wait_time,
+            "client_code": args.client_code,
+            "client_name": args.client_name,
+            "trade_details": args.trade_details,
+            "complexity": args.complexity
+        }
     except Exception as e:
-        return HandoffTradingResult(
-            success=False,
-            handoff_id="",
-            specialist_queue="",
-            estimated_wait="",
-            message=f"Error creating trading handoff: {str(e)}"
-        )
+        return {
+            "success": False,
+            "message": f"Error creating trading handoff: {str(e)}",
+            "handoff_id": "",
+            "specialist_queue": "",
+            "estimated_wait": ""
+        }

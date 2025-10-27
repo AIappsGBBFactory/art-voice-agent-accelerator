@@ -35,8 +35,6 @@ AGENT_BINDINGS: Dict[str, AgentBinding] = {
     "Compliance": AgentBinding(name="Compliance", ws_attr="compliance_agent"),
     "Trading": AgentBinding(name="Trading", ws_attr="trading_agent"),
     
-    # Legacy (backward compatibility)
-    "Claims": AgentBinding(name="Claims", ws_attr="claim_intake_agent"),
 }
 
 

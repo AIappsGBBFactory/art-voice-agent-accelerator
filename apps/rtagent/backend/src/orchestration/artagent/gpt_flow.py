@@ -1059,6 +1059,22 @@ async def process_gpt_response(  # noqa: PLR0913
     agent_history.append({"role": "user", "content": user_prompt})
     tool_set = available_tools or DEFAULT_TOOLS
 
+    # Validate and repair conversation history to prevent OpenAI API errors
+    is_valid, validation_error = _validate_conversation_history(agent_history, agent_name)
+    if not is_valid:
+        logger.warning(
+            "Conversation history validation failed for agent %s: %s - applying repair",
+            agent_name,
+            validation_error,
+            extra={
+                "agent_name": agent_name,
+                "validation_error": validation_error,
+                "history_length": len(agent_history),
+                "event_type": "conversation_repair_applied"
+            }
+        )
+        agent_history = _repair_conversation_history(agent_history, agent_name)
+
     logger.info(
         "Starting GPT response processing: agent=%s model=%s prompt_len=%d tools=%d",
         agent_name,

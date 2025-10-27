@@ -165,6 +165,7 @@ async def run_agency_agent(
     caller_name: str | None = cm_get(cm, "caller_name")
     client_id: str | None = cm_get(cm, "client_id")
     institution_name: str | None = cm_get(cm, "institution_name")
+    customer_intelligence = cm_get(cm, "customer_intelligence") or {}
     
     context_msg = f"Transfer Agency Agent serving {caller_name or 'client'}"
     if institution_name:
@@ -172,8 +173,8 @@ async def run_agency_agent(
     context_msg += " for DRIP liquidations and institutional services."
     
     await _run_specialist_base(
+        agent_key="Agency",
         cm=cm,
-        agent_name="AgencyAgent",
         utterance=utterance,
         ws=ws,
         is_acs=is_acs,
@@ -182,6 +183,7 @@ async def run_agency_agent(
             "caller_name": caller_name,
             "client_id": client_id,
             "institution_name": institution_name,
+            "customer_intelligence": customer_intelligence,
         },
         latency_label="agency_agent",
     )
@@ -200,14 +202,15 @@ async def run_compliance_agent(
     caller_name: str | None = cm_get(cm, "caller_name")
     client_id: str | None = cm_get(cm, "client_id") 
     institution_name: str | None = cm_get(cm, "institution_name")
+    customer_intelligence = cm_get(cm, "customer_intelligence") or {}
     
     context_msg = f"Compliance Specialist handling regulatory review for {caller_name or 'client'}"
     if institution_name:
         context_msg += f" from {institution_name}"
     
     await _run_specialist_base(
+        agent_key="Compliance",
         cm=cm,
-        agent_name="ComplianceAgent",
         utterance=utterance,
         ws=ws,
         is_acs=is_acs,
@@ -216,6 +219,7 @@ async def run_compliance_agent(
             "caller_name": caller_name,
             "client_id": client_id, 
             "institution_name": institution_name,
+            "customer_intelligence": customer_intelligence,
         },
         latency_label="compliance_agent",
     )
@@ -234,14 +238,15 @@ async def run_trading_agent(
     caller_name: str | None = cm_get(cm, "caller_name")
     client_id: str | None = cm_get(cm, "client_id")
     institution_name: str | None = cm_get(cm, "institution_name")
+    customer_intelligence = cm_get(cm, "customer_intelligence") or {}
     
     context_msg = f"Trading Specialist handling execution for {caller_name or 'client'}"
     if institution_name:
         context_msg += f" from {institution_name}"
     
     await _run_specialist_base(
+        agent_key="Trading",
         cm=cm,
-        agent_name="TradingAgent", 
         utterance=utterance,
         ws=ws,
         is_acs=is_acs,
@@ -250,6 +255,7 @@ async def run_trading_agent(
             "caller_name": caller_name,
             "client_id": client_id,
             "institution_name": institution_name,
+            "customer_intelligence": customer_intelligence,
         },
         latency_label="trading_agent",
     )

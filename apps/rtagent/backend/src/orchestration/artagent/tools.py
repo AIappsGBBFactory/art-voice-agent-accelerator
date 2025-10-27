@@ -42,44 +42,33 @@ async def process_tool_response(cm: "MemoManager", resp: Any, ws: WebSocket, is_
 
     handoff_type = _get_field(resp, "handoff")
     target_agent = _get_field(resp, "target_agent")
-
-    claim_success = resp.get("claim_success")
     topic = _get_field(resp, "topic")
-    claim_intent = _get_field(resp, "claim_intent")
-    intent = _get_field(resp, "intent")
 
-    # Unified intent routing (post-auth)
-    if intent in {"claims", "general"} and cm_get(cm, "authenticated", False):
-        new_agent: str = "Claims" if intent == "claims" else "General"
-        cm_set(cm, active_agent=new_agent, claim_intent=claim_intent, topic=topic)
-        sync_voice_from_agent(cm, ws, new_agent)
-        if new_agent != prev_agent:
-            logger.info("Routed via intent → %s", new_agent)
-            await send_agent_greeting(cm, ws, new_agent, is_acs)
-        return
-
-    # Hand-offs (non-auth)
-    if handoff_type == "ai_agent" and target_agent:
-        if target_agent in SPECIALISTS or get_specialist(target_agent) is not None:
+    # Financial Services Hand-offs (post-auth) �
+    if handoff_type in ["Transfer", "Fraud", "Compliance", "Trading"] and target_agent:
+        # Map handoff types to agent names
+        handoff_to_agent_map = {
+            "Transfer": "Agency",
+            "Fraud": "Fraud", 
+            "Compliance": "Compliance",
+            "Trading": "Trading"
+        }
+        
+        new_agent = handoff_to_agent_map.get(handoff_type, target_agent)
+        
+        # Ensure the agent exists in specialists
+        if new_agent in SPECIALISTS or get_specialist(new_agent) is not None:
+            pass  # Agent exists
+        else:
+            logger.warning("Agent %s not found in specialists, using target_agent: %s", new_agent, target_agent)
             new_agent = target_agent
-        elif "Claim" in target_agent:
-            new_agent = "Claims"
-        else:
-            new_agent = "General"
-
-        if new_agent == "Claims":
-            cm_set(cm, active_agent=new_agent, claim_intent=claim_intent)
-        else:
-            cm_set(cm, active_agent=new_agent, topic=topic)
-
+        
+        cm_set(cm, active_agent=new_agent, topic=topic)
         sync_voice_from_agent(cm, ws, new_agent)
-        logger.info("Hand-off → %s", new_agent)
+        logger.info("Financial Services Hand-off → %s (type: %s)", new_agent, handoff_type)
         if new_agent != prev_agent:
             await send_agent_greeting(cm, ws, new_agent, is_acs)
 
     elif handoff_type == "human_agent":
         reason = _get_field(resp, "reason") or _get_field(resp, "escalation_reason")
         cm_set(cm, escalated=True, escalation_reason=reason)
-
-    elif claim_success:
-        cm_set(cm, intake_completed=True, latest_claim_id=resp["claim_id"])  # type: ignore[index]

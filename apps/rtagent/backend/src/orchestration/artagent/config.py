@@ -14,7 +14,7 @@ APP_GREETS_ATTR = "greet_counts"
 
 # Orchestration pattern (entry + specialists). Financial Services multi-agent system.
 ENTRY_AGENT: str = "AutoAuth"
-SPECIALISTS: list[str] = ["Fraud", "Agency", "Compliance", "Trading", "Claims"]
+SPECIALISTS: list[str] = ["Fraud", "Agency", "Compliance", "Trading"]
 
 
 def configure_entry_and_specialists(

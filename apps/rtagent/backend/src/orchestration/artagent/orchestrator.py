@@ -13,7 +13,7 @@ from .registry import (
     get_specialist,
     register_specialist,
 )
-from .specialists import run_claims_agent, run_fraud_agent, run_agency_agent, run_compliance_agent, run_trading_agent
+from .specialists import run_fraud_agent, run_agency_agent, run_compliance_agent, run_trading_agent
 from .termination import maybe_terminate_if_escalated
 from apps.rtagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
@@ -138,5 +138,3 @@ def bind_default_handlers() -> None:
     register_specialist("Compliance", run_compliance_agent)  # ← AML/FATCA verification
     register_specialist("Trading", run_trading_agent)       # ← Complex trade execution
     
-    # Legacy Claims agent (for backward compatibility if needed)
-    register_specialist("Claims", run_claims_agent)
