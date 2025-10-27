@@ -34,6 +34,11 @@ on:
         description: 'Container name for Terraform state'
         required: false
         type: string
+      db_initialized:
+        description: 'Database initialization status with seed data. Set to False to have postprovisioning script initialize the mongodb'
+        required: false
+        type: string
+
   workflow_call:
     inputs:
       environment:
@@ -56,6 +61,11 @@ on:
         type: string
       rs_container_name:
         description: 'Container name for Terraform state'
+        required: false
+        type: string
+
+      db_initialized:
+        description: 'Database initialization status with seed data. Set to False to have postprovisioning script initialize the mongodb'
         required: false
         type: string
 
@@ -98,8 +108,11 @@ jobs:
       RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.rs_resource_group }}
       RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.rs_storage_account }}
       RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.rs_container_name }}
+
+      DB_INITIALIZED: ${{ inputs.db_initialized || vars.db_initialized }}
+
       ARM_USE_OIDC: "true"
-    
+      
     outputs:
       resource_group: ${{ steps.extract-outputs.outputs.resource_group }}
       frontend_url: ${{ steps.extract-outputs.outputs.frontend_url }}
@@ -182,6 +195,7 @@ jobs:
           azd env set RS_RESOURCE_GROUP "${{ env.RS_RESOURCE_GROUP }}"
           azd env set RS_STORAGE_ACCOUNT "${{ env.RS_STORAGE_ACCOUNT }}"
           azd env set RS_CONTAINER_NAME "${{ env.RS_CONTAINER_NAME }}"
+          azd env set DB_INITIALIZED "${{env.DB_INITIALIZED }}"
           
           echo "✅ AZD environment configured"
 

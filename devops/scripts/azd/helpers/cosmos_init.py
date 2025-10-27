@@ -2,6 +2,8 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Optional, Sequence
 
 try:
@@ -14,6 +16,9 @@ from src.cosmosdb.manager import CosmosDBMongoCoreManager
 logger = logging.getLogger("cosmos_init")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 async def upsert_documents(
     manager: CosmosDBMongoCoreManager,
