@@ -2,26 +2,114 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
-from pathlib import Path
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Protocol, Sequence
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from azure.identity import CredentialUnavailableError, DefaultAzureCredential
+from pymongo import MongoClient
+from pymongo.auth_oidc import OIDCCallback, OIDCCallbackContext, OIDCCallbackResult
+from pymongo.errors import InvalidURI
 
 try:
     from seed_data import SeedTask, list_datasets, load_seed_tasks
 except ImportError:  # pragma: no cover
     from .seed_data import SeedTask, list_datasets, load_seed_tasks  # type: ignore
 
-from src.cosmosdb.manager import CosmosDBMongoCoreManager
-
 logger = logging.getLogger("cosmos_init")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+
+class ManagerProtocol(Protocol):
+    database: object
+    collection: object
+
+    def upsert_document(self, document: dict, query: Mapping[str, object]) -> None:
+        ...
+
+
+class AzureIdentityTokenCallback(OIDCCallback):
+    """OIDC callback for Azure managed identity authentication."""
+    
+    def __init__(self, credential):
+        self.credential = credential
+
+    def fetch(self, context: OIDCCallbackContext) -> OIDCCallbackResult:
+        token = self.credential.get_token(
+            "https://ossrdbms-aad.database.windows.net/.default"
+        ).token
+        return OIDCCallbackResult(access_token=token)
+
+
+class _ConnectionStringManager:
+    """Lightweight manager that uses a Cosmos connection string."""
+
+    def __init__(self, connection_string: str, database_name: str, collection_name: str) -> None:
+        try:
+            self._client = MongoClient(connection_string, tz_aware=True)
+        except InvalidURI:
+            # Fall back to managed identity if connection string is invalid
+            credential = DefaultAzureCredential()
+            auth_properties = {"OIDC_CALLBACK": AzureIdentityTokenCallback(credential)}
+            
+            # Extract cluster name from connection string if possible
+            cluster_name = self._extract_cluster_name(connection_string)
+            if cluster_name:
+                mongo_uri = f"mongodb+srv://{cluster_name}.global.mongocluster.cosmos.azure.com/"
+                self._client = MongoClient(
+                    mongo_uri,
+                    connectTimeoutMS=120000,
+                    tls=True,
+                    retryWrites=True,
+                    authMechanism="MONGODB-OIDC",
+                    authMechanismProperties=auth_properties,
+                    tz_aware=True
+                )
+            else:
+                raise
+        
+        self.database = self._client[database_name]
+        self.collection = self.database[collection_name]
+        address = next(iter(self._client.nodes), (None, None))
+        self.cluster_host = address[0] or "connection-string"
+
+    def _extract_cluster_name(self, connection_string: str) -> Optional[str]:
+        """Extract cluster name from connection string for managed identity fallback."""
+        # Look for cluster name pattern in connection string
+        match = re.search(r'mongodb\+srv://([^.]+)\.global\.mongocluster\.cosmos\.azure\.com', connection_string)
+        return match.group(1) if match else None
+
+    def upsert_document(self, document: dict, query: Mapping[str, object]) -> None:
+        self.collection.update_one(query, {"$set": document}, upsert=True)
+
+
+class _ManagedIdentityManager:
+    """Mongo manager that authenticates with Azure AD."""
+
+    def __init__(self, cluster_name: str, database_name: str, collection_name: str) -> None:
+        if not cluster_name:
+            raise ValueError("AZURE_COSMOS_CLUSTER_NAME is required for managed identity authentication.")
+        credential = DefaultAzureCredential()
+        auth_properties = {"OIDC_CALLBACK": AzureIdentityTokenCallback(credential)}
+        mongo_uri = f"mongodb+srv://{cluster_name}.global.mongocluster.cosmos.azure.com/"
+        self._client = MongoClient(
+            mongo_uri,
+            connectTimeoutMS=120000,
+            tls=True,
+            retryWrites=True,
+            authMechanism="MONGODB-OIDC",
+            authMechanismProperties=auth_properties,
+            tz_aware=True,
+        )
+        self.database = self._client[database_name]
+        self.collection = self.database[collection_name]
+        address = next(iter(self._client.nodes), (None, None))
+        self.cluster_host = address[0] or cluster_name
+
+    def upsert_document(self, document: dict, query: Mapping[str, object]) -> None:
+        self.collection.update_one(query, {"$set": document}, upsert=True)
+
+
 async def upsert_documents(
-    manager: CosmosDBMongoCoreManager,
+    manager: ManagerProtocol,
     documents: Sequence[dict],
     id_field: str,
     dataset: str,
@@ -62,7 +150,44 @@ async def process_task(task: SeedTask) -> None:
     Latency:
         Linear in the number of documents within the task.
     """
-    manager = CosmosDBMongoCoreManager(database_name=task.database, collection_name=task.collection)
+    connection_string = os.getenv("AZURE_COSMOS_CONNECTION_STRING")
+    manager: ManagerProtocol
+    if connection_string:
+        if "AccountEndpoint=" in connection_string:
+            logger.warning(
+                "Provided connection string targets the SQL API; falling back to managed identity authentication."
+            )
+            manager = _ManagedIdentityManager(
+                cluster_name=os.getenv("AZURE_COSMOS_CLUSTER_NAME", ""),
+                database_name=task.database,
+                collection_name=task.collection,
+            )
+        else:
+            try:
+                manager = _ConnectionStringManager(
+                    connection_string=connection_string,
+                    database_name=task.database,
+                    collection_name=task.collection,
+                )
+            except InvalidURI as exc:
+                logger.warning(
+                    "Invalid Cosmos Mongo connection string detected; falling back to managed identity. error=%s",
+                    exc,
+                )
+                manager = _ManagedIdentityManager(
+                    cluster_name=os.getenv("AZURE_COSMOS_CLUSTER_NAME", ""),
+                    database_name=task.database,
+                    collection_name=task.collection,
+                )
+    else:
+        try:
+            manager = _ManagedIdentityManager(
+                cluster_name=os.getenv("AZURE_COSMOS_CLUSTER_NAME", ""),
+                database_name=task.database,
+                collection_name=task.collection,
+            )
+        except (ValueError, CredentialUnavailableError) as exc:
+            raise RuntimeError("Managed identity authentication unavailable for Cosmos seeding.") from exc
     logger.info(
         "Seeding dataset=%s collection=%s documents=%s",
         task.dataset,
@@ -97,6 +222,10 @@ async def main(args: argparse.Namespace) -> None:
             dataset_names = available
     else:
         dataset_names = available
+    if connection_string := os.getenv("AZURE_COSMOS_CONNECTION_STRING"):
+        logger.info("Using connection-string authentication for Cosmos seeding.")
+    else:
+        logger.info("Using managed identity / AAD authentication for Cosmos seeding.")
     tasks = load_seed_tasks(dataset_names, {"include_duplicates": args.include_duplicates})
     for task in tasks:
         await process_task(task)
