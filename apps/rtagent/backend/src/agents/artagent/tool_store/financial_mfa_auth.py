@@ -79,7 +79,7 @@ def get_financial_cosmos_manager() -> CosmosDBMongoCoreManager:
     if _cosmos_manager is None:
         _cosmos_manager = CosmosDBMongoCoreManager(
             database_name="financial_services_db",
-            collection_name="financial_clients"
+            collection_name="users"
         )
     return _cosmos_manager
 
@@ -131,6 +131,7 @@ class SendMfaCodeArgs(TypedDict):
     """Arguments for sending MFA code."""
     client_id: str
     delivery_method: Literal["email", "sms"]  # Client's preference or override
+    intent: Optional[Literal["fraud", "transfer_agency"]]  # Service intent for routing
     transaction_amount: Optional[float]
     transaction_type: Optional[str]
 
@@ -155,6 +156,7 @@ class VerifyMfaCodeResult(TypedDict):
     client_id: Optional[str]  # ← Added for orchestration compatibility
     client_name: Optional[str]
     institution_name: Optional[str]
+    intent: Optional[str]  # ← Service intent for orchestration routing
     authorization_level: Optional[str]
     max_transaction_limit: Optional[int]
 
@@ -422,11 +424,15 @@ async def send_mfa_code(args: SendMfaCodeArgs) -> SendMfaCodeResult:
         
         # Create MFA session record with Cosmos DB TTL for automatic cleanup
         current_time = datetime.datetime.utcnow()
+        # Get intent from args (passed by auth agent based on conversation)
+        intent = args.get("intent", "fraud")  # Default to fraud if not specified
+        
         session_data = {
             "_id": session_id,
             "client_id": client_id,
             "full_name": client_data.get("full_name"),
             "institution_name": client_data.get("institution_name"),
+            "intent": intent,  # ← Store intent for orchestration routing
             "otp_code": otp_code,
             "delivery_method": preferred_method,
             "delivery_address": delivery_address,
@@ -652,6 +658,7 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
                 "authenticated": False,
                 "client_id": None,
                 "client_name": None,
+                "intent": None,
                 "institution_name": None,
                 "authorization_level": None,
                 "max_transaction_limit": None
@@ -670,6 +677,9 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
         logger.info(f"✅ MFA verification successful for {client_name}", 
                    extra={"mfa_session_id": session_id, "client_id": client_id, 
                          "client_name": client_name, "institution": institution_name})
+        # Get intent from session for orchestration routing
+        intent = session_data.get("intent", "fraud")
+        
         return {
             "verified": True,
             "message": "Authentication complete. Welcome to Financial Services.",
@@ -677,6 +687,7 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
             "client_id": client_id,  # ← Now returning client_id for memory storage
             "client_name": client_name,
             "institution_name": institution_name,
+            "intent": intent,  # ← Return intent for orchestration routing
             "authorization_level": client_data.get("authorization_level"),
             "max_transaction_limit": client_data.get("max_transaction_limit")
         }
@@ -691,6 +702,7 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
             "client_id": None,
             "client_name": None,
             "institution_name": None,
+            "intent": None,
             "authorization_level": None,
             "max_transaction_limit": None
         }

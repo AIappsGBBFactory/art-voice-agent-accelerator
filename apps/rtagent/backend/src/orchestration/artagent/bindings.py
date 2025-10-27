@@ -22,11 +22,21 @@ class AgentBinding:
     ws_attr: Optional[str]
 
 
-# Static binding map (parity with original)
+# Static binding map for Financial Services multi-agent system
 AGENT_BINDINGS: Dict[str, AgentBinding] = {
+    # Entry point
     "AutoAuth": AgentBinding(name="AutoAuth", ws_attr="auth_agent"),
-    "Claims": AgentBinding(name="Claims", ws_attr="claim_intake_agent"),
+    
+    # Main service agents
     "Fraud": AgentBinding(name="Fraud", ws_attr="fraud_agent"),
+    "Agency": AgentBinding(name="Agency", ws_attr="agency_agent"),
+    
+    # Transfer Agency specialists
+    "Compliance": AgentBinding(name="Compliance", ws_attr="compliance_agent"),
+    "Trading": AgentBinding(name="Trading", ws_attr="trading_agent"),
+    
+    # Legacy (backward compatibility)
+    "Claims": AgentBinding(name="Claims", ws_attr="claim_intake_agent"),
 }
 
 

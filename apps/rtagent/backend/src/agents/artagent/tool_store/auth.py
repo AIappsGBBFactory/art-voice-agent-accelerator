@@ -53,10 +53,10 @@ logger = get_logger("tools.acme_auth")
 # Cosmos DB manager for policyholder data
 # ────────────────────────────────────────────────────────────────
 def _get_cosmos_manager() -> CosmosDBMongoCoreManager:
-    """Get Cosmos DB manager for policyholder authentication data."""
+    """Get Cosmos DB manager for user authentication data."""
     return CosmosDBMongoCoreManager(
-        database_name="voice_agent_db",
-        collection_name="policyholders"
+        database_name="financial_services_db",
+        collection_name="users"
     )
 
 async def _get_policyholder_by_credentials(

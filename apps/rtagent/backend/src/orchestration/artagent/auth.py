@@ -33,17 +33,36 @@ async def fetch_customer_intelligence(client_id: str) -> Dict[str, Any] | None:
         return None
         
     try:
-        # Connect to customer intelligence collection
+        # Connect to users collection (customer intelligence is embedded in user profiles)
         intelligence_manager = CosmosDBMongoCoreManager(
             database_name="financial_services_db",
-            collection_name="customer_intelligence"
+            collection_name="users"
         )
         
-        # Fetch customer intelligence using client_id
-        intelligence_profile = await asyncio.to_thread(
-            intelligence_manager.read_document,
-            query={"client_id": client_id}
+        # Fetch customer intelligence using flexible client_id query
+        client_query = {
+            "$or": [
+                {"_id": client_id},
+                {"client_id": client_id},
+                {"full_name": client_id.replace("_", " ").title()}
+            ]
+        }
+        
+        # Use query_documents to get user profile with embedded intelligence
+        user_profiles = await asyncio.to_thread(
+            intelligence_manager.query_documents,
+            query=client_query
         )
+        
+        intelligence_profile = None
+        if user_profiles and len(user_profiles) > 0:
+            # Extract customer intelligence from user profile
+            user_profile = user_profiles[0]
+            intelligence_profile = user_profile.get('customer_intelligence', {})
+            # Also include basic user info for context
+            intelligence_profile['full_name'] = user_profile.get('full_name')
+            intelligence_profile['client_id'] = user_profile.get('client_id')
+            intelligence_profile['institution_name'] = user_profile.get('institution_name')
         
         if intelligence_profile:
             logger.info(f"✅ Customer intelligence loaded for client {client_id}: "
@@ -90,52 +109,22 @@ async def run_auth_agent(
         logger.warning("Escalation during auth – session=%s reason=%s", cm.session_id, reason)
         return
 
-    # Handle direct agent handoffs from auth agent after successful MFA
-    if isinstance(result, dict) and result.get("handoff") in ["Fraud", "Claims", "Transfer"]:
-        # Auth agent completed MFA and is handing off to specialist
-        handoff_agent = result.get("handoff")
-        caller_name = result.get("caller_name") or result.get("client_name")
-        client_id = result.get("client_id")
-        institution_name = result.get("institution_name")
-        topic = result.get("topic") or result.get("service_type", "your account")
-        
-        logger.info(
-            "Auth completed with MFA – session=%s caller=%s client_id=%s → %s agent",
-            cm.session_id, caller_name, client_id, handoff_agent
-        )
-        
-        # 🧠 FETCH CUSTOMER INTELLIGENCE FOR PERSONALIZED EXPERIENCE
-        customer_intelligence = await fetch_customer_intelligence(client_id) if client_id else None
-        
-        # Store authentication and customer data in memory
-        cm_set(
-            cm,
-            authenticated=True,
-            caller_name=caller_name,
-            client_id=client_id,
-            institution_name=institution_name,
-            topic=topic,
-            active_agent=handoff_agent,
-            # 🎯 PERSONALIZATION DATA 
-            customer_intelligence=customer_intelligence,
-        )
-        
-        # Sync voice and send specialist greeting
-        sync_voice_from_agent(cm, ws, handoff_agent)
-        await send_agent_greeting(cm, ws, handoff_agent, is_acs)
-        return
-
-    # Legacy fallback for old insurance authentication (if still needed)
+    # Handle successful authentication with intent-based routing
     if isinstance(result, dict) and result.get("authenticated"):
-        # Support legacy insurance authentication flow
+        # Handle successful authentication with intent-based routing
         caller_name: str | None = result.get("caller_name")
-        client_id: str | None = result.get("client_id") or result.get("policy_id")  # Legacy support
+        client_id: str | None = result.get("client_id") 
         institution_name: str | None = result.get("institution_name")
-        claim_intent: str | None = result.get("claim_intent")
-        topic: str | None = result.get("topic") or "your policy"
-        intent: str = result.get("intent", "general")
+        topic: str | None = result.get("topic") or result.get("service_type", "your account")
+        intent: str = result.get("intent", "fraud")  # Default to fraud for financial services
         
-        active_agent: str = "Claims" if intent == "claims" else "Fraud"
+        # Route to specialist agent based on intent
+        if intent == "transfer_agency":
+            active_agent = "Agency"  # Route to Transfer Agency coordinator
+        elif intent == "fraud":
+            active_agent = "Fraud"
+        else:
+            active_agent = "Fraud"  # Default fallback to fraud for financial services
 
         # 🧠 FETCH CUSTOMER INTELLIGENCE FOR PERSONALIZED EXPERIENCE  
         customer_intelligence = await fetch_customer_intelligence(client_id) if client_id else None
@@ -146,7 +135,6 @@ async def run_auth_agent(
             caller_name=caller_name,
             client_id=client_id,
             institution_name=institution_name,
-            claim_intent=claim_intent,
             topic=topic,
             active_agent=active_agent,
             # 🎯 PERSONALIZATION DATA
@@ -154,8 +142,8 @@ async def run_auth_agent(
         )
 
         logger.info(
-            "Legacy auth OK – session=%s caller=%s client_id=%s → %s agent (Intelligence: %s)",
-            cm.session_id, caller_name, client_id, active_agent,
+            "Financial MFA auth OK – session=%s caller=%s client_id=%s intent=%s → %s agent (Intelligence: %s)",
+            cm.session_id, caller_name, client_id, intent, active_agent,
             "✅ Loaded" if customer_intelligence else "❌ Not Found"
         )
 

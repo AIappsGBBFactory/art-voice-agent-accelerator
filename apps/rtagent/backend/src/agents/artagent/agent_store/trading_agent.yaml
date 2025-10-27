@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------
+# ARTAgent – Trading Specialist Agent  
+# ---------------------------------------------------------------------
+agent:
+  name: TradingAgent
+  creator: Pablo Salvador
+  organization: GBB AI
+  description: |
+    Specialized trading execution agent handling complex DRIP liquidations, 
+    FX conversions, institutional settlement, and trade confirmation.
+    Receives handoffs from Agency Agent for execution-level complexity.
+
+model:
+  deployment_id: gpt-4o
+  temperature: 0.6 # Balanced for execution precision
+  top_p: 0.9 
+  max_completion_tokens: 2040
+
+voice:
+  name: en-US-Ava:DragonHDLatestNeural 
+  style: professional # Confident trading desk tone
+  rate: "0%" # Standard professional pace
+
+prompts:
+  path: voice_agent_trading.jinja # Trading specialist prompt
+
+tools:
+  # Client Data & Positions
+  - get_client_data              # ← Institutional client details
+  - get_drip_positions           # ← DRIP holdings and valuations
+  - calculate_liquidation_proceeds # ← Trade calculations & FX
+  
+  # Handoff back to Agency/Compliance  
+  - handoff_to_compliance        # ← Return to compliance if issues
+  - handoff_transfer_agency_agent # ← Return to Agency Agent
+  
+  # Emergency & Escalation
+  - escalate_emergency           # ← 911-type escalation
+  - escalate_human              # ← Live trading desk escalation

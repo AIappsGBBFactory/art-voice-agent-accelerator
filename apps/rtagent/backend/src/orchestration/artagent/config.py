@@ -12,9 +12,9 @@ ORCHESTRATOR_TRACING: bool = os.getenv("ORCHESTRATOR_TRACING", "true").lower() =
 LAST_ANNOUNCED_KEY = "last_announced_agent"
 APP_GREETS_ATTR = "greet_counts"
 
-# Orchestration pattern (entry + specialists). Defaults preserve your flow.
+# Orchestration pattern (entry + specialists). Financial Services multi-agent system.
 ENTRY_AGENT: str = "AutoAuth"
-SPECIALISTS: list[str] = ["Fraud", "Claims"]
+SPECIALISTS: list[str] = ["Fraud", "Agency", "Compliance", "Trading", "Claims"]
 
 
 def configure_entry_and_specialists(
@@ -33,4 +33,4 @@ def configure_entry_and_specialists(
     if entry_agent != "AutoAuth":
         logger.warning("Entry agent overridden to 'AutoAuth' (requested '%s')", entry_agent)
     ENTRY_AGENT = "AutoAuth"
-    SPECIALISTS = list(specialists or ["Fraud", "Claims"])
+    SPECIALISTS = list(specialists or ["Fraud", "Agency", "Compliance", "Trading", "Claims"])

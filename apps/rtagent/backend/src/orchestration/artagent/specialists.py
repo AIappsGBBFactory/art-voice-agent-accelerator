@@ -150,3 +150,106 @@ async def run_fraud_agent(
         },
         latency_label="fraud_agent",
     )
+
+
+async def run_agency_agent(
+    cm: "MemoManager",
+    utterance: str,
+    ws: WebSocket,
+    *,
+    is_acs: bool,
+) -> None:
+    """Handle Transfer Agency coordination - DRIP liquidations, compliance, and specialist delegation."""
+    
+    # Get authenticated client context 
+    caller_name: str | None = cm_get(cm, "caller_name")
+    client_id: str | None = cm_get(cm, "client_id")
+    institution_name: str | None = cm_get(cm, "institution_name")
+    
+    context_msg = f"Transfer Agency Agent serving {caller_name or 'client'}"
+    if institution_name:
+        context_msg += f" from {institution_name}"
+    context_msg += " for DRIP liquidations and institutional services."
+    
+    await _run_specialist_base(
+        cm=cm,
+        agent_name="AgencyAgent",
+        utterance=utterance,
+        ws=ws,
+        is_acs=is_acs,
+        context_message=context_msg,
+        respond_kwargs={
+            "caller_name": caller_name,
+            "client_id": client_id,
+            "institution_name": institution_name,
+        },
+        latency_label="agency_agent",
+    )
+
+
+async def run_compliance_agent(
+    cm: "MemoManager",
+    utterance: str,
+    ws: WebSocket,
+    *,
+    is_acs: bool,
+) -> None:
+    """Handle AML/FATCA compliance verification and regulatory review."""
+    
+    # Get client context from handoff
+    caller_name: str | None = cm_get(cm, "caller_name")
+    client_id: str | None = cm_get(cm, "client_id") 
+    institution_name: str | None = cm_get(cm, "institution_name")
+    
+    context_msg = f"Compliance Specialist handling regulatory review for {caller_name or 'client'}"
+    if institution_name:
+        context_msg += f" from {institution_name}"
+    
+    await _run_specialist_base(
+        cm=cm,
+        agent_name="ComplianceAgent",
+        utterance=utterance,
+        ws=ws,
+        is_acs=is_acs,
+        context_message=context_msg,
+        respond_kwargs={
+            "caller_name": caller_name,
+            "client_id": client_id, 
+            "institution_name": institution_name,
+        },
+        latency_label="compliance_agent",
+    )
+
+
+async def run_trading_agent(
+    cm: "MemoManager",
+    utterance: str,
+    ws: WebSocket,
+    *,
+    is_acs: bool,
+) -> None:
+    """Handle complex trade execution, FX conversion, and institutional settlement."""
+    
+    # Get client context from handoff
+    caller_name: str | None = cm_get(cm, "caller_name")
+    client_id: str | None = cm_get(cm, "client_id")
+    institution_name: str | None = cm_get(cm, "institution_name")
+    
+    context_msg = f"Trading Specialist handling execution for {caller_name or 'client'}"
+    if institution_name:
+        context_msg += f" from {institution_name}"
+    
+    await _run_specialist_base(
+        cm=cm,
+        agent_name="TradingAgent", 
+        utterance=utterance,
+        ws=ws,
+        is_acs=is_acs,
+        context_message=context_msg,
+        respond_kwargs={
+            "caller_name": caller_name,
+            "client_id": client_id,
+            "institution_name": institution_name,
+        },
+        latency_label="trading_agent",
+    )
