@@ -6,7 +6,7 @@ Reusable email templates that can be used by any tool.
 Provides both plain text and HTML versions with consistent styling.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 
 class EmailTemplates:
