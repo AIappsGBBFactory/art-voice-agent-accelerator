@@ -17,8 +17,8 @@ model:
   max_completion_tokens: 2040
 
 voice:
-  name: en-US-Ava:DragonHDLatestNeural 
-  style: professional # Confident trading desk tone
+  name: en-US-Adam:DragonHDLatestNeural # Confident male voice for trading
+  style: professional # Confident trading desk tone  
   rate: "0%" # Standard professional pace
 
 prompts:
