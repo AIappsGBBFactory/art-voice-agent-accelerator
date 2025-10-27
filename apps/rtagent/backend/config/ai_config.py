@@ -27,6 +27,22 @@ AGENT_FRAUD_CONFIG = os.getenv(
     "apps/rtagent/backend/src/agents/artagent/agent_store/fraud_agent.yaml",
 )
 
+# Transfer Agency agent configurations
+AGENT_AGENCY_CONFIG = os.getenv(
+    "AGENT_AGENCY_CONFIG",
+    "apps/rtagent/backend/src/agents/artagent/agent_store/agency_agent.yaml",
+)
+
+AGENT_COMPLIANCE_CONFIG = os.getenv(
+    "AGENT_COMPLIANCE_CONFIG",
+    "apps/rtagent/backend/src/agents/artagent/agent_store/compliance_agent.yaml",
+)
+
+AGENT_TRADING_CONFIG = os.getenv(
+    "AGENT_TRADING_CONFIG",
+    "apps/rtagent/backend/src/agents/artagent/agent_store/trading_agent.yaml",
+)
+
 # ==============================================================================
 # AZURE OPENAI SETTINGS
 # ==============================================================================

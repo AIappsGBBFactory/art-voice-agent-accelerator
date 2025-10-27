@@ -443,7 +443,10 @@ async def readiness_check(
     agent_status = await fast_ping(
         _check_rt_agents_fast,
         request.app.state.auth_agent,
-        request.app.state.claim_intake_agent,
+        request.app.state.fraud_agent,
+        request.app.state.agency_agent,
+        request.app.state.compliance_agent,
+        request.app.state.trading_agent,
         component="rt_agents",
     )
     health_checks.append(agent_status)
@@ -703,21 +706,34 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
     )
 
 
-async def _check_rt_agents_fast(auth_agent, claim_intake_agent) -> ServiceCheck:
-    """Fast RT Agents check."""
+async def _check_rt_agents_fast(auth_agent, fraud_agent, agency_agent, compliance_agent, trading_agent) -> ServiceCheck:
+    """Fast RT Agents check for all Transfer Agency system agents."""
     start = time.time()
-    if not auth_agent or not claim_intake_agent:
+    
+    # Check all required agents are initialized
+    agents = {
+        "auth": auth_agent,
+        "fraud": fraud_agent, 
+        "agency": agency_agent,
+        "compliance": compliance_agent,
+        "trading": trading_agent
+    }
+    
+    missing_agents = [name for name, agent in agents.items() if not agent]
+    
+    if missing_agents:
         return ServiceCheck(
             component="rt_agents",
             status="unhealthy",
-            error="not initialized",
+            error=f"agents not initialized: {', '.join(missing_agents)}",
             check_time_ms=round((time.time() - start) * 1000, 2),
         )
+    
     return ServiceCheck(
         component="rt_agents",
         status="healthy",
         check_time_ms=round((time.time() - start) * 1000, 2),
-        details="auth and claim intake agents initialized",
+        details=f"all agents initialized: {', '.join(agents.keys())}",
     )
 
 
@@ -763,8 +779,10 @@ async def get_agents_info(request: Request):
     try:
         # Get agents from app state
         auth_agent = getattr(request.app.state, "auth_agent", None)
-        claim_intake_agent = getattr(request.app.state, "claim_intake_agent", None)
         fraud_agent = getattr(request.app.state, "fraud_agent", None)
+        agency_agent = getattr(request.app.state, "agency_agent", None)
+        compliance_agent = getattr(request.app.state, "compliance_agent", None)
+        trading_agent = getattr(request.app.state, "trading_agent", None)
 
         # Helper function to extract agent info
         def extract_agent_info(agent, config_path: str = None):
@@ -832,20 +850,38 @@ async def get_agents_info(request: Request):
             if agent_info:
                 agents_info.append(agent_info)
 
-        if claim_intake_agent:
-            from config import AGENT_CLAIM_INTAKE_CONFIG
-
-            agent_info = extract_agent_info(
-                claim_intake_agent, AGENT_CLAIM_INTAKE_CONFIG
-            )
-            if agent_info:
-                agents_info.append(agent_info)
-
         if fraud_agent:
             from config import AGENT_FRAUD_CONFIG
 
             agent_info = extract_agent_info(
                 fraud_agent, AGENT_FRAUD_CONFIG
+            )
+            if agent_info:
+                agents_info.append(agent_info)
+
+        if agency_agent:
+            from config import AGENT_AGENCY_CONFIG
+
+            agent_info = extract_agent_info(
+                agency_agent, AGENT_AGENCY_CONFIG
+            )
+            if agent_info:
+                agents_info.append(agent_info)
+
+        if compliance_agent:
+            from config import AGENT_COMPLIANCE_CONFIG
+
+            agent_info = extract_agent_info(
+                compliance_agent, AGENT_COMPLIANCE_CONFIG
+            )
+            if agent_info:
+                agents_info.append(agent_info)
+
+        if trading_agent:
+            from config import AGENT_TRADING_CONFIG
+
+            agent_info = extract_agent_info(
+                trading_agent, AGENT_TRADING_CONFIG
             )
             if agent_info:
                 agents_info.append(agent_info)

@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------
+# ARTAgent – Transfer Agency Agent
+# ---------------------------------------------------------------------
+agent:
+  name: AgencyAgent
+  creator: Pablo Salvador
+  organization: GBB AI
+  description: |
+    Main Transfer Agency coordinator that handles DRIP liquidations, compliance checks,
+    and institutional servicing. Can handle basic requests directly or delegate
+    complex tasks to specialized sub-agents for compliance or trading execution.
+
+model:
+  deployment_id: gpt-4o
+  temperature: 0.7 # Balanced for institutional precision
+  top_p: 0.9 
+  max_completion_tokens: 2040
+
+voice:
+  name: en-US-Ava:DragonHDLatestNeural 
+  style: professional # Professional tone for institutional clients
+  rate: "0%" # Standard professional pace
+
+prompts:
+  path: voice_agent_transfer_agency.jinja # Transfer Agency prompt
+
+tools:
+  # Client Data & Position Management
+  - get_client_data              # ← Institutional client details
+  - get_drip_positions           # ← DRIP holdings and valuations
+  - check_compliance_status      # ← AML/FATCA compliance check
+  
+  # Trade Analysis & Calculation  
+  - calculate_liquidation_proceeds # ← Proceeds, fees, FX conversion
+  
+  # Specialist Handoffs (when complexity requires expertise)
+  - handoff_to_compliance        # ← AML/FATCA specialist review
+  - handoff_to_trading          # ← Complex trade execution
+  
+  # Emergency & Escalation
+  - escalate_emergency           # ← 911-type escalation
+  - escalate_human              # ← Live agent escalation

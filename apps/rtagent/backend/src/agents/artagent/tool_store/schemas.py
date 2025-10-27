@@ -364,6 +364,70 @@ escalate_human_schema: Dict[str, Any] = {
     },
 }
 
+handoff_fraud_agent_schema: Dict[str, Any] = {
+    "name": "handoff_fraud_agent",
+    "description": (
+        "Hand off client to fraud specialist after successful MFA authentication. "
+        "Use for fraud reporting, suspicious activity, or fraud investigations."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "caller_name": {
+                "type": "string",
+                "description": "Client's full legal name from identity verification.",
+            },
+            "client_id": {
+                "type": "string",
+                "description": "Verified client identifier from MFA process.",
+            },
+            "institution_name": {
+                "type": "string",
+                "description": "Client's financial institution name.",
+            },
+            "fraud_type": {
+                "type": "string",
+                "enum": ["suspicious_activity", "card_fraud", "identity_theft", "account_takeover"],
+                "description": "Type of fraud concern reported by client.",
+            },
+        },
+        "required": ["caller_name", "client_id", "institution_name", "fraud_type"],
+        "additionalProperties": False,
+    },
+}
+
+handoff_transfer_agency_agent_schema: Dict[str, Any] = {
+    "name": "handoff_transfer_agency_agent",
+    "description": (
+        "Hand off client to transfer agency specialist after successful MFA authentication. "
+        "Use for stock transfers, account transfers, or transfer agency services."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "caller_name": {
+                "type": "string",
+                "description": "Client's full legal name from identity verification.",
+            },
+            "client_id": {
+                "type": "string",
+                "description": "Verified client identifier from MFA process.",
+            },
+            "institution_name": {
+                "type": "string",
+                "description": "Client's financial institution name.",
+            },
+            "service_type": {
+                "type": "string",
+                "enum": ["stock_transfer", "account_transfer", "dividend_inquiry", "general_transfer"],
+                "description": "Type of transfer agency service requested.",
+            },
+        },
+        "required": ["caller_name", "client_id", "institution_name", "service_type"],
+        "additionalProperties": False,
+    },
+}
+
 verify_client_identity_schema: Dict[str, Any] = {
     "name": "verify_client_identity",
     "description": (
@@ -431,6 +495,11 @@ send_mfa_code_schema: Dict[str, Any] = {
                 "type": "string",
                 "enum": ["email", "sms"],
                 "description": "Delivery method for verification code.",
+            },
+            "intent": {
+                "type": "string",
+                "enum": ["fraud", "transfer_agency"],
+                "description": "Service intent to determine specialist routing after authentication.",
             },
             "transaction_amount": {
                 "type": "number",
@@ -759,6 +828,166 @@ check_transaction_authorization_schema: Dict[str, Any] = {
             },
         },
         "required": ["client_id", "operation"],
+        "additionalProperties": False,
+    },
+}
+
+# =============================================================================
+# Transfer Agency Tools
+# =============================================================================
+
+get_client_data_schema: Dict[str, Any] = {
+    "name": "get_client_data",
+    "description": (
+        "Retrieve institutional client data including account details, compliance status, and contact information. "
+        "Use this to verify client identity and get account configuration."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_code": {
+                "type": "string",
+                "description": "Institutional client code (e.g., GCA-48273).",
+            },
+        },
+        "required": ["client_code"],
+        "additionalProperties": False,
+    },
+}
+
+get_drip_positions_schema: Dict[str, Any] = {
+    "name": "get_drip_positions",
+    "description": (
+        "Get client's current Dividend Reinvestment Plan (DRIP) positions including shares, cost basis, and market values. "
+        "Returns detailed position data for all DRIP holdings."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_code": {
+                "type": "string",
+                "description": "Institutional client code to look up positions for.",
+            },
+        },
+        "required": ["client_code"],
+        "additionalProperties": False,
+    },
+}
+
+check_compliance_status_schema: Dict[str, Any] = {
+    "name": "check_compliance_status",
+    "description": (
+        "Check client's AML and FATCA compliance status including expiry dates and review requirements. "
+        "Use this to determine if compliance review is needed before processing transactions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_code": {
+                "type": "string",
+                "description": "Institutional client code to check compliance for.",
+            },
+        },
+        "required": ["client_code"],
+        "additionalProperties": False,
+    },
+}
+
+calculate_liquidation_proceeds_schema: Dict[str, Any] = {
+    "name": "calculate_liquidation_proceeds",
+    "description": (
+        "Calculate liquidation proceeds, fees, taxes, and net settlement amounts for DRIP positions. "
+        "Includes FX conversion for non-USD accounts and fee calculations based on settlement speed."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_code": {
+                "type": "string",
+                "description": "Institutional client code.",
+            },
+            "symbol": {
+                "type": "string",
+                "description": "Stock symbol to liquidate (e.g., PLTR, MSFT, TSLA).",
+            },
+            "shares": {
+                "type": "number",
+                "description": "Number of shares to liquidate. If omitted, liquidates entire position.",
+            },
+            "settlement_speed": {
+                "type": "string",
+                "enum": ["standard", "expedited"],
+                "description": "Settlement speed: 'standard' (2-3 days) or 'expedited' (same-day).",
+                "default": "standard",
+            },
+        },
+        "required": ["client_code", "symbol"],
+        "additionalProperties": False,
+    },
+}
+
+handoff_to_compliance_schema: Dict[str, Any] = {
+    "name": "handoff_to_compliance",
+    "description": (
+        "Transfer client to compliance specialist for AML/FATCA review and regulatory verification. "
+        "Use when compliance issues need specialist attention before proceeding with transactions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_code": {
+                "type": "string",
+                "description": "Institutional client code.",
+            },
+            "client_name": {
+                "type": "string",
+                "description": "Client contact name for personalized handoff.",
+            },
+            "compliance_issue": {
+                "type": "string",
+                "description": "Description of the compliance issue requiring specialist review.",
+            },
+            "urgency": {
+                "type": "string",
+                "enum": ["normal", "high", "expedited"],
+                "description": "Urgency level for the compliance review.",
+                "default": "normal",
+            },
+        },
+        "required": ["client_code", "client_name", "compliance_issue"],
+        "additionalProperties": False,
+    },
+}
+
+handoff_to_trading_schema: Dict[str, Any] = {
+    "name": "handoff_to_trading",
+    "description": (
+        "Transfer client to trading specialist for complex trade execution, FX conversion, or institutional settlement. "
+        "Use for trades requiring specialist attention beyond basic processing."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_code": {
+                "type": "string",
+                "description": "Institutional client code.",
+            },
+            "client_name": {
+                "type": "string",
+                "description": "Client contact name for personalized handoff.",
+            },
+            "trade_details": {
+                "type": "object",
+                "description": "Trade execution details and requirements.",
+            },
+            "complexity": {
+                "type": "string",
+                "enum": ["standard", "complex", "institutional"],
+                "description": "Trade complexity level to determine appropriate desk.",
+                "default": "standard",
+            },
+        },
+        "required": ["client_code", "client_name", "trade_details"],
         "additionalProperties": False,
     },
 }

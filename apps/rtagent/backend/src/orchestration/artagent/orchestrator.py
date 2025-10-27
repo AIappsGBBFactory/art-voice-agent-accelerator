@@ -13,7 +13,7 @@ from .registry import (
     get_specialist,
     register_specialist,
 )
-from .specialists import run_claims_agent, run_fraud_agent
+from .specialists import run_claims_agent, run_fraud_agent, run_agency_agent, run_compliance_agent, run_trading_agent
 from .termination import maybe_terminate_if_escalated
 from apps.rtagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
@@ -123,8 +123,20 @@ async def route_turn(
 
 def bind_default_handlers() -> None:
     """
-    Register default agent handlers with Fraud agent replacing General agent.
+    Register default agent handlers for Financial Services multi-agent system.
+    
+    Flow: Auth -> (Fraud | Agency) -> (Compliance | Trading)
     """
+    # Entry point agent 
     register_specialist("AutoAuth", run_auth_agent)
-    register_specialist("Fraud", run_fraud_agent)  # ← Financial services fraud detection
+    
+    # Main service agents (post-authentication routing)
+    register_specialist("Fraud", run_fraud_agent)        # ← Fraud detection & dispute resolution
+    register_specialist("Agency", run_agency_agent)      # ← Transfer Agency coordinator
+    
+    # Transfer Agency specialists (receive handoffs from Agency)
+    register_specialist("Compliance", run_compliance_agent)  # ← AML/FATCA verification
+    register_specialist("Trading", run_trading_agent)       # ← Complex trade execution
+    
+    # Legacy Claims agent (for backward compatibility if needed)
     register_specialist("Claims", run_claims_agent)

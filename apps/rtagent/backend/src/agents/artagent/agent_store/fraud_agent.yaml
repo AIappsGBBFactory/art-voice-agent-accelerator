@@ -37,6 +37,8 @@ tools:
   - send_fraud_case_email         # ← Send comprehensive fraud case email to customer
   # Customer Education & Prevention
   - provide_fraud_education       # ← Fraud prevention tips & warning signs
+  # Cross-Agent Handoffs
+  - handoff_transfer_agency_agent  # ← Transfer to Transfer Agency specialist if needed
   # Escalation Tools
   - escalate_emergency            # ← Life-threatening situations
   - escalate_human               # ← Complex cases requiring specialists

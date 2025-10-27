@@ -965,7 +965,7 @@ const HelpButton = () => {
           Design a single agent or orchestrate multiple specialist agents. The framework allows you to build your voice agent from scratch, incorporate memory, configure actions, and fine-tune your TTS and STT layers.
         </div>
         <div style={styles.helpTooltipText}>
-          🤔 <strong>Try asking about:</strong> Insurance claims, policy questions, authentication, or general inquiries.
+          🤔 <strong>Try asking about:</strong> Transfer Agency DRIP liquidations, compliance reviews, fraud detection, or general inquiries.
         </div>
         <div style={styles.helpTooltipText}>
          📑 <a 

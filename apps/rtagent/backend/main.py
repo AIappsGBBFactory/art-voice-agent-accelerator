@@ -45,8 +45,10 @@ from src.pools.session_metrics import ThreadSafeSessionMetrics
 from config.app_config import AppConfig
 from config.app_settings import (
     AGENT_AUTH_CONFIG,
-    AGENT_CLAIM_INTAKE_CONFIG,
     AGENT_FRAUD_CONFIG,
+    AGENT_AGENCY_CONFIG,
+    AGENT_COMPLIANCE_CONFIG,
+    AGENT_TRADING_CONFIG,
     ALLOWED_ORIGINS,
     ACS_CONNECTION_STRING,
     ACS_ENDPOINT,
@@ -167,8 +169,10 @@ def _build_startup_dashboard(
     lines.append("")
     agent_configs = [
         ("auth", "auth_agent", AGENT_AUTH_CONFIG),
-        ("claim-intake", "claim_intake_agent", AGENT_CLAIM_INTAKE_CONFIG),
         ("fraud", "fraud_agent", AGENT_FRAUD_CONFIG),
+        ("agency", "agency_agent", AGENT_AGENCY_CONFIG),
+        ("compliance", "compliance_agent", AGENT_COMPLIANCE_CONFIG),
+        ("trading", "trading_agent", AGENT_TRADING_CONFIG),
     ]
     loaded_agents: List[str] = []
     for label, attr, config_path in agent_configs:
@@ -404,8 +408,10 @@ async def lifespan(app: FastAPI):
 
     async def start_agents() -> None:
         app.state.auth_agent = ARTAgent(config_path=AGENT_AUTH_CONFIG)
-        app.state.claim_intake_agent = ARTAgent(config_path=AGENT_CLAIM_INTAKE_CONFIG)
         app.state.fraud_agent = ARTAgent(config_path=AGENT_FRAUD_CONFIG)
+        app.state.agency_agent = ARTAgent(config_path=AGENT_AGENCY_CONFIG)
+        app.state.compliance_agent = ARTAgent(config_path=AGENT_COMPLIANCE_CONFIG)
+        app.state.trading_agent = ARTAgent(config_path=AGENT_TRADING_CONFIG)
         app.state.promptsclient = PromptManager()
         logger.info("agents initialized")
 
@@ -413,6 +419,11 @@ async def lifespan(app: FastAPI):
 
     async def start_event_handlers() -> None:
         register_default_handlers()
+        
+        # Initialize orchestrator and bind all specialists
+        from apps.rtagent.backend.src.orchestration.artagent.orchestrator import bind_default_handlers
+        bind_default_handlers()
+        
         orchestrator_preset = os.getenv("ORCHESTRATOR_PRESET", "production")
         logger.info("event handlers registered", extra={"orchestrator_preset": orchestrator_preset})
 
