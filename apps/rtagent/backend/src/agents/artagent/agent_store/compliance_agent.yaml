@@ -17,7 +17,7 @@ model:
   max_completion_tokens: 2040
 
 voice:
-  name: en-US-Ava:DragonHDLatestNeural 
+  name: en-US-Brian:DragonHDLatestNeural # Authoritative male voice for compliance
   style: professional # Authoritative compliance tone
   rate: "-5%" # Slightly slower for regulatory precision
 

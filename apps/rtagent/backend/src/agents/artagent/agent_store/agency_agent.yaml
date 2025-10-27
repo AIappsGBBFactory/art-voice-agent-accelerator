@@ -12,14 +12,14 @@ agent:
 
 model:
   deployment_id: gpt-4o
-  temperature: 0.7 # Balanced for institutional precision
-  top_p: 0.9 
+  temperature: 0.6 # Optimized for institutional precision and responsiveness
+  top_p: 0.85 # Focused responses for transfer agency tasks
   max_completion_tokens: 2040
 
 voice:
-  name: en-US-Ava:DragonHDLatestNeural 
+  name: en-US-Emma:DragonHDLatestNeural # Distinctive voice for Agency Agent
   style: professional # Professional tone for institutional clients
-  rate: "0%" # Standard professional pace
+  rate: "-3%" # Slightly measured pace for complex financial transactions
 
 prompts:
   path: voice_agent_transfer_agency.jinja # Transfer Agency prompt
