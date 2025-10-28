@@ -4,6 +4,8 @@ locals {
     var.storage_account_id != null &&
     var.cosmosdb_account_id != null
   )
+  
+  resource_group_name = split("/", var.resource_group_id)[4]
 }
 
 ## Create the AI Foundry project capability host (only when required IDs provided)
@@ -48,7 +50,7 @@ resource "azurerm_cosmosdb_sql_role_assignment" "cosmosdb_db_sql_role_aifp_user_
     azapi_resource.ai_foundry_project_capability_host
   ]
   name                = uuidv5("dns", "${azapi_resource.ai_foundry_project.name}${azapi_resource.ai_foundry_project.output.identity.principalId}userthreadmessage_dbsqlrole")
-  resource_group_name = var.resource_group_name
+  resource_group_name = local.resource_group_name
   account_name        = local.cosmos_name_from_id
   scope               = "${local.cosmos_name_from_id}/dbs/enterprise_memory/colls/${local.project_id_guid}-thread-message-store"
   role_definition_id  = "${local.cosmos_name_from_id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
@@ -62,7 +64,7 @@ resource "azurerm_cosmosdb_sql_role_assignment" "cosmosdb_db_sql_role_aifp_syste
     azurerm_cosmosdb_sql_role_assignment.cosmosdb_db_sql_role_aifp_user_thread_message_store
   ]
   name                = uuidv5("dns", "${azapi_resource.ai_foundry_project.name}${azapi_resource.ai_foundry_project.output.identity.principalId}systemthread_dbsqlrole")
-  resource_group_name = var.resource_group_name
+  resource_group_name = local.resource_group_name
   account_name        = local.cosmos_name_from_id
   scope               = "${var.cosmosdb_account_id}/dbs/enterprise_memory/colls/${local.project_id_guid}-system-thread-message-store"
   role_definition_id  = "${var.cosmosdb_account_id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
@@ -76,7 +78,7 @@ resource "azurerm_cosmosdb_sql_role_assignment" "cosmosdb_db_sql_role_aifp_entit
     azurerm_cosmosdb_sql_role_assignment.cosmosdb_db_sql_role_aifp_system_thread_name
   ]
   name                = uuidv5("dns", "${azapi_resource.ai_foundry_project.name}${azapi_resource.ai_foundry_project.output.identity.principalId}entitystore_dbsqlrole")
-  resource_group_name = var.resource_group_name
+  resource_group_name = local.resource_group_name
   account_name        = local.cosmos_name_from_id
   scope               = "${var.cosmosdb_account_id}/dbs/enterprise_memory/colls/${local.project_id_guid}-agent-entity-store"
   role_definition_id  = "${var.cosmosdb_account_id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
@@ -115,7 +117,7 @@ resource "azurerm_role_assignment" "storage_blob_data_owner_ai_foundry_project" 
 
 # resource "azapi_resource_action" "purge_ai_foundry" {
 #   method      = "DELETE"
-#   resource_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.CognitiveServices/locations/${azurerm_resource_group.rg.location}/resourceGroups/${var.resource_group_name}/deletedAccounts/aifoundry${random_string.unique.result}"
+#   resource_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.CognitiveServices/locations/${azurerm_resource_group.rg.location}/resourceGroups/${local.resource_group_name}/deletedAccounts/aifoundry${random_string.unique.result}"
 #   type        = "Microsoft.Resources/resourceGroups/deletedAccounts@2021-04-30"
 #   when        = "destroy"
 
