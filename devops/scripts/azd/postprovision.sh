@@ -441,30 +441,47 @@ update_backend_base_url() {
     return 0
 }
 
-# ========================================================================
+# =================================================================
 # 🚀 Main Execution
 # ========================================================================
 
 main() {
     log_section "🚀 Starting Post-Provisioning Script"
     log_ci_mode
-    
-    # Step 1: Handle phone number configuration
-    log_section "📱 Configuring ACS Phone Number"
-    
-    if ! check_existing_phone_number; then
-        # Store the result but don't fail the script
-        if prompt_for_phone_number; then
-            log_success "Phone number configured"
+
+    log_section "🗄️ Initializing Cosmos DB (if needed)"
+
+    local db_initialized
+    db_initialized=$(get_azd_env_value "DB_INITIALIZED" "false")
+
+    if [ "$db_initialized" != "true" ]; then
+        log_info "DB_INITIALIZED != true; preparing Cosmos DB bootstrap"
+
+        export AZURE_COSMOS_CONNECTION_STRING="$(get_azd_env_value "AZURE_COSMOS_CONNECTION_STRING")"
+        export AZURE_COSMOS_DATABASE_NAME="$(get_azd_env_value "AZURE_COSMOS_DATABASE_NAME")"
+        export AZURE_COSMOS_COLLECTION_NAME="$(get_azd_env_value "AZURE_COSMOS_COLLECTION_NAME")"
+        export AZURE_COSMOS_CLUSTER_NAME="$(get_azd_env_value "AZURE_COSMOS_CLUSTER_NAME")"
+
+        # Install Python requirements for Cosmos DB initialization
+        if [ -f "$HELPERS_DIR/requirements-cosmos.txt" ]; then
+            log_info "Installing Cosmos DB specific Python requirements..."
+            pip3 install -q -r "$HELPERS_DIR/requirements-cosmos.txt" || {
+                log_warning "Failed to install requirements-cosmos.txt; Cosmos DB init may fail"
+            }
         else
-            if [ "$INTERACTIVE_MODE" = "false" ]; then
-                log_info "Phone number configuration skipped in CI/CD mode"
-            else
-                log_warning "Phone number configuration failed, continuing..."
-            fi
+            log_warning "No requirements-cosmos.txt found in helpers directory; proceeding with Cosmos DB init"
         fi
+        
+        if python3 "$HELPERS_DIR/cosmos_init.py"; then
+            log_success "Cosmos DB initialization completed"
+            azd env set DB_INITIALIZED true || log_warning "Failed to persist DB_INITIALIZED flag"
+        else
+            log_warning "Cosmos DB initialization script failed; review logs and retry"
+        fi
+    else
+        log_info "Cosmos DB already initialized; skipping bootstrap"
     fi
-    
+
     # Step 1b: Configure frontend BACKEND_URL for Vite runtime replacement
     update_frontend_backend_url || {
         log_warning "Frontend BACKEND_URL configuration did not complete; continue."
@@ -482,6 +499,21 @@ main() {
     local env_file
     env_name=$(get_azd_env_value "AZURE_ENV_NAME" "dev")
     env_file=".env.${env_name}"
+
+    # Step 3: Handle phone number configuration
+    log_section "📱 Configuring ACS Phone Number"    
+    if ! check_existing_phone_number; then
+        # Store the result but don't fail the script
+        if prompt_for_phone_number; then
+            log_success "Phone number configured"
+        else
+            if [ "$INTERACTIVE_MODE" = "false" ]; then
+                log_info "Phone number configuration skipped in CI/CD mode"
+            else
+                log_warning "Phone number configuration failed, continuing..."
+            fi
+        fi
+    fi
     
     if [ -f "$HELPERS_DIR/generate-env.sh" ]; then
         log_info "Generating environment file: $env_file"
