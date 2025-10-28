@@ -13,6 +13,7 @@ import os
 import threading
 from typing import Any, Dict, Optional
 from utils.ml_logging import get_logger
+from utils.azure_auth import get_credential
 
 # Email service imports
 try:
@@ -29,14 +30,39 @@ class EmailService:
     
     def __init__(self):
         """Initialize the email service with Azure configuration."""
-        self.connection_string = os.getenv("AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING")
+        # Try specific email connection string first, then fall back to general ACS connection string
+        self.connection_string = (
+            os.getenv("AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING") or 
+            os.getenv("ACS_CONNECTION_STRING")
+        )
         self.sender_address = os.getenv("AZURE_EMAIL_SENDER_ADDRESS")
+        self.client: Optional[EmailClient] = None
+
+        # Fall back to credential-based auth if no connection string
+        if not self.connection_string:
+            try:
+                self.credential = get_credential()
+                # Need endpoint for credential-based auth
+                self.endpoint = os.getenv("ACS_ENDPOINT")
+                if self.endpoint and self.credential:
+                    self.client = EmailClient(self.endpoint, self.credential)
+                else:
+                    self.client = None
+            except ImportError:
+                logger.warning("utils.azure_auth not available for credential-based authentication")
+                self.credential = None
+                self.endpoint = None
+                self.client = None
+        else:
+            self.credential = None
+            self.endpoint = None
+            self.client = EmailClient.from_connection_string(self.connection_string)
         
     def is_configured(self) -> bool:
         """Check if email service is properly configured."""
         return (
             AZURE_EMAIL_AVAILABLE and 
-            bool(self.connection_string) and 
+            self.client is not None and
             bool(self.sender_address)
         )
     
@@ -66,9 +92,6 @@ class EmailService:
                     "error": "Azure Email service not configured or not available"
                 }
             
-            # Create email client
-            client = EmailClient.from_connection_string(self.connection_string)
-            
             # Prepare email message
             message_content = {
                 "subject": subject,
@@ -88,7 +111,7 @@ class EmailService:
             }
             
             # Send email
-            poller = client.begin_send(message)
+            poller = self.client.begin_send(message)
             result = poller.result()
             
             # Extract message ID
