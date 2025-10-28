@@ -1,4 +1,4 @@
-name: 🎯 AZD Deployment Orchestration
+name: 🎯 Staging - AZD Deployment Orchestration
 
 on:
   workflow_dispatch:
@@ -6,12 +6,10 @@ on:
       environment:
         description: 'Environment to deploy to'
         required: true
-        default: 'dev'
+        default: 'staging'
         type: choice
         options:
-          - dev
           - staging
-          - prod
       action:
         description: 'Action to perform'
         required: true
@@ -25,7 +23,7 @@ on:
 
   push:
     branches:
-      - main
+      - useacases/finance_capitalmarkets
     paths:
       - 'infra/terraform/**'
       - 'src/**'
@@ -48,7 +46,7 @@ jobs:
     name: 🚀 Deploy with Azure Developer CLI
     uses: ./.github/workflows/deploy-azd.yml
     with:
-      environment: ${{ inputs.environment || 'dev' }}
+      environment: ${{ inputs.environment || 'staging' }}
       action: ${{ inputs.action || 'up' }}
       # # Use repository variables for remote state with fallbacks
       # rs_resource_group: ${{ vars.RS_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}

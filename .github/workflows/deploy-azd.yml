@@ -34,6 +34,11 @@ on:
         description: 'Container name for Terraform state'
         required: false
         type: string
+      db_initialized:
+        description: 'Database initialization status with seed data. Set to False to have postprovisioning script initialize the mongodb'
+        required: false
+        type: string
+
   workflow_call:
     inputs:
       environment:
@@ -59,6 +64,11 @@ on:
         required: false
         type: string
 
+      db_initialized:
+        description: 'Database initialization status with seed data. Set to False to have postprovisioning script initialize the mongodb'
+        required: false
+        type: string
+
 env:
   # CI/CD mode configuration
   AZD_SKIP_INTERACTIVE: true
@@ -80,13 +90,7 @@ jobs:
     # Try to request OIDC permissions, fall back gracefully if denied
 
     # Environment selection logic
-    environment: >-
-      ${{
-        github.event_name == 'pull_request' && 'dev' ||
-        github.event_name == 'workflow_dispatch' && inputs.environment ||
-        github.event_name == 'workflow_call' && inputs.environment ||
-        'dev'
-      }}
+    environment: ${{ inputs.environment }}
     
     env:
       # OIDC Authentication (preferred)
@@ -98,19 +102,17 @@ jobs:
       # Authentication method detection
       USE_OIDC: ${{ secrets.AZURE_CLIENT_SECRET == '' && 'true' || 'false' }}
       # Environment name logic
-      AZURE_ENV_NAME: >-
-        ${{
-          github.event_name == 'pull_request' && 'dev' ||
-          github.event_name == 'workflow_dispatch' && inputs.environment ||
-          github.event_name == 'workflow_call' && inputs.environment ||
-          'dev'
-        }}
+      AZURE_ENV_NAME: ${{ inputs.environment }}
+
       # Remote state fallback chain: inputs → repo vars → defaults
-      RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group }}
-      RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account }}
-      RS_CONTAINER_NAME: ${{ inputs.rs_container_name }}
+      RS_RESOURCE_GROUP: ${{ inputs.rs_resource_group || vars.rs_resource_group }}
+      RS_STORAGE_ACCOUNT: ${{ inputs.rs_storage_account || vars.rs_storage_account }}
+      RS_CONTAINER_NAME: ${{ inputs.rs_container_name || vars.rs_container_name }}
+
+      DB_INITIALIZED: ${{ inputs.db_initialized || vars.db_initialized }}
+
       ARM_USE_OIDC: "true"
-    
+      
     outputs:
       resource_group: ${{ steps.extract-outputs.outputs.resource_group }}
       frontend_url: ${{ steps.extract-outputs.outputs.frontend_url }}
@@ -193,6 +195,7 @@ jobs:
           azd env set RS_RESOURCE_GROUP "${{ env.RS_RESOURCE_GROUP }}"
           azd env set RS_STORAGE_ACCOUNT "${{ env.RS_STORAGE_ACCOUNT }}"
           azd env set RS_CONTAINER_NAME "${{ env.RS_CONTAINER_NAME }}"
+          azd env set DB_INITIALIZED "${{env.DB_INITIALIZED }}"
           
           echo "✅ AZD environment configured"
 
@@ -203,9 +206,6 @@ jobs:
           
           # Determine environment for tfvars
           TFVARS_ENV="${{ env.AZURE_ENV_NAME }}"
-          if [ "$TFVARS_ENV" = "dev" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "Using dev tfvars for PR preview"
-          fi
           
           # Base parameters from environment tfvars
           BASE_PARAMS=$(cat "infra/terraform/params/main.tfvars.${TFVARS_ENV}.json")
@@ -374,7 +374,7 @@ jobs:
 
             const output = `## 🏗️ Infrastructure Preview ${statusIcon}
             
-            **Environment:** \`dev\` (PR preview)
+            **Environment:** \`${environmentName}\` (PR preview)
             **Action:** Infrastructure provision preview via Azure Developer CLI
             **Status:** ${statusText}
             
@@ -408,7 +408,8 @@ jobs:
         run: |
           echo "## 🏗️ Infrastructure Preview" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** dev (PR preview)" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** \`${environmentName}\` (PR preview)" >> $GITHUB_STEP_SUMMARY
+
           echo "**Action:** Infrastructure provision preview via Azure Developer CLI" >> $GITHUB_STEP_SUMMARY
           
           if [ "${{ steps.preview.outputs.preview-success }}" = "true" ]; then
@@ -452,15 +453,6 @@ jobs:
             "provision")
               echo "🏗️ Provisioning infrastructure only..."
               azd provision --no-prompt
-              ;;
-            "deploy")
-              echo "📦 Deploying application only..."
-                # Get registry endpoint from repository variable if available
-              REGISTRY_ENDPOINT="${AZURE_CONTAINER_REGISTRY_ENDPOINT:-}"
-              if [ -n "$REGISTRY_ENDPOINT" ]; then
-                azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$REGISTRY_ENDPOINT"
-              fi
-              azd deploy --no-prompt
               ;;
             "up")
               echo "🚀 Provisioning infrastructure and deploying application..."
