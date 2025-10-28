@@ -282,16 +282,17 @@ const styles = {
   
   // Control section - blended footer design
   controlSection: {
-    padding: "12px",
-    backgroundColor: "#f1f5f9",
-    background: "linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)",
+    padding: "20px 12px",
+    backgroundColor: "#f8fafc",
+    background: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
     height: "15%",
-    minHeight: "100px",
-    borderTop: "1px solid #e2e8f0",
+    minHeight: "110px",
+    borderTop: "1px solid #e1e7ef",
     position: "relative",
+    boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.8)",
   },
   
   controlContainer: {
@@ -745,8 +746,141 @@ const styles = {
     borderRadius: "6px",
     border: "1px solid #e2e8f0",
   },
+
+  // ChatGPT-style interface styles
+  chatModeInterface: {
+    display: "flex",
+    flexDirection: "column",
+    height: "650px",
+    width: "100%",
+    background: "linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)",
+    borderRadius: "20px",
+    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.08), 0 8px 25px rgba(0, 0, 0, 0.06)",
+    overflow: "hidden",
+    border: "2px solid #e1e7ef",
+  },
+
+  chatMessagesArea: {
+    flex: 1,
+    padding: "40px 32px",
+    overflowY: "auto",
+    background: "linear-gradient(to bottom, #f8fafc 0%, #ffffff 60%, #f9fafb 100%)",
+    scrollBehavior: "smooth",
+    position: "relative",
+  },
+
+  chatInputSection: {
+    padding: "24px 28px",
+    borderTop: "1px solid #e1e7ef",
+    background: "linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)",
+    borderBottomLeftRadius: "20px",
+    borderBottomRightRadius: "20px",
+    boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.8)",
+  },
+
+  chatInputContainer: {
+    display: "flex",
+    alignItems: "center",
+    gap: "20px",
+    maxWidth: "700px",
+    margin: "0 auto",
+    position: "relative",
+  },
+
+  chatTextInput: {
+    width: "100%",
+    padding: "14px 18px",
+    border: "1px solid #e1e7ef",
+    borderRadius: "24px",
+    fontSize: "15px",
+    lineHeight: "1.4",
+    background: "#ffffff",
+    resize: "none",
+    minHeight: "48px",
+    maxHeight: "120px",
+    outline: "none",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    color: "#111827",
+    fontWeight: "400",
+    transition: "all 0.3s ease",
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.9)",
+  },
+
+  chatInputWrapper: {
+    flex: 1,
+    position: "relative",
+  },
+
+  chatButtonStack: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+
+  chatAttachButton: {
+    width: "44px",
+    height: "44px",
+    borderRadius: "50%",
+    border: "none",
+    background: "linear-gradient(135deg, #6b7280, #4b5563)",
+    color: "white",
+    fontSize: "16px",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "all 0.3s ease",
+    boxShadow: "0 3px 12px rgba(107, 114, 128, 0.15)",
+    flexShrink: 0,
+  },
+
+  chatSendButton: {
+    width: "44px",
+    height: "44px",
+    borderRadius: "50%",
+    border: "none",
+    background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+    color: "white",
+    fontSize: "16px",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "all 0.3s ease",
+    flexShrink: 0,
+    boxShadow: "0 3px 12px rgba(59, 130, 246, 0.2)",
+    transform: "scale(1)",
+  },
+
+  chatButton: (isActive, isHovered) => ({
+    width: "56px",
+    height: "56px",
+    borderRadius: "50%",
+    border: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    fontSize: "20px",
+    transition: "all 0.3s ease",
+    position: "relative",
+    background: isHovered ? 
+      (isActive ? "linear-gradient(135deg, #3b82f6, #2563eb)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
+      "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
+    color: isHovered ? 
+      (isActive ? "white" : "#3b82f6") :
+      (isActive ? "#3b82f6" : "#64748b"),
+    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
+    boxShadow: isHovered ? 
+      "0 8px 25px rgba(59,130,246,0.4), 0 0 0 4px rgba(59,130,246,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
+      (isActive ? 
+        "0 6px 20px rgba(59,130,246,0.3), 0 0 0 3px rgba(59,130,246,0.1)" : 
+        "0 2px 8px rgba(0,0,0,0.08)"),
+  }),
 };
-// Add keyframe animation for pulse effect
+// Add keyframe animation and input styles
 const styleSheet = document.createElement("style");
 styleSheet.textContent = `
   @keyframes pulse {
@@ -759,6 +893,39 @@ styleSheet.textContent = `
     100% {
       box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
     }
+  }
+  
+  /* Chat input focus and hover styles */
+  textarea:focus {
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12), 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+    background: #ffffff !important;
+  }
+  
+  textarea:hover {
+    border-color: #6b7280 !important;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
+  }
+  
+  /* Send button hover effect */
+  button[title="Send message"]:hover {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+    transform: scale(1.06) !important;
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4) !important;
+  }
+  
+  button[title="Send message"]:disabled {
+    background: linear-gradient(135deg, #d1d5db, #9ca3af) !important;
+    cursor: not-allowed !important;
+    transform: scale(1) !important;
+    box-shadow: none !important;
+  }
+  
+  /* Attachment button hover effect */
+  button[title="Attach file (coming soon)"]:hover {
+    background: linear-gradient(135deg, #4b5563, #374151) !important;
+    transform: scale(1.05) !important;
+    box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3) !important;
   }
 `;
 document.head.appendChild(styleSheet);
@@ -1021,7 +1188,11 @@ const IndustryTag = () => {
     if (currentBranch === 'main') {
       return 'Insurance Edition';
     } 
-    // Current branch (finance/capitalmarkets) → Finance Edition
+    // Retail branch → Retail Edition
+    else if (currentBranch.includes('retail')) {
+      return 'Retail Edition';
+    }
+    // Finance/capitalmarkets branches → Finance Edition
     else if (currentBranch.includes('finance') || currentBranch.includes('capitalmarkets')) {
       return 'Finance Edition';
     }
@@ -2063,15 +2234,21 @@ function RealTimeVoiceApp() {
     );
   }, []);
 
+  // Chat mode state
+  const [chatMode, setChatMode] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+
   // Tooltip states
   const [showResetTooltip, setShowResetTooltip] = useState(false);
   const [showMicTooltip, setShowMicTooltip] = useState(false);
   const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
+  const [showChatTooltip, setShowChatTooltip] = useState(false);
 
   // Hover states
   const [resetHovered, setResetHovered] = useState(false);
   const [micHovered, setMicHovered] = useState(false);
   const [phoneHovered, setPhoneHovered] = useState(false);
+  const [chatHovered, setChatHovered] = useState(false);
   const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
   const isCallDisabled =
     systemStatus.status === "degraded" && systemStatus.acsOnlyIssue;
@@ -2387,6 +2564,33 @@ function RealTimeVoiceApp() {
       setActiveSpeaker("System");
       setRecording(false);
       appendLog("🛑 PCM streaming stopped");
+    };
+
+    // Function to send text messages in chat mode
+    const sendTextMessage = (text) => {
+      if (!text.trim()) return;
+      
+      // Add user message to chat
+      const userMessage = {
+        speaker: "User",
+        text: text.trim()
+      };
+      setMessages(prev => [...prev, userMessage]);
+
+      // Send message via WebSocket if connected
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        const textMessage = {
+          type: "text_message",
+          text: text.trim(),
+          session_id: getOrCreateSessionId()
+        };
+        socketRef.current.send(JSON.stringify(textMessage));
+        console.log("📤 Sent text message:", textMessage);
+      } else {
+        console.warn("WebSocket not connected, cannot send text message");
+        // If no connection, start one
+        startRecognition();
+      }
     };
 
     const pushIfChanged = (arr, msg) => {
@@ -2769,10 +2973,10 @@ function RealTimeVoiceApp() {
           <IndustryTag />
           <div style={styles.appTitleContainer}>
             <div style={styles.appTitleWrapper}>
-              <span style={styles.appTitleIcon}>🎙️</span>
+              <span style={styles.appTitleIcon}>🛍️</span>
               <h1 style={styles.appTitle}>ARTAgent</h1>
             </div>
-            <p style={styles.appSubtitle}>Transforming customer interactions with real-time, intelligent voice interactions</p>
+            <p style={styles.appSubtitle}>Enhancing retail customer experiences with intelligent voice-powered shopping assistance</p>
             <div style={{
               fontSize: '10px',
               color: '#94a3b8',
@@ -2790,27 +2994,97 @@ function RealTimeVoiceApp() {
           <HelpButton />
         </div>
 
-        {/* Waveform Section */}
-        <div style={styles.waveformSection}>
-          <div style={styles.waveformSectionTitle}>Voice Activity</div>
-          <WaveformVisualization 
-            isActive={recording} 
-            speaker={activeSpeaker} 
-            audioLevel={audioLevel}
-            outputAudioLevel={0}
-          />
-          <div style={styles.sectionDivider}></div>
-        </div>
-
-        {/* Chat Messages */}
-        <div style={styles.chatSection} ref={chatRef}>
-          <div style={styles.chatSectionIndicator}></div>
-          <div style={styles.messageContainer} ref={messageContainerRef}>
-            {messages.map((message, index) => (
-              <ChatBubble key={index} message={message} />
-            ))}
+        {/* Conditional Content - Voice Mode vs Chat Mode */}
+        {chatMode ? (
+          // ChatGPT-Style Interface
+          <div style={styles.chatModeInterface}>
+            {/* Chat Messages Area */}
+            <div style={styles.chatMessagesArea} ref={chatRef}>
+              <div style={{maxWidth: '700px', margin: '0 auto'}}>
+                {messages.map((message, index) => (
+                  <ChatBubble key={index} message={message} />
+                ))}
+              </div>
+            </div>
+            
+            {/* ChatGPT-Style Input */}
+            <div style={styles.chatInputSection}>
+              <div style={styles.chatInputContainer}>
+                {/* Input Wrapper */}
+                <div style={styles.chatInputWrapper}>
+                  <textarea
+                    style={styles.chatTextInput}
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Type your message here..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (chatInput.trim()) {
+                          sendTextMessage(chatInput);
+                          setChatInput('');
+                        }
+                      }
+                    }}
+                  />
+                </div>
+                
+                {/* Stacked Buttons on Right */}
+                <div style={styles.chatButtonStack}>
+                  <button
+                    style={styles.chatSendButton}
+                    onClick={() => {
+                      if (chatInput.trim()) {
+                        sendTextMessage(chatInput);
+                        setChatInput('');
+                      }
+                    }}
+                    disabled={!chatInput.trim()}
+                    title="Send message"
+                  >
+                    ↑
+                  </button>
+                  
+                  <button
+                    style={styles.chatAttachButton}
+                    onClick={() => {
+                      // TODO: Implement file attachment functionality
+                      console.log('Attachment button clicked');
+                    }}
+                    title="Attach file (coming soon)"
+                  >
+                    📎
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          // Voice Mode Interface (Original Layout)
+          <>
+            {/* Waveform Section */}
+            <div style={styles.waveformSection}>
+              <div style={styles.waveformSectionTitle}>Voice Activity</div>
+              <WaveformVisualization 
+                isActive={recording} 
+                speaker={activeSpeaker} 
+                audioLevel={audioLevel}
+                outputAudioLevel={0}
+              />
+              <div style={styles.sectionDivider}></div>
+            </div>
+
+            {/* Chat Messages */}
+            <div style={styles.chatSection} ref={chatRef}>
+              <div style={styles.chatSectionIndicator}></div>
+              <div style={styles.messageContainer} ref={messageContainerRef}>
+                {messages.map((message, index) => (
+                  <ChatBubble key={index} message={message} />
+                ))}
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Control Buttons - Clean 3-button layout */}
         <div style={styles.controlSection}>
@@ -2897,7 +3171,43 @@ function RealTimeVoiceApp() {
               </div>
             </div>
 
-            {/* RIGHT: Phone Call Button */}
+            {/* THIRD: Chat Toggle Button */}
+            <div style={{ position: 'relative' }}>
+              <button
+                style={styles.chatButton(chatMode, chatHovered)}
+                onMouseEnter={() => {
+                  setShowChatTooltip(true);
+                  setChatHovered(true);
+                }}
+                onMouseLeave={() => {
+                  setShowChatTooltip(false);
+                  setChatHovered(false);
+                }}
+                onClick={() => {
+                  setChatMode(!chatMode);
+                  if (!chatMode) {
+                    // Switching to chat mode - ensure WebSocket is connected
+                    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+                      startRecognition();
+                    }
+                  }
+                }}
+              >
+                {chatMode ? "💬" : "📝"}
+              </button>
+              
+              {/* Tooltip */}
+              <div 
+                style={{
+                  ...styles.buttonTooltip,
+                  ...(showChatTooltip ? styles.buttonTooltipVisible : {})
+                }}
+              >
+                {chatMode ? "Switch back to voice mode" : "Switch to text chat mode"}
+              </div>
+            </div>
+
+            {/* FOURTH: Phone Call Button */}
             <div 
               style={{ position: 'relative' }}
               onMouseEnter={() => {
