@@ -1,5 +1,5 @@
-variable "resource_group_name" {
-  description = "Resource group name (used for diagnostics configuration)."
+variable "resource_group_id" {
+  description = "Resource group ID (used for diagnostics configuration)."
   type        = string
 }
 
@@ -103,12 +103,6 @@ variable "account_principal_ids" {
   description = "Principal IDs to assign Cognitive Services access to the AI Foundry account."
   type        = list(string)
   default     = []
-}
-
-variable "account_principal_role_definition_name" {
-  description = "Role definition to use for AI Foundry account assignments (defaults to Cognitive Services User)."
-  type        = string
-  default     = "Cognitive Services User"
 }
 
 # ============================================================================
