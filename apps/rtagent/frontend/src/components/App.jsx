@@ -3055,41 +3055,50 @@ function RealTimeVoiceApp() {
         {/* App Header - Apple Style */}
         <div style={{
           ...styles.appHeader,
-          background: '#FFFFFF',
+          background: 'linear-gradient(to bottom, #f8fafc 0%, #f1f5f9 100%)',
           borderBottom: '0.5px solid rgba(0, 0, 0, 0.1)',
-          boxShadow: 'none',
-          padding: '16px 24px',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+          padding: '20px 24px',
         }}>
           {/* Top Left Industry Tag */}
           <IndustryTag />
           <div style={styles.appTitleContainer}>
-            <div style={styles.appTitleWrapper}>
-              <span style={styles.appTitleIcon}>🛍️</span>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              marginBottom: '4px'
+            }}>
+              <div style={{
+                fontSize: '22px',
+                lineHeight: '1',
+              }}>🛍️</div>
               <h1 style={{
-                ...styles.appTitle,
-                color: '#000000',
-                fontSize: '20px',
+                color: '#1e293b',
+                fontSize: '19px',
                 fontWeight: '600',
                 letterSpacing: '-0.3px',
-                fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif',
+                margin: 0,
+                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
               }}>ARTAgent</h1>
             </div>
             <p style={{
-              ...styles.appSubtitle,
-              color: '#8E8E93',
-              fontSize: '13px',
+              color: '#94a3b8',
+              fontSize: '12px',
               fontWeight: '400',
-              fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
-            }}>Enhancing retail customer experiences with intelligent voice-powered shopping assistance</p>
+              margin: '0 0 6px 44px',
+              lineHeight: '1.4',
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            }}>Your shopping companion</p>
             <div style={{
               fontSize: '11px',
-              color: '#C7C7CC',
-              marginTop: '4px',
+              color: '#94a3b8',
               fontFamily: '-apple-system, BlinkMacSystemFont, "SF Mono", monospace',
               display: 'flex',
               alignItems: 'center',
               gap: '4px',
               fontWeight: '400',
+              marginLeft: '44px'
             }}>
               <span>💬</span>
               <span>Session: {getOrCreateSessionId()}</span>
@@ -3224,6 +3233,35 @@ function RealTimeVoiceApp() {
           </div>
         </div>
 
+        {/* Phone Input Panel - Positioned at top after header */}
+        {showPhoneInput && (
+          <div style={styles.phoneInputSection}>
+            <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
+              {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
+            </div>
+            <input
+              type="tel"
+              value={targetPhoneNumber}
+              onChange={(e) => setTargetPhoneNumber(e.target.value)}
+              placeholder="+15551234567"
+              style={styles.phoneInput}
+              disabled={callActive}
+            />
+            <button
+              onClick={callActive ? stopRecognition : startACSCall}
+              style={styles.callMeButton(callActive, isCallDisabled)}
+              title={
+                callActive
+                  ? "🔴 Hang up call"
+                  : "📞 Start phone call"
+              }
+              disabled={callActive}
+            >
+              {callActive ? "🔴 Hang Up" : "📞 Call Me"}
+            </button>
+          </div>
+        )}
+
         {/* Always Visible Chat Interface - Text + Voice */}
         <div style={styles.chatInterface}>
             {/* Chat Messages Area */}
@@ -3236,9 +3274,9 @@ function RealTimeVoiceApp() {
             {/* ChatGPT-Style Input */}
             <div style={{
               padding: '16px 20px 20px 20px',
-              background: '#FFFFFF',
-              borderTop: '1px solid #E5E5EA',
-              boxShadow: 'none'
+              background: 'linear-gradient(to bottom, #fafbfc 0%, #f0f4f8 100%)',
+              borderTop: '1px solid #e2e8f0',
+              boxShadow: '0 -1px 3px rgba(0, 0, 0, 0.03)'
             }}>
               <div style={{
                 display: 'flex',
@@ -3273,7 +3311,7 @@ function RealTimeVoiceApp() {
                     }}
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Message"
+                    placeholder="What would you like to shop for today?"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
@@ -3483,37 +3521,6 @@ function RealTimeVoiceApp() {
             </div>
           )}
         </div>
-
-        {/* Phone Input Panel */}
-        {showPhoneInput && (
-          <div style={styles.phoneInputSection}>
-            <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
-              {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
-            </div>
-            <input
-              type="tel"
-              value={targetPhoneNumber}
-              onChange={(e) => setTargetPhoneNumber(e.target.value)}
-              placeholder="+15551234567"
-              style={styles.phoneInput}
-              disabled={callActive || isCallDisabled}
-            />
-            <button
-              onClick={callActive ? stopRecognition : startACSCall}
-              style={styles.callMeButton(callActive, isCallDisabled)}
-              title={
-                callActive
-                  ? "🔴 Hang up call"
-                  : isCallDisabled
-                    ? "Configure Azure Communication Services to enable calling"
-                    : "📞 Start phone call"
-              }
-              disabled={callActive || isCallDisabled}
-            >
-              {callActive ? "🔴 Hang Up" : "📞 Call Me"}
-            </button>
-          </div>
-        )}
     </div>
   );
 }
