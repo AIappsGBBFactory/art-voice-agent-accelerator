@@ -115,6 +115,13 @@ async def send_tts_audio(
     rate: Optional[str] = None,
 ) -> None:
     """Send TTS audio to browser WebSocket client with optimized pool management."""
+    
+    # Cost optimization: Skip TTS generation if disabled for this session
+    enable_tts = getattr(ws.state, "enable_tts", True)
+    if not enable_tts:
+        logger.debug("TTS disabled for this session - skipping audio synthesis")
+        return
+    
     run_id = str(uuid.uuid4())[:8]
 
     if latency_tool:

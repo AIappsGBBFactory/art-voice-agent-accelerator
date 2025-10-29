@@ -273,6 +273,7 @@ async def dashboard_relay_endpoint(
 async def browser_conversation_endpoint(
     websocket: WebSocket,
     session_id: Optional[str] = Query(None),
+    enable_tts: bool = Query(True),
     orchestrator: Optional[callable] = Depends(get_orchestrator),
 ) -> None:
     """
@@ -287,6 +288,8 @@ async def browser_conversation_endpoint(
         websocket: WebSocket connection from browser client for voice interaction.
         session_id: Optional session ID for conversation persistence and state
                    management across reconnections.
+        enable_tts: Enable or disable text-to-speech audio generation (default: True).
+                   Set to False for text-only mode to save costs.
         orchestrator: Injected conversation orchestrator for processing user
                      interactions and generating responses.
 
@@ -313,7 +316,7 @@ async def browser_conversation_endpoint(
                 session_id = str(uuid.uuid4())
 
         logger.info(
-            f"[{session_id}] Conversation WebSocket connection established"
+            f"[{session_id}] Conversation WebSocket connection established (TTS: {'enabled' if enable_tts else 'disabled'})"
         )
         with tracer.start_as_current_span(
             "api.v1.realtime.conversation_connect",
@@ -339,6 +342,9 @@ async def browser_conversation_endpoint(
 
             # Store conn_id on websocket state for consistent access
             websocket.state.conn_id = conn_id
+            
+            # Store enable_tts flag for cost optimization
+            websocket.state.enable_tts = enable_tts
 
             # Initialize conversation session
             memory_manager = await _initialize_conversation_session(
@@ -511,9 +517,10 @@ async def _initialize_conversation_session(
     auth_agent = websocket.app.state.auth_agent
     memory_manager.append_to_history(auth_agent.name, "assistant", GREETING)
 
-    # Send TTS audio greeting
-    latency_tool = get_metadata("lt")
-    await send_tts_audio(GREETING, websocket, latency_tool=latency_tool)
+    # Send TTS audio greeting only if enabled (cost optimization)
+    if websocket.state.enable_tts:
+        latency_tool = get_metadata("lt")
+        await send_tts_audio(GREETING, websocket, latency_tool=latency_tool)
 
     # Persist initial state to Redis
     await memory_manager.persist_to_redis_async(redis_mgr)
@@ -747,6 +754,23 @@ async def _process_conversation_messages(
                     if stt_client:
                         stt_client.write_bytes(msg["bytes"])
 
+                # Handle text messages from chat interface
+                elif (
+                    msg.get("type") == "websocket.receive"
+                    and msg.get("text") is not None
+                ):
+                    try:
+                        json_data = json.loads(msg["text"])
+                        if json_data.get("type") == "text_message":
+                            text_input = json_data.get("text", "").strip()
+                            if text_input:
+                                # Route through same flow as STT final results
+                                current_buffer = get_metadata("user_buffer", "")
+                                set_metadata("user_buffer", current_buffer + text_input + "\n")
+                                logger.info(f"[{session_id}] Text input received: {text_input}")
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.debug(f"[{session_id}] Invalid text message format: {e}")
+
                 # Process accumulated user buffer (moved outside audio handling to prevent duplication)
                 user_buffer = get_metadata("user_buffer", "")
                 if user_buffer.strip():
@@ -778,10 +802,13 @@ async def _process_conversation_messages(
                         await websocket.app.state.conn_manager.broadcast_session(
                             session_id, goodbye_envelope
                         )
-                        latency_tool = get_metadata("lt")
-                        await send_tts_audio(
-                            goodbye, websocket, latency_tool=latency_tool
-                        )
+                        
+                        # Send goodbye TTS only if enabled (cost optimization)
+                        if websocket.state.enable_tts:
+                            latency_tool = get_metadata("lt")
+                            await send_tts_audio(
+                                goodbye, websocket, latency_tool=latency_tool
+                            )
                         break
 
                     # Process orchestration in background for non-blocking response

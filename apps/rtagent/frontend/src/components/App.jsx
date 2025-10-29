@@ -68,14 +68,15 @@ const styles = {
   },
 
   appHeader: {
-    backgroundColor: "#f8fafc",
-    background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+    backgroundColor: "#e0f2fe",
+    background: "linear-gradient(135deg, #dbeafe 0%, #e0f2fe 50%, #f0f9ff 100%)",
     padding: "16px 24px 12px 24px",
-    borderBottom: "1px solid #e2e8f0",
+    borderBottom: "1px solid #bae6fd",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
+    boxShadow: "0 2px 8px rgba(56, 189, 248, 0.1)",
   },
 
   appTitleContainer: {
@@ -97,24 +98,27 @@ const styles = {
   },
 
   appTitle: {
-    fontSize: "18px",
-    fontWeight: "600",
-    color: "#334155",
+    fontSize: "19px",
+    fontWeight: "700",
+    background: "linear-gradient(135deg, #0369a1, #0284c7)",
+    WebkitBackgroundClip: "text",
+    WebkitTextFillColor: "transparent",
+    backgroundClip: "text",
     textAlign: "center",
     margin: 0,
-    letterSpacing: "0.1px",
+    letterSpacing: "0.3px",
   },
 
   appSubtitle: {
     fontSize: "12px",
-    fontWeight: "400",
-    color: "#64748b",
+    fontWeight: "500",
+    color: "#0369a1",
     textAlign: "center",
     margin: 0,
-    letterSpacing: "0.1px",
+    letterSpacing: "0.2px",
     maxWidth: "350px",
     lineHeight: "1.3",
-    opacity: 0.8,
+    opacity: 0.85,
   },
   waveformSection: {
     backgroundColor: "#f1f5f9",
@@ -175,8 +179,9 @@ const styles = {
     padding: "15px 20px 15px 5px",
     width: "100%",
     overflowY: "auto",
-    backgroundColor: "#ffffff",
-    borderBottom: "1px solid #e2e8f0",
+    backgroundColor: "#f0f9ff",
+    background: "linear-gradient(180deg, #f0f9ff 0%, #e0f2fe 100%)",
+    borderBottom: "1px solid #bae6fd",
     display: "flex",
     flexDirection: "column",
     position: "relative",
@@ -224,47 +229,50 @@ const styles = {
   },
   
   userMessage: {
-    alignSelf: "flex-end",
-    maxWidth: "75%",
-    marginRight: "15px",
-    marginBottom: "4px",
+    alignSelf: "flex-start",
+    maxWidth: "70%",
+    marginLeft: "8px",
+    marginBottom: "8px",
   },
   
   userBubble: {
-    background: "#e0f2fe",
-    color: "#0f172a",
-    padding: "12px 16px",
-    borderRadius: "20px",
-    fontSize: "14px",
+    background: "linear-gradient(135deg, #3b82f6, #2563eb)",
+    color: "#ffffff",
+    padding: "12px 18px",
+    borderRadius: "18px 18px 18px 4px",
+    fontSize: "15px",
     lineHeight: "1.5",
-    border: "1px solid #bae6fd",
-    boxShadow: "0 2px 8px rgba(14,165,233,0.15)",
+    border: "none",
+    boxShadow: "0 2px 12px rgba(59, 130, 246, 0.25)",
     wordWrap: "break-word",
     overflowWrap: "break-word",
     hyphens: "auto",
     whiteSpace: "pre-wrap",
+    fontWeight: "400",
   },
   
-  // Assistant message (left aligned - teal bubble)
+  // Assistant message (right aligned - grey bubble)
   assistantMessage: {
-    alignSelf: "flex-start",
-    maxWidth: "80%", // Increased width for maximum space usage
-    marginLeft: "0px", // No left margin - flush to edge
-    marginBottom: "4px",
+    alignSelf: "flex-end",
+    maxWidth: "75%",
+    marginRight: "8px",
+    marginBottom: "8px",
   },
   
   assistantBubble: {
-    background: "#67d8ef",
-    color: "white",
-    padding: "12px 16px",
-    borderRadius: "20px",
-    fontSize: "14px",
+    background: "#f3f4f6",
+    color: "#1f2937",
+    padding: "12px 18px",
+    borderRadius: "18px 18px 4px 18px",
+    fontSize: "15px",
     lineHeight: "1.5",
-    boxShadow: "0 2px 8px rgba(103,216,239,0.3)",
+    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
     wordWrap: "break-word",
     overflowWrap: "break-word",
     hyphens: "auto",
     whiteSpace: "pre-wrap",
+    border: "1px solid #e5e7eb",
+    fontWeight: "400",
   },
   
   // Agent name label (appears above specialist bubbles)
@@ -280,16 +288,15 @@ const styles = {
     fontStyle: "italic",
   },
   
-  // Control section - blended footer design
+  // Compact control section - smaller buttons, more space for chat
   controlSection: {
-    padding: "20px 12px",
+    padding: "12px",
     backgroundColor: "#f8fafc",
     background: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
-    height: "15%",
-    minHeight: "110px",
+    minHeight: "70px",
     borderTop: "1px solid #e1e7ef",
     position: "relative",
     boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.8)",
@@ -297,11 +304,11 @@ const styles = {
   
   controlContainer: {
     display: "flex",
-    gap: "8px",
+    gap: "16px",
     background: "white",
-    padding: "12px 16px",
-    borderRadius: "24px",
-    boxShadow: "0 4px 16px rgba(100, 116, 139, 0.08), 0 1px 4px rgba(100, 116, 139, 0.04)",
+    padding: "8px 16px",
+    borderRadius: "20px",
+    boxShadow: "0 2px 8px rgba(100, 116, 139, 0.1)",
     border: "1px solid #e2e8f0",
     width: "fit-content",
   },
@@ -329,10 +336,10 @@ const styles = {
     };
   },
 
-  // Enhanced button styles with hover effects
+  // Compact button styles - smaller size for cleaner layout
   resetButton: (isActive, isHovered) => ({
-    width: "56px",
-    height: "56px",
+    width: "44px", // Reduced from 56px
+    height: "44px", // Reduced from 56px
     borderRadius: "50%",
     border: "none",
     display: "flex",
@@ -353,8 +360,8 @@ const styles = {
   }),
 
   micButton: (isActive, isHovered) => ({
-    width: "56px",
-    height: "56px",
+    width: "44px", // Reduced from 56px
+    height: "44px", // Reduced from 56px
     borderRadius: "50%",
     border: "none",
     display: "flex",
@@ -380,8 +387,8 @@ const styles = {
 
   phoneButton: (isActive, isHovered, isDisabled = false) => {
     const base = {
-      width: "56px",
-      height: "56px",
+      width: "44px", // Reduced from 56px
+      height: "44px", // Reduced from 56px
       borderRadius: "50%",
       border: "none",
       display: "flex",
@@ -747,63 +754,56 @@ const styles = {
     border: "1px solid #e2e8f0",
   },
 
-  // ChatGPT-style interface styles
-  chatModeInterface: {
+  // Always visible chat interface - proper proportions
+  chatInterface: {
     display: "flex",
     flexDirection: "column",
-    height: "650px",
+    flex: 1,
     width: "100%",
-    background: "linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)",
-    borderRadius: "20px",
-    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.08), 0 8px 25px rgba(0, 0, 0, 0.06)",
+    background: "linear-gradient(to bottom, #f8fafc 0%, #ffffff 100%)",
     overflow: "hidden",
-    border: "2px solid #e1e7ef",
   },
 
   chatMessagesArea: {
     flex: 1,
-    padding: "40px 32px",
+    padding: "28px 32px",
     overflowY: "auto",
-    background: "linear-gradient(to bottom, #f8fafc 0%, #ffffff 60%, #f9fafb 100%)",
+    background: "transparent",
     scrollBehavior: "smooth",
     position: "relative",
   },
 
   chatInputSection: {
-    padding: "24px 28px",
-    borderTop: "1px solid #e1e7ef",
-    background: "linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)",
-    borderBottomLeftRadius: "20px",
-    borderBottomRightRadius: "20px",
-    boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.8)",
+    padding: "16px 24px 20px 24px",
+    borderTop: "1px solid #e2e8f0",
+    background: "#ffffff",
+    boxShadow: "0 -2px 10px rgba(0, 0, 0, 0.03)",
   },
 
   chatInputContainer: {
     display: "flex",
-    alignItems: "center",
-    gap: "20px",
-    maxWidth: "700px",
+    alignItems: "flex-end",
+    gap: "8px",
+    maxWidth: "800px",
     margin: "0 auto",
     position: "relative",
   },
 
   chatTextInput: {
     width: "100%",
-    padding: "14px 18px",
-    border: "1px solid #e1e7ef",
-    borderRadius: "24px",
+    padding: "12px 16px",
+    border: "1px solid #d1d5db",
+    borderRadius: "20px",
     fontSize: "15px",
-    lineHeight: "1.4",
-    background: "#ffffff",
+    lineHeight: "1.5",
+    background: "#f9fafb",
     resize: "none",
-    minHeight: "48px",
+    minHeight: "44px",
     maxHeight: "120px",
     outline: "none",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     color: "#111827",
-    fontWeight: "400",
-    transition: "all 0.3s ease",
-    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.9)",
+    transition: "all 0.2s ease",
   },
 
   chatInputWrapper: {
@@ -813,45 +813,44 @@ const styles = {
 
   chatButtonStack: {
     display: "flex",
-    flexDirection: "column",
-    gap: "8px",
+    flexDirection: "row",
+    gap: "6px",
     alignItems: "center",
     flexShrink: 0,
   },
 
   chatAttachButton: {
-    width: "44px",
-    height: "44px",
+    width: "36px",
+    height: "36px",
     borderRadius: "50%",
-    border: "none",
-    background: "linear-gradient(135deg, #6b7280, #4b5563)",
-    color: "white",
+    border: "1px solid #e2e8f0",
+    background: "#ffffff",
+    color: "#6b7280",
     fontSize: "16px",
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    transition: "all 0.3s ease",
-    boxShadow: "0 3px 12px rgba(107, 114, 128, 0.15)",
+    transition: "all 0.2s ease",
     flexShrink: 0,
   },
 
   chatSendButton: {
-    width: "44px",
-    height: "44px",
+    width: "36px",
+    height: "36px",
     borderRadius: "50%",
     border: "none",
-    background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+    background: "#3b82f6",
     color: "white",
-    fontSize: "16px",
+    fontSize: "18px",
+    fontWeight: "bold",
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    transition: "all 0.3s ease",
+    transition: "all 0.2s ease",
     flexShrink: 0,
-    boxShadow: "0 3px 12px rgba(59, 130, 246, 0.2)",
-    transform: "scale(1)",
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
   },
 
   chatButton: (isActive, isHovered) => ({
@@ -1095,14 +1094,37 @@ const HelpButton = () => {
   return (
     <div 
       style={{
-        ...styles.helpButton,
-        ...(isHovered ? styles.helpButtonHover : {})
+        position: 'relative',
+        display: 'inline-block'
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
     >
-      ?
+      <button
+        style={{
+          width: '44px',
+          height: '44px',
+          borderRadius: '50%',
+          border: '2px solid #e2e8f0',
+          background: isHovered ? '#eff6ff' : '#ffffff',
+          color: isHovered ? '#3b82f6' : '#64748b',
+          fontSize: '20px',
+          fontWeight: 'bold',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          boxShadow: isHovered 
+            ? '0 6px 16px rgba(59, 130, 246, 0.2)' 
+            : '0 2px 8px rgba(100, 116, 139, 0.12)',
+          transform: isHovered ? 'translateY(-2px) scale(1.05)' : 'translateY(0) scale(1)',
+        }}
+        title="Help & Information"
+      >
+        ?
+      </button>
       <div style={{
         ...styles.helpTooltip,
         ...((isHovered || isClicked) ? styles.helpTooltipVisible : {})
@@ -2218,6 +2240,7 @@ function RealTimeVoiceApp() {
   const [messages, setMessages] = useState([]);
   const [log, setLog] = useState("");
   const [recording, setRecording] = useState(false);
+  const [isMuted, setIsMuted] = useState(true); // Start muted by default
   const [targetPhoneNumber, setTargetPhoneNumber] = useState("");
   const [callActive, setCallActive] = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState(null);
@@ -2293,6 +2316,8 @@ function RealTimeVoiceApp() {
   const processorRef = useRef(null);
   const analyserRef = useRef(null);
   const micStreamRef = useRef(null);
+  const isMutedRef = useRef(true); // Track mute state in ref for audio processing
+  const recordingRef = useRef(false); // Track recording state for TTS control
   
   // Audio playback refs for AudioWorklet
   const playbackAudioContextRef = useRef(null);
@@ -2440,20 +2465,25 @@ function RealTimeVoiceApp() {
   },[log]);
 
   const startRecognition = async () => {
-      setMessages([]);
-      appendLog("🎤 PCM streaming started");
+      appendLog("🎤 Voice mode starting");
 
       await initializeAudioPlayback();
 
       const sessionId = getOrCreateSessionId();
-      console.log('🔗 [FRONTEND] Starting conversation WebSocket with session_id:', sessionId);
+      console.log('🔗 [FRONTEND] Starting voice WebSocket with session_id:', sessionId);
 
-      // 1) open WS with session ID
-      const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}`);
+      // Close existing WebSocket if switching from text mode
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        console.log('🔄 Switching from text to voice mode - reconnecting with TTS enabled');
+        socketRef.current.close();
+      }
+
+      // 1) open WS with session ID and enable_tts=true for voice mode
+      const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&enable_tts=true`);
       socket.binaryType = "arraybuffer";
 
       socket.onopen = () => {
-        appendLog("🔌 WS open - Connected to backend!");
+        appendLog("🔌 WS open - Connected to backend with TTS enabled!");
         console.log("WebSocket connection OPENED to backend at:", `${WS_URL}/api/v1/realtime/conversation`);
       };
       socket.onclose = (event) => {
@@ -2504,29 +2534,35 @@ function RealTimeVoiceApp() {
         audioLevelRef.current = level;
         setAudioLevel(level);
 
-        // Debug: Log a sample of mic data
-        console.log("Mic data sample:", float32.slice(0, 10)); // Should show non-zero values if your mic is hot
+        // Only send audio data if NOT muted
+        if (!isMutedRef.current) {
+          // Debug: Log a sample of mic data
+          console.log("Mic data sample:", float32.slice(0, 10)); // Should show non-zero values if your mic is hot
 
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7fff;
-        }
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7fff;
+          }
 
-        // Debug: Show size before send
-        console.log("Sending int16 PCM buffer, length:", int16.length);
+          // Debug: Show size before send
+          console.log("Sending int16 PCM buffer, length:", int16.length);
 
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(int16.buffer);
-          // Debug: Confirm data sent
-          console.log("PCM audio chunk sent to backend!");
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(int16.buffer);
+            // Debug: Confirm data sent
+            console.log("PCM audio chunk sent to backend!");
+          } else {
+            console.log("WebSocket not open, did not send audio.");
+          }
         } else {
-          console.log("WebSocket not open, did not send audio.");
+          console.log("🔇 Microphone muted - not sending audio");
         }
       };
 
       source.connect(processor);
       processor.connect(audioCtx.destination);
       setRecording(true);
+      recordingRef.current = true; // Update ref for TTS control
     };
 
     const stopRecognition = () => {
@@ -2563,6 +2599,7 @@ function RealTimeVoiceApp() {
       }]);
       setActiveSpeaker("System");
       setRecording(false);
+      recordingRef.current = false; // Update ref for TTS control
       appendLog("🛑 PCM streaming stopped");
     };
 
@@ -2587,9 +2624,38 @@ function RealTimeVoiceApp() {
         socketRef.current.send(JSON.stringify(textMessage));
         console.log("📤 Sent text message:", textMessage);
       } else {
-        console.warn("WebSocket not connected, cannot send text message");
-        // If no connection, start one
-        startRecognition();
+        console.log("🚀 Auto-starting text-only session...");
+        // Start WebSocket connection WITHOUT TTS (text-only mode)
+        const sessionId = getOrCreateSessionId();
+        const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&enable_tts=false`);
+        socket.binaryType = "arraybuffer"; // Support both text and binary messages
+        socketRef.current = socket;
+        
+        socket.onopen = () => {
+          console.log("✅ Text-only WebSocket connected (TTS disabled, same session)");
+          appendLog("✅ Text chat session started");
+          
+          // Send the queued message
+          const textMessage = {
+            type: "text_message",
+            text: text.trim(),
+            session_id: sessionId
+          };
+          socket.send(JSON.stringify(textMessage));
+          console.log("📤 Sent queued text message:", textMessage);
+        };
+        
+        socket.onmessage = handleSocketMessage;
+        
+        socket.onerror = (err) => {
+          console.error("WebSocket error:", err);
+          appendLog("❌ Connection error");
+        };
+        
+        socket.onclose = () => {
+          console.log("WebSocket closed");
+          appendLog("🔌 Connection closed");
+        };
       }
     };
 
@@ -2689,13 +2755,32 @@ function RealTimeVoiceApp() {
       
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data" && payload.data) {
+        // Don't play audio for User messages (echo prevention)
+        if (payload.speaker === "User" || payload.sender === "User") {
+          console.log("🔇 Skipping TTS audio for User message (echo prevention)");
+          return;
+        }
+        
+        // Don't play TTS audio if microphone is muted (text-only mode)
+        if (isMutedRef.current) {
+          console.log("🔇 Skipping TTS audio - microphone is muted (text-only mode)");
+          return;
+        }
+        
+        // Don't play TTS audio if recording is not active (no voice session)
+        if (!recordingRef.current) {
+          console.log("🔇 Skipping TTS audio - voice session not active");
+          return;
+        }
+        
         try {
           console.log("🔊 Received audio_data message:", {
             frame_index: payload.frame_index,
             total_frames: payload.total_frames,
             sample_rate: payload.sample_rate,
             data_length: payload.data.length,
-            is_final: payload.is_final
+            is_final: payload.is_final,
+            speaker: payload.speaker || payload.sender
           });
 
           // Decode base64 -> Int16 -> Float32 [-1, 1]
@@ -2746,9 +2831,9 @@ function RealTimeVoiceApp() {
       const msgType = (type || "").toLowerCase();
 
       if (msgType === "user" || speaker === "User") {
+        // Add user voice input to chat
         setActiveSpeaker("User");
-        setMessages(prev => [...prev, { speaker: "User", text: txt }]);
-
+        setMessages(prev => pushIfChanged(prev, { speaker: "User", text: txt }));
         appendLog(`User: ${txt}`);
         return;
       }
@@ -2967,56 +3052,228 @@ function RealTimeVoiceApp() {
         {/* Backend Status Indicator */}
         <BackendIndicator url={API_BASE_URL} onStatusChange={handleSystemStatus} />
 
-        {/* App Header */}
-        <div style={styles.appHeader}>
+        {/* App Header - Apple Style */}
+        <div style={{
+          ...styles.appHeader,
+          background: '#FFFFFF',
+          borderBottom: '0.5px solid rgba(0, 0, 0, 0.1)',
+          boxShadow: 'none',
+          padding: '16px 24px',
+        }}>
           {/* Top Left Industry Tag */}
           <IndustryTag />
           <div style={styles.appTitleContainer}>
             <div style={styles.appTitleWrapper}>
               <span style={styles.appTitleIcon}>🛍️</span>
-              <h1 style={styles.appTitle}>ARTAgent</h1>
+              <h1 style={{
+                ...styles.appTitle,
+                color: '#000000',
+                fontSize: '20px',
+                fontWeight: '600',
+                letterSpacing: '-0.3px',
+                fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif',
+              }}>ARTAgent</h1>
             </div>
-            <p style={styles.appSubtitle}>Enhancing retail customer experiences with intelligent voice-powered shopping assistance</p>
+            <p style={{
+              ...styles.appSubtitle,
+              color: '#8E8E93',
+              fontSize: '13px',
+              fontWeight: '400',
+              fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
+            }}>Enhancing retail customer experiences with intelligent voice-powered shopping assistance</p>
             <div style={{
-              fontSize: '10px',
-              color: '#94a3b8',
+              fontSize: '11px',
+              color: '#C7C7CC',
               marginTop: '4px',
-              fontFamily: 'monospace',
+              fontFamily: '-apple-system, BlinkMacSystemFont, "SF Mono", monospace',
               display: 'flex',
               alignItems: 'center',
-              gap: '4px'
+              gap: '4px',
+              fontWeight: '400',
             }}>
               <span>💬</span>
               <span>Session: {getOrCreateSessionId()}</span>
             </div>
           </div>
-          {/* Top Right Help Button */}
-          <HelpButton />
+          
+          {/* Control Actions - Elegant header buttons */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            position: 'absolute',
+            right: '24px',
+            top: '50%',
+            transform: 'translateY(-50%)'
+          }}>
+            {/* Session Reset */}
+            <button
+              style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '50%',
+                border: '2px solid #e2e8f0',
+                background: '#ffffff',
+                color: '#64748b',
+                fontSize: '18px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: '0 2px 8px rgba(100, 116, 139, 0.12)',
+              }}
+              onClick={() => {
+                const newSessionId = createNewSessionId();
+                if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+                  socketRef.current.close();
+                }
+                setMessages([]);
+                setActiveSpeaker(null);
+                stopRecognition();
+                setCallActive(false);
+                setShowPhoneInput(false);
+                appendLog(`🔄️ Session reset - new session ID: ${newSessionId.split('_')[1]}`);
+                setTimeout(() => {
+                  setMessages([{ speaker: "System", text: "✅ New session started. How can I help you today?" }]);
+                }, 300);
+              }}
+              title="Start new session"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#fef2f2';
+                e.currentTarget.style.borderColor = '#fca5a5';
+                e.currentTarget.style.color = '#ef4444';
+                e.currentTarget.style.transform = 'translateY(-2px) scale(1.05)';
+                e.currentTarget.style.boxShadow = '0 6px 16px rgba(239, 68, 68, 0.2)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#ffffff';
+                e.currentTarget.style.borderColor = '#e2e8f0';
+                e.currentTarget.style.color = '#64748b';
+                e.currentTarget.style.transform = 'translateY(0) scale(1)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(100, 116, 139, 0.12)';
+              }}
+            >
+              ⟲
+            </button>
+
+            {/* Phone Call Button */}
+            <button
+              style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '50%',
+                border: callActive ? 'none' : '2px solid #e2e8f0',
+                background: callActive 
+                  ? 'linear-gradient(135deg, #ef4444, #dc2626)' 
+                  : (isCallDisabled ? '#f1f5f9' : '#ffffff'),
+                color: callActive ? '#ffffff' : (isCallDisabled ? '#94a3b8' : '#64748b'),
+                fontSize: '18px',
+                cursor: isCallDisabled ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: callActive 
+                  ? '0 8px 20px rgba(239, 68, 68, 0.35)' 
+                  : '0 2px 8px rgba(100, 116, 139, 0.12)',
+                opacity: isCallDisabled ? 0.6 : 1,
+              }}
+              onClick={() => {
+                if (isCallDisabled) return;
+                if (callActive) {
+                  stopRecognition();
+                  setCallActive(false);
+                  setMessages(prev => [...prev, { speaker: "System", text: "📞 Call ended" }]);
+                } else {
+                  setShowPhoneInput(!showPhoneInput);
+                }
+              }}
+              disabled={isCallDisabled}
+              title={isCallDisabled ? "Phone calling disabled" : (callActive ? "Hang up" : "Make a call")}
+              onMouseEnter={(e) => {
+                if (!isCallDisabled && !callActive) {
+                  e.currentTarget.style.background = '#eff6ff';
+                  e.currentTarget.style.borderColor = '#93c5fd';
+                  e.currentTarget.style.color = '#3b82f6';
+                  e.currentTarget.style.transform = 'translateY(-2px) scale(1.05)';
+                  e.currentTarget.style.boxShadow = '0 6px 16px rgba(59, 130, 246, 0.2)';
+                } else if (callActive) {
+                  e.currentTarget.style.transform = 'translateY(-2px) scale(1.05)';
+                  e.currentTarget.style.boxShadow = '0 12px 28px rgba(239, 68, 68, 0.45)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isCallDisabled && !callActive) {
+                  e.currentTarget.style.background = '#ffffff';
+                  e.currentTarget.style.borderColor = '#e2e8f0';
+                  e.currentTarget.style.color = '#64748b';
+                  e.currentTarget.style.transform = 'translateY(0) scale(1)';
+                  e.currentTarget.style.boxShadow = '0 2px 8px rgba(100, 116, 139, 0.12)';
+                } else if (callActive) {
+                  e.currentTarget.style.transform = 'translateY(0) scale(1)';
+                  e.currentTarget.style.boxShadow = '0 8px 20px rgba(239, 68, 68, 0.35)';
+                }
+              }}
+            >
+              {callActive ? "📵" : "📞"}
+            </button>
+
+            {/* Help Button */}
+            <HelpButton />
+          </div>
         </div>
 
-        {/* Conditional Content - Voice Mode vs Chat Mode */}
-        {chatMode ? (
-          // ChatGPT-Style Interface
-          <div style={styles.chatModeInterface}>
+        {/* Always Visible Chat Interface - Text + Voice */}
+        <div style={styles.chatInterface}>
             {/* Chat Messages Area */}
             <div style={styles.chatMessagesArea} ref={chatRef}>
-              <div style={{maxWidth: '700px', margin: '0 auto'}}>
-                {messages.map((message, index) => (
-                  <ChatBubble key={index} message={message} />
-                ))}
-              </div>
+              {messages.map((message, index) => (
+                <ChatBubble key={index} message={message} />
+              ))}
             </div>
             
             {/* ChatGPT-Style Input */}
-            <div style={styles.chatInputSection}>
-              <div style={styles.chatInputContainer}>
+            <div style={{
+              padding: '16px 20px 20px 20px',
+              background: '#FFFFFF',
+              borderTop: '1px solid #E5E5EA',
+              boxShadow: 'none'
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'flex-end',
+                gap: '8px',
+                maxWidth: '900px',
+                margin: '0 auto',
+              }}>
                 {/* Input Wrapper */}
-                <div style={styles.chatInputWrapper}>
+                <div style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column'
+                }}>
                   <textarea
-                    style={styles.chatTextInput}
+                    style={{
+                      width: '100%',
+                      minHeight: '48px',
+                      maxHeight: '140px',
+                      padding: '14px 16px',
+                      fontSize: '16px',
+                      lineHeight: '1.5',
+                      border: '1px solid #E5E5EA',
+                      borderRadius: '24px',
+                      outline: 'none',
+                      resize: 'none',
+                      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif',
+                      background: '#FFFFFF',
+                      color: '#000000',
+                      transition: 'all 0.2s ease-out',
+                      boxShadow: 'none',
+                    }}
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Type your message here..."
+                    placeholder="Message"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
@@ -3026,13 +3283,45 @@ function RealTimeVoiceApp() {
                         }
                       }
                     }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = '#007AFF';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = '#E5E5EA';
+                    }}
                   />
                 </div>
                 
-                {/* Stacked Buttons on Right */}
-                <div style={styles.chatButtonStack}>
+                {/* Action Buttons - Send, Microphone, Attach */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  paddingBottom: '2px'
+                }}>
+                  {/* Send Button - Professional Style */}
                   <button
-                    style={styles.chatSendButton}
+                    style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '50%',
+                      border: 'none',
+                      background: chatInput.trim() 
+                        ? '#007AFF' 
+                        : '#E5E5EA',
+                      color: '#ffffff',
+                      fontSize: '20px',
+                      fontWeight: '600',
+                      cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'all 0.2s ease-out',
+                      boxShadow: 'none',
+                      position: 'relative',
+                      overflow: 'hidden',
+                      opacity: chatInput.trim() ? 1 : 0.5,
+                    }}
                     onClick={() => {
                       if (chatInput.trim()) {
                         sendTextMessage(chatInput);
@@ -3041,17 +3330,130 @@ function RealTimeVoiceApp() {
                     }}
                     disabled={!chatInput.trim()}
                     title="Send message"
+                    onMouseEnter={(e) => {
+                      if (chatInput.trim()) {
+                        e.currentTarget.style.background = '#0051D5';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (chatInput.trim()) {
+                        e.currentTarget.style.background = '#007AFF';
+                      }
+                    }}
+                    onMouseDown={(e) => {
+                      if (chatInput.trim()) {
+                        e.currentTarget.style.transform = 'scale(0.95)';
+                      }
+                    }}
+                    onMouseUp={(e) => {
+                      if (chatInput.trim()) {
+                        e.currentTarget.style.transform = 'scale(1)';
+                      }
+                    }}
                   >
-                    ↑
+                    <span style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '22px',
+                    }}>
+                      ➤
+                    </span>
                   </button>
                   
+                  {/* Microphone Button - Mute/Unmute Toggle */}
                   <button
-                    style={styles.chatAttachButton}
+                    style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '50%',
+                      border: 'none',
+                      background: isMuted ? '#E5E5EA' : '#34C759',
+                      color: isMuted ? '#8E8E93' : '#ffffff',
+                      fontSize: '20px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'all 0.2s ease-out',
+                      boxShadow: 'none',
+                    }}
                     onClick={() => {
-                      // TODO: Implement file attachment functionality
+                      if (isMuted) {
+                        // Unmute - start the session if not already started
+                        if (!recording) {
+                          startRecognition();
+                        }
+                        setIsMuted(false);
+                        isMutedRef.current = false;
+                        console.log("🎤 Microphone unmuted");
+                      } else {
+                        // Mute - clear audio levels to hide visualizer
+                        setIsMuted(true);
+                        isMutedRef.current = true;
+                        setAudioLevel(0);
+                        audioLevelRef.current = 0;
+                        console.log("🔇 Microphone muted");
+                      }
+                    }}
+                    title={isMuted ? "Unmute microphone" : "Mute microphone"}
+                    onMouseEnter={(e) => {
+                      if (isMuted) {
+                        e.currentTarget.style.background = '#D1D1D6';
+                      } else {
+                        e.currentTarget.style.background = '#2DB84C';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (isMuted) {
+                        e.currentTarget.style.background = '#E5E5EA';
+                      } else {
+                        e.currentTarget.style.background = '#34C759';
+                      }
+                    }}
+                    onMouseDown={(e) => {
+                      e.currentTarget.style.transform = 'scale(0.95)';
+                    }}
+                    onMouseUp={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                    }}
+                  >
+                    {isMuted ? '🎤' : '🔇'}
+                  </button>
+                  
+                  {/* Attach Button - Apple Style */}
+                  <button
+                    style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '50%',
+                      border: 'none',
+                      background: '#E5E5EA',
+                      color: '#8E8E93',
+                      fontSize: '20px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'all 0.2s ease-out',
+                      boxShadow: 'none',
+                    }}
+                    onClick={() => {
                       console.log('Attachment button clicked');
                     }}
                     title="Attach file (coming soon)"
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#D1D1D6';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#E5E5EA';
+                    }}
+                    onMouseDown={(e) => {
+                      e.currentTarget.style.transform = 'scale(0.95)';
+                    }}
+                    onMouseUp={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                    }}
                   >
                     📎
                   </button>
@@ -3059,266 +3461,59 @@ function RealTimeVoiceApp() {
               </div>
             </div>
           </div>
-        ) : (
-          // Voice Mode Interface (Original Layout)
-          <>
-            {/* Waveform Section */}
-            <div style={styles.waveformSection}>
-              <div style={styles.waveformSectionTitle}>Voice Activity</div>
+          
+          {/* Voice Activity Indicator - Only visible when recording AND unmuted */}
+          {recording && !isMuted && (
+            <div style={{
+              padding: "6px 16px",
+              background: "linear-gradient(90deg, #dcfce7 0%, #bbf7d0 100%)",
+              borderTop: "1px solid #86efac",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: "32px",
+              transition: "all 0.3s ease"
+            }}>
               <WaveformVisualization 
-                isActive={recording} 
+                isActive={true} 
                 speaker={activeSpeaker} 
                 audioLevel={audioLevel}
                 outputAudioLevel={0}
               />
-              <div style={styles.sectionDivider}></div>
             </div>
-
-            {/* Chat Messages */}
-            <div style={styles.chatSection} ref={chatRef}>
-              <div style={styles.chatSectionIndicator}></div>
-              <div style={styles.messageContainer} ref={messageContainerRef}>
-                {messages.map((message, index) => (
-                  <ChatBubble key={index} message={message} />
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Control Buttons - Clean 3-button layout */}
-        <div style={styles.controlSection}>
-          <div style={styles.controlContainer}>
-            
-            {/* LEFT: Reset/Restart Session Button */}
-            <div style={{ position: 'relative' }}>
-              <button
-                style={styles.resetButton(false, resetHovered)}
-                onMouseEnter={() => {
-                  setShowResetTooltip(true);
-                  setResetHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setShowResetTooltip(false);
-                  setResetHovered(false);
-                }}
-                onClick={() => {
-                  // Reset entire session - clear chat and restart with new session ID
-                  const newSessionId = createNewSessionId();
-                  
-                  // Close existing WebSocket if connected
-                  if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-                    console.log('🔌 Closing WebSocket for session reset...');
-                    socketRef.current.close();
-                  }
-                  
-                  // Reset UI state
-                  setMessages([]);
-                  setActiveSpeaker(null);
-                  stopRecognition();
-                  setCallActive(false);
-                  setShowPhoneInput(false);
-                  appendLog(`🔄️ Session reset - new session ID: ${newSessionId.split('_')[1]}`);
-                  
-                  // Add welcome message
-                  setTimeout(() => {
-                    setMessages([{ 
-                      speaker: "System", 
-                      text: "✅ Session restarted with new ID. Ready for a fresh conversation!" 
-                    }]);
-                  }, 500);
-                }}
-              >
-                ⟲
-              </button>
-              
-              {/* Tooltip */}
-              <div 
-                style={{
-                  ...styles.buttonTooltip,
-                  ...(showResetTooltip ? styles.buttonTooltipVisible : {})
-                }}
-              >
-                Reset conversation & start fresh
-              </div>
-            </div>
-
-            {/* MIDDLE: Microphone Button */}
-            <div style={{ position: 'relative' }}>
-              <button
-                style={styles.micButton(recording, micHovered)}
-                onMouseEnter={() => {
-                  setShowMicTooltip(true);
-                  setMicHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setShowMicTooltip(false);
-                  setMicHovered(false);
-                }}
-                onClick={recording ? stopRecognition : startRecognition}
-              >
-                {recording ? "🛑" : "🎤"}
-              </button>
-              
-              {/* Tooltip */}
-              <div 
-                style={{
-                  ...styles.buttonTooltip,
-                  ...(showMicTooltip ? styles.buttonTooltipVisible : {})
-                }}
-              >
-                {recording ? "Stop recording your voice" : "Start voice conversation"}
-              </div>
-            </div>
-
-            {/* THIRD: Chat Toggle Button */}
-            <div style={{ position: 'relative' }}>
-              <button
-                style={styles.chatButton(chatMode, chatHovered)}
-                onMouseEnter={() => {
-                  setShowChatTooltip(true);
-                  setChatHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setShowChatTooltip(false);
-                  setChatHovered(false);
-                }}
-                onClick={() => {
-                  setChatMode(!chatMode);
-                  if (!chatMode) {
-                    // Switching to chat mode - ensure WebSocket is connected
-                    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-                      startRecognition();
-                    }
-                  }
-                }}
-              >
-                {chatMode ? "💬" : "📝"}
-              </button>
-              
-              {/* Tooltip */}
-              <div 
-                style={{
-                  ...styles.buttonTooltip,
-                  ...(showChatTooltip ? styles.buttonTooltipVisible : {})
-                }}
-              >
-                {chatMode ? "Switch back to voice mode" : "Switch to text chat mode"}
-              </div>
-            </div>
-
-            {/* FOURTH: Phone Call Button */}
-            <div 
-              style={{ position: 'relative' }}
-              onMouseEnter={() => {
-                setShowPhoneTooltip(true);
-                if (isCallDisabled && phoneButtonRef.current) {
-                  const rect = phoneButtonRef.current.getBoundingClientRect();
-                  setPhoneDisabledPos({
-                    top: rect.bottom + 12,
-                    left: rect.left + rect.width / 2,
-                  });
-                }
-                if (!isCallDisabled) {
-                  setPhoneHovered(true);
-                }
-              }}
-              onMouseLeave={() => {
-                setShowPhoneTooltip(false);
-                setPhoneHovered(false);
-                setPhoneDisabledPos(null);
-              }}
-            >
-              <button
-                ref={phoneButtonRef}
-                style={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
-                disabled={isCallDisabled}
-                title={
-                  isCallDisabled
-                    ? undefined
-                    : callActive
-                      ? "Hang up the phone call"
-                      : "Make a phone call"
-                }
-                onClick={() => {
-                  if (isCallDisabled) {
-                    return;
-                  }
-                  if (callActive) {
-                    // Hang up call
-                    stopRecognition();
-                    setCallActive(false);
-                    setMessages(prev => [...prev, { 
-                      speaker: "System",
-                      text: "📞 Call ended" 
-                    }]);
-                  } else {
-                    // Show phone input
-                    setShowPhoneInput(!showPhoneInput);
-                  }
-                }}
-              >
-                {callActive ? "📵" : "📞"}
-              </button>
-              
-              {/* Tooltip */}
-              {!isCallDisabled && (
-                <div 
-                  style={{
-                    ...styles.buttonTooltip,
-                    ...(showPhoneTooltip ? styles.buttonTooltipVisible : {})
-                  }}
-                >
-                  {callActive ? "Hang up the phone call" : "Make a phone call"}
-                </div>
-              )}
-              {isCallDisabled && showPhoneTooltip && phoneDisabledPos && (
-                <div
-                  style={{
-                    ...styles.phoneDisabledDialog,
-                    top: phoneDisabledPos.top,
-                    left: phoneDisabledPos.left,
-                  }}
-                >
-                  ⚠️ Outbound calling is disabled. Update backend .env with Azure Communication Services settings (ACS_CONNECTION_STRING, ACS_SOURCE_PHONE_NUMBER, ACS_ENDPOINT) to enable this feature.
-                </div>
-              )}
-            </div>
-
-          </div>
+          )}
         </div>
 
         {/* Phone Input Panel */}
-      {showPhoneInput && (
-        <div style={styles.phoneInputSection}>
-          <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
-            {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
+        {showPhoneInput && (
+          <div style={styles.phoneInputSection}>
+            <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
+              {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
+            </div>
+            <input
+              type="tel"
+              value={targetPhoneNumber}
+              onChange={(e) => setTargetPhoneNumber(e.target.value)}
+              placeholder="+15551234567"
+              style={styles.phoneInput}
+              disabled={callActive || isCallDisabled}
+            />
+            <button
+              onClick={callActive ? stopRecognition : startACSCall}
+              style={styles.callMeButton(callActive, isCallDisabled)}
+              title={
+                callActive
+                  ? "🔴 Hang up call"
+                  : isCallDisabled
+                    ? "Configure Azure Communication Services to enable calling"
+                    : "📞 Start phone call"
+              }
+              disabled={callActive || isCallDisabled}
+            >
+              {callActive ? "🔴 Hang Up" : "📞 Call Me"}
+            </button>
           </div>
-          <input
-            type="tel"
-            value={targetPhoneNumber}
-            onChange={(e) => setTargetPhoneNumber(e.target.value)}
-            placeholder="+15551234567"
-            style={styles.phoneInput}
-            disabled={callActive || isCallDisabled}
-          />
-          <button
-            onClick={callActive ? stopRecognition : startACSCall}
-            style={styles.callMeButton(callActive, isCallDisabled)}
-            title={
-              callActive
-                ? "🔴 Hang up call"
-                : isCallDisabled
-                  ? "Configure Azure Communication Services to enable calling"
-                  : "📞 Start phone call"
-            }
-            disabled={callActive || isCallDisabled}
-          >
-            {callActive ? "🔴 Hang Up" : "📞 Call Me"}
-          </button>
-        </div>
-      )}
-      </div>
+        )}
     </div>
   );
 }
