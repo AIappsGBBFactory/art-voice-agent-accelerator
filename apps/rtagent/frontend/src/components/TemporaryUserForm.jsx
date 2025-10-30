@@ -231,7 +231,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
   return (
     <section style={formStyles.container}>
       <div style={formStyles.headerRow}>
-        <h2 style={formStyles.title}>Create 24-Hour Demo Access</h2>
+        <h2 style={formStyles.title}>Create 1-Hour Demo Access</h2>
         {onClose && (
           <button
             type="button"
@@ -246,10 +246,10 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
       </div>
       <p style={formStyles.subtitle}>
         Supply your details to generate a temporary profile that is automatically purged after
-        24 hours. Phone number is optional and used only for SMS simulations.
+        1 hour. Phone number is optional and used only for SMS simulations.
       </p>
       <div style={formStyles.warning}>
-        ⚠️ This environment is for demonstration purposes only. All records are erased after 24 hours.
+        ⚠️ This environment is for demonstration purposes only. All records are erased after 1 hour.
       </div>
 
       <form style={formStyles.form} onSubmit={handleSubmit}>

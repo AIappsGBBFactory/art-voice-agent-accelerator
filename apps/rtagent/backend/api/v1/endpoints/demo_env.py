@@ -83,7 +83,7 @@ class DemoUserResponse(BaseModel):
     safety_notice: str
 
 
-DEMOS_TTL_SECONDS = int(os.getenv("DEMO_USER_TTL_SECONDS", "86400"))
+DEMOS_TTL_SECONDS = int(os.getenv("DEMO_USER_TTL_SECONDS", "3600"))
 PROFILE_TEMPLATES = (
     {
         "key": "contoso_exec",
@@ -254,6 +254,10 @@ def _build_profile(
     conversation = CONVERSATION_PROFILES[template["key"]]
     security = SECURITY_PROFILES[template["key"]]
 
+    # Calculate TTL-dependent values
+    ttl_hours = DEMOS_TTL_SECONDS // 3600
+    ttl_days = max(1, ttl_hours // 24)
+    
     customer_intelligence = {
         "relationship_context": {
             "relationship_tier": template["relationship_tier"],
@@ -267,7 +271,7 @@ def _build_profile(
             "current_balance": rng.randint(*template["balance_range"]),
             "ytd_transaction_volume": rng.randint(*template["volume_range"]),
             "account_health_score": rng.randint(88, 99),
-            "last_login": (anchor - timedelta(days=rng.randint(0, 6))).date().isoformat(),
+            "last_login": (anchor - timedelta(days=rng.randint(0, min(6, ttl_days)))).date().isoformat(),
             "login_frequency": rng.choice(("daily", "weekly", "3x per week")),
         },
         "spending_patterns": {
@@ -307,7 +311,7 @@ def _build_profile(
         "active_alerts": [
             {
                 "type": conversation["alert_type"],
-                "message": "Demo identity issued. Data purges automatically within 24 hours.",
+                "message": f"Demo identity issued. Data purges automatically within {ttl_hours} hours.",
                 "priority": rng.choice(("info", "medium")),
             }
         ],
@@ -486,7 +490,7 @@ async def create_temporary_user(
         rng: Request-scoped random number generator.
 
     Returns:
-        DemoUserResponse: Generated profile plus sample telemetry valid for 24 hours.
+        DemoUserResponse: Generated profile plus sample telemetry valid for hour set by DEMOS_TTL_SECONDS.
 
     Latency:
         Pure CPU work; expected response within ~25 ms under typical load.
