@@ -87,6 +87,7 @@ from apps.rtagent.backend.src.services.acs.acs_caller import (
 )
 
 from apps.rtagent.backend.api.v1.events.registration import register_default_handlers
+from api.v1.endpoints import demo_env
 
 
 # --------------------------------------------------------------------------- #
@@ -570,6 +571,7 @@ def setup_app_middleware_and_routes(app: FastAPI):
 
     # app.include_router(api_router)  # legacy, if needed
     app.include_router(v1_router)
+    app.include_router(demo_env.router)
 
     # Health endpoints are now included in v1_router at /api/v1/health
 

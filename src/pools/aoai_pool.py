@@ -33,7 +33,8 @@ logger = get_logger(__name__)
 # Configuration
 AOAI_POOL_ENABLED = os.getenv("AOAI_POOL_ENABLED", "true").lower() == "true"
 AOAI_POOL_SIZE = int(os.getenv("AOAI_POOL_SIZE", "10"))
-
+AOAI_MAX_RETRIES = int(os.getenv("AOAI_MAX_RETRIES", "5"))
+AOAI_TIMEOUT = float(os.getenv("AOAI_TIMEOUT", "10.0"))
 
 @dataclass
 class ClientMetrics:
@@ -116,8 +117,8 @@ class AOAIClientPool:
                 api_version="2025-01-01-preview",
                 azure_endpoint=AZURE_OPENAI_ENDPOINT,
                 api_key=AZURE_OPENAI_KEY,
-                max_retries=1,  # Lower retries for faster failover
-                timeout=30.0,  # Shorter timeout for responsiveness
+                max_retries=AOAI_MAX_RETRIES,
+                timeout=AOAI_TIMEOUT,
             )
         else:
             # Use managed identity
@@ -129,8 +130,8 @@ class AOAIClientPool:
                 api_version="2025-01-01-preview",
                 azure_endpoint=AZURE_OPENAI_ENDPOINT,
                 azure_ad_token_provider=azure_ad_token_provider,
-                max_retries=1,
-                timeout=30.0,
+                max_retries=AOAI_MAX_RETRIES,
+                timeout=AOAI_TIMEOUT,
             )
 
     async def get_dedicated_client(self, session_id: str) -> AzureOpenAI:

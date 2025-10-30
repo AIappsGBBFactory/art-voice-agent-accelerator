@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import "reactflow/dist/style.css";
+import TemporaryUserForm from './TemporaryUserForm';
 
 // Environment configuration
 const backendPlaceholder = '__BACKEND_URL__';
@@ -744,6 +745,82 @@ const styles = {
     padding: "4px 8px",
     borderRadius: "6px",
     border: "1px solid #e2e8f0",
+  },
+
+  demoButton: {
+    position: "fixed",
+    top: "24px",
+    right: "24px",
+    padding: "10px 18px",
+    borderRadius: "999px",
+    border: "none",
+    background: "linear-gradient(135deg, #0ea5e9, #0369a1)",
+    color: "#ffffff",
+    fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+    boxShadow: "0 14px 32px rgba(2, 132, 199, 0.35)",
+    zIndex: 1400,
+    transition: "transform 0.2s ease, box-shadow 0.2s ease",
+  },
+  demoButtonActive: {
+    transform: "translateY(-1px) scale(1.02)",
+    boxShadow: "0 18px 40px rgba(2, 132, 199, 0.45)",
+  },
+  demoFormOverlay: {
+    position: "fixed",
+    top: "92px",
+    right: "24px",
+    zIndex: 1390,
+  },
+  profileToggleWrapper: {
+    margin: "0 24px",
+    paddingBottom: "12px",
+  },
+  profileToggleButton: {
+    width: "100%",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "10px 12px",
+    borderRadius: "12px",
+    border: "1px solid #cbd5e1",
+    background: "linear-gradient(135deg, #ecfeff, #bae6fd)",
+    color: "#0f172a",
+    fontSize: "12px",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  profilePanel: {
+    marginTop: "8px",
+    padding: "12px",
+    borderRadius: "12px",
+    border: "1px solid #e2e8f0",
+    background: "#f8fafc",
+    display: "grid",
+    gap: "6px",
+    fontSize: "12px",
+    color: "#1f2937",
+  },
+  profileBadge: {
+    padding: "10px 12px",
+    borderRadius: "10px",
+    background: "linear-gradient(135deg, #f97316, #ef4444)",
+    color: "#ffffff",
+    fontWeight: 700,
+    letterSpacing: "0.6px",
+    textAlign: "center",
+  },
+  profileNotice: {
+    marginTop: "4px",
+    padding: "8px 10px",
+    borderRadius: "8px",
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    color: "#b91c1c",
+    fontSize: "11px",
+    fontWeight: 600,
+    textAlign: "center",
   },
 };
 // Add keyframe animation for pulse effect
@@ -1999,7 +2076,10 @@ const ChatBubble = ({ message }) => {
           textAlign: "center",
           fontSize: "14px",
         }}>
-          {text}
+
+                                                                                                            
+
+                            {text}
         </div>
       </div>
     );
@@ -2055,6 +2135,9 @@ function RealTimeVoiceApp() {
     status: "checking",
     acsOnlyIssue: false,
   });
+  const [sessionProfiles, setSessionProfiles] = useState({});
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
+  const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   const handleSystemStatus = useCallback((nextStatus) => {
     setSystemStatus((prev) =>
       prev.status === nextStatus.status && prev.acsOnlyIssue === nextStatus.acsOnlyIssue
@@ -2073,6 +2156,7 @@ function RealTimeVoiceApp() {
   const [micHovered, setMicHovered] = useState(false);
   const [phoneHovered, setPhoneHovered] = useState(false);
   const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
+  const [showDemoForm, setShowDemoForm] = useState(false);
   const isCallDisabled =
     systemStatus.status === "degraded" && systemStatus.acsOnlyIssue;
 
@@ -2209,6 +2293,65 @@ function RealTimeVoiceApp() {
 
 
   const appendLog = m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`);
+  const formatCurrency = (value) => {
+    if (typeof value !== 'number') return '—';
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
+  };
+  const formatUpper = (str) => (typeof str === 'string' ? str.toUpperCase() : '—');
+  const formatNumber = (value) => (typeof value === 'number' ? value.toLocaleString('en-US') : '—');
+  const formatDate = (value) => {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.valueOf())
+      ? value
+      : parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  };
+  const resolveRelationshipTier = (profile) =>
+    profile?.customer_intelligence?.relationship_context?.relationship_tier ??
+    profile?.relationship_tier ??
+    '—';
+  const activeSessionProfile = sessionProfiles[sessionId];
+  const resolveProfileName = (profile) => {
+    if (!profile) {
+      return undefined;
+    }
+    return (
+      profile.full_name ??
+      profile.name ??
+      profile.client_name ??
+      profile.contact_info?.contact_name ??
+      profile.contact_info?.full_name
+    );
+  };
+  const profileToggleLabel = activeSessionProfile
+    ? `${resolveProfileName(activeSessionProfile.profile) ?? 'Demo User'} • SSN ${activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'}`
+    : 'User Profile';
+  const handleDemoCreated = useCallback((demoPayload) => {
+    if (!demoPayload) {
+      return;
+    }
+    const ssn = demoPayload?.profile?.verification_codes?.ssn4;
+    const notice = demoPayload?.safety_notice ?? 'Demo data only.';
+    const sessionKey = demoPayload.session_id ?? sessionId;
+    const messageLines = [
+      '🚨 DEMO PROFILE GENERATED 🚨',
+      ssn ? `Temporary SSN Last 4: ${ssn}` : null,
+      notice,
+      'NEVER enter real customer or personal data in this environment.',
+    ].filter(Boolean);
+    setSessionProfiles((prev) => ({
+      ...prev,
+      [sessionKey]: {
+        sessionId: sessionKey,
+        profile: demoPayload.profile,
+        expiresAt: demoPayload.expires_at,
+        safetyNotice: notice,
+      },
+    }));
+    setProfilePanelOpen(true);
+    setMessages((prev) => [...prev, { speaker: "System", text: messageLines.join('\n') }]);
+    appendLog('Synthetic demo profile issued with sandbox identifiers');
+  }, [appendLog, sessionId]);
 
   useEffect(()=>{
     if(messageContainerRef.current) {
@@ -2257,22 +2400,20 @@ function RealTimeVoiceApp() {
     };
   }, []);
 
-  useEffect(()=>{
+  useEffect(() => {
     if (log.includes("Call connected"))  setCallActive(true);
     if (log.includes("Call ended"))      setCallActive(false);
-  },[log]);
+  }, [log]);
 
   const startRecognition = async () => {
+      const currentSessionId = sessionId;
       setMessages([]);
       appendLog("🎤 PCM streaming started");
 
       await initializeAudioPlayback();
 
-      const sessionId = getOrCreateSessionId();
-      console.log('🔗 [FRONTEND] Starting conversation WebSocket with session_id:', sessionId);
-
-      // 1) open WS with session ID
-      const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}`);
+      console.log('🔗 [FRONTEND] Starting conversation WebSocket with session_id:', currentSessionId);
+      const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${currentSessionId}`);
       socket.binaryType = "arraybuffer";
 
       socket.onopen = () => {
@@ -2541,6 +2682,25 @@ function RealTimeVoiceApp() {
       const txt = content || message;
       const msgType = (type || "").toLowerCase();
 
+      if (msgType === "session_profile") {
+        const sessionKey = payload.session_id ?? sessionId;
+        const profileData = payload.profile ?? payload.data?.profile;
+        if (sessionKey && profileData) {
+          setSessionProfiles((prev) => ({
+            ...prev,
+            [sessionKey]: {
+              sessionId: sessionKey,
+              profile: profileData,
+              expiresAt: payload.expires_at ?? payload.expiresAt,
+              safetyNotice: payload.safety_notice ?? payload.safetyNotice,
+            },
+          }));
+          setProfilePanelOpen(true);
+          appendLog(`Session profile acknowledged for ${sessionKey}`);
+        }
+        return;
+      }
+
       if (msgType === "user" || speaker === "User") {
         setActiveSpeaker("User");
         setMessages(prev => [...prev, { speaker: "User", text: txt }]);
@@ -2662,9 +2822,8 @@ function RealTimeVoiceApp() {
     }
     try {
       // Get the current session ID for this browser session
-      const currentSessionId = getOrCreateSessionId();
+      const currentSessionId = sessionId;
       console.log('📞 [FRONTEND] Initiating phone call with session_id:', currentSessionId);
-      console.log('📞 [FRONTEND] This session_id will be sent to backend for call mapping');
       
       const res = await fetch(`${API_BASE_URL}/api/v1/calls/initiate`, {
         method:"POST",
@@ -2783,12 +2942,59 @@ function RealTimeVoiceApp() {
               gap: '4px'
             }}>
               <span>💬</span>
-              <span>Session: {getOrCreateSessionId()}</span>
+              <span>Session: {sessionId}</span>
             </div>
           </div>
           {/* Top Right Help Button */}
           <HelpButton />
         </div>
+
+        {activeSessionProfile && (
+          <div style={styles.profileToggleWrapper}>
+            <button
+              type="button"
+              style={styles.profileToggleButton}
+              onClick={() => setProfilePanelOpen((prev) => !prev)}
+            >
+              <span>{profileToggleLabel}</span>
+              <span>{profilePanelOpen ? '▲' : '▼'}</span>
+            </button>
+            {profilePanelOpen && (
+              <div style={styles.profilePanel}>
+                <div style={styles.profileBadge}>
+                  USE DEMO SSN LAST 4: {activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'}
+                </div>
+                <div><strong>Name:</strong> {activeSessionProfile.profile?.full_name || '—'}</div>
+                <div><strong>Relationship Tier:</strong> {resolveRelationshipTier(activeSessionProfile.profile)}</div>
+                <div><strong>Company Code:</strong> {activeSessionProfile.profile?.company_code || '—'}</div>
+                <div><strong>Preferred MFA:</strong> {formatUpper(activeSessionProfile.profile?.contact_info?.preferred_mfa_method)}</div>
+                <div><strong>MFA Threshold:</strong> {formatCurrency(activeSessionProfile.profile?.mfa_required_threshold)}</div>
+                <div><strong>Email:</strong> {activeSessionProfile.profile?.contact_info?.email || '—'}</div>
+                <div><strong>Phone:</strong> {activeSessionProfile.profile?.contact_info?.phone || '—'}</div>
+                <div><strong>Current Balance:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.account_status?.current_balance)}</div>
+                <div><strong>YTD Volume:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.account_status?.ytd_transaction_volume)}</div>
+                <div><strong>Account Health:</strong> {formatNumber(activeSessionProfile.profile?.customer_intelligence?.account_status?.account_health_score)}</div>
+                <div><strong>Login Frequency:</strong> {activeSessionProfile.profile?.customer_intelligence?.account_status?.login_frequency || '—'}</div>
+                <div><strong>Last Login:</strong> {formatDate(activeSessionProfile.profile?.customer_intelligence?.account_status?.last_login)}</div>
+                <div><strong>Lifetime Value:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.relationship_context?.lifetime_value)}</div>
+                <div><strong>Verification Codes:</strong> SSN {activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'} • Employee {activeSessionProfile.profile?.verification_codes?.employee_id4 ?? '----'} • Phone {activeSessionProfile.profile?.verification_codes?.phone4 ?? '----'}</div>
+                <div><strong>Session:</strong> {activeSessionProfile.sessionId || sessionId}</div>
+                <div>
+                  <strong>Expires:</strong>{' '}
+                  {activeSessionProfile.expiresAt
+                    ? new Date(activeSessionProfile.expiresAt).toLocaleString(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : '—'}
+                </div>
+                {activeSessionProfile.safetyNotice && (
+                  <div style={styles.profileNotice}>{activeSessionProfile.safetyNotice}</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Waveform Section */}
         <div style={styles.waveformSection}>
@@ -2831,7 +3037,9 @@ function RealTimeVoiceApp() {
                 onClick={() => {
                   // Reset entire session - clear chat and restart with new session ID
                   const newSessionId = createNewSessionId();
-                  
+                  setSessionId(newSessionId);
+                  setSessionProfiles({});
+                  setProfilePanelOpen(false);
                   // Close existing WebSocket if connected
                   if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
                     console.log('🔌 Closing WebSocket for session reset...');
@@ -2844,7 +3052,7 @@ function RealTimeVoiceApp() {
                   stopRecognition();
                   setCallActive(false);
                   setShowPhoneInput(false);
-                  appendLog(`🔄️ Session reset - new session ID: ${newSessionId.split('_')[1]}`);
+                  appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
                   
                   // Add welcome message
                   setTimeout(() => {
@@ -3006,6 +3214,27 @@ function RealTimeVoiceApp() {
           >
             {callActive ? "🔴 Hang Up" : "📞 Call Me"}
           </button>
+        </div>
+      )}
+      <button
+        type="button"
+        style={{
+          ...styles.demoButton,
+          ...(showDemoForm ? styles.demoButtonActive : {}),
+        }}
+        onClick={() => setShowDemoForm((prev) => !prev)}
+        title={showDemoForm ? "Close demo profile form" : "Create 24-hour demo profile"}
+      >
+        {showDemoForm ? "Close Demo Form" : "New Demo Profile"}
+      </button>
+      {showDemoForm && (
+        <div style={styles.demoFormOverlay}>
+          <TemporaryUserForm
+            apiBaseUrl={API_BASE_URL}
+            onClose={() => setShowDemoForm(false)}
+            sessionId={sessionId}
+            onSuccess={handleDemoCreated}
+          />
         </div>
       )}
       </div>
