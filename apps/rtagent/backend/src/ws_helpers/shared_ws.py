@@ -12,6 +12,7 @@ WebSocket helpers for both realtime and ACS routers:
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import json
 import uuid
 from contextlib import suppress
@@ -196,12 +197,70 @@ async def send_tts_audio(
         style = voice_style or "conversational"
         eff_rate = rate or "medium"
 
+        # One-time voice warm-up to avoid first-response decoder stalls
+        warm_signature = (voice_to_use, style, eff_rate)
+        prepared_voices: set[tuple[str, str, str]] = getattr(
+            synth, "_prepared_voices", None
+        )
+        if prepared_voices is None:
+            prepared_voices = set()
+            setattr(synth, "_prepared_voices", prepared_voices)
+
+        if warm_signature not in prepared_voices:
+            warm_partial = partial(
+                synth.synthesize_to_pcm,
+                text=" .",
+                voice=voice_to_use,
+                sample_rate=TTS_SAMPLE_RATE_UI,
+                style=style,
+                rate=eff_rate,
+            )
+            try:
+                loop = asyncio.get_running_loop()
+                executor = getattr(ws.app.state, "speech_executor", None)
+                if executor:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(executor, warm_partial), timeout=4.0
+                    )
+                else:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, warm_partial), timeout=4.0
+                    )
+                prepared_voices.add(warm_signature)
+                logger.debug(
+                    "[%s] Warmed TTS voice=%s style=%s rate=%s (run=%s)",
+                    session_id,
+                    voice_to_use,
+                    style,
+                    eff_rate,
+                    run_id,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[%s] TTS warm-up timed out for voice=%s style=%s (run=%s)",
+                    session_id,
+                    voice_to_use,
+                    style,
+                    run_id,
+                )
+            except Exception as warm_exc:
+                logger.warning(
+                    "[%s] TTS warm-up failed for voice=%s style=%s: %s (run=%s)",
+                    session_id,
+                    voice_to_use,
+                    style,
+                    warm_exc,
+                    run_id,
+                )
+
         logger.debug(
             f"TTS synthesis: voice={voice_to_use}, style={style}, rate={eff_rate} (run={run_id})"
         )
 
         async def _synthesize() -> bytes:
-            return await asyncio.to_thread(
+            loop = asyncio.get_running_loop()
+            executor = getattr(ws.app.state, "speech_executor", None)
+            synth_partial = partial(
                 synth.synthesize_to_pcm,
                 text=text,
                 voice=voice_to_use,
@@ -209,6 +268,9 @@ async def send_tts_audio(
                 style=style,
                 rate=eff_rate,
             )
+            if executor:
+                return await loop.run_in_executor(executor, synth_partial)
+            return await loop.run_in_executor(None, synth_partial)
 
         synthesis_task = asyncio.create_task(_synthesize())
         cancel_wait: Optional[asyncio.Task[None]] = None

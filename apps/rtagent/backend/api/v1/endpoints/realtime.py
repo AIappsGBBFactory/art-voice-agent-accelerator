@@ -57,7 +57,15 @@ from config import GREETING, ENABLE_AUTH_VALIDATION
 from apps.rtagent.backend.src.helpers import check_for_stopwords, receive_and_filter
 from src.tools.latency_tool import LatencyTool
 from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
-from apps.rtagent.backend.src.ws_helpers.shared_ws import send_tts_audio
+from apps.rtagent.backend.src.orchestration.artagent.cm_utils import (
+    cm_get,
+    cm_set,
+)
+from apps.rtagent.backend.src.ws_helpers.shared_ws import (
+    _get_connection_metadata,
+    _set_connection_metadata,
+    send_tts_audio,
+)
 from apps.rtagent.backend.src.ws_helpers.envelopes import (
     make_envelope,
     make_status_envelope,
@@ -81,6 +89,9 @@ from apps.rtagent.backend.src.utils.auth import validate_acs_ws_auth, AuthError
 
 logger = get_logger("api.v1.endpoints.realtime")
 tracer = trace.get_tracer(__name__)
+
+# Sentinel for state lookups
+_STATE_SENTINEL = object()
 
 router = APIRouter()
 
@@ -461,6 +472,10 @@ async def _initialize_conversation_session(
     websocket.state.tts_client = tts_client
     websocket.state.lt = latency_tool  # ← KEY FIX: Orchestrator expects this
     websocket.state.is_synthesizing = False
+    websocket.state.audio_playing = False
+    websocket.state.tts_cancel_requested = False
+    greeting_sent = memory_manager.get_value_from_corememory("greeting_sent", False)
+    websocket.state.greeting_sent = greeting_sent
     websocket.state.user_buffer = ""
     websocket.state.orchestration_tasks = orchestration_tasks  # Track background tasks
     websocket.state.tts_cancel_event = tts_cancel_event
@@ -474,7 +489,8 @@ async def _initialize_conversation_session(
     conn_manager = websocket.app.state.conn_manager
     connection = conn_manager._conns.get(conn_id)
     if connection:
-        connection.meta.handler = {
+        handler = connection.meta.handler
+        base_state = {
             "cm": memory_manager,
             "session_id": session_id,
             "tts_client": tts_client,
@@ -482,38 +498,104 @@ async def _initialize_conversation_session(
             "is_synthesizing": False,
             "user_buffer": "",
             "tts_cancel_event": tts_cancel_event,
+            "audio_playing": False,
+            "tts_cancel_requested": False,
+            "greeting_sent": greeting_sent,
         }
 
-    # Helper function to access connection metadata
+        if handler is None or isinstance(handler, dict):
+            merged = handler or {}
+            merged.update(base_state)
+            connection.meta.handler = merged
+        else:
+            for key, value in base_state.items():
+                setattr(handler, key, value)
+
+        for key, value in base_state.items():
+            _set_connection_metadata(websocket, key, value)
+
+    # Helper function to access connection metadata with websocket fallbacks
     def get_metadata(key: str, default=None):
-        # Use connection metadata as single source of truth
-        if connection and connection.meta.handler:
-            return connection.meta.handler.get(key, default)
-        return default
+        value = getattr(websocket.state, key, _STATE_SENTINEL)
+        if value is not _STATE_SENTINEL:
+            return value
+        return _get_connection_metadata(websocket, key, default)
 
     def set_metadata(key: str, value):
-        # Use connection metadata as single source of truth
-        if connection and connection.meta.handler:
-            connection.meta.handler[key] = value
+        setattr(websocket.state, key, value)
+        if not _set_connection_metadata(websocket, key, value):
+            current_conn = conn_manager._conns.get(conn_id)
+            if current_conn:
+                handler = current_conn.meta.handler
+                if handler is None:
+                    current_conn.meta.handler = {key: value}
+                elif isinstance(handler, dict):
+                    handler[key] = value
+                else:
+                    setattr(handler, key, value)
 
-    # Send greeting message using new envelope format
-    greeting_envelope = make_status_envelope(
-        GREETING,
-        sender="System",
-        topic="session",
-        session_id=session_id,
-    )
-    await websocket.app.state.conn_manager.send_to_connection(
-        conn_id, greeting_envelope
-    )
+    def set_metadata_threadsafe(key: str, value):
+        loop = getattr(websocket.state, "_loop", None)
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(set_metadata, key, value)
+        else:
+            # Not thread-safe to call set_metadata directly if loop is None
+            logger.warning(
+                "[%s] set_metadata_threadsafe called with no running event loop; metadata update may not be thread-safe.",
+                session_id,
+            )
+            # Optionally, raise an exception instead of logging:
+            # raise RuntimeError("No running event loop for thread-safe metadata update")
 
-    # Add greeting to conversation history
-    auth_agent = websocket.app.state.auth_agent
-    memory_manager.append_to_history(auth_agent.name, "assistant", GREETING)
+    if not greeting_sent:
+        # Send greeting message using new envelope format
+        greeting_envelope = make_status_envelope(
+            GREETING,
+            sender="System",
+            topic="session",
+            session_id=session_id,
+        )
+        await websocket.app.state.conn_manager.send_to_connection(
+            conn_id, greeting_envelope
+        )
 
-    # Send TTS audio greeting
-    latency_tool = get_metadata("lt")
-    await send_tts_audio(GREETING, websocket, latency_tool=latency_tool)
+        # Add greeting to conversation history
+        auth_agent = websocket.app.state.auth_agent
+        memory_manager.append_to_history(auth_agent.name, "assistant", GREETING)
+
+        # Send TTS audio greeting
+        latency_tool = get_metadata("lt")
+        await send_tts_audio(GREETING, websocket, latency_tool=latency_tool)
+
+        # Persist greeting state
+        set_metadata("greeting_sent", True)
+        cm_set(memory_manager, greeting_sent=True)
+        greeting_sent = True
+        redis_mgr = websocket.app.state.redis
+        try:
+            await memory_manager.persist_to_redis_async(redis_mgr)
+        except Exception as persist_exc:  # noqa: BLE001
+            logger.warning(
+                "[%s] Failed to persist greeting_sent flag: %s",
+                session_id,
+                persist_exc,
+            )
+    else:
+        active_agent = cm_get(memory_manager, "active_agent", None)
+        resume_text = (
+            f"{active_agent} is ready to continue assisting you."
+            if active_agent
+            else "Session resumed with your previous assistant."
+        )
+        resume_envelope = make_status_envelope(
+            resume_text,
+            sender=active_agent or "System",
+            topic="session",
+            session_id=session_id,
+        )
+        await websocket.app.state.conn_manager.send_to_connection(
+            conn_id, resume_envelope
+        )
 
     # Persist initial state to Redis
     await memory_manager.persist_to_redis_async(redis_mgr)
@@ -539,13 +621,17 @@ async def _initialize_conversation_session(
                     tts_client.stop_speaking()
 
                 # Clear both synthesis flag and audio state
-                set_metadata("is_synthesizing", False)
-                set_metadata("audio_playing", False)
-                set_metadata("tts_cancel_requested", True)
+                set_metadata_threadsafe("is_synthesizing", False)
+                set_metadata_threadsafe("audio_playing", False)
+                set_metadata_threadsafe("tts_cancel_requested", True)
 
                 cancel_event = get_metadata("tts_cancel_event")
                 if cancel_event:
-                    cancel_event.set()
+                    loop = getattr(websocket.state, "_loop", None)
+                    if loop and loop.is_running():
+                        loop.call_soon_threadsafe(cancel_event.set)
+                    else:
+                        cancel_event.set()
 
                 async def _cancel_background_orchestration():
                     tasks = getattr(websocket.state, "orchestration_tasks", set())
@@ -718,17 +804,27 @@ async def _process_conversation_messages(
         try:
             # Get connection manager for this session
             conn_manager = websocket.app.state.conn_manager
-            connection = conn_manager._conns.get(conn_id)
-
             # Helper function to access connection metadata
+            _STATE_SENTINEL = object()
+
             def get_metadata(key: str, default=None):
-                if connection and connection.meta.handler:
-                    return connection.meta.handler.get(key, default)
-                return default
+                value = getattr(websocket.state, key, _STATE_SENTINEL)
+                if value is not _STATE_SENTINEL:
+                    return value
+                return _get_connection_metadata(websocket, key, default)
 
             def set_metadata(key: str, value):
-                if connection and connection.meta.handler:
-                    connection.meta.handler[key] = value
+                setattr(websocket.state, key, value)
+                if not _set_connection_metadata(websocket, key, value):
+                    current_conn = conn_manager._conns.get(conn_id)
+                    if current_conn:
+                        handler = current_conn.meta.handler
+                        if handler is None:
+                            current_conn.meta.handler = {key: value}
+                        elif isinstance(handler, dict):
+                            handler[key] = value
+                        else:
+                            setattr(handler, key, value)
 
             message_count = 0
             while (
