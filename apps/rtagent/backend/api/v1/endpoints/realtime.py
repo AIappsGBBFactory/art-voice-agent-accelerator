@@ -274,6 +274,7 @@ async def browser_conversation_endpoint(
     websocket: WebSocket,
     session_id: Optional[str] = Query(None),
     enable_tts: bool = Query(True),
+    user_id: Optional[str] = Query(None),
     orchestrator: Optional[callable] = Depends(get_orchestrator),
 ) -> None:
     """
@@ -301,6 +302,7 @@ async def browser_conversation_endpoint(
     Note:
         Session ID generation: Uses provided session_id, ACS call-connection-id
         from headers, or generates collision-resistant UUID4 for session isolation.
+        User context: If user_id provided, loads profile and pushes to client on connect.
     """
     memory_manager = None
     conn_id = None
@@ -376,6 +378,9 @@ async def browser_conversation_endpoint(
                 total_sessions=session_count,
                 api_version="v1",
             )
+            
+        # Push user context if provided
+        await _push_user_context(websocket, session_id, user_id, memory_manager)
 
         # Process conversation messages
         await _process_conversation_messages(
@@ -1194,3 +1199,102 @@ async def _cleanup_conversation_session(
         except Exception as e:
             span.set_status(Status(StatusCode.ERROR, f"Cleanup error: {e}"))
             logger.error(f"Error during conversation cleanup: {e}")
+
+
+# ============================================================================
+# User Context Management
+# ============================================================================
+
+
+async def _push_user_context(
+    websocket: WebSocket,
+    session_id: str,
+    user_id: Optional[str],
+    memory_manager,
+) -> None:
+    """
+    Push user context to client via WebSocket on connection.
+    
+    Sends available users list and current user profile if user_id provided.
+    Stores user context in session for orchestrator access.
+    """
+    try:
+        cosmos_manager = websocket.app.state.cosmos_manager
+        
+        # Fetch and push available users
+        users = await asyncio.to_thread(
+            cosmos_manager.query_documents,
+            query={}
+        )
+        
+        if users:
+            users_list = []
+            for user in users:
+                loyalty_data = user.get("dynamics365_data", {})
+                location = user.get("location", {})
+                preferences = user.get("preferences", {})
+                
+                # Map avatar emoji
+                uid = user.get("user_id", "")
+                if uid == "sarah_johnson":
+                    emoji = "🏃‍♀️"
+                elif uid == "michael_chen":
+                    emoji = "💼"
+                elif uid == "emma_rodriguez":
+                    emoji = "🌸"
+                else:
+                    styles = preferences.get("style", [])
+                    if "athletic" in styles:
+                        emoji = "🏃‍♀️"
+                    elif "business_casual" in styles or "professional" in styles:
+                        emoji = "💼"
+                    elif "boho" in styles or "vintage" in styles:
+                        emoji = "🌸"
+                    else:
+                        emoji = "👤"
+                
+                users_list.append({
+                    "user_id": user.get("user_id"),
+                    "full_name": user.get("full_name"),
+                    "loyalty_tier": loyalty_data.get("loyalty_tier", "Member"),
+                    "location": f"{location.get('city', 'Unknown')}, {location.get('state', '')}".strip(", "),
+                    "avatar_emoji": emoji,
+                    "style_summary": ", ".join(preferences.get("style", [])[:2]).title()
+                })
+            
+            # Push users list to client
+            users_envelope = make_envelope(
+                etype="users_list",
+                sender="System",
+                payload={"users": users_list},
+                topic="session",
+                session_id=session_id
+            )
+            await websocket.send_text(json.dumps(users_envelope))
+            logger.info(f"[{session_id}] Pushed {len(users_list)} users to client")
+        
+        # If user_id provided, fetch and push full profile
+        if user_id:
+            profile = await asyncio.to_thread(
+                cosmos_manager.read_document,
+                query={"user_id": user_id}
+            )
+            
+            if profile:
+                profile_envelope = make_envelope(
+                    etype="user_profile",
+                    sender="System",
+                    payload={"profile": profile},
+                    topic="session",
+                    session_id=session_id
+                )
+                await websocket.send_text(json.dumps(profile_envelope))
+                
+                # Store in session metadata for orchestrator
+                if memory_manager:
+                    memory_manager.set_metadata("current_user", profile)
+                
+                logger.info(f"[{session_id}] Pushed user profile: {profile.get('full_name')}")
+    
+    except Exception as e:
+        logger.error(f"[{session_id}] Error pushing user context: {e}", exc_info=True)

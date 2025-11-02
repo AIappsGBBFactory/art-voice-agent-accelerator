@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import "reactflow/dist/style.css";
+import UserSwitcher from './UserSwitcher';
 
 // Environment configuration
 const backendPlaceholder = '__BACKEND_URL__';
@@ -2261,6 +2262,14 @@ function RealTimeVoiceApp() {
   const [chatMode, setChatMode] = useState(false);
   const [chatInput, setChatInput] = useState('');
 
+  // User management state
+  const [currentUser, setCurrentUser] = useState(null);
+  const [availableUsers, setAvailableUsers] = useState([]);
+  const [isLoadingUser, setIsLoadingUser] = useState(false);
+  
+  // Profile cache for production - avoid redundant API calls
+  const profileCacheRef = useRef(new Map());
+
   // Tooltip states
   const [showResetTooltip, setShowResetTooltip] = useState(false);
   const [showMicTooltip, setShowMicTooltip] = useState(false);
@@ -2412,6 +2421,45 @@ function RealTimeVoiceApp() {
 
   const appendLog = m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`);
 
+  const handleUserSwitch = async (newUser) => {
+    setIsLoadingUser(true);
+    appendLog(`Switching to user: ${newUser.full_name}`);
+    
+    try {
+      const newSessionId = createNewSessionId();
+      
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+      
+      // Use cached profile from availableUsers or wait for WebSocket push
+      const cachedProfile = profileCacheRef.current.get(newUser.user_id);
+      if (cachedProfile) {
+        setCurrentUser({
+          ...newUser,
+          ...cachedProfile
+        });
+      } else {
+        setCurrentUser(newUser);
+      }
+      
+      setMessages([]);
+      setLog('');
+      setRecording(false);
+      setIsMuted(true);
+      setCallActive(false);
+      setChatMode(false);
+      
+      appendLog(`Switched to ${newUser.full_name} (${newUser.loyalty_tier})`);
+    } catch (error) {
+      console.error('Error during user switch:', error);
+      appendLog(`User switch failed: ${error.message}`);
+    } finally {
+      setIsLoadingUser(false);
+    }
+  };
+
   useEffect(()=>{
     if(messageContainerRef.current) {
       messageContainerRef.current.scrollTo({
@@ -2426,6 +2474,7 @@ function RealTimeVoiceApp() {
     }
   },[messages]);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (processorRef.current) {
@@ -2478,8 +2527,10 @@ function RealTimeVoiceApp() {
         socketRef.current.close();
       }
 
-      // 1) open WS with session ID and enable_tts=true for voice mode
-      const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&enable_tts=true`);
+      // 1) open WS with session ID, user_id (if selected), and enable_tts=true for voice mode
+      const userId = currentUser?.user_id || '';
+      const userParam = userId ? `&user_id=${userId}` : '';
+      const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&enable_tts=true${userParam}`);
       socket.binaryType = "arraybuffer";
 
       socket.onopen = () => {
@@ -2627,7 +2678,9 @@ function RealTimeVoiceApp() {
         console.log("🚀 Auto-starting text-only session...");
         // Start WebSocket connection WITHOUT TTS (text-only mode)
         const sessionId = getOrCreateSessionId();
-        const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&enable_tts=false`);
+        const userId = currentUser?.user_id || '';
+        const userParam = userId ? `&user_id=${userId}` : '';
+        const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&enable_tts=false${userParam}`);
         socket.binaryType = "arraybuffer"; // Support both text and binary messages
         socketRef.current = socket;
         
@@ -2667,17 +2720,6 @@ function RealTimeVoiceApp() {
     };
 
     const handleSocketMessage = async (event) => {
-      // Log all incoming messages for debugging
-      if (typeof event.data === "string") {
-        try {
-          const msg = JSON.parse(event.data);
-          console.log("📨 WebSocket message received:", msg.type || "unknown", msg);
-        } catch (e) {
-          console.log("📨 Non-JSON WebSocket message:", event.data);
-        }
-      } else {
-        console.log("📨 Binary WebSocket message received, length:", event.data.byteLength);
-      }
 
       if (typeof event.data !== "string") {
         const ctx = new AudioContext();
@@ -2699,16 +2741,9 @@ function RealTimeVoiceApp() {
         return;
       }
 
-      // --- NEW: Handle envelope format from backend ---
+      // Handle envelope format from backend
       // If message is in envelope format, extract the actual payload
       if (payload.type && payload.sender && payload.payload && payload.ts) {
-        console.log("📨 Received envelope message:", {
-          type: payload.type,
-          sender: payload.sender,
-          topic: payload.topic,
-          session_id: payload.session_id
-        });
-        
         // Extract the actual message from the envelope
         const envelopeType = payload.type;
         const envelopeSender = payload.sender;
@@ -2742,15 +2777,41 @@ function RealTimeVoiceApp() {
             content: actualPayload.message
           };
         } else {
-          // For other envelope types, use the payload directly
+          // For other envelope types, preserve type and payload structure
           payload = {
-            ...actualPayload,
+            type: envelopeType,
+            payload: actualPayload,
             sender: envelopeSender,
             speaker: envelopeSender
           };
         }
+      }
+      
+      // Handle users list pushed from backend
+      if (payload.type === "users_list" && payload.payload?.users) {
+        setAvailableUsers(payload.payload.users);
         
-        console.log("📨 Transformed envelope to legacy format:", payload);
+        // Auto-select first user if none selected
+        if (!currentUser && payload.payload.users.length > 0) {
+          const firstUser = payload.payload.users[0];
+          setCurrentUser(firstUser);
+          appendLog(`Welcome ${firstUser.full_name}!`);
+        }
+        return;
+      }
+      
+      // Handle user profile pushed from backend
+      if (payload.type === "user_profile" && payload.payload?.profile) {
+        const profile = payload.payload.profile;
+        profileCacheRef.current.set(profile.user_id, profile);
+        
+        // Update current user with full profile
+        setCurrentUser(prev => ({
+          ...prev,
+          ...profile
+        }));
+        
+        return;
       }
       
       // Handle audio_data messages from backend TTS
@@ -3048,6 +3109,21 @@ function RealTimeVoiceApp() {
    * ------------------------------------------------------------------ */
   return (
     <div style={styles.root}>
+      {/* User Profile Switcher - Floating outside ARTAgent box (like BackendIndicator) */}
+      <div style={{
+        position: 'fixed',
+        top: '68px',
+        right: '16px',
+        zIndex: 1000
+      }}>
+        <UserSwitcher 
+          currentUser={currentUser}
+          availableUsers={availableUsers}
+          onUserSwitch={handleUserSwitch}
+          isLoading={isLoadingUser}
+        />
+      </div>
+
       <div style={styles.mainContainer}>
         {/* Backend Status Indicator */}
         <BackendIndicator url={API_BASE_URL} onStatusChange={handleSystemStatus} />

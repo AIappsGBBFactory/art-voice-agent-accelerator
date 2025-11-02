@@ -401,6 +401,12 @@ async def lifespan(app: FastAPI):
             database_name=AZURE_COSMOS_DATABASE_NAME,
             collection_name=AZURE_COSMOS_COLLECTION_NAME,
         )
+        # Cosmos manager for retail users collection
+        app.state.cosmos_manager = CosmosDBMongoCoreManager(
+            connection_string=AZURE_COSMOS_CONNECTION_STRING,
+            database_name="retail-db",
+            collection_name="users",
+        )
         app.state.acs_caller = initialize_acs_caller_instance()
         logger.info("external services ready")
 

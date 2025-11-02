@@ -7,6 +7,35 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.handoffs import (
     handoff_transfer_agency_agent,
 )
 
+# Retail Tools
+from apps.rtagent.backend.src.agents.artagent.tool_store.retail_product_tools import (
+    search_products_general,
+    search_products_filtered,
+    check_product_availability,
+)
+from apps.rtagent.backend.src.agents.artagent.tool_store.retail_handoffs import (
+    handoff_to_stylist,
+    handoff_to_postsale,
+    handoff_to_concierge,
+    stylist_handoff_to_postsale,
+    escalate_to_human as retail_escalate_to_human,
+)
+from apps.rtagent.backend.src.agents.artagent.tool_store.retail_checkout_tools import (
+    initiate_checkout,
+    apply_membership_discount,
+    get_shipping_options,
+    process_payment,
+    create_order,
+    get_order_status,
+)
+from apps.rtagent.backend.src.agents.artagent.tool_store.retail_store_info_tools import (
+    get_product_details,
+    get_pricing_for_tier,
+    check_current_promotions,
+    get_store_hours,
+    get_return_policy,
+)
+
 from apps.rtagent.backend.src.agents.artagent.tool_store.financial_mfa_auth import (
     verify_client_identity,
     verify_fraud_client_identity,
@@ -65,6 +94,28 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.schemas import (
     handoff_to_trading_schema,
 )
 
+# Retail Tool Schemas
+from apps.rtagent.backend.src.agents.artagent.tool_store.retail_schemas import (
+    search_products_general_schema,
+    search_products_filtered_schema,
+    check_product_availability_schema,
+    handoff_to_stylist_schema,
+    handoff_to_postsale_schema,
+    handoff_to_concierge_schema,
+    escalate_to_human_schema as retail_escalate_to_human_schema,
+    initiate_checkout_schema,
+    apply_membership_discount_schema,
+    get_shipping_options_schema,
+    process_payment_schema,
+    create_order_schema,
+    get_order_status_schema,
+    get_product_details_schema,
+    get_pricing_for_tier_schema,
+    check_current_promotions_schema,
+    get_store_hours_schema,
+    get_return_policy_schema,
+)
+
 function_mapping: Dict[str, Callable[..., Any]] = {
     "escalate_emergency": escalate_emergency,
     "escalate_human": escalate_human,
@@ -92,6 +143,28 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "calculate_liquidation_proceeds": calculate_liquidation_proceeds,
     "handoff_to_compliance": handoff_to_compliance,
     "handoff_to_trading": handoff_to_trading,
+    # Retail Product Search Tools
+    "search_products_general": search_products_general,
+    "search_products_filtered": search_products_filtered,
+    "check_product_availability": check_product_availability,
+    # Retail Handoff Tools
+    "handoff_to_stylist": handoff_to_stylist,
+    "handoff_to_postsale": handoff_to_postsale,
+    "handoff_to_concierge": handoff_to_concierge,
+    "stylist_handoff_to_postsale": stylist_handoff_to_postsale,
+    # Retail Checkout Tools
+    "initiate_checkout": initiate_checkout,
+    "apply_membership_discount": apply_membership_discount,
+    "get_shipping_options": get_shipping_options,
+    "process_payment": process_payment,
+    "create_order": create_order,
+    "get_order_status": get_order_status,
+    # Retail Store Info Tools
+    "get_product_details": get_product_details,
+    "get_pricing_for_tier": get_pricing_for_tier,
+    "check_current_promotions": check_current_promotions,
+    "get_store_hours": get_store_hours,
+    "get_return_policy": get_return_policy,
 }
 
 
@@ -122,6 +195,28 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": calculate_liquidation_proceeds_schema},
     {"type": "function", "function": handoff_to_compliance_schema},
     {"type": "function", "function": handoff_to_trading_schema},
+    # Retail Product Search Tools
+    {"type": "function", "function": search_products_general_schema},
+    {"type": "function", "function": search_products_filtered_schema},
+    {"type": "function", "function": check_product_availability_schema},
+    # Retail Handoff Tools
+    {"type": "function", "function": handoff_to_stylist_schema},
+    {"type": "function", "function": handoff_to_postsale_schema},
+    {"type": "function", "function": handoff_to_concierge_schema},
+    {"type": "function", "function": retail_escalate_to_human_schema},
+    # Retail Checkout Tools
+    {"type": "function", "function": initiate_checkout_schema},
+    {"type": "function", "function": apply_membership_discount_schema},
+    {"type": "function", "function": get_shipping_options_schema},
+    {"type": "function", "function": process_payment_schema},
+    {"type": "function", "function": create_order_schema},
+    {"type": "function", "function": get_order_status_schema},
+    # Retail Store Info Tools
+    {"type": "function", "function": get_product_details_schema},
+    {"type": "function", "function": get_pricing_for_tier_schema},
+    {"type": "function", "function": check_current_promotions_schema},
+    {"type": "function", "function": get_store_hours_schema},
+    {"type": "function", "function": get_return_policy_schema},
 ]
 
 TOOL_REGISTRY: dict[str, dict] = {t["function"]["name"]: t for t in available_tools}
