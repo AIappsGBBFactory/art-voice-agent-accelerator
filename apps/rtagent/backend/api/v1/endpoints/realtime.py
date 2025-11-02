@@ -541,9 +541,6 @@ async def _initialize_conversation_session(
         "greeting_sent": greeting_sent,
         "last_tts_start_ts": 0.0,
         "last_tts_end_ts": 0.0,
-        "energy_barge_hits": 0,
-        "energy_last_hit_ts": 0.0,
-        "energy_last_trigger_ts": 0.0,
     }
 
     for key, value in initial_metadata.items():
