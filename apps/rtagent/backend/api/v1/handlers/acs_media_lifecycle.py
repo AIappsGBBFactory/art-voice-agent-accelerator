@@ -672,24 +672,37 @@ class RouteTurnThread:
                         stream_mode=StreamMode.MEDIA,
                     )
                 )
+                
+                # Use dynamic timeout based on text length for greetings and longer content
+                base_timeout = 8.0
+                if event.event_type == SpeechEventType.GREETING:
+                    # Allow extra time for longer greetings (roughly 1 second per 15 characters)
+                    dynamic_timeout = max(base_timeout, len(event.text) / 15.0 + 5.0)
+                else:
+                    dynamic_timeout = base_timeout
+                
                 try:
-                    await asyncio.wait_for(self.current_response_task, timeout=8.0)
+                    await asyncio.wait_for(self.current_response_task, timeout=dynamic_timeout)
+                    if event.event_type == SpeechEventType.GREETING:
+                        logger.info(
+                            f"[{self.call_connection_id}] Greeting playback completed successfully"
+                        )
                 except asyncio.TimeoutError:
                     logger.error(
-                        f"[{self.call_connection_id}] {playback_type} playback timed out waiting for TTS pipeline"
+                        f"[{self.call_connection_id}] {playback_type} playback timed out after {dynamic_timeout:.1f}s (text_len={len(event.text)})"
                     )
-                    if not self.current_response_task.done():
+                    # Only cancel if task is still running
+                    if self.current_response_task and not self.current_response_task.done():
                         self.current_response_task.cancel()
+                        try:
+                            await self.current_response_task
+                        except asyncio.CancelledError:
+                            pass
                 except Exception as e:
                     logger.error(
                         f"[{self.call_connection_id}] {playback_type} playback failed: {e}"
                     )
-                    if not self.current_response_task.done():
-                        self.current_response_task.cancel()
-                if event.event_type == SpeechEventType.GREETING:
-                    logger.info(
-                        f"[{self.call_connection_id}] Greeting playback dispatched"
-                    )
+                    # Let task complete naturally on non-timeout errors to avoid interference
             except asyncio.CancelledError:
                 logger.info(
                     f"[{self.call_connection_id}] {event.event_type.value} playback cancelled"
