@@ -123,6 +123,102 @@ check_product_availability_schema: Dict[str, Any] = {
     },
 }
 
+search_complementary_items_schema: Dict[str, Any] = {
+    "name": "search_complementary_items",
+    "description": (
+        "Find matching pieces for outfit building (e.g., 'what goes with these jeans?'). "
+        "Returns products that complement the base item."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "base_product_id": {
+                "type": "string",
+                "description": "Product ID to find complementary items for.",
+            },
+            "category_filters": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional categories to search within (e.g., ['tops', 'shoes']).",
+            },
+        },
+        "required": ["base_product_id"],
+        "additionalProperties": False,
+    },
+}
+
+get_outfit_suggestions_schema: Dict[str, Any] = {
+    "name": "get_outfit_suggestions",
+    "description": (
+        "Get pre-curated outfit combinations for specific occasions. "
+        "Returns complete outfit suggestions with all pieces."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "occasion": {
+                "type": "string",
+                "enum": ["wedding", "birthday", "work", "casual_outing", "date_night", "gym", "interview"],
+                "description": "Event or occasion type.",
+            },
+            "style": {
+                "type": "string",
+                "enum": ["modern", "classic", "trendy", "minimalist", "bohemian"],
+                "description": "Style preference (optional).",
+            },
+            "budget": {
+                "type": "number",
+                "description": "Maximum budget in USD (optional).",
+                "minimum": 0,
+            },
+        },
+        "required": ["occasion"],
+        "additionalProperties": False,
+    },
+}
+
+get_customer_style_profile_schema: Dict[str, Any] = {
+    "name": "get_customer_style_profile",
+    "description": (
+        "Retrieve customer purchase history, style preferences, and sizing information. "
+        "Use for personalized recommendations."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "customer_id": {
+                "type": "string",
+                "description": "User identifier from session.",
+            },
+        },
+        "required": ["customer_id"],
+        "additionalProperties": False,
+    },
+}
+
+get_customer_measurements_schema: Dict[str, Any] = {
+    "name": "get_customer_measurements",
+    "description": (
+        "Get customer measurements for fit recommendations. "
+        "Returns sizing information and fit suggestions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "customer_id": {
+                "type": "string",
+                "description": "User identifier.",
+            },
+            "product_id": {
+                "type": "string",
+                "description": "Optional product ID for size recommendation.",
+            },
+        },
+        "required": ["customer_id"],
+        "additionalProperties": False,
+    },
+}
+
 # ═══════════════════════════════════════════════════════════════════
 # CHECKOUT & PAYMENT TOOLS (Post-Sale Agent)
 # ═══════════════════════════════════════════════════════════════════
@@ -355,6 +451,29 @@ handoff_to_postsale_schema: Dict[str, Any] = {
     },
 }
 
+stylist_handoff_to_postsale_schema: Dict[str, Any] = {
+    "name": "stylist_handoff_to_postsale",
+    "description": (
+        "Transfer customer from Personal Stylist to Post-Sale Agent after styling session. "
+        "Use when customer is ready to purchase stylist recommendations."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "recommended_items": {
+                "type": "string",
+                "description": "Products from styling recommendations (required).",
+            },
+            "styling_context": {
+                "type": "string",
+                "description": "Context about occasion and style notes (optional).",
+            },
+        },
+        "required": ["recommended_items"],
+        "additionalProperties": False,
+    },
+}
+
 handoff_to_concierge_schema: Dict[str, Any] = {
     "name": "handoff_to_concierge",
     "description": (
@@ -364,13 +483,13 @@ handoff_to_concierge_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "caller_name": {
-                "type": "string",
-                "description": "Customer name (optional).",
-            },
             "reason": {
                 "type": "string",
                 "description": "Why returning to concierge (required).",
+            },
+            "completed_task": {
+                "type": "string",
+                "description": "Summary of what was accomplished (optional).",
             },
         },
         "required": ["reason"],
@@ -387,10 +506,6 @@ escalate_to_human_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "caller_name": {
-                "type": "string",
-                "description": "Customer name (optional).",
-            },
             "issue": {
                 "type": "string",
                 "description": "Description of problem (required).",
@@ -402,7 +517,7 @@ escalate_to_human_schema: Dict[str, Any] = {
                 "default": "medium",
             },
         },
-        "required": ["issue"],
+        "required": ["issue", "urgency"],
         "additionalProperties": False,
     },
 }
@@ -499,6 +614,661 @@ get_return_policy_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {},
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# PERSONAL STYLIST - VISUAL & STYLING TOOLS
+# ═══════════════════════════════════════════════════════════════════
+
+get_product_images_schema: Dict[str, Any] = {
+    "name": "get_product_images",
+    "description": (
+        "TODO: Retrieve high-resolution product images from Azure Blob Storage. "
+        "Get multiple angles, lifestyle shots, and detail views."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "product_id": {
+                "type": "string",
+                "description": "Product identifier.",
+            },
+            "image_type": {
+                "type": "string",
+                "enum": ["product", "lifestyle", "detail", "all"],
+                "description": "Type of images to retrieve (default: all).",
+            },
+        },
+        "required": ["product_id"],
+        "additionalProperties": False,
+    },
+}
+
+get_style_inspiration_schema: Dict[str, Any] = {
+    "name": "get_style_inspiration",
+    "description": (
+        "TODO: Get lookbook images and style examples for occasions. "
+        "Visual inspiration boards from curated collections."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "occasion": {
+                "type": "string",
+                "enum": ["wedding", "birthday", "work", "casual", "date_night", "interview"],
+                "description": "Event type for styling inspiration.",
+            },
+            "style": {
+                "type": "string",
+                "enum": ["modern", "classic", "trendy", "bohemian", "minimalist"],
+                "description": "Style aesthetic preference (optional).",
+            },
+        },
+        "required": ["occasion"],
+        "additionalProperties": False,
+    },
+}
+
+suggest_color_combinations_schema: Dict[str, Any] = {
+    "name": "suggest_color_combinations",
+    "description": (
+        "TODO: Suggest color pairings based on color theory for outfit coordination. "
+        "Recommends complementary, analogous, or triadic color schemes."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "base_colors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of colors in current outfit pieces.",
+            },
+            "occasion": {
+                "type": "string",
+                "description": "Optional occasion context for appropriate color choices.",
+            },
+        },
+        "required": ["base_colors"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# POST-SALE - PAYMENT & CHECKOUT TOOLS
+# ═══════════════════════════════════════════════════════════════════
+
+apply_promo_code_schema: Dict[str, Any] = {
+    "name": "apply_promo_code",
+    "description": (
+        "TODO: Validate and apply promotional code to shopping cart. "
+        "Checks expiration, usage limits, and category restrictions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "promo_code": {
+                "type": "string",
+                "description": "Promotional code to apply.",
+            },
+            "cart_id": {
+                "type": "string",
+                "description": "Shopping cart identifier.",
+            },
+        },
+        "required": ["promo_code", "cart_id"],
+        "additionalProperties": False,
+    },
+}
+
+save_payment_method_schema: Dict[str, Any] = {
+    "name": "save_payment_method",
+    "description": (
+        "TODO: Securely store tokenized payment method for future checkouts. "
+        "PCI-compliant token storage via payment gateway."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "payment_token": {
+                "type": "string",
+                "description": "Tokenized payment method from gateway.",
+            },
+            "customer_id": {
+                "type": "string",
+                "description": "Customer identifier.",
+            },
+        },
+        "required": ["payment_token", "customer_id"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# POST-SALE - ORDER MANAGEMENT TOOLS
+# ═══════════════════════════════════════════════════════════════════
+
+get_order_history_schema: Dict[str, Any] = {
+    "name": "get_order_history",
+    "description": (
+        "TODO: Retrieve customer's past orders with filtering. "
+        "Returns order summaries with status and dates."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "customer_id": {
+                "type": "string",
+                "description": "Customer identifier.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Number of recent orders to return (default: 10).",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 10,
+            },
+        },
+        "required": ["customer_id"],
+        "additionalProperties": False,
+    },
+}
+
+cancel_order_schema: Dict[str, Any] = {
+    "name": "cancel_order",
+    "description": (
+        "TODO: Cancel order before shipment and initiate refund. "
+        "Only allowed for orders in pending or processing status."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "order_id": {
+                "type": "string",
+                "description": "Order identifier to cancel.",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Cancellation reason for analytics.",
+            },
+        },
+        "required": ["order_id", "reason"],
+        "additionalProperties": False,
+    },
+}
+
+modify_order_schema: Dict[str, Any] = {
+    "name": "modify_order",
+    "description": (
+        "TODO: Modify order details before shipment (address, items, quantities). "
+        "Only allowed before order ships."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "order_id": {
+                "type": "string",
+                "description": "Order identifier.",
+            },
+            "modifications": {
+                "type": "object",
+                "description": "Dictionary of changes (e.g., {'shipping_address': {...}, 'items': [...]}).",
+            },
+        },
+        "required": ["order_id", "modifications"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# POST-SALE - RETURNS & EXCHANGES
+# ═══════════════════════════════════════════════════════════════════
+
+initiate_return_schema: Dict[str, Any] = {
+    "name": "initiate_return",
+    "description": (
+        "TODO: Start return process and generate RMA number with return label. "
+        "Validates 30-day return window and creates return case."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "order_id": {
+                "type": "string",
+                "description": "Order containing items to return.",
+            },
+            "item_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of item identifiers to return.",
+            },
+            "reason": {
+                "type": "string",
+                "enum": ["wrong_size", "wrong_color", "quality_issue", "changed_mind", "ordered_by_mistake"],
+                "description": "Return reason.",
+            },
+        },
+        "required": ["order_id", "item_ids", "reason"],
+        "additionalProperties": False,
+    },
+}
+
+initiate_exchange_schema: Dict[str, Any] = {
+    "name": "initiate_exchange",
+    "description": (
+        "TODO: Exchange item for different size/color with advanced shipping. "
+        "New item ships immediately; return label provided for original."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "order_id": {
+                "type": "string",
+                "description": "Original order identifier.",
+            },
+            "item_id": {
+                "type": "string",
+                "description": "Item to exchange.",
+            },
+            "exchange_item_id": {
+                "type": "string",
+                "description": "New product identifier to receive.",
+            },
+        },
+        "required": ["order_id", "item_id", "exchange_item_id"],
+        "additionalProperties": False,
+    },
+}
+
+check_return_eligibility_schema: Dict[str, Any] = {
+    "name": "check_return_eligibility",
+    "description": (
+        "TODO: Validate if item qualifies for return based on policy. "
+        "Checks 30-day window, tags attached, unworn condition."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "order_id": {
+                "type": "string",
+                "description": "Order identifier.",
+            },
+            "item_id": {
+                "type": "string",
+                "description": "Item to validate.",
+            },
+        },
+        "required": ["order_id", "item_id"],
+        "additionalProperties": False,
+    },
+}
+
+process_refund_schema: Dict[str, Any] = {
+    "name": "process_refund",
+    "description": (
+        "TODO: Issue refund to original payment method after return received. "
+        "Processes via payment gateway, 5-7 business days."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "return_id": {
+                "type": "string",
+                "description": "Return case identifier.",
+            },
+            "refund_amount": {
+                "type": "number",
+                "description": "Amount to refund in USD.",
+            },
+        },
+        "required": ["return_id", "refund_amount"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# POST-SALE - SHIPPING & DELIVERY TOOLS
+# ═══════════════════════════════════════════════════════════════════
+
+select_shipping_method_schema: Dict[str, Any] = {
+    "name": "select_shipping_method",
+    "description": (
+        "TODO: Choose shipping tier for order (standard/express/next_day). "
+        "Updates cart with selected shipping cost."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "cart_id": {
+                "type": "string",
+                "description": "Shopping cart identifier.",
+            },
+            "shipping_method": {
+                "type": "string",
+                "enum": ["standard", "express", "next_day"],
+                "description": "Shipping tier selection.",
+            },
+        },
+        "required": ["cart_id", "shipping_method"],
+        "additionalProperties": False,
+    },
+}
+
+track_shipment_schema: Dict[str, Any] = {
+    "name": "track_shipment",
+    "description": (
+        "TODO: Get real-time shipment tracking from carrier (UPS/FedEx/USPS). "
+        "Returns status, location, and delivery ETA."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "tracking_number": {
+                "type": "string",
+                "description": "Shipment tracking number.",
+            },
+        },
+        "required": ["tracking_number"],
+        "additionalProperties": False,
+    },
+}
+
+update_shipping_address_schema: Dict[str, Any] = {
+    "name": "update_shipping_address",
+    "description": (
+        "TODO: Change delivery address before order ships. "
+        "Only allowed for orders not yet in transit."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "order_id": {
+                "type": "string",
+                "description": "Order identifier.",
+            },
+            "new_address": {
+                "type": "object",
+                "description": "Updated shipping address (street, city, state, zip, country).",
+            },
+        },
+        "required": ["order_id", "new_address"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# POST-SALE - CUSTOMER ACCOUNT TOOLS
+# ═══════════════════════════════════════════════════════════════════
+
+get_customer_profile_schema: Dict[str, Any] = {
+    "name": "get_customer_profile",
+    "description": (
+        "TODO: Retrieve customer account info (tier, addresses, payment methods). "
+        "Returns full profile from Cosmos DB users collection."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "customer_id": {
+                "type": "string",
+                "description": "Customer identifier.",
+            },
+        },
+        "required": ["customer_id"],
+        "additionalProperties": False,
+    },
+}
+
+update_payment_method_schema: Dict[str, Any] = {
+    "name": "update_payment_method",
+    "description": (
+        "TODO: Update saved payment method with new tokenized card. "
+        "PCI-compliant token storage, invalidates old token."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "customer_id": {
+                "type": "string",
+                "description": "Customer identifier.",
+            },
+            "payment_token": {
+                "type": "string",
+                "description": "New tokenized payment method.",
+            },
+        },
+        "required": ["customer_id", "payment_token"],
+        "additionalProperties": False,
+    },
+}
+
+get_loyalty_balance_schema: Dict[str, Any] = {
+    "name": "get_loyalty_balance",
+    "description": (
+        "TODO: Get customer loyalty rewards points balance. "
+        "Returns points available for redemption and tier benefits."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "customer_id": {
+                "type": "string",
+                "description": "Customer identifier.",
+            },
+        },
+        "required": ["customer_id"],
+        "additionalProperties": False,
+    },
+}
+
+apply_loyalty_points_schema: Dict[str, Any] = {
+    "name": "apply_loyalty_points",
+    "description": (
+        "TODO: Redeem loyalty points toward purchase. "
+        "Converts points to discount on cart total."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "customer_id": {
+                "type": "string",
+                "description": "Customer identifier.",
+            },
+            "points_amount": {
+                "type": "integer",
+                "description": "Number of points to redeem.",
+            },
+            "cart_id": {
+                "type": "string",
+                "description": "Shopping cart identifier.",
+            },
+        },
+        "required": ["customer_id", "points_amount", "cart_id"],
+        "additionalProperties": False,
+    },
+}
+
+check_gift_card_balance_schema: Dict[str, Any] = {
+    "name": "check_gift_card_balance",
+    "description": (
+        "TODO: Check gift card balance and expiration. "
+        "Returns available balance and usage restrictions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "gift_card_number": {
+                "type": "string",
+                "description": "Gift card identifier.",
+            },
+        },
+        "required": ["gift_card_number"],
+        "additionalProperties": False,
+    },
+}
+
+apply_gift_card_schema: Dict[str, Any] = {
+    "name": "apply_gift_card",
+    "description": (
+        "TODO: Apply gift card to cart payment. "
+        "Validates balance and deducts from card."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "gift_card_number": {
+                "type": "string",
+                "description": "Gift card identifier.",
+            },
+            "cart_id": {
+                "type": "string",
+                "description": "Shopping cart identifier.",
+            },
+        },
+        "required": ["gift_card_number", "cart_id"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# POST-SALE - SUPPORT & DOCUMENTATION TOOLS
+# ═══════════════════════════════════════════════════════════════════
+
+get_shipping_policy_schema: Dict[str, Any] = {
+    "name": "get_shipping_policy",
+    "description": (
+        "TODO: Get shipping terms, timelines, and cost structure. "
+        "Returns policy for domestic and international shipping."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
+}
+
+get_warranty_info_schema: Dict[str, Any] = {
+    "name": "get_warranty_info",
+    "description": (
+        "TODO: Get product warranty details and claim process. "
+        "Returns manufacturer warranty and store protection options."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "product_id": {
+                "type": "string",
+                "description": "Product identifier.",
+            },
+        },
+        "required": ["product_id"],
+        "additionalProperties": False,
+    },
+}
+
+send_order_confirmation_email_schema: Dict[str, Any] = {
+    "name": "send_order_confirmation_email",
+    "description": (
+        "TODO: Resend order confirmation email via Azure Communication Services. "
+        "Includes order details, tracking, and delivery ETA."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "order_id": {
+                "type": "string",
+                "description": "Order identifier.",
+            },
+            "customer_email": {
+                "type": "string",
+                "description": "Recipient email address.",
+            },
+        },
+        "required": ["order_id", "customer_email"],
+        "additionalProperties": False,
+    },
+}
+
+send_return_label_email_schema: Dict[str, Any] = {
+    "name": "send_return_label_email",
+    "description": (
+        "TODO: Email return shipping label to customer. "
+        "Includes PDF label and return instructions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "return_id": {
+                "type": "string",
+                "description": "Return case identifier.",
+            },
+            "customer_email": {
+                "type": "string",
+                "description": "Recipient email address.",
+            },
+        },
+        "required": ["return_id", "customer_email"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# POST-SALE - ESCALATION TOOLS
+# ═══════════════════════════════════════════════════════════════════
+
+escalate_payment_issue_schema: Dict[str, Any] = {
+    "name": "escalate_payment_issue",
+    "description": (
+        "TODO: Escalate payment failures or fraud alerts to support team. "
+        "Creates ticket for payment specialist review."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "customer_id": {
+                "type": "string",
+                "description": "Customer identifier.",
+            },
+            "issue_type": {
+                "type": "string",
+                "enum": ["declined_card", "fraud_alert", "insufficient_funds", "address_mismatch"],
+                "description": "Payment problem category.",
+            },
+            "details": {
+                "type": "string",
+                "description": "Issue description.",
+            },
+        },
+        "required": ["customer_id", "issue_type", "details"],
+        "additionalProperties": False,
+    },
+}
+
+escalate_shipping_issue_schema: Dict[str, Any] = {
+    "name": "escalate_shipping_issue",
+    "description": (
+        "TODO: Escalate shipping problems to logistics team. "
+        "Handles lost packages, delivery delays, and carrier issues."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "order_id": {
+                "type": "string",
+                "description": "Order identifier.",
+            },
+            "tracking_number": {
+                "type": "string",
+                "description": "Shipment tracking number.",
+            },
+            "issue": {
+                "type": "string",
+                "enum": ["lost_package", "delivery_delay", "damaged_package", "wrong_address"],
+                "description": "Shipping problem type.",
+            },
+        },
+        "required": ["order_id", "tracking_number", "issue"],
         "additionalProperties": False,
     },
 }

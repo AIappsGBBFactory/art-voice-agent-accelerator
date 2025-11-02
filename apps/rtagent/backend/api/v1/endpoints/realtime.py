@@ -348,9 +348,12 @@ async def browser_conversation_endpoint(
             # Store enable_tts flag for cost optimization
             websocket.state.enable_tts = enable_tts
 
-            # Initialize conversation session
+            # Load user profile BEFORE initializing session (needed for personalized greeting)
+            current_user_profile = await _load_user_profile(websocket, user_id)
+
+            # Initialize conversation session with user context
             memory_manager = await _initialize_conversation_session(
-                websocket, session_id, conn_id, orchestrator
+                websocket, session_id, conn_id, orchestrator, current_user_profile
             )
 
             # Register session thread-safely
@@ -379,7 +382,7 @@ async def browser_conversation_endpoint(
                 api_version="v1",
             )
             
-        # Push user context if provided
+        # Push user context to client (users list + profile)
         await _push_user_context(websocket, session_id, user_id, memory_manager)
 
         # Process conversation messages
@@ -408,17 +411,30 @@ async def _initialize_conversation_session(
     session_id: str,
     conn_id: str,
     orchestrator: Optional[callable],
+    user_profile: Optional[Dict] = None,
 ) -> MemoManager:
-    """Initialize conversation session with consolidated state management.
+    """Initialize conversation session with consolidated state management and user context.
 
     :param websocket: WebSocket connection for the conversation
     :param session_id: Unique identifier for the conversation session
+    :param conn_id: Connection manager ID
     :param orchestrator: Optional orchestrator for conversation routing
+    :param user_profile: Optional user profile dict from Cosmos DB
     :return: Initialized MemoManager instance for conversation state
     :raises Exception: If session initialization fails
     """
     redis_mgr = websocket.app.state.redis
     memory_manager = MemoManager.from_redis(session_id, redis_mgr)
+    
+    # Store user profile in CoreMemory ONCE at session initialization
+    # This avoids sending the full profile context on every turn (token waste)
+    if user_profile:
+        memory_manager.update_corememory("current_user", user_profile)
+        # Extract key fields for easy access
+        if isinstance(user_profile, dict):
+            memory_manager.update_corememory("user_name", user_profile.get("full_name", "valued customer"))
+            memory_manager.update_corememory("user_id", user_profile.get("user_id", user_profile.get("_id")))
+        logger.info(f"[{session_id}] Stored user profile in CoreMemory: {user_profile.get('full_name') if isinstance(user_profile, dict) else 'user'}")
 
     # Acquire per-connection TTS synthesizer from pool
     tts_pool = websocket.app.state.tts_pool
@@ -507,9 +523,16 @@ async def _initialize_conversation_session(
         if connection and connection.meta.handler:
             connection.meta.handler[key] = value
 
+    # Personalize greeting with user name if available
+    greeting_text = GREETING
+    if user_profile:
+        user_name = user_profile.get("full_name", "").split()[0]  # First name only
+        if user_name:
+            greeting_text = f"Hello {user_name}! Welcome back to your personal shopping assistant. I'm here to help you discover products, get style advice, or assist with your orders. How can I help you today?"
+    
     # Send greeting message using new envelope format
     greeting_envelope = make_status_envelope(
-        GREETING,
+        greeting_text,
         sender="System",
         topic="session",
         session_id=session_id,
@@ -518,14 +541,14 @@ async def _initialize_conversation_session(
         conn_id, greeting_envelope
     )
 
-    # Add greeting to conversation history
-    auth_agent = websocket.app.state.auth_agent
-    memory_manager.append_to_history(auth_agent.name, "assistant", GREETING)
+    # Add greeting to conversation history with Shopping Concierge
+    shopping_concierge_agent = websocket.app.state.shopping_concierge_agent
+    memory_manager.append_to_history(shopping_concierge_agent.name, "assistant", greeting_text)
 
     # Send TTS audio greeting only if enabled (cost optimization)
     if websocket.state.enable_tts:
         latency_tool = get_metadata("lt")
-        await send_tts_audio(GREETING, websocket, latency_tool=latency_tool)
+        await send_tts_audio(greeting_text, websocket, latency_tool=latency_tool)
 
     # Persist initial state to Redis
     await memory_manager.persist_to_redis_async(redis_mgr)
@@ -1206,6 +1229,29 @@ async def _cleanup_conversation_session(
 # ============================================================================
 
 
+async def _load_user_profile(
+    websocket: WebSocket,
+    user_id: Optional[str],
+) -> Optional[Dict]:
+    """
+    Load user profile from Cosmos DB if user_id provided.
+    Returns None if no user_id or profile not found.
+    """
+    if not user_id:
+        return None
+    
+    try:
+        cosmos_manager = websocket.app.state.cosmos_manager
+        profile = await asyncio.to_thread(
+            cosmos_manager.read_document,
+            query={"user_id": user_id}
+        )
+        return profile
+    except Exception as e:
+        logger.warning(f"Could not load user profile for {user_id}: {e}")
+        return None
+
+
 async def _push_user_context(
     websocket: WebSocket,
     session_id: str,
@@ -1215,13 +1261,13 @@ async def _push_user_context(
     """
     Push user context to client via WebSocket on connection.
     
-    Sends available users list and current user profile if user_id provided.
-    Stores user context in session for orchestrator access.
+    Sends available users list and current user profile envelope to client.
+    Note: Profile is already loaded in MemoManager, this just pushes to UI.
     """
     try:
         cosmos_manager = websocket.app.state.cosmos_manager
         
-        # Fetch and push available users
+        # Fetch and push available users list
         users = await asyncio.to_thread(
             cosmos_manager.query_documents,
             query={}
@@ -1273,28 +1319,19 @@ async def _push_user_context(
             await websocket.send_text(json.dumps(users_envelope))
             logger.info(f"[{session_id}] Pushed {len(users_list)} users to client")
         
-        # If user_id provided, fetch and push full profile
-        if user_id:
-            profile = await asyncio.to_thread(
-                cosmos_manager.read_document,
-                query={"user_id": user_id}
+        # If user profile already loaded in MemoManager, push to client
+        current_user = memory_manager.get_value_from_corememory("current_user")
+        if current_user:
+            profile_envelope = make_envelope(
+                etype="user_profile",
+                sender="System",
+                payload={"profile": current_user},
+                topic="session",
+                session_id=session_id
             )
-            
-            if profile:
-                profile_envelope = make_envelope(
-                    etype="user_profile",
-                    sender="System",
-                    payload={"profile": profile},
-                    topic="session",
-                    session_id=session_id
-                )
-                await websocket.send_text(json.dumps(profile_envelope))
-                
-                # Store in session metadata for orchestrator
-                if memory_manager:
-                    memory_manager.set_metadata("current_user", profile)
-                
-                logger.info(f"[{session_id}] Pushed user profile: {profile.get('full_name')}")
+            await websocket.send_text(json.dumps(profile_envelope))
+            user_name = current_user.get('full_name') if isinstance(current_user, dict) else 'user'
+            logger.info(f"[{session_id}] Pushed user profile to client: {user_name}")
     
     except Exception as e:
         logger.error(f"[{session_id}] Error pushing user context: {e}", exc_info=True)

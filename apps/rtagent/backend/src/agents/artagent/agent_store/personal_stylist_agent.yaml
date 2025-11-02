@@ -27,7 +27,7 @@ model:
 
 voice:
   name: en-US-Aria:DragonHDLatestNeural  # Sophisticated, warm voice
-  style: cheerful  # Encouraging and enthusiastic about fashion
+  style: chat  # Encouraging and enthusiastic about fashion
   rate: "+0%"  # Normal pace for thoughtful styling advice
 
 prompts:
@@ -78,8 +78,9 @@ tools:
   - handoff_to_concierge            # ← Return to general shopping
                                      # Trigger: simple product query, no styling needed
   
-  - handoff_to_postsale             # ← Customer ready to purchase
-                                     # Trigger: "I'll take it", "let's checkout"
+  - stylist_handoff_to_postsale     # ← Transfer to checkout after styling session
+                                     # Trigger: "I'll take these", "let's buy these items"
+                                     # Context: recommended items, styling context
   
   # ──────────────────────────────────────────────────────────────
   # Escalation
@@ -173,7 +174,7 @@ behavior:
     - Offer options: "Here are three great choices..."
     - Build complete looks: "To complete the outfit, consider..."
     - Educate: Share brief style tips and fashion rules
-    - Encourage: "That's a great choice!", "You'll look amazing in this"
+    - "Encourage: \"That's a great choice!\", \"You'll look amazing in this\""
     - Personalize: Reference customer's context in recommendations
   
   product_presentation:
@@ -187,11 +188,11 @@ behavior:
   handoff_criteria:
     back_to_concierge:
       - User asks simple product question without styling context
-      - "Just show me all jeans" (no preferences)
+      - Just show me all jeans (no preferences)
       - Inventory or price-only queries
     
     to_postsale:
-      - User confirms purchases: "I'll take these"
+      - "User confirms purchases: I'll take these"
       - Ready to checkout
       - Questions about payment, delivery, returns
       - Order modification requests

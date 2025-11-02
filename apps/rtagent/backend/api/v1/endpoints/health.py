@@ -439,14 +439,12 @@ async def readiness_check(
     )
     health_checks.append(acs_status)
 
-    # Check RT Agents
+    # Check RT Agents (Retail)
     agent_status = await fast_ping(
         _check_rt_agents_fast,
-        request.app.state.auth_agent,
-        request.app.state.fraud_agent,
-        request.app.state.agency_agent,
-        request.app.state.compliance_agent,
-        request.app.state.trading_agent,
+        request.app.state.shopping_concierge_agent,
+        request.app.state.personal_stylist_agent,
+        request.app.state.postsale_agent,
         component="rt_agents",
     )
     health_checks.append(agent_status)
@@ -706,17 +704,15 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
     )
 
 
-async def _check_rt_agents_fast(auth_agent, fraud_agent, agency_agent, compliance_agent, trading_agent) -> ServiceCheck:
-    """Fast RT Agents check for all Transfer Agency system agents."""
+async def _check_rt_agents_fast(shopping_concierge_agent, personal_stylist_agent, postsale_agent) -> ServiceCheck:
+    """Fast RT Agents check for all retail voice assistant agents."""
     start = time.time()
     
     # Check all required agents are initialized
     agents = {
-        "auth": auth_agent,
-        "fraud": fraud_agent, 
-        "agency": agency_agent,
-        "compliance": compliance_agent,
-        "trading": trading_agent
+        "shopping_concierge": shopping_concierge_agent,
+        "personal_stylist": personal_stylist_agent, 
+        "postsale": postsale_agent,
     }
     
     missing_agents = [name for name, agent in agents.items() if not agent]
@@ -733,7 +729,7 @@ async def _check_rt_agents_fast(auth_agent, fraud_agent, agency_agent, complianc
         component="rt_agents",
         status="healthy",
         check_time_ms=round((time.time() - start) * 1000, 2),
-        details=f"all agents initialized: {', '.join(agents.keys())}",
+        details=f"all retail agents initialized: {', '.join(agents.keys())}",
     )
 
 
@@ -777,12 +773,10 @@ async def get_agents_info(request: Request):
     agents_info = []
 
     try:
-        # Get agents from app state
-        auth_agent = getattr(request.app.state, "auth_agent", None)
-        fraud_agent = getattr(request.app.state, "fraud_agent", None)
-        agency_agent = getattr(request.app.state, "agency_agent", None)
-        compliance_agent = getattr(request.app.state, "compliance_agent", None)
-        trading_agent = getattr(request.app.state, "trading_agent", None)
+        # Get retail agents from app state
+        shopping_concierge_agent = getattr(request.app.state, "shopping_concierge_agent", None)
+        personal_stylist_agent = getattr(request.app.state, "personal_stylist_agent", None)
+        postsale_agent = getattr(request.app.state, "postsale_agent", None)
 
         # Helper function to extract agent info
         def extract_agent_info(agent, config_path: str = None):
@@ -842,46 +836,28 @@ async def get_agents_info(request: Request):
                     "error": str(e),
                 }
 
-        # Extract info for each agent
-        if auth_agent:
-            from config import AGENT_AUTH_CONFIG
+        # Extract info for each retail agent
+        if shopping_concierge_agent:
+            from config import AGENT_SHOPPING_CONCIERGE_CONFIG
 
-            agent_info = extract_agent_info(auth_agent, AGENT_AUTH_CONFIG)
+            agent_info = extract_agent_info(shopping_concierge_agent, AGENT_SHOPPING_CONCIERGE_CONFIG)
             if agent_info:
                 agents_info.append(agent_info)
 
-        if fraud_agent:
-            from config import AGENT_FRAUD_CONFIG
+        if personal_stylist_agent:
+            from config import AGENT_PERSONAL_STYLIST_CONFIG
 
             agent_info = extract_agent_info(
-                fraud_agent, AGENT_FRAUD_CONFIG
+                personal_stylist_agent, AGENT_PERSONAL_STYLIST_CONFIG
             )
             if agent_info:
                 agents_info.append(agent_info)
 
-        if agency_agent:
-            from config import AGENT_AGENCY_CONFIG
+        if postsale_agent:
+            from config import AGENT_POSTSALE_CONFIG
 
             agent_info = extract_agent_info(
-                agency_agent, AGENT_AGENCY_CONFIG
-            )
-            if agent_info:
-                agents_info.append(agent_info)
-
-        if compliance_agent:
-            from config import AGENT_COMPLIANCE_CONFIG
-
-            agent_info = extract_agent_info(
-                compliance_agent, AGENT_COMPLIANCE_CONFIG
-            )
-            if agent_info:
-                agents_info.append(agent_info)
-
-        if trading_agent:
-            from config import AGENT_TRADING_CONFIG
-
-            agent_info = extract_agent_info(
-                trading_agent, AGENT_TRADING_CONFIG
+                postsale_agent, AGENT_POSTSALE_CONFIG
             )
             if agent_info:
                 agents_info.append(agent_info)
@@ -957,28 +933,28 @@ async def update_agent_config(
     start_time = time.time()
 
     try:
-        # Get the agent instance from app state
+        # Get the agent instance from app state (retail agents)
         agent = None
-        if agent_name.lower() in ["authagent", "auth_agent", "auth"]:
-            agent = getattr(request.app.state, "auth_agent", None)
+        if agent_name.lower() in ["shoppingconcierge", "shopping_concierge_agent", "shopping", "concierge"]:
+            agent = getattr(request.app.state, "shopping_concierge_agent", None)
         elif agent_name.lower() in [
-            "fnolintakeagent",
-            "claim_intake_agent",
-            "claim",
-            "fnol",
+            "personalstylist",
+            "personal_stylist_agent",
+            "stylist",
         ]:
-            agent = getattr(request.app.state, "claim_intake_agent", None)
+            agent = getattr(request.app.state, "personal_stylist_agent", None)
         elif agent_name.lower() in [
-            "fraudagent",
-            "fraud_agent", 
-            "fraud",
+            "postsale",
+            "postsale_agent", 
+            "post_sale",
+            "ordersupport",
         ]:
-            agent = getattr(request.app.state, "fraud_agent", None)
+            agent = getattr(request.app.state, "postsale_agent", None)
 
         if not agent:
             raise HTTPException(
                 status_code=404,
-                detail=f"Agent '{agent_name}' not found. Available agents: auth, claim, fraud",
+                detail=f"Agent '{agent_name}' not found. Available agents: shopping_concierge, personal_stylist, postsale",
             )
 
         updated_fields = []

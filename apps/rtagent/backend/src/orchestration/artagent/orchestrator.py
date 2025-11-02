@@ -6,14 +6,12 @@ from typing import TYPE_CHECKING
 from fastapi import WebSocket
 from opentelemetry import trace
 
-from .auth import run_auth_agent
 from .cm_utils import cm_get, cm_set, get_correlation_context
 from .config import ENTRY_AGENT
 from .registry import (
     get_specialist,
     register_specialist,
 )
-from .specialists import run_fraud_agent, run_agency_agent, run_compliance_agent, run_trading_agent
 from .termination import maybe_terminate_if_escalated
 from apps.rtagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
@@ -59,8 +57,8 @@ async def route_turn(
         run_id = uuid.uuid4().hex[:12]
     cm_set(cm, current_run_id=run_id)
 
-    # Initialize with entry agent if not authenticated yet
-    if (not cm_get(cm, "authenticated", False)) and cm_get(cm, "active_agent") != ENTRY_AGENT:
+    # Initialize with Shopping Concierge if no active agent set
+    if not cm_get(cm, "active_agent"):
         cm_set(cm, active_agent=ENTRY_AGENT)
 
     span_attrs = create_service_handler_attrs(
@@ -70,7 +68,6 @@ async def route_turn(
         operation="route_turn",
         transcript_length=len(transcript),
         is_acs=is_acs,
-        authenticated=cm_get(cm, "authenticated", False),
         active_agent=cm_get(cm, "active_agent", "none"),
     )
     span_attrs["run.id"] = run_id
@@ -123,18 +120,21 @@ async def route_turn(
 
 def bind_default_handlers() -> None:
     """
-    Register default agent handlers for Financial Services multi-agent system.
+    Register default agent handlers for Retail Voice Assistant multi-agent system.
     
-    Flow: Auth -> (Fraud | Agency) -> (Compliance | Trading)
+    Flow: ShoppingConcierge (entry) -> (PersonalStylist | PostSale)
+    All agents can hand off to each other as needed.
     """
-    # Entry point agent 
-    register_specialist("AutoAuth", run_auth_agent)
+    from .specialists import (
+        run_shopping_concierge_agent,
+        run_personal_stylist_agent,
+        run_postsale_agent
+    )
     
-    # Main service agents (post-authentication routing)
-    register_specialist("Fraud", run_fraud_agent)        # ← Fraud detection & dispute resolution
-    register_specialist("Agency", run_agency_agent)      # ← Transfer Agency coordinator
+    # Entry point agent - main retail assistant
+    register_specialist("ShoppingConcierge", run_shopping_concierge_agent)
     
-    # Transfer Agency specialists (receive handoffs from Agency)
-    register_specialist("Compliance", run_compliance_agent)  # ← AML/FATCA verification
-    register_specialist("Trading", run_trading_agent)       # ← Complex trade execution
+    # Specialist agents (receive handoffs from Shopping Concierge or each other)
+    register_specialist("PersonalStylist", run_personal_stylist_agent)  # ← Style recommendations
+    register_specialist("PostSale", run_postsale_agent)                 # ← Order support & returns
     

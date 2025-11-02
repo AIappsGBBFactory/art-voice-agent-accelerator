@@ -28,38 +28,316 @@ from utils.ml_logging import get_logger
 logger = get_logger("retail_product_tools")
 
 # ═══════════════════════════════════════════════════════════════════
-# Azure AI Search & Cosmos DB Clients (Initialize from environment)
+# Client References (Thread-safe, injected via app.state)
 # ═══════════════════════════════════════════════════════════════════
 
-# TODO: Initialize these from your app's dependency injection
-# from your_app_context import search_client, cosmos_manager, aoai_client
+class RetailToolContext:
+    """
+    Context object holding Azure service clients for retail tools.
+    
+    This is stored in app.state and passed to tool functions via closure.
+    Thread-safe: Azure SDK clients are thread-safe for concurrent operations.
+    """
+    def __init__(
+        self,
+        search_client=None,
+        cosmos_product_manager=None,
+        aoai_client=None,
+        blob_service_client=None
+    ):
+        self.search_client = search_client
+        self.cosmos_product_manager = cosmos_product_manager
+        self.aoai_client = aoai_client
+        self.blob_service_client = blob_service_client
+        
+        logger.info(
+            "Retail tool context initialized",
+            extra={
+                "search_enabled": search_client is not None,
+                "cosmos_enabled": cosmos_product_manager is not None,
+                "aoai_enabled": aoai_client is not None,
+                "blob_enabled": blob_service_client is not None
+            }
+        )
+    
+    @property
+    def has_vector_search(self) -> bool:
+        """Check if vector search is available"""
+        return self.search_client is not None and self.aoai_client is not None
+    
+    @property
+    def has_product_db(self) -> bool:
+        """Check if product database is available"""
+        return self.cosmos_product_manager is not None
 
-# Placeholder - replace with actual initialization
-search_client = None  # Azure SearchClient instance
-cosmos_product_manager = None  # Cosmos DB manager for 'products' collection
-aoai_client = None  # Azure OpenAI client for embeddings
+
+# Module-level context (set once during app startup)
+_context: Optional[RetailToolContext] = None
+
+
+def initialize_retail_tools(
+    search_client=None,
+    cosmos_product_manager=None,
+    aoai_client=None,
+    blob_service_client=None
+) -> RetailToolContext:
+    """
+    Initialize retail tools with Azure service clients.
+    
+    Called during FastAPI app startup (in main.py lifespan).
+    Stores context module-wide for tool functions to access.
+    
+    Args:
+        search_client: Azure SearchClient for vector search (optional)
+        cosmos_product_manager: Cosmos DB manager for products (required)
+        aoai_client: Azure OpenAI client for embeddings (optional)
+        blob_service_client: Azure BlobServiceClient for images (optional)
+    
+    Returns:
+        Retail tool context instance
+    """
+    global _context
+    _context = RetailToolContext(search_client, cosmos_product_manager, aoai_client, blob_service_client)
+    return _context
+
+
+def get_context() -> RetailToolContext:
+    """Get current retail tool context"""
+    if _context is None:
+        raise RuntimeError("Retail tools not initialized. Call initialize_retail_tools() first.")
+    return _context
 
 
 # ═══════════════════════════════════════════════════════════════════
 # Helper Functions
 # ═══════════════════════════════════════════════════════════════════
 
-def generate_embedding(text: str) -> List[float]:
+def download_product_image(image_url: str, blob_service_client) -> Optional[str]:
+    """
+    Download product image from Azure Blob Storage and convert to base64.
+    
+    Uses Managed Identity authentication (same as notebook 12).
+    
+    Args:
+        image_url: Full blob URL  
+        blob_service_client: Azure BlobServiceClient instance
+        
+    Returns:
+        Base64-encoded data URL (data:image/png;base64,...) or None if failed
+    """
+    if not image_url or not blob_service_client:
+        return None
+        
+    try:
+        import base64
+        import os
+        
+        # Get container name from env (same as notebook 12)
+        container_name = os.getenv("BLOB_CONTAINER_NAME", "clothesimages")
+        
+        # Extract blob path from URL
+        # URL: https://storagefactoryeastus.blob.core.windows.net/clothesimages/products/PROD-XXX.png
+        if f"/{container_name}/" in image_url:
+            blob_name = image_url.split(f"/{container_name}/")[1]
+        else:
+            # Fallback: use last part of URL
+            blob_name = image_url.split("/")[-1]
+            
+        # Get blob client
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name,
+            blob=f"products/{blob_name}" if not blob_name.startswith("products/") else blob_name
+        )
+        
+        # Download image bytes
+        blob_data = blob_client.download_blob()
+        image_bytes = blob_data.readall()
+        
+        # Convert to base64
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        
+        logger.debug(f"Downloaded image: {blob_name} ({len(image_bytes)} bytes)")
+        
+        # Return as data URL
+        return f"data:image/png;base64,{image_base64}"
+        
+    except Exception as e:
+        logger.warning(
+            f"Failed to download product image: {image_url} - {e}",
+            extra={"image_url": image_url, "error": str(e)}
+        )
+        return None
+
+
+def extract_display_product(product: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract UI-relevant fields from full product document.
+    
+    Creates lightweight product data optimized for frontend display.
+    Removes sensitive/internal fields and keeps only what UI needs.
+    
+    Args:
+        product: Full product document from Cosmos DB
+    
+    Returns:
+        Lightweight product dict with only display fields
+    """
+    try:
+        # Extract pricing
+        pricing = product.get('pricing', {})
+        base_price = pricing.get('base_price', 0)
+        sale_price = pricing.get('sale_price')
+        on_sale = pricing.get('on_sale', False)
+        
+        # Extract specifications
+        specs = product.get('specifications', {})
+        colors = specs.get('colors', [])
+        sizes = specs.get('sizes', [])
+        materials = specs.get('materials', [])
+        
+        # Extract inventory
+        inventory = product.get('inventory', {})
+        total_stock = inventory.get('total_stock', 0)
+        in_stock = total_stock > 0
+        
+        # Extract merchandising
+        merchandising = product.get('merchandising', {})
+        rating = merchandising.get('customer_rating', 0)
+        review_count = merchandising.get('review_count', 0)
+        
+        # Build display product
+        display_product = {
+            "product_id": product.get("product_id", ""),
+            "name": product.get("name", "Unknown Product"),
+            "brand": product.get("brand", "Unknown Brand"),
+            "category": product.get("category", ""),
+            "gender": product.get("gender", ""),
+            
+            # Pricing
+            "price": base_price,
+            "sale_price": sale_price if on_sale and sale_price else None,
+            "on_sale": on_sale,
+            "formatted_price": f"${base_price:.2f}",
+            "formatted_sale_price": f"${sale_price:.2f}" if (on_sale and sale_price) else None,
+            
+            # Image (download from blob storage and convert to base64 data URL)
+            "image_url": download_product_image(
+                product.get("image_url", ""),
+                get_context().blob_service_client
+            ) or "",  # Returns base64 data URL or empty string
+            
+            # Product attributes
+            "colors": colors[:5],  # Limit to 5 for UI
+            "sizes": sizes,
+            "materials": materials[:3],  # Limit to 3
+            
+            # Availability
+            "in_stock": in_stock,
+            "stock_status": "In Stock" if total_stock > 50 else "Limited Stock" if in_stock else "Out of Stock",
+            
+            # Social proof
+            "rating": round(rating, 1) if rating else None,
+            "review_count": review_count,
+            
+            # Description (truncated for UI)
+            "description": product.get("rich_description", "")[:250] + "..." if len(product.get("rich_description", "")) > 250 else product.get("rich_description", ""),
+            
+            # Formality & fit (useful for styling context)
+            "formality": product.get("formality", ""),
+            "fit": product.get("fit", "")
+        }
+        
+        return display_product
+    
+    except Exception as e:
+        logger.error(f"Failed to extract display product: {e}", exc_info=True)
+        # Return minimal safe product data
+        return {
+            "product_id": product.get("product_id", ""),
+            "name": product.get("name", "Product"),
+            "brand": product.get("brand", "Unknown"),
+            "price": 0,
+            "formatted_price": "$0.00",
+            "image_url": "",
+            "in_stock": False,
+            "stock_status": "Unavailable"
+        }
+
+
+def extract_lightweight_product(product: dict) -> dict:
+    """
+    Extract lightweight product summary for GPT conversation history (NO base64 images).
+    
+    This prevents token overflow by excluding large base64-encoded images from
+    the conversation history sent to GPT. Images are only included in the
+    frontend display data sent via WebSocket.
+    
+    Args:
+        product: Full product document from Cosmos DB
+        
+    Returns:
+        Lightweight product dict suitable for GPT context (~200 tokens vs 40,000+ with base64)
+    """
+    try:
+        # Pricing
+        pricing = product.get('pricing', {})
+        base_price = pricing.get('base_price', 0)
+        sale_price = pricing.get('sale_price')
+        on_sale = sale_price and sale_price < base_price
+        
+        # Inventory
+        inventory = product.get('inventory', {})
+        total_stock = inventory.get('total_stock', 0)
+        
+        # Specifications
+        specs = product.get('specifications', {})
+        colors = specs.get('colors', [])
+        sizes = specs.get('sizes', [])
+        
+        # Lightweight summary for GPT
+        return {
+            "product_id": product.get("product_id", ""),
+            "name": product.get("name", "Unknown"),
+            "brand": product.get("brand", "Unknown"),
+            "category": product.get("category", ""),
+            "price": f"${base_price:.2f}",
+            "sale_price": f"${sale_price:.2f}" if on_sale else None,
+            "colors": colors[:3],  # First 3 colors only
+            "sizes": sizes,
+            "in_stock": total_stock > 0,
+            "stock_status": "In Stock" if total_stock > 50 else "Limited" if total_stock > 0 else "Out of Stock"
+            # ❌ NO image_url - prevents base64 from bloating conversation history
+        }
+    except Exception as e:
+        logger.error(f"Failed to extract lightweight product: {e}", exc_info=True)
+        return {
+            "product_id": product.get("product_id", ""),
+            "name": product.get("name", "Product"),
+            "brand": product.get("brand", "Unknown"),
+            "price": "$0.00"
+        }
+
+
+def generate_embedding(text: str, ctx: Optional[RetailToolContext] = None) -> List[float]:
     """
     Generate 3072-dim embedding using Azure OpenAI text-embedding-3-large
     
     Args:
         text: Text to embed
+        ctx: Retail tool context (uses module context if None)
     
     Returns:
-        List of 3072 floats
+        List of 3072 floats (empty list if client unavailable)
     """
     try:
-        if not aoai_client:
-            logger.error("Azure OpenAI client not initialized")
+        if ctx is None:
+            ctx = get_context()
+        
+        if not ctx.aoai_client:
+            logger.warning("Azure OpenAI client not available, embeddings disabled")
             return []
         
-        response = aoai_client.embeddings.create(
+        response = ctx.aoai_client.embeddings.create(
             model="text-embedding-3-large",
             input=text,
             dimensions=3072
@@ -157,10 +435,52 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
         
         logger.info(f"General search: '{query}' (top_k={top_k})")
         
+        # Get context
+        ctx = get_context()
+        
         # Generate embedding for semantic search
-        query_embedding = generate_embedding(query)
+        query_embedding = generate_embedding(query, ctx)
         if not query_embedding:
             return _json(False, "Search temporarily unavailable. Please try again.")
+        
+        # Check if Azure AI Search is available
+        if not ctx.search_client:
+            logger.warning("Azure AI Search not configured, using Cosmos DB fallback")
+            # Fallback: Simple query to Cosmos DB
+            query_filter = {"$text": {"$search": query}} if query else {}
+            documents = await asyncio.to_thread(
+                ctx.cosmos_product_manager.query_documents,
+                query=query_filter
+            )
+            documents = documents[:top_k] if documents else []
+            
+            if not documents:
+                return _json(
+                    True,
+                    f"I couldn't find products matching '{query}'. Try a different search?",
+                    count=0,
+                    products=[],
+                    display_type="product_carousel"
+                )
+            
+            # Extract TWO representations (same as AI Search path)
+            products_for_gpt = [extract_lightweight_product(doc) for doc in documents]
+            display_products = [extract_display_product(doc) for doc in documents]
+            
+            voice_response = f"I found {len(documents)} option{'s' if len(documents) > 1 else ''} for you. "
+            for product in documents[:3]:
+                voice_response += format_product_for_voice(product, 0)
+            voice_response += "Would you like more details?"
+            
+            return _json(
+                True, 
+                voice_response, 
+                count=len(documents), 
+                products=products_for_gpt,  # ✅ Lightweight for GPT
+                display_products=display_products,  # ✅ Full data with images for frontend
+                display_type="product_carousel",
+                tool="search_products_general"
+            )
         
         # Perform vector search in Azure AI Search
         from azure.search.documents.models import VectorizedQuery
@@ -171,7 +491,7 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
             fields="desc_vector"
         )
         
-        results = search_client.search(
+        results = ctx.search_client.search(
             search_text=None,
             vector_queries=[vector_query],
             select=["id", "category", "gender", "formality", "colors", "rich_description"],
@@ -197,12 +517,18 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
         # Retrieve full details from Cosmos DB
         query_filter = {"product_id": {"$in": product_ids}}
         documents = await asyncio.to_thread(
-            cosmos_product_manager.query_documents,
+            ctx.cosmos_product_manager.query_documents,
             query=query_filter
         )
         
         if not documents:
             return _json(False, "Found matches but couldn't retrieve details. Please try again.")
+        
+        # Extract TWO representations:
+        # 1. Lightweight for GPT conversation history (no base64 images)
+        # 2. Full display data with base64 images (for frontend WebSocket only)
+        products_for_gpt = [extract_lightweight_product(doc) for doc in documents]
+        display_products = [extract_display_product(doc) for doc in documents]
         
         # Format for voice response
         voice_response = f"I found {len(documents)} option{'s' if len(documents) > 1 else ''} for you. "
@@ -216,11 +542,24 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
         
         voice_response += "Would you like more details on any of these?"
         
+        logger.info(
+            f"Product search completed successfully",
+            extra={
+                "query": query,
+                "result_count": len(documents),
+                "gpt_products_count": len(products_for_gpt),
+                "display_products_count": len(display_products),
+                "has_images": sum(1 for p in display_products if p.get("image_url"))
+            }
+        )
+        
         return _json(
             True,
             voice_response,
             count=len(documents),
-            products=documents,
+            products=products_for_gpt,  # ✅ Lightweight for GPT (NO base64)
+            display_products=display_products,  # ✅ Full data with images for frontend WebSocket
+            display_type="product_carousel",  # ✅ UI rendering hint
             tool="search_products_general"
         )
     
@@ -288,8 +627,11 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
         
         logger.info(f"Stylist search: '{query}' | occasion={occasion}, weather={weather}, formality={formality}")
         
+        # Get context
+        ctx = get_context()
+        
         # Generate embedding
-        query_embedding = generate_embedding(query)
+        query_embedding = generate_embedding(query, ctx)
         if not query_embedding:
             return _json(False, "Search temporarily unavailable.")
         
@@ -314,6 +656,47 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
         
         logger.info(f"Filter: {filter_expression or 'None (pure semantic)'}")
         
+        # Check if Azure AI Search is available
+        if not ctx.search_client:
+            logger.warning("Azure AI Search not configured, using Cosmos DB with manual filtering")
+            # Fallback: Build Cosmos DB query with available filters
+            cosmos_filter = {}
+            if formality:
+                cosmos_filter["formality"] = formality
+            if gender:
+                cosmos_filter["gender"] = gender
+            if query:
+                cosmos_filter["$text"] = {"$search": query}
+            
+            documents = await asyncio.to_thread(
+                ctx.cosmos_product_manager.query_documents,
+                query=cosmos_filter
+            )
+            documents = documents[:top_k] if documents else []
+            
+            if not documents:
+                return _json(
+                    True,
+                    f"No products found with those filters. Let's try broader options?",
+                    count=0,
+                    products=[],
+                    filters_applied={"occasion": occasion, "weather": weather, "formality": formality, "gender": gender}
+                )
+            
+            voice_response = f"I found {len(documents)} option{'s' if len(documents) > 1 else ''} for you. "
+            for product in documents[:3]:
+                voice_response += format_product_for_voice(product, 0)
+            voice_response += "Would you like to see complementary pieces?"
+            
+            return _json(
+                True,
+                voice_response,
+                count=len(documents),
+                products=documents,
+                filters_applied={"occasion": occasion, "weather": weather, "formality": formality, "gender": gender},
+                tool="search_products_filtered"
+            )
+        
         # Vector search with filters
         from azure.search.documents.models import VectorizedQuery
         
@@ -323,7 +706,7 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
             fields="desc_vector"
         )
         
-        results = search_client.search(
+        results = ctx.search_client.search(
             search_text=None,
             vector_queries=[vector_query],
             filter=filter_expression,
@@ -355,15 +738,20 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
                 relaxation_msg,
                 count=0,
                 products=[],
+                display_type="product_carousel",  # Consistent even when empty
                 filters_applied={"occasion": occasion, "weather": weather, "formality": formality, "gender": gender, "colors": colors}
             )
         
         # Get full details from Cosmos DB
         query_filter = {"product_id": {"$in": product_ids}}
         documents = await asyncio.to_thread(
-            cosmos_product_manager.query_documents,
+            ctx.cosmos_product_manager.query_documents,
             query=query_filter
         )
+        
+        # Extract TWO representations (same pattern as general search)
+        products_for_gpt = [extract_lightweight_product(doc) for doc in documents]
+        display_products = [extract_display_product(doc) for doc in documents]
         
         # Build personalized stylist response
         voice_response = "Based on your needs, here are my personalized recommendations. "
@@ -390,11 +778,20 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
         
         voice_response += "Would you like to see complementary pieces to complete the outfit?"
         
+        # Count products with images for logging
+        products_with_images = sum(1 for p in display_products if p.get("image_url"))
+        logger.info(
+            f"[search_products_filtered] Returning {len(products_for_gpt)} GPT products, "
+            f"{len(display_products)} display products ({products_with_images} with images)"
+        )
+        
         return _json(
             True,
             voice_response,
             count=len(documents),
-            products=documents,
+            products=products_for_gpt,  # ✅ Lightweight for GPT (NO base64)
+            display_products=display_products,  # ✅ Full data with images for frontend
+            display_type="product_carousel",  # Tell frontend to render as carousel
             filters_applied={"occasion": occasion, "weather": weather, "formality": formality, "gender": gender, "age_group": age_group, "colors": colors},
             tool="search_products_filtered"
         )
@@ -436,9 +833,13 @@ async def check_product_availability(args: CheckProductAvailabilityArgs) -> Dict
             return _json(False, "Product ID required for availability check.")
         
         # Query Cosmos DB for product
+        ctx = get_context()
+        if not ctx.has_product_db:
+            return _json(False, "Product database not available. Please try again later.")
+        
         query_filter = {"product_id": product_id}
         documents = await asyncio.to_thread(
-            cosmos_product_manager.query_documents,
+            ctx.cosmos_product_manager.query_documents,
             query=query_filter
         )
         
@@ -491,106 +892,166 @@ async def check_product_availability(args: CheckProductAvailabilityArgs) -> Dict
         return _json(False, "Couldn't check availability. Please try again.")
 
 
+async def search_complementary_items(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Find matching pieces for outfit building (e.g., "what goes with these jeans?").
+    
+    TODO: Implement complementary item recommendation logic using:
+    - Product embeddings similarity
+    - Style compatibility rules
+    - Color coordination
+    - Customer purchase patterns
+    
+    Args:
+        base_product_id: Product to find matches for
+        category_filters: Optional categories (e.g., ["tops", "shoes"])
+    """
+    logger.info(f"search_complementary_items called: {args}")
+    # TODO: Implement complementary search algorithm
+    return _json(
+        True,
+        "I'll help you find pieces that go well with that item. This feature is coming soon!",
+        message="Complementary item search not yet implemented"
+    )
+
+
+async def get_outfit_suggestions(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get pre-curated outfit combinations for specific occasions.
+    
+    TODO: Implement outfit recommendation engine using:
+    - Curated lookbook database
+    - Occasion-specific styling rules
+    - Seasonal trends
+    - Budget constraints
+    
+    Args:
+        occasion: Event type (e.g., "wedding", "interview")
+        style: Style preference (e.g., "modern", "classic")
+        budget: Optional budget range
+    """
+    logger.info(f"get_outfit_suggestions called: {args}")
+    # TODO: Query curated outfits database
+    return _json(
+        True,
+        "I'm working on curating perfect outfit suggestions for you. Check back soon!",
+        message="Outfit suggestions not yet implemented"
+    )
+
+
+async def get_customer_style_profile(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Retrieve customer purchase history, preferences, and sizing information.
+    
+    TODO: Implement profile retrieval from:
+    - Cosmos DB users collection
+    - Purchase history analysis
+    - Preference learning from interactions
+    - Size history tracking
+    
+    Args:
+        customer_id: User identifier
+    """
+    logger.info(f"get_customer_style_profile called: {args}")
+    # TODO: Query Cosmos DB for customer profile
+    return _json(
+        True,
+        "Let me look up your style profile. This personalization feature is coming soon!",
+        message="Customer profile retrieval not yet implemented"
+    )
+
+
+async def get_customer_measurements(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get customer measurements for fit recommendations.
+    
+    TODO: Implement measurement retrieval and fit suggestions using:
+    - Stored customer measurements
+    - Size recommendation algorithm
+    - Brand-specific size mapping
+    - Fit preference history
+    
+    Args:
+        customer_id: User identifier
+        product_id: Optional product for size recommendation
+    """
+    logger.info(f"get_customer_measurements called: {args}")
+    # TODO: Retrieve measurements from customer profile
+    return _json(
+        True,
+        "I'll help you find the perfect fit. Measurement features are coming soon!",
+        message="Customer measurements not yet implemented"
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════
-# Export Tool Registry
+# Personal Stylist - Visual & Styling Tools
 # ═══════════════════════════════════════════════════════════════════
 
-# Tool definitions for LLM function calling
-RETAIL_TOOLS = {
-    "search_products_general": {
-        "function": search_products_general,
-        "schema": {
-            "name": "search_products_general",
-            "description": "Fast semantic product search for direct queries. Use when customer asks for specific products without styling context.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language product search query (e.g., 'casual jeans', 'blue shirts')"
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Number of products to return (default: 5)",
-                        "default": 5
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    "search_products_filtered": {
-        "function": search_products_filtered,
-        "schema": {
-            "name": "search_products_filtered",
-            "description": "Advanced filtered search for styling recommendations. Use when customer needs personalized outfit suggestions with context (occasion, weather, style).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Semantic search query describing desired style"
-                    },
-                    "occasion": {
-                        "type": "string",
-                        "enum": ["wedding", "birthday", "work", "casual_outing", "date_night", "gym", "interview"],
-                        "description": "Event or occasion type"
-                    },
-                    "weather": {
-                        "type": "string",
-                        "enum": ["warm", "mild", "cold", "rainy"],
-                        "description": "Climate or weather conditions"
-                    },
-                    "formality": {
-                        "type": "string",
-                        "enum": ["casual", "business_casual", "smart_casual", "formal", "athletic"],
-                        "description": "Formality level"
-                    },
-                    "gender": {
-                        "type": "string",
-                        "enum": ["Men", "Women", "Unisex"],
-                        "description": "Target gender"
-                    },
-                    "age_group": {
-                        "type": "string",
-                        "enum": ["teen", "young_adult", "adult", "senior"],
-                        "description": "Age category for appropriate styling"
-                    },
-                    "colors": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Preferred color palette"
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Number of results",
-                        "default": 5
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    "check_product_availability": {
-        "function": check_product_availability,
-        "schema": {
-            "name": "check_product_availability",
-            "description": "Check real-time inventory availability for a specific product",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "product_id": {
-                        "type": "string",
-                        "description": "Product identifier from search results"
-                    },
-                    "region": {
-                        "type": "string",
-                        "enum": ["US_WEST", "US_EAST", "US_SOUTH"],
-                        "description": "Specific region or omit for all regions"
-                    }
-                },
-                "required": ["product_id"]
-            }
-        }
-    }
-}
+async def get_product_images(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Retrieve high-resolution product images from Azure Blob Storage.
+    
+    TODO: Implement image retrieval using:
+    - Azure Blob Storage URLs
+    - Multiple angles/views
+    - Lifestyle images
+    - Zoom-enabled detail shots
+    
+    Args:
+        product_id: Product identifier
+        image_type: Optional ("product", "lifestyle", "detail")
+    """
+    logger.info(f"get_product_images called: {args}")
+    # TODO: Query Blob Storage for product images
+    return _json(
+        True,
+        "I can show you product images soon. This feature is under development!",
+        message="Product images not yet implemented"
+    )
+
+
+async def get_style_inspiration(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get lookbook images and style inspiration for occasions.
+    
+    TODO: Implement inspiration board using:
+    - Curated lookbook collections
+    - Occasion-specific styling examples
+    - Seasonal trend images
+    - Celebrity/influencer styles
+    
+    Args:
+        occasion: Event type
+        style: Style preference
+    """
+    logger.info(f"get_style_inspiration called: {args}")
+    # TODO: Query lookbook database
+    return _json(
+        True,
+        "Style inspiration boards are coming soon! I'll help you visualize your look.",
+        message="Style inspiration not yet implemented"
+    )
+
+
+async def suggest_color_combinations(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Suggest color combinations based on color theory for outfit coordination.
+    
+    TODO: Implement color matching algorithm using:
+    - Color wheel theory (complementary, analogous, triadic)
+    - Season-appropriate palettes
+    - Skin tone considerations
+    - Current fashion trends
+    
+    Args:
+        base_colors: List of colors in current items
+        occasion: Optional occasion context
+    """
+    logger.info(f"suggest_color_combinations called: {args}")
+    # TODO: Implement color theory engine
+    return _json(
+        True,
+        "Color coordination tips are coming soon! I'll help you create stunning combinations.",
+        message="Color suggestions not yet implemented"
+    )

@@ -44,11 +44,9 @@ from src.pools.connection_manager import ThreadSafeConnectionManager
 from src.pools.session_metrics import ThreadSafeSessionMetrics
 from config.app_config import AppConfig
 from config.app_settings import (
-    AGENT_AUTH_CONFIG,
-    AGENT_FRAUD_CONFIG,
-    AGENT_AGENCY_CONFIG,
-    AGENT_COMPLIANCE_CONFIG,
-    AGENT_TRADING_CONFIG,
+    AGENT_SHOPPING_CONCIERGE_CONFIG,
+    AGENT_PERSONAL_STYLIST_CONFIG,
+    AGENT_POSTSALE_CONFIG,
     ALLOWED_ORIGINS,
     ACS_CONNECTION_STRING,
     ACS_ENDPOINT,
@@ -56,7 +54,6 @@ from config.app_settings import (
     AZURE_COSMOS_COLLECTION_NAME,
     AZURE_COSMOS_CONNECTION_STRING,
     AZURE_COSMOS_DATABASE_NAME,
-
     ENTRA_EXEMPT_PATHS,
     ENABLE_AUTH_VALIDATION,
     # Documentation settings
@@ -168,11 +165,9 @@ def _build_startup_dashboard(
 
     lines.append("")
     agent_configs = [
-        ("auth", "auth_agent", AGENT_AUTH_CONFIG),
-        ("fraud", "fraud_agent", AGENT_FRAUD_CONFIG),
-        ("agency", "agency_agent", AGENT_AGENCY_CONFIG),
-        ("compliance", "compliance_agent", AGENT_COMPLIANCE_CONFIG),
-        ("trading", "trading_agent", AGENT_TRADING_CONFIG),
+        ("concierge", "shopping_concierge_agent", AGENT_SHOPPING_CONCIERGE_CONFIG),
+        ("stylist", "personal_stylist_agent", AGENT_PERSONAL_STYLIST_CONFIG),
+        ("postsale", "postsale_agent", AGENT_POSTSALE_CONFIG),
     ]
     loaded_agents: List[str] = []
     for label, attr, config_path in agent_configs:
@@ -396,28 +391,121 @@ async def lifespan(app: FastAPI):
     add_step("aoai", start_aoai_pool)
 
     async def start_external_services() -> None:
+        """
+        Initialize Cosmos DB managers for different data domains.
+        
+        Three separate managers are required because:
+        1. app.state.cosmos: Legacy call analytics/history (uses AZURE_COSMOS_DATABASE_NAME)
+           - Used by: /api/v1/calls endpoints, realtime analytics persistence
+           - Collection: call records, session data
+        
+        2. app.state.cosmos_manager: Retail users collection (retail-db.users)
+           - Used by: /api/v1/customers endpoints, user profile management
+           - Collection: customer profiles, preferences, purchase history
+        
+        3. app.state.cosmos_products: Retail products collection (retail-db.products)
+           - Used by: Retail agent tools (search_products_general, etc.)
+           - Collection: product catalog, inventory, pricing
+        
+        Note: Each CosmosDBMongoCoreManager creates its own MongoClient. While this
+        creates multiple connections to the same Cosmos DB account, it's acceptable
+        because:
+        - MongoDB clients are lightweight and thread-safe
+        - Each client maintains its own connection pool
+        - Different databases may have different access patterns
+        - Future optimization: Refactor to share client across same-database managers
+        """
+        # Legacy analytics database (separate from retail)
         app.state.cosmos = CosmosDBMongoCoreManager(
             connection_string=AZURE_COSMOS_CONNECTION_STRING,
             database_name=AZURE_COSMOS_DATABASE_NAME,
             collection_name=AZURE_COSMOS_COLLECTION_NAME,
         )
-        # Cosmos manager for retail users collection
+        
+        # Retail database - users collection
         app.state.cosmos_manager = CosmosDBMongoCoreManager(
             connection_string=AZURE_COSMOS_CONNECTION_STRING,
             database_name="retail-db",
             collection_name="users",
         )
+        
+        # Retail database - products collection (shares same DB as users)
+        app.state.cosmos_products = CosmosDBMongoCoreManager(
+            connection_string=AZURE_COSMOS_CONNECTION_STRING,
+            database_name="retail-db",
+            collection_name="products",
+        )
+        
         app.state.acs_caller = initialize_acs_caller_instance()
         logger.info("external services ready")
 
     add_step("services", start_external_services)
 
     async def start_agents() -> None:
-        app.state.auth_agent = ARTAgent(config_path=AGENT_AUTH_CONFIG)
-        app.state.fraud_agent = ARTAgent(config_path=AGENT_FRAUD_CONFIG)
-        app.state.agency_agent = ARTAgent(config_path=AGENT_AGENCY_CONFIG)
-        app.state.compliance_agent = ARTAgent(config_path=AGENT_COMPLIANCE_CONFIG)
-        app.state.trading_agent = ARTAgent(config_path=AGENT_TRADING_CONFIG)
+        # Initialize Azure AI Search client for retail product vector search
+        from config.app_settings import (
+            AZURE_AI_SEARCH_ENDPOINT,
+            AZURE_AI_SEARCH_KEY,
+            AZURE_AI_SEARCH_INDEX_NAME
+        )
+        
+        search_client = None
+        if AZURE_AI_SEARCH_ENDPOINT and AZURE_AI_SEARCH_KEY:
+            try:
+                from azure.search.documents import SearchClient
+                from azure.core.credentials import AzureKeyCredential
+                
+                search_client = SearchClient(
+                    endpoint=AZURE_AI_SEARCH_ENDPOINT,
+                    index_name=AZURE_AI_SEARCH_INDEX_NAME,
+                    credential=AzureKeyCredential(AZURE_AI_SEARCH_KEY)
+                )
+                logger.info(
+                    "Azure AI Search initialized",
+                    extra={"endpoint": AZURE_AI_SEARCH_ENDPOINT, "index": AZURE_AI_SEARCH_INDEX_NAME}
+                )
+            except Exception as e:
+                logger.warning(f"Azure AI Search initialization failed: {e}. Falling back to Cosmos DB only.")
+                search_client = None
+        else:
+            logger.info("Azure AI Search not configured (optional). Using Cosmos DB for product search.")
+        
+        # Get Azure OpenAI client from pool
+        aoai_client = None
+        if hasattr(app.state, 'aoai_pool') and app.state.aoai_pool:
+            aoai_client = app.state.aoai_pool.clients[0] if app.state.aoai_pool.clients else None
+        
+        # Initialize Azure Blob Storage client for product images
+        blob_service_client = None
+        storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
+        if storage_account_name:
+            try:
+                from azure.storage.blob import BlobServiceClient
+                from azure.identity import DefaultAzureCredential
+                
+                account_url = f"https://{storage_account_name}.blob.core.windows.net"
+                credential = DefaultAzureCredential()
+                blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
+                logger.info(f"✅ Azure Blob Storage initialized: {storage_account_name}")
+            except Exception as e:
+                logger.warning(f"⚠️  Blob storage initialization failed: {e}")
+        else:
+            logger.warning("⚠️  AZURE_STORAGE_ACCOUNT_NAME not set, product images disabled")
+        
+        # Initialize retail product tools with production dependencies
+        from apps.rtagent.backend.src.agents.artagent.tool_store.retail_product_tools import initialize_retail_tools
+        
+        app.state.retail_context = initialize_retail_tools(
+            search_client=search_client,
+            cosmos_product_manager=app.state.cosmos_products,
+            aoai_client=aoai_client,
+            blob_service_client=blob_service_client
+        )
+        
+        # Load agent configurations
+        app.state.shopping_concierge_agent = ARTAgent(config_path=AGENT_SHOPPING_CONCIERGE_CONFIG)
+        app.state.personal_stylist_agent = ARTAgent(config_path=AGENT_PERSONAL_STYLIST_CONFIG)
+        app.state.postsale_agent = ARTAgent(config_path=AGENT_POSTSALE_CONFIG)
         app.state.promptsclient = PromptManager()
         logger.info("agents initialized")
 

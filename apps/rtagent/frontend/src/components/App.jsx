@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import "reactflow/dist/style.css";
 import UserSwitcher from './UserSwitcher';
+import ProductCarousel from './ProductCarousel';
 
 // Environment configuration
 const backendPlaceholder = '__BACKEND_URL__';
@@ -2179,10 +2180,19 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
  *  CHAT BUBBLE
  * ------------------------------------------------------------------ */
 const ChatBubble = ({ message }) => {
-  const { speaker, text, isTool, streaming } = message;
+  const { speaker, text, isTool, streaming, type, products, voiceResponse } = message;
   const isUser = speaker === "User";
   const isSpecialist = speaker?.includes("Specialist");
   const isAuthAgent = speaker === "Auth Agent";
+  
+  // Handle product carousel display
+  if (type === "product_display" && products && products.length > 0) {
+    return (
+      <div style={styles.assistantMessage}>
+        <ProductCarousel products={products} voiceResponse={voiceResponse} />
+      </div>
+    );
+  }
   
   if (isTool) {
     return (
@@ -2890,12 +2900,42 @@ function RealTimeVoiceApp() {
       const { type, content = "", message = "", speaker } = payload;
       const txt = content || message;
       const msgType = (type || "").toLowerCase();
+      
+      // Debug: Log all WebSocket messages with type
+      if (type) {
+        console.log(`[WebSocket] Received message type: ${type}`, payload);
+      }
 
       if (msgType === "user" || speaker === "User") {
         // Add user voice input to chat
         setActiveSpeaker("User");
         setMessages(prev => pushIfChanged(prev, { speaker: "User", text: txt }));
         appendLog(`User: ${txt}`);
+        return;
+      }
+
+      // Handle product display messages from backend
+      if (type === "product_display" && payload.products) {
+        console.log("🛍️ Product display received:", {
+          count: payload.count,
+          products: payload.products.length,
+          tool: payload.tool_name,
+          productData: payload.products,  // Log full product data
+          firstProductImageUrl: payload.products[0]?.image_url,
+        });
+        
+        setMessages(prev => [
+          ...prev,
+          {
+            type: "product_display",
+            speaker: "Assistant",
+            products: payload.products,
+            voiceResponse: payload.voice_response || "",
+            timestamp: payload.timestamp,
+          },
+        ]);
+        
+        appendLog(`🛍️ Displaying ${payload.products.length} products`);
         return;
       }
 
@@ -3148,14 +3188,17 @@ function RealTimeVoiceApp() {
               <div style={{
                 fontSize: '22px',
                 lineHeight: '1',
-              }}>🛍️</div>
+              }}></div>
               <h1 style={{
-                color: '#1e293b',
+                color: '#072a63ff',
                 fontSize: '19px',
                 fontWeight: '600',
-                letterSpacing: '-0.3px',
+                letterSpacing: '-0.2x',
+                lineHeight: '1.2',
+                textAlign: 'left',
+                textTransform: 'none',
                 margin: 0,
-                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                fontFamily: 'system-ui, "Segoe UI Variable", "Segoe UI", Roboto, Arial, sans-serif'
               }}>ARTAgent</h1>
             </div>
             <p style={{
@@ -3164,7 +3207,7 @@ function RealTimeVoiceApp() {
               fontWeight: '400',
               margin: '0 0 6px 44px',
               lineHeight: '1.4',
-              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+              fontFamily: 'system-ui, "Segoe UI Variable", "Segoe UI", Roboto, Arial, sans-serif'
             }}>Your shopping companion</p>
             <div style={{
               fontSize: '11px',

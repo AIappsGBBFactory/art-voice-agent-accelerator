@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Dict, Optional, TYPE_CHECKING
 
 from fastapi import WebSocket
 
@@ -22,85 +22,53 @@ if TYPE_CHECKING:  # pragma: no cover
     from src.stateful.state_managment import MemoManager
 
 
-def create_personalized_greeting(
-    caller_name: Optional[str],
-    agent_name: str, 
-    customer_intelligence: Dict[str, Any],
-    institution_name: str,
-    topic: str
+def create_retail_greeting(
+    agent_name: str,
+    caller_name: Optional[str] = None,
+    topic: Optional[str] = None,
+    is_returning: bool = False,
 ) -> str:
     """
-    Create ultra-personalized greeting using 360° customer intelligence.
+    Create friendly, natural retail greeting for agent handoffs.
     
-    Uses behavioral patterns, relationship context, account status, 
-    and communication preferences for 10/10 customer experience.
+    Args:
+        agent_name: Agent name (ShoppingConcierge, PersonalStylist, PostSale)
+        caller_name: Customer name if available
+        topic: Current topic/context
+        is_returning: Whether customer is returning to this agent
+    
+    Returns:
+        Friendly greeting text
     """
-    try:
-        # Safely handle caller name
-        first_name = "there"  # Default fallback
-        if caller_name and caller_name.strip():
-            first_name = caller_name.split()[0] if caller_name.split() else "there"
-        
-        # Extract intelligence data
-        relationship_context = customer_intelligence.get("relationship_context", {})
-        account_status = customer_intelligence.get("account_status", {})
-        memory_score = customer_intelligence.get("memory_score", {})
-        conversation_context = customer_intelligence.get("conversation_context", {})
-        active_alerts = customer_intelligence.get("active_alerts", [])
-        
-        # Get personalization elements
-        relationship_tier = relationship_context.get("relationship_tier", "valued").lower()
-        relationship_years = relationship_context.get("relationship_duration_years", 0)
-        communication_style = memory_score.get("communication_style", "Direct/Business-focused")
-        account_health = account_status.get("account_health_score", 95)
-        
-        # Use custom greeting if available
-        custom_greeting = conversation_context.get("greeting_style", "")
-        first_name = caller_name.split()[0] if caller_name and caller_name.strip() else "there"
-        if custom_greeting and first_name in custom_greeting:
-            # Use the pre-generated personalized greeting
-            base_greeting = custom_greeting
+    first_name = caller_name.split()[0] if caller_name and caller_name.strip() else None
+    
+    # Agent-specific greetings
+    if agent_name == "ShoppingConcierge":
+        if is_returning:
+            base = f"Welcome back{f', {first_name}' if first_name else ''}! I'm here to help you find anything else you need."
         else:
-            # Create greeting based on relationship tier and communication style
-            # first_name already set above with null safety
-            
-            if "Direct" in communication_style or "Business" in communication_style:
-                base_greeting = f"Good morning {first_name}. This is your {agent_name} specialist at {institution_name}"
-            elif "Relationship" in communication_style:
-                base_greeting = f"Hello {first_name}, it's great to hear from you again. This is your dedicated {agent_name} specialist"
-            else:  # Detail-oriented
-                base_greeting = f"Good morning {first_name}. I'm your {agent_name} specialist, and I have your complete account profile ready"
-        
-        # Add relationship recognition
-        if relationship_years >= 3:
-            loyalty_note = f"I see you've been with us for {int(relationship_years)} years as a {relationship_tier} client"
-        elif relationship_tier in ["platinum", "gold"]:
-            loyalty_note = f"As our {relationship_tier} client, you have priority access to our specialist team"
+            base = f"Hi{f' {first_name}' if first_name else ''}! Welcome to our store. I'm here to help you find exactly what you're looking for."
+    
+    elif agent_name == "PersonalStylist":
+        if is_returning:
+            base = f"Great to style with you again{f', {first_name}' if first_name else ''}! What can I help you put together today?"
         else:
-            loyalty_note = f"I have your complete {relationship_tier} account profile here"
-        
-        # Add proactive service based on account status
-        if active_alerts:
-            alert_count = len(active_alerts)
-            service_note = f"I see you have {alert_count} account update{'s' if alert_count > 1 else ''} I can address"
-        elif account_health >= 95:
-            service_note = "Your account is in excellent standing, and I'm here to ensure it stays that way"
+            base = f"Hi{f' {first_name}' if first_name else ''}! I'm your personal stylist. I'd love to help you find the perfect look."
+    
+    elif agent_name == "PostSale":
+        if is_returning:
+            base = f"I'm back to help{f', {first_name}' if first_name else ''}. What else can I do for you?"
         else:
-            service_note = "I'm here to help with any concerns about your account"
-        
-        # Combine into ultra-personalized greeting
-        personalized_greeting = f"{base_greeting}. {loyalty_note}. {service_note}. How can I assist you today?"
-        
-        return personalized_greeting
-        
-    except Exception as e:
-        logger.warning(f"Error creating personalized greeting: {e}")
-        # Fallback to enhanced but simpler greeting
-        first_name = caller_name.split()[0] if caller_name else "there"
-        return (
-            f"Good morning {first_name}, this is your {agent_name} specialist from {institution_name}. "
-            f"I have your account information ready and I'm here to help. What can I do for you today?"
-        )
+            base = f"Perfect{f', {first_name}' if first_name else ''}! Let's get your order finalized. I'll make this quick and easy."
+    
+    else:
+        base = f"Hi{f' {first_name}' if first_name else ''}! How can I help you today?"
+    
+    # Add context if available
+    if topic and not is_returning:
+        base += f" I understand you're interested in {topic}."
+    
+    return base
 
 
 def sync_voice_from_agent(cm: "MemoManager", ws: WebSocket, agent_name: str) -> None:
@@ -123,90 +91,68 @@ async def send_agent_greeting(
     cm: "MemoManager", ws: WebSocket, agent_name: str, is_acs: bool
 ) -> None:
     """
-    Emit a greeting when switching to a specialist agent (behavior-preserving).
+    Send friendly retail greeting when switching to a specialist agent.
+    
+    Args:
+        cm: MemoManager with conversation state
+        ws: WebSocket connection
+        agent_name: Target agent name (ShoppingConcierge, PersonalStylist, PostSale)
+        is_acs: Whether this is an ACS phone call context
     """
     if cm is None:
         logger.error("MemoManager is None in send_agent_greeting for agent=%s", agent_name)
         return
 
     if agent_name == cm_get(cm, LAST_ANNOUNCED_KEY):
-        return  # prevent duplicate greeting
+        return  # Prevent duplicate greeting
 
+    # Get agent voice configuration
     agent = get_agent_instance(ws, agent_name)
     voice_name = getattr(agent, "voice_name", None) if agent else None
     voice_style = getattr(agent, "voice_style", "chat") if agent else "chat"
-    voice_rate = getattr(agent, "voice_rate", "+3%") if agent else "+3%"
+    voice_rate = getattr(agent, "voice_rate", "+2%") if agent else "+2%"
     actual_agent_name = getattr(agent, "name", None) or agent_name
 
+    # Track greeting count per agent
     state_counts: Dict[str, int] = getattr(ws.state, APP_GREETS_ATTR, {})
     if not hasattr(ws.state, APP_GREETS_ATTR):
         ws.state.__setattr__(APP_GREETS_ATTR, state_counts)
 
     counter = state_counts.get(actual_agent_name, 0)
     state_counts[actual_agent_name] = counter + 1
+    is_returning = counter > 0
 
+    # Get customer context
     caller_name = cm_get(cm, "caller_name")
-    topic = cm_get(cm, "topic") or cm_get(cm, "claim_intent") or "your policy"
-    
-    # 🎯 ULTRA-PERSONALIZED GREETING USING CUSTOMER INTELLIGENCE
-    customer_intelligence = cm_get(cm, "customer_intelligence")
-    institution_name = cm_get(cm, "institution_name")
-    
-    if customer_intelligence and counter == 0:
-        # Use 360° customer intelligence for 10/10 personalized experience
-        greeting = create_personalized_greeting(
-            caller_name=caller_name,
-            agent_name=agent_name,
-            customer_intelligence=customer_intelligence,
-            institution_name=institution_name,
-            topic=topic
-        )
-    elif counter == 0:
-        # Fallback to enhanced greeting with available data
-        if institution_name:
-            greeting = (
-                f"Good morning {caller_name}, I see you're calling from {institution_name}. "
-                f"This is your {agent_name} specialist. I'm here to help you with any concerns about {topic}. "
-                f"How can I assist you today?"
-            )
-        else:
-            greeting = (
-                f"Hi {caller_name}, this is the {agent_name} specialist agent. "
-                f"I understand you're calling about {topic}. How can I help you further?"
-            )
-    else:
-        # Return customer greeting with intelligence
-        if customer_intelligence:
-            relationship_tier = customer_intelligence.get("relationship_context", {}).get("relationship_tier", "valued")
-            greeting = (
-                f"Welcome back, {caller_name}. This is your {agent_name} specialist again. "
-                f"As a {relationship_tier.lower()} client, you have my full attention. "
-                f"What else can I help you with today?"
-            )
-        else:
-            greeting = (
-                f"Welcome back, {caller_name}. {agent_name} specialist here. "
-                f"What else can I assist you with?"
-            )
+    topic = cm_get(cm, "topic")
 
+    # Create retail-specific greeting
+    greeting = create_retail_greeting(
+        agent_name=agent_name,
+        caller_name=caller_name,
+        topic=topic,
+        is_returning=is_returning,
+    )
+
+    # Add to conversation history
     cm.append_to_history(actual_agent_name, "assistant", greeting)
     cm_set(cm, **{LAST_ANNOUNCED_KEY: agent_name})
 
+    # Send greeting via appropriate channel
     if is_acs:
         logger.info("ACS greeting #%s for %s (voice: %s): %s", counter + 1, agent_name, voice_name or "default", greeting)
-        if agent_name == "Fraud":
-            agent_sender = "Fraud Specialist"
-        elif agent_name == "Agency":
-            agent_sender = "Transfer Agency Specialist"
-        elif agent_name == "Compliance":
-            agent_sender = "Compliance Specialist"
-        elif agent_name == "Trading":
-            agent_sender = "Trading Specialist"
-        else:
-            agent_sender = "Assistant"
+        
+        # Map agent names to display names
+        agent_display_names = {
+            "ShoppingConcierge": "Shopping Assistant",
+            "PersonalStylist": "Personal Stylist",
+            "PostSale": "Order Support"
+        }
+        agent_sender = agent_display_names.get(agent_name, "Assistant")
 
         _, session_id = get_correlation_context(ws, cm)
         await broadcast_message(None, greeting, agent_sender, app_state=ws.app.state, session_id=session_id)
+        
         try:
             await send_response_to_acs(
                 ws=ws,
@@ -217,17 +163,19 @@ async def send_agent_greeting(
                 voice_style=voice_style,
                 rate=voice_rate,
             )
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.error("Failed to send ACS greeting audio: %s", exc)
             logger.warning("ACS greeting sent as text only.")
     else:
         logger.info("WS greeting #%s for %s (voice: %s)", counter + 1, agent_name, voice_name or "default")
         _, session_id = get_correlation_context(ws, cm)
         envelope = make_status_envelope(message=greeting, session_id=session_id)
+        
         if hasattr(ws.app.state, "conn_manager") and hasattr(ws.state, "conn_id"):
             await ws.app.state.conn_manager.send_to_connection(ws.state.conn_id, envelope)
         else:
             await ws.send_text(json.dumps({"type": "status", "message": greeting}))
+        
         await send_tts_audio(
             greeting,
             ws,

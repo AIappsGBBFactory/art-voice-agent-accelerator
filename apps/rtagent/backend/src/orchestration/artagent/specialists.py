@@ -1,3 +1,11 @@
+"""
+Retail Agent Specialist Handlers
+=================================
+
+Specialist agent handlers for retail voice assistant use case.
+Supports Shopping Concierge (entry point), Personal Stylist, and Post-Sale agents.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, TYPE_CHECKING
@@ -47,7 +55,7 @@ async def _run_specialist_base(
     await process_tool_response(cm, resp, ws, is_acs)
 
 
-async def run_general_agent(
+async def run_shopping_concierge_agent(
     cm: "MemoManager",
     utterance: str,
     ws: WebSocket,
@@ -55,63 +63,54 @@ async def run_general_agent(
     is_acs: bool,
 ) -> None:
     """
-    Handle a turn with the GeneralInfoAgent.
-    """
-    if cm is None:
-        logger.error("MemoManager is None in run_general_agent")
-        raise ValueError("MemoManager (cm) parameter cannot be None in run_general_agent")
-
-    caller_name = cm_get(cm, "caller_name")
-    topic = cm_get(cm, "topic")
-    policy_id = cm_get(cm, "policy_id")
-
-    context_msg = f"Authenticated caller: {caller_name} (Policy: {policy_id}) | Topic: {topic}"
-    await _run_specialist_base(
-        agent_key="General",
-        cm=cm,
-        utterance=utterance,
-        ws=ws,
-        is_acs=is_acs,
-        context_message=context_msg,
-        respond_kwargs={"caller_name": caller_name, "topic": topic, "policy_id": policy_id},
-        latency_label="general_agent",
-    )
-
-
-async def run_claims_agent(
-    cm: "MemoManager",
-    utterance: str,
-    ws: WebSocket,
-    *,
-    is_acs: bool,
-) -> None:
-    """
-    Handle a turn with the ClaimIntakeAgent.
+    Handle Shopping Concierge agent - entry point for retail voice assistant.
+    Routes to product discovery, general inquiries, and specialist handoffs.
     """
     if cm is None:
-        logger.error("MemoManager is None in run_claims_agent")
-        raise ValueError("MemoManager (cm) parameter cannot be None in run_claims_agent")
+        logger.error("MemoManager is None in run_shopping_concierge_agent")
+        raise ValueError("MemoManager (cm) parameter cannot be None")
 
-    caller_name = cm_get(cm, "caller_name")
-    claim_intent = cm_get(cm, "claim_intent")
-    policy_id = cm_get(cm, "policy_id")
-
-    context_msg = (
-        f"Authenticated caller: {caller_name} (Policy: {policy_id}) | Claim Intent: {claim_intent}"
-    )
+    # Get user profile from core memory for dynamic prompt injection
+    current_user = cm.get_value_from_corememory("current_user") or {}
+    user_name = current_user.get("full_name") if isinstance(current_user, dict) else None
+    if not user_name:
+        user_name = cm.get_value_from_corememory("caller_name") or "valued customer"
+    
+    # Extract nested data for Jinja2 template access
+    loyalty_data = current_user.get("dynamics365_data", {}) if isinstance(current_user, dict) else {}
+    location_data = current_user.get("location", {}) if isinstance(current_user, dict) else {}
+    preferences_data = current_user.get("preferences", {}) if isinstance(current_user, dict) else {}
+    
+    # Flatten for easy Jinja2 access
+    customer_name = user_name
+    loyalty_tier = loyalty_data.get("loyalty_tier", "Member")
+    location = f"{location_data.get('city', 'US')}, {location_data.get('state', '')}".strip(", ") or "US"
+    style_preferences = ", ".join(preferences_data.get("style", [])) or "Not specified"
+    recent_searches = ", ".join(current_user.get("search_history", [])[:3]) if isinstance(current_user, dict) else ""
+    
+    context_msg = f"Shopping Concierge serving {customer_name} ({loyalty_tier})"
+    
+    # Pass flattened data for Jinja2 template
     await _run_specialist_base(
-        agent_key="Claims",
+        agent_key="ShoppingConcierge",
         cm=cm,
         utterance=utterance,
         ws=ws,
         is_acs=is_acs,
         context_message=context_msg,
-        respond_kwargs={"caller_name": caller_name, "claim_intent": claim_intent, "policy_id": policy_id},
-        latency_label="claim_agent",
+        respond_kwargs={
+            "user_profile": current_user,  # Full profile for reference
+            "customer_name": customer_name,
+            "loyalty_tier": loyalty_tier,
+            "location": location,
+            "style_preferences": style_preferences,
+            "recent_searches": recent_searches,
+        },
+        latency_label="shopping_concierge_agent",
     )
 
 
-async def run_fraud_agent(
+async def run_personal_stylist_agent(
     cm: "MemoManager",
     utterance: str,
     ws: WebSocket,
@@ -119,143 +118,103 @@ async def run_fraud_agent(
     is_acs: bool,
 ) -> None:
     """
-    Handle a turn with the FraudAgent for post-authentication fraud investigation.
+    Handle Personal Stylist agent - personalized style recommendations and outfit building.
+    Receives handoffs from Shopping Concierge for styling consultations.
     """
     if cm is None:
-        logger.error("MemoManager is None in run_fraud_agent")
-        raise ValueError("MemoManager (cm) parameter cannot be None in run_fraud_agent")
+        logger.error("MemoManager is None in run_personal_stylist_agent")
+        raise ValueError("MemoManager (cm) parameter cannot be None")
 
-    caller_name = cm_get(cm, "caller_name")
-    client_id = cm_get(cm, "client_id")
-    institution_name = cm_get(cm, "institution_name")
-    fraud_type = cm_get(cm, "fraud_type", "general_inquiry")
-    customer_intelligence = cm_get(cm, "customer_intelligence") or {}
-
-    context_msg = (
-        f"Authenticated client: {caller_name} (ID: {client_id}) | Institution: {institution_name} | Fraud Type: {fraud_type}"
-    )
+    # Get user profile from core memory for dynamic prompt injection
+    current_user = cm.get_value_from_corememory("current_user") or {}
+    user_name = current_user.get("full_name") if isinstance(current_user, dict) else None
+    if not user_name:
+        user_name = cm.get_value_from_corememory("caller_name") or "valued customer"
+    
+    # Extract nested data for Jinja2 template access
+    loyalty_data = current_user.get("dynamics365_data", {}) if isinstance(current_user, dict) else {}
+    location_data = current_user.get("location", {}) if isinstance(current_user, dict) else {}
+    preferences_data = current_user.get("preferences", {}) if isinstance(current_user, dict) else {}
+    
+    # Flatten for easy Jinja2 access
+    customer_name = user_name
+    loyalty_tier = loyalty_data.get("loyalty_tier", "Member")
+    location = f"{location_data.get('city', 'US')}, {location_data.get('state', '')}".strip(", ") or "US"
+    style_preferences = ", ".join(preferences_data.get("style", [])) or "Not specified"
+    recent_searches = ", ".join(current_user.get("search_history", [])[:3]) if isinstance(current_user, dict) else ""
+    
+    context_msg = f"Personal Stylist consulting with {customer_name} ({loyalty_tier})"
+    
+    # Pass flattened data for Jinja2 template
     await _run_specialist_base(
-        agent_key="Fraud",
+        agent_key="PersonalStylist",
         cm=cm,
         utterance=utterance,
         ws=ws,
         is_acs=is_acs,
         context_message=context_msg,
         respond_kwargs={
-            "caller_name": caller_name, 
-            "client_id": client_id, 
-            "institution_name": institution_name,
-            "fraud_type": fraud_type,
-            "customer_intelligence": customer_intelligence
+            "user_profile": current_user,  # Full profile for reference
+            "customer_name": customer_name,
+            "loyalty_tier": loyalty_tier,
+            "location": location,
+            "style_preferences": style_preferences,
+            "recent_searches": recent_searches,
         },
-        latency_label="fraud_agent",
+        latency_label="personal_stylist_agent",
     )
 
 
-async def run_agency_agent(
+async def run_postsale_agent(
     cm: "MemoManager",
     utterance: str,
     ws: WebSocket,
     *,
     is_acs: bool,
 ) -> None:
-    """Handle Transfer Agency coordination - DRIP liquidations, compliance, and specialist delegation."""
+    """
+    Handle Post-Sale Support agent - order tracking, returns, and customer service.
+    Receives handoffs from Shopping Concierge for post-purchase inquiries.
+    """
+    if cm is None:
+        logger.error("MemoManager is None in run_postsale_agent")
+        raise ValueError("MemoManager (cm) parameter cannot be None")
+
+    # Get user profile from core memory for dynamic prompt injection
+    current_user = cm.get_value_from_corememory("current_user") or {}
+    user_name = current_user.get("full_name") if isinstance(current_user, dict) else None
+    if not user_name:
+        user_name = cm.get_value_from_corememory("caller_name") or "valued customer"
     
-    # Get authenticated client context 
-    caller_name: str | None = cm_get(cm, "caller_name")
-    client_id: str | None = cm_get(cm, "client_id")
-    institution_name: str | None = cm_get(cm, "institution_name")
-    customer_intelligence = cm_get(cm, "customer_intelligence") or {}
+    # Extract nested data for Jinja2 template access
+    loyalty_data = current_user.get("dynamics365_data", {}) if isinstance(current_user, dict) else {}
+    location_data = current_user.get("location", {}) if isinstance(current_user, dict) else {}
+    preferences_data = current_user.get("preferences", {}) if isinstance(current_user, dict) else {}
     
-    context_msg = f"Transfer Agency Agent serving {caller_name or 'client'}"
-    if institution_name:
-        context_msg += f" from {institution_name}"
-    context_msg += " for DRIP liquidations and institutional services."
+    # Flatten for easy Jinja2 access
+    customer_name = user_name
+    loyalty_tier = loyalty_data.get("loyalty_tier", "Member")
+    location = f"{location_data.get('city', 'US')}, {location_data.get('state', '')}".strip(", ") or "US"
+    style_preferences = ", ".join(preferences_data.get("style", [])) or "Not specified"
+    recent_searches = ", ".join(current_user.get("search_history", [])[:3]) if isinstance(current_user, dict) else ""
     
+    context_msg = f"Post-Sale Support assisting {customer_name} ({loyalty_tier})"
+    
+    # Pass flattened data for Jinja2 template
     await _run_specialist_base(
-        agent_key="Agency",
+        agent_key="PostSale",
         cm=cm,
         utterance=utterance,
         ws=ws,
         is_acs=is_acs,
         context_message=context_msg,
         respond_kwargs={
-            "caller_name": caller_name,
-            "client_id": client_id,
-            "institution_name": institution_name,
-            "customer_intelligence": customer_intelligence,
+            "user_profile": current_user,  # Full profile for reference
+            "customer_name": customer_name,
+            "loyalty_tier": loyalty_tier,
+            "location": location,
+            "style_preferences": style_preferences,
+            "recent_searches": recent_searches,
         },
-        latency_label="agency_agent",
-    )
-
-
-async def run_compliance_agent(
-    cm: "MemoManager",
-    utterance: str,
-    ws: WebSocket,
-    *,
-    is_acs: bool,
-) -> None:
-    """Handle AML/FATCA compliance verification and regulatory review."""
-    
-    # Get client context from handoff
-    caller_name: str | None = cm_get(cm, "caller_name")
-    client_id: str | None = cm_get(cm, "client_id") 
-    institution_name: str | None = cm_get(cm, "institution_name")
-    customer_intelligence = cm_get(cm, "customer_intelligence") or {}
-    
-    context_msg = f"Compliance Specialist handling regulatory review for {caller_name or 'client'}"
-    if institution_name:
-        context_msg += f" from {institution_name}"
-    
-    await _run_specialist_base(
-        agent_key="Compliance",
-        cm=cm,
-        utterance=utterance,
-        ws=ws,
-        is_acs=is_acs,
-        context_message=context_msg,
-        respond_kwargs={
-            "caller_name": caller_name,
-            "client_id": client_id, 
-            "institution_name": institution_name,
-            "customer_intelligence": customer_intelligence,
-        },
-        latency_label="compliance_agent",
-    )
-
-
-async def run_trading_agent(
-    cm: "MemoManager",
-    utterance: str,
-    ws: WebSocket,
-    *,
-    is_acs: bool,
-) -> None:
-    """Handle complex trade execution, FX conversion, and institutional settlement."""
-    
-    # Get client context from handoff
-    caller_name: str | None = cm_get(cm, "caller_name")
-    client_id: str | None = cm_get(cm, "client_id")
-    institution_name: str | None = cm_get(cm, "institution_name")
-    customer_intelligence = cm_get(cm, "customer_intelligence") or {}
-    
-    context_msg = f"Trading Specialist handling execution for {caller_name or 'client'}"
-    if institution_name:
-        context_msg += f" from {institution_name}"
-    
-    await _run_specialist_base(
-        agent_key="Trading",
-        cm=cm,
-        utterance=utterance,
-        ws=ws,
-        is_acs=is_acs,
-        context_message=context_msg,
-        respond_kwargs={
-            "caller_name": caller_name,
-            "client_id": client_id,
-            "institution_name": institution_name,
-            "customer_intelligence": customer_intelligence,
-        },
-        latency_label="trading_agent",
+        latency_label="postsale_agent",
     )

@@ -25,7 +25,7 @@ model:
 
 voice:
   name: en-US-Emma:DragonHDLatestNeural  # Friendly, professional female voice
-  style: friendly  # Approachable retail assistant tone
+  style: chat  # Approachable retail assistant tone
   rate: "+2%"  # Slightly upbeat pace for retail energy
 
 prompts:

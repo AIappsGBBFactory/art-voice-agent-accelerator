@@ -88,6 +88,11 @@ AZURE_COSMOS_CONNECTION_STRING: str = os.getenv("AZURE_COSMOS_CONNECTION_STRING"
 AZURE_COSMOS_DATABASE_NAME: str = os.getenv("AZURE_COSMOS_DATABASE_NAME", "")
 AZURE_COSMOS_COLLECTION_NAME: str = os.getenv("AZURE_COSMOS_COLLECTION_NAME", "")
 
+# Azure AI Search configuration (for retail product vector search)
+AZURE_AI_SEARCH_ENDPOINT: str = os.getenv("AZURE_AI_SEARCH_SERVICE_ENDPOINT", "")
+AZURE_AI_SEARCH_KEY: str = os.getenv("AZURE_AI_SEARCH_ADMIN_KEY", "")
+AZURE_AI_SEARCH_INDEX_NAME: str = os.getenv("AZURE_AI_SEARCH_INDEX_NAME", "clothing-index")
+
 # ==============================================================================
 # AUTHENTICATION CONFIGURATION
 # ==============================================================================

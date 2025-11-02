@@ -15,6 +15,7 @@ import random
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import WebSocket
@@ -86,6 +87,10 @@ AOAI_RETRY_JITTER_SEC: float = _env_float("AOAI_RETRY_JITTER_SEC", 0.2)
 
 # 🚀 AOAI Client Pool Configuration
 AOAI_USE_SESSION_POOL: bool = os.getenv("AOAI_USE_SESSION_POOL", "true").lower() == "true"
+
+# 🔧 Parallel Tool Calling Configuration
+PARALLEL_TOOL_MAX_COUNT: int = int(os.getenv("PARALLEL_TOOL_MAX_COUNT", "10"))
+PARALLEL_TOOL_TIMEOUT_SEC: float = _env_float("PARALLEL_TOOL_TIMEOUT_SEC", 30.0)
 
 
 @dataclass
@@ -377,25 +382,23 @@ def _get_agent_voice_config(
 
 def _get_agent_sender_name(cm: "MemoManager", *, include_autoauth: bool = True) -> str:
     """
-    Resolve the visible sender name for dashboard/UI.
+    Resolve the visible sender name for dashboard/UI (retail agents).
 
     :param cm: MemoManager instance for reading conversation context.
-    :param include_autoauth: When True, map active_agent=='AutoAuth' to 'Auth Agent'.
+    :param include_autoauth: Legacy parameter (unused for retail).
     :return: Human-friendly speaker label for display.
     """
     try:
         active_agent = cm.get_value_from_corememory("active_agent") if cm else None
-        authenticated = cm.get_value_from_corememory("authenticated") if cm else False
 
-        if active_agent == "Claims":
-            return "Claims Specialist"
-        if active_agent == "Fraud":
-            return "Fraud Specialist"
-        if include_autoauth and active_agent == "AutoAuth":
-            return "Auth Agent"
-        if not authenticated:
-            return "Auth Agent"
-        return "Assistant"
+        # Retail agent display names
+        retail_agent_names = {
+            "ShoppingConcierge": "Shopping Assistant",
+            "PersonalStylist": "Personal Stylist",
+            "PostSale": "Order Support",
+        }
+        
+        return retail_agent_names.get(active_agent, "Assistant")
     except Exception:
         return "Assistant"
 
@@ -665,10 +668,27 @@ def _repair_conversation_history(history: List[JSONDict], agent_name: str) -> Li
             extra={
                 "agent_name": agent_name,
                 "orphaned_count": len(pending_tool_calls),
+                "orphaned_ids": list(pending_tool_calls.keys()),
                 "event_type": "conversation_history_repair"
             }
         )
         
+        # Find the position to insert synthetic responses
+        # They must come BEFORE any user/assistant messages after the tool call
+        insert_position = len(repaired_history)
+        
+        # Work backwards to find where to insert
+        for i in range(len(repaired_history) - 1, -1, -1):
+            msg = repaired_history[i]
+            role = msg.get("role")
+            
+            # If we hit an assistant message with tool_calls, insert after it
+            if role == "assistant" and msg.get("tool_calls"):
+                insert_position = i + 1
+                break
+        
+        # Insert synthetic responses at the correct position
+        synthetic_responses = []
         for tool_call_id, tool_call in pending_tool_calls.items():
             synthetic_response = {
                 "tool_call_id": tool_call_id,
@@ -680,7 +700,21 @@ def _repair_conversation_history(history: List[JSONDict], agent_name: str) -> Li
                     "synthetic_response": True
                 }),
             }
-            repaired_history.append(synthetic_response)
+            synthetic_responses.append(synthetic_response)
+        
+        # Insert at the correct position (not just append)
+        repaired_history[insert_position:insert_position] = synthetic_responses
+        
+        logger.info(
+            "Inserted %d synthetic tool responses at position %d",
+            len(synthetic_responses),
+            insert_position,
+            extra={
+                "insert_position": insert_position,
+                "synthetic_count": len(synthetic_responses),
+                "event_type": "conversation_repair_complete"
+            }
+        )
     
     return repaired_history
 
@@ -724,6 +758,14 @@ class _ToolCallState:
         self.name: str = ""
         self.call_id: str = ""
         self.args_json: str = ""
+
+
+class _ParallelToolCallsState:
+    """State carrier for multiple parallel tool calls parsed from stream deltas."""
+    def __init__(self) -> None:
+        # Map from tool_call index -> _ToolCallState
+        self.tool_calls: Dict[int, _ToolCallState] = {}
+        self.has_any: bool = False
 
 
 async def _openai_stream_with_retry(
@@ -934,9 +976,10 @@ async def _consume_openai_stream(
     cm: "MemoManager",
     call_connection_id: Optional[str],
     session_id: Optional[str],
-) -> Tuple[str, _ToolCallState]:
+) -> Tuple[str, _ParallelToolCallsState]:
     """
     Consume the AOAI stream, emitting TTS chunks as punctuation arrives.
+    Supports parallel tool calling by aggregating multiple tool_calls.
 
     :param response_stream: Azure OpenAI streaming response object or ctx.
     :param ws: WebSocket connection for client communication.
@@ -944,11 +987,11 @@ async def _consume_openai_stream(
     :param cm: MemoManager instance for conversation state.
     :param call_connection_id: Optional correlation ID for tracing.
     :param session_id: Optional session ID for tracing correlation.
-    :return: (full_assistant_text, tool_call_state)
+    :return: (full_assistant_text, parallel_tools_state)
     """
     collected: List[str] = []
     final_chunks: List[str] = []
-    tool = _ToolCallState()
+    parallel_tools = _ParallelToolCallsState()
 
     # TTFB ends on first delta; then we time the stream consume
     lt = _lt(ws)
@@ -973,14 +1016,22 @@ async def _consume_openai_stream(
             continue
         delta = chunk.choices[0].delta
 
-        # Tool-call aggregation
+        # Tool-call aggregation (support parallel calls)
         if getattr(delta, "tool_calls", None):
-            tc = delta.tool_calls[0]
-            tool.call_id = tc.id or tool.call_id
-            tool.name = getattr(tc.function, "name", None) or tool.name
-            tool.args_json += getattr(tc.function, "arguments", None) or ""
-            if not tool.started:
-                tool.started = True
+            for tc in delta.tool_calls:
+                idx = tc.index if hasattr(tc, "index") else 0
+                
+                # Initialize tool state for this index if not exists
+                if idx not in parallel_tools.tool_calls:
+                    parallel_tools.tool_calls[idx] = _ToolCallState()
+                
+                tool = parallel_tools.tool_calls[idx]
+                tool.call_id = tc.id or tool.call_id
+                tool.name = getattr(tc.function, "name", None) or tool.name
+                tool.args_json += getattr(tc.function, "arguments", None) or ""
+                if not tool.started:
+                    tool.started = True
+                    parallel_tools.has_any = True
             continue
 
         # Text streaming (flush on boundaries in TTS_END)
@@ -1011,7 +1062,7 @@ async def _consume_openai_stream(
         except Exception:
             pass
 
-    return "".join(final_chunks).strip(), tool
+    return "".join(final_chunks).strip(), parallel_tools
 
 
 # ---------------------------------------------------------------------------
@@ -1172,13 +1223,15 @@ async def process_gpt_response(  # noqa: PLR0913
                 )
 
                 # Consume the stream and emit chunks
-                full_text, tool_state = await _consume_openai_stream(
+                full_text, parallel_tools = await _consume_openai_stream(
                     response_stream, ws, is_acs, cm, call_connection_id, session_id
                 )
 
-                dep_span.set_attribute("tool_call_detected", tool_state.started)
-                if tool_state.started:
-                    dep_span.set_attribute("tool_name", tool_state.name)
+                dep_span.set_attribute("tool_call_detected", parallel_tools.has_any)
+                if parallel_tools.has_any:
+                    tool_names = [t.name for t in parallel_tools.tool_calls.values() if t.name]
+                    dep_span.set_attribute("tool_names", ",".join(tool_names))
+                    dep_span.set_attribute("tool_count", len(parallel_tools.tool_calls))
 
         except Exception as exc:  # noqa: BLE001
             # Ensure timers stop on all error paths
@@ -1229,63 +1282,483 @@ async def process_gpt_response(  # noqa: PLR0913
             await _broadcast_dashboard(ws, cm, full_text, include_autoauth=False)
             span.set_attribute("response.length", len(full_text))
 
-        # Handle follow-up tool call (if any)
-        if tool_state.started:
+        # Handle parallel tool calls (if any)
+        if parallel_tools.has_any:
+            tool_count = len(parallel_tools.tool_calls)
             span.add_event(
-                "tool_execution_starting",
-                {"tool_name": tool_state.name, "tool_id": tool_state.call_id},
+                "parallel_tool_execution_starting",
+                {"tool_count": tool_count},
             )
-
-            agent_history.append(
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": tool_state.call_id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_state.name,
-                                "arguments": tool_state.args_json,
-                            },
-                        }
-                    ],
+            logger.info(
+                "Starting parallel tool execution: %d tools",
+                tool_count,
+                extra={
+                    "tool_count": tool_count,
+                    "tool_names": [t.name for t in parallel_tools.tool_calls.values()],
+                    "event_type": "parallel_tools_start"
                 }
             )
-            result = await _handle_tool_call(
-                tool_state.name,
-                tool_state.call_id,
-                tool_state.args_json,
-                cm,
-                ws,
-                agent_name,
-                is_acs,
-                model_id,
-                temperature,
-                top_p,
-                max_tokens,
-                tool_set,
-                call_connection_id,
-                session_id,
-            )
-            if result is not None:
-                async def persist_tool_results() -> None:
-                    cm.persist_tool_output(tool_state.name, result)
-                    if isinstance(result, dict) and "slots" in result:
-                        cm.update_slots(result["slots"])
 
-                asyncio.create_task(persist_tool_results())
-                span.set_attribute("tool.execution_success", True)
-                span.add_event("tool_execution_completed", {"tool_name": tool_state.name})
-            return result
+            # Build assistant message with ALL tool calls
+            tool_calls_list = []
+            sorted_indices = sorted(parallel_tools.tool_calls.keys())
+            
+            # Apply max parallel limit
+            if len(sorted_indices) > PARALLEL_TOOL_MAX_COUNT:
+                logger.warning(
+                    "Tool call limit exceeded: requested=%d max=%d, truncating",
+                    len(sorted_indices),
+                    PARALLEL_TOOL_MAX_COUNT,
+                    extra={
+                        "requested_count": len(sorted_indices),
+                        "max_count": PARALLEL_TOOL_MAX_COUNT,
+                        "event_type": "parallel_tool_limit_exceeded"
+                    }
+                )
+                sorted_indices = sorted_indices[:PARALLEL_TOOL_MAX_COUNT]
+            
+            for idx in sorted_indices:
+                tool = parallel_tools.tool_calls[idx]
+                tool_calls_list.append({
+                    "id": tool.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "arguments": tool.args_json,
+                    },
+                })
+            
+            agent_history.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": tool_calls_list,
+            })
+
+            # Execute all tool calls in parallel with timeout protection
+            tasks = []
+            for idx in sorted_indices:
+                tool = parallel_tools.tool_calls[idx]
+                
+                # Wrap each tool call with timeout
+                async def execute_tool_with_timeout(
+                    tool_name: str,
+                    tool_id: str,
+                    tool_args: str,
+                ) -> Dict[str, Any]:
+                    try:
+                        result = await asyncio.wait_for(
+                            _execute_tool_only(
+                                tool_name,
+                                tool_id,
+                                tool_args,
+                                cm,
+                                ws,
+                                agent_name,
+                                is_acs,
+                                call_connection_id,
+                                session_id,
+                            ),
+                            timeout=PARALLEL_TOOL_TIMEOUT_SEC,
+                        )
+                        return result
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            "Tool execution timeout: tool=%s timeout=%s",
+                            tool_name,
+                            PARALLEL_TOOL_TIMEOUT_SEC,
+                            extra={
+                                "tool_name": tool_name,
+                                "timeout_seconds": PARALLEL_TOOL_TIMEOUT_SEC,
+                                "event_type": "tool_timeout"
+                            }
+                        )
+                        # Return error result instead of raising to prevent conversation corruption
+                        return {
+                            "error": "timeout",
+                            "message": f"Tool execution exceeded {PARALLEL_TOOL_TIMEOUT_SEC}s timeout",
+                            "tool_name": tool_name,
+                        }
+                
+                task = execute_tool_with_timeout(tool.name, tool.call_id, tool.args_json)
+                tasks.append(task)
+            
+            # Wait for all tool calls to complete
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # CRITICAL: Add ALL tool responses to conversation history BEFORE follow-up
+            # This follows Azure OpenAI best practices for parallel function calling
+            # Reference: https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/function-calling
+            successful_results = []
+            for idx, (result, tool) in enumerate(zip(results, [parallel_tools.tool_calls[i] for i in sorted_indices])):
+                if isinstance(result, Exception):
+                    logger.error(
+                        "Parallel tool execution failed: tool=%s error=%s",
+                        tool.name,
+                        result,
+                        extra={
+                            "tool_name": tool.name,
+                            "error": str(result),
+                            "event_type": "parallel_tool_error"
+                        }
+                    )
+                    span.add_event("tool_execution_failed", {"tool_name": tool.name, "error": str(result)})
+                    
+                    # Add error response to conversation history
+                    agent_history.append({
+                        "tool_call_id": tool.call_id,
+                        "role": "tool",
+                        "name": tool.name,
+                        "content": json.dumps({
+                            "error": type(result).__name__,
+                            "message": "Tool execution failed",
+                            "details": str(result)[:500]
+                        }),
+                    })
+                    
+                elif result is not None:
+                    # Check if result is a timeout error dict
+                    is_timeout = isinstance(result, dict) and result.get("error") == "timeout"
+                    
+                    if is_timeout:
+                        logger.warning(
+                            "Tool timed out: tool=%s timeout=%s",
+                            tool.name,
+                            PARALLEL_TOOL_TIMEOUT_SEC,
+                            extra={
+                                "tool_name": tool.name,
+                                "timeout_seconds": PARALLEL_TOOL_TIMEOUT_SEC,
+                                "event_type": "tool_timeout_handled"
+                            }
+                        )
+                        span.add_event("tool_execution_timeout", {"tool_name": tool.name, "timeout": PARALLEL_TOOL_TIMEOUT_SEC})
+                        
+                        # Add timeout error to conversation history
+                        agent_history.append({
+                            "tool_call_id": tool.call_id,
+                            "role": "tool",
+                            "name": tool.name,
+                            "content": json.dumps(result),
+                        })
+                    else:
+                        # Successful result
+                        successful_results.append(result)
+                        
+                        # Persist successful results
+                        async def persist_tool_results(name: str, res: Dict[str, Any]) -> None:
+                            cm.persist_tool_output(name, res)
+                            if isinstance(res, dict) and "slots" in res:
+                                cm.update_slots(res["slots"])
+                        
+                        asyncio.create_task(persist_tool_results(tool.name, result))
+                        span.add_event("tool_execution_completed", {"tool_name": tool.name})
+                        
+                        # Add successful result to conversation history
+                        agent_history.append({
+                            "tool_call_id": tool.call_id,
+                            "role": "tool",
+                            "name": tool.name,
+                            "content": json.dumps(result),
+                        })
+            
+            span.set_attribute("tool.execution_success", True)
+            span.set_attribute("tool.parallel_count", tool_count)
+            logger.info(
+                "Parallel tool execution completed: %d tools, %d successful",
+                tool_count,
+                len(successful_results),
+                extra={
+                    "tool_count": tool_count,
+                    "successful_count": len(successful_results),
+                    "event_type": "parallel_tools_complete"
+                }
+            )
+            
+            # Now that ALL tool responses are in conversation history, do ONE follow-up call
+            logger.info(
+                "Starting parallel tools follow-up: %d tools completed",
+                tool_count,
+                extra={
+                    "tool_count": tool_count,
+                    "event_type": "parallel_tools_followup_start"
+                }
+            )
+            
+            try:
+                await _process_tool_followup(
+                    cm,
+                    ws,
+                    agent_name,
+                    is_acs,
+                    model_id,
+                    temperature,
+                    top_p,
+                    max_tokens,
+                    tool_set,
+                    call_connection_id,
+                    session_id,
+                )
+            except Exception as followup_exc:
+                logger.error(
+                    "Parallel tools follow-up failed: error=%s",
+                    followup_exc,
+                    extra={
+                        "tool_count": tool_count,
+                        "followup_error": str(followup_exc),
+                        "event_type": "parallel_tools_followup_error"
+                    },
+                    exc_info=True
+                )
+                # Don't propagate follow-up errors
+            
+            # Return first successful result for backward compatibility
+            if successful_results:
+                return successful_results[0]
+            return None
 
         span.set_attribute("completion_type", "text_only")
         return None
 
 
 # ---------------------------------------------------------------------------
-# Tool handling (UNCHANGED)
+# Tool handling
 # ---------------------------------------------------------------------------
+async def _execute_tool_only(
+    tool_name: str,
+    tool_id: str,
+    args: str,
+    cm: "MemoManager",
+    ws: WebSocket,
+    agent_name: str,
+    is_acs: bool,
+    call_connection_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Execute a tool WITHOUT follow-up call - designed for parallel execution.
+    
+    This function executes the tool and adds the response to conversation history,
+    but does NOT make a follow-up AOAI call. This prevents conversation history
+    corruption when multiple tools are running in parallel.
+    
+    :param tool_name: Name of the tool function to execute.
+    :param tool_id: Unique identifier for this tool call instance.
+    :param args: JSON string containing tool function arguments.
+    :param cm: MemoManager instance for conversation state.
+    :param ws: WebSocket connection for client communication.
+    :param agent_name: Identifier for the calling agent context.
+    :param is_acs: Flag indicating Azure Communication Services pathway.
+    :param call_connection_id: Optional correlation ID for tracing.
+    :param session_id: Optional session ID for tracing correlation.
+    :return: Parsed result dictionary from the tool execution.
+    :raises ValueError: If tool_name does not exist in function_mapping.
+    """
+    logger.info(
+        "Executing tool (no follow-up): tool=%s id=%s args_len=%d",
+        tool_name,
+        tool_id,
+        len(args) if args else 0,
+        extra={
+            "tool_name": tool_name,
+            "tool_id": tool_id,
+            "args_length": len(args) if args else 0,
+            "agent_name": agent_name,
+            "is_acs": is_acs,
+            "event_type": "tool_execution_only_start"
+        }
+    )
+
+    with create_trace_context(
+        name="gpt_flow.execute_tool_only",
+        call_connection_id=call_connection_id,
+        session_id=session_id,
+        metadata={
+            "tool_name": tool_name,
+            "tool_id": tool_id,
+            "agent_name": agent_name,
+            "is_acs": is_acs,
+            "args_length": len(args) if args else 0,
+        },
+    ) as trace_ctx:
+        try:
+            params: JSONDict = json.loads(args or "{}")
+        except json.JSONDecodeError as json_exc:
+            trace_ctx.set_attribute("error", f"Invalid JSON args: {json_exc}")
+            logger.error(
+                "Invalid JSON in tool args: tool=%s, args=%s, error=%s",
+                tool_name,
+                args[:200] if args else "None",
+                json_exc,
+                extra={
+                    "tool_name": tool_name,
+                    "args_preview": args[:200] if args else "None",
+                    "error_type": "json_decode_error",
+                    "event_type": "tool_execution_error"
+                }
+            )
+            raise ValueError(f"Invalid JSON arguments for tool '{tool_name}': {json_exc}")
+        
+        fn = function_mapping.get(tool_name)
+        if fn is None:
+            trace_ctx.set_attribute("error", f"Unknown tool '{tool_name}'")
+            logger.error(
+                "Unknown tool requested: %s",
+                tool_name,
+                extra={
+                    "tool_name": tool_name,
+                    "available_tools": list(function_mapping.keys()),
+                    "event_type": "tool_execution_error"
+                }
+            )
+            raise ValueError(f"Unknown tool '{tool_name}'")
+
+        trace_ctx.set_attribute("tool.parameters_count", len(params))
+        call_short_id = uuid.uuid4().hex[:8]
+        trace_ctx.set_attribute("tool.call_id", call_short_id)
+
+        await push_tool_start(ws, call_short_id, tool_name, params, is_acs=is_acs, session_id=session_id)
+        trace_ctx.add_event("tool_start_pushed", {"call_id": call_short_id})
+
+        with create_trace_context(
+            name=f"gpt_flow.execute_tool.{tool_name}",
+            call_connection_id=call_connection_id,
+            session_id=session_id,
+            metadata={"tool_name": tool_name, "call_id": call_short_id},
+        ) as exec_ctx:
+            t0 = time.perf_counter()
+            result: Dict[str, Any] = {}
+            elapsed_ms = 0.0
+
+            try:
+                result_raw = await fn(params)
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                exec_ctx.set_attribute("execution.duration_ms", elapsed_ms)
+                exec_ctx.set_attribute("execution.success", True)
+                
+                # Parse JSON string result to dict
+                result = json.loads(result_raw) if isinstance(result_raw, str) else result_raw
+
+                logger.info(
+                    "Tool execution successful: tool=%s duration=%.2fms result_type=%s",
+                    tool_name,
+                    elapsed_ms,
+                    type(result).__name__,
+                    extra={
+                        "tool_name": tool_name,
+                        "execution_duration_ms": elapsed_ms,
+                        "result_type": type(result).__name__,
+                        "success": True,
+                        "event_type": "tool_execution_success"
+                    }
+                )
+                
+            except Exception as tool_exc:
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                exec_ctx.set_attribute("execution.duration_ms", elapsed_ms)
+                exec_ctx.set_attribute("execution.success", False)
+                exec_ctx.record_exception(tool_exc)
+
+                logger.error(
+                    "Tool execution failed: tool=%s duration=%.2fms error=%s",
+                    tool_name,
+                    elapsed_ms,
+                    str(tool_exc),
+                    extra={
+                        "tool_name": tool_name,
+                        "execution_duration_ms": elapsed_ms,
+                        "error_type": type(tool_exc).__name__,
+                        "error_message": str(tool_exc),
+                        "success": False,
+                        "event_type": "tool_execution_error"
+                    }
+                )
+                
+                # Use error result
+                result = {
+                    "error": type(tool_exc).__name__,
+                    "message": "Tool execution failed. Please try again or contact support.",
+                    "details": str(tool_exc)[:500]
+                }
+                
+                # Push tool_end with error status
+                await push_tool_end(
+                    ws,
+                    call_short_id,
+                    tool_name,
+                    "error",
+                    elapsed_ms,
+                    error=str(tool_exc),
+                    is_acs=is_acs,
+                    session_id=session_id,
+                )
+                trace_ctx.add_event("tool_end_pushed", {"elapsed_ms": elapsed_ms, "status": "error"})
+
+                if is_acs:
+                    await _broadcast_dashboard(ws, cm, f"🛠️ {tool_name} ❌", include_autoauth=False)
+
+        # Push success tool_end if no error
+        if elapsed_ms > 0 and result and (not isinstance(result, dict) or not result.get("error")):
+            await push_tool_end(
+                ws,
+                call_short_id,
+                tool_name,
+                "success",
+                elapsed_ms,
+                result=result,
+                is_acs=is_acs,
+                session_id=session_id,
+            )
+            trace_ctx.add_event("tool_end_pushed", {"elapsed_ms": elapsed_ms, "status": "success"})
+
+            if is_acs:
+                await _broadcast_dashboard(ws, cm, f"🛠️ {tool_name} ✔️", include_autoauth=False)
+            
+            # Send product display message to frontend if applicable
+            # Tool results use structure: {"ok": bool, "message": str, "data": {...}}
+            if isinstance(result, dict):
+                data = result.get("data", {})
+                if isinstance(data, dict) and data.get("display_type") == "product_carousel":
+                    # Use display_products (with base64 images) for frontend WebSocket
+                    # Use products (lightweight, no images) for GPT conversation history
+                    display_products = data.get("display_products", [])
+                    if display_products:  # Only send if we have products to display
+                        try:
+                            await ws.send_text(json.dumps({
+                                "type": "product_display",
+                                "products": display_products,  # ✅ Full data with base64 images
+                                "count": data.get("count", len(display_products)),
+                                "tool_name": tool_name,
+                                "voice_response": result.get("message", ""),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            }))
+                            logger.info(
+                                f"[Product Display] Sent {len(display_products)} products to frontend via WebSocket",
+                                extra={
+                                    "tool_name": tool_name,
+                                    "product_count": len(display_products),
+                                    "products_with_images": sum(1 for p in display_products if p.get("image_url")),
+                                    "event_type": "product_display_sent"
+                                }
+                            )
+                            trace_ctx.add_event("product_display_sent", {
+                                "tool_name": tool_name,
+                                "product_count": len(display_products),
+                                "has_images": sum(1 for p in display_products if p.get("image_url"))
+                            })
+                        except Exception as display_error:
+                            # Don't fail the whole tool execution if display messaging fails
+                            logger.warning(
+                                f"Failed to send product display message: {display_error}",
+                                extra={
+                                    "tool_name": tool_name,
+                                    "error": str(display_error),
+                                    "event_type": "product_display_error"
+                                }
+                            )
+
+        trace_ctx.set_attribute("tool.execution_complete", True)
+        return result or {}
+
+
 async def _handle_tool_call(  # noqa: PLR0913
     tool_name: str,
     tool_id: str,

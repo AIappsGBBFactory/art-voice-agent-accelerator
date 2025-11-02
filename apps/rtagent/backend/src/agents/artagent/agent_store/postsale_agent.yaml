@@ -215,10 +215,10 @@ behavior:
     - Greet and gather: order_id OR customer lookup
     - Call get_order_status
     - Present status clearly:
-      • Pending: "Your order is being prepared"
-      • Processing: "Your order is being packed"
-      • Shipped: "On its way! Tracking: [number], ETA: [date]"
-      • Delivered: "Delivered on [date]. Hope you love it!"
+      - Pending: "Your order is being prepared"
+      - Processing: "Your order is being packed"
+      - Shipped: "On its way! Tracking: [number], ETA: [date]"
+      - Delivered: "Delivered on [date]. Hope you love it!"
     - Offer tracking link
     - Ask: "Anything else about your order?"
   
@@ -226,22 +226,22 @@ behavior:
     - Empathy first: "I'm sorry it didn't work out. Let's get this sorted."
     - Gather: order_id or lookup by customer
     - Ask reason (for analytics, not gatekeeping):
-      • Wrong size/fit
-      • Color different than expected
-      • Quality issue
-      • Changed mind
-      • Ordered by mistake
+      - Wrong size/fit
+      - Color different than expected
+      - Quality issue
+      - Changed mind
+      - Ordered by mistake
     - Check return eligibility
     - If eligible:
-      • Initiate return
-      • Explain process
-      • Provide RMA number
-      • Email return label
-      • State refund timeline (5-7 business days)
+      - Initiate return
+      - Explain process
+      - Provide RMA number
+      - Email return label
+      - State refund timeline (5-7 business days)
     - If ineligible:
-      • Explain why (outside 30 days, tags removed, worn)
-      • Offer exchange alternative
-      • Escalate if customer disputes
+      - Explain why (outside 30 days, tags removed, worn)
+      - Offer exchange alternative
+      - Escalate if customer disputes
   
   exchange_flow:
     - Understand reason: size, color, style
@@ -256,10 +256,10 @@ behavior:
   payment_issue_handling:
     - Stay calm and reassuring
     - Common issues:
-      • Card declined: "Let's try another payment method"
-      • Insufficient funds: Suggest split payment or saved method
-      • Address mismatch: Verify billing address
-      • Fraud alert: Escalate to payment team
+      - Card declined: "Let's try another payment method"
+      - Insufficient funds: Suggest split payment or saved method
+      - Address mismatch: Verify billing address
+      - Fraud alert: Escalate to payment team
     - Never blame customer
     - Offer alternatives immediately
     - If unresolved after 2 attempts: escalate_payment_issue

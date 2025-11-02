@@ -9,38 +9,23 @@ for the real-time voice agent.
 import os
 
 # ==============================================================================
-# AGENT CONFIGURATIONS
+# RETAIL AGENT CONFIGURATIONS
 # ==============================================================================
 
-# Agent configuration file paths
-AGENT_AUTH_CONFIG = os.getenv(
-    "AGENT_AUTH_CONFIG", "apps/rtagent/backend/src/agents/artagent/agent_store/auth_agent.yaml"
+# Retail agent configuration file paths
+AGENT_SHOPPING_CONCIERGE_CONFIG = os.getenv(
+    "AGENT_SHOPPING_CONCIERGE_CONFIG",
+    "apps/rtagent/backend/src/agents/artagent/agent_store/shopping_concierge_agent.yaml"
 )
 
-AGENT_CLAIM_INTAKE_CONFIG = os.getenv(
-    "AGENT_CLAIM_INTAKE_CONFIG",
-    "apps/rtagent/backend/src/agents/artagent/agent_store/claim_intake_agent.yaml",
+AGENT_PERSONAL_STYLIST_CONFIG = os.getenv(
+    "AGENT_PERSONAL_STYLIST_CONFIG",
+    "apps/rtagent/backend/src/agents/artagent/agent_store/personal_stylist_agent.yaml",
 )
 
-AGENT_FRAUD_CONFIG = os.getenv(
-    "AGENT_FRAUD_CONFIG",
-    "apps/rtagent/backend/src/agents/artagent/agent_store/fraud_agent.yaml",
-)
-
-# Transfer Agency agent configurations
-AGENT_AGENCY_CONFIG = os.getenv(
-    "AGENT_AGENCY_CONFIG",
-    "apps/rtagent/backend/src/agents/artagent/agent_store/agency_agent.yaml",
-)
-
-AGENT_COMPLIANCE_CONFIG = os.getenv(
-    "AGENT_COMPLIANCE_CONFIG",
-    "apps/rtagent/backend/src/agents/artagent/agent_store/compliance_agent.yaml",
-)
-
-AGENT_TRADING_CONFIG = os.getenv(
-    "AGENT_TRADING_CONFIG",
-    "apps/rtagent/backend/src/agents/artagent/agent_store/trading_agent.yaml",
+AGENT_POSTSALE_CONFIG = os.getenv(
+    "AGENT_POSTSALE_CONFIG",
+    "apps/rtagent/backend/src/agents/artagent/agent_store/postsale_agent.yaml",
 )
 
 # ==============================================================================

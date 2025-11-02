@@ -447,3 +447,58 @@ RETAIL_STORE_INFO_TOOLS = {
         }
     }
 }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Additional Policy & Information Tools (TODO implementations)
+# ═══════════════════════════════════════════════════════════════════
+
+async def get_shipping_policy(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get shipping terms, timelines, and policies.
+    
+    TODO: Implement policy retrieval from:
+    - Policy database or static content
+    - Shipping tiers and timelines
+    - International shipping rules
+    - Cost structure
+    
+    Args: None
+    """
+    logger.info(f"get_shipping_policy called: {args}")
+    # TODO: Retrieve shipping policy
+    return _json(
+        True,
+        "Here's our shipping policy: Standard shipping (5-7 business days) is free on orders over $50. "
+        "Express shipping (2-3 days) is $9.99, and next-day delivery is $19.99. "
+        "We ship within the continental US. Orders placed before 2 PM EST ship the same day!",
+        policy="shipping",
+        free_threshold=50.00,
+        standard_days="5-7",
+        express_days="2-3",
+        express_cost=9.99,
+        next_day_cost=19.99
+    )
+
+
+async def get_warranty_info(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get product warranty details.
+    
+    TODO: Implement warranty retrieval using:
+    - Product warranty database
+    - Manufacturer warranty terms
+    - Store warranty extensions
+    - Claim process info
+    
+    Args:
+        product_id: Product identifier
+    """
+    logger.info(f"get_warranty_info called: {args}")
+    # TODO: Query warranty information
+    return _json(
+        True,
+        "Product warranty information lookup is coming soon! "
+        "Generally, our items come with manufacturer warranties. Please contact us with specific product questions.",
+        message="Warranty info not yet implemented"
+    )

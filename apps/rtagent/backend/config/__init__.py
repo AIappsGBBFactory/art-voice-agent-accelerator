@@ -72,13 +72,10 @@ from .constants import (
 
 # Import application settings
 from .app_settings import (
-    # Agent configurations
-    AGENT_AUTH_CONFIG,
-    AGENT_CLAIM_INTAKE_CONFIG,
-    AGENT_FRAUD_CONFIG,
-    AGENT_AGENCY_CONFIG,
-    AGENT_COMPLIANCE_CONFIG,
-    AGENT_TRADING_CONFIG,
+    # Retail Agent configurations
+    AGENT_SHOPPING_CONCIERGE_CONFIG,
+    AGENT_PERSONAL_STYLIST_CONFIG,
+    AGENT_POSTSALE_CONFIG,
     # Speech service settings
     POOL_SIZE_TTS,
     POOL_SIZE_STT,
@@ -265,13 +262,10 @@ __all__ = [
     "ENABLE_AUTH_VALIDATION",
     "ENTRA_EXEMPT_PATHS",
     "ALLOWED_ORIGINS",
-    # Agent configs
-    "AGENT_AUTH_CONFIG",
-    "AGENT_CLAIM_INTAKE_CONFIG",
-    "AGENT_FRAUD_CONFIG",
-    "AGENT_AGENCY_CONFIG",
-    "AGENT_COMPLIANCE_CONFIG",
-    "AGENT_TRADING_CONFIG",
+    # Retail Agent configs
+    "AGENT_SHOPPING_CONCIERGE_CONFIG",
+    "AGENT_PERSONAL_STYLIST_CONFIG",
+    "AGENT_POSTSALE_CONFIG",
     # API paths
     "ACS_CALL_OUTBOUND_PATH",
     "ACS_CALL_INBOUND_PATH",
@@ -281,6 +275,10 @@ __all__ = [
     "AZURE_COSMOS_CONNECTION_STRING",
     "AZURE_COSMOS_DATABASE_NAME",
     "AZURE_COSMOS_COLLECTION_NAME",
+    # Azure AI Search
+    "AZURE_AI_SEARCH_ENDPOINT",
+    "AZURE_AI_SEARCH_KEY",
+    "AZURE_AI_SEARCH_INDEX_NAME",
     # Voice and speech
     "AUDIO_FORMAT",
     "RECOGNIZED_LANGUAGE",

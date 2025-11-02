@@ -70,8 +70,8 @@ STOP_WORDS: List[str] = ["goodbye", "exit", "see you later", "bye"]
 # DEFAULT MESSAGES
 # ==============================================================================
 
-# Default greeting message
-GREETING: str = """Hi there from XYZ Finance corporation! This call might be recorded for quality control purposes. What can I help you with today?"""
+# Default greeting message for retail voice assistant
+GREETING: str = """Hello! Welcome to your personal shopping assistant. I'm here to help you discover products, get style advice, or assist with your orders. How can I help you today?"""
 
 # ==============================================================================
 # FEATURE FLAGS (Default Values)

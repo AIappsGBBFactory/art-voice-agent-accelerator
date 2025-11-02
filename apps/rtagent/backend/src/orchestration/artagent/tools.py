@@ -27,9 +27,12 @@ def _get_field(resp: Dict[str, Any], key: str) -> Any:
 
 async def process_tool_response(cm: "MemoManager", resp: Any, ws: WebSocket, is_acs: bool) -> None:
     """
-    Inspect structured tool outputs and update core-memory accordingly.
-
-    Behavior-preserving port of the original _process_tool_response.
+    Process tool outputs and route agent handoffs for retail voice assistant.
+    
+    Handles:
+    - Retail agent handoffs (ShoppingConcierge ↔ PersonalStylist ↔ PostSale)
+    - Human agent escalations
+    - Context preservation across handoffs
     """
     if cm is None:
         logger.error("MemoManager is None in process_tool_response")
@@ -40,35 +43,38 @@ async def process_tool_response(cm: "MemoManager", resp: Any, ws: WebSocket, is_
 
     prev_agent: str | None = cm_get(cm, "active_agent")
 
-    handoff_type = _get_field(resp, "handoff")
-    target_agent = _get_field(resp, "target_agent")
+    handoff_to = _get_field(resp, "handoff_to")
+    escalate_to = _get_field(resp, "escalate_to")
     topic = _get_field(resp, "topic")
 
-    # Financial Services Hand-offs (post-auth) �
-    if handoff_type in ["Transfer", "Fraud", "Compliance", "Trading"] and target_agent:
-        # Map handoff types to agent names
-        handoff_to_agent_map = {
-            "Transfer": "Agency",
-            "Fraud": "Fraud", 
-            "Compliance": "Compliance",
-            "Trading": "Trading"
+    # ═══════════════════════════════════════════════════════════════════
+    # Retail Agent Handoffs
+    # ═══════════════════════════════════════════════════════════════════
+    if handoff_to:
+        # Map retail tool handoff targets to orchestrator agent names
+        retail_handoff_map = {
+            "personal_stylist": "PersonalStylist",
+            "postsale": "PostSale",
+            "shopping_concierge": "ShoppingConcierge",
         }
         
-        new_agent = handoff_to_agent_map.get(handoff_type, target_agent)
+        new_agent = retail_handoff_map.get(handoff_to.lower(), handoff_to)
         
-        # Ensure the agent exists in specialists
+        # Verify agent is registered
         if new_agent in SPECIALISTS or get_specialist(new_agent) is not None:
-            pass  # Agent exists
+            cm_set(cm, active_agent=new_agent, topic=topic)
+            sync_voice_from_agent(cm, ws, new_agent)
+            logger.info("Handoff: %s → %s (topic: %s)", prev_agent or "none", new_agent, topic or "general")
+            if new_agent != prev_agent:
+                await send_agent_greeting(cm, ws, new_agent, is_acs)
         else:
-            logger.warning("Agent %s not found in specialists, using target_agent: %s", new_agent, target_agent)
-            new_agent = target_agent
-        
-        cm_set(cm, active_agent=new_agent, topic=topic)
-        sync_voice_from_agent(cm, ws, new_agent)
-        logger.info("Financial Services Hand-off → %s (type: %s)", new_agent, handoff_type)
-        if new_agent != prev_agent:
-            await send_agent_greeting(cm, ws, new_agent, is_acs)
+            logger.warning("Agent %s not found in specialists (handoff_to=%s)", new_agent, handoff_to)
 
-    elif handoff_type == "human_agent":
-        reason = _get_field(resp, "reason") or _get_field(resp, "escalation_reason")
-        cm_set(cm, escalated=True, escalation_reason=reason)
+    # ═══════════════════════════════════════════════════════════════════
+    # Human Escalation
+    # ═══════════════════════════════════════════════════════════════════
+    elif escalate_to == "human_agent":
+        reason = _get_field(resp, "reason") or _get_field(resp, "escalation_reason") or _get_field(resp, "issue")
+        urgency = _get_field(resp, "urgency") or "medium"
+        cm_set(cm, escalated=True, escalation_reason=reason, escalation_urgency=urgency)
+        logger.warning("Escalation to human agent: reason=%s, urgency=%s", reason, urgency)

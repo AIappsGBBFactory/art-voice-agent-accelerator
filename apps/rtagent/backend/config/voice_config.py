@@ -48,14 +48,12 @@ def get_agent_voice(agent_config_path: str) -> str:
 # VOICE AND TTS SETTINGS
 # ==============================================================================
 
-# Agent configuration paths for voice extraction
-AGENT_AUTH_CONFIG = os.getenv(
-    "AGENT_AUTH_CONFIG", "apps/rtagent/backend/src/agents/artagent/agent_store/auth_agent.yaml"
-)
+# Agent configuration paths for voice extraction (use Shopping Concierge for greeting voice)
+from .ai_config import AGENT_SHOPPING_CONCIERGE_CONFIG
 
 # Primary TTS voice configuration
 GREETING_VOICE_TTS = os.getenv("GREETING_VOICE_TTS") or get_agent_voice(
-    AGENT_AUTH_CONFIG
+    AGENT_SHOPPING_CONCIERGE_CONFIG
 )
 
 # TTS behavior settings

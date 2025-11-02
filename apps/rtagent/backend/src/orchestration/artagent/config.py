@@ -12,25 +12,23 @@ ORCHESTRATOR_TRACING: bool = os.getenv("ORCHESTRATOR_TRACING", "true").lower() =
 LAST_ANNOUNCED_KEY = "last_announced_agent"
 APP_GREETS_ATTR = "greet_counts"
 
-# Orchestration pattern (entry + specialists). Financial Services multi-agent system.
-ENTRY_AGENT: str = "AutoAuth"
-SPECIALISTS: list[str] = ["Fraud", "Agency", "Compliance", "Trading"]
+# Orchestration pattern (entry + specialists). Retail voice assistant multi-agent system.
+ENTRY_AGENT: str = "ShoppingConcierge"
+SPECIALISTS: list[str] = ["ShoppingConcierge", "PersonalStylist", "PostSale"]
 
 
 def configure_entry_and_specialists(
-    *, entry_agent: str = "AutoAuth", specialists: Optional[Iterable[str]] = None
+    *, entry_agent: str = "ShoppingConcierge", specialists: Optional[Iterable[str]] = None
 ) -> None:
     """
-    Configure the entry agent and ordered list of specialists.
+    Configure the entry agent and ordered list of specialists for retail use case.
 
-    Entry agent is coerced to `AutoAuth` for behavior parity with the original orchestrator.
+    Entry agent defaults to Shopping Concierge - the main retail assistant.
 
-    :param entry_agent: Requested entry agent name (forced to 'AutoAuth')
+    :param entry_agent: Entry agent name (defaults to 'ShoppingConcierge')
     :param specialists: Ordered list of specialist agent names
     :return: None
     """
     global ENTRY_AGENT, SPECIALISTS  # noqa: PLW0603
-    if entry_agent != "AutoAuth":
-        logger.warning("Entry agent overridden to 'AutoAuth' (requested '%s')", entry_agent)
-    ENTRY_AGENT = "AutoAuth"
-    SPECIALISTS = list(specialists or ["Fraud", "Agency", "Compliance", "Trading", "Claims"])
+    ENTRY_AGENT = entry_agent
+    SPECIALISTS = list(specialists or ["ShoppingConcierge", "PersonalStylist", "PostSale"])
