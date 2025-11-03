@@ -3,161 +3,280 @@ import React, { useMemo, useState } from 'react';
 const formStyles = {
   container: {
     margin: '0',
-    padding: '16px 20px',
-    maxWidth: '360px',
-    width: '360px',
-    borderRadius: '16px',
-    border: '1px solid #e2e8f0',
-    background: '#ffffff',
-    boxShadow: '0 12px 32px rgba(15, 23, 42, 0.12)',
+    padding: '24px 28px 28px 28px',
+    maxWidth: '420px',
+    width: '420px',
+    borderRadius: '24px',
+    border: '1px solid rgba(226, 232, 240, 0.8)',
+    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.98) 100%)',
+    backdropFilter: 'blur(20px)',
+    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.05)',
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px',
+    gap: '16px',
+    position: 'relative',
+    overflow: 'hidden',
+    transform: 'translateY(0)',
+    transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
   },
   headerRow: {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: '16px',
+    gap: '20px',
+    marginBottom: '4px',
+  },
+  titleSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    flex: 1,
   },
   title: {
-    fontSize: '16px',
-    fontWeight: 600,
-    color: '#0f172a',
+    fontSize: '20px',
+    fontWeight: 700,
+    background: 'linear-gradient(135deg, #1e293b 0%, #3b82f6 100%)',
+    backgroundClip: 'text',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
     margin: 0,
+    letterSpacing: '-0.025em',
   },
   subtitle: {
-    fontSize: '12px',
+    fontSize: '13px',
     color: '#64748b',
     margin: 0,
     lineHeight: 1.5,
+    fontWeight: 400,
   },
   closeButton: {
-    background: 'transparent',
+    background: 'rgba(148, 163, 184, 0.1)',
     border: 'none',
-    color: '#0f172a',
-    fontSize: '20px',
+    color: '#64748b',
+    fontSize: '16px',
     lineHeight: 1,
     cursor: 'pointer',
-    padding: '0 4px',
+    padding: '8px',
+    borderRadius: '8px',
+    transition: 'all 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '32px',
+    height: '32px',
+    flexShrink: 0,
+  },
+  closeButtonHover: {
+    background: 'rgba(239, 68, 68, 0.1)',
+    color: '#ef4444',
+    transform: 'scale(1.05)',
   },
   warning: {
-    fontSize: '11px',
+    fontSize: '12px',
     color: '#dc2626',
-    background: '#fef2f2',
-    border: '1px solid #fecaca',
-    borderRadius: '8px',
-    padding: '8px 10px',
+    background: 'linear-gradient(135deg, rgba(254, 242, 242, 0.9) 0%, rgba(252, 165, 165, 0.1) 100%)',
+    border: '1px solid rgba(252, 165, 165, 0.3)',
+    borderRadius: '12px',
+    padding: '12px 16px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    backdropFilter: 'blur(10px)',
+    fontWeight: 500,
   },
   form: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
-    gap: '12px',
+    gap: '16px',
+    marginTop: '8px',
   },
   formRow: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '6px',
+    gap: '8px',
+    position: 'relative',
+  },
+  formRowFull: {
+    gridColumn: '1 / -1',
   },
   label: {
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 600,
-    color: '#475569',
-    textTransform: 'uppercase',
-    letterSpacing: '0.4px',
+    color: '#374151',
+    letterSpacing: '0.025em',
+    marginBottom: '2px',
+    transition: 'color 0.2s ease',
+  },
+  labelFocused: {
+    color: '#3b82f6',
+  },
+  inputContainer: {
+    position: 'relative',
   },
   input: {
-    padding: '10px 12px',
-    borderRadius: '10px',
-    border: '1px solid #cbd5f5',
-    fontSize: '13px',
+    width: '100%',
+    padding: '14px 16px',
+    borderRadius: '12px',
+    border: '2px solid #e5e7eb',
+    fontSize: '14px',
     color: '#1f2937',
     outline: 'none',
-    background: '#fff', // Always white background
-    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-    // Prevent system dark mode from affecting input
+    background: 'rgba(255, 255, 255, 0.8)',
+    backdropFilter: 'blur(10px)',
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05), inset 0 1px 2px rgba(0, 0, 0, 0.02)',
+    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+    fontWeight: 500,
     WebkitTextFillColor: '#1f2937',
-    // For Firefox
     MozAppearance: 'none',
     appearance: 'none',
+    boxSizing: 'border-box',
+  },
+  inputFocused: {
+    borderColor: '#3b82f6',
+    background: 'rgba(255, 255, 255, 0.95)',
+    boxShadow: '0 0 0 4px rgba(59, 130, 246, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05)',
+    transform: 'translateY(-1px)',
+  },
+  inputError: {
+    borderColor: '#ef4444',
+    background: 'rgba(254, 242, 242, 0.5)',
   },
   buttonRow: {
     gridColumn: '1 / -1',
     display: 'flex',
     justifyContent: 'flex-end',
+    marginTop: '8px',
   },
   button: {
-    padding: '10px 18px',
-    borderRadius: '10px',
+    padding: '16px 32px',
+    borderRadius: '12px',
     border: 'none',
-    fontSize: '13px',
+    fontSize: '14px',
     fontWeight: 600,
     cursor: 'pointer',
-    background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 50%, #1e40af 100%)',
     color: '#ffffff',
-    boxShadow: '0 8px 16px rgba(37, 99, 235, 0.2)',
-    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+    boxShadow: '0 10px 25px -5px rgba(59, 130, 246, 0.4), 0 4px 6px -2px rgba(59, 130, 246, 0.2)',
+    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+    position: 'relative',
+    overflow: 'hidden',
+    letterSpacing: '0.025em',
+    minWidth: '140px',
+  },
+  buttonHover: {
+    transform: 'translateY(-2px) scale(1.02)',
+    boxShadow: '0 15px 35px -5px rgba(59, 130, 246, 0.5), 0 8px 15px -5px rgba(59, 130, 246, 0.3)',
   },
   buttonDisabled: {
-    opacity: 0.65,
+    opacity: 0.6,
     cursor: 'not-allowed',
-    boxShadow: 'none',
-    transform: 'scale(1)',
+    transform: 'none',
+    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+  },
+  buttonLoader: {
+    display: 'inline-block',
+    width: '16px',
+    height: '16px',
+    border: '2px solid rgba(255, 255, 255, 0.3)',
+    borderRadius: '50%',
+    borderTopColor: '#ffffff',
+    animation: 'spin 1s ease-in-out infinite',
+    marginRight: '8px',
   },
   status: {
-    padding: '10px 14px',
-    borderRadius: '10px',
-    fontSize: '12px',
+    padding: '14px 18px',
+    borderRadius: '12px',
+    fontSize: '13px',
+    fontWeight: 500,
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    backdropFilter: 'blur(10px)',
+    border: '1px solid transparent',
+    transition: 'all 0.3s ease',
   },
   statusSuccess: {
-    background: '#f0fdf4',
-    border: '1px solid #bbf7d0',
-    color: '#166534',
+    background: 'linear-gradient(135deg, rgba(240, 253, 244, 0.9) 0%, rgba(187, 247, 208, 0.2) 100%)',
+    border: '1px solid rgba(34, 197, 94, 0.2)',
+    color: '#059669',
   },
   statusError: {
-    background: '#fef2f2',
-    border: '1px solid #fecaca',
-    color: '#b91c1c',
+    background: 'linear-gradient(135deg, rgba(254, 242, 242, 0.9) 0%, rgba(252, 165, 165, 0.2) 100%)',
+    border: '1px solid rgba(239, 68, 68, 0.2)',
+    color: '#dc2626',
+  },
+  statusIcon: {
+    fontSize: '16px',
+    flexShrink: 0,
   },
   resultCard: {
-    borderRadius: '10px',
-    border: '1px solid #e2e8f0',
-    padding: '12px 14px',
-    background: '#f8fafc',
+    borderRadius: '12px',
+    border: '1px solid rgba(226, 232, 240, 0.8)',
+    padding: '16px 20px',
+    background: 'linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.6) 100%)',
+    backdropFilter: 'blur(10px)',
     display: 'grid',
-    gap: '6px',
-    fontSize: '12px',
+    gap: '8px',
+    fontSize: '13px',
     color: '#0f172a',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
   },
   resultList: {
-    margin: '4px 0 0',
-    paddingLeft: '18px',
+    margin: '6px 0 0',
+    paddingLeft: '20px',
     color: '#475569',
+    lineHeight: '1.5',
   },
   ssnBanner: {
-    padding: '10px 12px',
-    borderRadius: '10px',
-    background: 'linear-gradient(135deg, #f97316, #ef4444)',
+    padding: '14px 16px',
+    borderRadius: '12px',
+    background: 'linear-gradient(135deg, #f97316 0%, #ef4444 100%)',
     color: '#ffffff',
     fontWeight: 700,
-    fontSize: '13px',
+    fontSize: '14px',
     textAlign: 'center',
-    letterSpacing: '0.6px',
+    letterSpacing: '0.5px',
+    boxShadow: '0 8px 25px -8px rgba(239, 68, 68, 0.4)',
   },
   cautionBox: {
-    marginTop: '8px',
-    padding: '10px 12px',
-    borderRadius: '10px',
-    background: '#fef2f2',
-    border: '1px solid #fecaca',
+    marginTop: '12px',
+    padding: '12px 16px',
+    borderRadius: '12px',
+    background: 'linear-gradient(135deg, rgba(254, 242, 242, 0.9) 0%, rgba(252, 165, 165, 0.1) 100%)',
+    border: '1px solid rgba(239, 68, 68, 0.2)',
     color: '#b91c1c',
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 600,
     textAlign: 'center',
     textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    backdropFilter: 'blur(10px)',
   },
 };
+
+// Add keyframe animations
+const styleSheet = document.createElement('style');
+styleSheet.textContent = `
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes slideInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+`;
+if (!document.head.querySelector('style[data-form-animations]')) {
+  styleSheet.setAttribute('data-form-animations', 'true');
+  document.head.appendChild(styleSheet);
+}
 
 const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
   const [formState, setFormState] = useState({
@@ -167,6 +286,9 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
     preferred_channel: 'email',
   });
   const [status, setStatus] = useState({ type: 'idle', message: '', data: null });
+  const [focusedField, setFocusedField] = useState(null);
+  const [isButtonHovered, setIsButtonHovered] = useState(false);
+  const [isCloseHovered, setIsCloseHovered] = useState(false);
 
   const submitDisabled = useMemo(
     () =>
@@ -231,89 +353,156 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
   };
 
   return (
-    <section style={formStyles.container}>
+    <section style={{
+      ...formStyles.container,
+      animation: 'slideInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+    }}>
       <div style={formStyles.headerRow}>
-        <h2 style={formStyles.title}>Create 24-Hour Demo Access</h2>
+        <div style={formStyles.titleSection}>
+          <h2 style={formStyles.title}>Create Demo Access</h2>
+          <p style={formStyles.subtitle}>
+            Generate a temporary 24-hour profile for testing. Phone number is optional for future SMS simulations.
+          </p>
+        </div>
         {onClose && (
           <button
             type="button"
-            style={formStyles.closeButton}
+            style={{
+              ...formStyles.closeButton,
+              ...(isCloseHovered ? formStyles.closeButtonHover : {})
+            }}
+            onMouseEnter={() => setIsCloseHovered(true)}
+            onMouseLeave={() => setIsCloseHovered(false)}
             onClick={onClose}
             aria-label="Close demo form"
             title="Close demo form"
           >
-            ×
+            ✕
           </button>
         )}
       </div>
-      <p style={formStyles.subtitle}>
-        Supply your details to generate a temporary profile that is automatically purged after
-        24 hour. Phone number is optional and used only for SMS simulations.
-      </p>
       <div style={formStyles.warning}>
-        ⚠️ This environment is for demonstration purposes only. All records are erased after 24 hours.
+        <span style={formStyles.statusIcon}>⚠️</span>
+        <span>Demo environment - All data is automatically purged after 24 hours</span>
       </div>
 
       <form style={formStyles.form} onSubmit={handleSubmit}>
         <div style={formStyles.formRow}>
-          <label style={formStyles.label} htmlFor="full_name">
+          <label 
+            style={{
+              ...formStyles.label,
+              ...(focusedField === 'full_name' ? formStyles.labelFocused : {})
+            }} 
+            htmlFor="full_name"
+          >
             Full Name
           </label>
-          <input
-            id="full_name"
-            name="full_name"
-            value={formState.full_name}
-            onChange={handleChange}
-            style={formStyles.input}
-            placeholder="Ada Lovelace"
-            required
-          />
+          <div style={formStyles.inputContainer}>
+            <input
+              id="full_name"
+              name="full_name"
+              value={formState.full_name}
+              onChange={handleChange}
+              onFocus={() => setFocusedField('full_name')}
+              onBlur={() => setFocusedField(null)}
+              style={{
+                ...formStyles.input,
+                ...(focusedField === 'full_name' ? formStyles.inputFocused : {})
+              }}
+              placeholder="Ada Lovelace"
+              required
+            />
+          </div>
         </div>
         <div style={formStyles.formRow}>
-          <label style={formStyles.label} htmlFor="email">
-            Email
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            value={formState.email}
-            onChange={handleChange}
-            style={formStyles.input}
-            placeholder="ada@example.com"
-            required
-          />
-        </div>
-        <div style={formStyles.formRow}>
-          <label style={formStyles.label} htmlFor="phone_number">
-            Phone (Optional)
-          </label>
-          <input
-            id="phone_number"
-            name="phone_number"
-            value={formState.phone_number}
-            onChange={handleChange}
-            style={formStyles.input}
-            placeholder="+15551234567"
-          />
-        </div>
-        <div style={formStyles.formRow}>
-          <label style={formStyles.label} htmlFor="preferred_channel">
-            MFA Delivery
-          </label>
-          <select
-            id="preferred_channel"
-            name="preferred_channel"
-            value={formState.preferred_channel}
-            onChange={handleChange}
+          <label 
             style={{
-              ...formStyles.input,
-              paddingRight: '32px',
-            }}
+              ...formStyles.label,
+              ...(focusedField === 'email' ? formStyles.labelFocused : {})
+            }} 
+            htmlFor="email"
           >
-            <option value="email">Email (default)</option>
-            <option value="sms">SMS (requires phone)</option>
-          </select>
+            Email Address
+          </label>
+          <div style={formStyles.inputContainer}>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              value={formState.email}
+              onChange={handleChange}
+              onFocus={() => setFocusedField('email')}
+              onBlur={() => setFocusedField(null)}
+              style={{
+                ...formStyles.input,
+                ...(focusedField === 'email' ? formStyles.inputFocused : {})
+              }}
+              placeholder="ada@example.com"
+              required
+            />
+          </div>
+        </div>
+        <div style={formStyles.formRow}>
+          <label 
+            style={{
+              ...formStyles.label,
+              ...(focusedField === 'phone_number' ? formStyles.labelFocused : {})
+            }} 
+            htmlFor="phone_number"
+          >
+            Phone Number (Coming Soon)
+          </label>
+          <div style={formStyles.inputContainer}>
+            <input
+              id="phone_number"
+              name="phone_number"
+              value={formState.phone_number}
+              onChange={handleChange}
+              onFocus={() => setFocusedField('phone_number')}
+              onBlur={() => setFocusedField(null)}
+              disabled
+              style={{
+                ...formStyles.input,
+                ...(focusedField === 'phone_number' ? formStyles.inputFocused : {}),
+                opacity: 0.6,
+                cursor: 'not-allowed'
+              }}
+              placeholder="+1 (555) 123-4567 (Coming Soon)"
+            />
+          </div>
+        </div>
+        <div style={{ ...formStyles.formRow, ...formStyles.formRowFull }}>
+          <label 
+            style={{
+              ...formStyles.label,
+              ...(focusedField === 'preferred_channel' ? formStyles.labelFocused : {})
+            }} 
+            htmlFor="preferred_channel"
+          >
+            Verification Method
+          </label>
+          <div style={formStyles.inputContainer}>
+            <select
+              id="preferred_channel"
+              name="preferred_channel"
+              value={formState.preferred_channel}
+              onChange={handleChange}
+              onFocus={() => setFocusedField('preferred_channel')}
+              onBlur={() => setFocusedField(null)}
+              style={{
+                ...formStyles.input,
+                ...(focusedField === 'preferred_channel' ? formStyles.inputFocused : {}),
+                paddingRight: '32px',
+                backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'m6 8 4 4 4-4\'/%3e%3c/svg%3e")',
+                backgroundPosition: 'right 12px center',
+                backgroundRepeat: 'no-repeat',
+                backgroundSize: '16px',
+              }}
+            >
+              <option value="email">📧 Email Verification</option>
+              <option value="sms" disabled>📱 SMS Verification (Coming Soon)</option>
+            </select>
+          </div>
         </div>
         <div style={formStyles.buttonRow}>
           <button
@@ -321,10 +510,16 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
             style={{
               ...formStyles.button,
               ...(submitDisabled ? formStyles.buttonDisabled : {}),
+              ...(isButtonHovered && !submitDisabled ? formStyles.buttonHover : {}),
             }}
+            onMouseEnter={() => setIsButtonHovered(true)}
+            onMouseLeave={() => setIsButtonHovered(false)}
             disabled={submitDisabled}
           >
-            {status.type === 'pending' ? 'Creating…' : 'Create Demo Profile'}
+            {status.type === 'pending' && (
+              <span style={formStyles.buttonLoader}></span>
+            )}
+            {status.type === 'pending' ? 'Creating Profile...' : 'Create Demo Profile'}
           </button>
         </div>
       </form>
@@ -334,12 +529,20 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
           style={{
             ...formStyles.status,
             ...(status.type === 'success' ? formStyles.statusSuccess : formStyles.statusError),
+            animation: 'slideInUp 0.3s ease-out'
           }}
         >
-          {status.message}
-          {status.type === 'success' && status.data?.safety_notice && (
-            <div style={{ marginTop: '6px', fontWeight: 600 }}>{status.data.safety_notice}</div>
-          )}
+          <span style={formStyles.statusIcon}>
+            {status.type === 'success' ? '✅' : '❌'}
+          </span>
+          <div>
+            {status.message}
+            {status.type === 'success' && status.data?.safety_notice && (
+              <div style={{ marginTop: '6px', fontWeight: 600, fontSize: '12px', opacity: 0.8 }}>
+                {status.data.safety_notice}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
