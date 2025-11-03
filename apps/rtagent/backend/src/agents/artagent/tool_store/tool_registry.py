@@ -64,6 +64,11 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.retail_store_info_tools
     get_shipping_policy,
     get_warranty_info,
 )
+from apps.rtagent.backend.src.agents.artagent.tool_store.postsale_tools import (
+    get_customer_info,
+    get_product_price,
+    send_order_confirmation_email as postsale_send_email,  # Different implementation
+)
 
 from apps.rtagent.backend.src.agents.artagent.tool_store.financial_mfa_auth import (
     verify_client_identity,
@@ -170,6 +175,10 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.retail_schemas import (
     escalate_payment_issue_schema,
     escalate_shipping_issue_schema,
 )
+from apps.rtagent.backend.src.agents.artagent.tool_store.postsale_schemas import (
+    get_customer_info_schema,
+    get_product_price_schema,
+)
 
 function_mapping: Dict[str, Callable[..., Any]] = {
     "escalate_emergency": escalate_emergency,
@@ -249,6 +258,9 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "get_warranty_info": get_warranty_info,
     "send_order_confirmation_email": send_order_confirmation_email,
     "send_return_label_email": send_return_label_email,
+    # Post-Sale Checkout Tools (New Simplified Implementation)
+    "get_customer_info": get_customer_info,
+    "get_product_price": get_product_price,
     # Retail Escalation Tools
     "escalate_payment_issue": escalate_payment_issue,
     "escalate_shipping_issue": escalate_shipping_issue,
@@ -336,6 +348,9 @@ available_tools: List[Dict[str, Any]] = [
     # Retail Escalation Tools
     {"type": "function", "function": escalate_payment_issue_schema},
     {"type": "function", "function": escalate_shipping_issue_schema},
+    # Post-Sale Checkout Tools (Simplified Implementation)
+    {"type": "function", "function": get_customer_info_schema},
+    {"type": "function", "function": get_product_price_schema},
 ]
 
 TOOL_REGISTRY: dict[str, dict] = {t["function"]["name"]: t for t in available_tools}

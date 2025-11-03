@@ -171,6 +171,34 @@ run_load_test_realtime_conversation:
 		$(EXTRA_ARGS)
 
 ############################################################
+# Retail Product Data Management
+# Purpose: Bulk upload product images and data to Azure
+############################################################
+
+# Bulk upload product images to Azure (Blob Storage, Cosmos DB, Azure AI Search)
+# Usage: make upload_product_images [FOLDER=utils/data/clothes/] [DRY_RUN=true] [MAX=10] [FORCE=true]
+upload_product_images:
+	@echo "📦 Bulk Product Image Upload"
+	@echo "============================"
+	@echo ""
+	# Set default parameters
+	$(eval FOLDER ?= utils/data/clothes/)
+	$(eval DRY_RUN ?= false)
+	$(eval MAX ?= )
+	$(eval FORCE ?= false)
+	
+	@if [ "$(DRY_RUN)" = "true" ]; then \
+		echo "🧪 Running in DRY RUN mode (no actual uploads)"; \
+		python scripts/bulk_image_upload.py --folder $(FOLDER) --dry-run $(if $(MAX),--max $(MAX),) $(if $(filter true,$(FORCE)),--force,); \
+	elif [ "$(FORCE)" = "true" ]; then \
+		echo "🚀 Running in PRODUCTION mode with FORCE reprocess"; \
+		python scripts/bulk_image_upload.py --folder $(FOLDER) --force $(if $(MAX),--max $(MAX),); \
+	else \
+		echo "🚀 Running in PRODUCTION mode"; \
+		python scripts/bulk_image_upload.py --folder $(FOLDER) $(if $(MAX),--max $(MAX),); \
+	fi
+
+############################################################
 # Azure Communication Services Phone Number Management
 # Purpose: Purchase and manage ACS phone numbers
 ############################################################
@@ -407,7 +435,10 @@ help:
 	@echo "  run_load_test_acs_media          Run ACS media WebSocket load test (HOST=$(HOST))"
 	@echo "  run_load_test_realtime_conversation  Run realtime conversation WebSocket load test"
 	@echo ""
-	@echo "📞 Azure Communication Services:"
+	@echo "� Retail Product Data:"
+	@echo "  upload_product_images            Bulk upload product images to Azure (Blob, Cosmos, Search)"
+	@echo ""
+	@echo "�📞 Azure Communication Services:"
 	@echo "  purchase_acs_phone_number        Purchase ACS phone number and store in env file"
 	@echo "  purchase_acs_phone_number_ps     Purchase ACS phone number (PowerShell version)"
 	@echo ""

@@ -198,9 +198,15 @@ async def run_postsale_agent(
     style_preferences = ", ".join(preferences_data.get("style", [])) or "Not specified"
     recent_searches = ", ".join(current_user.get("search_history", [])[:3]) if isinstance(current_user, dict) else ""
     
-    context_msg = f"Post-Sale Support assisting {customer_name} ({loyalty_tier})"
+    # Get handoff context (product IDs and summary from Shopping Concierge)
+    product_ids = cm.get_value_from_corememory("product_ids") or []
+    product_summary = cm.get_value_from_corememory("product_summary") or ""
     
-    # Pass flattened data for Jinja2 template
+    context_msg = f"Post-Sale Support assisting {customer_name} ({loyalty_tier})"
+    if product_summary:
+        context_msg += f" | Products: {product_summary[:100]}"
+    
+    # Pass flattened data + handoff context for Jinja2 template
     await _run_specialist_base(
         agent_key="PostSale",
         cm=cm,
@@ -215,6 +221,8 @@ async def run_postsale_agent(
             "location": location,
             "style_preferences": style_preferences,
             "recent_searches": recent_searches,
+            "product_ids": product_ids,  # From handoff
+            "product_summary": product_summary,  # From handoff
         },
         latency_label="postsale_agent",
     )

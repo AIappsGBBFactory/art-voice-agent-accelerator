@@ -92,8 +92,10 @@ async def handoff_to_stylist(args: HandoffToStylistArgs) -> Dict[str, Any]:
 
 class HandoffToPostSaleArgs(TypedDict):
     """Schema for handoff to Post-Sale Agent"""
-    intent: str                 # checkout, return, track_order, exchange
-    cart_items: Optional[str]   # Products customer wants to buy (product IDs or summary)
+    intent: str                         # checkout, return, track_order, exchange
+    product_ids: Optional[list[str]]    # Product IDs selected (e.g., ["PROD-ABC123", "PROD-XYZ789"])
+    product_summary: Optional[str]      # Human-readable product names and prices already shown to customer
+    customer_email: Optional[str]       # Customer email for order confirmation
 
 
 async def handoff_to_postsale(args: HandoffToPostSaleArgs) -> Dict[str, Any]:
@@ -125,14 +127,16 @@ async def handoff_to_postsale(args: HandoffToPostSaleArgs) -> Dict[str, Any]:
     
     try:
         intent = (args.get("intent") or "checkout").strip().lower()
-        cart_items = (args.get("cart_items") or "").strip()
+        product_ids = args.get("product_ids") or []
+        product_summary = (args.get("product_summary") or "").strip()
+        customer_email = (args.get("customer_email") or "").strip()
         
         # Validate intent
         valid_intents = ["checkout", "return", "track_order", "exchange"]
         if intent not in valid_intents:
             intent = "checkout"
         
-        logger.info(f"HANDOFF: Concierge → Post-Sale | intent='{intent}'")
+        logger.info(f"HANDOFF: Concierge → Post-Sale | intent='{intent}' | products={len(product_ids)} | summary={product_summary[:100] if product_summary else 'none'}")
         
         # Context-specific handoff messages
         intent_messages = {
@@ -148,7 +152,9 @@ async def handoff_to_postsale(args: HandoffToPostSaleArgs) -> Dict[str, Any]:
             True,
             handoff_msg,
             handoff_to="postsale",
-            cart_items=cart_items,
+            product_ids=product_ids,
+            product_summary=product_summary,
+            customer_email=customer_email,
             intent=intent,
             handoff_reason=f"Customer needs {intent} assistance"
         )
@@ -164,7 +170,8 @@ async def handoff_to_postsale(args: HandoffToPostSaleArgs) -> Dict[str, Any]:
 
 class StylistHandoffToPostSaleArgs(TypedDict):
     """Schema for stylist to post-sale handoff"""
-    recommended_items: str              # Products stylist suggested
+    product_ids: list[str]              # Product IDs recommended by stylist
+    customer_email: Optional[str]       # Customer email for order confirmation  
     styling_context: Optional[str]      # Occasion, weather, style notes
 
 
@@ -188,16 +195,17 @@ async def stylist_handoff_to_postsale(args: StylistHandoffToPostSaleArgs) -> Dic
         return _json(False, "Unable to process that purchase request.")
     
     try:
-        recommended_items = (args.get("recommended_items") or "").strip()
+        product_ids = args.get("product_ids") or []
+        customer_email = (args.get("customer_email") or "").strip()
         styling_context = (args.get("styling_context") or "").strip()
         
-        if not recommended_items:
+        if not product_ids:
             return _json(
                 False,
                 "I need to know which items you'd like to purchase before transferring to checkout."
             )
         
-        logger.info(f"HANDOFF: Stylist → Post-Sale | items='{recommended_items[:100]}'")
+        logger.info(f"HANDOFF: Stylist → Post-Sale | products={len(product_ids)}")
         
         # Build context-aware handoff message
         handoff_msg = "Wonderful! I'm so glad you love these pieces. "
@@ -212,7 +220,8 @@ async def stylist_handoff_to_postsale(args: StylistHandoffToPostSaleArgs) -> Dic
             True,
             handoff_msg,
             handoff_to="postsale",
-            cart_items=recommended_items,
+            product_ids=product_ids,
+            customer_email=customer_email,
             styling_context=styling_context,
             intent="checkout",
             handoff_reason="Customer ready to purchase styled items"

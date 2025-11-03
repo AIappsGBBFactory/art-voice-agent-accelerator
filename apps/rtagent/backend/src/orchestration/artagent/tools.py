@@ -39,13 +39,16 @@ async def process_tool_response(cm: "MemoManager", resp: Any, ws: WebSocket, is_
         return
 
     if not isinstance(resp, dict):
+        logger.info(f"🔍 DEBUG: resp is not dict, type={type(resp)}, value={resp}")
         return
 
     prev_agent: str | None = cm_get(cm, "active_agent")
+    logger.info(f"🔍 DEBUG: resp={resp}, prev_agent={prev_agent}")
 
     handoff_to = _get_field(resp, "handoff_to")
     escalate_to = _get_field(resp, "escalate_to")
     topic = _get_field(resp, "topic")
+    logger.info(f"🔍 DEBUG: handoff_to={handoff_to}, escalate_to={escalate_to}, topic={topic}")
 
     # ═══════════════════════════════════════════════════════════════════
     # Retail Agent Handoffs
@@ -62,9 +65,26 @@ async def process_tool_response(cm: "MemoManager", resp: Any, ws: WebSocket, is_
         
         # Verify agent is registered
         if new_agent in SPECIALISTS or get_specialist(new_agent) is not None:
+            # Store handoff context (product IDs, summary, etc.)
+            product_ids = _get_field(resp, "product_ids")
+            product_summary = _get_field(resp, "product_summary")
+            intent = _get_field(resp, "intent")
+            
+            # Base context update
             cm_set(cm, active_agent=new_agent, topic=topic)
+            
+            # Store handoff-specific context
+            if product_ids:
+                cm_set(cm, product_ids=product_ids)
+            if product_summary:
+                cm_set(cm, product_summary=product_summary)
+            if intent:
+                cm_set(cm, intent=intent)
+            
             sync_voice_from_agent(cm, ws, new_agent)
-            logger.info("Handoff: %s → %s (topic: %s)", prev_agent or "none", new_agent, topic or "general")
+            logger.info("Handoff: %s → %s (topic: %s, products: %s)", 
+                       prev_agent or "none", new_agent, topic or "general",
+                       len(product_ids) if product_ids else 0)
             if new_agent != prev_agent:
                 await send_agent_greeting(cm, ws, new_agent, is_acs)
         else:

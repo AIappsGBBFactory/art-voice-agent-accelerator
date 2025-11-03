@@ -112,61 +112,112 @@ def get_context() -> RetailToolContext:
 # Helper Functions
 # ═══════════════════════════════════════════════════════════════════
 
-def download_product_image(image_url: str, blob_service_client) -> Optional[str]:
+def generate_image_sas_url(blob_url: str, blob_service_client) -> str:
     """
-    Download product image from Azure Blob Storage and convert to base64.
+    Generate a SAS URL for a blob image (fast, ~5ms per image).
     
-    Uses Managed Identity authentication (same as notebook 12).
+    For private blob storage, we need SAS tokens to allow frontend access.
+    This is MUCH faster than base64 encoding (~5ms vs ~1-2 seconds).
     
     Args:
-        image_url: Full blob URL  
+        blob_url: Full blob URL from Cosmos DB
         blob_service_client: Azure BlobServiceClient instance
         
     Returns:
-        Base64-encoded data URL (data:image/png;base64,...) or None if failed
+        Blob URL with SAS token, or original URL if SAS generation fails
     """
-    if not image_url or not blob_service_client:
-        return None
-        
+    if not blob_url or not blob_service_client:
+        return ""
+    
     try:
-        import base64
         import os
+        from azure.storage.blob import generate_blob_sas, BlobSasPermissions, UserDelegationKey
+        from datetime import datetime, timedelta, timezone
         
-        # Get container name from env (same as notebook 12)
+        # Extract container and blob name from URL
+        # URL format: https://storagefactoryeastus.blob.core.windows.net/clothesimages/products/PROD-XXX.png
         container_name = os.getenv("BLOB_CONTAINER_NAME", "clothesimages")
         
-        # Extract blob path from URL
-        # URL: https://storagefactoryeastus.blob.core.windows.net/clothesimages/products/PROD-XXX.png
-        if f"/{container_name}/" in image_url:
-            blob_name = image_url.split(f"/{container_name}/")[1]
+        if f"/{container_name}/" in blob_url:
+            blob_name = blob_url.split(f"/{container_name}/")[1]
         else:
-            # Fallback: use last part of URL
-            blob_name = image_url.split("/")[-1]
-            
+            # If container not in URL, assume it's just the filename
+            blob_name = f"products/{blob_url.split('/')[-1]}"
+        
         # Get blob client
-        blob_client = blob_service_client.get_blob_client(
-            container=container_name,
-            blob=f"products/{blob_name}" if not blob_name.startswith("products/") else blob_name
-        )
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
         
-        # Download image bytes
-        blob_data = blob_client.download_blob()
-        image_bytes = blob_data.readall()
+        # Generate user delegation key (for Managed Identity / Entra ID auth)
+        # This is more secure than account keys
+        start_time = datetime.now(timezone.utc)
+        expiry_time = start_time + timedelta(hours=1)
         
-        # Convert to base64
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        
-        logger.debug(f"Downloaded image: {blob_name} ({len(image_bytes)} bytes)")
-        
-        # Return as data URL
-        return f"data:image/png;base64,{image_base64}"
+        try:
+            # Try to get user delegation key (requires Managed Identity or Entra ID)
+            # REQUIRES: "Storage Blob Data Contributor" or "Storage Blob Delegator" RBAC role
+            logger.debug(f"Attempting user delegation key for {blob_service_client.account_name}")
+            
+            user_delegation_key = blob_service_client.get_user_delegation_key(
+                key_start_time=start_time,
+                key_expiry_time=expiry_time
+            )
+            
+            logger.debug(f"✅ User delegation key acquired successfully")
+            
+            # Generate SAS with user delegation key
+            sas_token = generate_blob_sas(
+                account_name=blob_service_client.account_name,
+                container_name=container_name,
+                blob_name=blob_name,
+                user_delegation_key=user_delegation_key,
+                permission=BlobSasPermissions(read=True),
+                expiry=expiry_time,
+                start=start_time
+            )
+            
+            # Return URL with SAS token
+            sas_url = f"{blob_url}?{sas_token}"
+            logger.debug(f"✅ Generated SAS URL with user delegation key")
+            return sas_url
+            
+        except Exception as delegation_error:
+            # Log detailed error for debugging
+            error_msg = str(delegation_error)
+            logger.warning(f"❌ User delegation key failed: {error_msg}")
+            
+            # Check for common permission issues
+            if "AuthorizationPermissionMismatch" in error_msg or "403" in error_msg:
+                logger.error(f"🔐 PERMISSION ISSUE: Identity needs 'Storage Blob Data Contributor' or 'Storage Blob Delegator' role")
+                logger.error(f"   Run: az role assignment create --assignee <user/sp> --role 'Storage Blob Data Contributor' --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/{blob_service_client.account_name}")
+            elif "AuthenticationFailed" in error_msg:
+                logger.error(f"🔐 AUTHENTICATION ISSUE: DefaultAzureCredential failed - check Azure CLI login or Managed Identity")
+            
+            logger.debug(f"Trying account key fallback...")
+            # Fallback: Try account key if available
+            account_key = os.getenv("AZURE_STORAGE_ACCESS_KEY")
+            if account_key:
+                sas_token = generate_blob_sas(
+                    account_name=blob_service_client.account_name,
+                    container_name=container_name,
+                    blob_name=blob_name,
+                    account_key=account_key,
+                    permission=BlobSasPermissions(read=True),
+                    expiry=expiry_time
+                )
+                sas_url = f"{blob_url}?{sas_token}"
+                logger.debug(f"✅ Generated SAS URL with account key")
+                return sas_url
+            
+            # FINAL FALLBACK: Return original URL if container is public
+            # This works if the blob container has anonymous read access enabled
+            logger.info(f"ℹ️  No SAS available - returning original URL (works if container is public)")
+            return blob_url
         
     except Exception as e:
-        logger.warning(
-            f"Failed to download product image: {image_url} - {e}",
-            extra={"image_url": image_url, "error": str(e)}
-        )
-        return None
+        logger.warning(f"⚠️  SAS generation error: {e}")
+        # Return original URL (works if blob storage is public)
+        logger.info(f"ℹ️  Returning original URL (works if container is public)")
+        return blob_url
 
 
 def extract_display_product(product: Dict[str, Any]) -> Dict[str, Any]:
@@ -220,11 +271,12 @@ def extract_display_product(product: Dict[str, Any]) -> Dict[str, Any]:
             "formatted_price": f"${base_price:.2f}",
             "formatted_sale_price": f"${sale_price:.2f}" if (on_sale and sale_price) else None,
             
-            # Image (download from blob storage and convert to base64 data URL)
-            "image_url": download_product_image(
+            # Image URL with SAS token (fast: ~5ms vs ~1-2s for base64)
+            # Private blob storage requires SAS tokens for frontend access
+            "image_url": generate_image_sas_url(
                 product.get("image_url", ""),
                 get_context().blob_service_client
-            ) or "",  # Returns base64 data URL or empty string
+            ),
             
             # Product attributes
             "colors": colors[:5],  # Limit to 5 for UI
@@ -403,6 +455,8 @@ def format_product_for_voice(product: Dict[str, Any], score: float = 0.0) -> str
 class SearchProductsGeneralArgs(TypedDict):
     """Input schema for general product search"""
     query: str  # Natural language search query
+    category: Optional[str]  # Product category (MUST match ENUM): Tops, Bottoms, Dresses, Outerwear, Footwear, Accessories
+    gender: Optional[str]  # Target gender (MUST match ENUM): Men, Women, Unisex
     top_k: int  # Number of results (default: 5)
 
 
@@ -417,6 +471,8 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
     
     Args:
         query: Natural language product search
+        category: Product category filter (Tops, Bottoms, Dresses, Outerwear, Footwear, Accessories)
+        gender: Gender filter (Men, Women, Unisex)
         top_k: Number of products to return (default: 5)
     
     Returns:
@@ -428,12 +484,14 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
     
     try:
         query = (args.get("query") or "").strip()
+        category = args.get("category")  # Optional: Tops, Bottoms, Dresses, Outerwear, Footwear, Accessories
+        gender = args.get("gender")      # Optional: Men, Women, Unisex
         top_k = args.get("top_k", 5)
         
         if not query:
             return _json(False, "Please tell me what you're looking for.")
         
-        logger.info(f"General search: '{query}' (top_k={top_k})")
+        logger.info(f"General search: '{query}' (category={category}, gender={gender}, top_k={top_k})")
         
         # Get context
         ctx = get_context()
@@ -487,13 +545,25 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
         
         vector_query = VectorizedQuery(
             vector=query_embedding,
-            k_nearest_neighbors=top_k,
+            k_nearest_neighbors=top_k * 2,  # Get more candidates for filtering
             fields="desc_vector"
         )
+        
+        # Build OData filter for category and gender
+        filter_parts = []
+        if category:
+            filter_parts.append(f"category eq '{category}'")
+        if gender:
+            filter_parts.append(f"gender eq '{gender}'")
+        
+        filter_expression = " and ".join(filter_parts) if filter_parts else None
+        
+        logger.info(f"Azure AI Search filter: {filter_expression or 'None (pure semantic)'}")
         
         results = ctx.search_client.search(
             search_text=None,
             vector_queries=[vector_query],
+            filter=filter_expression,  # ✅ Apply category + gender filters
             select=["id", "category", "gender", "formality", "colors", "rich_description"],
             top=top_k
         )
@@ -516,12 +586,36 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
         
         # Retrieve full details from Cosmos DB
         query_filter = {"product_id": {"$in": product_ids}}
+        
+        logger.info(
+            f"Querying Cosmos DB for products",
+            extra={
+                "product_ids": product_ids,
+                "filter": query_filter
+            }
+        )
+        
         documents = await asyncio.to_thread(
             ctx.cosmos_product_manager.query_documents,
             query=query_filter
         )
         
+        logger.info(
+            f"Cosmos DB query result",
+            extra={
+                "found_count": len(documents) if documents else 0,
+                "expected_count": len(product_ids)
+            }
+        )
+        
         if not documents:
+            logger.error(
+                f"Azure AI Search found {len(product_ids)} products but Cosmos DB returned 0 - DATA MISMATCH!",
+                extra={
+                    "search_product_ids": product_ids,
+                    "search_scores": search_scores
+                }
+            )
             return _json(False, "Found matches but couldn't retrieve details. Please try again.")
         
         # Extract TWO representations:
@@ -575,12 +669,13 @@ async def search_products_general(args: SearchProductsGeneralArgs) -> Dict[str, 
 class SearchProductsFilteredArgs(TypedDict):
     """Input schema for filtered stylist search"""
     query: str
+    category: Optional[str]  # Product category (MUST match ENUM): Tops, Bottoms, Dresses, Outerwear, Footwear, Accessories
     occasion: Optional[str]  # wedding, birthday, work, casual, date_night, interview
-    weather: Optional[str]   # warm, mild, cold, rainy
-    formality: Optional[str]  # casual, business_casual, formal, athletic
-    gender: Optional[str]     # Men, Women, Unisex
-    age_group: Optional[str]  # teen, young_adult, adult, senior
-    colors: Optional[List[str]]  # Preferred colors
+    weather: Optional[str]   # warm, mild, cold, rainy (MAPS TO climate field in index)
+    formality: Optional[str]  # MUST match ENUM: casual, business_casual, formal, athletic
+    gender: Optional[str]     # MUST match ENUM: Men, Women, Unisex
+    age_group: Optional[str]  # teen, young_adult, adult, senior (semantic only, not a filter field)
+    colors: Optional[List[str]]  # Preferred colors (must match indexed color values)
     top_k: int
 
 
@@ -597,12 +692,13 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
     
     Args:
         query: Semantic search query
+        category: Product category filter (Tops, Bottoms, Dresses, Outerwear, Footwear, Accessories) - CRITICAL for preventing wrong-category results
         occasion: Event type (optional)
-        weather: Climate filter (optional)
-        formality: Style level (optional)
-        gender: Target gender (optional)
-        age_group: Age category (used semantically, not as filter)
-        colors: Preferred colors (optional)
+        weather: Climate filter (optional) - Maps to climate field: warm, cold, all-season
+        formality: Style level (casual, business_casual, formal, athletic) - MUST match ENUM
+        gender: Target gender (Men, Women, Unisex) - MUST match ENUM
+        age_group: Age category (used semantically, not as filter field)
+        colors: Preferred colors (optional) - Must match indexed color values
         top_k: Number of results (default: 5)
     
     Returns:
@@ -614,6 +710,7 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
     
     try:
         query = (args.get("query") or "").strip()
+        category = args.get("category")  # ✅ NEW: Category filter
         occasion = args.get("occasion")
         weather = args.get("weather")
         formality = args.get("formality")
@@ -625,7 +722,7 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
         if not query:
             return _json(False, "Please describe what style you're looking for.")
         
-        logger.info(f"Stylist search: '{query}' | occasion={occasion}, weather={weather}, formality={formality}")
+        logger.info(f"Stylist search: '{query}' | category={category}, occasion={occasion}, weather={weather}, formality={formality}, gender={gender}")
         
         # Get context
         ctx = get_context()
@@ -635,18 +732,38 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
         if not query_embedding:
             return _json(False, "Search temporarily unavailable.")
         
-        # Build OData filter string
+        # Build OData filter string (MUST match ENUM values exactly!)
         filter_parts = []
         
-        if formality:
-            filter_parts.append(f"formality eq '{formality}'")
+        # ✅ CRITICAL: Category filter (prevents jeans when asking for sweaters!)
+        if category:
+            filter_parts.append(f"category eq '{category}'")
         
+        # ✅ Gender filter (Men, Women, Unisex)
         if gender:
             filter_parts.append(f"gender eq '{gender}'")
         
-        if weather:
-            filter_parts.append(f"climate/any(c: c eq '{weather}')")
+        # ✅ Formality filter (casual, business_casual, formal, athletic)
+        if formality:
+            filter_parts.append(f"formality eq '{formality}'")
         
+        # ✅ Weather/Climate filter (warm, cold, all-season)
+        if weather:
+            # Map common weather terms to climate ENUM values
+            weather_map = {
+                "warm": "warm",
+                "hot": "warm",
+                "summer": "warm",
+                "cold": "cold",
+                "winter": "cold",
+                "all-season": "all-season",
+                "mild": "all-season",
+                "rainy": "all-season"  # Most all-season clothes work for rain
+            }
+            climate_value = weather_map.get(weather.lower(), weather)
+            filter_parts.append(f"climate/any(c: c eq '{climate_value}')")
+        
+        # ✅ Color filters (array field)
         if colors:
             color_filters = [f"colors/any(col: col eq '{color}')" for color in colors]
             if color_filters:
@@ -661,6 +778,8 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
             logger.warning("Azure AI Search not configured, using Cosmos DB with manual filtering")
             # Fallback: Build Cosmos DB query with available filters
             cosmos_filter = {}
+            if category:
+                cosmos_filter["category"] = category
             if formality:
                 cosmos_filter["formality"] = formality
             if gender:
@@ -680,7 +799,7 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
                     f"No products found with those filters. Let's try broader options?",
                     count=0,
                     products=[],
-                    filters_applied={"occasion": occasion, "weather": weather, "formality": formality, "gender": gender}
+                    filters_applied={"category": category, "occasion": occasion, "weather": weather, "formality": formality, "gender": gender}
                 )
             
             voice_response = f"I found {len(documents)} option{'s' if len(documents) > 1 else ''} for you. "
@@ -693,7 +812,7 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
                 voice_response,
                 count=len(documents),
                 products=documents,
-                filters_applied={"occasion": occasion, "weather": weather, "formality": formality, "gender": gender},
+                filters_applied={"category": category, "occasion": occasion, "weather": weather, "formality": formality, "gender": gender},
                 tool="search_products_filtered"
             )
         
@@ -739,7 +858,7 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
                 count=0,
                 products=[],
                 display_type="product_carousel",  # Consistent even when empty
-                filters_applied={"occasion": occasion, "weather": weather, "formality": formality, "gender": gender, "colors": colors}
+                filters_applied={"category": category, "occasion": occasion, "weather": weather, "formality": formality, "gender": gender, "colors": colors}
             )
         
         # Get full details from Cosmos DB
@@ -792,7 +911,7 @@ async def search_products_filtered(args: SearchProductsFilteredArgs) -> Dict[str
             products=products_for_gpt,  # ✅ Lightweight for GPT (NO base64)
             display_products=display_products,  # ✅ Full data with images for frontend
             display_type="product_carousel",  # Tell frontend to render as carousel
-            filters_applied={"occasion": occasion, "weather": weather, "formality": formality, "gender": gender, "age_group": age_group, "colors": colors},
+            filters_applied={"category": category, "occasion": occasion, "weather": weather, "formality": formality, "gender": gender, "age_group": age_group, "colors": colors},
             tool="search_products_filtered"
         )
     

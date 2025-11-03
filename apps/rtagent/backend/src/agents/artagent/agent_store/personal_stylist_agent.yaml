@@ -26,7 +26,7 @@ model:
   max_completion_tokens: 2560  # Longer for detailed styling advice
 
 voice:
-  name: en-US-Aria:DragonHDLatestNeural  # Sophisticated, warm voice
+  name: en-US-Adam:DragonHDLatestNeural  # Sophisticated, warm voice
   style: chat  # Encouraging and enthusiastic about fashion
   rate: "+0%"  # Normal pace for thoughtful styling advice
 

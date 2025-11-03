@@ -61,6 +61,7 @@ if TYPE_CHECKING:  # pragma: no cover – typing-only import
 # Logging / Tracing
 # ---------------------------------------------------------------------------
 logger = get_logger("orchestration.gpt_flow")
+logger.info("🔧 gpt_flow.py LOADED with TOKEN OPTIMIZATION (display_products sanitization ENABLED)")
 tracer = trace.get_tracer(__name__)
 
 _GPT_FLOW_TRACING = os.getenv("GPT_FLOW_TRACING", "true").lower() == "true"
@@ -1452,12 +1453,32 @@ async def process_gpt_response(  # noqa: PLR0913
                         asyncio.create_task(persist_tool_results(tool.name, result))
                         span.add_event("tool_execution_completed", {"tool_name": tool.name})
                         
+                        # Sanitize result for conversation history (remove display_products)
+                        # Tools return: {"ok": bool, "message": str, "data": {...}}
+                        # display_products (with full details + image URLs) is NESTED in data, not at top level!
+                        result_for_history = result.copy() if isinstance(result, dict) else result
+                        
+                        if isinstance(result_for_history, dict) and "data" in result_for_history:
+                            data = result_for_history.get("data", {})
+                            if isinstance(data, dict) and "display_products" in data:
+                                removed_count = len(data.get("display_products", []))
+                                # Remove display_products from the nested data object
+                                result_for_history["data"] = {k: v for k, v in data.items() if k != "display_products"}
+                                logger.info(
+                                    f"🔧 TOKEN OPTIMIZATION (parallel): Removed {removed_count} display_products from conversation history (kept lightweight product summaries)",
+                                    extra={
+                                        "tool_name": tool.name,
+                                        "removed_display_products": removed_count,
+                                        "event_type": "token_optimization_applied"
+                                    }
+                                )
+                        
                         # Add successful result to conversation history
                         agent_history.append({
                             "tool_call_id": tool.call_id,
                             "role": "tool",
                             "name": tool.name,
-                            "content": json.dumps(result),
+                            "content": json.dumps(result_for_history),  # ✅ Sanitized - no base64
                         })
             
             span.set_attribute("tool.execution_success", True)
@@ -1717,14 +1738,14 @@ async def _execute_tool_only(
             if isinstance(result, dict):
                 data = result.get("data", {})
                 if isinstance(data, dict) and data.get("display_type") == "product_carousel":
-                    # Use display_products (with base64 images) for frontend WebSocket
+                    # Use display_products (with SAS image URLs) for frontend WebSocket
                     # Use products (lightweight, no images) for GPT conversation history
                     display_products = data.get("display_products", [])
                     if display_products:  # Only send if we have products to display
                         try:
                             await ws.send_text(json.dumps({
                                 "type": "product_display",
-                                "products": display_products,  # ✅ Full data with base64 images
+                                "products": display_products,  # ✅ Full data with SAS image URLs
                                 "count": data.get("count", len(display_products)),
                                 "tool_name": tool_name,
                                 "voice_response": result.get("message", ""),
@@ -1928,13 +1949,33 @@ async def _handle_tool_call(  # noqa: PLR0913
                     }
                 )
                 
+                # Sanitize result for conversation history (remove display_products)
+                # Tools return: {"ok": bool, "message": str, "data": {...}}
+                # display_products (with full details + image URLs) is NESTED in data, not at top level!
+                result_for_history = result.copy() if isinstance(result, dict) else result
+                
+                if isinstance(result_for_history, dict) and "data" in result_for_history:
+                    data = result_for_history.get("data", {})
+                    if isinstance(data, dict) and "display_products" in data:
+                        removed_count = len(data.get("display_products", []))
+                        # Remove display_products from nested data object
+                        result_for_history["data"] = {k: v for k, v in data.items() if k != "display_products"}
+                        logger.info(
+                            f"🔧 TOKEN OPTIMIZATION: Removed {removed_count} display_products from conversation history (kept lightweight product summaries)",
+                        extra={
+                            "tool_name": tool_name,
+                            "removed_display_products": removed_count,
+                            "event_type": "token_optimization_applied"
+                        }
+                    )
+                
                 # Add successful tool response to prevent conversation corruption
                 agent_history.append(
                     {
                         "tool_call_id": tool_id,
                         "role": "tool",
                         "name": tool_name,
-                        "content": json.dumps(result),
+                        "content": json.dumps(result_for_history),  # ✅ Sanitized - no base64
                     }
                 )
                 

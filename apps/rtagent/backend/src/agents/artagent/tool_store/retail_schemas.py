@@ -19,15 +19,31 @@ search_products_general_schema: Dict[str, Any] = {
     "name": "search_products_general",
     "description": (
         "Fast semantic product search for direct queries. "
-        "Use when customer asks for specific products without styling context. "
-        "Returns top matching products with availability and pricing."
+        "Use when customer asks for specific products. "
+        "CRITICAL: Always provide 'category' and 'gender' to prevent wrong-category results (e.g., returning jeans when customer asks for sweaters)."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Natural language product search query (e.g., 'casual jeans', 'blue shirts', 'running shoes').",
+                "description": (
+                    "Natural language search query. MUST include category keywords "
+                    "(e.g., 'relaxed fit sweater light colors' NOT just 'relaxed light colors')."
+                ),
+            },
+            "category": {
+                "type": "string",
+                "enum": ["Tops", "Bottoms", "Dresses", "Outerwear", "Footwear", "Accessories"],
+                "description": (
+                    "CRITICAL: Product category filter. MUST match Azure AI Search ENUM exactly. "
+                    "Prevents wrong-category results (e.g., jeans when asking for sweaters)."
+                ),
+            },
+            "gender": {
+                "type": "string",
+                "enum": ["Men", "Women", "Unisex"],
+                "description": "Target gender. MUST match Azure AI Search ENUM exactly.",
             },
             "top_k": {
                 "type": "integer",
@@ -46,15 +62,27 @@ search_products_filtered_schema: Dict[str, Any] = {
     "name": "search_products_filtered",
     "description": (
         "Advanced filtered search for styling recommendations. "
-        "Use when customer needs personalized outfit suggestions with context like occasion, weather, or formality. "
-        "Applies Azure AI Search OData filters for precise matching."
+        "Use for personalized outfit suggestions with occasion, weather, or formality context. "
+        "CRITICAL: Always provide 'category' and 'gender' filters to prevent wrong-category results."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Semantic search query describing desired style.",
+                "description": (
+                    "Semantic search query describing desired style. "
+                    "MUST include category keywords in query text."
+                ),
+            },
+            "category": {
+                "type": "string",
+                "enum": ["Tops", "Bottoms", "Dresses", "Outerwear", "Footwear", "Accessories"],
+                "description": (
+                    "CRITICAL: Product category filter. MUST match Azure AI Search ENUM exactly. "
+                    "Use: Tops (shirts, sweaters, blouses), Bottoms (jeans, pants, skirts), "
+                    "Dresses, Outerwear (jackets, coats), Footwear (shoes, boots), Accessories."
+                ),
             },
             "occasion": {
                 "type": "string",
@@ -63,28 +91,34 @@ search_products_filtered_schema: Dict[str, Any] = {
             },
             "weather": {
                 "type": "string",
-                "enum": ["warm", "mild", "cold", "rainy"],
-                "description": "Climate or weather conditions (optional).",
+                "enum": ["warm", "cold", "all-season"],
+                "description": (
+                    "Climate filter (optional). MUST match Azure AI Search 'climate' field ENUM: "
+                    "warm (hot weather), cold (winter), all-season (versatile)."
+                ),
             },
             "formality": {
                 "type": "string",
-                "enum": ["casual", "business_casual", "smart_casual", "formal", "athletic"],
-                "description": "Formality level (optional).",
+                "enum": ["casual", "business_casual", "formal", "athletic"],
+                "description": (
+                    "Formality level (optional). MUST match Azure AI Search ENUM exactly: "
+                    "casual, business_casual, formal, athletic."
+                ),
             },
             "gender": {
                 "type": "string",
                 "enum": ["Men", "Women", "Unisex"],
-                "description": "Target gender (optional).",
+                "description": "Target gender (optional). MUST match Azure AI Search ENUM exactly.",
             },
             "age_group": {
                 "type": "string",
                 "enum": ["teen", "young_adult", "adult", "senior"],
-                "description": "Age category for appropriate styling (optional, used semantically).",
+                "description": "Age category for styling (optional). Used semantically, NOT as index filter.",
             },
             "colors": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Preferred color palette (optional).",
+                "description": "Preferred colors (optional). Use common color names from indexed products.",
             },
             "top_k": {
                 "type": "integer",
@@ -426,27 +460,41 @@ handoff_to_stylist_schema: Dict[str, Any] = {
 handoff_to_postsale_schema: Dict[str, Any] = {
     "name": "handoff_to_postsale",
     "description": (
-        "Transfer customer to Post-Sale Agent for checkout, order tracking, returns, or exchanges. "
-        "Use when customer is ready to buy or needs transaction support."
+        "Transfer customer to Post-Sale Agent for checkout with selected products. "
+        "Pass product IDs AND product summary (names + prices) already shown to customer. "
+        "Agent will confirm and send email confirmation."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "caller_name": {
-                "type": "string",
-                "description": "Customer name (optional).",
-            },
-            "cart_items": {
-                "type": "string",
-                "description": "Products to purchase or manage (optional).",
-            },
             "intent": {
                 "type": "string",
                 "enum": ["checkout", "return", "track_order", "exchange"],
-                "description": "Transaction intent (required).",
+                "description": "Transaction intent (default: checkout).",
+                "default": "checkout"
+            },
+            "product_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "List of product IDs customer selected (e.g., ['PROD-ABC123', 'PROD-XYZ789']). "
+                    "CRITICAL: Pass the actual product IDs from search results."
+                ),
+            },
+            "product_summary": {
+                "type": "string",
+                "description": (
+                    "Human-readable summary of products and prices ALREADY SHOWN to customer. "
+                    "Example: 'Lenny Washed Wide-Leg Jeans - $76 with Platinum discount (reg $98)'. "
+                    "Prevents re-querying prices customer already saw and agreed to."
+                ),
+            },
+            "customer_email": {
+                "type": "string",
+                "description": "Customer email for order confirmation (optional, Post-Sale agent will ask if missing).",
             },
         },
-        "required": ["intent"],
+        "required": ["intent", "product_ids"],
         "additionalProperties": False,
     },
 }

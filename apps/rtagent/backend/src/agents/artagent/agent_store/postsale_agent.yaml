@@ -31,147 +31,42 @@ voice:
   rate: "-2%"  # Slightly slower for payment details clarity
 
 prompts:
-  path: voice_agent_postsale.jinja  # Transaction specialist prompt
+  path: voice_agent_postsale.jinja  # Checkout specialist prompt
 
 tools:
   # ──────────────────────────────────────────────────────────────
-  # Checkout & Payment Processing
+  # Checkout Flow Tools
   # ──────────────────────────────────────────────────────────────
-  - initiate_checkout               # ← Start checkout flow
-                                     # Args: product_ids, customer_id
-                                     # Returns: cart summary, total, tax
-  
-  - apply_membership_discount       # ← Apply tier pricing (Member/Gold/Platinum)
-                                     # Args: customer_tier, cart_id
-  
-  - apply_promo_code                # ← Validate and apply promotion codes
-                                     # Args: promo_code, cart_id
-  
-  - process_payment                 # ← Secure payment via payment gateway
-                                     # Args: payment_method, amount, cart_id
-                                     # Integration: Stripe/Square/Azure Payment
-  
-  - save_payment_method             # ← Store payment info securely (tokenized)
-                                     # Args: payment_token, customer_id
-  
-  # ──────────────────────────────────────────────────────────────
-  # Order Management
-  # ──────────────────────────────────────────────────────────────
-  - create_order                    # ← Finalize order after payment
-                                     # Args: cart_id, shipping_address, customer_id
-                                     # Returns: order_id, confirmation_number
-  
-  - get_order_status                # ← Track order progress
-                                     # Args: order_id OR customer_id
-                                     # Returns: status, tracking_number, ETA
-  
-  - get_order_history               # ← Past purchases
-                                     # Args: customer_id, limit
-  
-  - cancel_order                    # ← Cancel before shipment
-                                     # Args: order_id, reason
-                                     # Business rule: only if status='pending' or 'processing'
-  
-  - modify_order                    # ← Update shipping address or items
-                                     # Args: order_id, modifications
-                                     # Restricted: only before shipment
-  
-  # ──────────────────────────────────────────────────────────────
-  # Returns & Exchanges
-  # ──────────────────────────────────────────────────────────────
-  - initiate_return                 # ← Start return process
-                                     # Args: order_id, item_ids, reason
-                                     # Returns: return_label, instructions, RMA_number
-  
-  - initiate_exchange               # ← Exchange for different size/color
-                                     # Args: order_id, item_id, exchange_item_id
-  
-  - check_return_eligibility        # ← Validate return policy compliance
-                                     # Args: order_id, item_id
-                                     # Rules: 30-day window, unworn, tags attached
-  
-  - process_refund                  # ← Issue refund after return received
-                                     # Args: return_id, refund_amount
-                                     # Timeline: 5-7 business days
-  
-  # ──────────────────────────────────────────────────────────────
-  # Shipping & Delivery
-  # ──────────────────────────────────────────────────────────────
-  - get_shipping_options            # ← Available shipping methods
-                                     # Args: cart_id, destination_zip
-                                     # Returns: standard, express, next_day with prices
-  
-  - select_shipping_method          # ← Choose shipping tier
-                                     # Args: cart_id, shipping_method
-  
-  - track_shipment                  # ← Real-time tracking
-                                     # Args: tracking_number
-                                     # Integration: UPS/FedEx/USPS APIs
-  
-  - update_shipping_address         # ← Change delivery address
-                                     # Args: order_id, new_address
-                                     # Restriction: only if not shipped
-  
-  # ──────────────────────────────────────────────────────────────
-  # Customer Account Management
-  # ──────────────────────────────────────────────────────────────
-  - get_customer_profile            # ← Customer info, tier, saved addresses
-                                     # Args: customer_id
-  
-  - update_payment_method           # ← Modify saved payment
-                                     # Args: customer_id, payment_token
-  
-  - get_loyalty_balance             # ← Rewards points
-                                     # Args: customer_id
-  
-  - apply_loyalty_points            # ← Use points as payment
-                                     # Args: customer_id, points_amount, cart_id
-  
-  - check_gift_card_balance         # ← Gift card inquiry
-                                     # Args: gift_card_number
-  
-  - apply_gift_card                 # ← Use gift card for payment
-                                     # Args: gift_card_number, cart_id
-  
-  # ──────────────────────────────────────────────────────────────
-  # Support & Documentation
-  # ──────────────────────────────────────────────────────────────
-  - get_return_policy               # ← Return/exchange rules
-  - get_shipping_policy             # ← Shipping terms and timelines
-  - get_warranty_info               # ← Product warranty details
+  - get_customer_info                # Get customer name, email, address, loyalty tier
+                                     # Returns complete profile for order processing
+                                     
+  - get_product_price                # Get discounted price for a product
                                      # Args: product_id
-  
-  - send_order_confirmation_email   # ← Resend confirmation
-                                     # Args: order_id, customer_email
-  
-  - send_return_label_email         # ← Email return shipping label
-                                     # Args: return_id, customer_email
-  
-  # ──────────────────────────────────────────────────────────────
-  # Agent Handoffs
-  # ──────────────────────────────────────────────────────────────
-  - handoff_to_concierge            # ← Customer wants to shop more
-                                     # Trigger: "I want to look at other items"
-  
-  - handoff_to_stylist              # ← Needs styling help for exchange
-                                     # Trigger: "help me pick a better size/style"
+                                     # Returns: base price, discount amount, final price
+                                     # Automatically applies customer's loyalty tier discount
+                                     
+  - send_order_confirmation_email    # Send complete order confirmation
+                                     # Args: product_ids (from handoff)
+                                     # Gets customer info, calculates discounted prices
+                                     # Generates order ID, sends email with:
+                                     #   - Customer name & shipping address
+                                     #   - Products with discounted prices
+                                     #   - Loyalty tier benefits
+                                     #   - Shipping details
+                                     # Only call after customer explicitly confirms
+
   
   # ──────────────────────────────────────────────────────────────
-  # Escalation
+  # Agent Handoffs (Future: Will add when implementing these agents)
   # ──────────────────────────────────────────────────────────────
-  - escalate_payment_issue          # ← Payment failures, fraud alerts
-                                     # Args: customer_id, issue_type, details
-  
-  - escalate_shipping_issue         # ← Lost packages, delivery problems
-                                     # Args: order_id, tracking_number, issue
-  
-  - escalate_human                  # ← Complex disputes, dissatisfaction
+  # - handoff_to_concierge          # Customer wants to shop more
+  # - handoff_to_stylist            # Needs styling help
 
 # ──────────────────────────────────────────────────────────────
-# Transaction Agent Behavior
+# Post-Sale Agent Behavior (MVP - Email Confirmation Only)
 # ──────────────────────────────────────────────────────────────
 behavior:
-  greeting: "Great! Let's complete your order. I'll make sure everything goes smoothly. How would you like to proceed?"
+  greeting: "Perfect! Let's get your order finalized. I'll make this quick and easy."
   
   checkout_flow:
     steps:
