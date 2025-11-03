@@ -681,7 +681,7 @@ const styles = {
     justifyContent: "center",
     fontSize: "14px",
     transition: "all 0.2s ease",
-    zIndex: 1000,
+    zIndex: 99999,
     boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
   },
 
@@ -726,7 +726,7 @@ const styles = {
     fontSize: "12px",
     lineHeight: "1.5",
     color: "#334155",
-    zIndex: 1001,
+    zIndex: 99999,
     opacity: 0,
     transform: "translateY(-8px)",
     pointerEvents: "none",
