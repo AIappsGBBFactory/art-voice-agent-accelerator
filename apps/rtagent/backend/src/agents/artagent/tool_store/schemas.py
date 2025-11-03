@@ -10,6 +10,7 @@ Tools:
 - handoff_general_agent
 - handoff_claim_agent
 - escalate_human
+- detect_voicemail_and_end_call
 """
 
 from __future__ import annotations
@@ -988,6 +989,35 @@ handoff_to_trading_schema: Dict[str, Any] = {
             },
         },
         "required": ["client_code", "client_name", "trade_details"],
+        "additionalProperties": False,
+    },
+}
+
+
+detect_voicemail_schema: Dict[str, Any] = {
+    "name": "detect_voicemail_and_end_call",
+    "description": (
+        "Use when you are confident the caller is a voicemail or answering machine. "
+        "Provide the cues that informed the decision so the system can gracefully terminate the call."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "voicemail_cues": {
+                "type": "string",
+                "description": (
+                    "Brief note describing the audio/text cues indicating voicemail "
+                    "(e.g., 'automated greeting', 'beep', 'no live response')."
+                ),
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Optional confidence score between 0 and 1.",
+            },
+        },
+        "required": ["voicemail_cues"],
         "additionalProperties": False,
     },
 }

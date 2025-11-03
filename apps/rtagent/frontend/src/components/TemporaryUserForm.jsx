@@ -164,6 +164,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
     full_name: '',
     email: '',
     phone_number: '',
+    preferred_channel: 'email',
   });
   const [status, setStatus] = useState({ type: 'idle', message: '', data: null });
 
@@ -191,6 +192,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
     const payload = {
       full_name: formState.full_name.trim(),
       email: formState.email.trim(),
+      preferred_channel: formState.preferred_channel,
     };
     if (formState.phone_number.trim()) {
       payload.phone_number = formState.phone_number.trim();
@@ -218,7 +220,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
         data: { safety_notice: data?.safety_notice },
       });
       onSuccess?.(data);
-      setFormState({ full_name: '', email: '', phone_number: '' });
+      setFormState({ full_name: '', email: '', phone_number: '', preferred_channel: 'email' });
     } catch (error) {
       setStatus({
         type: 'error',
@@ -294,6 +296,24 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
             style={formStyles.input}
             placeholder="+15551234567"
           />
+        </div>
+        <div style={formStyles.formRow}>
+          <label style={formStyles.label} htmlFor="preferred_channel">
+            MFA Delivery
+          </label>
+          <select
+            id="preferred_channel"
+            name="preferred_channel"
+            value={formState.preferred_channel}
+            onChange={handleChange}
+            style={{
+              ...formStyles.input,
+              paddingRight: '32px',
+            }}
+          >
+            <option value="email">Email (default)</option>
+            <option value="sms">SMS (requires phone)</option>
+          </select>
         </div>
         <div style={formStyles.buttonRow}>
           <button

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 
 import pymongo
+from bson.son import SON
 import yaml
 from utils.azure_auth import get_credential
 from dotenv import load_dotenv
@@ -227,6 +228,21 @@ class CosmosDBMongoCoreManager:
             logger.error(f"Failed to delete document: {e}")
             return False
 
+    @staticmethod
+    def _normalize_ttl_seconds(raw_seconds: Any) -> int:
+        """Validate and clamp TTL seconds to Cosmos DB supported range."""
+        try:
+            seconds = int(raw_seconds)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("TTL seconds must be an integer value") from exc
+
+        if seconds < 0:
+            raise ValueError("TTL seconds must be non-negative")
+
+        # Cosmos DB (Mongo API) relies on signed 32-bit range for ttl values
+        max_supported = 2_147_483_647
+        return min(seconds, max_supported)
+
     def ensure_ttl_index(self, field_name: str = "ttl", expire_seconds: int = 0) -> bool:
         """
         Create TTL index on collection for automatic document expiration.
@@ -239,16 +255,44 @@ class CosmosDBMongoCoreManager:
             True if index was created successfully, False otherwise
         """
         try:
-            # Create TTL index - documents will expire based on the ttl field value
-            index_def = {field_name: 1}
-            options = {"expireAfterSeconds": expire_seconds}
-            
-            result = self.collection.create_index(index_def, **options)
-            logger.info(f"TTL index created on '{field_name}' field: {result}")
+            normalized_expire = self._normalize_ttl_seconds(expire_seconds)
+
+            # Detect existing TTL index for the same field
+            try:
+                existing_indexes = list(self.collection.list_indexes())
+            except Exception:  # pragma: no cover - defensive fallback
+                existing_indexes = []
+
+            for index in existing_indexes:
+                key_spec = index.get("key")
+                if isinstance(key_spec, (dict, SON)):
+                    key_items = list(key_spec.items())
+                else:
+                    key_items = list(key_spec or [])
+
+                if key_items == [(field_name, 1)]:
+                    current_expire = index.get("expireAfterSeconds")
+                    if current_expire == normalized_expire:
+                        logger.info("TTL index already configured for '%s'", field_name)
+                        return True
+                    # Drop stale index so we can recreate with desired settings
+                    self.collection.drop_index(index["name"])
+                    logger.info("Dropped stale TTL index '%s'", index["name"])
+                    break
+
+            index_def = [(field_name, pymongo.ASCENDING)]
+            result = self.collection.create_index(
+                index_def,
+                expireAfterSeconds=normalized_expire,
+            )
+            logger.info("TTL index created on '%s' field: %s", field_name, result)
             return True
-            
-        except Exception as e:
-            logger.error(f"Failed to create TTL index: {e}")
+
+        except ValueError as exc:
+            logger.error("Invalid TTL configuration: %s", exc)
+            return False
+        except Exception as exc:  # pragma: no cover - real backend safeguard
+            logger.error("Failed to create TTL index: %s", exc)
             return False
 
     def upsert_document_with_ttl(
@@ -266,10 +310,15 @@ class CosmosDBMongoCoreManager:
             The upserted document's ID if a new document is inserted, None otherwise
         """
         try:
-            # Add TTL field to document (must be int32 as per Azure Cosmos DB requirements)
+            # Calculate expiration time as Date object (required for TTL with expireAfterSeconds=0)
+            ttl_value = self._normalize_ttl_seconds(ttl_seconds)
+            expiration_time = datetime.utcnow() + timedelta(seconds=ttl_value)
+            
             document_with_ttl = document.copy()
-            document_with_ttl["ttl"] = int(ttl_seconds)  # Ensure it's int32
-            document_with_ttl["expires_at"] = (datetime.utcnow() + timedelta(seconds=ttl_seconds)).isoformat() + "Z"
+            # Store Date object for TTL index (this is what MongoDB TTL requires)
+            document_with_ttl["ttl"] = expiration_time
+            # Keep string version for human readability/debugging
+            document_with_ttl["expires_at"] = expiration_time.isoformat() + "Z"
             
             # Use the existing upsert method
             result = self.upsert_document(document_with_ttl, query)
@@ -297,10 +346,15 @@ class CosmosDBMongoCoreManager:
             The inserted document's ID or None if an error occurred
         """
         try:
-            # Add TTL field to document (must be int32 as per Azure Cosmos DB requirements)
+            # Calculate expiration time as Date object (required for TTL with expireAfterSeconds=0)
+            ttl_value = self._normalize_ttl_seconds(ttl_seconds)
+            expiration_time = datetime.utcnow() + timedelta(seconds=ttl_value)
+            
             document_with_ttl = document.copy()
-            document_with_ttl["ttl"] = int(ttl_seconds)  # Ensure it's int32
-            document_with_ttl["expires_at"] = (datetime.utcnow() + timedelta(seconds=ttl_seconds)).isoformat() + "Z"
+            # Store Date object for TTL index (this is what MongoDB TTL requires)
+            document_with_ttl["ttl"] = expiration_time
+            # Keep string version for human readability/debugging
+            document_with_ttl["expires_at"] = expiration_time.isoformat() + "Z"
             
             # Use the existing insert method
             result = self.insert_document(document_with_ttl)

@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import "reactflow/dist/style.css";
-import TemporaryUserForm from './TemporaryUserForm';
 import useBargeIn from '../hooks/useBargeIn.js';
 import logger from '../utils/logger.js';
 
@@ -22,7 +21,10 @@ const getOrCreateSessionId = () => {
     sessionId = `session_${Date.now()}_${tabId}`;
     sessionStorage.setItem(sessionKey, sessionId);
   }
-  
+  //   logger.debug('Created NEW tab-specific session ID:', sessionId);
+  // } else {
+  //   logger.debug('Retrieved existing tab session ID:', sessionId);
+  // }
   
   return sessionId;
 };
@@ -285,6 +287,33 @@ const styles = {
     whiteSpace: "pre-wrap",
   },
 
+  assistantBubbleInterrupted: {
+    border: "1px dashed #f97316",
+    boxShadow: "0 0 0 1px rgba(249, 115, 22, 0.18)",
+    background: "linear-gradient(135deg, rgba(255, 247, 237, 0.85) 0%, #67d8ef 80%)",
+    position: "relative",
+  },
+
+  interruptionBadge: {
+    display: "inline-block",
+    marginLeft: "8px",
+    padding: "0 6px",
+    fontSize: "11px",
+    fontWeight: "600",
+    color: "#9a3412",
+    backgroundColor: "rgba(253, 186, 116, 0.3)",
+    border: "1px solid rgba(249, 115, 22, 0.4)",
+    borderRadius: "999px",
+    verticalAlign: "baseline",
+  },
+
+  interruptionFootnote: {
+    marginTop: "6px",
+    fontSize: "11px",
+    color: "#9a3412",
+    fontStyle: "italic",
+  },
+  
   // Agent name label (appears above specialist bubbles)
   agentNameLabel: {
     fontSize: "10px",
@@ -691,28 +720,6 @@ const styles = {
     transform: "scale(1.05)",
   },
 
-  industryTag: {
-    position: "absolute",
-    top: "40px",
-    left: "20px",
-    padding: "8px 14px",
-    borderRadius: "18px",
-    border: "none",
-    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-    color: "white",
-    fontSize: "10px",
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: "0.8px",
-    boxShadow: "0 4px 15px rgba(102, 126, 234, 0.4), 0 2px 4px rgba(0,0,0,0.1)",
-    zIndex: 1000,
-    userSelect: "none",
-    backdropFilter: "blur(10px)",
-    transition: "all 0.3s ease",
-    whiteSpace: "nowrap",
-    maxWidth: "fit-content",
-  },
-
   helpTooltip: {
     position: "absolute",
     top: "40px",
@@ -762,82 +769,6 @@ const styles = {
     padding: "4px 8px",
     borderRadius: "6px",
     border: "1px solid #e2e8f0",
-  },
-
-  demoButton: {
-    position: "fixed",
-    top: "24px",
-    right: "24px",
-    padding: "10px 18px",
-    borderRadius: "999px",
-    border: "none",
-    background: "linear-gradient(135deg, #0ea5e9, #0369a1)",
-    color: "#ffffff",
-    fontSize: "13px",
-    fontWeight: "600",
-    cursor: "pointer",
-    boxShadow: "0 14px 32px rgba(2, 132, 199, 0.35)",
-    zIndex: 1400,
-    transition: "transform 0.2s ease, box-shadow 0.2s ease",
-  },
-  demoButtonActive: {
-    transform: "translateY(-1px) scale(1.02)",
-    boxShadow: "0 18px 40px rgba(2, 132, 199, 0.45)",
-  },
-  demoFormOverlay: {
-    position: "fixed",
-    top: "92px",
-    right: "24px",
-    zIndex: 1390,
-  },
-  profileToggleWrapper: {
-    margin: "0 24px",
-    paddingBottom: "12px",
-  },
-  profileToggleButton: {
-    width: "100%",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "10px 12px",
-    borderRadius: "12px",
-    border: "1px solid #cbd5e1",
-    background: "linear-gradient(135deg, #ecfeff, #bae6fd)",
-    color: "#0f172a",
-    fontSize: "12px",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  profilePanel: {
-    marginTop: "8px",
-    padding: "12px",
-    borderRadius: "12px",
-    border: "1px solid #e2e8f0",
-    background: "#f8fafc",
-    display: "grid",
-    gap: "6px",
-    fontSize: "12px",
-    color: "#1f2937",
-  },
-  profileBadge: {
-    padding: "10px 12px",
-    borderRadius: "10px",
-    background: "linear-gradient(135deg, #f97316, #ef4444)",
-    color: "#ffffff",
-    fontWeight: 700,
-    letterSpacing: "0.6px",
-    textAlign: "center",
-  },
-  profileNotice: {
-    marginTop: "4px",
-    padding: "8px 10px",
-    borderRadius: "8px",
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
-    color: "#b91c1c",
-    fontSize: "11px",
-    fontWeight: 600,
-    textAlign: "center",
   },
 };
 // Add keyframe animation for pulse effect
@@ -1059,7 +990,7 @@ const HelpButton = () => {
           Design a single agent or orchestrate multiple specialist agents. The framework allows you to build your voice agent from scratch, incorporate memory, configure actions, and fine-tune your TTS and STT layers.
         </div>
         <div style={styles.helpTooltipText}>
-          🤔 <strong>Try asking about:</strong> Transfer Agency DRIP liquidations, compliance reviews, fraud detection, or general inquiries.
+          🤔 <strong>Try asking about:</strong> Insurance claims, policy questions, authentication, or general inquiries.
         </div>
         <div style={styles.helpTooltipText}>
          📑 <a 
@@ -1099,33 +1030,6 @@ const HelpButton = () => {
           </div>
         )}
       </div>
-    </div>
-  );
-};
-
-/* ------------------------------------------------------------------ *
- *  INDUSTRY TAG COMPONENT
- * ------------------------------------------------------------------ */
-const IndustryTag = () => {
-  // Determine branch-based industry tag
-  const getIndustryTag = () => {
-    const currentBranch = import.meta.env.VITE_BRANCH_NAME || 'finance';
-    
-    // When promoted to production (main branch) → Insurance Edition
-    if (currentBranch === 'main') {
-      return 'Insurance Edition';
-    } 
-    // Current branch (finance/capitalmarkets) → Finance Edition
-    else if (currentBranch.includes('finance') || currentBranch.includes('capitalmarkets')) {
-      return 'Finance Edition';
-    }
-    
-    return 'Finance Edition'; // Default fallback
-  };
-
-  return (
-    <div style={styles.industryTag}>
-      {getIndustryTag()}
     </div>
   );
 };
@@ -2079,7 +1983,7 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
  *  CHAT BUBBLE
  * ------------------------------------------------------------------ */
 const ChatBubble = ({ message }) => {
-  const { speaker, text, isTool, streaming } = message;
+  const { speaker, text, isTool, streaming, interrupted, interruptionMeta } = message;
   const isUser = speaker === "User";
   const isSpecialist = speaker?.includes("Specialist");
   const isAuthAgent = speaker === "Auth Agent";
@@ -2093,16 +1997,18 @@ const ChatBubble = ({ message }) => {
           textAlign: "center",
           fontSize: "14px",
         }}>
-
-                                                                                                            
-
-                            {text}
+          {text}
         </div>
       </div>
     );
   }
   
-  const bubbleStyle = isUser ? styles.userBubble : styles.assistantBubble;
+  const bubbleStyle = isUser
+    ? styles.userBubble
+    : {
+        ...styles.assistantBubble,
+        ...(interrupted ? styles.assistantBubbleInterrupted : {}),
+      };
 
   return (
     <div style={isUser ? styles.userMessage : styles.assistantMessage}>
@@ -2116,7 +2022,17 @@ const ChatBubble = ({ message }) => {
         {text.split("\n").map((line, i) => (
           <div key={i}>{line}</div>
         ))}
+        {interrupted && (
+          <span style={styles.interruptionBadge}>[audio cut off]</span>
+        )}
         {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
+        {interrupted && (
+          <div style={styles.interruptionFootnote}>
+            Barge-in stopped playback
+            {interruptionMeta?.trigger ? ` · trigger: ${interruptionMeta.trigger}` : ""}
+            {interruptionMeta?.at ? ` · stage: ${interruptionMeta.at}` : ""}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2154,9 +2070,6 @@ function RealTimeVoiceApp() {
     status: "checking",
     acsOnlyIssue: false,
   });
-  const [sessionProfiles, setSessionProfiles] = useState({});
-  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
-  const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   const handleSystemStatus = useCallback((nextStatus) => {
     setSystemStatus((prev) =>
       prev.status === nextStatus.status && prev.acsOnlyIssue === nextStatus.acsOnlyIssue
@@ -2175,7 +2088,6 @@ function RealTimeVoiceApp() {
   const [micHovered, setMicHovered] = useState(false);
   const [phoneHovered, setPhoneHovered] = useState(false);
   const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
-  const [showDemoForm, setShowDemoForm] = useState(false);
   const isCallDisabled =
     systemStatus.status === "degraded" && systemStatus.acsOnlyIssue;
 
@@ -2225,8 +2137,6 @@ function RealTimeVoiceApp() {
   const pcmSinkRef = useRef(null);
   const playbackActiveRef = useRef(false);
   const assistantStreamGenerationRef = useRef(0);
-  const terminationReasonRef = useRef(null);
-  const resampleWarningRef = useRef(false);
   const shouldReconnectRef = useRef(false);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
@@ -2280,30 +2190,6 @@ function RealTimeVoiceApp() {
     registerProcessor('pcm-sink', PcmSink);
   `;
 
-  const resampleFloat32 = useCallback((input, fromRate, toRate) => {
-    if (!input || fromRate === toRate || !Number.isFinite(fromRate) || !Number.isFinite(toRate) || fromRate <= 0 || toRate <= 0) {
-      return input;
-    }
-
-    const resampleRatio = toRate / fromRate;
-    if (!Number.isFinite(resampleRatio) || resampleRatio <= 0) {
-      return input;
-    }
-
-    const newLength = Math.max(1, Math.round(input.length * resampleRatio));
-    const output = new Float32Array(newLength);
-    for (let i = 0; i < newLength; i += 1) {
-      const sourceIndex = i / resampleRatio;
-      const index0 = Math.floor(sourceIndex);
-      const index1 = Math.min(input.length - 1, index0 + 1);
-      const frac = sourceIndex - index0;
-      const sample0 = input[index0] ?? 0;
-      const sample1 = input[index1] ?? sample0;
-      output[i] = sample0 + (sample1 - sample0) * frac;
-    }
-    return output;
-  }, []);
-
   // Initialize playback audio context and worklet (call on user gesture)
   const initializeAudioPlayback = async () => {
     if (playbackAudioContextRef.current) return; // Already initialized
@@ -2341,66 +2227,9 @@ function RealTimeVoiceApp() {
   };
 
 
-  const appendLog = m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`);
-  const formatCurrency = (value) => {
-    if (typeof value !== 'number') return '—';
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
-  };
-  const formatUpper = (str) => (typeof str === 'string' ? str.toUpperCase() : '—');
-  const formatNumber = (value) => (typeof value === 'number' ? value.toLocaleString('en-US') : '—');
-  const formatDate = (value) => {
-    if (!value) return '—';
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.valueOf())
-      ? value
-      : parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  };
-  const resolveRelationshipTier = (profile) =>
-    profile?.customer_intelligence?.relationship_context?.relationship_tier ??
-    profile?.relationship_tier ??
-    '—';
-  const activeSessionProfile = sessionProfiles[sessionId];
-  const resolveProfileName = (profile) => {
-    if (!profile) {
-      return undefined;
-    }
-    return (
-      profile.full_name ??
-      profile.name ??
-      profile.client_name ??
-      profile.contact_info?.contact_name ??
-      profile.contact_info?.full_name
-    );
-  };
-  const profileToggleLabel = activeSessionProfile
-    ? `${resolveProfileName(activeSessionProfile.profile) ?? 'Demo User'} • SSN ${activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'}`
-    : 'User Profile';
-  const handleDemoCreated = useCallback((demoPayload) => {
-    if (!demoPayload) {
-      return;
-    }
-    const ssn = demoPayload?.profile?.verification_codes?.ssn4;
-    const notice = demoPayload?.safety_notice ?? 'Demo data only.';
-    const sessionKey = demoPayload.session_id ?? sessionId;
-    const messageLines = [
-      '🚨 DEMO PROFILE GENERATED 🚨',
-      ssn ? `Temporary SSN Last 4: ${ssn}` : null,
-      notice,
-      'NEVER enter real customer or personal data in this environment.',
-    ].filter(Boolean);
-    setSessionProfiles((prev) => ({
-      ...prev,
-      [sessionKey]: {
-        sessionId: sessionKey,
-        profile: demoPayload.profile,
-        expiresAt: demoPayload.expires_at,
-        safetyNotice: notice,
-      },
-    }));
-    setProfilePanelOpen(true);
-    setMessages((prev) => [...prev, { speaker: "System", text: messageLines.join('\n') }]);
-    appendLog('Synthetic demo profile issued with sandbox identifiers');
-  }, [appendLog, sessionId]);
+  const appendLog = useCallback((message) => {
+    setLog(prev => `${prev}\n${new Date().toLocaleTimeString()} - ${message}`);
+  }, []);
 
   const publishMetricsSummary = useCallback(
     (label, detail) => {
@@ -2433,6 +2262,7 @@ function RealTimeVoiceApp() {
     finalizeBargeInClear,
   } = useBargeIn({
     appendLog,
+    setMessages,
     setActiveSpeaker,
     assistantStreamGenerationRef,
     pcmSinkRef,
@@ -2640,10 +2470,10 @@ function RealTimeVoiceApp() {
     };
   }, []);
 
-  useEffect(() => {
+  useEffect(()=>{
     if (log.includes("Call connected"))  setCallActive(true);
     if (log.includes("Call ended"))      setCallActive(false);
-  }, [log]);
+  },[log]);
 
   const startRecognition = async () => {
       setMessages([]);
@@ -2654,8 +2484,6 @@ function RealTimeVoiceApp() {
       const sessionId = getOrCreateSessionId();
       resetMetrics(sessionId);
       assistantStreamGenerationRef.current = 0;
-      terminationReasonRef.current = null;
-      resampleWarningRef.current = false;
       shouldReconnectRef.current = true;
       reconnectAttemptsRef.current = 0;
       if (reconnectTimeoutRef.current) {
@@ -2686,30 +2514,25 @@ function RealTimeVoiceApp() {
             socketRef.current = null;
           }
 
-          if (!shouldReconnectRef.current) {
-            if (terminationReasonRef.current === "HUMAN_HANDOFF") {
-              appendLog("🔌 WS closed after live agent transfer");
+          if (shouldReconnectRef.current) {
+            const attempt = reconnectAttemptsRef.current + 1;
+            reconnectAttemptsRef.current = attempt;
+            const delay = Math.min(5000, 250 * Math.pow(2, attempt - 1));
+            appendLog(`🔄 WS reconnect scheduled in ${Math.round(delay)} ms (attempt ${attempt})`);
+
+            if (reconnectTimeoutRef.current) {
+              clearTimeout(reconnectTimeoutRef.current);
             }
-            return;
+
+            reconnectTimeoutRef.current = window.setTimeout(() => {
+              reconnectTimeoutRef.current = null;
+              if (!shouldReconnectRef.current) {
+                return;
+              }
+              appendLog("🔄 Attempting WS reconnect…");
+              connectSocket(true);
+            }, delay);
           }
-
-          const attempt = reconnectAttemptsRef.current + 1;
-          reconnectAttemptsRef.current = attempt;
-          const delay = Math.min(5000, 250 * Math.pow(2, attempt - 1));
-          appendLog(`🔄 WS reconnect scheduled in ${Math.round(delay)} ms (attempt ${attempt})`);
-
-          if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current);
-          }
-
-          reconnectTimeoutRef.current = window.setTimeout(() => {
-            reconnectTimeoutRef.current = null;
-            if (!shouldReconnectRef.current) {
-              return;
-            }
-            appendLog("🔄 Attempting WS reconnect…");
-            connectSocket(true);
-          }, delay);
         };
 
         ws.onerror = (err) => {
@@ -2926,30 +2749,6 @@ function RealTimeVoiceApp() {
         logger.debug("📨 Transformed envelope to legacy format:", payload);
       }
 
-      if (payload.type === "session_end") {
-        const reason = payload.reason || "UNKNOWN";
-        terminationReasonRef.current = reason;
-        if (reason === "HUMAN_HANDOFF") {
-          shouldReconnectRef.current = false;
-        }
-        const normalizedReason =
-          typeof reason === "string" ? reason.split("_").join(" ") : String(reason);
-        const reasonText =
-          reason === "HUMAN_HANDOFF"
-            ? "Transferring you to a live agent. Please stay on the line."
-            : `Session ended (${normalizedReason})`;
-        setMessages((prev) =>
-          pushIfChanged(prev, { speaker: "System", text: reasonText })
-        );
-        setActiveSpeaker("System");
-        appendLog(`⚠️ Session ended (${reason})`);
-        playbackActiveRef.current = false;
-        if (pcmSinkRef.current) {
-          pcmSinkRef.current.port.postMessage({ type: "clear" });
-        }
-        return;
-      }
-
       if (payload.event_type === "stt_partial" && payload.data) {
         const partialData = payload.data;
         const partialText = (partialData.content || "").trim();
@@ -2967,18 +2766,10 @@ function RealTimeVoiceApp() {
           trigger: partialMeta.trigger,
         });
 
-        const bargeInEvent = recordBargeInEvent("stt_partial", partialMeta);
-        const shouldClearPlayback =
-          playbackActiveRef.current === true || !bargeInEvent?.clearIssuedTs;
-
-        if (shouldClearPlayback) {
+        if (playbackActiveRef.current) {
           interruptAssistantOutput(partialMeta, {
             logMessage: "🔇 Audio cleared due to live speech (partial transcription)",
           });
-
-          if (bargeInEvent) {
-            finalizeBargeInClear(bargeInEvent, { keepPending: true });
-          }
         }
 
         if (partialText) {
@@ -3021,28 +2812,6 @@ function RealTimeVoiceApp() {
         setActiveSpeaker("User");
         return;
       }
-
-      if (payload.event_type === "live_agent_transfer") {
-        terminationReasonRef.current = "HUMAN_HANDOFF";
-        shouldReconnectRef.current = false;
-        playbackActiveRef.current = false;
-        if (pcmSinkRef.current) {
-          pcmSinkRef.current.port.postMessage({ type: "clear" });
-        }
-        const reasonDetail =
-          payload.data?.reason ||
-          payload.data?.escalation_reason ||
-          payload.data?.message;
-        const transferText = reasonDetail
-          ? `Escalating to a live agent: ${reasonDetail}`
-          : "Escalating you to a live agent. Please hold while we connect.";
-        setMessages((prev) =>
-          pushIfChanged(prev, { speaker: "System", text: transferText })
-        );
-        setActiveSpeaker("System");
-        appendLog("🤝 Escalated to live agent");
-        return;
-      }
       
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data" && payload.data) {
@@ -3077,17 +2846,7 @@ function RealTimeVoiceApp() {
 
           // Push to the worklet queue
           if (pcmSinkRef.current) {
-            let samples = float32;
-            const playbackCtx = playbackAudioContextRef.current;
-            const sourceRate = payload.sample_rate;
-            if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
-              samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
-              if (!resampleWarningRef.current) {
-                appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
-                resampleWarningRef.current = true;
-              }
-            }
-            pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
+            pcmSinkRef.current.port.postMessage({ type: 'push', payload: float32 });
             appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
           } else {
             logger.warn("Audio playback not initialized, attempting init...");
@@ -3095,17 +2854,7 @@ function RealTimeVoiceApp() {
             // Try to initialize if not done yet
             await initializeAudioPlayback();
             if (pcmSinkRef.current) {
-              let samples = float32;
-              const playbackCtx = playbackAudioContextRef.current;
-              const sourceRate = payload.sample_rate;
-              if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
-                samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
-                if (!resampleWarningRef.current) {
-                  appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
-                  resampleWarningRef.current = true;
-                }
-              }
-              pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
+              pcmSinkRef.current.port.postMessage({ type: 'push', payload: float32 });
               appendLog("🔊 TTS audio playing (after init)");
             } else {
               logger.error("Failed to initialize audio playback");
@@ -3131,25 +2880,6 @@ function RealTimeVoiceApp() {
       const txt = content || message;
       const msgType = (type || "").toLowerCase();
 
-      if (msgType === "session_profile") {
-        const sessionKey = payload.session_id ?? sessionId;
-        const profileData = payload.profile ?? payload.data?.profile;
-        if (sessionKey && profileData) {
-          setSessionProfiles((prev) => ({
-            ...prev,
-            [sessionKey]: {
-              sessionId: sessionKey,
-              profile: profileData,
-              expiresAt: payload.expires_at ?? payload.expiresAt,
-              safetyNotice: payload.safety_notice ?? payload.safetyNotice,
-            },
-          }));
-          setProfilePanelOpen(true);
-          appendLog(`Session profile acknowledged for ${sessionKey}`);
-        }
-        return;
-      }
-
       if (msgType === "user" || speaker === "User") {
         setActiveSpeaker("User");
         setMessages((prev) => {
@@ -3172,19 +2902,23 @@ function RealTimeVoiceApp() {
         setActiveSpeaker(streamingSpeaker);
         setMessages(prev => {
           const latest = prev.at(-1);
+          if (latest?.interrupted) {
+            return [
+              ...prev,
+              {
+                speaker: streamingSpeaker,
+                text: txt,
+                streaming: true,
+                streamGeneration,
+              },
+            ];
+          }
           if (
             latest?.streaming &&
             latest?.speaker === streamingSpeaker &&
             latest?.streamGeneration === streamGeneration
           ) {
-            return prev.map((m, i) =>
-              i === prev.length - 1
-                ? {
-                    ...m,
-                    text: m.text + txt,
-                  }
-                : m,
-            );
+            return prev.map((m,i)=> i===prev.length-1 ? {...m, text: m.text + txt} : m);
           }
           return [
             ...prev,
@@ -3208,13 +2942,9 @@ function RealTimeVoiceApp() {
         registerAssistantFinal(assistantSpeaker);
         setActiveSpeaker("Assistant");
         setMessages(prev => {
-          const latest = prev.at(-1);
-          if (
-            latest?.streaming &&
-            latest?.speaker === assistantSpeaker
-          ) {
-            return prev.map((m, i) =>
-              i === prev.length - 1
+          if (prev.at(-1)?.streaming) {
+            return prev.map((m,i)=>
+              i===prev.length-1
                 ? {
                     ...m,
                     text: txt,
@@ -3223,10 +2953,7 @@ function RealTimeVoiceApp() {
                 : m,
             );
           }
-          return pushIfChanged(prev, {
-            speaker: assistantSpeaker,
-            text: txt,
-          });
+          return pushIfChanged(prev, { speaker:"Assistant", text:txt });
         });
 
         appendLog("🤖 Assistant responded");
@@ -3428,8 +3155,6 @@ function RealTimeVoiceApp() {
 
         {/* App Header */}
         <div style={styles.appHeader}>
-          {/* Top Left Industry Tag */}
-          <IndustryTag />
           <div style={styles.appTitleContainer}>
             <div style={styles.appTitleWrapper}>
               <span style={styles.appTitleIcon}>🎙️</span>
@@ -3446,59 +3171,12 @@ function RealTimeVoiceApp() {
               gap: '4px'
             }}>
               <span>💬</span>
-              <span>Session: {sessionId}</span>
+              <span>Session: {getOrCreateSessionId()}</span>
             </div>
           </div>
           {/* Top Right Help Button */}
           <HelpButton />
         </div>
-
-        {activeSessionProfile && (
-          <div style={styles.profileToggleWrapper}>
-            <button
-              type="button"
-              style={styles.profileToggleButton}
-              onClick={() => setProfilePanelOpen((prev) => !prev)}
-            >
-              <span>{profileToggleLabel}</span>
-              <span>{profilePanelOpen ? '▲' : '▼'}</span>
-            </button>
-            {profilePanelOpen && (
-              <div style={styles.profilePanel}>
-                <div style={styles.profileBadge}>
-                  USE DEMO SSN LAST 4: {activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'}
-                </div>
-                <div><strong>Name:</strong> {activeSessionProfile.profile?.full_name || '—'}</div>
-                <div><strong>Relationship Tier:</strong> {resolveRelationshipTier(activeSessionProfile.profile)}</div>
-                <div><strong>Company Code:</strong> {activeSessionProfile.profile?.company_code || '—'}</div>
-                <div><strong>Preferred MFA:</strong> {formatUpper(activeSessionProfile.profile?.contact_info?.preferred_mfa_method)}</div>
-                <div><strong>MFA Threshold:</strong> {formatCurrency(activeSessionProfile.profile?.mfa_required_threshold)}</div>
-                <div><strong>Email:</strong> {activeSessionProfile.profile?.contact_info?.email || '—'}</div>
-                <div><strong>Phone:</strong> {activeSessionProfile.profile?.contact_info?.phone || '—'}</div>
-                <div><strong>Current Balance:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.account_status?.current_balance)}</div>
-                <div><strong>YTD Volume:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.account_status?.ytd_transaction_volume)}</div>
-                <div><strong>Account Health:</strong> {formatNumber(activeSessionProfile.profile?.customer_intelligence?.account_status?.account_health_score)}</div>
-                <div><strong>Login Frequency:</strong> {activeSessionProfile.profile?.customer_intelligence?.account_status?.login_frequency || '—'}</div>
-                <div><strong>Last Login:</strong> {formatDate(activeSessionProfile.profile?.customer_intelligence?.account_status?.last_login)}</div>
-                <div><strong>Lifetime Value:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.relationship_context?.lifetime_value)}</div>
-                <div><strong>Verification Codes:</strong> SSN {activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'} • Employee {activeSessionProfile.profile?.verification_codes?.employee_id4 ?? '----'} • Phone {activeSessionProfile.profile?.verification_codes?.phone4 ?? '----'}</div>
-                <div><strong>Session:</strong> {activeSessionProfile.sessionId || sessionId}</div>
-                <div>
-                  <strong>Expires:</strong>{' '}
-                  {activeSessionProfile.expiresAt
-                    ? new Date(activeSessionProfile.expiresAt).toLocaleString(undefined, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      })
-                    : '—'}
-                </div>
-                {activeSessionProfile.safetyNotice && (
-                  <div style={styles.profileNotice}>{activeSessionProfile.safetyNotice}</div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Waveform Section */}
         <div style={styles.waveformSection}>
@@ -3541,9 +3219,7 @@ function RealTimeVoiceApp() {
                 onClick={() => {
                   // Reset entire session - clear chat and restart with new session ID
                   const newSessionId = createNewSessionId();
-                  setSessionId(newSessionId);
-                  setSessionProfiles({});
-                  setProfilePanelOpen(false);
+                  
                   // Close existing WebSocket if connected
                   if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
                     logger.info('🔌 Closing WebSocket for session reset...');
@@ -3556,7 +3232,7 @@ function RealTimeVoiceApp() {
                   stopRecognition();
                   setCallActive(false);
                   setShowPhoneInput(false);
-                  appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
+                  appendLog(`🔄️ Session reset - new session ID: ${newSessionId.split('_')[1]}`);
                   
                   // Add welcome message
                   setTimeout(() => {
@@ -3718,27 +3394,6 @@ function RealTimeVoiceApp() {
           >
             {callActive ? "🔴 Hang Up" : "📞 Call Me"}
           </button>
-        </div>
-      )}
-      <button
-        type="button"
-        style={{
-          ...styles.demoButton,
-          ...(showDemoForm ? styles.demoButtonActive : {}),
-        }}
-        onClick={() => setShowDemoForm((prev) => !prev)}
-        title={showDemoForm ? "Close demo profile form" : "Create 24-hour demo profile"}
-      >
-        {showDemoForm ? "Close Demo Form" : "New Demo Profile"}
-      </button>
-      {showDemoForm && (
-        <div style={styles.demoFormOverlay}>
-          <TemporaryUserForm
-            apiBaseUrl={API_BASE_URL}
-            onClose={() => setShowDemoForm(false)}
-            sessionId={sessionId}
-            onSuccess={handleDemoCreated}
-          />
         </div>
       )}
       </div>
