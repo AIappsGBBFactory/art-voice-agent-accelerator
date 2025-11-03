@@ -128,8 +128,8 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
           onClick={handleClick}
           sx={{ 
             position: 'absolute',
-            top: '72px', // Position below the Finance Edition label
-            right: '20px', // Back to right side to avoid content interference
+            top: '56px', // Align with logged-in profile button
+            right: '16px', // Align with logged-in profile button
             padding: '8px 16px',
             borderRadius: '18px',
             background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.9) 0%, rgba(79, 70, 229, 0.95) 100%)',
@@ -140,7 +140,7 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
             justifyContent: 'center',
             cursor: 'pointer',
             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            zIndex: 1000,
+            zIndex: 100,
             boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3), 0 2px 6px rgba(0, 0, 0, 0.1)',
             '&:hover': {
               background: 'linear-gradient(135deg, rgba(99, 102, 241, 1) 0%, rgba(79, 70, 229, 1) 100%)',
@@ -192,7 +192,7 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
           border: '2px solid #e2e8f0',
           cursor: 'pointer',
           transition: 'all 0.2s ease',
-          zIndex: 1000,
+          zIndex: 100,
           boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
           maxWidth: '160px',
           '&:hover': {
