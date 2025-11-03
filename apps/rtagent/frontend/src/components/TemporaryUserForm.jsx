@@ -362,7 +362,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
         <div style={formStyles.titleSection}>
           <h2 style={formStyles.title}>Create Demo Access</h2>
           <p style={formStyles.subtitle}>
-            Generate a temporary 24-hour profile for testing. Phone number is currently not enabled for this environment.
+            Generate a temporary 24-hour profile for testing. SMS-based verification is currently not enabled for this environment.
           </p>
         </div>
         {onClose && (
