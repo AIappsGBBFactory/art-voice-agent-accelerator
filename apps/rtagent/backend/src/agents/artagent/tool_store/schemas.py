@@ -997,8 +997,9 @@ handoff_to_trading_schema: Dict[str, Any] = {
 detect_voicemail_schema: Dict[str, Any] = {
     "name": "detect_voicemail_and_end_call",
     "description": (
-        "Use when you are confident the caller is a voicemail or answering machine. "
-        "Provide the cues that informed the decision so the system can gracefully terminate the call."
+        "Use when you suspect the caller is a voicemail or answering machine. "
+        "This tool will give the caller one opportunity to respond as a human before ending the call. "
+        "Provide the cues that informed your decision and optionally customize the confirmation message."
     ),
     "parameters": {
         "type": "object",
@@ -1007,17 +1008,46 @@ detect_voicemail_schema: Dict[str, Any] = {
                 "type": "string",
                 "description": (
                     "Brief note describing the audio/text cues indicating voicemail "
-                    "(e.g., 'automated greeting', 'beep', 'no live response')."
+                    "(e.g., 'automated greeting', 'beep', 'no live response', 'machine-like tone')."
                 ),
             },
             "confidence": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1,
-                "description": "Optional confidence score between 0 and 1.",
+                "description": "Optional confidence score between 0 and 1 for voicemail detection.",
+            },
+            "confirmation_message": {
+                "type": "string",
+                "description": (
+                    "Optional custom message to give the caller one chance to respond as a human. "
+                    "If not provided, a default polite confirmation will be used."
+                ),
             },
         },
         "required": ["voicemail_cues"],
+        "additionalProperties": False,
+    },
+}
+
+confirm_voicemail_schema: Dict[str, Any] = {
+    "name": "confirm_voicemail_and_end_call",
+    "description": (
+        "Use ONLY after calling detect_voicemail_and_end_call when no human response is received. "
+        "This confirms the voicemail detection and gracefully terminates the call."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "confirmation_reason": {
+                "type": "string",
+                "description": (
+                    "Brief explanation of why you're confirming this is a voicemail "
+                    "(e.g., 'no response to confirmation request', 'continued automated message')."
+                ),
+            },
+        },
+        "required": ["confirmation_reason"],
         "additionalProperties": False,
     },
 }
