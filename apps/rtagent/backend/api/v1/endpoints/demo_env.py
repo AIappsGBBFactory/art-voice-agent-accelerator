@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from random import Random
-from typing import Any
+from typing import Any, Literal
 import secrets
 
 import asyncio
@@ -27,6 +27,10 @@ class DemoUserRequest(BaseModel):
         default=None,
         pattern=r"^\+\d{10,15}$",
         description="Optional phone number in E.164 format for SMS demos.",
+    )
+    preferred_channel: Literal["email", "sms"] | None = Field(
+        default=None,
+        description="Preferred MFA delivery channel. Defaults to email unless explicitly set to SMS.",
     )
     session_id: str | None = Field(
         default=None,
@@ -221,7 +225,9 @@ def _build_profile(
     client_id = f"{slug}_{template['company_code_prefix'].lower()}"
     company_code = f"{template['company_code_prefix']}-{company_suffix}"
     contact_phone = payload.phone_number or template["default_phone"]
-    preferred_mfa = "sms" if payload.phone_number else template["default_mfa_method"]
+    explicit_channel = (payload.preferred_channel or "").lower()
+    prefers_sms = explicit_channel == "sms" and bool(payload.phone_number)
+    preferred_mfa = "sms" if prefers_sms else "email"
     phone_last4 = contact_phone[-4:] if contact_phone else f"{rng.randint(0, 9999):04d}"
     contact_info = {
         "email": str(payload.email),
@@ -377,9 +383,10 @@ def _build_transactions(
 
 def _build_interaction_plan(payload: DemoUserRequest, rng: Random) -> DemoInteractionPlan:
     """Craft a communication plan that mirrors the financial seed intelligence."""
+    explicit_channel = (payload.preferred_channel or "").lower()
     has_phone = payload.phone_number is not None
-    primary = "sms" if has_phone else "email"
-    fallback = "email" if primary == "sms" else "voip_callback"
+    primary = "sms" if explicit_channel == "sms" and has_phone else "email"
+    fallback = "sms" if primary == "email" and has_phone else "voip_callback"
     tone = rng.choice(("concise summary", "step-by-step guidance", "proactive alert"))
     notification = (
         f"Demo profile ready for {payload.full_name}. Expect a {tone} via {primary.upper()}."

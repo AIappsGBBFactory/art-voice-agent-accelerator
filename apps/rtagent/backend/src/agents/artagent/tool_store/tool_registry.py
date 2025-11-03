@@ -33,6 +33,9 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.transfer_agency_tools i
     handoff_to_compliance,
     handoff_to_trading,
 )
+from apps.rtagent.backend.src.agents.artagent.tool_store.voicemail import (
+    detect_voicemail_and_end_call,
+)
 from utils.ml_logging import get_logger
 
 log = get_logger("tools_helper")
@@ -63,6 +66,11 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.schemas import (
     calculate_liquidation_proceeds_schema,
     handoff_to_compliance_schema,
     handoff_to_trading_schema,
+    find_information_schema,
+    handoff_claim_schema,
+    handoff_general_schema,
+    record_fnol_schema,
+    detect_voicemail_schema,
 )
 
 function_mapping: Dict[str, Callable[..., Any]] = {
@@ -92,6 +100,9 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "calculate_liquidation_proceeds": calculate_liquidation_proceeds,
     "handoff_to_compliance": handoff_to_compliance,
     "handoff_to_trading": handoff_to_trading,
+    # "handoff_claim_agent": handoff_claim_agent,
+    # "find_information_for_policy": find_information_for_policy,
+    "detect_voicemail_and_end_call": detect_voicemail_and_end_call,
 }
 
 
@@ -122,6 +133,9 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": calculate_liquidation_proceeds_schema},
     {"type": "function", "function": handoff_to_compliance_schema},
     {"type": "function", "function": handoff_to_trading_schema},
+    # {"type": "function", "function": handoff_claim_schema},
+    # {"type": "function", "function": find_information_schema},
+    {"type": "function", "function": detect_voicemail_schema},
 ]
 
 TOOL_REGISTRY: dict[str, dict] = {t["function"]["name"]: t for t in available_tools}
