@@ -32,5 +32,7 @@ tools:
   - verify_mfa_code           # ← Verify OTP code
   - check_transaction_authorization # ← Check operation permissions
   # Escalation Tools (if authentication fails or emergency)
+  # - authenticate_caller
+  - detect_voicemail_and_end_call  # ← gracefully end voicemail calls
   - escalate_emergency         # ← 911-type escalation
   - escalate_human             # ← non-emergency live-agent transfer

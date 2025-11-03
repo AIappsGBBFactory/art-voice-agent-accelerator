@@ -55,7 +55,10 @@ def test_upsert_document_with_ttl_adds_ttl_and_expiry():
     updated_doc = manager.upsert_document.call_args[0][0]
 
     assert updated_doc is not base_doc
-    assert "ttl" in updated_doc and updated_doc["ttl"] == 120
+    # TTL field should now contain a datetime object, not an integer
+    assert "ttl" in updated_doc
+    assert isinstance(updated_doc["ttl"], datetime)
+    assert updated_doc["ttl"] > datetime.utcnow()
     assert "expires_at" in updated_doc
     expires_at = datetime.fromisoformat(updated_doc["expires_at"].replace("Z", "+00:00"))
     assert expires_at > datetime.now(timezone.utc)
@@ -75,7 +78,9 @@ def test_insert_document_with_ttl_adds_ttl_and_expiry():
     inserted_doc = manager.insert_document.call_args[0][0]
 
     assert inserted_doc is not base_doc
-    assert inserted_doc["ttl"] == 90
+    # TTL field should now contain a datetime object, not an integer
+    assert isinstance(inserted_doc["ttl"], datetime)
+    assert inserted_doc["ttl"] > datetime.utcnow()
     expires_at = datetime.fromisoformat(inserted_doc["expires_at"].replace("Z", "+00:00"))
     assert expires_at > datetime.now(timezone.utc)
     assert "ttl" not in base_doc
