@@ -286,7 +286,7 @@ class ACSLifecycleHandler:
                         await redis_mgr.set_value_async(
                             f"call_session_map:{call_id}",
                             browser_session_id,
-                            ttl_seconds=3600,  # Expire after 1 hour
+                            ttl_seconds=3600*24,  # Expire after 24 hours
                         )
                         logger.info(
                             f"🔗 Stored session mapping: {call_id} -> {browser_session_id}"
