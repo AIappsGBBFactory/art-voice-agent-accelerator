@@ -310,13 +310,15 @@ class CosmosDBMongoCoreManager:
             The upserted document's ID if a new document is inserted, None otherwise
         """
         try:
-            # Add TTL field to document (must be int32 as per Azure Cosmos DB requirements)
+            # Calculate expiration time as Date object (required for TTL with expireAfterSeconds=0)
             ttl_value = self._normalize_ttl_seconds(ttl_seconds)
+            expiration_time = datetime.utcnow() + timedelta(seconds=ttl_value)
+            
             document_with_ttl = document.copy()
-            document_with_ttl["ttl"] = ttl_value
-            document_with_ttl["expires_at"] = (
-                datetime.utcnow() + timedelta(seconds=ttl_value)
-            ).isoformat() + "Z"
+            # Store Date object for TTL index (this is what MongoDB TTL requires)
+            document_with_ttl["ttl"] = expiration_time
+            # Keep string version for human readability/debugging
+            document_with_ttl["expires_at"] = expiration_time.isoformat() + "Z"
             
             # Use the existing upsert method
             result = self.upsert_document(document_with_ttl, query)
@@ -344,13 +346,15 @@ class CosmosDBMongoCoreManager:
             The inserted document's ID or None if an error occurred
         """
         try:
-            # Add TTL field to document (must be int32 as per Azure Cosmos DB requirements)
+            # Calculate expiration time as Date object (required for TTL with expireAfterSeconds=0)
             ttl_value = self._normalize_ttl_seconds(ttl_seconds)
+            expiration_time = datetime.utcnow() + timedelta(seconds=ttl_value)
+            
             document_with_ttl = document.copy()
-            document_with_ttl["ttl"] = ttl_value
-            document_with_ttl["expires_at"] = (
-                datetime.utcnow() + timedelta(seconds=ttl_value)
-            ).isoformat() + "Z"
+            # Store Date object for TTL index (this is what MongoDB TTL requires)
+            document_with_ttl["ttl"] = expiration_time
+            # Keep string version for human readability/debugging
+            document_with_ttl["expires_at"] = expiration_time.isoformat() + "Z"
             
             # Use the existing insert method
             result = self.insert_document(document_with_ttl)
