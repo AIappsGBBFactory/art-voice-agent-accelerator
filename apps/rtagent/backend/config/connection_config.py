@@ -48,7 +48,7 @@ MAX_CONCURRENT_SESSIONS = int(os.getenv("MAX_CONCURRENT_SESSIONS", "1000"))
 ENABLE_SESSION_PERSISTENCE = (
     os.getenv("ENABLE_SESSION_PERSISTENCE", "true").lower() == "true"
 )
-SESSION_STATE_TTL = int(os.getenv("SESSION_STATE_TTL", "3600"))  # 1 hour
+SESSION_STATE_TTL = int(os.getenv("SESSION_STATE_TTL", "86400"))  # 24 hours
 
 # ==============================================================================
 # CONNECTION POOLING
