@@ -10,7 +10,6 @@ const formStyles = {
     border: '1px solid rgba(226, 232, 240, 0.8)',
     background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.98) 100%)',
     backdropFilter: 'blur(20px)',
-    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.05)',
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
