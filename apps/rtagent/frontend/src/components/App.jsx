@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import "reactflow/dist/style.css";
 import TemporaryUserForm from './TemporaryUserForm';
+import ProfileButton from './ProfileButton.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import logger from '../utils/logger.js';
 
@@ -695,20 +696,19 @@ const styles = {
     position: "absolute",
     top: "40px",
     left: "20px",
-    padding: "8px 14px",
-    borderRadius: "18px",
-    border: "none",
-    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-    color: "white",
-    fontSize: "10px",
+    padding: "6px 12px",
+    borderRadius: "12px",
+    border: "1px solid rgba(102, 126, 234, 0.3)",
+    background: "rgba(102, 126, 234, 0.15)",
+    backdropFilter: "blur(12px)",
+    color: "#667eea",
+    fontSize: "9px",
     fontWeight: "600",
     textTransform: "uppercase",
     letterSpacing: "0.8px",
-    boxShadow: "0 4px 15px rgba(102, 126, 234, 0.4), 0 2px 4px rgba(0,0,0,0.1)",
+    boxShadow: "0 2px 8px rgba(102, 126, 234, 0.2)",
     zIndex: 1000,
     userSelect: "none",
-    backdropFilter: "blur(10px)",
-    transition: "all 0.3s ease",
     whiteSpace: "nowrap",
     maxWidth: "fit-content",
   },
@@ -763,61 +763,78 @@ const styles = {
     borderRadius: "6px",
     border: "1px solid #e2e8f0",
   },
-
-  demoButton: {
+  demoFormBackdrop: {
     position: "fixed",
-    top: "24px",
-    right: "24px",
-    padding: "10px 18px",
-    borderRadius: "999px",
-    border: "none",
-    background: "linear-gradient(135deg, #0ea5e9, #0369a1)",
-    color: "#ffffff",
-    fontSize: "13px",
-    fontWeight: "600",
-    cursor: "pointer",
-    boxShadow: "0 14px 32px rgba(2, 132, 199, 0.35)",
-    zIndex: 1400,
-    transition: "transform 0.2s ease, box-shadow 0.2s ease",
-  },
-  demoButtonActive: {
-    transform: "translateY(-1px) scale(1.02)",
-    boxShadow: "0 18px 40px rgba(2, 132, 199, 0.45)",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.1)",
+    backdropFilter: "blur(2px)",
+    zIndex: 1490,
   },
   demoFormOverlay: {
     position: "fixed",
-    top: "92px",
+    top: "80px",
     right: "24px",
-    zIndex: 1390,
+    bottom: "24px",
+    zIndex: 1500,
+    maxHeight: "calc(100vh - 120px)",
+    overflowY: "auto",
+    display: "flex",
+    flexDirection: "column",
   },
-  profileToggleWrapper: {
+  profileButtonWrapper: {
     margin: "0 24px",
     paddingBottom: "12px",
   },
-  profileToggleButton: {
-    width: "100%",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "10px 12px",
-    borderRadius: "12px",
-    border: "1px solid #cbd5e1",
-    background: "linear-gradient(135deg, #ecfeff, #bae6fd)",
-    color: "#0f172a",
-    fontSize: "12px",
-    fontWeight: 600,
-    cursor: "pointer",
+  profileMenuPaper: {
+    maxWidth: '380px',
+    minWidth: '320px',
+    boxShadow: '0 8px 32px rgba(0,0,0,0.12), 0 2px 16px rgba(0,0,0,0.08)',
+    borderRadius: '16px',
+    border: '1px solid rgba(226, 232, 240, 0.8)',
+    backdropFilter: 'blur(20px)',
   },
-  profilePanel: {
-    marginTop: "8px",
-    padding: "12px",
-    borderRadius: "12px",
-    border: "1px solid #e2e8f0",
-    background: "#f8fafc",
-    display: "grid",
-    gap: "6px",
-    fontSize: "12px",
-    color: "#1f2937",
+  profileDetailsGrid: {
+    padding: '16px',
+    display: 'grid',
+    gap: '8px',
+    fontSize: '12px',
+    color: '#1f2937',
+  },
+  profileDetailItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '4px 0',
+  },
+  profileDetailLabel: {
+    fontWeight: '600',
+    color: '#64748b',
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  profileDetailValue: {
+    fontWeight: '500',
+    color: '#1f2937',
+    textAlign: 'right',
+    maxWidth: '200px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  profileMenuHeader: {
+    padding: '16px 16px 8px 16px',
+    background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
+    borderTopLeftRadius: '16px',
+    borderTopRightRadius: '16px',
+  },
+  ssnChipWrapper: {
+    display: 'flex',
+    justifyContent: 'center',
+    padding: '8px 16px',
+    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(249, 115, 22, 0.05) 100%)',
   },
   profileBadge: {
     padding: "10px 12px",
@@ -996,7 +1013,7 @@ const BackendStatisticsButton = ({ onToggle, isActive }) => {
 };
 
 /* ------------------------------------------------------------------ *
- *  HELP BUTTON COMPONENT
+ *  HELP BUTTON WITH TOOLTIP COMPONENT
  * ------------------------------------------------------------------ */
 const HelpButton = () => {
   const [isHovered, setIsHovered] = useState(false);
@@ -2156,6 +2173,8 @@ function RealTimeVoiceApp() {
   });
   const [sessionProfiles, setSessionProfiles] = useState({});
   const [profilePanelOpen, setProfilePanelOpen] = useState(false);
+  // Profile menu state moved to ProfileButton component
+  // Profile menu state moved to ProfileButton component
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   const handleSystemStatus = useCallback((nextStatus) => {
     setSystemStatus((prev) =>
@@ -2341,40 +2360,10 @@ function RealTimeVoiceApp() {
   };
 
 
-  const appendLog = m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`);
-  const formatCurrency = (value) => {
-    if (typeof value !== 'number') return '—';
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
-  };
-  const formatUpper = (str) => (typeof str === 'string' ? str.toUpperCase() : '—');
-  const formatNumber = (value) => (typeof value === 'number' ? value.toLocaleString('en-US') : '—');
-  const formatDate = (value) => {
-    if (!value) return '—';
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.valueOf())
-      ? value
-      : parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  };
-  const resolveRelationshipTier = (profile) =>
-    profile?.customer_intelligence?.relationship_context?.relationship_tier ??
-    profile?.relationship_tier ??
-    '—';
+  const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
+  // Formatting functions moved to ProfileButton component
   const activeSessionProfile = sessionProfiles[sessionId];
-  const resolveProfileName = (profile) => {
-    if (!profile) {
-      return undefined;
-    }
-    return (
-      profile.full_name ??
-      profile.name ??
-      profile.client_name ??
-      profile.contact_info?.contact_name ??
-      profile.contact_info?.full_name
-    );
-  };
-  const profileToggleLabel = activeSessionProfile
-    ? `${resolveProfileName(activeSessionProfile.profile) ?? 'Demo User'} • SSN ${activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'}`
-    : 'User Profile';
+  
   const handleDemoCreated = useCallback((demoPayload) => {
     if (!demoPayload) {
       return;
@@ -3451,54 +3440,15 @@ function RealTimeVoiceApp() {
           </div>
           {/* Top Right Help Button */}
           <HelpButton />
+          
+          {/* Profile Button - positioned relative to header */}
+          <ProfileButton 
+            profile={activeSessionProfile} 
+            sessionId={sessionId}
+            onMenuClose={() => setProfilePanelOpen(false)}
+            onCreateProfile={() => setShowDemoForm(true)}
+          />
         </div>
-
-        {activeSessionProfile && (
-          <div style={styles.profileToggleWrapper}>
-            <button
-              type="button"
-              style={styles.profileToggleButton}
-              onClick={() => setProfilePanelOpen((prev) => !prev)}
-            >
-              <span>{profileToggleLabel}</span>
-              <span>{profilePanelOpen ? '▲' : '▼'}</span>
-            </button>
-            {profilePanelOpen && (
-              <div style={styles.profilePanel}>
-                <div style={styles.profileBadge}>
-                  USE DEMO SSN LAST 4: {activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'}
-                </div>
-                <div><strong>Name:</strong> {activeSessionProfile.profile?.full_name || '—'}</div>
-                <div><strong>Relationship Tier:</strong> {resolveRelationshipTier(activeSessionProfile.profile)}</div>
-                <div><strong>Company Code:</strong> {activeSessionProfile.profile?.company_code || '—'}</div>
-                <div><strong>Preferred MFA:</strong> {formatUpper(activeSessionProfile.profile?.contact_info?.preferred_mfa_method)}</div>
-                <div><strong>MFA Threshold:</strong> {formatCurrency(activeSessionProfile.profile?.mfa_required_threshold)}</div>
-                <div><strong>Email:</strong> {activeSessionProfile.profile?.contact_info?.email || '—'}</div>
-                <div><strong>Phone:</strong> {activeSessionProfile.profile?.contact_info?.phone || '—'}</div>
-                <div><strong>Current Balance:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.account_status?.current_balance)}</div>
-                <div><strong>YTD Volume:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.account_status?.ytd_transaction_volume)}</div>
-                <div><strong>Account Health:</strong> {formatNumber(activeSessionProfile.profile?.customer_intelligence?.account_status?.account_health_score)}</div>
-                <div><strong>Login Frequency:</strong> {activeSessionProfile.profile?.customer_intelligence?.account_status?.login_frequency || '—'}</div>
-                <div><strong>Last Login:</strong> {formatDate(activeSessionProfile.profile?.customer_intelligence?.account_status?.last_login)}</div>
-                <div><strong>Lifetime Value:</strong> {formatCurrency(activeSessionProfile.profile?.customer_intelligence?.relationship_context?.lifetime_value)}</div>
-                <div><strong>Verification Codes:</strong> SSN {activeSessionProfile.profile?.verification_codes?.ssn4 ?? '----'} • Employee {activeSessionProfile.profile?.verification_codes?.employee_id4 ?? '----'} • Phone {activeSessionProfile.profile?.verification_codes?.phone4 ?? '----'}</div>
-                <div><strong>Session:</strong> {activeSessionProfile.sessionId || sessionId}</div>
-                <div>
-                  <strong>Expires:</strong>{' '}
-                  {activeSessionProfile.expiresAt
-                    ? new Date(activeSessionProfile.expiresAt).toLocaleString(undefined, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      })
-                    : '—'}
-                </div>
-                {activeSessionProfile.safetyNotice && (
-                  <div style={styles.profileNotice}>{activeSessionProfile.safetyNotice}</div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Waveform Section */}
         <div style={styles.waveformSection}>
@@ -3720,26 +3670,18 @@ function RealTimeVoiceApp() {
           </button>
         </div>
       )}
-      <button
-        type="button"
-        style={{
-          ...styles.demoButton,
-          ...(showDemoForm ? styles.demoButtonActive : {}),
-        }}
-        onClick={() => setShowDemoForm((prev) => !prev)}
-        title={showDemoForm ? "Close demo profile form" : "Create 24-hour demo profile"}
-      >
-        {showDemoForm ? "Close Demo Form" : "New Demo Profile"}
-      </button>
       {showDemoForm && (
-        <div style={styles.demoFormOverlay}>
-          <TemporaryUserForm
-            apiBaseUrl={API_BASE_URL}
-            onClose={() => setShowDemoForm(false)}
-            sessionId={sessionId}
-            onSuccess={handleDemoCreated}
-          />
-        </div>
+        <>
+          <div style={styles.demoFormBackdrop} onClick={() => setShowDemoForm(false)} />
+          <div style={styles.demoFormOverlay}>
+            <TemporaryUserForm
+              apiBaseUrl={API_BASE_URL}
+              onClose={() => setShowDemoForm(false)}
+              sessionId={sessionId}
+              onSuccess={handleDemoCreated}
+            />
+          </div>
+        </>
       )}
       </div>
     </div>
