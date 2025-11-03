@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from 'react';
+import { Tooltip, IconButton } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 
 const formStyles = {
   container: {
@@ -360,7 +362,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
         <div style={formStyles.titleSection}>
           <h2 style={formStyles.title}>Create Demo Access</h2>
           <p style={formStyles.subtitle}>
-            Generate a temporary 24-hour profile for testing. Phone number is optional for future SMS simulations.
+            Generate a temporary 24-hour profile for testing. Phone number is currently not enabled for this environment.
           </p>
         </div>
         {onClose && (
@@ -421,7 +423,43 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
             }} 
             htmlFor="email"
           >
-            Email Address
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>Email Address</span>
+              <Tooltip
+                title="Provide a valid, accessible email address for MFA verification during the demo."
+                arrow
+                placement="right"
+                sx={{
+                  '& .MuiTooltip-tooltip': {
+                    backgroundColor: 'rgba(59, 130, 246, 0.9)',
+                    color: 'white',
+                    fontSize: '12px',
+                    maxWidth: '250px',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
+                  },
+                  '& .MuiTooltip-arrow': {
+                    color: 'rgba(59, 130, 246, 0.9)',
+                  }
+                }}
+              >
+                <IconButton
+                  size="small"
+                  sx={{
+                    padding: '2px',
+                    color: '#6b7280',
+                    '&:hover': {
+                      color: '#3b82f6',
+                      backgroundColor: 'rgba(59, 130, 246, 0.08)'
+                    },
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <InfoOutlinedIcon sx={{ fontSize: '16px' }} />
+                </IconButton>
+              </Tooltip>
+            </div>
           </label>
           <div style={formStyles.inputContainer}>
             <input
