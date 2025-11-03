@@ -71,7 +71,7 @@ STOP_WORDS: List[str] = ["goodbye", "exit", "see you later", "bye"]
 # ==============================================================================
 
 # Default greeting message
-GREETING: str = """Hi there from XYZ Finance corporation! This call might be recorded for quality control purposes. What can I help you with today?"""
+GREETING: str = """Hello from XYZ Finance corporation! This call might be recorded for quality control purposes. What can I help you with today?"""
 
 # ==============================================================================
 # FEATURE FLAGS (Default Values)
