@@ -17,7 +17,7 @@ model:
   max_completion_tokens: 2040
 
 voice:
-  name: en-US-Ava:DragonHDLatestNeural # Voice for TTS output
+  name: en-US-Aria:DragonHDLatestNeural # Voice for TTS output
   style: chat # Voice style (chat, professional, friendly)
   rate: "+5%" # Speech rate (slower for authentication)
 
