@@ -17,9 +17,9 @@ model:
   max_completion_tokens: 2040
 
 voice:
-  name: en-US-Ava:DragonHDLatestNeural # Friendly female voice for authentication
+  name: en-US-Alloy:DragonHDLatestNeural # Voice for TTS output
   style: chat # Voice style (chat, professional, friendly)
-  rate: "-2%" # Slightly slower pace for clear authentication instructions
+  rate: "+2%" # Slightly slower pace for clear authentication instructions
 
 prompts:
   path: voice_agent_authentication.jinja # input prompt
