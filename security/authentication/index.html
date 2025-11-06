@@ -1,0 +1,1393 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="Azure-powered real-time voice agent with text-to-speech and speech recognition capabilities" name="description"/>
+<link href="../../deployment/cicd/" rel="prev"/>
+<link href="../../operations/monitoring/" rel="next"/>
+<link href="../../assets/images/favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.6.23" name="generator"/>
+<title>Authentication - Real-Time Voice Agent Documentation</title>
+<link href="../../assets/stylesheets/main.84d31ad4.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.06af60db.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<link href="../../assets/_mkdocstrings.css" rel="stylesheet"/>
+<link href="../../assets/oad-styles.css" rel="stylesheet"/>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="light-blue" data-md-color-primary="blue" data-md-color-scheme="default" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#authentication-guide">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="Real-Time Voice Agent Documentation" class="md-header__button md-logo" data-md-component="logo" href="../.." title="Real-Time Voice Agent Documentation">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            Real-Time Voice Agent Documentation
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Authentication
+            
+          </span>
+</div>
+</div>
+</div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Switch to dark mode" class="md-option" data-md-color-accent="light-blue" data-md-color-media="" data-md-color-primary="blue" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Switch to dark mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+</label>
+<input aria-label="Switch to light mode" class="md-option" data-md-color-accent="light-blue" data-md-color-media="" data-md-color-primary="blue" data-md-color-scheme="slate" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Switch to light mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+</label>
+</form>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<a aria-label="Share" class="md-search__icon md-icon" data-clipboard="" data-clipboard-text="" data-md-component="search-share" href="javascript:void(0)" tabindex="-1" title="Share">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"></path></svg>
+</a>
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/Azure-Samples/art-voice-agent-accelerator/" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"></path></svg>
+</div>
+<div class="md-source__repository">
+    Azure-Samples/art-voice-agent-accelerator
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
+<div class="md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../..">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../getting-started/">
+          
+  
+  
+  Getting Started
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../architecture/">
+          
+  
+  
+  Architecture
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../deployment/">
+          
+  
+  
+  Deployment
+
+        </a>
+</li>
+<li class="md-tabs__item md-tabs__item--active">
+<a class="md-tabs__link" href="./">
+          
+  
+  
+  Security
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../operations/monitoring/">
+          
+  
+  
+  Operations
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../api/">
+          
+  
+  
+  API Reference
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../industry/healthcare/">
+          
+  
+  
+  Industry Solutions
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../samples/">
+          
+  
+  
+  Samples &amp; Labs
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../guides/repository-structure/">
+          
+  
+  
+  Guides
+
+        </a>
+</li>
+</ul>
+</div>
+</nav>
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="Real-Time Voice Agent Documentation" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="Real-Time Voice Agent Documentation">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+    Real-Time Voice Agent Documentation
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/Azure-Samples/art-voice-agent-accelerator/" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"></path></svg>
+</div>
+<div class="md-source__repository">
+    Azure-Samples/art-voice-agent-accelerator
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    Home
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    Getting Started
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            Getting Started
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/">
+<span class="md-ellipsis">
+    Quick Start Guide
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/local-development/">
+<span class="md-ellipsis">
+    Local Development
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/configuration/">
+<span class="md-ellipsis">
+    Configuration Guide
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+<span class="md-ellipsis">
+    Architecture
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_3_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+            Architecture
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/">
+<span class="md-ellipsis">
+    Overview
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/llm-orchestration/">
+<span class="md-ellipsis">
+    LLM Orchestration
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/acs-flows/">
+<span class="md-ellipsis">
+    ACS Flows
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/data-flows/">
+<span class="md-ellipsis">
+    Data Flows
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/speech-recognition/">
+<span class="md-ellipsis">
+    Speech Recognition
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/speech-synthesis/">
+<span class="md-ellipsis">
+    Speech Synthesis
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/streaming-modes/">
+<span class="md-ellipsis">
+    Streaming Modes
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/integrations/">
+<span class="md-ellipsis">
+    Integrations
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    Deployment
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            Deployment
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../deployment/">
+<span class="md-ellipsis">
+    Deployment Guide
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../deployment/production/">
+<span class="md-ellipsis">
+    Production
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../deployment/cicd/">
+<span class="md-ellipsis">
+    CI/CD
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+<span class="md-ellipsis">
+    Security
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            Security
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    Authentication
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    Authentication
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#authentication-guide">
+<span class="md-ellipsis">
+      Authentication Guide
+    </span>
+</a>
+<nav aria-label="Authentication Guide" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#table-of-contents">
+<span class="md-ellipsis">
+      Table of Contents
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#architecture-overview">
+<span class="md-ellipsis">
+      Architecture Overview
+    </span>
+</a>
+<nav aria-label="Architecture Overview" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#key-components">
+<span class="md-ellipsis">
+      Key Components
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#authentication-flow-diagram">
+<span class="md-ellipsis">
+      Authentication Flow Diagram
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#call-flow-types">
+<span class="md-ellipsis">
+      Call Flow Types
+    </span>
+</a>
+<nav aria-label="Call Flow Types" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#pstn-flow">
+<span class="md-ellipsis">
+      PSTN Flow
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#sip-flow">
+<span class="md-ellipsis">
+      SIP Flow
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-flow">
+<span class="md-ellipsis">
+      API Flow
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#websocket-authentication">
+<span class="md-ellipsis">
+      WebSocket Authentication
+    </span>
+</a>
+<nav aria-label="WebSocket Authentication" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#websocket-security-implementation">
+<span class="md-ellipsis">
+      WebSocket Security Implementation
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#key-security-features">
+<span class="md-ellipsis">
+      Key Security Features
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#session-key-management">
+<span class="md-ellipsis">
+      Session Key Management
+    </span>
+</a>
+<nav aria-label="Session Key Management" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#session-key-formats">
+<span class="md-ellipsis">
+      Session Key Formats
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#authentication-process">
+<span class="md-ellipsis">
+      Authentication Process
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#security-architecture">
+<span class="md-ellipsis">
+      Security Architecture
+    </span>
+</a>
+<nav aria-label="Security Architecture" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#dtmf-based-authentication-logic">
+<span class="md-ellipsis">
+      🔁 DTMF-Based Authentication Logic
+    </span>
+</a>
+<nav aria-label="🔁 DTMF-Based Authentication Logic" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#authentication-states">
+<span class="md-ellipsis">
+      Authentication States
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fallback-mechanisms">
+<span class="md-ellipsis">
+      Fallback Mechanisms
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#security-layers">
+<span class="md-ellipsis">
+      🔐 Security Layers
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#security-implementation">
+<span class="md-ellipsis">
+      Security Implementation
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#technical-references">
+<span class="md-ellipsis">
+      Technical References
+    </span>
+</a>
+<nav aria-label="Technical References" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#azure-communication-services">
+<span class="md-ellipsis">
+      Azure Communication Services
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#azure-event-grid-security">
+<span class="md-ellipsis">
+      Azure Event Grid &amp; Security
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#aws-connect-integration">
+<span class="md-ellipsis">
+      AWS Connect Integration
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-patterns">
+<span class="md-ellipsis">
+      Implementation Patterns
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    Operations
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            Operations
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../operations/monitoring/">
+<span class="md-ellipsis">
+    Monitoring
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../operations/troubleshooting/">
+<span class="md-ellipsis">
+    Troubleshooting
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../operations/testing/">
+<span class="md-ellipsis">
+    Testing
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../operations/load-testing/">
+<span class="md-ellipsis">
+    Load Testing
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    API Reference
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            API Reference
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api/">
+<span class="md-ellipsis">
+    Overview
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api/api-reference/">
+<span class="md-ellipsis">
+    API Reference
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_8" type="checkbox"/>
+<label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+<span class="md-ellipsis">
+    Industry Solutions
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_8_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_8">
+<span class="md-nav__icon md-icon"></span>
+            Industry Solutions
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../industry/healthcare/">
+<span class="md-ellipsis">
+    Healthcare
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-ellipsis">
+    Samples &amp; Labs
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            Samples &amp; Labs
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../samples/">
+<span class="md-ellipsis">
+    Overview
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_10" type="checkbox"/>
+<label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+<span class="md-ellipsis">
+    Guides
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_10_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_10">
+<span class="md-nav__icon md-icon"></span>
+            Guides
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../guides/repository-structure/">
+<span class="md-ellipsis">
+    Repository Structure
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../guides/utilities/">
+<span class="md-ellipsis">
+    Utilities &amp; Services
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#authentication-guide">
+<span class="md-ellipsis">
+      Authentication Guide
+    </span>
+</a>
+<nav aria-label="Authentication Guide" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#table-of-contents">
+<span class="md-ellipsis">
+      Table of Contents
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#architecture-overview">
+<span class="md-ellipsis">
+      Architecture Overview
+    </span>
+</a>
+<nav aria-label="Architecture Overview" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#key-components">
+<span class="md-ellipsis">
+      Key Components
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#authentication-flow-diagram">
+<span class="md-ellipsis">
+      Authentication Flow Diagram
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#call-flow-types">
+<span class="md-ellipsis">
+      Call Flow Types
+    </span>
+</a>
+<nav aria-label="Call Flow Types" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#pstn-flow">
+<span class="md-ellipsis">
+      PSTN Flow
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#sip-flow">
+<span class="md-ellipsis">
+      SIP Flow
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-flow">
+<span class="md-ellipsis">
+      API Flow
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#websocket-authentication">
+<span class="md-ellipsis">
+      WebSocket Authentication
+    </span>
+</a>
+<nav aria-label="WebSocket Authentication" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#websocket-security-implementation">
+<span class="md-ellipsis">
+      WebSocket Security Implementation
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#key-security-features">
+<span class="md-ellipsis">
+      Key Security Features
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#session-key-management">
+<span class="md-ellipsis">
+      Session Key Management
+    </span>
+</a>
+<nav aria-label="Session Key Management" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#session-key-formats">
+<span class="md-ellipsis">
+      Session Key Formats
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#authentication-process">
+<span class="md-ellipsis">
+      Authentication Process
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#security-architecture">
+<span class="md-ellipsis">
+      Security Architecture
+    </span>
+</a>
+<nav aria-label="Security Architecture" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#dtmf-based-authentication-logic">
+<span class="md-ellipsis">
+      🔁 DTMF-Based Authentication Logic
+    </span>
+</a>
+<nav aria-label="🔁 DTMF-Based Authentication Logic" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#authentication-states">
+<span class="md-ellipsis">
+      Authentication States
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fallback-mechanisms">
+<span class="md-ellipsis">
+      Fallback Mechanisms
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#security-layers">
+<span class="md-ellipsis">
+      🔐 Security Layers
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#security-implementation">
+<span class="md-ellipsis">
+      Security Implementation
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#technical-references">
+<span class="md-ellipsis">
+      Technical References
+    </span>
+</a>
+<nav aria-label="Technical References" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#azure-communication-services">
+<span class="md-ellipsis">
+      Azure Communication Services
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#azure-event-grid-security">
+<span class="md-ellipsis">
+      Azure Event Grid &amp; Security
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#aws-connect-integration">
+<span class="md-ellipsis">
+      AWS Connect Integration
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-patterns">
+<span class="md-ellipsis">
+      Implementation Patterns
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1>Authentication</h1>
+<h2 id="authentication-guide">Authentication Guide<a class="headerlink" href="#authentication-guide" title="Permanent link">¶</a></h2>
+<p>This document outlines the authentication and session management strategy for the real-time voice agent application that integrates Azure Communication Services (ACS) with external telephony systems.</p>
+<h3 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">¶</a></h3>
+<ol>
+<li><a href="#architecture-overview">Architecture Overview</a></li>
+<li><a href="#authentication-flow-diagram">Authentication Flow Diagram</a></li>
+<li><a href="#call-flow-types">Call Flow Types</a></li>
+<li><a href="#pstn-flow">PSTN Flow (with DTMF Authentication)</a></li>
+<li><a href="#sip-flow">SIP Flow (with DTMF Authentication)</a> </li>
+<li><a href="#api-flow">API Flow (with Direct Lookup)</a></li>
+<li><a href="#websocket-authentication">WebSocket Authentication</a></li>
+<li><a href="#session-key-management">Session Key Management</a></li>
+<li><a href="#security-architecture">Security Architecture</a></li>
+<li><a href="#technical-references">Technical References</a></li>
+</ol>
+<hr/>
+<h3 id="architecture-overview">Architecture Overview<a class="headerlink" href="#architecture-overview" title="Permanent link">¶</a></h3>
+<p>The system uses <strong>Azure Communication Services Call Automation</strong> as the unified media processing layer with three distinct authentication mechanisms:</p>
+<ul>
+<li><strong>🔐 DTMF Authentication</strong>: For PSTN and SIP calls using media tone analysis</li>
+<li><strong>🔑 Direct Lookup</strong>: For API calls using call connection IDs</li>
+<li><strong>📦 Redis Session Store</strong>: Centralized session management across all flows</li>
+</ul>
+<h4 id="key-components">Key Components<a class="headerlink" href="#key-components" title="Permanent link">¶</a></h4>
+<ul>
+<li><strong>Event Grid Integration</strong>: Delivers <code>IncomingCall</code> events with webhook callbacks</li>
+<li><strong>Call Automation REST API</strong>: Asynchronous interface for call control  </li>
+<li><strong>Session Border Controllers (SBCs)</strong>: Certified SBCs for Direct Routing</li>
+<li><strong>WebSocket Security</strong>: Custom token validation for real-time media</li>
+<li><strong>AWS Connect Integration</strong>: Cross-cloud session handoff using Resume Contact API</li>
+</ul>
+<hr/>
+<h3 id="authentication-flow-diagram">Authentication Flow Diagram<a class="headerlink" href="#authentication-flow-diagram" title="Permanent link">¶</a></h3>
+<div class="mermaid">flowchart LR
+  %% Style Definitions
+  classDef acs fill:#e0e7ff,stroke:#4f46e5,stroke-width:2px,color:#312e81
+  classDef backend fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e
+  classDef storage fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
+  classDef external fill:#fed7aa,stroke:#ea580c,stroke-width:2px,color:#9a3412
+  classDef event fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#831843
+  classDef dtmf fill:#ecfeff,stroke:#0891b2,stroke-width:2px,color:#164e63
+
+  %% Call Flows
+  subgraph SIP["📱 SIP Flow"]
+    SIP1[📞 SIP User] --&gt; SIP2[☁️ AWS Connect]
+    SIP2 --&gt; SIP3[🔧 Enterprise SBC] --&gt; SIP4[📡 ACS SIP]
+  end
+
+  subgraph PSTN["📞 PSTN Flow"]
+    PSTN1[📞 Caller] --&gt; PSTN2[☁️ AWS Connect]
+    PSTN2 --&gt; PSTN3[🔧 Telco SBC] --&gt; PSTN4[📡 ACS PSTN]
+  end
+
+  subgraph API["🧑‍💻 API Flow"]
+    API1[🧑‍💻 Client] --&gt; API2[🔐 EasyAuth] --&gt; API3[⚡ /api/call]
+    API3 --&gt; API4[📡 ACS Automation]
+  end
+
+  %% Authentication Engine
+  subgraph AUTH["🎵 Authentication Engine"]
+    D1[🔎 Analyze DTMF Media]
+    D2[🔍 Lookup Session Key]
+    D3{✅ Key exists?}
+    D4[✅ Authorize WebSocket]
+    D5[❌ Reject Connection]
+    D3 -- Yes --&gt; D4
+    D3 -- No --&gt; D5
+  end
+
+  %% Backend &amp; Storage
+  subgraph Backend["🧠 Backend Orchestrator"]
+    WS[🔌 WebSocket Handler]
+    TV[🛡️ Token Validation]
+  end
+
+  Redis[(🗄️ Redis Store)]
+
+  %% Flow Connections
+  SIP4 --&gt; D1
+  PSTN4 --&gt; D1
+  API4 --&gt; D2
+  D1 --&gt; D2
+  D2 --&gt; D3
+  D4 --&gt; WS
+  WS --&gt; TV --&gt; Redis
+
+  %% Session Storage
+  SIP2 --&gt;|store sip:call_id| Redis
+  PSTN2 --&gt;|store pstn:ani:code| Redis
+  API3 --&gt;|store call_connection_id| Redis
+
+  %% Styling
+  class SIP1,SIP2,SIP3,PSTN1,PSTN2,PSTN3,API1,API2,API3 external
+  class SIP4,PSTN4,API4 acs
+  class D1,D2,D3,D4,D5 dtmf
+  class WS,TV backend
+  class Redis storage
+</div>
+<h3 id="call-flow-types">Call Flow Types<a class="headerlink" href="#call-flow-types" title="Permanent link">¶</a></h3>
+<h4 id="pstn-flow">PSTN Flow<a class="headerlink" href="#pstn-flow" title="Permanent link">¶</a></h4>
+<p><strong>Authentication Method</strong>: DTMF Media Analysis</p>
+<ol>
+<li><strong>Call Setup</strong>: Caller → AWS Connect IVR → SBC → ACS PSTN</li>
+<li><strong>Session Storage</strong>: AWS Connect stores <code>pstn:ani:code</code> in Redis</li>
+<li><strong>Authentication</strong>: DTMF analysis extracts caller ANI and codes</li>
+<li><strong>Validation</strong>: System checks Redis for matching composite key</li>
+<li><strong>Authorization</strong>: Valid sessions proceed to WebSocket handler</li>
+</ol>
+<h4 id="sip-flow">SIP Flow<a class="headerlink" href="#sip-flow" title="Permanent link">¶</a></h4>
+<p><strong>Authentication Method</strong>: DTMF Media Analysis</p>
+<ol>
+<li><strong>Call Setup</strong>: SIP Client → Enterprise SBC → ACS SIP Interface</li>
+<li><strong>Session Storage</strong>: SBC stores <code>sip:call_id</code> in Redis</li>
+<li><strong>Authentication</strong>: DTMF analysis extracts SIP call identifier</li>
+<li><strong>Validation</strong>: System validates against stored session key</li>
+<li><strong>Authorization</strong>: Authenticated calls establish media streaming</li>
+</ol>
+<h4 id="api-flow">API Flow<a class="headerlink" href="#api-flow" title="Permanent link">¶</a></h4>
+<p><strong>Authentication Method</strong>: Direct Call Connection ID Lookup</p>
+<ol>
+<li><strong>Call Setup</strong>: Client → <code>/api/call</code> endpoint → ACS Call Automation</li>
+<li><strong>Session Storage</strong>: API stores <code>acs:call_connection_id</code> in Redis</li>
+<li><strong>Authentication</strong>: Direct lookup using known call connection ID</li>
+<li><strong>Validation</strong>: No DTMF analysis required</li>
+<li><strong>Authorization</strong>: WebSocket established with validated session</li>
+</ol>
+<hr/>
+<h3 id="websocket-authentication">WebSocket Authentication<a class="headerlink" href="#websocket-authentication" title="Permanent link">¶</a></h3>
+<p>WebSocket connections require secure authentication for real-time media processing. The system implements custom token validation based on the established session.</p>
+<h4 id="websocket-security-implementation">WebSocket Security Implementation<a class="headerlink" href="#websocket-security-implementation" title="Permanent link">¶</a></h4>
+<p>For detailed WebSocket authentication patterns, see the official Azure Communication Services documentation:
+<a href="https://learn.microsoft.com/en-us/azure/communication-services/how-tos/call-automation/secure-webhook-endpoint?pivots=programming-language-python">Secure Webhook Endpoint</a></p>
+<h4 id="key-security-features">Key Security Features<a class="headerlink" href="#key-security-features" title="Permanent link">¶</a></h4>
+<ul>
+<li><strong>Token-based Authentication</strong>: Custom JWT tokens for WebSocket connections</li>
+<li><strong>Session Correlation</strong>: WebSocket sessions correlated with call sessions</li>
+<li><strong>Real-time Validation</strong>: Continuous validation during media streaming</li>
+<li><strong>Secure Handshake</strong>: Encrypted WebSocket handshake process</li>
+</ul>
+<hr/>
+<h3 id="session-key-management">Session Key Management<a class="headerlink" href="#session-key-management" title="Permanent link">¶</a></h3>
+<h4 id="session-key-formats">Session Key Formats<a class="headerlink" href="#session-key-formats" title="Permanent link">¶</a></h4>
+<table>
+<thead>
+<tr>
+<th>Flow Type</th>
+<th>Key Format</th>
+<th>Example</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PSTN</strong></td>
+<td><code>pstn:ani:code</code></td>
+<td><code>pstn:+15551234567:823</code></td>
+<td>ANI + DTMF code from AWS Connect</td>
+</tr>
+<tr>
+<td><strong>SIP</strong></td>
+<td><code>sip:call_id</code></td>
+<td><code>sip:abc-xyz-123</code></td>
+<td>Call identifier from enterprise SBC</td>
+</tr>
+<tr>
+<td><strong>API</strong></td>
+<td><code>acs:call_connection_id</code></td>
+<td><code>acs:call_connection_id:abc123</code></td>
+<td>Direct call connection ID</td>
+</tr>
+</tbody>
+</table>
+<h4 id="authentication-process">Authentication Process<a class="headerlink" href="#authentication-process" title="Permanent link">¶</a></h4>
+<p><strong>For PSTN/SIP Calls (DTMF-based)</strong>:
+1. External system stores session key in Redis
+2. ACS receives <code>IncomingCall</code> event
+3. System analyzes DTMF media stream
+4. Extracts caller data and constructs composite key
+5. Validates key existence in Redis
+6. Authorizes or rejects WebSocket connection</p>
+<p><strong>For API Calls (Direct lookup)</strong>:
+1. Client calls <code>/api/call</code> endpoint
+2. System stores call connection ID in Redis
+3. ACS establishes call and triggers event
+4. Direct lookup using call connection ID
+5. Authorizes WebSocket connection</p>
+<hr/>
+<h3 id="security-architecture">Security Architecture<a class="headerlink" href="#security-architecture" title="Permanent link">¶</a></h3>
+<h4 id="dtmf-based-authentication-logic">🔁 <strong>DTMF-Based Authentication Logic</strong><a class="headerlink" href="#dtmf-based-authentication-logic" title="Permanent link">¶</a></h4>
+<p>The authentication flow leverages <strong>DTMF media analysis</strong> for telephony calls (PSTN/SIP) and <strong>direct call connection ID lookup</strong> for API-initiated calls to bridge session context between cloud platforms:</p>
+<ol>
+<li><strong>Session Pre-Storage</strong>: External systems (AWS Connect, SBC) store composite keys in Redis; API calls store call connection IDs</li>
+<li><strong>EventGrid Delivery</strong>: <code>IncomingCall</code> events trigger authentication processing</li>
+<li><strong>Authentication Method</strong>:</li>
+<li><strong>DTMF Analysis</strong>: For PSTN/SIP calls - extracts caller information and DTMF codes from media stream</li>
+<li><strong>Direct Lookup</strong>: For API calls - uses call connection ID from the initial <code>/api/call</code> request</li>
+<li><strong>Composite Key Construction</strong>: Builds Redis lookup key using extracted data or call connection ID</li>
+<li><strong>Redis Validation</strong>: Checks if composite key exists in session store</li>
+<li><strong>Authentication Decision</strong>: Key presence determines authorization success/failure</li>
+<li><strong>WebSocket Authorization</strong>: Only validated sessions proceed to real-time media processing</li>
+</ol>
+<h5 id="authentication-states"><strong>Authentication States</strong><a class="headerlink" href="#authentication-states" title="Permanent link">¶</a></h5>
+<ul>
+<li>✅ <strong>Valid Session</strong>: </li>
+<li><strong>PSTN/SIP</strong>: Composite key exists in Redis → DTMF authentication successful → WebSocket authorized</li>
+<li><strong>API</strong>: Call connection ID exists in Redis → Direct lookup successful → WebSocket authorized</li>
+<li>⏳ <strong>Processing Authentication</strong>: </li>
+<li><strong>PSTN/SIP</strong>: DTMF media analysis in progress → Authentication pending</li>
+<li><strong>API</strong>: Call connection ID lookup in progress → Authentication pending</li>
+<li>❌ <strong>Invalid Session</strong>: </li>
+<li><strong>PSTN/SIP</strong>: Composite key missing or DTMF analysis failed → Authentication failed → Connection rejected</li>
+<li><strong>API</strong>: Call connection ID missing or invalid → Authentication failed → Connection rejected</li>
+</ul>
+<h5 id="fallback-mechanisms"><strong>Fallback Mechanisms</strong><a class="headerlink" href="#fallback-mechanisms" title="Permanent link">¶</a></h5>
+<ul>
+<li><strong>DTMF Re-analysis</strong>: If initial DTMF extraction fails for PSTN/SIP calls, system can re-analyze media stream</li>
+<li><strong>Session Recovery</strong>: Temporary authentication failures can be retried with configurable timeout</li>
+<li><strong>API Call Validation</strong>: For API calls, validates against the original <code>/api/call</code> request session</li>
+<li><strong>Key Expiration</strong>: Redis keys have configurable TTL to prevent stale session accumulation</li>
+</ul>
+<hr/>
+<h4 id="security-layers">🔐 <strong>Security Layers</strong><a class="headerlink" href="#security-layers" title="Permanent link">¶</a></h4>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Event Grid</strong></td>
+<td>Azure Event Grid Security</td>
+<td>Secure <code>IncomingCall</code> event delivery</td>
+</tr>
+<tr>
+<td><strong>DTMF Analysis</strong></td>
+<td>Media Stream Processing</td>
+<td>Extract caller data for authentication</td>
+</tr>
+<tr>
+<td><strong>Redis Validation</strong></td>
+<td>Composite Key Lookup</td>
+<td>Primary authorization decision</td>
+</tr>
+<tr>
+<td><strong>WebSocket</strong></td>
+<td>Custom JWT + Session Auth</td>
+<td>Real-time media stream security</td>
+</tr>
+<tr>
+<td><strong>API Endpoints</strong></td>
+<td>EasyAuth (Microsoft Entra ID)</td>
+<td>HTTP endpoint protection</td>
+</tr>
+</tbody>
+</table>
+<h4 id="security-implementation">Security Implementation<a class="headerlink" href="#security-implementation" title="Permanent link">¶</a></h4>
+<ul>
+<li><strong>Media Stream Security</strong>: DTMF analysis on encrypted ACS streams</li>
+<li><strong>Session Timeout</strong>: Configurable TTL (default: 1 hour)  </li>
+<li><strong>Rate Limiting</strong>: DTMF processing abuse prevention</li>
+<li><strong>Key Cryptography</strong>: Secure Redis key formatting</li>
+<li><strong>Cross-Cloud Validation</strong>: Secure AWS Connect ↔ ACS handoff</li>
+</ul>
+<hr/>
+<h3 id="technical-references">Technical References<a class="headerlink" href="#technical-references" title="Permanent link">¶</a></h3>
+<h4 id="azure-communication-services">Azure Communication Services<a class="headerlink" href="#azure-communication-services" title="Permanent link">¶</a></h4>
+<ul>
+<li><a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/call-automation/call-automation">Call Automation Overview</a></li>
+<li><a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/call-automation/incoming-call-notification">Incoming Call Events</a></li>
+<li><a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/telephony/direct-routing-sip-specification">Direct Routing SIP Specification</a></li>
+<li><a href="https://learn.microsoft.com/en-us/azure/communication-services/how-tos/call-automation/secure-webhook-endpoint">Secure Webhook Endpoints</a></li>
+</ul>
+<h4 id="azure-event-grid-security">Azure Event Grid &amp; Security<a class="headerlink" href="#azure-event-grid-security" title="Permanent link">¶</a></h4>
+<ul>
+<li><a href="https://learn.microsoft.com/en-us/azure/event-grid/secure-webhook-delivery">Event Grid Webhook Security</a></li>
+<li><a href="https://learn.microsoft.com/en-us/azure/event-grid/communication-services-voice-video-events">Communication Services Events</a></li>
+</ul>
+<h4 id="aws-connect-integration">AWS Connect Integration<a class="headerlink" href="#aws-connect-integration" title="Permanent link">¶</a></h4>
+<ul>
+<li><a href="https://docs.aws.amazon.com/connect/latest/adminguide/contact-flow-resume.html">Resume Contact Flow</a></li>
+<li><a href="https://docs.aws.amazon.com/connect/latest/adminguide/contact-flow-resume.html">DTMF Handling</a></li>
+</ul>
+<h4 id="implementation-patterns">Implementation Patterns<a class="headerlink" href="#implementation-patterns" title="Permanent link">¶</a></h4>
+<ul>
+<li><a href="https://learn.microsoft.com/en-us/azure/communication-services/how-tos/call-automation/secure-webhook-endpoint#call-automation-webhook-events">WebSocket Authentication</a></li>
+<li><a href="https://redis.io/docs/latest/develop/use/patterns/sessions/">Redis Session Management</a></li>
+</ul>
+</article>
+</div>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+<button class="md-top md-icon" data-md-component="top" hidden="" type="button">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"></path></svg>
+  Back to top
+</button>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.highlight", "search.share", "content.code.copy", "content.code.annotate"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+mermaid.initialize({});</script></body>
+</html>
