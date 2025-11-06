@@ -385,8 +385,8 @@ def _get_agent_sender_name(cm: "MemoManager", *, include_autoauth: bool = True) 
         active_agent = cm.get_value_from_corememory("active_agent") if cm else None
         authenticated = cm.get_value_from_corememory("authenticated") if cm else False
 
-        if active_agent == "Claims":
-            return "Claims Specialist"
+        if active_agent in {"Claims", "Renewal"}:
+            return "Renewal Specialist"
         if active_agent == "General":
             return "General Info"
         if include_autoauth and active_agent == "AutoAuth":
@@ -396,6 +396,7 @@ def _get_agent_sender_name(cm: "MemoManager", *, include_autoauth: bool = True) 
         return "Assistant"
     except Exception:
         return "Assistant"
+
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +409,7 @@ async def _emit_streaming_text(
     cm: "MemoManager",
     call_connection_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
 ) -> None:
     """
     Emit one assistant text chunk via either ACS or WebSocket + TTS.
@@ -418,9 +420,53 @@ async def _emit_streaming_text(
     :param cm: MemoManager for voice config and speaker labels.
     :param call_connection_id: Optional correlation ID for tracing.
     :param session_id: Optional session ID for tracing correlation.
+    :param agent_name: Name of the agent for coordination purposes.
     :raises: Re-raises any exceptions from TTS or ACS emission.
     """
     voice_name, voice_style, voice_rate = _get_agent_voice_config(cm)
+    effective_session_id = session_id or getattr(cm, "session_id", None) or getattr(ws.state, "session_id", None)
+    session_is_acs = bool(is_acs)
+
+    envelope = make_assistant_streaming_envelope(
+        content=text,
+        sender=_get_agent_sender_name(cm, include_autoauth=True),
+        session_id=effective_session_id,
+    )
+    envelope["speaker"] = envelope.get("sender")
+    envelope["message"] = text  # Legacy compatibility for dashboards
+    conn_id = None if session_is_acs else getattr(ws.state, "conn_id", None)
+
+    def _queue_acs_playback() -> None:
+        """Schedule ACS playback without blocking GPT stream."""
+
+        previous_task: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
+
+        async def _runner(prior: Optional[asyncio.Task]) -> None:
+            current_task = asyncio.current_task()
+            if prior:
+                try:
+                    await prior
+                except Exception as prior_exc:  # noqa: BLE001
+                    logger.warning("Previous ACS playback task failed: %s", prior_exc)
+            try:
+
+                await send_response_to_acs(
+                    ws,
+                    text,
+                    latency_tool=_lt(ws),
+                    voice_name=voice_name,
+                    voice_style=voice_style,
+                    rate=voice_rate,
+                )
+            except Exception as playback_exc:  # noqa: BLE001
+                logger.exception("ACS playback task failed", exc_info=playback_exc)
+            finally:
+                tail_now: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
+                if tail_now is current_task:
+                    setattr(ws.state, "acs_playback_tail", None)
+
+        next_task = asyncio.create_task(_runner(previous_task), name="acs_playback_step")
+        setattr(ws.state, "acs_playback_tail", next_task)
 
     if _STREAM_TRACING:
         span_attrs = create_service_handler_attrs(
@@ -436,20 +482,10 @@ async def _emit_streaming_text(
             "gpt_flow.emit_streaming_text", attributes=span_attrs
         ) as span:
             try:
-                playback_status = "completed"
                 if is_acs:
                     span.set_attribute("output_channel", "acs")
-                    await send_response_to_acs(
-                        ws,
-                        text,
-                        latency_tool=_lt(ws),
-                        voice_name=voice_name,
-                        voice_style=voice_style,
-                        rate=voice_rate,
-                    )
-                    playback_status = get_connection_metadata(
-                        ws, "acs_last_playback_status", "completed"
-                    )
+
+                    _queue_acs_playback()
                 else:
                     span.set_attribute("output_channel", "websocket_tts")
                     await send_tts_audio(
@@ -460,29 +496,12 @@ async def _emit_streaming_text(
                         voice_style=voice_style,
                         rate=voice_rate,
                     )
-                envelope = make_assistant_streaming_envelope(
-                    content=text,
-                    sender=_get_agent_sender_name(cm, include_autoauth=True),
-                    session_id=session_id,
-                )
-                envelope["speaker"] = envelope.get("sender")
-                envelope["message"] = text  # Legacy compatibility for dashboards
-                conn_id = None if is_acs else getattr(ws.state, "conn_id", None)
-                await send_session_envelope(
-                    ws,
-                    envelope,
-                    session_id=session_id,
-                    conn_id=conn_id,
-                    event_label="assistant_streaming",
-                    broadcast_only=is_acs,
-                )
 
                 span.add_event(
                     "text_emitted",
                     {
                         "text_length": len(text),
                         "output_channel": "acs" if is_acs else "websocket",
-                        "acs.playback_status": playback_status,
                     },
                 )
             except Exception as exc:  # noqa: BLE001
@@ -490,19 +509,8 @@ async def _emit_streaming_text(
                 logger.exception("Failed to emit streaming text")
                 raise
     else:
-        playback_status = "completed"
         if is_acs:
-            await send_response_to_acs(
-                ws,
-                text,
-                latency_tool=_lt(ws),
-                voice_name=voice_name,
-                voice_style=voice_style,
-                rate=voice_rate,
-            )
-            playback_status = get_connection_metadata(
-                ws, "acs_last_playback_status", "completed"
-            )
+            _queue_acs_playback()
         else:
             await send_tts_audio(
                 text,
@@ -512,22 +520,13 @@ async def _emit_streaming_text(
                 voice_style=voice_style,
                 rate=voice_rate,
             )
-
-        envelope = make_assistant_streaming_envelope(
-            content=text,
-            sender=_get_agent_sender_name(cm, include_autoauth=True),
-            session_id=session_id,
-        )
-        envelope["speaker"] = envelope.get("sender")
-        envelope["message"] = text  # Legacy compatibility for dashboards
-        conn_id = None if is_acs else getattr(ws.state, "conn_id", None)
         await send_session_envelope(
             ws,
             envelope,
-            session_id=session_id,
+            session_id=effective_session_id,
             conn_id=conn_id,
             event_label="assistant_streaming",
-            broadcast_only=is_acs,
+            broadcast_only=False,
         )
 
 
@@ -576,6 +575,7 @@ def _validate_conversation_history(history: List[JSONDict], agent_name: str) -> 
     - Orphaned tool calls (assistant with tool_calls but no tool responses)
     - Invalid message sequences
     - Malformed tool call structures
+    - Null content in messages (should be omitted or empty string)
     
     Args:
         history: List of conversation messages
@@ -589,35 +589,69 @@ def _validate_conversation_history(history: List[JSONDict], agent_name: str) -> 
         
     # Track tool calls that need responses
     pending_tool_calls = {}
+    issues = []
     
     for i, msg in enumerate(history):
         role = msg.get("role")
         
+        # Check for null content (should be omitted or empty string, never null)
+        if msg.get("content") is None and "tool_calls" not in msg:
+            issues.append(f"Message at index {i} has null content")
+        
         if role == "assistant":
             tool_calls = msg.get("tool_calls")
             if tool_calls:
+                logger.debug(
+                    "Found assistant message with tool_calls at index %d for agent %s: %s",
+                    i, agent_name, tool_calls,
+                    extra={"agent_name": agent_name, "message_index": i, "tool_calls": tool_calls}
+                )
+                
+                # Check for null content in tool call messages
+                if msg.get("content") is not None:
+                    issues.append(f"Assistant message at index {i} with tool_calls has non-null content")
+                
                 # Register tool calls that need responses
                 for tool_call in tool_calls:
                     if isinstance(tool_call, dict) and "id" in tool_call:
                         pending_tool_calls[tool_call["id"]] = i
+                        logger.debug(
+                            "Registered pending tool call %s for agent %s",
+                            tool_call["id"], agent_name,
+                            extra={"agent_name": agent_name, "tool_call_id": tool_call["id"]}
+                        )
                         
         elif role == "tool":
             tool_call_id = msg.get("tool_call_id")
+            logger.debug(
+                "Found tool message at index %d for agent %s: tool_call_id=%s",
+                i, agent_name, tool_call_id,
+                extra={"agent_name": agent_name, "message_index": i, "tool_call_id": tool_call_id}
+            )
             if tool_call_id and tool_call_id in pending_tool_calls:
                 # Mark tool call as resolved
                 del pending_tool_calls[tool_call_id]
+                logger.debug(
+                    "Resolved tool call %s for agent %s",
+                    tool_call_id, agent_name,
+                    extra={"agent_name": agent_name, "tool_call_id": tool_call_id}
+                )
     
     # Check for orphaned tool calls
     if pending_tool_calls:
         orphaned_ids = list(pending_tool_calls.keys())
-        error_msg = f"Orphaned tool calls detected: {orphaned_ids}"
+        issues.append(f"Orphaned tool calls detected: {orphaned_ids}")
+    
+    # Return first issue found
+    if issues:
+        error_msg = "; ".join(issues)
         logger.error(
             "Conversation history validation failed for agent %s: %s",
             agent_name,
             error_msg,
             extra={
                 "agent_name": agent_name,
-                "orphaned_tool_calls": orphaned_ids,
+                "validation_issues": issues,
                 "history_length": len(history),
                 "event_type": "conversation_validation_error"
             }
@@ -639,10 +673,11 @@ def _validate_conversation_history(history: List[JSONDict], agent_name: str) -> 
 
 def _repair_conversation_history(history: List[JSONDict], agent_name: str) -> List[JSONDict]:
     """
-    Attempt to repair conversation history by adding missing tool responses.
+    Attempt to repair conversation history by fixing common OpenAI API issues.
     
-    This is a recovery mechanism to prevent conversation corruption from
-    causing cascading failures.
+    This function handles:
+    - Adding missing tool responses for orphaned tool calls
+    - Fixing null content in messages (removes null content or sets to empty string)
     
     Args:
         history: Original conversation history
@@ -651,26 +686,47 @@ def _repair_conversation_history(history: List[JSONDict], agent_name: str) -> Li
     Returns:
         List[JSONDict]: Repaired conversation history
     """
-    repaired_history = history.copy()
+    repaired_history = []
     pending_tool_calls = {}
     
-    # Identify orphaned tool calls
+    # First pass: Fix null content issues and identify orphaned tool calls
     for i, msg in enumerate(history):
         role = msg.get("role")
+        repaired_msg = msg.copy()
         
+        # Fix null content issues
+        if repaired_msg.get("content") is None:
+            if "tool_calls" in repaired_msg:
+                # Assistant message with tool calls should not have content field
+                repaired_msg.pop("content", None)
+                logger.debug(
+                    "Removed null content from assistant message with tool_calls at index %d for agent %s",
+                    i, agent_name
+                )
+            else:
+                # Regular message should have empty string instead of null
+                repaired_msg["content"] = ""
+                logger.debug(
+                    "Changed null content to empty string at index %d for agent %s",
+                    i, agent_name
+                )
+        
+        repaired_history.append(repaired_msg)
+        
+        # Track tool calls for orphan detection
         if role == "assistant":
-            tool_calls = msg.get("tool_calls")
+            tool_calls = repaired_msg.get("tool_calls")
             if tool_calls:
                 for tool_call in tool_calls:
                     if isinstance(tool_call, dict) and "id" in tool_call:
                         pending_tool_calls[tool_call["id"]] = tool_call
                         
         elif role == "tool":
-            tool_call_id = msg.get("tool_call_id")
+            tool_call_id = repaired_msg.get("tool_call_id")
             if tool_call_id and tool_call_id in pending_tool_calls:
                 del pending_tool_calls[tool_call_id]
     
-    # Add synthetic tool responses for orphaned tool calls
+    # Second pass: Add synthetic tool responses for orphaned tool calls
     if pending_tool_calls:
         logger.warning(
             "Repairing conversation history for agent %s: adding %d synthetic tool responses",
@@ -1002,6 +1058,7 @@ async def _consume_openai_stream(
     cm: "MemoManager",
     call_connection_id: Optional[str],
     session_id: Optional[str],
+    agent_name: str,
 ) -> Tuple[str, _ToolCallState]:
     """
     Consume the AOAI stream, emitting TTS chunks as punctuation arrives.
@@ -1012,6 +1069,7 @@ async def _consume_openai_stream(
     :param cm: MemoManager instance for conversation state.
     :param call_connection_id: Optional correlation ID for tracing.
     :param session_id: Optional session ID for tracing correlation.
+    :param agent_name: Name of the agent for coordination purposes.
     :return: (full_assistant_text, tool_call_state)
     """
     collected: List[str] = []
@@ -1058,7 +1116,7 @@ async def _consume_openai_stream(
                 streaming = add_space("".join(collected).strip())
                 logger.info("process_gpt_response – streaming text chunk: %s", streaming)
                 await _emit_streaming_text(
-                    streaming, ws, is_acs, cm, call_connection_id, session_id
+                    streaming, ws, is_acs, cm, call_connection_id, session_id, agent_name
                 )
                 final_chunks.append(streaming)
                 collected.clear()
@@ -1068,7 +1126,7 @@ async def _consume_openai_stream(
         pending = "".join(collected).strip()
         if pending:
             await _emit_streaming_text(
-                pending, ws, is_acs, cm, call_connection_id, session_id
+                pending, ws, is_acs, cm, call_connection_id, session_id, agent_name
             )
             final_chunks.append(pending)
 
@@ -1125,6 +1183,121 @@ async def process_gpt_response(  # noqa: PLR0913
     # Build history and tools
     agent_history: List[JSONDict] = cm.get_history(agent_name)
     agent_history.append({"role": "user", "content": user_prompt})
+    history_was_empty = (
+        len(agent_history) == 1
+        and agent_history[0].get("role") == "user"
+        and agent_history[0].get("content") == user_prompt
+    )
+    active_agent = None
+    try:
+        active_agent = cm.get_value_from_corememory("active_agent")
+    except Exception:  # noqa: BLE001
+        active_agent = None
+
+    is_auth_agent = (
+        isinstance(agent_name, str) and agent_name.lower() == "autoauth"
+    ) or (isinstance(active_agent, str) and active_agent.lower() == "autoauth")
+
+    if history_was_empty and is_auth_agent:
+        greeting = ""
+        try:
+            greeting = cm.get_value_from_corememory("current_greeting", "")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to fetch auth agent greeting: %s",
+                exc,
+                extra={
+                    "agent_name": agent_name,
+                    "event_type": "auth_greeting_lookup_failed"
+                },
+            )
+        if greeting:
+            agent_history.insert(0, {"role": "assistant", "content": greeting})
+            logger.info(
+                "Initialized auth agent history with greeting",
+                extra={
+                    "agent_name": agent_name,
+                    "event_type": "auth_greeting_initialized"
+                },
+            )
+    # Log the history for debugging
+    logger.info(
+        "Retrieved conversation history for agent %s: %d messages",
+        agent_name,
+        len(agent_history),
+        extra={
+            "agent_name": agent_name,
+            "history_length": len(agent_history),
+            "last_messages": [
+                f"{msg.get('role', 'unknown')}: {str(msg.get('content', msg.get('tool_calls', '')))[:50]}..." 
+                for msg in agent_history[-3:]
+            ],
+            "event_type": "conversation_history_retrieved"
+        }
+    )
+    
+    # Validate and repair conversation history to prevent OpenAI API errors
+    is_valid, error_msg = _validate_conversation_history(agent_history, agent_name)
+    if not is_valid:
+        logger.warning(
+            "Conversation history validation failed for agent %s: %s. Attempting repair.",
+            agent_name,
+            error_msg,
+            extra={
+                "agent_name": agent_name,
+                "validation_error": error_msg,
+                "history_length": len(agent_history),
+                "event_type": "conversation_history_repair_attempt"
+            }
+        )
+        original_length = len(agent_history)
+        agent_history = _repair_conversation_history(agent_history, agent_name)
+        
+        # If history was repaired, update the memory manager to persist the fix
+        if len(agent_history) > original_length:
+            logger.info(
+                "Updated conversation history for agent %s after repair: added %d synthetic responses",
+                agent_name,
+                len(agent_history) - original_length,
+                extra={
+                    "agent_name": agent_name,
+                    "added_responses": len(agent_history) - original_length,
+                    "event_type": "conversation_history_updated"
+                }
+            )
+            # Clear the agent's history and rebuild it with the repaired version
+            user_msg = agent_history.pop()  # Remove the user prompt temporarily
+            
+            # Clear the agent's history and rebuild it with repaired messages (excluding the user prompt)
+            cm.clear_history(agent_name)
+            for msg in agent_history:
+                cm.append_to_history(agent_name, msg["role"], msg["content"])
+            
+            # Re-add user prompt
+            agent_history.append(user_msg)
+        
+        # Validate again after repair
+        is_valid_after_repair, _ = _validate_conversation_history(agent_history, agent_name)
+        if not is_valid_after_repair:
+            logger.error(
+                "Conversation history repair failed for agent %s. This may cause OpenAI API errors.",
+                agent_name,
+                extra={
+                    "agent_name": agent_name,
+                    "event_type": "conversation_history_repair_failed"
+                }
+            )
+    else:
+        logger.debug(
+            "Conversation history validation passed for agent %s",
+            agent_name,
+            extra={
+                "agent_name": agent_name,
+                "history_length": len(agent_history),
+                "event_type": "conversation_history_valid"
+            }
+        )
+    
     tool_set = available_tools or DEFAULT_TOOLS
 
     logger.info(
@@ -1171,6 +1344,23 @@ async def process_gpt_response(  # noqa: PLR0913
             tools=tool_set,
         )
         span.set_attribute("chat.history_length", len(agent_history))
+        
+        # Log the final history being sent to OpenAI for debugging
+        logger.info(
+            "Sending conversation history to OpenAI for agent %s: %d messages",
+            agent_name,
+            len(agent_history),
+            extra={
+                "agent_name": agent_name,
+                "final_history_length": len(agent_history),
+                "tool_call_messages": [
+                    {"index": i, "role": msg.get("role"), "has_tool_calls": "tool_calls" in msg, "tool_call_id": msg.get("tool_call_id")}
+                    for i, msg in enumerate(agent_history)
+                    if msg.get("role") in ["assistant", "tool"] and ("tool_calls" in msg or msg.get("tool_call_id"))
+                ],
+                "event_type": "openai_request_prepared"
+            }
+        )
 
         # Dependency span for AOAI
         azure_openai_attrs = create_service_dependency_attrs(
@@ -1249,7 +1439,7 @@ async def process_gpt_response(  # noqa: PLR0913
 
                 # Consume the stream and emit chunks
                 full_text, tool_state = await _consume_openai_stream(
-                    response_stream, ws, is_acs, cm, call_connection_id, session_id
+                    response_stream, ws, is_acs, cm, call_connection_id, session_id, agent_name
                 )
 
                 dep_span.set_attribute("tool_call_detected", tool_state.started)
@@ -1320,7 +1510,6 @@ async def process_gpt_response(  # noqa: PLR0913
             agent_history.append(
                 {
                     "role": "assistant",
-                    "content": None,
                     "tool_calls": [
                         {
                             "id": tool_state.call_id,

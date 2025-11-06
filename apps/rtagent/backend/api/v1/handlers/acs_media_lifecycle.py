@@ -38,7 +38,11 @@ from config import GREETING, STT_PROCESSING_TIMEOUT
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     send_response_to_acs,
     broadcast_message,
+    send_user_transcript,
+    send_user_partial_transcript,
+    send_session_envelope,
 )
+from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
 from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
 from src.enums.stream_modes import StreamMode
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
@@ -274,12 +278,14 @@ class SpeechSDKThread:
         thread_bridge: ThreadBridge,
         barge_in_handler: Callable,
         speech_queue: asyncio.Queue,
+        websocket: WebSocket,
     ):
         self.call_connection_id = call_connection_id
         self.recognizer = recognizer
         self.thread_bridge = thread_bridge
         self.barge_in_handler = barge_in_handler
         self.speech_queue = speech_queue
+        self.websocket = websocket
         self.thread_obj: Optional[threading.Thread] = None
         self.thread_running = False
         self.recognizer_started = False
@@ -361,6 +367,23 @@ class SpeechSDKThread:
                     logger.error(
                         f"[{self.call_connection_id}] Barge-in error: {e}"
                     )
+                trimmed = text.strip()
+                loop = self.thread_bridge.main_loop
+                if loop and not loop.is_closed():
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            send_user_partial_transcript(
+                                self.websocket,
+                                trimmed,
+                                language=lang,
+                                speaker_id=speaker_id,
+                            ),
+                            loop,
+                        )
+                    except Exception as send_exc:
+                        logger.debug(
+                            f"[{self.call_connection_id}] Failed to emit partial transcript: {send_exc}"
+                        )
             else:
                 logger.debug(
                     f"[{self.call_connection_id}] Partial result too short, ignoring"
@@ -596,25 +619,22 @@ class RouteTurnThread:
                     return
 
                 # Broadcast user transcription to dashboard
-                if (
-                    hasattr(self.memory_manager, "session_id")
-                    and self.memory_manager.session_id
-                ):
-                    try:
-                        await broadcast_message(
-                            connected_clients=None,  # Ignored for safety
-                            message=event.text,
-                            sender="User",
-                            app_state=self.websocket.app.state,
-                            session_id=self.memory_manager.session_id,
-                        )
-                        logger.info(
-                            f"[{self.call_connection_id}] Broadcasting user transcript: '{event.text[:50]}...' to session: {self.memory_manager.session_id}"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"[{self.call_connection_id}] Failed to broadcast user transcript: {e}"
-                        )
+                session_for_emit = (
+                    getattr(self.memory_manager, "session_id", None)
+                    or getattr(self.websocket.state, "session_id", None)
+                )
+                try:
+                    await send_user_transcript(
+                        self.websocket,
+                        event.text,
+                        session_id=session_for_emit,
+                        conn_id=None,
+                        broadcast_only=True,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.call_connection_id}] Failed to emit user transcript: {e}"
+                    )
 
                 if self.orchestrator_func:
                     coro = self.orchestrator_func(
@@ -678,6 +698,74 @@ class RouteTurnThread:
                         f"[{event.speaker_id}] Starting {playback_type} playback (len={len(event.text)} chars)"
                     )
 
+                if event.event_type == SpeechEventType.GREETING:
+                    if self.memory_manager:
+                        try:
+                            app_state = getattr(self.websocket, "app", None)
+                            app_state = getattr(app_state, "state", None)
+                            auth_agent = getattr(app_state, "auth_agent", None)
+                            agent_name = getattr(auth_agent, "name", None) if auth_agent else None
+                            if not agent_name:
+                                agent_name = self.memory_manager.get_value_from_corememory(
+                                    "active_agent", None
+                                )
+                            if not agent_name:
+                                agent_name = "AutoAuth"
+
+                            history = self.memory_manager.get_history(agent_name)
+                            last_entry = history[-1] if history else None
+                            last_content = (
+                                last_entry.get("content")
+                                if isinstance(last_entry, dict)
+                                else None
+                            )
+                            if last_content != event.text:
+                                self.memory_manager.append_to_history(
+                                    agent_name, "assistant", event.text
+                                )
+
+                            if not self.memory_manager.get_value_from_corememory(
+                                "greeting_sent", False
+                            ):
+                                self.memory_manager.update_corememory(
+                                    "greeting_sent", True
+                                )
+                            if not self.memory_manager.get_value_from_corememory(
+                                "active_agent", None
+                            ):
+                                self.memory_manager.update_corememory(
+                                    "active_agent", agent_name
+                                )
+                        except Exception as cm_exc:  # noqa: BLE001
+                            logger.warning(
+                                f"[{self.call_connection_id}] Failed to record greeting context: {cm_exc}"
+                            )
+                    session_for_emit = (
+                        getattr(self.memory_manager, "session_id", None)
+                        or getattr(self.websocket.state, "session_id", None)
+                        or getattr(self.websocket.state, "call_connection_id", None)
+                    )
+                    if session_for_emit:
+                        greeting_envelope = make_status_envelope(
+                            event.text,
+                            sender="System",
+                            topic="session",
+                            session_id=session_for_emit,
+                        )
+                        try:
+                            await send_session_envelope(
+                                self.websocket,
+                                greeting_envelope,
+                                session_id=session_for_emit,
+                                conn_id=None,
+                                event_label="acs_greeting",
+                                broadcast_only=True,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                f"[{self.call_connection_id}] Failed to broadcast greeting to UI: {exc}"
+                            )
+
                 if not isinstance(event.text, str):
                     logger.warning(
                         f"[{self.call_connection_id}] Skipping {playback_type} playback due to non-string text payload"
@@ -703,7 +791,7 @@ class RouteTurnThread:
                     )
                 )
                 try:
-                    await asyncio.wait_for(self.current_response_task, timeout=8.0)
+                    await asyncio.wait_for(self.current_response_task, timeout=60.0)
                 except asyncio.TimeoutError:
                     logger.error(
                         f"[{self.call_connection_id}] {playback_type} playback timed out waiting for TTS pipeline"
@@ -839,6 +927,7 @@ class MainEventLoop:
         # Remove hard limit on concurrent audio tasks - let system scale naturally
         # Previous limit of 50 was a major bottleneck for concurrency
         self.max_concurrent_audio_tasks = None  # No artificial limit
+        self.playback_lock = asyncio.Lock()
 
     async def handle_barge_in(self):
         """Handle barge-in interruption."""
@@ -1100,6 +1189,8 @@ class ACSMediaHandler:
             candidate_languages=["en-US", "fr-FR", "de-DE", "es-ES", "it-IT"],
             vad_silence_timeout_ms=800,
             audio_format="pcm",
+            use_semantic_segmentation=False,
+            enable_diarisation=False,
         )
 
         # Cross-thread communication
@@ -1125,6 +1216,7 @@ class ACSMediaHandler:
             thread_bridge=self.thread_bridge,
             barge_in_handler=self.main_event_loop.handle_barge_in,
             speech_queue=self.speech_queue,
+            websocket=websocket,
         )
         self.thread_bridge.set_route_turn_thread(self.route_turn_thread)
 
@@ -1156,6 +1248,14 @@ class ACSMediaHandler:
 
                 # Start threads
                 self.speech_sdk_thread.prepare_thread()
+                # Ensure recognizer starts immediately instead of waiting for first audio packet
+                for _ in range(10):
+                    if self.speech_sdk_thread.thread_running:
+                        break
+                    await asyncio.sleep(0.05)
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self.speech_sdk_thread.start_recognizer
+                )
                 await self.route_turn_thread.start()
 
                 logger.info(f"[{self.call_connection_id}] Media handler started")

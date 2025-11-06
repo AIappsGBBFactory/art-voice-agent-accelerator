@@ -20,7 +20,7 @@ model:
   max_completion_tokens: 2040
 
 voice:
-  name: en-US-Emma2:DragonHDLatestNeural # Voice for TTS output
+  name: en-US-AlloyTurboMultilingualNeural # Voice for TTS output
   style: chat # Voice style (chat, professional, friendly)
   rate: "+15%" # Speech rate (moderate pace for general info)
 
