@@ -136,7 +136,7 @@ def _vad(cfg: Dict[str, Any] | None) -> TurnDetection | None:
         "Unsupported turn_detection.type '{0}'. Expected 'semantic' or 'server'.".format(vad_type)
     )
 
-class AzureLiveVoiceAgent:
+class AzureVoiceLiveAgent:
     """
     YAML-driven agent for Azure AI VoiceLive (production-ready).
     
@@ -273,10 +273,10 @@ class AzureLiveVoiceAgent:
         if "turn_detection" in sess and not isinstance(sess["turn_detection"], dict):
             raise ValueError("'session.turn_detection' must be an object")
 
-def load_agents_from_folder(folder: str = "agents") -> dict[str, AzureLiveVoiceAgent]:
-    out: dict[str, AzureLiveVoiceAgent] = {}
+def load_agents_from_folder(folder: str = "agents") -> dict[str, AzureVoiceLiveAgent]:
+    out: dict[str, AzureVoiceLiveAgent] = {}
     for p in Path(folder).glob("*.yaml"):
-        agent = AzureLiveVoiceAgent(config_path=p)
+        agent = AzureVoiceLiveAgent(config_path=p)
         out[agent.name] = agent
     if not out:
         raise RuntimeError(f"No agent YAML files found in {folder}")

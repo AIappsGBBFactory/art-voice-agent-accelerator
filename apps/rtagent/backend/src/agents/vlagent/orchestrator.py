@@ -24,7 +24,7 @@ class LiveOrchestrator:
     def __init__(
         self,
         conn,
-        agents: Dict[str, "AzureLiveVoiceAgent"],
+        agents: Dict[str, "AzureVoiceLiveAgent"],
         handoff_map: Dict[str, str],
         start_agent: str = "AutoAuth",
         audio_processor=None,
