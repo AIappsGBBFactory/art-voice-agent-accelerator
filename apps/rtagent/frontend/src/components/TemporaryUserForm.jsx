@@ -111,6 +111,17 @@ const formStyles = {
   labelFocused: {
     color: '#3b82f6',
   },
+  requiredBadge: {
+    marginLeft: '8px',
+    padding: '2px 6px',
+    borderRadius: '999px',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    color: '#b91c1c',
+    fontSize: '10px',
+    letterSpacing: '0.08em',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+  },
   inputContainer: {
     position: 'relative',
   },
@@ -206,9 +217,24 @@ const formStyles = {
     border: '1px solid rgba(239, 68, 68, 0.2)',
     color: '#dc2626',
   },
+  statusPending: {
+    background: 'linear-gradient(135deg, rgba(254, 243, 199, 0.9) 0%, rgba(253, 230, 138, 0.2) 100%)',
+    border: '1px solid rgba(234, 179, 8, 0.25)',
+    color: '#92400e',
+  },
   statusIcon: {
     fontSize: '16px',
     flexShrink: 0,
+  },
+  helperText: {
+    marginTop: '6px',
+    fontSize: '11px',
+    color: '#64748b',
+    lineHeight: 1.4,
+  },
+  helperTextWarning: {
+    color: '#dc2626',
+    fontWeight: 600,
   },
   resultCard: {
     borderRadius: '12px',
@@ -290,23 +316,45 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
   const [focusedField, setFocusedField] = useState(null);
   const [isButtonHovered, setIsButtonHovered] = useState(false);
   const [isCloseHovered, setIsCloseHovered] = useState(false);
+  const [touchedFields, setTouchedFields] = useState({});
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
   const submitDisabled = useMemo(
-    () =>
-      status.type === 'pending' ||
-      !formState.full_name.trim() ||
-      !formState.email.trim(),
-    [status.type, formState],
+    () => status.type === 'pending',
+    [status.type],
   );
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    setFormState((prev) => ({ ...prev, [name]: value }));
+    setFormState((prev) => {
+      const next = { ...prev, [name]: value };
+      if (
+        status.type === 'error' &&
+        status.message?.startsWith('Full name and email') &&
+        next.full_name.trim() &&
+        next.email.trim()
+      ) {
+        setStatus({ type: 'idle', message: '', data: null });
+        setAttemptedSubmit(false);
+      }
+      return next;
+    });
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (submitDisabled) {
+      return;
+    }
+
+    setAttemptedSubmit(true);
+
+    if (!formState.full_name.trim() || !formState.email.trim()) {
+      setStatus({
+        type: 'error',
+        message: 'Full name and email are required to create a demo profile.',
+        data: null,
+      });
       return;
     }
 
@@ -344,6 +392,8 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
       });
       onSuccess?.(data);
       setFormState({ full_name: '', email: '', phone_number: '', preferred_channel: 'email' });
+      setTouchedFields({});
+      setAttemptedSubmit(false);
     } catch (error) {
       setStatus({
         type: 'error',
@@ -351,6 +401,14 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
         data: null,
       });
     }
+  };
+
+  const showRequiredError = (fieldName) => {
+    if (fieldName !== 'full_name' && fieldName !== 'email') {
+      return false;
+    }
+    const isEmpty = !formState[fieldName].trim();
+    return isEmpty && (touchedFields[fieldName] || attemptedSubmit);
   };
 
   return (
@@ -396,7 +454,8 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
             }} 
             htmlFor="full_name"
           >
-            Full Name
+            <span>Full Name</span>
+            <span style={formStyles.requiredBadge}>Required</span>
           </label>
           <div style={formStyles.inputContainer}>
             <input
@@ -405,14 +464,26 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
               value={formState.full_name}
               onChange={handleChange}
               onFocus={() => setFocusedField('full_name')}
-              onBlur={() => setFocusedField(null)}
+              onBlur={() => {
+                setFocusedField(null);
+                setTouchedFields((prev) => ({ ...prev, full_name: true }));
+              }}
               style={{
                 ...formStyles.input,
-                ...(focusedField === 'full_name' ? formStyles.inputFocused : {})
+                ...(focusedField === 'full_name' ? formStyles.inputFocused : {}),
+                ...(showRequiredError('full_name') ? formStyles.inputError : {})
               }}
               placeholder="Ada Lovelace"
               required
             />
+          </div>
+          <div
+            style={{
+              ...formStyles.helperText,
+              ...(showRequiredError('full_name') ? formStyles.helperTextWarning : {}),
+            }}
+          >
+            Sample value shown is a placeholder. Please enter the full name you want to use.
           </div>
         </div>
         <div style={formStyles.formRow}>
@@ -425,6 +496,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span>Email Address</span>
+              <span style={formStyles.requiredBadge}>Required</span>
               <Tooltip
                 title="Provide a valid, accessible email address for MFA verification during the demo."
                 arrow
@@ -469,14 +541,26 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
               value={formState.email}
               onChange={handleChange}
               onFocus={() => setFocusedField('email')}
-              onBlur={() => setFocusedField(null)}
+              onBlur={() => {
+                setFocusedField(null);
+                setTouchedFields((prev) => ({ ...prev, email: true }));
+              }}
               style={{
                 ...formStyles.input,
-                ...(focusedField === 'email' ? formStyles.inputFocused : {})
+                ...(focusedField === 'email' ? formStyles.inputFocused : {}),
+                ...(showRequiredError('email') ? formStyles.inputError : {})
               }}
               placeholder="ada@example.com"
               required
             />
+          </div>
+          <div
+            style={{
+              ...formStyles.helperText,
+              ...(showRequiredError('email') ? formStyles.helperTextWarning : {}),
+            }}
+          >
+            Placeholder email won’t be submitted. Use an inbox you can access for the demo.
           </div>
         </div>
         <div style={formStyles.formRow}>
@@ -565,12 +649,16 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
         <div
           style={{
             ...formStyles.status,
-            ...(status.type === 'success' ? formStyles.statusSuccess : formStyles.statusError),
+            ...(status.type === 'success'
+              ? formStyles.statusSuccess
+              : status.type === 'pending'
+              ? formStyles.statusPending
+              : formStyles.statusError),
             animation: 'slideInUp 0.3s ease-out'
           }}
         >
           <span style={formStyles.statusIcon}>
-            {status.type === 'success' ? '✅' : '❌'}
+            {status.type === 'success' ? '✅' : status.type === 'pending' ? '⏳' : '❌'}
           </span>
           <div>
             {status.message}

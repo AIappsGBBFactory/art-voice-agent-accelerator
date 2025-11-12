@@ -216,6 +216,7 @@ class ACSLifecycleHandler:
         redis_mgr,
         call_id: str = None,
         browser_session_id: str = None,  # NEW: Browser session ID for UI coordination
+        stream_mode: StreamMode | None = None,
     ) -> Dict[str, Any]:
         """
         Initiate an outbound call with orchestrator support.
@@ -228,6 +229,8 @@ class ACSLifecycleHandler:
         :type call_id: str
         :param browser_session_id: Browser session ID for UI/ACS coordination
         :type browser_session_id: str
+        :param stream_mode: Streaming mode override for this call
+        :type stream_mode: Optional[StreamMode]
         :return: Call initiation result
         :rtype: Dict[str, Any]
         :raises HTTPException: When ACS caller is not initialized or call fails
@@ -235,6 +238,8 @@ class ACSLifecycleHandler:
 
         if not acs_caller:
             raise HTTPException(503, "ACS Caller not initialised")
+
+        effective_stream_mode = stream_mode or ACS_STREAMING_MODE
 
         with tracer.start_as_current_span(
             "v1.acs_lifecycle.start_outbound_call",
@@ -244,6 +249,7 @@ class ACSLifecycleHandler:
                 "call.id": call_id or "auto_generated",
                 "call.direction": "outbound",
                 "api.version": "v1",
+                "stream.mode": str(effective_stream_mode),
             },
         ) as span:
             try:
@@ -251,7 +257,7 @@ class ACSLifecycleHandler:
 
                 start_time = time.perf_counter()
                 result = await acs_caller.initiate_call(
-                    target_number, stream_mode=ACS_STREAMING_MODE
+                    target_number, stream_mode=effective_stream_mode
                 )
                 latency = time.perf_counter() - start_time
 
@@ -260,6 +266,7 @@ class ACSLifecycleHandler:
                     {
                         "call.initiation_latency_ms": latency * 1000,
                         "call.result_status": result.get("status"),
+                        "stream.mode": str(effective_stream_mode),
                     },
                 )
 
@@ -277,6 +284,20 @@ class ACSLifecycleHandler:
                         "browser.session_id": browser_session_id,
                     },
                 )
+
+                if redis_mgr and call_id:
+                    try:
+                        await redis_mgr.set_value_async(
+                            f"call_stream_mode:{call_id}",
+                            str(effective_stream_mode),
+                            ttl_seconds=3600 * 24,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to persist streaming mode override for %s: %s",
+                            call_id,
+                            exc,
+                        )
 
                 # Store browser session ID mapping for media endpoint coordination
                 if browser_session_id and redis_mgr:
@@ -304,6 +325,7 @@ class ACSLifecycleHandler:
                         "call_direction": "outbound",
                         "initiated_at": datetime.utcnow().isoformat() + "Z",
                         "browser_session_id": browser_session_id,  # Include in event data
+                        "streaming_mode": str(effective_stream_mode),
                     },
                     redis_mgr,
                 )
@@ -318,6 +340,7 @@ class ACSLifecycleHandler:
                     "message": "Call initiated",
                     "callId": call_id,
                     "initiated_at": datetime.utcnow().isoformat() + "Z",
+                    "streaming_mode": str(effective_stream_mode),
                 }
 
             except (HttpResponseError, RuntimeError) as exc:
@@ -711,6 +734,7 @@ def create_enterprise_media_handler(
     recognizer,
     cm: MemoManager,
     session_id: str,
+    stream_mode: Optional[StreamMode] = None,
 ) -> ACSMediaHandler:
     """
     Factory function for creating media handlers.
@@ -731,10 +755,11 @@ def create_enterprise_media_handler(
     if orchestrator is None:
         orchestrator = get_orchestrator()
     return ACSMediaHandler(
-        ws=websocket,
-        orchestrator=orchestrator,
+        websocket=websocket,
+        orchestrator_func=orchestrator,
         call_connection_id=call_connection_id,
         recognizer=recognizer,
-        cm=cm,
+        memory_manager=cm,
         session_id=session_id,
+        stream_mode=stream_mode or ACS_STREAMING_MODE,
     )

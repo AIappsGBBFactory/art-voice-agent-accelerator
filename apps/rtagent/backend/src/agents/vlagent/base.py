@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 from azure.ai.voicelive.models import (
-    RequestSession,
     ServerVad,
     AzureSemanticVad,
     Modality,
@@ -15,7 +14,11 @@ from azure.ai.voicelive.models import (
     FunctionTool,
     ResponseCreateParams,
     TurnDetection,
-    AzureStandardVoice
+    AzureStandardVoice,
+    AzurePersonalVoice,
+    AzureCustomVoice,
+    OpenAIVoice,
+    RequestSession,
 )
 from .prompts import PromptManager
 from .tools import build_function_tools
@@ -136,7 +139,7 @@ def _vad(cfg: Dict[str, Any] | None) -> TurnDetection | None:
         "Unsupported turn_detection.type '{0}'. Expected 'semantic' or 'server'.".format(vad_type)
     )
 
-class AzureLiveVoiceAgent:
+class AzureVoiceLiveAgent:
     """
     YAML-driven agent for Azure AI VoiceLive (production-ready).
     
@@ -175,6 +178,7 @@ class AzureLiveVoiceAgent:
         voice_cfg = sess.get("voice") or {}
         self.voice_name: Optional[str] = voice_cfg.get("name")
         self.voice_type: str = (voice_cfg.get("type") or "azure-standard").lower()
+        self.voice_cfg: Dict[str, Any] = voice_cfg
 
         # Per-agent tools configuration
         self.tools_cfg = self._cfg.get("tools", []) or []
@@ -204,18 +208,13 @@ class AzureLiveVoiceAgent:
         
         Called automatically when switching between agents.
         """
-        instructions = self.pm.get_prompt(self.prompt_path, **(system_vars or {}))
+        template_vars = dict(system_vars or {})
+        template_vars.setdefault("active_agent", self.name)
 
-        # Configure per-agent voice
-        voice = None
-        if self.voice_name:
-            if self.voice_type == "azure-standard" or "-" in self.voice_name:
-                voice = AzureStandardVoice(name=self.voice_name, type="azure-standard")
-            else:
-                voice = self.voice_name
-            logger.info("[%s] Applying voice: %s", self.name, self.voice_name)
-        else:
-            logger.debug("[%s] No explicit voice configured", self.name)
+        overrides = template_vars.get("session_overrides") if isinstance(template_vars.get("session_overrides"), dict) else {}
+        voice_payload = self._build_voice_payload(overrides.get("voice") if overrides else None)
+        instructions = self.pm.get_prompt(self.prompt_path, **template_vars)
+
         
         # Build session update with per-agent configuration
         kwargs: Dict[str, Any] = dict(
@@ -226,8 +225,8 @@ class AzureLiveVoiceAgent:
             turn_detection=self.turn_detection,  # Per-agent VAD settings
         )
         
-        if voice is not None:
-            kwargs["voice"] = voice  # Per-agent voice
+        if voice_payload:
+            kwargs["voice"] = voice_payload  # Per-agent voice
         
         if self.tools:
             kwargs["tools"] = self.tools  # Per-agent tools
@@ -236,7 +235,14 @@ class AzureLiveVoiceAgent:
         
         # Apply all per-agent settings to the session
         session_payload = RequestSession(**kwargs)
-        logger.debug("[%s] Session update payload: %s", self.name, session_payload)
+        def _preview(value: Any, limit: int = 50) -> str:
+            text = repr(value)
+            return text if len(text) <= limit else f"{text[:limit - 3]}..."
+        payload_preview = "\n".join(
+            f"  {key}: {_preview(value)}" for key, value in kwargs.items()
+        ) or "  <empty>"
+        logger.info("[%s] Session update payload:\n%s", self.name, payload_preview)
+
         await conn.session.update(session=session_payload)
         logger.info("[%s] Session updated successfully", self.name)
         
@@ -249,7 +255,63 @@ class AzureLiveVoiceAgent:
             )
             await self.trigger_response(conn, say=say)
         else:
-            logger.warning("[%s] No greeting provided - agent will not speak first", self.name)
+            logger.debug("[%s] Greeting deferred by orchestrator", self.name)
+
+    def _build_voice_payload(self, override: Optional[Dict[str, Any]] = None) -> Optional[Any]:
+        """Return a VoiceLive-compatible voice payload honoring overrides when provided."""
+        cfg: Dict[str, Any] = dict(self.voice_cfg)
+        if override:
+            cfg.update({k: v for k, v in override.items() if v not in (None, "")})
+
+        name = cfg.get("name") or self.voice_name
+        if not name:
+            return None
+
+        voice_type = (cfg.get("type") or self.voice_type or "").lower().strip()
+
+        # Azure voices
+        if voice_type in {"azure-standard", "azure_standard", "azure"}:
+            optionals = {
+                key: cfg[key]
+                for key in ("temperature", "custom_lexicon_url", "prefer_locales", "locale", "style", "pitch", "rate", "volume")
+                if cfg.get(key) is not None
+            }
+            return AzureStandardVoice(name=name, **optionals)
+
+        if voice_type in {"azure-personal", "azure_personal"}:
+            model = cfg.get("model")
+            if not model:
+                logger.warning(
+                    "[%s] azure-personal voice requires 'model'; falling back to raw name",
+                    self.name,
+                )
+                return AzureStandardVoice(name=name)
+            optionals = {key: cfg[key] for key in ("temperature",) if cfg.get(key) is not None}
+            return AzurePersonalVoice(name=name, model=model, **optionals)
+
+        if voice_type in {"azure-custom", "azure_custom"}:
+            endpoint_id = cfg.get("endpoint_id")
+            if not endpoint_id:
+                logger.warning(
+                    "[%s] azure-custom voice requires 'endpoint_id'; falling back to raw name",
+                    self.name,
+                )
+                return AzureStandardVoice(name=name)
+            optionals = {
+                key: cfg[key]
+                for key in ("temperature", "custom_lexicon_url", "prefer_locales", "locale", "style", "pitch", "rate", "volume")
+                if cfg.get(key) is not None
+            }
+            return AzureCustomVoice(name=name, endpoint_id=endpoint_id, **optionals)
+
+        # For OpenAI voices, return the rich OpenAIVoice model so the SDK can serialize correctly.
+        if voice_type in {"openai", "gpt", ""}:
+            openai_name = cfg.get("openai_name") or name
+            return OpenAIVoice(name=openai_name)
+
+        # Unknown type – safest fallback is to return the raw name string (the service treats it as default handling).
+        logger.warning("[%s] Unknown voice.type '%s'; defaulting to AzureStandardVoice", self.name, voice_type)
+        return AzureStandardVoice(name=name)
 
     async def trigger_response(self, conn, *, say: Optional[str] = None) -> None:
         params = ResponseCreateParams(
@@ -273,10 +335,10 @@ class AzureLiveVoiceAgent:
         if "turn_detection" in sess and not isinstance(sess["turn_detection"], dict):
             raise ValueError("'session.turn_detection' must be an object")
 
-def load_agents_from_folder(folder: str = "agents") -> dict[str, AzureLiveVoiceAgent]:
-    out: dict[str, AzureLiveVoiceAgent] = {}
+def load_agents_from_folder(folder: str = "agents") -> dict[str, AzureVoiceLiveAgent]:
+    out: dict[str, AzureVoiceLiveAgent] = {}
     for p in Path(folder).glob("*.yaml"):
-        agent = AzureLiveVoiceAgent(config_path=p)
+        agent = AzureVoiceLiveAgent(config_path=p)
         out[agent.name] = agent
     if not out:
         raise RuntimeError(f"No agent YAML files found in {folder}")

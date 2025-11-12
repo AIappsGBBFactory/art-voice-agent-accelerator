@@ -181,19 +181,56 @@ async def initiate_call(
                     f"📞 [BACKEND] Target number: {request.target_number} | Session ID: {browser_session_id}"
                 )
 
+                # Determine effective streaming mode (request override > context > env default)
+                effective_stream_mode = ACS_STREAMING_MODE
+                override_candidates = []
+                if request.streaming_mode is not None:
+                    override_candidates.append(request.streaming_mode)
+                if request.context and request.context.get("streaming_mode") is not None:
+                    override_candidates.append(request.context.get("streaming_mode"))
+
+                for candidate in override_candidates:
+                    if candidate is None:
+                        continue
+                    if isinstance(candidate, StreamMode):
+                        effective_stream_mode = candidate
+                        break
+                    if isinstance(candidate, str):
+                        try:
+                            effective_stream_mode = StreamMode.from_string(candidate)
+                            break
+                        except ValueError as exc:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=str(exc),
+                            ) from exc
+
+                if dep_op.span and hasattr(dep_op.span, "set_attribute"):
+                    try:
+                        dep_op.span.set_attribute(
+                            "stream.mode.requested", str(effective_stream_mode)
+                        )
+                    except Exception:  # noqa: BLE001
+                        dep_op.log_debug(
+                            "Unable to record requested stream mode on dependency span",
+                            stream_mode=str(effective_stream_mode),
+                        )
+
                 result = await acs_handler.start_outbound_call(
                     acs_caller=http_request.app.state.acs_caller,
                     target_number=request.target_number,
                     redis_mgr=http_request.app.state.redis,
                     browser_session_id=browser_session_id,  # 🎯 Pass browser session for coordination
+                    stream_mode=effective_stream_mode,
                 )
                 if result.get("status") == "success":
                     call_id = result.get("callId")
 
                     # Pre-initialize a Voice Live session bound to this call (no audio yet, no pool)
                     try:
-                        if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE and hasattr(
-                            http_request.app.state, "conn_manager"
+                        if (
+                            effective_stream_mode == StreamMode.VOICE_LIVE
+                            and hasattr(http_request.app.state, "conn_manager")
                         ):
                             agent_yaml = os.getenv(
                                 "VOICE_LIVE_AGENT_YAML",
@@ -210,6 +247,7 @@ async def initiate_call(
                                     "lva_agent": lva_agent,
                                     "target_number": request.target_number,
                                     "browser_session_id": browser_session_id,
+                                    "streaming_mode": str(effective_stream_mode),
                                 },
                             )
                             logger.info(
@@ -236,6 +274,7 @@ async def initiate_call(
                             "initiated_at": result.get("initiated_at"),
                             "api_version": "v1",
                             "status": "initiating",
+                            "streaming_mode": str(effective_stream_mode),
                         },
                     )
 
@@ -251,8 +290,13 @@ async def initiate_call(
                         status="initiating",
                         target_number=request.target_number,
                         message=result.get("message", "call initiated successfully"),
+                        streaming_mode=effective_stream_mode,
                         initiated_at=result.get("initiated_at"),
-                        details={"api_version": "v1", "acs_result": result},
+                        details={
+                            "api_version": "v1",
+                            "acs_result": result,
+                            "streaming_mode": str(effective_stream_mode),
+                        },
                     )
 
             # Handle failure case
