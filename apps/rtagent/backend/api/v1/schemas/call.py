@@ -6,6 +6,7 @@ Pydantic schemas for call management API requests and responses.
 
 from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict
+from src.enums.stream_modes import StreamMode
 
 
 class CallInitiateRequest(BaseModel):
@@ -33,6 +34,15 @@ class CallInitiateRequest(BaseModel):
                 "source": "web_portal",
             }
         },
+    )
+    streaming_mode: Optional[StreamMode] = Field(
+        default=None,
+        description=(
+            "Optional streaming mode override for Azure Communication Services media "
+            "handling. When provided, this value supersedes the default ACS_STREAMING_MODE "
+            "environment setting for the duration of the call."
+        ),
+        json_schema_extra={"example": "voice_live"},
     )
 
     model_config = ConfigDict(
@@ -69,6 +79,20 @@ class CallInitiateResponse(BaseModel):
         description="Human-readable status message",
         json_schema_extra={"example": "Call initiation requested"},
     )
+    streaming_mode: Optional[StreamMode] = Field(
+        default=None,
+        description="Effective streaming mode used for media handling.",
+        json_schema_extra={"example": "voice_live"},
+    )
+    initiated_at: Optional[str] = Field(
+        default=None,
+        description="Timestamp indicating when call initiation completed.",
+        json_schema_extra={"example": "2025-07-18T22:45:30Z"},
+    )
+    details: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Backend metadata useful for debugging call initiation.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -77,6 +101,9 @@ class CallInitiateResponse(BaseModel):
                 "status": "initiating",
                 "target_number": "+1234567890",
                 "message": "Call initiation requested for +1234567890",
+                "streaming_mode": "voice_live",
+                "initiated_at": "2025-07-18T22:45:30Z",
+                "details": {"api_version": "v1"},
             }
         }
     )

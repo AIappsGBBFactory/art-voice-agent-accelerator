@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 from config import (
     AZURE_OPENAI_CHAT_DEPLOYMENT_ID,
     AZURE_OPENAI_ENDPOINT,
+    ACS_STREAMING_MODE,
     TTS_END,
 )
 from apps.rtagent.backend.src.agents.artagent.tool_store.tool_registry import (
@@ -440,6 +441,7 @@ async def _emit_streaming_text(
         """Schedule ACS playback without blocking GPT stream."""
 
         previous_task: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
+        stream_mode = getattr(ws.state, "stream_mode", ACS_STREAMING_MODE)
 
         async def _runner(prior: Optional[asyncio.Task]) -> None:
             current_task = asyncio.current_task()
@@ -457,6 +459,7 @@ async def _emit_streaming_text(
                     voice_name=voice_name,
                     voice_style=voice_style,
                     rate=voice_rate,
+                    stream_mode=stream_mode,
                 )
             except Exception as playback_exc:  # noqa: BLE001
                 logger.exception("ACS playback task failed", exc_info=playback_exc)

@@ -100,13 +100,13 @@ const STREAMING_MODE_OPTIONS = [
     description:
       'Three-thread ACS media pipeline with custom orchestration. Best for advanced agent control.',
   },
-  {
-    value: 'transcription',
-    label: 'Transcription',
-    icon: '📝',
-    description:
-      'Capture audio for speech-to-text only. Choose when you do not need TTS playback.',
-  },
+  // {
+  //   value: 'transcription',
+  //   label: 'Transcription',
+  //   icon: '📝',
+  //   description:
+  //     'Capture audio for speech-to-text only. Choose when you do not need TTS playback.',
+  // },
 ];
 
 function StreamingModeSelector({ value, onChange, disabled = false }) {

@@ -34,7 +34,7 @@ from fastapi.websockets import WebSocketState
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from config import GREETING, STT_PROCESSING_TIMEOUT
+from config import ACS_STREAMING_MODE, GREETING, STT_PROCESSING_TIMEOUT
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     send_response_to_acs,
     broadcast_message,
@@ -549,11 +549,25 @@ class RouteTurnThread:
         orchestrator_func: Callable,
         memory_manager: Optional[MemoManager],
         websocket: WebSocket,
+        stream_mode: StreamMode = ACS_STREAMING_MODE,
     ):
         self.speech_queue = speech_queue
         self.orchestrator_func = orchestrator_func
         self.memory_manager = memory_manager
         self.websocket = websocket
+        if isinstance(stream_mode, str):
+            try:
+                stream_mode = StreamMode.from_string(stream_mode)
+            except ValueError:
+                logger.warning(
+                    "[%s] Invalid stream_mode '%s' supplied to RouteTurnThread; defaulting to %s",
+                    call_connection_id,
+                    stream_mode,
+                    ACS_STREAMING_MODE,
+                )
+                stream_mode = ACS_STREAMING_MODE
+
+        self.stream_mode: StreamMode = stream_mode or ACS_STREAMING_MODE
 
         self.processing_task: Optional[asyncio.Task] = None
         self.current_response_task: Optional[asyncio.Task] = None
@@ -787,7 +801,7 @@ class RouteTurnThread:
                         text=event.text,
                         blocking=False,
                         latency_tool=getattr(self.websocket.state, "lt", None),
-                        stream_mode=StreamMode.MEDIA,
+                        stream_mode=self.stream_mode,
                     )
                 )
                 
@@ -1169,6 +1183,7 @@ class ACSMediaHandler:
         memory_manager: Optional[MemoManager] = None,
         session_id: Optional[str] = None,
         greeting_text: str = GREETING,
+        stream_mode: StreamMode = ACS_STREAMING_MODE,
     ):
         """
         Initialize the three-thread architecture media handler.
@@ -1188,6 +1203,7 @@ class ACSMediaHandler:
         :param greeting_text: Text for greeting playback
         :type greeting_text: str
         """
+        self.stream_mode = stream_mode or ACS_STREAMING_MODE
         self.websocket = websocket
         self.orchestrator_func = orchestrator_func
         self.call_connection_id = call_connection_id or "unknown"
@@ -1196,6 +1212,14 @@ class ACSMediaHandler:
         self.session_id = session_id or call_connection_id or self.call_connection_id
         self.memory_manager = memory_manager
         self.greeting_text = greeting_text
+        # Ensure downstream helpers can inspect the active streaming mode
+        try:
+            self.websocket.state.stream_mode = self.stream_mode
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "[%s] Unable to persist stream_mode on websocket state; proceeding",
+                self.call_connection_id,
+            )
 
         # Initialize speech recognizer
         self.recognizer = recognizer or StreamingSpeechRecognizerFromBytes(
@@ -1217,6 +1241,7 @@ class ACSMediaHandler:
             orchestrator_func=orchestrator_func,
             memory_manager=memory_manager,
             websocket=websocket,
+            stream_mode=self.stream_mode,
         )
 
         self.main_event_loop = MainEventLoop(
