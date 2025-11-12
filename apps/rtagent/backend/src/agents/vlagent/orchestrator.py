@@ -35,6 +35,8 @@ class LiveOrchestrator:
         self.active = start_agent
         self.audio = audio_processor
         self.visited_agents: set = set()  # Track which agents have been visited
+        self._pending_greeting: Optional[str] = None
+        self._pending_greeting_agent: Optional[str] = None
 
         if self.active not in self.agents:
             raise ValueError(f"Start agent '{self.active}' not found in registry")
@@ -50,6 +52,11 @@ class LiveOrchestrator:
         previous_agent = self.active
         agent = self.agents[agent_name]
         
+        # Always work with a copy so we do not mutate upstream state.
+        system_vars = dict(system_vars or {})
+        system_vars.setdefault("previous_agent", previous_agent)
+        system_vars.setdefault("active_agent", agent.name)
+
         # Check if this is first visit or returning
         is_first_visit = agent_name not in self.visited_agents
         self.visited_agents.add(agent_name)
@@ -70,10 +77,24 @@ class LiveOrchestrator:
         else:
             greeting = agent.return_greeting or f"Welcome back! How can I help you?"
         
+        handoff_message = system_vars.get("handoff_message")
+        combined_greeting = " ".join(
+            segment.strip()
+            for segment in (handoff_message, greeting)
+            if segment and segment.strip()
+        )
+
+        if combined_greeting:
+            self._pending_greeting = combined_greeting
+            self._pending_greeting_agent = agent_name
+        else:
+            self._pending_greeting = None
+            self._pending_greeting_agent = None
+
         await agent.apply_session(
             self.conn,
             system_vars=system_vars,
-            say=greeting,
+            say=None,
         )
 
         self.active = agent_name
@@ -119,10 +140,18 @@ class LiveOrchestrator:
                 return False
             
             # Build context from tool result
+            handoff_context = result.get("handoff_context") or {}
             ctx = {
-                "handoff_reason": result.get("reason", args.get("reason", "unspecified")),
-                "details": result.get("details", args.get("details", "")),
+                "handoff_reason": result.get("handoff_summary")
+                or handoff_context.get("reason")
+                or args.get("reason", "unspecified"),
+                "details": handoff_context.get("details")
+                or result.get("details")
+                or args.get("details", ""),
                 "previous_agent": self.active,
+                "handoff_context": handoff_context,
+                "handoff_message": result.get("message"),
+                "session_overrides": result.get("session_overrides"),
             }
             
             logger.info(
@@ -132,7 +161,8 @@ class LiveOrchestrator:
 
             # Cancel the current response to prevent the previous agent from continuing to speak
             try:
-                await self.conn.response.cancel()
+                if result.get("should_interrupt_playback", True):
+                    await self.conn.response.cancel()
             except Exception:
                 logger.debug("response.cancel() failed during handoff", exc_info=True)
 
@@ -174,9 +204,22 @@ class LiveOrchestrator:
         et = event.type
 
         if et == ServerEventType.SESSION_UPDATED:
-            logger.info("Session ready: %s", getattr(event.session, "id", "unknown"))
+            session_obj = getattr(event, "session", None)
+            session_id = getattr(session_obj, "id", "unknown") if session_obj else "unknown"
+            voice_info = getattr(session_obj, "voice", None) if session_obj else None
+            logger.info("Session ready: %s | voice=%s", session_id, voice_info)
             if self.audio:
                 await self.audio.start_capture()
+
+            if self._pending_greeting and self._pending_greeting_agent == self.active:
+                try:
+                    await self.agents[self.active].trigger_response(
+                        self.conn,
+                        say=self._pending_greeting,
+                    )
+                finally:
+                    self._pending_greeting = None
+                    self._pending_greeting_agent = None
 
         elif et == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED:
             logger.debug("User speech started → cancel current response")

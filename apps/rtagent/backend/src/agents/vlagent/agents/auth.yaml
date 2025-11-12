@@ -18,7 +18,7 @@ session:
   # Per-agent voice (changes when switching to this agent)
   voice:
     type: azure-standard
-    name: en-US-AvaNeural  # Professional voice for authentication
+    name: en-US-AndrewNeural  # Professional voice for authentication
   
   # Per-agent VAD settings (optimized for auth flow - quick responses)
   turn_detection:
