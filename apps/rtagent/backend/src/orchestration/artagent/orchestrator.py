@@ -15,9 +15,10 @@ from .registry import (
 )
 from .specialists import run_fraud_agent, run_agency_agent, run_compliance_agent, run_trading_agent
 from .termination import maybe_terminate_if_escalated
+from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message
 from apps.rtagent.backend.src.utils.tracing import (
-    create_service_dependency_attrs,
     create_service_handler_attrs,
+    create_service_dependency_attrs,
 )
 from utils.ml_logging import get_logger
 
@@ -28,6 +29,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from src.stateful.state_managment import MemoManager
 
 
+# -------------------------------------------------------------
+# Public entry-point (per user turn)
+# -------------------------------------------------------------
 async def route_turn(
     cm: "MemoManager",
     transcript: str,
@@ -35,34 +39,42 @@ async def route_turn(
     *,
     is_acs: bool,
 ) -> None:
-    """
-    Handle one user turn plus immediate follow-ups (behavior-preserving).
+    """Handle **one** user turn plus any immediate follow-ups.
 
-    :param cm: MemoManager
-    :param transcript: User transcript text
-    :param ws: WebSocket
-    :param is_acs: Whether this turn is part of an ACS phone call
-    :return: None
+    Responsibilities:
+    * Broadcast the user message to supervisor dashboards.
+    * Run the authentication agent until success.
+    * Delegate to the correct specialist agent.
+    * Detect when a live human transfer is required.
+    * Persist conversation state to Redis for resilience.
+    * Create a per-turn run_id and group all stage latencies under it.
     """
     if cm is None:
-        logger.error("MemoManager (cm) is None - cannot process orchestration")
+        logger.error("❌ MemoManager (cm) is None - cannot process orchestration")
         raise ValueError("MemoManager (cm) parameter cannot be None")
 
+    # Extract correlation context
     call_connection_id, session_id = get_correlation_context(ws, cm)
 
-    # Start a per-turn latency run id
+    # Ensure we start a per-turn latency run and expose the id in CoreMemory
     try:
-        run_id = ws.state.lt.begin_run(label="turn")
+        run_id = ws.state.lt.begin_run(label="turn")  # new LatencyTool (v2)
+        # pin it as "current run" for subsequent start/stop calls in this turn
         if hasattr(ws.state.lt, "set_current_run"):
             ws.state.lt.set_current_run(run_id)
     except Exception:
+        # fallback to a locally generated id if the tool doesn't support begin_run
         run_id = uuid.uuid4().hex[:12]
     cm_set(cm, current_run_id=run_id)
 
-    # Initialize with entry agent if not authenticated yet
-    if (not cm_get(cm, "authenticated", False)) and cm_get(cm, "active_agent") != ENTRY_AGENT:
+    # Initialize session with configured entry agent if no active_agent is set
+    if (
+        not cm_get(cm, "authenticated", False)
+        and cm_get(cm, "active_agent") != ENTRY_AGENT
+    ):
         cm_set(cm, active_agent=ENTRY_AGENT)
 
+    # Create handler span for orchestrator service
     span_attrs = create_service_handler_attrs(
         service_name="orchestrator",
         call_connection_id=call_connection_id,
@@ -73,17 +85,20 @@ async def route_turn(
         authenticated=cm_get(cm, "authenticated", False),
         active_agent=cm_get(cm, "active_agent", "none"),
     )
+    # include run.id in the span
     span_attrs["run.id"] = run_id
 
-    with tracer.start_as_current_span("orchestrator.route_turn", attributes=span_attrs) as span:
+    with tracer.start_as_current_span(
+        "orchestrator.route_turn", attributes=span_attrs
+    ) as span:
         redis_mgr = ws.app.state.redis
 
         try:
-            # 1) Check escalation (any agent)
+            # 1) Unified escalation check (for *any* agent)
             if await maybe_terminate_if_escalated(cm, ws, is_acs=is_acs):
                 return
 
-            # 2) Dispatch to active agent
+            # 2) Dispatch to agent (AutoAuth or specialists; registry-backed)
             active: str = cm_get(cm, "active_agent") or ENTRY_AGENT
             span.set_attribute("orchestrator.stage", "specialist_dispatch")
             span.set_attribute("orchestrator.target_agent", active)
@@ -91,7 +106,9 @@ async def route_turn(
 
             handler = get_specialist(active)
             if handler is None:
-                logger.warning("Unknown active_agent=%s session=%s", active, cm.session_id)
+                logger.warning(
+                    "Unknown active_agent=%s session=%s", active, cm.session_id
+                )
                 span.set_attribute("orchestrator.error", "unknown_agent")
                 return
 
@@ -105,23 +122,26 @@ async def route_turn(
             )
             agent_attrs["run.id"] = run_id
 
-            with tracer.start_as_current_span(f"orchestrator.call_{active.lower()}_agent", attributes=agent_attrs):
+            with tracer.start_as_current_span(
+                f"orchestrator.call_{active.lower()}_agent", attributes=agent_attrs
+            ):
                 await handler(cm, transcript, ws, is_acs=is_acs)
 
-                # 3) Terminate if escalated by the handler
+                # 3) After any agent runs, if escalation flag was set during the turn, terminate.
                 if await maybe_terminate_if_escalated(cm, ws, is_acs=is_acs):
                     return
 
         except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("route_turn crash – session=%s", cm.session_id)
+            logger.exception("💥 route_turn crash – session=%s", cm.session_id)
             span.set_attribute("orchestrator.error", "exception")
             raise
         finally:
-            # Non-blocking persistence (same as original)
-            await cm.persist_background(redis_mgr)
+            # Ensure core-memory is persisted even if a downstream component failed.
+            await cm.persist_to_redis_async(redis_mgr)
 
 
-def bind_default_handlers() -> None:
+
+def _bind_default_handlers() -> None:
     """
     Register default agent handlers for Financial Services multi-agent system.
     

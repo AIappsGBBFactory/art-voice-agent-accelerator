@@ -59,3 +59,18 @@ def cm_set(cm: "MemoManager", **kwargs: Any) -> None:
         return
     for k, v in kwargs.items():
         cm.update_corememory(k, v)
+
+def sync_voice_from_agent(cm: "MemoManager", ws: WebSocket, agent_name: str) -> None:
+    """Update CoreMemory voice based on the agent instance (if available)."""
+    from .bindings import get_agent_instance
+    
+    agent = get_agent_instance(ws, agent_name)
+    voice_name = getattr(agent, "voice_name", None) if agent else None
+    voice_style = getattr(agent, "voice_style", "chat") if agent else "chat"
+    voice_rate = getattr(agent, "voice_rate", "+3%") if agent else "+3%"
+    cm_set(
+        cm,
+        current_agent_voice=voice_name,
+        current_agent_voice_style=voice_style,
+        current_agent_voice_rate=voice_rate,
+    )
