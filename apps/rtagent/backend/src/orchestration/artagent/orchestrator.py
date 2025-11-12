@@ -141,7 +141,7 @@ async def route_turn(
 
 
 
-def _bind_default_handlers() -> None:
+def bind_default_handlers() -> None:
     """
     Register default agent handlers for Financial Services multi-agent system.
     
