@@ -23,7 +23,7 @@ on:
 
   push:
     branches:
-      - useacases/finance_capitalmarkets
+      - staging
     paths:
       - 'infra/terraform/**'
       - 'src/**'
