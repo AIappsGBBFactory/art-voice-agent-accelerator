@@ -171,6 +171,7 @@ class VoiceLiveSDKHandler:
 			return
 
 		kind = payload.get("kind") or payload.get("Kind")
+		
 		if kind == "AudioMetadata":
 			metadata = payload.get("payload", {})
 			self._acs_sample_rate = metadata.get("rate", self._acs_sample_rate)
