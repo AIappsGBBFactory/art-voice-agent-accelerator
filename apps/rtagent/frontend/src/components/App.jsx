@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import "reactflow/dist/style.css";
 import TemporaryUserForm from './TemporaryUserForm';
+import StreamingModeSelector from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import logger from '../utils/logger.js';
@@ -53,6 +54,9 @@ const createMetricsState = () => ({
 });
 
 const toMs = (value) => (typeof value === "number" ? Math.round(value) : undefined);
+
+const STREAM_MODE_STORAGE_KEY = 'rtagent.streamingMode';
+const STREAM_MODE_FALLBACK = 'voice_live';
 
 // Component styles
 const styles = {
@@ -2171,6 +2175,29 @@ function RealTimeVoiceApp() {
     status: "checking",
     acsOnlyIssue: false,
   });
+  const streamingModeOptions = StreamingModeSelector.options ?? [];
+  const allowedStreamModes = streamingModeOptions.map((option) => option.value);
+  const fallbackStreamMode = allowedStreamModes.includes(STREAM_MODE_FALLBACK)
+    ? STREAM_MODE_FALLBACK
+    : allowedStreamModes[0] || STREAM_MODE_FALLBACK;
+  const [selectedStreamingMode, setSelectedStreamingMode] = useState(() => {
+    const allowed = new Set(allowedStreamModes);
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = window.localStorage.getItem(STREAM_MODE_STORAGE_KEY);
+        if (stored && allowed.has(stored)) {
+          return stored;
+        }
+      } catch (err) {
+        logger.warn('Failed to read stored streaming mode preference', err);
+      }
+    }
+    const envMode = (import.meta.env.VITE_ACS_STREAMING_MODE || '').toLowerCase();
+    if (envMode && allowed.has(envMode)) {
+      return envMode;
+    }
+    return fallbackStreamMode;
+  });
   const [sessionProfiles, setSessionProfiles] = useState({});
   const [profilePanelOpen, setProfilePanelOpen] = useState(false);
   // Profile menu state moved to ProfileButton component
@@ -2205,6 +2232,35 @@ function RealTimeVoiceApp() {
       setPhoneDisabledPos(null);
     }
   }, [isCallDisabled, phoneDisabledPos]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        STREAM_MODE_STORAGE_KEY,
+        selectedStreamingMode,
+      );
+    } catch (err) {
+      logger.warn('Failed to persist streaming mode preference', err);
+    }
+  }, [selectedStreamingMode]);
+
+  const handleStreamingModeChange = useCallback(
+    (mode) => {
+      if (!mode || mode === selectedStreamingMode) {
+        return;
+      }
+      setSelectedStreamingMode(mode);
+      logger.info(`🎚️ [FRONTEND] Streaming mode updated to ${mode}`);
+    },
+    [selectedStreamingMode],
+  );
+
+  const selectedStreamingModeLabel = StreamingModeSelector.getLabel(
+    selectedStreamingMode,
+  );
 
   // Health monitoring (disabled)
   /*
@@ -3315,16 +3371,22 @@ function RealTimeVoiceApp() {
     try {
       // Get the current session ID for this browser session
       const currentSessionId = getOrCreateSessionId();
-      logger.info('📞 [FRONTEND] Initiating phone call with session_id:', currentSessionId);
-      logger.debug('📞 [FRONTEND] This session_id will be sent to backend for call mapping');
+      logger.info(
+        `📞 [FRONTEND] Initiating phone call with session_id: ${currentSessionId} (streaming_mode=${selectedStreamingMode})`,
+      );
+      logger.debug(
+        '📞 [FRONTEND] This session_id will be sent to backend for call mapping',
+      );
       
       const res = await fetch(`${API_BASE_URL}/api/v1/calls/initiate`, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ 
           target_number: targetPhoneNumber,
+          streaming_mode: selectedStreamingMode,
           context: {
-            browser_session_id: currentSessionId  // 🎯 CRITICAL: Pass browser session ID for ACS coordination
+            browser_session_id: currentSessionId,  // 🎯 Pass browser session ID for ACS coordination
+            streaming_mode: selectedStreamingMode,
           }
         }),
       });
@@ -3334,11 +3396,12 @@ function RealTimeVoiceApp() {
         return;
       }
       // show in chat
+      const readableMode = selectedStreamingModeLabel || selectedStreamingMode;
       setMessages(m => [
         ...m,
-        { speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber}` }
+        { speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber} · Mode: ${readableMode}` }
       ]);
-      appendLog("📞 Call initiated");
+      appendLog(`📞 Call initiated (mode: ${readableMode})`);
 
       // relay WS WITH session_id to monitor THIS session (including phone calls)
       logger.info('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor session:', currentSessionId);
@@ -3645,6 +3708,14 @@ function RealTimeVoiceApp() {
         <div style={styles.phoneInputSection}>
           <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
             {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
+          </div>
+          <StreamingModeSelector
+            value={selectedStreamingMode}
+            onChange={handleStreamingModeChange}
+            disabled={callActive || isCallDisabled}
+          />
+          <div style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.5 }}>
+            Active mode: {selectedStreamingModeLabel || selectedStreamingMode}. Applies to ACS PSTN calls only. Browser/WebRTC streaming remains unchanged.
           </div>
           <input
             type="tel"
