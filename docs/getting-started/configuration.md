@@ -140,7 +140,7 @@ Configure voice aliases for different scenarios:
 | Alias | Voice | Style | Use Case |
 |-------|-------|-------|----------|
 | `support_contact_center` | `en-US-JennyMultilingualNeural` | `customer-service` | Customer support calls |
-| `sales_assistant` | `en-US-AriaNeural` | `friendly` | Sales and marketing |
+| `sales_assistant` | `en-US-EmmaNeural` | `friendly` | Sales and marketing |
 | `technical_narrator` | `en-US-BrianNeural` | `newscast` | Technical documentation |
 | `casual_chat` | `en-US-SaraNeural` | `chat` | Informal conversations |
 

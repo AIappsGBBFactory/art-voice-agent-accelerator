@@ -1,0 +1,37 @@
+# agents/auth.yaml
+# Healthcare Identity Authentication agent with custom voice and VAD settings
+
+agent:
+  name: AuthAgent
+  greeting: "Hello! Welcome to our healthcare services. To verify your identity, I'll need your full name, ZIP code, and the last 4 digits of your date of birth or member ID. This call may be recorded for quality assurance. Let's start with your full name, please."
+  return_greeting: "Welcome back! Let me verify your identity again. Please provide your full name."
+
+prompts:
+  path: voice_agent_authentication.jinja
+
+# Per-agent session configuration (applied when this agent becomes active)
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+  
+  # Per-agent voice (changes when switching to this agent)
+  voice:
+    type: azure-standard
+    name: en-US-AvaNeural  # Professional voice for authentication
+  
+  # Per-agent VAD settings (optimized for auth flow - quick responses)
+  turn_detection:
+    threshold: 0.5              # Speech detection sensitivity (0.0-1.0)
+    prefix_padding_ms: 300      # Include 300ms before speech starts
+    silence_duration_ms: 500    # Wait 500ms of silence (faster for auth)
+  
+  tool_choice: auto
+
+# Tools available to this agent (by name from tools.TOOL_REGISTRY or full specs)
+tools:
+  - authenticate_caller
+  - escalate_emergency
+  - escalate_human
+  - handoff_to_scheduler
+  - handoff_to_insurance

@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from src.pools.on_demand_pool import OnDemandResourcePool
+from src.speech.auth_manager import get_speech_token_manager
 from utils.telemetry_config import setup_azure_monitor
 
 # ---------------- Monitoring ------------------------------------------------
@@ -197,6 +198,7 @@ def _build_startup_dashboard(
     return "\n".join(lines)
 
 
+
 # --------------------------------------------------------------------------- #
 #  Lifecycle Management
 # --------------------------------------------------------------------------- #
@@ -338,6 +340,43 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(app.state.tts_pool.prepare(), app.state.stt_pool.prepare())
         logger.info("speech providers ready")
 
+        loop = asyncio.get_running_loop()
+
+        # Prime Azure Speech token ahead of first request
+        try:
+            await loop.run_in_executor(None, lambda: get_speech_token_manager().get_token())
+            logger.info("Speech authentication token prepared")
+        except Exception as exc:
+            logger.warning(f"Skipping speech token warm-up: {exc}")
+
+        # Pre-warm STT so the first call does not pay the Speech SDK setup cost
+        try:
+            stt_instance = await app.state.stt_pool.acquire()
+            try:
+                stt_instance.prepare_start()
+                stt_instance.close_stream()
+            finally:
+                await app.state.stt_pool.release(stt_instance)
+            logger.info("Speech STT warm-up completed")
+        except Exception as exc:
+            logger.warning(f"Skipping STT warm-up: {exc}")
+
+        # Pre-warm TTS by synthesizing a tiny utterance on startup
+        try:
+            tts_instance = await app.state.tts_pool.acquire()
+            try:
+                await loop.run_in_executor(
+                    None,
+                    tts_instance.synthesize_to_pcm,
+                    " .",
+                    app_config.voice.default_voice,
+                )
+            finally:
+                await app.state.tts_pool.release(tts_instance)
+            logger.info("Speech TTS warm-up completed")
+        except Exception as exc:
+            logger.warning(f"Skipping TTS warm-up: {exc}")
+
     async def stop_speech_pools() -> None:
         shutdown_tasks = []
         if hasattr(app.state, "tts_pool"):
@@ -375,6 +414,12 @@ async def lifespan(app: FastAPI):
     add_step("services", start_external_services)
 
     async def start_agents() -> None:
+        AGENT_AUTH_CONFIG="apps/rtagent/backend/src/agents/artagent/agent_store/auth_agent.yaml"
+        AGENT_CONTRACT_RENEWAL="apps/rtagent/backend/src/agents/artagent/agent_store/contract_renewal_agent.yaml"
+        AGENT_GENERAL_INFO_CONFIG="apps/rtagent/backend/src/agents/artagent/agent_store/general_info_agent.yaml"
+        AGENT_GENERAL_ELEVATOR_INFO_CONFIG="apps/rtagent/backend/src/agents/artagent/agent_store/general_elevator_info_agent.yaml"
+        AGENT_SUPPORT_INTAKE_CONFIG="apps/rtagent/backend/src/agents/artagent/agent_store/support_intake_agent.yaml"
+
         app.state.auth_agent = ARTAgent(config_path=AGENT_AUTH_CONFIG)
         app.state.fraud_agent = ARTAgent(config_path=AGENT_FRAUD_CONFIG)
         app.state.agency_agent = ARTAgent(config_path=AGENT_AGENCY_CONFIG)
@@ -382,6 +427,12 @@ async def lifespan(app: FastAPI):
         app.state.trading_agent = ARTAgent(config_path=AGENT_TRADING_CONFIG)
         app.state.promptsclient = PromptManager()
         logger.info("agents initialized")
+    # async def start_agents() -> None:
+    #     app.state.auth_agent = ARTAgent(config_path=AGENT_AUTH_CONFIG)
+    #     app.state.claim_intake_agent = ARTAgent(config_path=AGENT_CLAIM_INTAKE_CONFIG)
+    #     app.state.general_info_agent = ARTAgent(config_path=AGENT_GENERAL_INFO_CONFIG)
+    #     app.state.promptsclient = PromptManager()
+    #     logger.info("agents initialized")
 
     add_step("agents", start_agents)
 

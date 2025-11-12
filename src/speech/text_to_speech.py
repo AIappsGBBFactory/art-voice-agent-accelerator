@@ -433,7 +433,7 @@ class SpeechSynthesizer:
         # Memory synthesis for processing
         audio_bytes = synthesizer.synthesize_speech(
             "This is synthesized audio data",
-            voice="en-US-AriaNeural"
+            voice="en-US-EmmaNeural"
         )
 
         # Streaming frames for real-time applications
@@ -551,7 +551,7 @@ class SpeechSynthesizer:
             synthesizer = SpeechSynthesizer(
                 key="your-speech-key",
                 region="eastus",
-                voice="en-US-AriaNeural",
+                voice="en-US-EmmaNeural",
                 playback="auto"
             )
 

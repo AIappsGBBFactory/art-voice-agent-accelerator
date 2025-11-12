@@ -38,7 +38,11 @@ from config import GREETING, STT_PROCESSING_TIMEOUT
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     send_response_to_acs,
     broadcast_message,
+    send_user_transcript,
+    send_user_partial_transcript,
+    send_session_envelope,
 )
+from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
 from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
 from src.enums.stream_modes import StreamMode
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
@@ -209,7 +213,37 @@ class ThreadBridge:
                     f"[{self.call_connection_id}] Enqueued speech event type={event.event_type.value} qsize={speech_queue.qsize()}"
                 )
         except asyncio.QueueFull:
-            logger.warning(f"[{self.call_connection_id}] Speech queue full, dropping event")
+            # Emergency clear oldest events if queue is consistently full
+            queue_size = speech_queue.qsize()
+            logger.warning(
+                f"[{self.call_connection_id}] Speech queue full (size={queue_size}), attempting emergency clear"
+            )
+            
+            # Try to clear old events to make room for new ones
+            cleared_count = 0
+            max_clear = min(3, queue_size // 2)  # Clear up to 3 events or half the queue
+            
+            for _ in range(max_clear):
+                try:
+                    old_event = speech_queue.get_nowait()
+                    cleared_count += 1
+                    logger.debug(
+                        f"[{self.call_connection_id}] Cleared old event: {old_event.event_type.value}"
+                    )
+                except asyncio.QueueEmpty:
+                    break
+            
+            # Now try to add the new event
+            try:
+                speech_queue.put_nowait(event)
+                logger.info(
+                    f"[{self.call_connection_id}] After emergency clear ({cleared_count} events), "
+                    f"successfully queued {event.event_type.value} (qsize={speech_queue.qsize()})"
+                )
+            except asyncio.QueueFull:
+                logger.error(
+                    f"[{self.call_connection_id}] Queue still full after emergency clear, dropping event {event.event_type.value}"
+                )
         except Exception:
             # Fallback to run_coroutine_threadsafe
             if self.main_loop and not self.main_loop.is_closed():
@@ -244,12 +278,14 @@ class SpeechSDKThread:
         thread_bridge: ThreadBridge,
         barge_in_handler: Callable,
         speech_queue: asyncio.Queue,
+        websocket: WebSocket,
     ):
         self.call_connection_id = call_connection_id
         self.recognizer = recognizer
         self.thread_bridge = thread_bridge
         self.barge_in_handler = barge_in_handler
         self.speech_queue = speech_queue
+        self.websocket = websocket
         self.thread_obj: Optional[threading.Thread] = None
         self.thread_running = False
         self.recognizer_started = False
@@ -331,6 +367,23 @@ class SpeechSDKThread:
                     logger.error(
                         f"[{self.call_connection_id}] Barge-in error: {e}"
                     )
+                trimmed = text.strip()
+                loop = self.thread_bridge.main_loop
+                if loop and not loop.is_closed():
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            send_user_partial_transcript(
+                                self.websocket,
+                                trimmed,
+                                language=lang,
+                                speaker_id=speaker_id,
+                            ),
+                            loop,
+                        )
+                    except Exception as send_exc:
+                        logger.debug(
+                            f"[{self.call_connection_id}] Failed to emit partial transcript: {send_exc}"
+                        )
             else:
                 logger.debug(
                     f"[{self.call_connection_id}] Partial result too short, ignoring"
@@ -566,25 +619,22 @@ class RouteTurnThread:
                     return
 
                 # Broadcast user transcription to dashboard
-                if (
-                    hasattr(self.memory_manager, "session_id")
-                    and self.memory_manager.session_id
-                ):
-                    try:
-                        await broadcast_message(
-                            connected_clients=None,  # Ignored for safety
-                            message=event.text,
-                            sender="User",
-                            app_state=self.websocket.app.state,
-                            session_id=self.memory_manager.session_id,
-                        )
-                        logger.info(
-                            f"[{self.call_connection_id}] Broadcasting user transcript: '{event.text[:50]}...' to session: {self.memory_manager.session_id}"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"[{self.call_connection_id}] Failed to broadcast user transcript: {e}"
-                        )
+                session_for_emit = (
+                    getattr(self.memory_manager, "session_id", None)
+                    or getattr(self.websocket.state, "session_id", None)
+                )
+                try:
+                    await send_user_transcript(
+                        self.websocket,
+                        event.text,
+                        session_id=session_for_emit,
+                        conn_id=None,
+                        broadcast_only=True,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.call_connection_id}] Failed to emit user transcript: {e}"
+                    )
 
                 if self.orchestrator_func:
                     coro = self.orchestrator_func(
@@ -647,6 +697,74 @@ class RouteTurnThread:
                     logger.info(
                         f"[{event.speaker_id}] Starting {playback_type} playback (len={len(event.text)} chars)"
                     )
+
+                if event.event_type == SpeechEventType.GREETING:
+                    if self.memory_manager:
+                        try:
+                            app_state = getattr(self.websocket, "app", None)
+                            app_state = getattr(app_state, "state", None)
+                            auth_agent = getattr(app_state, "auth_agent", None)
+                            agent_name = getattr(auth_agent, "name", None) if auth_agent else None
+                            if not agent_name:
+                                agent_name = self.memory_manager.get_value_from_corememory(
+                                    "active_agent", None
+                                )
+                            if not agent_name:
+                                agent_name = "AutoAuth"
+
+                            history = self.memory_manager.get_history(agent_name)
+                            last_entry = history[-1] if history else None
+                            last_content = (
+                                last_entry.get("content")
+                                if isinstance(last_entry, dict)
+                                else None
+                            )
+                            if last_content != event.text:
+                                self.memory_manager.append_to_history(
+                                    agent_name, "assistant", event.text
+                                )
+
+                            if not self.memory_manager.get_value_from_corememory(
+                                "greeting_sent", False
+                            ):
+                                self.memory_manager.update_corememory(
+                                    "greeting_sent", True
+                                )
+                            if not self.memory_manager.get_value_from_corememory(
+                                "active_agent", None
+                            ):
+                                self.memory_manager.update_corememory(
+                                    "active_agent", agent_name
+                                )
+                        except Exception as cm_exc:  # noqa: BLE001
+                            logger.warning(
+                                f"[{self.call_connection_id}] Failed to record greeting context: {cm_exc}"
+                            )
+                    session_for_emit = (
+                        getattr(self.memory_manager, "session_id", None)
+                        or getattr(self.websocket.state, "session_id", None)
+                        or getattr(self.websocket.state, "call_connection_id", None)
+                    )
+                    if session_for_emit:
+                        greeting_envelope = make_status_envelope(
+                            event.text,
+                            sender="System",
+                            topic="session",
+                            session_id=session_for_emit,
+                        )
+                        try:
+                            await send_session_envelope(
+                                self.websocket,
+                                greeting_envelope,
+                                session_id=session_for_emit,
+                                conn_id=None,
+                                event_label="acs_greeting",
+                                broadcast_only=True,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                f"[{self.call_connection_id}] Failed to broadcast greeting to UI: {exc}"
+                            )
 
                 if not isinstance(event.text, str):
                     logger.warning(
@@ -718,14 +836,25 @@ class RouteTurnThread:
         try:
             # Clear speech queue
             queue_size = self.speech_queue.qsize()
+            cleared_count = 0
+            
             while not self.speech_queue.empty():
                 try:
                     self.speech_queue.get_nowait()
+                    cleared_count += 1
                 except asyncio.QueueEmpty:
                     break
 
-            if queue_size > 2:  # Only log if significant clearing
-                logger.info(f"[{self.call_connection_id}] Cleared {queue_size} stale events")
+            if cleared_count > 2:  # Only log if significant clearing
+                logger.info(
+                    f"[{self.call_connection_id}] Cleared {cleared_count} stale events during barge-in "
+                    f"(queue was {queue_size}/{self.speech_queue.maxsize})"
+                )
+            elif queue_size >= self.speech_queue.maxsize * 0.8:  # Log if queue was getting full
+                logger.warning(
+                    f"[{self.call_connection_id}] Speech queue was nearly full ({queue_size}/{self.speech_queue.maxsize}) "
+                    f"during barge-in, cleared {cleared_count} events"
+                )
 
             # Cancel current response task
             if self.current_response_task and not self.current_response_task.done():
@@ -753,6 +882,29 @@ class RouteTurnThread:
                 await self.processing_task
             except asyncio.CancelledError:
                 pass
+        
+        # Clear any remaining events in speech queue to prevent buildup across sessions
+        await self._clear_speech_queue()
+    
+    async def _clear_speech_queue(self):
+        """Clear any remaining events from the speech queue."""
+        try:
+            queue_size = self.speech_queue.qsize()
+            if queue_size > 0:
+                # Drain all remaining events
+                cleared_count = 0
+                while not self.speech_queue.empty():
+                    try:
+                        self.speech_queue.get_nowait()
+                        cleared_count += 1
+                    except asyncio.QueueEmpty:
+                        break
+                
+                logger.info(
+                    f"[{self.call_connection_id}] Cleared {cleared_count} remaining speech events from queue during stop"
+                )
+        except Exception as e:
+            logger.error(f"[{self.call_connection_id}] Error clearing speech queue: {e}")
 
 
 class MainEventLoop:
@@ -788,6 +940,7 @@ class MainEventLoop:
         # Remove hard limit on concurrent audio tasks - let system scale naturally
         # Previous limit of 50 was a major bottleneck for concurrency
         self.max_concurrent_audio_tasks = None  # No artificial limit
+        self.playback_lock = asyncio.Lock()
 
     async def handle_barge_in(self):
         """Handle barge-in interruption."""
@@ -1049,6 +1202,8 @@ class ACSMediaHandler:
             candidate_languages=["en-US", "fr-FR", "de-DE", "es-ES", "it-IT"],
             vad_silence_timeout_ms=800,
             audio_format="pcm",
+            use_semantic_segmentation=False,
+            enable_diarisation=False,
         )
 
         # Cross-thread communication
@@ -1074,6 +1229,7 @@ class ACSMediaHandler:
             thread_bridge=self.thread_bridge,
             barge_in_handler=self.main_event_loop.handle_barge_in,
             speech_queue=self.speech_queue,
+            websocket=websocket,
         )
         self.thread_bridge.set_route_turn_thread(self.route_turn_thread)
 
@@ -1105,6 +1261,14 @@ class ACSMediaHandler:
 
                 # Start threads
                 self.speech_sdk_thread.prepare_thread()
+                # Ensure recognizer starts immediately instead of waiting for first audio packet
+                for _ in range(10):
+                    if self.speech_sdk_thread.thread_running:
+                        break
+                    await asyncio.sleep(0.05)
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self.speech_sdk_thread.start_recognizer
+                )
                 await self.route_turn_thread.start()
 
                 logger.info(f"[{self.call_connection_id}] Media handler started")
@@ -1172,6 +1336,16 @@ class ACSMediaHandler:
                         f"[{self.call_connection_id}] Error cleaning up main event loop: {e}"
                     )
 
+                # Final cleanup: ensure speech queue is completely drained
+                try:
+                    await self._clear_speech_queue_final()
+                    logger.debug(f"[{self.call_connection_id}] Speech queue final cleanup completed")
+                except Exception as e:
+                    cleanup_errors.append(f"speech_queue_cleanup: {e}")
+                    logger.error(
+                        f"[{self.call_connection_id}] Error during final speech queue cleanup: {e}"
+                    )
+
                 if cleanup_errors:
                     logger.warning(
                         f"[{self.call_connection_id}] Media handler stopped with {len(cleanup_errors)} cleanup errors"
@@ -1184,6 +1358,27 @@ class ACSMediaHandler:
             except Exception as e:
                 logger.error(f"[{self.call_connection_id}] Critical stop error: {e}")
                 # Don't re-raise - ensure cleanup always completes
+
+    async def _clear_speech_queue_final(self):
+        """Final cleanup of speech queue during handler shutdown."""
+        try:
+            if hasattr(self, 'speech_queue') and self.speech_queue:
+                queue_size = self.speech_queue.qsize()
+                if queue_size > 0:
+                    # Drain all remaining events
+                    cleared_count = 0
+                    while not self.speech_queue.empty():
+                        try:
+                            self.speech_queue.get_nowait()
+                            cleared_count += 1
+                        except asyncio.QueueEmpty:
+                            break
+                    
+                    logger.info(
+                        f"[{self.call_connection_id}] Final cleanup: cleared {cleared_count} speech events from queue"
+                    )
+        except Exception as e:
+            logger.error(f"[{self.call_connection_id}] Error in final speech queue cleanup: {e}")
 
     @property
     def is_running(self) -> bool:

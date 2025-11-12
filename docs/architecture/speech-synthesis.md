@@ -35,7 +35,7 @@ synthesizer = SpeechSynthesizer(
 synthesizer = SpeechSynthesizer(
     key="your-speech-key",
     region="eastus",
-    voice="en-US-AriaNeural"
+    voice="en-US-EmmaNeural"
 )
 ```
 
@@ -80,7 +80,7 @@ synthesizer = SpeechSynthesizer(
 # Speak text directly
 synthesizer.start_speaking_text(
     "This will play through your speakers!",
-    voice="en-US-AriaNeural",
+    voice="en-US-EmmaNeural",
     style="excited"
 )
 
@@ -118,7 +118,7 @@ else:
 # Advanced voice styling
 audio = synthesizer.synthesize_speech(
     "Production-ready voice synthesis",
-    voice="en-US-AriaNeural",
+    voice="en-US-EmmaNeural",
     style="news",  # Available: chat, cheerful, sad, angry, etc.
     rate="+5%",    # Speed adjustment
     pitch="+2Hz",  # Pitch control

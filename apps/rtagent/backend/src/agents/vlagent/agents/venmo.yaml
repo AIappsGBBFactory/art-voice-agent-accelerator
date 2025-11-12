@@ -1,0 +1,33 @@
+# agents/venmo.yaml
+# Venmo Knowledge Agent focused on RAG-powered answers and routing
+
+agent:
+  name: VenmoAgent
+  greeting: "Hi there! I'm here to help with Venmo account and payment questions. How can I assist you today?"
+  return_greeting: "Welcome back! What else can I look up for your Venmo account?"
+
+prompts:
+  path: venmo_agent.jinja
+
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+
+  voice:
+    type: azure-standard
+    name: en-US-AvaNeural
+
+  turn_detection:
+    threshold: 0.55
+    prefix_padding_ms: 250
+    silence_duration_ms: 650
+
+  tool_choice: auto
+
+# Venmo agent tools (defined in tools.py)
+tools:
+  - search_knowledge_base
+  - handoff_to_auth
+  - escalate_emergency
+  - escalate_human

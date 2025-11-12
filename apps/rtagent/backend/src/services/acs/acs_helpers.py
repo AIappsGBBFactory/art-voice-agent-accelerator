@@ -211,7 +211,7 @@ async def play_response(
     locale: str = "en-US",
     participants: list = None,
     max_retries: int = 5,
-    initial_backoff: float = 0.5,
+    initial_backoff: float = 0.1,
 ):
     """
     Plays `response_text` into the given ACS call, using the SpeechConfig.
@@ -375,8 +375,8 @@ async def play_response_with_queue(
     locale: str = "en-US",
     participants: list = None,
     max_retries: int = 5,
-    initial_backoff: float = 0.5,
-    transcription_resume_delay: float = 1.0,
+    initial_backoff: float = 0.1,
+    transcription_resume_delay: float = 0.1,
 ):
     """
     Enhanced play_response that supports message queuing for sequential playback.

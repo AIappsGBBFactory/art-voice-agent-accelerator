@@ -32,7 +32,11 @@ from config import (
 )
 from src.tools.latency_tool import LatencyTool
 from apps.rtagent.backend.src.services.acs.acs_helpers import play_response_with_queue
-from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
+from apps.rtagent.backend.src.ws_helpers.envelopes import (
+    make_envelope,
+    make_event_envelope,
+    make_status_envelope,
+)
 from apps.rtagent.backend.src.services.speech_services import SpeechSynthesizer
 from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
@@ -112,6 +116,84 @@ def _ws_is_connected(ws: WebSocket) -> bool:
     return (
         ws.client_state == WebSocketState.CONNECTED
         and ws.application_state == WebSocketState.CONNECTED
+    )
+
+
+async def send_user_transcript(
+    ws: WebSocket,
+    text: str,
+    *,
+    session_id: Optional[str] = None,
+    conn_id: Optional[str] = None,
+    broadcast_only: bool = False,
+) -> None:
+    """Emit a user transcript using the standard session envelope.
+
+    Aligns ACS transcripts with the realtime conversation flow so dashboards
+    and the UI render user bubbles consistently.
+    """
+    payload_session_id = session_id or getattr(ws.state, "session_id", None)
+    resolved_conn = None if broadcast_only else (conn_id or getattr(ws.state, "conn_id", None))
+
+    envelope_payload = make_envelope(
+        etype="event",
+        sender="User",
+        payload={
+            "type": "user",
+            "sender": "User",
+            "message": text,
+            "content": text,
+        },
+        topic="session",
+        session_id=payload_session_id,
+    )
+
+    await send_session_envelope(
+        ws,
+        envelope_payload,
+        session_id=payload_session_id,
+        conn_id=resolved_conn,
+        event_label="user_transcript",
+        broadcast_only=broadcast_only,
+    )
+
+
+async def send_user_partial_transcript(
+    ws: WebSocket,
+    text: str,
+    *,
+    language: Optional[str] = None,
+    speaker_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> None:
+    """Emit partial user speech updates for ACS parity with realtime."""
+    payload_session_id = session_id or getattr(ws.state, "session_id", None)
+
+    partial_payload = {
+        "type": "streaming",
+        "streaming_type": "stt_partial",
+        "content": text,
+        "language": language,
+        "speaker_id": speaker_id,
+        "session_id": payload_session_id,
+        "is_final": False,
+    }
+
+    envelope = make_event_envelope(
+        event_type="stt_partial",
+        event_data=partial_payload,
+        sender="STT",
+        topic="session",
+        session_id=payload_session_id,
+    )
+
+    await send_session_envelope(
+        ws,
+        envelope,
+        session_id=payload_session_id,
+        conn_id=None,
+        event_label="user_transcript_partial",
+        broadcast_only=True,
     )
 
 
@@ -645,7 +727,12 @@ async def send_response_to_acs(
                 logger.warning("ACS MEDIA: Temporarily acquired TTS synthesizer from pool")
             except Exception as e:
                 logger.error(f"ACS MEDIA: Unable to acquire TTS synthesizer (run={run_id}): {e}")
-                _lt_stop(latency_tool, "tts", ws, meta={"run_id": run_id, "mode": "acs", "error": "acquire_failed"})
+                _lt_stop(
+                    latency_tool,
+                    "tts",
+                    ws,
+                    meta={"run_id": run_id, "mode": "acs", "error": "acquire_failed"},
+                )
                 playback_status = "acquire_failed"
                 _record_status(playback_status)
                 return None
@@ -657,178 +744,29 @@ async def send_response_to_acs(
                 voice_to_use,
                 len(text),
             )
-            playback_status = "started"
-            playback_task = asyncio.current_task()
-            if main_event_loop and playback_task:
-                main_event_loop.current_playback_task = playback_task
-            try:
-                pcm_bytes = await asyncio.to_thread(
-                    synth.synthesize_to_pcm,
-                    text,
-                    voice_to_use,
-                    TTS_SAMPLE_RATE_ACS,
-                    style,
-                    eff_rate,
-                )
-            except RuntimeError as synth_err:
-                logger.warning(
-                    "ACS MEDIA: Primary TTS failed (run=%s). Retrying without style/rate. error=%s",
-                    run_id,
-                    synth_err,
-                )
-                pcm_bytes = await asyncio.to_thread(
-                    synth.synthesize_to_pcm,
-                    text,
-                    voice_to_use,
-                    TTS_SAMPLE_RATE_ACS,
-                    "",
-                    "",
-                )
-
-            # Split into frames for ACS
-            frames = SpeechSynthesizer.split_pcm_to_base64_frames(
-                pcm_bytes, sample_rate=TTS_SAMPLE_RATE_ACS
-            )
-
-            if not frames and pcm_bytes:
-                frame_size_bytes = int(0.02 * TTS_SAMPLE_RATE_ACS * 2)
-                logger.warning(
-                    "ACS MEDIA: Frame split returned no frames; padding and retrying (run=%s)",
-                    run_id,
-                )
-                padded_pcm = pcm_bytes + b"\x00" * frame_size_bytes
-                frames = SpeechSynthesizer.split_pcm_to_base64_frames(
-                    padded_pcm, sample_rate=TTS_SAMPLE_RATE_ACS
-                )
-
-            frame_count = len(frames)
-            estimated_duration = frame_count * 0.02
-            total_bytes = len(pcm_bytes)
-            logger.debug(
-                "ACS MEDIA: Prepared frames (run=%s, frames=%s, bytes=%s, est_duration=%.2fs)",
-                run_id,
-                frame_count,
-                total_bytes,
-                estimated_duration,
-            )
-
-            sequence_id = 0
-            for frame in frames:
-                if not _ws_is_connected(ws):
-                    logger.info(
-                        "ACS MEDIA: WebSocket closing; stopping frame send (run=%s)",
-                        run_id,
-                    )
-                    break
-                lt = _get_connection_metadata(ws, "lt")
-                greeting_ttfb_stopped = _get_connection_metadata(
-                    ws, "_greeting_ttfb_stopped", False
-                )
-
-                if lt and not greeting_ttfb_stopped:
-                    lt.stop("greeting_ttfb", ws.app.state.redis)
-                    _set_connection_metadata(ws, "_greeting_ttfb_stopped", True)
-
-                try:
-                    await ws.send_json(
-                        {
-                            "kind": "AudioData",
-                            "AudioData": {"data": frame, "sequenceId": sequence_id},
-                            "StopAudio": None,
-                        }
-                    )
-                    sequence_id += 1
-                    await asyncio.sleep(0.02)
-                except asyncio.CancelledError:
-                    logger.info(
-                        "ACS MEDIA: Frame loop cancelled (run=%s, seq=%s)",
-                        run_id,
-                        sequence_id,
-                    )
-                    playback_status = "cancelled"
-                    _record_status(playback_status)
-                    raise
-                except Exception as e:
-                    if not _ws_is_connected(ws):
-                        logger.info(
-                            "ACS MEDIA: WebSocket closed during frame send (run=%s)",
-                            run_id,
-                        )
-                    else:
-                        logger.error(
-                            "Failed to send ACS audio frame (run=%s): %s | text_preview=%s",
-                            run_id,
-                            e,
-                            (text[:40] + "...") if len(text) > 40 else text,
-                        )
-                    playback_status = "failed"
-                    _record_status(playback_status)
-                    break
-
-            logger.info(
-                "ACS MEDIA: Completed TTS synthesis (run=%s, frames=%s, bytes=%s, duration=%.2fs)",
-                run_id,
-                frame_count,
-                total_bytes,
-                estimated_duration,
-            )
-
-            if frames:
-                if not _ws_is_connected(ws):
-                    logger.debug(
-                        "ACS MEDIA: WebSocket closing; skipping StopAudio send (run=%s)",
-                        run_id,
-                    )
-                    playback_status = "interrupted"
-                    _record_status(playback_status)
-                else:
-                    try:
-                        await ws.send_json(
-                            {"kind": "StopAudio", "AudioData": None, "StopAudio": {}}
-                        )
-                        logger.debug(
-                            "ACS MEDIA: Sent StopAudio after playback (run=%s)", run_id
-                        )
-                        playback_status = "completed"
-                        _record_status(playback_status)
-                    except Exception as e:
-                        if not _ws_is_connected(ws):
-                            logger.debug(
-                                "ACS MEDIA: WebSocket closed before StopAudio send (run=%s)",
-                                run_id,
-                            )
-                        else:
-                            logger.warning(
-                                "ACS MEDIA: Failed to send StopAudio (run=%s): %s",
-                                run_id,
-                                e,
-                            )
-                        playback_status = "interrupted"
-                        _record_status(playback_status)
-            else:
-                playback_status = "no_audio"
-                _record_status(playback_status)
-
-        except asyncio.TimeoutError:
-            logger.error(
-                "ACS MEDIA: TTS synthesis timed out (run=%s, voice=%s, text_preview=%s)",
-                run_id,
+            pcm_bytes = await asyncio.to_thread(
+                synth.synthesize_to_pcm,
+                text,
                 voice_to_use,
-                (text[:40] + "...") if len(text) > 40 else text,
+                TTS_SAMPLE_RATE_ACS,
+                style,
+                eff_rate,
             )
-            frames = []
-            playback_status = "timeout"
-            _record_status(playback_status)
-        except asyncio.CancelledError:
-            logger.info(
-                "ACS MEDIA: Playback cancelled by barge-in (run=%s)",
+        except RuntimeError as synth_err:
+            logger.warning(
+                "ACS MEDIA: Primary TTS failed (run=%s). Retrying without style/rate. error=%s",
                 run_id,
+                synth_err,
             )
-            playback_status = "cancelled"
-            _record_status(playback_status)
-            raise
+            pcm_bytes = await asyncio.to_thread(
+                synth.synthesize_to_pcm,
+                text,
+                voice_to_use,
+                TTS_SAMPLE_RATE_ACS,
+                "",
+                "",
+            )
         except Exception as e:
-            frames = []
             logger.error(
                 "Failed to produce ACS audio (run=%s): %s | text_preview=%s",
                 run_id,
@@ -837,33 +775,204 @@ async def send_response_to_acs(
             )
             playback_status = "failed"
             _record_status(playback_status)
-        finally:
-            if (
-                main_event_loop
-                and playback_task
-                and main_event_loop.current_playback_task is playback_task
-            ):
-                main_event_loop.current_playback_task = None
-            _lt_stop(
-                latency_tool,
-                "tts:send_frames",
-                ws,
-                meta={"run_id": run_id, "mode": "acs", "frames": len(frames)},
-            )
             _lt_stop(
                 latency_tool,
                 "tts",
                 ws,
-                meta={"run_id": run_id, "mode": "acs", "voice": voice_to_use},
+                meta={
+                    "run_id": run_id,
+                    "mode": "acs",
+                    "voice": voice_to_use,
+                    "error": "synthesis_failure",
+                },
             )
-
             if temp_synth and synth:
                 try:
                     await ws.app.state.tts_pool.release(synth)
-                except Exception as e:
-                    logger.error(f"Error releasing temporary ACS TTS synthesizer (run={run_id}): {e}")
+                except Exception as release_exc:
+                    logger.error(
+                        f"Error releasing temporary ACS TTS synthesizer (run={run_id}): {release_exc}"
+                    )
+            return None
 
-        return None
+        frames = SpeechSynthesizer.split_pcm_to_base64_frames(
+            pcm_bytes, sample_rate=TTS_SAMPLE_RATE_ACS
+        )
+
+        if not frames and pcm_bytes:
+            frame_size_bytes = int(0.02 * TTS_SAMPLE_RATE_ACS * 2)
+            logger.warning(
+                "ACS MEDIA: Frame split returned no frames; padding and retrying (run=%s)",
+                run_id,
+            )
+            padded_pcm = pcm_bytes + b"\x00" * frame_size_bytes
+            frames = SpeechSynthesizer.split_pcm_to_base64_frames(
+                padded_pcm, sample_rate=TTS_SAMPLE_RATE_ACS
+            )
+
+        if not frames:
+            playback_status = "no_audio"
+            _record_status(playback_status)
+            _lt_stop(
+                latency_tool,
+                "tts",
+                ws,
+                meta={"run_id": run_id, "mode": "acs", "voice": voice_to_use, "frames": 0},
+            )
+            if temp_synth and synth:
+                try:
+                    await ws.app.state.tts_pool.release(synth)
+                except Exception as release_exc:
+                    logger.error(
+                        f"Error releasing temporary ACS TTS synthesizer (run={run_id}): {release_exc}"
+                    )
+            return None
+
+        frame_count = len(frames)
+        estimated_duration = frame_count * 0.02
+        total_bytes = len(pcm_bytes)
+        logger.debug(
+            "ACS MEDIA: Prepared frames (run=%s, frames=%s, bytes=%s, est_duration=%.2fs)",
+            run_id,
+            frame_count,
+            total_bytes,
+            estimated_duration,
+        )
+        pcm_bytes = None
+
+        class _NullAsyncLock:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        playback_lock = getattr(main_event_loop, "playback_lock", None) if main_event_loop else None
+        lock_cm = playback_lock if playback_lock is not None else _NullAsyncLock()
+
+        async def _stream_frames() -> None:
+            nonlocal frames, playback_status, synth, temp_synth
+            async with lock_cm:
+                playback_task_local = asyncio.current_task()
+                if main_event_loop and playback_task_local:
+                    main_event_loop.current_playback_task = playback_task_local
+                try:
+                    playback_status = "started"
+                    _record_status(playback_status)
+                    sequence_id = 0
+                    for frame in frames:
+                        if not _ws_is_connected(ws):
+                            logger.info(
+                                "ACS MEDIA: WebSocket closing; stopping frame send (run=%s)",
+                                run_id,
+                            )
+                            playback_status = "interrupted"
+                            _record_status(playback_status)
+                            break
+
+                        lt = _get_connection_metadata(ws, "lt")
+                        greeting_ttfb_stopped = _get_connection_metadata(
+                            ws, "_greeting_ttfb_stopped", False
+                        )
+
+                        if lt and not greeting_ttfb_stopped:
+                            lt.stop("greeting_ttfb", ws.app.state.redis)
+                            _set_connection_metadata(ws, "_greeting_ttfb_stopped", True)
+
+                        try:
+                            await ws.send_json(
+                                {
+                                    "kind": "AudioData",
+                                    "AudioData": {"data": frame, "sequenceId": sequence_id},
+                                    "StopAudio": None,
+                                }
+                            )
+                            sequence_id += 1
+                            await asyncio.sleep(0.02)
+                        except asyncio.CancelledError:
+                            logger.info(
+                                "ACS MEDIA: Frame loop cancelled (run=%s, seq=%s)",
+                                run_id,
+                                sequence_id,
+                            )
+                            playback_status = "cancelled"
+                            _record_status(playback_status)
+                            raise
+                        except Exception as frame_exc:
+                            if not _ws_is_connected(ws):
+                                logger.info(
+                                    "ACS MEDIA: WebSocket closed during frame send (run=%s)",
+                                    run_id,
+                                )
+                            else:
+                                logger.error(
+                                    "Failed to send ACS audio frame (run=%s, seq=%s): %s",
+                                    run_id,
+                                    sequence_id,
+                                    frame_exc,
+                                )
+                            playback_status = "failed"
+                            _record_status(playback_status)
+                            break
+                    else:
+                        if _ws_is_connected(ws):
+                            try:
+                                await ws.send_json(
+                                    {"kind": "StopAudio", "AudioData": None, "StopAudio": {}}
+                                )
+                                logger.debug(
+                                    "ACS MEDIA: Sent StopAudio after playback (run=%s)", run_id
+                                )
+                                playback_status = "completed"
+                                _record_status(playback_status)
+                            except Exception as stop_exc:
+                                if not _ws_is_connected(ws):
+                                    logger.debug(
+                                        "ACS MEDIA: WebSocket closed before StopAudio send (run=%s)",
+                                        run_id,
+                                    )
+                                else:
+                                    logger.warning(
+                                        "ACS MEDIA: Failed to send StopAudio (run=%s): %s",
+                                        run_id,
+                                        stop_exc,
+                                    )
+                                playback_status = "interrupted"
+                                _record_status(playback_status)
+                finally:
+                    if (
+                        main_event_loop
+                        and playback_task_local
+                        and main_event_loop.current_playback_task is playback_task_local
+                    ):
+                        main_event_loop.current_playback_task = None
+                    _lt_stop(
+                        latency_tool,
+                        "tts:send_frames",
+                        ws,
+                        meta={"run_id": run_id, "mode": "acs", "frames": len(frames)},
+                    )
+                    _lt_stop(
+                        latency_tool,
+                        "tts",
+                        ws,
+                        meta={"run_id": run_id, "mode": "acs", "voice": voice_to_use},
+                    )
+                    if temp_synth and synth:
+                        try:
+                            await ws.app.state.tts_pool.release(synth)
+                        except Exception as release_exc:
+                            logger.error(
+                                f"Error releasing temporary ACS TTS synthesizer (run={run_id}): {release_exc}"
+                            )
+
+        _record_status("queued")
+        stream_task = asyncio.create_task(_stream_frames())
+
+        if blocking:
+            await stream_task
+            return None
+        return stream_task
 
     elif stream_mode == StreamMode.TRANSCRIPTION:
         # TRANSCRIPTION mode - queue with ACS caller
@@ -939,7 +1048,6 @@ async def push_final(
             session_id=getattr(ws.state, "session_id", None),
             conn_id=conn_id,
             event_label="assistant_final",
-            broadcast_only=is_acs,
         )
         if is_acs:
             logger.debug(
