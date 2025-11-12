@@ -143,10 +143,19 @@ class LiveOrchestrator:
         else:
             # Business tool - log result and send back via conversation.item.create
             success_indicator = "✓" if result.get("authenticated") or result.get("success") else "✗"
+            safe_result = {}
+            for key, value in result.items():
+                if key == "message":
+                    continue
+                text = str(value)
+                safe_result[key] = text if len(text) <= 50 else f"{text[:47]}..."
+            pretty_result = json.dumps(safe_result, indent=2, ensure_ascii=False)
             logger.info(
-                "[%s] Tool '%s' %s | Result: %s",
-                self.active, name, success_indicator, 
-                {k: v for k, v in result.items() if k not in ["message"]}  # Log key fields only
+                "[%s] Tool '%s' %s | Result:\n%s",
+                self.active,
+                name,
+                success_indicator,
+                pretty_result,
             )
             
             output_item = FunctionCallOutputItem(

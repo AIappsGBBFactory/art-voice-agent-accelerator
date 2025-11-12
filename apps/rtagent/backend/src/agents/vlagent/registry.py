@@ -11,4 +11,5 @@ def load_registry(agents_dir: str = "agents") -> Dict[str, AzureLiveVoiceAgent]:
 HANDOFF_MAP: Dict[str, str] = {
     "handoff_to_scheduler": "Scheduler",
     "handoff_to_insurance": "Insurance",
+    "handoff_to_auth": "AuthAgent",
 }

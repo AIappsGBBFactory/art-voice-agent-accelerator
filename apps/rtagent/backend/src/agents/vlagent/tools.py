@@ -12,18 +12,32 @@ Benefits:
 ✅ Simpler testing and maintenance
 """
 from __future__ import annotations
+import os
 import sys
-from pathlib import Path
-from typing import Dict, Any, List, Union
-from azure.ai.voicelive.models import FunctionTool
 import asyncio
+import time
+from pathlib import Path
+from typing import Dict, Any, List, Union, Optional
+
+from azure.ai.voicelive.models import FunctionTool
+from dotenv import load_dotenv
 
 # Add project root to path for utils and src imports
 project_root = Path(__file__).resolve().parents[3]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+load_dotenv()
+
 from utils.ml_logging import get_logger
+from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
+    DEFAULT_COLLECTION_NAME,
+    DEFAULT_DATABASE_NAME,
+    DEFAULT_NUM_CANDIDATES,
+    DEFAULT_TOP_K,
+    schedule_cosmos_retriever_warmup,
+    one_shot_query,
+)
 
 logger = get_logger("voicelive.tools")
 
@@ -33,6 +47,14 @@ try:
 except ImportError:
     logger.warning("CosmosDB manager not available - authentication will use mock data")
     CosmosDBMongoCoreManager = None
+
+
+# Kick off Cosmos vector retriever warmup without blocking the main thread.
+try:
+    if schedule_cosmos_retriever_warmup():
+        logger.debug("Background Cosmos retriever warmup scheduled")
+except Exception as exc:  # pragma: no cover - best effort bootstrapping
+    logger.debug("Cosmos retriever warmup scheduling skipped: %s", exc)
 
 # =============================================================================
 # Tool Schema Registry
@@ -66,6 +88,24 @@ TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
                 "reason": {"type": "string", "description": "Why the user needs insurance help"},
                 "topic": {"type": "string", "description": "Optional: benefits|eligibility|copay|deductible|claim|meds"},
                 "details": {"type": "string", "description": "Short context"},
+            },
+            "required": ["reason"],
+        },
+    },
+    "handoff_to_auth": {
+        "name": "handoff_to_auth",
+        "description": "Transfer caller to the Authentication agent for identity verification and routing support.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Why the caller needs the authentication specialist (e.g., 'general account help').",
+                },
+                "details": {
+                    "type": "string",
+                    "description": "Optional context gathered prior to handoff.",
+                },
             },
             "required": ["reason"],
         },
@@ -180,6 +220,40 @@ TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
                 "attempt": {"type": "integer", "description": "Authentication attempt counter (default: 1)"}
             },
             "required": ["full_name"]
+        },
+    },
+
+    # ===== KNOWLEDGE BASE =====
+    "search_knowledge_base": {
+        "name": "search_knowledge_base",
+        "description": "Retrieve relevant knowledge base articles from Cosmos DB using semantic vector search.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "User question or keywords to search for within the knowledge base.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "Maximum number of articles to return (defaults to service configuration).",
+                    "minimum": 1,
+                },
+                "num_candidates": {
+                    "type": "integer",
+                    "description": "Candidate pool size considered during vector search (defaults to service configuration).",
+                    "minimum": 1,
+                },
+                "database": {
+                    "type": "string",
+                    "description": "Override Cosmos DB database name (defaults to paypalragdb).",
+                },
+                "collection": {
+                    "type": "string",
+                    "description": "Override Cosmos DB collection name (defaults to vectorstorecollection).",
+                },
+            },
+            "required": ["query"],
         },
     },
     
@@ -333,6 +407,181 @@ async def authenticate_caller(
             "attempt": attempt,
             "active_agent": "AutoAuth"
         }
+
+
+# ========================================
+# 📚 KNOWLEDGE BASE TOOLS
+# ========================================
+
+
+async def search_knowledge_base(
+    query: str,
+    top_k: Optional[int] = None,
+    num_candidates: Optional[int] = None,
+    database: Optional[str] = None,
+    collection: Optional[str] = None,
+    doc_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Retrieve knowledge base articles via Cosmos DB vector search without blocking the event loop."""
+    import time
+
+    kb_logger = get_logger("voicelive.knowledge")
+    query_text = (query or "").strip()
+    if not query_text:
+        kb_logger.warning("Knowledge base search skipped: empty query")
+        return {
+            "success": False,
+            "message": "Knowledge base query must not be empty.",
+            "results": [],
+            "active_agent": "Knowledge"
+        }
+
+    default_top_k = DEFAULT_TOP_K
+    default_num_candidates = DEFAULT_NUM_CANDIDATES
+    default_database = DEFAULT_DATABASE_NAME
+    default_collection = DEFAULT_COLLECTION_NAME
+    default_vector_index = (
+        os.environ.get("VOICELIVE_KB_VECTOR_INDEX")
+        or os.environ.get("AZURE_COSMOS_VECTOR_INDEX_NAME")
+        or os.environ.get("COSMOS_VECTOR_INDEX_NAME")
+        or os.environ.get("COSMOS_VECTOR_INDEX")
+    )
+
+    effective_top_k = int(top_k) if top_k is not None else default_top_k
+    if effective_top_k <= 0:
+        effective_top_k = default_top_k
+
+    effective_num_candidates = int(num_candidates) if num_candidates is not None else default_num_candidates
+    if effective_num_candidates < effective_top_k:
+        effective_num_candidates = effective_top_k
+
+    effective_database = (database or "").strip() or default_database
+    effective_collection = (collection or "").strip() or default_collection
+
+    preface_message = f"Let me look '{query_text}' up for you." if query_text else "Let me check that for you."
+
+    filter_query: Optional[Dict[str, Any]] = None
+    if doc_type:
+        filter_query = {"doc_type": doc_type}
+
+    kb_logger.info(
+        "Knowledge base search executing | query='%s' | top_k=%d | candidates=%d | db=%s | collection=%s | index=%s",
+        query_text,
+        effective_top_k,
+        effective_num_candidates,
+        effective_database,
+        effective_collection,
+        default_vector_index or "<auto>",
+    )
+
+    search_start = time.perf_counter()
+    try:
+        results, query_metrics = await asyncio.to_thread(
+            one_shot_query,
+            query_text,
+            top_k=effective_top_k,
+            num_candidates=effective_num_candidates,
+            database=effective_database,
+            collection=effective_collection,
+            filters=filter_query,
+            vector_index=default_vector_index,
+            include_metrics=True,
+        )
+    except Exception as exc:
+        kb_logger.error("Knowledge base search failed for '%s': %s", query_text, exc)
+        return {
+            "success": False,
+            "message": "Knowledge lookup hit an unexpected issue. Ask the caller to restate or narrow the question and try again before escalating.",
+            "results": [],
+            "active_agent": "Knowledge",
+            "error": str(exc),
+            "database": effective_database,
+            "collection": effective_collection,
+            "retry_advised": True,
+        }
+
+    elapsed_ms = (time.perf_counter() - search_start) * 1000.0
+    query_metrics = query_metrics or {}
+    retriever_init_ms = query_metrics.get("retriever_init_ms")
+    embedding_ms = query_metrics.get("embedding_ms")
+    aggregate_ms = query_metrics.get("aggregate_ms")
+    cosmos_total_ms = query_metrics.get("total_ms")
+    fallback_used = bool(query_metrics.get("fallback_used"))
+
+    formatted_results = [
+        {
+            "url": item.url,
+            "content": item.content,
+            "doc_type": item.doc_type,
+            "score": item.score,
+            "snippet": item.snippet,
+        }
+        for item in results
+    ]
+
+    preview_entries: List[str] = []
+    for item in formatted_results:
+        snippet = (item.get("snippet") or item.get("content") or "")[:50].replace("\n", " ")
+        preview_entries.append(f"{item.get('url', '')} :: {snippet}")
+    previews_str = "; ".join(preview_entries) if preview_entries else "<no-results>"
+
+    kb_logger.info(
+        "Knowledge base search completed | query='%s' | results=%d | top_k=%d | candidates=%d | db=%s | collection=%s | index=%s | latency=%.2fms | retriever=%.2fms | embed=%.2fms | aggregate=%.2fms | fallback=%s | previews=%s",
+        query_text,
+        len(formatted_results),
+        effective_top_k,
+        effective_num_candidates,
+        effective_database,
+        effective_collection,
+        default_vector_index or "<auto>",
+        elapsed_ms,
+        (retriever_init_ms or 0.0),
+        (embedding_ms or 0.0),
+        (aggregate_ms or 0.0),
+        fallback_used,
+        previews_str,
+    )
+
+    message = "No knowledge base articles found." if not formatted_results else f"Found {len(formatted_results)} knowledge base articles."
+
+    top_result_snippet = ""
+    top_result_url = ""
+    if formatted_results:
+        top_result = formatted_results[0]
+        top_result_snippet = (top_result.get("snippet") or top_result.get("content") or "")[:50].replace("\n", " ")
+        top_result_url = top_result.get("url", "")
+
+    response_message = (
+        "Thanks for waiting—here's what I found." if formatted_results else "Thanks for waiting. I couldn't find a solid match yet."
+    )
+
+    return {
+        "success": True,
+        "query": query_text,
+        "results": formatted_results,
+        "top_k": effective_top_k,
+        "num_candidates": effective_num_candidates,
+        "database": effective_database,
+        "collection": effective_collection,
+        "vector_index": default_vector_index,
+        "message": message,
+        "active_agent": "Knowledge",
+        "latency_ms": round(elapsed_ms, 2),
+        "preface_message": preface_message,
+        "response_message": response_message,
+        "should_interrupt_playback": bool(formatted_results),
+        "top_result_snippet": top_result_snippet,
+        "top_result_url": top_result_url,
+        "filters": filter_query or {},
+        "latency_breakdown": {
+            "retriever_init_ms": round(retriever_init_ms or 0.0, 2),
+            "embedding_ms": round(embedding_ms or 0.0, 2),
+            "aggregate_ms": round(aggregate_ms or 0.0, 2),
+            "cosmos_total_ms": round(cosmos_total_ms or 0.0, 2),
+            "tool_total_ms": round(elapsed_ms, 2),
+            "fallback_used": fallback_used,
+        },
+    }
 
 
 # ========================================
@@ -860,6 +1109,24 @@ async def handoff_to_insurance(reason: str, topic: str = "", details: str = "") 
     }
 
 
+async def handoff_to_auth(reason: str, details: str = "") -> Dict[str, Any]:
+    """Trigger handoff to the Authentication agent for broader assistance."""
+    handoff_logger3 = get_logger("voicelive.handoff")
+    handoff_logger3.info(
+        "🔀 [Handoff] VenmoAgent → AuthAgent | Reason: %s | Details: %s",
+        reason,
+        details or "<none>",
+    )
+
+    return {
+        "handoff": True,
+        "target_agent": "AuthAgent",
+        "reason": reason,
+        "details": details,
+        "message": "Connecting you with our identity and general support specialist...",
+    }
+
+
 # =============================================================================
 # Tool Registry and Execution
 # =============================================================================
@@ -871,6 +1138,7 @@ TOOL_IMPLEMENTATIONS: Dict[str, Any] = {
     # Business logic tools
     # Authentication
     "authenticate_caller": authenticate_caller,
+    "search_knowledge_base": search_knowledge_base,
     
     # Escalation tools
     "escalate_emergency": escalate_emergency,
@@ -879,6 +1147,7 @@ TOOL_IMPLEMENTATIONS: Dict[str, Any] = {
     # Handoff tools (agent switching)
     "handoff_to_scheduler": handoff_to_scheduler,
     "handoff_to_insurance": handoff_to_insurance,
+    "handoff_to_auth": handoff_to_auth,
     
     # Scheduling tools
     "check_availability": check_availability,
