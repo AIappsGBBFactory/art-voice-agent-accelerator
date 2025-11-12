@@ -41,6 +41,40 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
 
 logger = get_logger("voicelive.tools")
 
+
+def _cleanup_context(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove empty or null values to keep handoff payloads lean."""
+    return {k: v for k, v in (data or {}).items() if v not in (None, "", [], {})}
+
+
+def _build_handoff_payload(
+    *,
+    target_agent: str,
+    message: str,
+    summary: str,
+    context: Dict[str, Any],
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Create a consistent handoff response consumed by the orchestrator."""
+    sanitized_context = _cleanup_context(context)
+    payload: Dict[str, Any] = {
+        "handoff": True,
+        "target_agent": target_agent,
+        "message": message,
+        "handoff_summary": summary,
+        "handoff_context": sanitized_context,
+    }
+
+    # Maintain compatibility with legacy fields expected by downstream prompts/logs.
+    for key in ("reason", "topic", "preferred_window", "department", "details", "urgency", "complexity"):
+        if key in sanitized_context:
+            payload[key] = sanitized_context[key]
+
+    if extra:
+        payload.update(extra)
+
+    return payload
+
 # Cosmos DB manager import
 try:
     from src.cosmosdb.manager import CosmosDBMongoCoreManager
@@ -1064,15 +1098,20 @@ async def handoff_to_scheduler(reason: str, preferred_window: str = "", departme
         reason, preferred_window or "<none>", department or "<none>", details or "<none>"
     )
     
-    return {
-        "handoff": True,
-        "target_agent": "Scheduler",
+    context = {
         "reason": reason,
         "preferred_window": preferred_window,
         "department": department,
         "details": details,
-        "message": "Transferring you to our scheduling specialist..."
     }
+
+    return _build_handoff_payload(
+        target_agent="Scheduler",
+        message="Transferring you to our scheduling specialist...",
+        summary=reason,
+        context=context,
+        extra={"should_interrupt_playback": True},
+    )
 
 
 async def handoff_to_insurance(reason: str, topic: str = "", details: str = "") -> Dict[str, Any]:
@@ -1099,14 +1138,19 @@ async def handoff_to_insurance(reason: str, topic: str = "", details: str = "") 
         reason, topic or "<none>", details or "<none>"
     )
     
-    return {
-        "handoff": True,
-        "target_agent": "Insurance",
+    context = {
         "reason": reason,
         "topic": topic,
         "details": details,
-        "message": "Transferring you to our insurance benefits specialist..."
     }
+
+    return _build_handoff_payload(
+        target_agent="Insurance",
+        message="Transferring you to our insurance benefits specialist...",
+        summary=reason,
+        context=context,
+        extra={"should_interrupt_playback": True},
+    )
 
 
 async def handoff_to_auth(reason: str, details: str = "") -> Dict[str, Any]:
@@ -1118,13 +1162,18 @@ async def handoff_to_auth(reason: str, details: str = "") -> Dict[str, Any]:
         details or "<none>",
     )
 
-    return {
-        "handoff": True,
-        "target_agent": "AuthAgent",
+    context = {
         "reason": reason,
         "details": details,
-        "message": "Connecting you with our identity and general support specialist...",
     }
+
+    return _build_handoff_payload(
+        target_agent="AuthAgent",
+        message="Connecting you with our identity and general support specialist...",
+        summary=reason,
+        context=context,
+        extra={"should_interrupt_playback": True},
+    )
 
 
 # =============================================================================
