@@ -19,7 +19,7 @@ model:
 voice:
   name: en-US-FableTurboMultilingualNeural # Voice for TTS output
   style: chat # Voice style (chat, professional, friendly)
-  rate: "-2%" # Slightly slower pace for clear authentication instructions
+  rate: "+2%" # Slightly slower pace for clear authentication instructions
 
 prompts:
   path: voice_agent_authentication.jinja # input prompt
