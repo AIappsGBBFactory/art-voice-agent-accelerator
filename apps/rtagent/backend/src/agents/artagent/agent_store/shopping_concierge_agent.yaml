@@ -24,7 +24,7 @@ model:
   max_completion_tokens: 2048
 
 voice:
-  name: en-US-Ava:DragonHDLatestNeural  # Friendly, professional female voice
+  name: en-US-Andrew:DragonHDLatestNeural  # Friendly, professional female voice
   style: chat  # Approachable retail assistant tone
   rate: "+2%"  # Slightly upbeat pace for retail energy
 
