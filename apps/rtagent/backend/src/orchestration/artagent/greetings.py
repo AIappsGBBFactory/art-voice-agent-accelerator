@@ -8,6 +8,7 @@ from fastapi import WebSocket
 from .bindings import get_agent_instance
 from .cm_utils import cm_get, cm_set, get_correlation_context
 from .config import LAST_ANNOUNCED_KEY, APP_GREETS_ATTR
+from config import ACS_STREAMING_MODE
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     send_tts_audio,
@@ -208,6 +209,7 @@ async def send_agent_greeting(
         _, session_id = get_correlation_context(ws, cm)
         await broadcast_message(None, greeting, agent_sender, app_state=ws.app.state, session_id=session_id)
         try:
+            stream_mode = getattr(ws.state, "stream_mode", ACS_STREAMING_MODE)
             await send_response_to_acs(
                 ws=ws,
                 text=greeting,
@@ -216,6 +218,7 @@ async def send_agent_greeting(
                 voice_name=voice_name,
                 voice_style=voice_style,
                 rate=voice_rate,
+                stream_mode=stream_mode,
             )
         except Exception as exc:  # pragma: no cover
             logger.error("Failed to send ACS greeting audio: %s", exc)

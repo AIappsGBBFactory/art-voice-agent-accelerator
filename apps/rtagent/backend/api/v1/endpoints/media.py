@@ -78,6 +78,30 @@ tracer = trace.get_tracer(__name__)
 router = APIRouter()
 
 
+async def _resolve_call_stream_mode(redis_mgr, call_connection_id: Optional[str]) -> StreamMode:
+    """Resolve the effective streaming mode for a call, respecting overrides."""
+
+    if not call_connection_id or redis_mgr is None:
+        return ACS_STREAMING_MODE
+
+    try:
+        stored_value = await redis_mgr.get_value_async(
+            f"call_stream_mode:{call_connection_id}"
+        )
+        if stored_value:
+            if isinstance(stored_value, bytes):
+                stored_value = stored_value.decode("utf-8")
+            return StreamMode.from_string(str(stored_value))
+    except Exception as exc:
+        logger.warning(
+            "Unable to resolve stream mode override for %s: %s",
+            call_connection_id,
+            exc,
+        )
+
+    return ACS_STREAMING_MODE
+
+
 @router.get("/status", response_model=dict, summary="Get Media Streaming Status")
 async def get_media_status():
     """
@@ -201,6 +225,8 @@ async def acs_media_stream(websocket: WebSocket) -> None:
     session_id = None
     conn_id = None
     orchestrator = get_orchestrator()
+    redis_mgr = getattr(websocket.app.state, "redis", None)
+    stream_mode = ACS_STREAMING_MODE
     try:
         # Extract call_connection_id from WebSocket query parameters or headers
         query_params = dict(websocket.query_params)
@@ -245,6 +271,14 @@ async def acs_media_stream(websocket: WebSocket) -> None:
                 else f"media_{str(uuid.uuid4())[:8]}"
             )
             logger.info(f"📞 Created ACS-only session ID: {session_id}")
+
+        stream_mode = await _resolve_call_stream_mode(redis_mgr, call_connection_id)
+        websocket.state.stream_mode = stream_mode
+        logger.info(
+            "🎛️ Stream mode for call %s resolved to %s",
+            call_connection_id,
+            stream_mode,
+        )
         # Start tracing with valid call connection ID
         with tracer.start_as_current_span(
             "api.v1.media.websocket_accept",
@@ -254,7 +288,7 @@ async def acs_media_stream(websocket: WebSocket) -> None:
                 "media.session_id": session_id,
                 "call.connection.id": call_connection_id,
                 "network.protocol.name": "websocket",
-                "streaming.mode": str(ACS_STREAMING_MODE),
+                "streaming.mode": str(stream_mode),
             },
         ) as accept_span:
             # Clean single-call registration with call validation
@@ -289,7 +323,7 @@ async def acs_media_stream(websocket: WebSocket) -> None:
                 "api.version": "v1",
                 "call.connection.id": call_connection_id,
                 "orchestrator.name": getattr(orchestrator, "name", "unknown"),
-                "stream.mode": str(ACS_STREAMING_MODE),
+                "stream.mode": str(stream_mode),
             },
         ) as init_span:
             handler = await _create_media_handler(
@@ -298,6 +332,7 @@ async def acs_media_stream(websocket: WebSocket) -> None:
                 session_id=session_id,
                 orchestrator=orchestrator,
                 conn_id=conn_id,  # Pass the connection ID
+                stream_mode=stream_mode,
             )
 
             # Store the handler object in connection metadata for lifecycle management
@@ -315,11 +350,10 @@ async def acs_media_stream(websocket: WebSocket) -> None:
             init_span.set_attribute("handler.initialized", True)
 
             # Track WebSocket connection for session metrics
-            if hasattr(websocket.app.state, "session_metrics"):
-                await websocket.app.state.session_metrics.increment_connected()
+            await websocket.app.state.session_metrics.increment_connected()
 
         # Process media messages with clean loop
-        await _process_media_stream(websocket, handler, call_connection_id)
+        await _process_media_stream(websocket, handler, call_connection_id, stream_mode)
 
     except WebSocketDisconnect as e:
         _log_websocket_disconnect(e, session_id, call_connection_id)
@@ -346,6 +380,7 @@ async def _create_media_handler(
     session_id: str,
     orchestrator: callable,
     conn_id: str,
+    stream_mode: StreamMode,
 ):
     """
     Create appropriate media handler based on configured streaming mode.
@@ -360,6 +395,7 @@ async def _create_media_handler(
         session_id: Session identifier for tracking and coordination.
         orchestrator: Conversation orchestrator function for processing.
         conn_id: Connection manager connection ID for lifecycle management.
+        stream_mode: Effective streaming mode to use for this call.
 
     Returns:
         Configured media handler instance based on streaming mode
@@ -420,6 +456,7 @@ async def _create_media_handler(
             conn_meta.handler = {}
         conn_meta.handler["lt"] = latency_tool
         conn_meta.handler["_greeting_ttfb_stopped"] = False
+        conn_meta.handler["stream_mode"] = str(stream_mode)
 
     latency_tool.start("greeting_ttfb")
 
@@ -436,7 +473,7 @@ async def _create_media_handler(
         if call_connection_id:
             conn_meta.handler["call_connection_id"] = call_connection_id
 
-    if ACS_STREAMING_MODE == StreamMode.MEDIA:
+    if stream_mode == StreamMode.MEDIA:
         # Use the V1 ACS media handler - acquire recognizer from pool
         try:
             stt_snapshot = websocket.app.state.stt_pool.snapshot()
@@ -510,6 +547,7 @@ async def _create_media_handler(
             recognizer=per_conn_recognizer,
             memory_manager=memory_manager,
             session_id=session_id,
+            stream_mode=stream_mode,
         )
 
 
@@ -517,7 +555,7 @@ async def _create_media_handler(
         logger.info("Created V1 ACS media handler for MEDIA mode")
         return handler
 
-    elif ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
+    elif stream_mode == StreamMode.VOICE_LIVE:
         handler = VoiceLiveSDKHandler(
             websocket=websocket,
             session_id=session_id,
@@ -528,14 +566,17 @@ async def _create_media_handler(
         return handler
 
     else:
-        error_msg = f"Unknown streaming mode: {ACS_STREAMING_MODE}"
+        error_msg = f"Unknown streaming mode: {stream_mode}"
         logger.error(error_msg)
         await websocket.close(code=1000, reason="Invalid streaming mode")
         raise HTTPException(400, error_msg)
 
 
 async def _process_media_stream(
-    websocket: WebSocket, handler, call_connection_id: str
+    websocket: WebSocket,
+    handler,
+    call_connection_id: str,
+    stream_mode: StreamMode,
 ) -> None:
     """
     Process incoming WebSocket media messages with comprehensive error handling.
@@ -565,7 +606,7 @@ async def _process_media_stream(
         attributes={
             "api.version": "v1",
             "call.connection.id": call_connection_id,
-            "stream.mode": str(ACS_STREAMING_MODE),
+            "stream.mode": str(stream_mode),
         },
     ) as span:
         logger.info(
@@ -607,11 +648,11 @@ async def _process_media_stream(
                     continue
 
                 # Handle message based on streaming mode
-                if ACS_STREAMING_MODE == StreamMode.MEDIA:
+                if stream_mode == StreamMode.MEDIA:
                     await handler.handle_media_message(msg_text)
-                elif ACS_STREAMING_MODE == StreamMode.TRANSCRIPTION:
+                elif stream_mode == StreamMode.TRANSCRIPTION:
                     await handler.handle_transcription_message(msg_text)
-                elif ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
+                elif stream_mode == StreamMode.VOICE_LIVE:
                     await handler.handle_audio_data(msg_text)
 
         except WebSocketDisconnect as e:
