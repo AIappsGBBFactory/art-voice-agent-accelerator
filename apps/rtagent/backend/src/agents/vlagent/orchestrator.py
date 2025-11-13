@@ -4,19 +4,44 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from azure.ai.voicelive.models import ServerEventType, FunctionCallOutputItem
-from .tools import execute_tool, is_handoff_tool
+from .financial_tools import execute_tool, is_handoff_tool
+
+if TYPE_CHECKING:
+    from .base import AzureVoiceLiveAgent
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.orchestrator")
 
+
+def _sanitize_handoff_context(raw: Any) -> Dict[str, Any]:
+    """Remove control flags so prompt variables stay clean."""
+
+    if not isinstance(raw, dict):
+        return {}
+
+    disallowed = {
+        "success",
+        "handoff",
+        "target_agent",
+        "message",
+        "handoff_summary",
+        "should_interrupt_playback",
+        "session_overrides",
+    }
+    return {
+        key: value
+        for key, value in raw.items()
+        if key not in disallowed and value not in (None, "", [], {})
+    }
+
 class LiveOrchestrator:
     """
     Orchestrates agent switching and tool execution for VoiceLive multi-agent system.
-    
-    All tool execution flows through tools.py for centralized management:
+
+    All tool execution flows through financial_tools.py for centralized management:
     - Handoff tools → trigger agent switching
     - Business tools → execute and return results to model
     """
@@ -91,11 +116,22 @@ class LiveOrchestrator:
             self._pending_greeting = None
             self._pending_greeting_agent = None
 
-        await agent.apply_session(
-            self.conn,
-            system_vars=system_vars,
-            say=None,
-        )
+        handoff_context = _sanitize_handoff_context(system_vars.get("handoff_context"))
+        if handoff_context:
+            system_vars["handoff_context"] = handoff_context
+            for key in ("caller_name", "client_id", "institution_name", "service_type", "case_id"):
+                if key not in system_vars and handoff_context.get(key) is not None:
+                    system_vars[key] = handoff_context.get(key)
+
+        try:
+            await agent.apply_session(
+                self.conn,
+                system_vars=system_vars,
+                say=None,
+            )
+        except Exception:
+            logger.exception("Failed to apply session for agent '%s'", agent_name)
+            raise
 
         self.active = agent_name
         
@@ -140,7 +176,10 @@ class LiveOrchestrator:
                 return False
             
             # Build context from tool result
-            handoff_context = result.get("handoff_context") or {}
+            handoff_context = _sanitize_handoff_context(result.get("handoff_context"))
+            session_overrides = result.get("session_overrides")
+            if not isinstance(session_overrides, dict) or not session_overrides:
+                session_overrides = None
             ctx = {
                 "handoff_reason": result.get("handoff_summary")
                 or handoff_context.get("reason")
@@ -151,8 +190,9 @@ class LiveOrchestrator:
                 "previous_agent": self.active,
                 "handoff_context": handoff_context,
                 "handoff_message": result.get("message"),
-                "session_overrides": result.get("session_overrides"),
             }
+            if session_overrides:
+                ctx["session_overrides"] = session_overrides
             
             logger.info(
                 "[Handoff Tool] '%s' triggered | %s → %s",

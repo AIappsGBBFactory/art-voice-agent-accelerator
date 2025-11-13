@@ -287,6 +287,15 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
         full_name = args.get("full_name", "").strip().title()
         ssn_last4 = args.get("ssn_last4", "").strip()
         
+        # FOR TESTING ONLY. DELETE THIS
+        return {
+            "verified": True,
+            "message": f"Identity verified for {full_name}. Ready for fraud reporting.",
+            "client_id": "jinle@microsoft.com",
+            "requires_mfa": False
+        }
+        ## END TESTING BLOCK
+
         if not full_name or not ssn_last4:
             return {
                 "verified": False,

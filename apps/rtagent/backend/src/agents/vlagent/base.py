@@ -21,7 +21,7 @@ from azure.ai.voicelive.models import (
     RequestSession,
 )
 from .prompts import PromptManager
-from .tools import build_function_tools
+from .financial_tools import build_function_tools
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.agents")
@@ -210,6 +210,8 @@ class AzureVoiceLiveAgent:
         """
         template_vars = dict(system_vars or {})
         template_vars.setdefault("active_agent", self.name)
+        if not isinstance(template_vars.get("customer_intelligence"), dict):
+            template_vars["customer_intelligence"] = {}
 
         overrides = template_vars.get("session_overrides") if isinstance(template_vars.get("session_overrides"), dict) else {}
         voice_payload = self._build_voice_payload(overrides.get("voice") if overrides else None)
