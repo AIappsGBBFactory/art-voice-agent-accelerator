@@ -1,5 +1,5 @@
 """
-Enhanced Fraud Detection Tools for ARTAgent Financial Services
+Enhanced Fraud Detection Tools for VLAgent Financial Services
 
 Provides comprehensive fraud detection and investigation capabilities including:
 1. Transaction Analysis & Pattern Detection
@@ -75,7 +75,7 @@ class FraudProtectionError(Exception):
             error_code="CASE_SYSTEM_ERROR"
         )
 
-logger = get_logger("tools.fraud_detection")
+logger = get_logger("tools.vlagent.fraud_detection")
 
 # Initialize Cosmos DB managers for fraud detection
 _fraud_cosmos_manager = None
@@ -1024,7 +1024,27 @@ async def block_card_emergency(args: BlockCardArgs) -> BlockCardResult:
         
         # Block card using real database operations
         card_blocked = await block_card_in_database_async(client_id, card_last_4, block_reason, confirmation_number)
-        
+
+        if not card_blocked:
+            logger.warning(
+                f"⚠️ Card block requires manual authorization for client {client_id}",
+                extra={"client_id": client_id, "card_last_4": card_last_4},
+            )
+            error = FraudProtectionError.card_block_failed()
+            next_steps_failure = [
+                error.customer_message,
+                "I'm escalating you to a live fraud specialist right now so they can finalize the block immediately.",
+                "If we get disconnected, call the number on the back of your card to ensure it is blocked.",
+                "Monitor your recent transactions—any new unauthorized charges will be disputed and credited back.",
+            ]
+            return {
+                "card_blocked": False,
+                "confirmation_number": "",
+                "replacement_timeline": "Manual fraud team authorization required",
+                "temporary_access_options": [],
+                "next_steps": next_steps_failure,
+            }
+
         # Standard replacement timeline
         replacement_timeline = "New card will be expedited and arrive within 1-2 business days"
         
@@ -1050,7 +1070,7 @@ async def block_card_emergency(args: BlockCardArgs) -> BlockCardResult:
                    extra={"client_id": client_id, "confirmation_number": confirmation_number})
         
         return {
-            "card_blocked": card_blocked,
+            "card_blocked": True,
             "confirmation_number": confirmation_number,
             "replacement_timeline": replacement_timeline,
             "temporary_access_options": temporary_access_options,

@@ -3,6 +3,7 @@ import "reactflow/dist/style.css";
 import TemporaryUserForm from './TemporaryUserForm';
 import StreamingModeSelector from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
+import DemoScenariosWidget from './DemoScenariosWidget.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import logger from '../utils/logger.js';
 
@@ -57,6 +58,76 @@ const toMs = (value) => (typeof value === "number" ? Math.round(value) : undefin
 
 const STREAM_MODE_STORAGE_KEY = 'rtagent.streamingMode';
 const STREAM_MODE_FALLBACK = 'voice_live';
+
+const buildSessionProfile = (raw, fallbackSessionId, previous) => {
+  if (!raw && !previous) {
+    return null;
+  }
+  const container = raw ?? {};
+  const data = container.data ?? {};
+  const demoMeta = container.demo_metadata
+    ?? container.demoMetadata
+    ?? data.demo_metadata
+    ?? data.demoMetadata
+    ?? {};
+  const sessionValue = container.session_id
+    ?? container.sessionId
+    ?? data.session_id
+    ?? data.sessionId
+    ?? demoMeta.session_id
+    ?? previous?.sessionId
+    ?? fallbackSessionId;
+  const profileValue = container.profile
+    ?? data.profile
+    ?? demoMeta.profile
+    ?? previous?.profile
+    ?? null;
+  const rawTransactions = container.transactions ?? data.transactions;
+  const metaTransactions = demoMeta.transactions;
+  const transactionsValue = Array.isArray(rawTransactions) && rawTransactions.length
+    ? rawTransactions
+    : Array.isArray(metaTransactions) && metaTransactions.length
+    ? metaTransactions
+    : previous?.transactions ?? [];
+  const interactionPlanValue = container.interaction_plan
+    ?? container.interactionPlan
+    ?? data.interaction_plan
+    ?? data.interactionPlan
+    ?? demoMeta.interaction_plan
+    ?? previous?.interactionPlan
+    ?? null;
+  const entryIdValue = container.entry_id
+    ?? container.entryId
+    ?? data.entry_id
+    ?? data.entryId
+    ?? demoMeta.entry_id
+    ?? previous?.entryId
+    ?? null;
+  const expiresAtValue = container.expires_at
+    ?? container.expiresAt
+    ?? data.expires_at
+    ?? data.expiresAt
+    ?? demoMeta.expires_at
+    ?? previous?.expiresAt
+    ?? null;
+  const safetyNoticeValue = container.safety_notice
+    ?? container.safetyNotice
+    ?? data.safety_notice
+    ?? data.safetyNotice
+    ?? demoMeta.safety_notice
+    ?? previous?.safetyNotice
+    ?? null;
+
+  return {
+    sessionId: sessionValue,
+    profile: profileValue,
+    transactions: transactionsValue,
+    interactionPlan: interactionPlanValue,
+    entryId: entryIdValue,
+    expiresAt: expiresAtValue,
+    safetyNotice: safetyNoticeValue,
+  };
+};
 
 // Component styles
 const styles = {
@@ -685,7 +756,7 @@ const styles = {
     justifyContent: "center",
     fontSize: "14px",
     transition: "all 0.2s ease",
-    zIndex: 99999,
+    zIndex: 40,
     boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
   },
 
@@ -730,7 +801,7 @@ const styles = {
     fontSize: "12px",
     lineHeight: "1.5",
     color: "#334155",
-    zIndex: 99999,
+    zIndex: 50,
     opacity: 0,
     transform: "translateY(-8px)",
     pointerEvents: "none",
@@ -775,14 +846,14 @@ const styles = {
     bottom: 0,
     backgroundColor: "rgba(0, 0, 0, 0.1)",
     backdropFilter: "blur(2px)",
-    zIndex: 1490,
+    zIndex: 12000,
   },
   demoFormOverlay: {
     position: "fixed",
     top: "80px",
     right: "24px",
     bottom: "24px",
-    zIndex: 1500,
+    zIndex: 12010,
     maxHeight: "calc(100vh - 120px)",
     overflowY: "auto",
     display: "flex",
@@ -2435,12 +2506,11 @@ function RealTimeVoiceApp() {
     ].filter(Boolean);
     setSessionProfiles((prev) => ({
       ...prev,
-      [sessionKey]: {
-        sessionId: sessionKey,
-        profile: demoPayload.profile,
-        expiresAt: demoPayload.expires_at,
-        safetyNotice: notice,
-      },
+      [sessionKey]: buildSessionProfile(
+        demoPayload,
+        sessionKey,
+        prev[sessionKey],
+      ),
     }));
     setProfilePanelOpen(true);
     setMessages((prev) => [...prev, { speaker: "System", text: messageLines.join('\n') }]);
@@ -3176,19 +3246,19 @@ function RealTimeVoiceApp() {
       const txt = content || message;
       const msgType = (type || "").toLowerCase();
 
-      if (msgType === "session_profile") {
+      if (msgType === "session_profile" || msgType === "demo_profile") {
         const sessionKey = payload.session_id ?? sessionId;
-        const profileData = payload.profile ?? payload.data?.profile;
-        if (sessionKey && profileData) {
-          setSessionProfiles((prev) => ({
-            ...prev,
-            [sessionKey]: {
-              sessionId: sessionKey,
-              profile: profileData,
-              expiresAt: payload.expires_at ?? payload.expiresAt,
-              safetyNotice: payload.safety_notice ?? payload.safetyNotice,
-            },
-          }));
+        if (sessionKey) {
+          setSessionProfiles((prev) => {
+            const normalized = buildSessionProfile(payload, sessionKey, prev[sessionKey]);
+            if (!normalized) {
+              return prev;
+            }
+            return {
+              ...prev,
+              [sessionKey]: normalized,
+            };
+          });
           setProfilePanelOpen(true);
           appendLog(`Session profile acknowledged for ${sessionKey}`);
         }
@@ -3755,6 +3825,7 @@ function RealTimeVoiceApp() {
         </>
       )}
       </div>
+      <DemoScenariosWidget />
     </div>
   );
 }

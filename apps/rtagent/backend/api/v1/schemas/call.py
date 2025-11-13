@@ -44,6 +44,14 @@ class CallInitiateRequest(BaseModel):
         ),
         json_schema_extra={"example": "voice_live"},
     )
+    record_call: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Optional flag indicating whether this call should be recorded."
+            " When omitted, recording falls back to the default environment toggle."
+        ),
+        json_schema_extra={"example": True},
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -51,6 +59,7 @@ class CallInitiateRequest(BaseModel):
                 "target_number": "+1234567890",
                 "caller_id": "+1987654321",
                 "context": {"customer_id": "cust_12345", "department": "support"},
+                "record_call": True,
             }
         }
     )

@@ -237,6 +237,18 @@ resource "azurerm_container_app" "backend" {
         name        = "ACS_CONNECTION_STRING"
         secret_name = "acs-connection-string"
       }
+      env {
+        name        = "AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING"
+        secret_name = "acs-connection-string"
+      }
+      env {
+        name        = "AZURE_COMMUNICATION_SMS_CONNECTION_STRING"
+        secret_name = "acs-connection-string"
+      }
+      env {
+        name        = "AZURE_SMS_FROM_PHONE_NUMBER"
+        value       = "+1<REPLACE_ME_WITH_VERIFIED_NUMBER>"
+      }
 
       env {
         name  = "ACS_STREAMING_MODE"
@@ -327,6 +339,21 @@ resource "azurerm_container_app" "backend" {
       env {
         name  = "AZURE_SPEECH_REGION"
         value = module.ai_foundry.location
+      }
+
+      env {
+        name  = "AZURE_VOICELIVE_ENDPOINT"
+        value = module.ai_foundry.endpoint
+      }
+
+      env {
+        name  = "VOICELIVE_MODEL"
+        value = "gpt-realtime"
+      }
+
+      env {
+        name  = "AZURE_VOICELIVE_API_KEY"
+        value = ""
       }
 
       dynamic "env" {

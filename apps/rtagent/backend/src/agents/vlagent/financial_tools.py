@@ -23,9 +23,9 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
     one_shot_query,
     schedule_cosmos_retriever_warmup,
 )
-from apps.rtagent.backend.src.agents.artagent.tool_store.tool_registry import (
-    available_tools as ART_AVAILABLE_TOOLS,
-    function_mapping as ART_FUNCTIONS,
+from .tool_store.tool_registry import (
+    available_tools as VL_AVAILABLE_TOOLS,
+    function_mapping as VL_FUNCTIONS,
 )
 from .handoffs import (
     escalate_human as vl_escalate_human,
@@ -52,9 +52,9 @@ def _schedule_retriever_warmup() -> None:
 _schedule_retriever_warmup()
 
 
-_ART_SCHEMAS_BY_NAME: Dict[str, Dict[str, Any]] = {
+_VL_SCHEMAS_BY_NAME: Dict[str, Dict[str, Any]] = {
     entry["function"]["name"]: entry["function"]
-    for entry in ART_AVAILABLE_TOOLS
+    for entry in VL_AVAILABLE_TOOLS
     if isinstance(entry, dict) and entry.get("type") == "function"
 }
 
@@ -93,7 +93,7 @@ FINANCIAL_TOOL_NAMES: Tuple[str, ...] = (
 
 TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {}
 for _tool_name in FINANCIAL_TOOL_NAMES:
-    schema = _ART_SCHEMAS_BY_NAME.get(_tool_name)
+    schema = _VL_SCHEMAS_BY_NAME.get(_tool_name)
     if not schema:
         logger.warning("Schema not found for tool '%s'; skipping registration", _tool_name)
         continue
@@ -137,74 +137,6 @@ TOOL_SCHEMAS["search_knowledge_base"] = {
             },
         },
         "required": ["query"],
-        "additionalProperties": False,
-    },
-}
-
-TOOL_SCHEMAS["handoff_venmo_agent"] = {
-    "name": "handoff_venmo_agent",
-    "description": (
-        "Transfer the authenticated caller to the Venmo support specialist with context about the issue."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "caller_name": {
-                "type": "string",
-                "description": "Full name of the authenticated caller.",
-            },
-            "client_id": {
-                "type": "string",
-                "description": "Internal client or account identifier returned from verification (optional for general questions).",
-            },
-            "issue_summary": {
-                "type": "string",
-                "description": "Short description of the Venmo-related question or problem.",
-            },
-            "inquiry_type": {
-                "type": "string",
-                "description": "Categorised venmo request type (e.g., payments, limits, disputes).",
-            },
-            "institution_name": {
-                "type": "string",
-                "description": "Optional institution or company association for the caller.",
-            },
-            "session_overrides": {
-                "type": "object",
-                "description": "Optional session overrides to apply when VenmoAgent becomes active.",
-            },
-        },
-        "required": ["caller_name"],
-        "additionalProperties": False,
-    },
-}
-
-TOOL_SCHEMAS["handoff_to_auth"] = {
-    "name": "handoff_to_auth",
-    "description": (
-        "Return the caller to the Authentication agent for identity checks or broader financial assistance."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "caller_name": {
-                "type": "string",
-                "description": "Full name of the caller being redirected.",
-            },
-            "reason": {
-                "type": "string",
-                "description": "Primary reason for returning to authentication (e.g., identity_required).",
-            },
-            "details": {
-                "type": "string",
-                "description": "Additional context gathered from the Venmo conversation.",
-            },
-            "session_overrides": {
-                "type": "object",
-                "description": "Optional session overrides to pass back when AuthAgent resumes.",
-            },
-        },
-        "required": ["caller_name"],
         "additionalProperties": False,
     },
 }
@@ -394,7 +326,33 @@ async def _execute_get_venmo_transactions(arguments: Dict[str, Any]) -> Dict[str
     }
 
 
+async def _execute_send_mfa_code(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    forced_args = dict(arguments or {})
+    requested_method = (forced_args.get("delivery_method") or "").lower()
+    if requested_method and requested_method != "email":
+        logger.info(
+            "voice-agent: overriding MFA delivery method '%s' to email",
+            requested_method,
+        )
+    forced_args["delivery_method"] = "email"
+    return await _call_art_tool("send_mfa_code", forced_args)
+
+
+async def _execute_resend_mfa_code(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    forced_args = dict(arguments or {})
+    requested_method = (forced_args.get("delivery_method") or "").lower()
+    if requested_method and requested_method != "email":
+        logger.info(
+            "voice-agent: overriding MFA resend method '%s' to email",
+            requested_method,
+        )
+    forced_args["delivery_method"] = "email"
+    return await _call_art_tool("resend_mfa_code", forced_args)
+
+
 _CUSTOM_EXECUTORS: Dict[str, ToolExecutor] = {
+    "send_mfa_code": _execute_send_mfa_code,
+    "resend_mfa_code": _execute_resend_mfa_code,
     "handoff_fraud_agent": vl_handoff_fraud_agent,
     "handoff_transfer_agency_agent": vl_handoff_transfer_agency_agent,
     "handoff_venmo_agent": vl_handoff_venmo_agent,
@@ -517,11 +475,11 @@ def _coerce_handoff(tool_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _call_art_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """Invoke an ARTAgent tool and normalise its response."""
+    """Invoke an VLAgent tool and normalise its response."""
 
-    fn = ART_FUNCTIONS.get(tool_name)
+    fn = VL_FUNCTIONS.get(tool_name)
     if fn is None:
-        raise KeyError(f"Tool '{tool_name}' is not registered in ART function mapping")
+        raise KeyError(f"Tool '{tool_name}' is not registered in VoiceLive tool mapping")
 
     positional, keyword = _prepare_args(fn, arguments)
 
@@ -651,7 +609,7 @@ for _name in TOOL_SCHEMAS:
     if _name in _CUSTOM_EXECUTORS:
         TOOL_EXECUTORS[_name] = _CUSTOM_EXECUTORS[_name]
         continue
-    if _name not in ART_FUNCTIONS:
+    if _name not in VL_FUNCTIONS:
         logger.warning("Implementation not found for tool '%s'; skipping", _name)
         continue
     TOOL_EXECUTORS[_name] = _make_art_executor(_name)

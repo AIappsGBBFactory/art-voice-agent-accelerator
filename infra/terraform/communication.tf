@@ -58,6 +58,18 @@ resource "azurerm_key_vault_secret" "acs_connection_string" {
 # - Required for Call Automation with speech features
 #
 
+# Allow ACS managed identity to store call recordings in the primary storage account
+resource "azurerm_role_assignment" "acs_storage_blob_contributor" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azapi_resource.acs.output.identity.principalId
+
+  depends_on = [
+    azapi_resource.acs,
+    azurerm_storage_account.main
+  ]
+}
+
 # ============================================================================
 # DIAGNOSTIC SETTINGS FOR AZURE COMMUNICATION SERVICES
 # ============================================================================

@@ -62,6 +62,7 @@ class LiveOrchestrator:
         self.visited_agents: set = set()  # Track which agents have been visited
         self._pending_greeting: Optional[str] = None
         self._pending_greeting_agent: Optional[str] = None
+        self._last_user_message: Optional[str] = None
 
         if self.active not in self.agents:
             raise ValueError(f"Start agent '{self.active}' not found in registry")
@@ -119,7 +120,17 @@ class LiveOrchestrator:
         handoff_context = _sanitize_handoff_context(system_vars.get("handoff_context"))
         if handoff_context:
             system_vars["handoff_context"] = handoff_context
-            for key in ("caller_name", "client_id", "institution_name", "service_type", "case_id"):
+            for key in (
+                "caller_name",
+                "client_id",
+                "institution_name",
+                "service_type",
+                "case_id",
+                "issue_summary",
+                "details",
+                "handoff_reason",
+                "user_last_utterance",
+            ):
                 if key not in system_vars and handoff_context.get(key) is not None:
                     system_vars[key] = handoff_context.get(key)
 
@@ -165,6 +176,16 @@ class LiveOrchestrator:
         
         # Execute tool via centralized tools.py
         logger.info("Executing tool: %s with args: %s", name, args)
+
+        last_user_message = (self._last_user_message or "").strip()
+        if is_handoff_tool(name) and last_user_message:
+            # Pre-populate commonly used handoff fields so the caller is not asked to repeat themselves.
+            for field in ("details", "issue_summary", "summary", "topic", "handoff_reason"):
+                if not args.get(field):
+                    args[field] = last_user_message
+            # Preserve the raw utterance for downstream agents even if they use custom field names.
+            args.setdefault("user_last_utterance", last_user_message)
+
         result = await execute_tool(name, args)
         
         # Check if this is a handoff tool
@@ -176,7 +197,14 @@ class LiveOrchestrator:
                 return False
             
             # Build context from tool result
-            handoff_context = _sanitize_handoff_context(result.get("handoff_context"))
+            raw_handoff_context = result.get("handoff_context") if isinstance(result, dict) else {}
+            handoff_context: Dict[str, Any] = {}
+            if isinstance(raw_handoff_context, dict):
+                handoff_context = dict(raw_handoff_context)
+            if last_user_message:
+                handoff_context.setdefault("user_last_utterance", last_user_message)
+                handoff_context.setdefault("details", last_user_message)
+            handoff_context = _sanitize_handoff_context(handoff_context)
             session_overrides = result.get("session_overrides")
             if not isinstance(session_overrides, dict) or not session_overrides:
                 session_overrides = None
@@ -186,11 +214,14 @@ class LiveOrchestrator:
                 or args.get("reason", "unspecified"),
                 "details": handoff_context.get("details")
                 or result.get("details")
-                or args.get("details", ""),
+                or args.get("details")
+                or last_user_message,
                 "previous_agent": self.active,
                 "handoff_context": handoff_context,
                 "handoff_message": result.get("message"),
             }
+            if last_user_message:
+                ctx.setdefault("user_last_utterance", last_user_message)
             if session_overrides:
                 ctx["session_overrides"] = session_overrides
             
@@ -207,6 +238,8 @@ class LiveOrchestrator:
                 logger.debug("response.cancel() failed during handoff", exc_info=True)
 
             await self._switch_to(target, ctx)
+            # Clear the cached user message once the handoff has completed.
+            self._last_user_message = None
             # Note: _switch_to triggers greeting automatically via apply_session(say=...)
             return True
         
@@ -280,6 +313,7 @@ class LiveOrchestrator:
             user_transcript = getattr(event, "transcript", "")
             if user_transcript:
                 logger.info("[USER] Says: %s", user_transcript)
+                self._last_user_message = user_transcript.strip()
 
         elif et == ServerEventType.RESPONSE_AUDIO_DELTA:
             if self.audio:

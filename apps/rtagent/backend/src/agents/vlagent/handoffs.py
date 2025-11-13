@@ -265,6 +265,8 @@ class HandoffVenmoArgs(TypedDict, total=False):
     issue_summary: str
     inquiry_type: str
     institution_name: str
+    details: str
+    user_last_utterance: str
     session_overrides: Dict[str, Any]
 
 
@@ -277,6 +279,8 @@ async def handoff_venmo_agent(args: HandoffVenmoArgs) -> Dict[str, Any]:
     issue_summary = (args.get("issue_summary") or "Venmo support request").strip()
     inquiry_type = (args.get("inquiry_type") or "general_support").strip()
     institution_name = (args.get("institution_name") or "").strip()
+    details = (args.get("details") or "").strip()
+    user_last_utterance = (args.get("user_last_utterance") or "").strip()
     session_overrides = args.get("session_overrides")
 
     # if not caller_name:
@@ -297,6 +301,12 @@ async def handoff_venmo_agent(args: HandoffVenmoArgs) -> Dict[str, Any]:
     }
     if client_id:
         context["client_id"] = client_id
+    if details:
+        context.setdefault("details", details)
+    if user_last_utterance:
+        context.setdefault("user_last_utterance", user_last_utterance)
+        if not context.get("details"):
+            context["details"] = user_last_utterance
     extra: Dict[str, Any] = {"should_interrupt_playback": True}
     if isinstance(session_overrides, dict) and session_overrides:
         extra["session_overrides"] = session_overrides
@@ -304,7 +314,7 @@ async def handoff_venmo_agent(args: HandoffVenmoArgs) -> Dict[str, Any]:
     payload = _build_handoff_payload(
         target_agent="VenmoAgent",
         message="Connecting you with our Venmo support specialist...",
-        summary=issue_summary,
+        summary=details or user_last_utterance or issue_summary,
         context=context,
         extra=extra,
     )
@@ -316,6 +326,7 @@ class HandoffToAuthArgs(TypedDict, total=False):
     caller_name: str
     reason: str
     details: str
+    user_last_utterance: str
     session_overrides: Dict[str, Any]
 
 
@@ -326,6 +337,7 @@ async def handoff_to_auth(args: HandoffToAuthArgs) -> Dict[str, Any]:
     caller_name = (args.get("caller_name") or "").strip()
     reason = (args.get("reason") or "additional_support").strip()
     details = (args.get("details") or "").strip()
+    user_last_utterance = (args.get("user_last_utterance") or "").strip()
     session_overrides = args.get("session_overrides")
 
     if not caller_name:
@@ -340,8 +352,10 @@ async def handoff_to_auth(args: HandoffToAuthArgs) -> Dict[str, Any]:
     context = {
         "caller_name": caller_name,
         "handoff_reason": reason,
-        "details": details,
+        "details": details or user_last_utterance,
     }
+    if user_last_utterance:
+        context.setdefault("user_last_utterance", user_last_utterance)
     extra: Dict[str, Any] = {"should_interrupt_playback": True}
     if isinstance(session_overrides, dict) and session_overrides:
         extra["session_overrides"] = session_overrides

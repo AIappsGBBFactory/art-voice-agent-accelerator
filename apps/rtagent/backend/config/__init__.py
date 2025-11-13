@@ -117,6 +117,7 @@ from .app_settings import (
     # Feature flags
     DTMF_VALIDATION_ENABLED,
     ENABLE_AUTH_VALIDATION,
+    ENABLE_ACS_CALL_RECORDING,
     # AI settings
     DEFAULT_TEMPERATURE,
     DEFAULT_MAX_TOKENS,
@@ -263,6 +264,7 @@ __all__ = [
     "BASE_URL",
     # Authentication
     "ENABLE_AUTH_VALIDATION",
+    "ENABLE_ACS_CALL_RECORDING",
     "ENTRA_EXEMPT_PATHS",
     "ALLOWED_ORIGINS",
     # Agent configs
