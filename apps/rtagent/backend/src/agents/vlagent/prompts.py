@@ -7,7 +7,7 @@ from jinja2 import Environment, FileSystemLoader, ChoiceLoader, TemplateNotFound
 
 
 class PromptManager:
-    """Render VoiceLive prompts, falling back to ARTAgent templates when needed."""
+    """Render VoiceLive prompts, falling back to VLAgent templates when needed."""
 
     def __init__(self, template_dir: Optional[Path] = None) -> None:
         if template_dir is None:
@@ -18,18 +18,18 @@ class PromptManager:
 
         primary_dir = Path(template_dir) if not isinstance(template_dir, Path) else template_dir
 
-        agents_root = Path(__file__).resolve().parent.parent
-        art_templates = agents_root / "artagent" / "prompt_store" / "templates"
+        agents_root = Path(__file__).resolve().parent
+        vl_templates = agents_root / "templates"
 
         loaders = []
-        if art_templates.exists():
-            loaders.append(FileSystemLoader(str(art_templates)))
+        if vl_templates.exists():
+            loaders.append(FileSystemLoader(str(vl_templates)))
         if primary_dir.exists():
             loaders.append(FileSystemLoader(str(primary_dir)))
 
         if not loaders:
             raise FileNotFoundError(
-                "No prompt directories available. Checked VoiceLive templates and ARTAgent fallback."
+                "No prompt directories available. Checked VoiceLive templates and VLAgent fallback."
             )
 
         self._env = Environment(loader=ChoiceLoader(loaders), autoescape=False)

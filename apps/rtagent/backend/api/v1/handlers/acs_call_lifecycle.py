@@ -29,6 +29,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from config import (
     ACS_STREAMING_MODE,
+    ENABLE_ACS_CALL_RECORDING,
     GREETING,
     GREETING_VOICE_TTS,
 )
@@ -217,6 +218,7 @@ class ACSLifecycleHandler:
         call_id: str = None,
         browser_session_id: str = None,  # NEW: Browser session ID for UI coordination
         stream_mode: StreamMode | None = None,
+        record_call: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Initiate an outbound call with orchestrator support.
@@ -231,6 +233,8 @@ class ACSLifecycleHandler:
         :type browser_session_id: str
         :param stream_mode: Streaming mode override for this call
         :type stream_mode: Optional[StreamMode]
+        :param record_call: Optional override for enabling ACS call recording
+        :type record_call: Optional[bool]
         :return: Call initiation result
         :rtype: Dict[str, Any]
         :raises HTTPException: When ACS caller is not initialized or call fails
@@ -240,6 +244,9 @@ class ACSLifecycleHandler:
             raise HTTPException(503, "ACS Caller not initialised")
 
         effective_stream_mode = stream_mode or ACS_STREAMING_MODE
+        recording_enabled = (
+            record_call if record_call is not None else ENABLE_ACS_CALL_RECORDING
+        )
 
         with tracer.start_as_current_span(
             "v1.acs_lifecycle.start_outbound_call",
@@ -250,6 +257,7 @@ class ACSLifecycleHandler:
                 "call.direction": "outbound",
                 "api.version": "v1",
                 "stream.mode": str(effective_stream_mode),
+                "call.recording_enabled": recording_enabled,
             },
         ) as span:
             try:
@@ -282,6 +290,7 @@ class ACSLifecycleHandler:
                         "call.connection.id": call_id,
                         "call.success": True,
                         "browser.session_id": browser_session_id,
+                        "call.recording_enabled": recording_enabled,
                     },
                 )
 
@@ -295,6 +304,19 @@ class ACSLifecycleHandler:
                     except Exception as exc:
                         logger.warning(
                             "Failed to persist streaming mode override for %s: %s",
+                            call_id,
+                            exc,
+                        )
+
+                    try:
+                        await redis_mgr.set_value_async(
+                            f"call_recording_preference:{call_id}",
+                            "true" if recording_enabled else "false",
+                            ttl_seconds=3600 * 24,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to persist recording preference for %s: %s",
                             call_id,
                             exc,
                         )
@@ -326,6 +348,7 @@ class ACSLifecycleHandler:
                         "initiated_at": datetime.utcnow().isoformat() + "Z",
                         "browser_session_id": browser_session_id,  # Include in event data
                         "streaming_mode": str(effective_stream_mode),
+                        "recording_enabled": recording_enabled,
                     },
                     redis_mgr,
                 )
@@ -341,6 +364,7 @@ class ACSLifecycleHandler:
                     "callId": call_id,
                     "initiated_at": datetime.utcnow().isoformat() + "Z",
                     "streaming_mode": str(effective_stream_mode),
+                    "recording_enabled": recording_enabled,
                 }
 
             except (HttpResponseError, RuntimeError) as exc:
@@ -387,6 +411,8 @@ class ACSLifecycleHandler:
         self,
         request_body: Dict[str, Any],
         acs_caller,
+        redis_mgr=None,
+        record_call: Optional[bool] = None,
     ) -> JSONResponse:
         """
         Accept and process inbound call events.
@@ -397,6 +423,10 @@ class ACSLifecycleHandler:
         :param request_body: Event Grid request body containing events
         :type request_body: Dict[str, Any]
         :param acs_caller: The ACS caller instance for call operations
+        :param redis_mgr: Redis manager instance for persisting call state
+        :type redis_mgr: Optional[Any]
+        :param record_call: Optional override for enabling ACS call recording
+        :type record_call: Optional[bool]
         :return: Validation response or call acceptance status
         :rtype: JSONResponse
         :raises HTTPException: When ACS caller is not initialized or processing fails
@@ -425,7 +455,11 @@ class ACSLifecycleHandler:
                         )
                     elif event_type == "Microsoft.Communication.IncomingCall":
                         return await self._handle_incoming_call(
-                            event_data, acs_caller, span
+                            event_data,
+                            acs_caller,
+                            span,
+                            redis_mgr=redis_mgr,
+                            record_call=record_call,
                         )
                     else:
                         logger.info(f"📝 Ignoring unhandled event type: {event_type}")
@@ -478,7 +512,12 @@ class ACSLifecycleHandler:
         return JSONResponse({"validationResponse": validation_code}, status_code=200)
 
     async def _handle_incoming_call(
-        self, event_data: Dict[str, Any], acs_caller, span
+        self,
+        event_data: Dict[str, Any],
+        acs_caller,
+        span,
+        redis_mgr=None,
+        record_call: Optional[bool] = None,
     ) -> JSONResponse:
         """
         Handle incoming call event.
@@ -510,7 +549,13 @@ class ACSLifecycleHandler:
             },
         )
 
-        logger.info(f"Answering incoming call from {caller_id}")
+        recording_enabled = (
+            record_call if record_call is not None else ENABLE_ACS_CALL_RECORDING
+        )
+
+        logger.info(
+            f"Answering incoming call from {caller_id} | recording_enabled={recording_enabled}"
+        )
 
         # Answer the call
         start_time = time.perf_counter()
@@ -533,8 +578,23 @@ class ACSLifecycleHandler:
                     "call.connection.id": call_connection_id,
                     "call.answer_latency_ms": latency * 1000,
                     "call.answered": True,
+                    "call.recording_enabled": recording_enabled,
                 },
             )
+
+            if redis_mgr:
+                try:
+                    await redis_mgr.set_value_async(
+                        f"call_recording_preference:{call_connection_id}",
+                        "true" if recording_enabled else "false",
+                        ttl_seconds=3600 * 24,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to persist recording preference for inbound call %s: %s",
+                        call_connection_id,
+                        exc,
+                    )
 
             logger.info(
                 f"✅ Call answered successfully: {call_connection_id} (latency: {latency:.3f}s)"
@@ -549,6 +609,7 @@ class ACSLifecycleHandler:
                 "call_connection_id": call_connection_id,
                 "caller_id": caller_id,
                 "answered_at": datetime.utcnow().isoformat() + "Z",
+                "recording_enabled": recording_enabled,
             },
             status_code=200,
         )

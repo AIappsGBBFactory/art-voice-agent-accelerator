@@ -1,5 +1,5 @@
 """
-Enhanced Financial Services MFA Authentication Tools for ARTAgent
+Enhanced Financial Services MFA Authentication Tools for VLAgent
 
 Provides multi-factor authentication for financial services clients including:
 1. Client Identity Verification (Name + Institution)

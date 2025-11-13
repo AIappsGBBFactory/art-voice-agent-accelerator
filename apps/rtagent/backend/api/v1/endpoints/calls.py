@@ -5,7 +5,7 @@ Call Management Endpoints
 REST API endpoints for managing phone calls through Azure Communication Services.
 """
 
-from typing import List, Optional
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
@@ -41,6 +41,29 @@ import os
 logger = get_logger("api.v1.calls")
 tracer = trace.get_tracer(__name__)
 router = APIRouter()
+
+_BOOL_TRUE = {"true", "1", "yes", "on"}
+_BOOL_FALSE = {"false", "0", "no", "off"}
+
+
+def _coerce_optional_bool(value: Any) -> Optional[bool]:
+    """Normalize loosely-typed boolean inputs to strict Optional[bool]."""
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _BOOL_TRUE:
+            return True
+        if lowered in _BOOL_FALSE:
+            return False
+        return None
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    return None
 
 
 def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
@@ -216,15 +239,25 @@ async def initiate_call(
                             stream_mode=str(effective_stream_mode),
                         )
 
+                record_call_override: Optional[bool] = _coerce_optional_bool(
+                    request.record_call
+                )
+                if record_call_override is None and request.context:
+                    record_call_override = _coerce_optional_bool(
+                        request.context.get("record_call")
+                    )
+
                 result = await acs_handler.start_outbound_call(
                     acs_caller=http_request.app.state.acs_caller,
                     target_number=request.target_number,
                     redis_mgr=http_request.app.state.redis,
                     browser_session_id=browser_session_id,  # 🎯 Pass browser session for coordination
                     stream_mode=effective_stream_mode,
+                    record_call=record_call_override,
                 )
                 if result.get("status") == "success":
                     call_id = result.get("callId")
+                    recording_enabled = result.get("recording_enabled")
 
                     # Pre-initialize a Voice Live session bound to this call (no audio yet, no pool)
                     try:
@@ -275,6 +308,7 @@ async def initiate_call(
                             "api_version": "v1",
                             "status": "initiating",
                             "streaming_mode": str(effective_stream_mode),
+                            "recording_enabled": recording_enabled,
                         },
                     )
 
@@ -292,10 +326,12 @@ async def initiate_call(
                         message=result.get("message", "call initiated successfully"),
                         streaming_mode=effective_stream_mode,
                         initiated_at=result.get("initiated_at"),
+                        recording_enabled=recording_enabled,
                         details={
                             "api_version": "v1",
                             "acs_result": result,
                             "streaming_mode": str(effective_stream_mode),
+                            "recording_enabled": recording_enabled,
                         },
                     )
 
@@ -560,6 +596,40 @@ async def answer_inbound_call(
         try:
             request_body = await http_request.json()
 
+            def _extract_recording_override(payload: Any) -> Optional[bool]:
+                if isinstance(payload, dict):
+                    candidates = [
+                        payload.get("recordCall"),
+                        payload.get("record_call"),
+                        payload.get("recordingEnabled"),
+                    ]
+                    for candidate in candidates:
+                        coerced = _coerce_optional_bool(candidate)
+                        if coerced is not None:
+                            return coerced
+
+                    data_section = payload.get("data")
+                    if data_section is not None:
+                        return _extract_recording_override(data_section)
+
+                    return None
+
+                if isinstance(payload, list):
+                    for item in payload:
+                        coerced = _extract_recording_override(item)
+                        if coerced is not None:
+                            return coerced
+                return None
+
+            record_call_override = None
+            query_value = (
+                http_request.query_params.get("recordCall")
+                or http_request.query_params.get("record_call")
+            )
+            record_call_override = _coerce_optional_bool(query_value)
+            if record_call_override is None:
+                record_call_override = _extract_recording_override(request_body)
+
             # Create handler with orchestrator injection
             acs_handler = ACSLifecycleHandler()
 
@@ -579,6 +649,8 @@ async def answer_inbound_call(
                 result = await acs_handler.accept_inbound_call(
                     request_body=request_body,
                     acs_caller=http_request.app.state.acs_caller,
+                    redis_mgr=getattr(http_request.app.state, "redis", None),
+                    record_call=record_call_override,
                 )
 
             # op.log_info("Inbound call processed successfully")

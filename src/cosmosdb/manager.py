@@ -3,7 +3,7 @@ import os
 import re
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timedelta
 
 import pymongo
@@ -179,15 +179,46 @@ class CosmosDBMongoCoreManager:
             logger.error(f"Failed to read document: {e}")
             return None
 
-    def query_documents(self, query: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def query_documents(
+        self,
+        query: Dict[str, Any],
+        projection: Optional[Dict[str, Any]] = None,
+        sort: Optional[Sequence[Tuple[str, int]]] = None,
+        skip: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Query multiple documents from the collection based on a query.
-        :param query: The query to match documents.
-        :return: A list of matching documents.
+
+        Args:
+            query: Filter used to match documents.
+            projection: Optional field projection to apply.
+            sort: Optional sort specification passed to Mongo cursor.
+            skip: Optional number of documents to skip.
+            limit: Optional maximum number of documents to return.
+
+        Returns:
+            A list of matching documents.
         """
         try:
-            documents = list(self.collection.find(query))
-            logger.info(f"Found {len(documents)} documents matching the query.")
+            cursor = self.collection.find(query, projection=projection)
+
+            if sort:
+                cursor = cursor.sort(list(sort))
+
+            if skip is not None and skip > 0:
+                cursor = cursor.skip(skip)
+
+            if limit is not None and limit > 0:
+                cursor = cursor.limit(limit)
+
+            documents = list(cursor)
+            logger.info(
+                "Found %d documents matching the query (limit=%s, skip=%s).",
+                len(documents),
+                limit if limit is not None else "none",
+                skip if skip is not None else 0,
+            )
             return documents
         except PyMongoError as e:
             logger.error(f"Failed to query documents: {e}")
