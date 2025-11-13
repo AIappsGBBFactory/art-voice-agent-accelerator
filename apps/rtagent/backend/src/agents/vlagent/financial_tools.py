@@ -1,0 +1,707 @@
+# financial_tools.py
+"""Financial-services tool wiring for Azure VoiceLive agents."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import json
+import os
+import time
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+
+from azure.ai.voicelive.models import FunctionTool
+from pydantic import BaseModel
+
+from utils.ml_logging import get_logger
+from src.cosmosdb.manager import CosmosDBMongoCoreManager
+from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
+    DEFAULT_COLLECTION_NAME,
+    DEFAULT_DATABASE_NAME,
+    DEFAULT_NUM_CANDIDATES,
+    DEFAULT_TOP_K,
+    one_shot_query,
+    schedule_cosmos_retriever_warmup,
+)
+from apps.rtagent.backend.src.agents.artagent.tool_store.tool_registry import (
+    available_tools as ART_AVAILABLE_TOOLS,
+    function_mapping as ART_FUNCTIONS,
+)
+from .handoffs import (
+    escalate_human as vl_escalate_human,
+    handoff_fraud_agent as vl_handoff_fraud_agent,
+    handoff_transfer_agency_agent as vl_handoff_transfer_agency_agent,
+    handoff_venmo_agent as vl_handoff_venmo_agent,
+    handoff_to_auth as vl_handoff_to_auth,
+)
+
+logger = get_logger("voicelive.tools.financial")
+kb_logger = get_logger("voicelive.tools.financial.kb")
+
+
+def _schedule_retriever_warmup() -> None:
+    """Kick off background warmup for Cosmos vector retrieval."""
+
+    try:
+        if schedule_cosmos_retriever_warmup(appname="voicelive-financial"):
+            logger.debug("Scheduled Cosmos retriever warmup task")
+    except Exception:
+        logger.debug("Cosmos retriever warmup skipped", exc_info=True)
+
+
+_schedule_retriever_warmup()
+
+
+_ART_SCHEMAS_BY_NAME: Dict[str, Dict[str, Any]] = {
+    entry["function"]["name"]: entry["function"]
+    for entry in ART_AVAILABLE_TOOLS
+    if isinstance(entry, dict) and entry.get("type") == "function"
+}
+
+
+FINANCIAL_TOOL_NAMES: Tuple[str, ...] = (
+    "verify_client_identity",
+    "verify_fraud_client_identity",
+    "send_mfa_code",
+    "verify_mfa_code",
+    "resend_mfa_code",
+    "check_transaction_authorization",
+    "analyze_recent_transactions",
+    "check_suspicious_activity",
+    "create_fraud_case",
+    "create_transaction_dispute",
+    "block_card_emergency",
+    "provide_fraud_education",
+    "ship_replacement_card",
+    "send_fraud_case_email",
+    "get_client_data",
+    "get_drip_positions",
+    "check_compliance_status",
+    "calculate_liquidation_proceeds",
+    "handoff_fraud_agent",
+    "handoff_transfer_agency_agent",
+    "handoff_to_compliance",
+    "handoff_to_trading",
+    "handoff_venmo_agent",
+    "handoff_to_auth",
+    "escalate_human",
+    "escalate_emergency",
+    "detect_voicemail_and_end_call",
+    "confirm_voicemail_and_end_call",
+)
+
+
+TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {}
+for _tool_name in FINANCIAL_TOOL_NAMES:
+    schema = _ART_SCHEMAS_BY_NAME.get(_tool_name)
+    if not schema:
+        logger.warning("Schema not found for tool '%s'; skipping registration", _tool_name)
+        continue
+    TOOL_SCHEMAS[_tool_name] = schema
+
+
+TOOL_SCHEMAS["search_knowledge_base"] = {
+    "name": "search_knowledge_base",
+    "description": (
+        "Retrieve institutional knowledge-base snippets from the Cosmos vector index. "
+        "Use this after authentication to ground policy summaries, rate tables, or escalation guidance."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Natural-language question or keyword to search in the financial KB.",
+            },
+            "top_k": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Maximum number of passages to return (defaults to service configuration).",
+            },
+            "num_candidates": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Candidate pool size for semantic search reranking (defaults to service configuration).",
+            },
+            "database": {
+                "type": "string",
+                "description": "Override Cosmos DB database name if a custom corpus is required.",
+            },
+            "collection": {
+                "type": "string",
+                "description": "Override Cosmos DB collection name if using a non-default index.",
+            },
+            "doc_type": {
+                "type": "string",
+                "description": "Optional metadata filter (e.g., 'mfa_playbook', 'fraud_policy').",
+            },
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+}
+
+TOOL_SCHEMAS["handoff_venmo_agent"] = {
+    "name": "handoff_venmo_agent",
+    "description": (
+        "Transfer the authenticated caller to the Venmo support specialist with context about the issue."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "caller_name": {
+                "type": "string",
+                "description": "Full name of the authenticated caller.",
+            },
+            "client_id": {
+                "type": "string",
+                "description": "Internal client or account identifier returned from verification (optional for general questions).",
+            },
+            "issue_summary": {
+                "type": "string",
+                "description": "Short description of the Venmo-related question or problem.",
+            },
+            "inquiry_type": {
+                "type": "string",
+                "description": "Categorised venmo request type (e.g., payments, limits, disputes).",
+            },
+            "institution_name": {
+                "type": "string",
+                "description": "Optional institution or company association for the caller.",
+            },
+            "session_overrides": {
+                "type": "object",
+                "description": "Optional session overrides to apply when VenmoAgent becomes active.",
+            },
+        },
+        "required": ["caller_name"],
+        "additionalProperties": False,
+    },
+}
+
+TOOL_SCHEMAS["handoff_to_auth"] = {
+    "name": "handoff_to_auth",
+    "description": (
+        "Return the caller to the Authentication agent for identity checks or broader financial assistance."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "caller_name": {
+                "type": "string",
+                "description": "Full name of the caller being redirected.",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Primary reason for returning to authentication (e.g., identity_required).",
+            },
+            "details": {
+                "type": "string",
+                "description": "Additional context gathered from the Venmo conversation.",
+            },
+            "session_overrides": {
+                "type": "object",
+                "description": "Optional session overrides to pass back when AuthAgent resumes.",
+            },
+        },
+        "required": ["caller_name"],
+        "additionalProperties": False,
+    },
+}
+
+TOOL_SCHEMAS["get_venmo_account_summary"] = {
+    "name": "get_venmo_account_summary",
+    "description": "Retrieve the caller's Venmo account summary, including current balance, after identity verification is complete.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Internal client identifier returned from authentication tools (preferred).",
+            },
+            "full_name": {
+                "type": "string",
+                "description": "Optional caller name for logging context after authentication.",
+            },
+            "institution_name": {
+                "type": "string",
+                "description": "Optional institution or employer metadata for logging context.",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+TOOL_SCHEMAS["get_venmo_transactions"] = {
+    "name": "get_venmo_transactions",
+    "description": "Retrieve the caller's recent Venmo transactions after authentication for activity review.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Verified client identifier returned from authentication tools.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "description": "Maximum number of transactions to return (default 5).",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+
+HANDOFF_TOOL_NAMES: Tuple[str, ...] = (
+    "handoff_fraud_agent",
+    "handoff_transfer_agency_agent",
+    "handoff_to_compliance",
+    "handoff_to_trading",
+    "handoff_venmo_agent",
+    "handoff_to_auth",
+)
+
+ToolExecutor = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
+
+_USERS_MANAGER: Optional[CosmosDBMongoCoreManager] = None
+
+
+def _get_users_manager() -> CosmosDBMongoCoreManager:
+    global _USERS_MANAGER
+    if _USERS_MANAGER is None:
+        _USERS_MANAGER = CosmosDBMongoCoreManager(
+            database_name="financial_services_db",
+            collection_name="users",
+        )
+    return _USERS_MANAGER
+
+
+async def _execute_get_venmo_account_summary(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    client_id = (arguments.get("client_id") or "").strip()
+    full_name = (arguments.get("full_name") or "").strip()
+    institution_name = (arguments.get("institution_name") or "").strip()
+
+    if not client_id:
+        return {
+            "success": False,
+            "message": "A verified client_id is required before retrieving balance information.",
+        }
+
+    query: Dict[str, Any] = {"$or": [{"_id": client_id}, {"client_id": client_id}]}
+
+    manager = _get_users_manager()
+
+    try:
+        raw_result = await asyncio.to_thread(manager.read_document, query)
+    except Exception as exc:
+        logger.error("Failed to load Venmo account summary | query=%s err=%s", query, exc)
+        return {
+            "success": False,
+            "message": "Account lookup temporarily unavailable. Please retry or route to authentication.",
+            "error": str(exc),
+        }
+
+    if not raw_result:
+        return {
+            "success": False,
+            "message": "No matching client record found. Confirm the caller's identity or escalate.",
+        }
+
+    account_status = (raw_result.get("customer_intelligence") or {}).get("account_status") or {}
+    balance = account_status.get("current_balance")
+    currency = account_status.get("account_currency", "USD")
+
+    return {
+        "success": True,
+        "message": f"Retrieved Venmo account summary for {raw_result.get('full_name', client_id or full_name)}.",
+        "client_id": raw_result.get("client_id") or raw_result.get("_id"),
+        "full_name": raw_result.get("full_name"),
+        "institution_name": raw_result.get("institution_name"),
+        "balance": balance,
+        "currency": currency,
+        "authorization_level": raw_result.get("authorization_level"),
+        "mfa_enabled": (raw_result.get("mfa_settings") or {}).get("enabled", False),
+        "mfa_required_threshold": raw_result.get("mfa_required_threshold"),
+        "account_health_score": account_status.get("account_health_score"),
+        "last_login": raw_result.get("customer_intelligence", {}).get("account_status", {}).get("last_login"),
+    }
+
+
+async def _execute_get_venmo_transactions(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    client_id = (arguments.get("client_id") or "").strip()
+    limit_raw = arguments.get("limit")
+
+    if not client_id:
+        return {
+            "success": False,
+            "message": "A verified client_id is required before retrieving transaction history.",
+        }
+
+    try:
+        limit = int(limit_raw) if isinstance(limit_raw, int) else 5
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        limit = 5
+
+    limit = max(1, min(limit, 20))
+
+    manager = _get_users_manager()
+    query: Dict[str, Any] = {"$or": [{"_id": client_id}, {"client_id": client_id}]}
+
+    try:
+        raw_result = await asyncio.to_thread(manager.read_document, query)
+    except Exception as exc:
+        logger.error("Failed to load Venmo transactions | client_id=%s err=%s", client_id, exc)
+        return {
+            "success": False,
+            "message": "Unable to retrieve transactions right now. Please retry or escalate.",
+            "error": str(exc),
+        }
+
+    if not raw_result:
+        return {
+            "success": False,
+            "message": "No matching client record found for transaction lookup.",
+        }
+
+    transactions = (
+        raw_result.get("demo_metadata", {}).get("transactions")
+        or raw_result.get("transactions")
+        or []
+    )
+
+    formatted: List[Dict[str, Any]] = []
+    for entry in transactions[:limit]:
+        formatted.append(
+            {
+                "transaction_id": entry.get("transaction_id"),
+                "merchant": entry.get("merchant"),
+                "amount": entry.get("amount"),
+                "category": entry.get("category"),
+                "timestamp": entry.get("timestamp") or entry.get("transaction_date"),
+                "risk_score": entry.get("risk_score"),
+            }
+        )
+
+    return {
+        "success": True,
+        "message": f"Retrieved {len(formatted)} recent Venmo transactions.",
+        "client_id": raw_result.get("client_id") or raw_result.get("_id"),
+        "transactions": formatted,
+    }
+
+
+_CUSTOM_EXECUTORS: Dict[str, ToolExecutor] = {
+    "handoff_fraud_agent": vl_handoff_fraud_agent,
+    "handoff_transfer_agency_agent": vl_handoff_transfer_agency_agent,
+    "handoff_venmo_agent": vl_handoff_venmo_agent,
+    "handoff_to_auth": vl_handoff_to_auth,
+    "escalate_human": vl_escalate_human,
+    "get_venmo_account_summary": _execute_get_venmo_account_summary,
+    "get_venmo_transactions": _execute_get_venmo_transactions,
+}
+
+
+def _cleanup_context(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip falsy values to keep handoff payloads compact."""
+
+    return {key: value for key, value in (data or {}).items() if value not in (None, "", [], {}, False)}
+
+
+def _build_handoff_payload(
+    *,
+    target_agent: str,
+    message: str,
+    summary: str,
+    context: Dict[str, Any],
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Create orchestrator-compatible payload for agent switching."""
+
+    payload: Dict[str, Any] = {
+        "handoff": True,
+        "target_agent": target_agent,
+        "message": message,
+        "handoff_summary": summary,
+        "handoff_context": context,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _prepare_args(fn: Callable[..., Any], raw_args: Dict[str, Any]) -> Tuple[List[Any], Dict[str, Any]]:
+    """Coerce VoiceLive dict arguments into the tool's declared signature."""
+
+    signature = inspect.signature(fn)
+    params = list(signature.parameters.values())
+    if not params:
+        return [], {}
+
+    if len(params) == 1:
+        param = params[0]
+        annotation = param.annotation
+        if annotation is not inspect._empty and inspect.isclass(annotation):
+            try:
+                if issubclass(annotation, BaseModel):
+                    return [annotation(**raw_args)], {}
+            except TypeError:
+                pass
+        return [raw_args], {}
+
+    return [], raw_args
+
+
+def _normalize_result(result: Any) -> Dict[str, Any]:
+    """Convert tool results into JSON-serialisable dictionaries."""
+
+    if result is None:
+        return {"success": False, "message": "Tool returned no data."}
+
+    if hasattr(result, "model_dump"):
+        result = result.model_dump()
+    elif hasattr(result, "dict") and callable(getattr(result, "dict")):
+        try:
+            result = result.dict()
+        except TypeError:
+            pass
+
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            return {"success": False, "message": result}
+
+    if isinstance(result, dict) and "ok" in result:
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        normalised = {
+            "success": bool(result.get("ok")),
+            "message": result.get("message", ""),
+        }
+        normalised.update(data)
+        return normalised
+
+    if isinstance(result, dict):
+        return result
+
+    return {"success": True, "value": result}
+
+
+def _coerce_handoff(tool_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate upstream handoff payloads into orchestrator format."""
+
+    data = dict(payload or {})
+    success = bool(data.pop("success", True))
+    message = data.pop("message", f"Transferring to {data.get('target_agent') or tool_name}.")
+    summary = data.pop("handoff_summary", message)
+    target = data.pop("target_agent", data.pop("handoff", tool_name))
+    session_overrides = data.pop("session_overrides", None)
+    should_interrupt = bool(data.pop("should_interrupt_playback", True))
+
+    extra: Dict[str, Any] = {"handoff": True, "should_interrupt_playback": should_interrupt}
+    if session_overrides:
+        extra["session_overrides"] = session_overrides
+
+    payload_out = _build_handoff_payload(
+        target_agent=str(target or tool_name),
+        message=message,
+        summary=summary,
+        context=_cleanup_context(data),
+        extra=extra,
+    )
+    payload_out["success"] = success
+    return payload_out
+
+
+async def _call_art_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Invoke an ARTAgent tool and normalise its response."""
+
+    fn = ART_FUNCTIONS.get(tool_name)
+    if fn is None:
+        raise KeyError(f"Tool '{tool_name}' is not registered in ART function mapping")
+
+    positional, keyword = _prepare_args(fn, arguments)
+
+    if inspect.iscoroutinefunction(fn):
+        result = await fn(*positional, **keyword)
+    else:
+        result = await asyncio.to_thread(fn, *positional, **keyword)
+
+    return _normalize_result(result)
+
+
+async def _execute_art_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute an ART tool, handling handoff payload translation when required."""
+
+    payload = await _call_art_tool(tool_name, arguments)
+    if tool_name in HANDOFF_TOOL_NAMES:
+        if not payload.get("success", True):
+            return payload
+        return _coerce_handoff(tool_name, payload)
+    return payload
+
+
+def _make_art_executor(tool_name: str) -> ToolExecutor:
+    async def _executor(arguments: Dict[str, Any]) -> Dict[str, Any]:
+        return await _execute_art_tool(tool_name, arguments)
+
+    return _executor
+
+
+async def _execute_search_knowledge_base(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Perform Cosmos DB semantic search for grounded institutional answers."""
+
+    query = (arguments.get("query") or "").strip()
+    if not query:
+        return {
+            "success": False,
+            "message": "Knowledge base query must not be empty.",
+            "results": [],
+        }
+
+    top_k = arguments.get("top_k")
+    num_candidates = arguments.get("num_candidates")
+    database = (arguments.get("database") or "").strip() or DEFAULT_DATABASE_NAME
+    collection = (arguments.get("collection") or "").strip() or DEFAULT_COLLECTION_NAME
+    doc_type = (arguments.get("doc_type") or "").strip()
+
+    effective_top_k = int(top_k) if isinstance(top_k, int) and top_k > 0 else DEFAULT_TOP_K
+    effective_candidates = int(num_candidates) if isinstance(num_candidates, int) and num_candidates > 0 else DEFAULT_NUM_CANDIDATES
+    if effective_candidates < effective_top_k:
+        effective_candidates = effective_top_k
+
+    vector_index = (
+        os.environ.get("VOICELIVE_KB_VECTOR_INDEX")
+        or os.environ.get("AZURE_COSMOS_VECTOR_INDEX_NAME")
+        or os.environ.get("COSMOS_VECTOR_INDEX_NAME")
+        or os.environ.get("COSMOS_VECTOR_INDEX")
+    )
+
+    filters: Optional[Dict[str, Any]] = {"doc_type": doc_type} if doc_type else None
+
+    kb_logger.info(
+        "KB search | query='%s' top_k=%d candidates=%d database=%s collection=%s",
+        query,
+        effective_top_k,
+        effective_candidates,
+        database,
+        collection,
+    )
+
+    start = time.perf_counter()
+    try:
+        results, metrics = await asyncio.to_thread(
+            one_shot_query,
+            query,
+            top_k=effective_top_k,
+            num_candidates=effective_candidates,
+            database=database,
+            collection=collection,
+            filters=filters,
+            vector_index=vector_index,
+            include_metrics=True,
+        )
+    except Exception as exc:
+        kb_logger.error("Knowledge base search failed for '%s': %s", query, exc)
+        return {
+            "success": False,
+            "message": "Knowledge lookup encountered a temporary issue. Try tightening the question or escalate if it persists.",
+            "results": [],
+            "error": str(exc),
+        }
+
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    metrics = metrics or {}
+
+    formatted = []
+    for item in results:
+        formatted.append(
+            {
+                "url": getattr(item, "url", None),
+                "content": getattr(item, "content", None),
+                "doc_type": getattr(item, "doc_type", None),
+                "score": getattr(item, "score", None),
+                "snippet": getattr(item, "snippet", None),
+            }
+        )
+
+    return {
+        "success": True,
+        "message": f"Pulling what we know about '{query}'.",
+        "results": formatted,
+        "latency_ms": round(elapsed_ms, 2),
+        "metrics": {
+            "retriever_init_ms": metrics.get("retriever_init_ms"),
+            "embedding_ms": metrics.get("embedding_ms"),
+            "aggregate_ms": metrics.get("aggregate_ms"),
+            "cosmos_total_ms": metrics.get("total_ms"),
+            "fallback_used": metrics.get("fallback_used", False),
+        },
+    }
+
+
+TOOL_EXECUTORS: Dict[str, ToolExecutor] = {}
+for _name in TOOL_SCHEMAS:
+    if _name == "search_knowledge_base":
+        TOOL_EXECUTORS[_name] = _execute_search_knowledge_base
+        continue
+    if _name in _CUSTOM_EXECUTORS:
+        TOOL_EXECUTORS[_name] = _CUSTOM_EXECUTORS[_name]
+        continue
+    if _name not in ART_FUNCTIONS:
+        logger.warning("Implementation not found for tool '%s'; skipping", _name)
+        continue
+    TOOL_EXECUTORS[_name] = _make_art_executor(_name)
+
+
+def build_function_tools(tools_cfg: List[Union[str, Dict[str, Any]]] | None) -> List[FunctionTool]:
+    """Convert YAML tool declarations into VoiceLive FunctionTool objects."""
+
+    function_tools: List[FunctionTool] = []
+    for entry in tools_cfg or []:
+        if isinstance(entry, str):
+            schema = TOOL_SCHEMAS.get(entry)
+            if not schema:
+                raise ValueError(f"Tool '{entry}' is not registered")
+        else:
+            schema = entry.get("function") or entry
+
+        name = schema.get("name")
+        if not name:
+            raise ValueError("Tool specification missing 'name'")
+
+        function_tools.append(
+            FunctionTool(
+                name=name,
+                description=schema.get("description", ""),
+                parameters=schema.get("parameters", {"type": "object", "properties": {}}),
+            )
+        )
+
+    return function_tools
+
+
+async def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a registered tool with model-provided arguments."""
+
+    executor = TOOL_EXECUTORS.get(tool_name)
+    if not executor:
+        return {
+            "success": False,
+            "error": f"Tool '{tool_name}' not implemented",
+            "message": "Requested tool is unavailable in this VoiceLive deployment.",
+        }
+
+    return await executor(arguments)
+
+
+def is_handoff_tool(tool_name: str) -> bool:
+    """Return True when tool triggers an agent handoff."""
+
+    return tool_name in HANDOFF_TOOL_NAMES
+
+
+__all__ = ["build_function_tools", "execute_tool", "is_handoff_tool"]

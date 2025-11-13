@@ -566,39 +566,49 @@ async def answer_inbound_call(
             with trace_acs_dependency(
                 tracer, logger, "acs_lifecycle", "accept_inbound_call"
             ) as dep_op:
+                
+                # Sample Payload for D365 Transfer
+                # 'id' = '14bd8e31-bd47-4ae3-bbf6-21b103c21ba3_1fb971cadf0143cda27019ac20805d7c.8759326'
+                # 'topic' = '/subscriptions/46c8d580-4e4e-43b3-b3db-4a2daea037b1/resourcegroups/devops-shared/providers/microsoft.communication/communicationservices/acs-local-test'
+                # 'subject' = '/phoneCall/caller/+18557047380/recipient/+18666881708'
+                # 'data' = {'to': {'kind': 'phoneNumber', 'rawId': '4:+18666881708', 'phoneNumber': {...}}, 'from': {'kind': 'phoneNumber', 'rawId': '4:+18557047380', 'phoneNumber': {...}}, 'serverCallId': 'aHR0cHM6Ly9hcGkuZmxpZ2h0cHJveHkuc2t5cGUuY29tL2FwaS92Mi9jcC9jb252LXVzZWEyLTA1LXByb2QtY...EyOC0yNy0xMjMmZT02Mzg5ODE1MjIwNzIwOTgwNDM=', 'callerDisplayName': '', 'incomingCallContext': 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJjYyI6Ikg0c0lBQUFBQUFBQUE4MVliWS9idUJIK0s0SUwzS...FNzUjBDUGk0a3NOYmI2WkRzUEl4R0VhSEZwS0EifQ.', 'correlationId': '14bd8e31-bd47-4ae3-bbf6-21b103c21ba3'}
+                # 'eventType' = 'Microsoft.Communication.IncomingCall'
+                # 'dataVersion' = '1.0'
+                # 'metadataVersion' = '1'
+                # 'eventTime' = '2025-11-12T22:39:21.3416931Z'
                 result = await acs_handler.accept_inbound_call(
                     request_body=request_body,
                     acs_caller=http_request.app.state.acs_caller,
                 )
 
-            op.log_info("Inbound call processed successfully")
-            # Attempt to pre-initialize Voice Live for this inbound call (no pool)
-            try:
-                if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
-                    # Extract call_connection_id from response body
-                    body_bytes = result.body if hasattr(result, "body") else None
-                    if body_bytes and hasattr(http_request.app.state, "conn_manager"):
-                        import json
+            # op.log_info("Inbound call processed successfully")
+            # # Attempt to pre-initialize Voice Live for this inbound call (no pool)
+            # try:
+            #     if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
+            #         # Extract call_connection_id from response body
+            #         body_bytes = result.body if hasattr(result, "body") else None
+            #         if body_bytes and hasattr(http_request.app.state, "conn_manager"):
+            #             import json
 
-                        body = json.loads(body_bytes.decode("utf-8"))
-                        call_connection_id = body.get("call_connection_id")
-                        if call_connection_id:
-                            agent_yaml = os.getenv(
-                                "VOICE_LIVE_AGENT_YAML",
-                                "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
-                            )
-                            lva_agent = build_lva_from_yaml(
-                                agent_yaml, enable_audio_io=False
-                            )
-                            await asyncio.to_thread(lva_agent.connect)
-                            await http_request.app.state.conn_manager.set_call_context(
-                                call_connection_id, {"lva_agent": lva_agent}
-                            )
-                            logger.info(
-                                f"Pre-initialized Voice Live agent for inbound call {call_connection_id}"
-                            )
-            except Exception as e:
-                logger.debug(f"Voice Live preinit (inbound) skipped: {e}")
+            #             body = json.loads(body_bytes.decode("utf-8"))
+            #             call_connection_id = body.get("call_connection_id")
+            #             if call_connection_id:
+            #                 agent_yaml = os.getenv(
+            #                     "VOICE_LIVE_AGENT_YAML",
+            #                     "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
+            #                 )
+            #                 lva_agent = build_lva_from_yaml(
+            #                     agent_yaml, enable_audio_io=False
+            #                 )
+            #                 await asyncio.to_thread(lva_agent.connect)
+            #                 await http_request.app.state.conn_manager.set_call_context(
+            #                     call_connection_id, {"lva_agent": lva_agent}
+            #                 )
+            #                 logger.info(
+            #                     f"Pre-initialized Voice Live agent for inbound call {call_connection_id}"
+            #                 )
+            # except Exception as e:
+            #     logger.debug(f"Voice Live preinit (inbound) skipped: {e}")
 
             return result
 

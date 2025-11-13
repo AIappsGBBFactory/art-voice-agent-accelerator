@@ -113,19 +113,19 @@ TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "required": ["reason"],
         },
     },
-    "handoff_to_insurance": {
-        "name": "handoff_to_insurance",
-        "description": "Transfer caller to Insurance & Benefits agent for coverage, copays, deductibles, claims, or medications.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "reason": {"type": "string", "description": "Why the user needs insurance help"},
-                "topic": {"type": "string", "description": "Optional: benefits|eligibility|copay|deductible|claim|meds"},
-                "details": {"type": "string", "description": "Short context"},
-            },
-            "required": ["reason"],
-        },
-    },
+    # "handoff_to_insurance": {
+    #     "name": "handoff_to_insurance",
+    #     "description": "Transfer caller to Insurance & Benefits agent for coverage, copays, deductibles, claims, or medications.",
+    #     "parameters": {
+    #         "type": "object",
+    #         "properties": {
+    #             "reason": {"type": "string", "description": "Why the user needs insurance help"},
+    #             "topic": {"type": "string", "description": "Optional: benefits|eligibility|copay|deductible|claim|meds"},
+    #             "details": {"type": "string", "description": "Short context"},
+    #         },
+    #         "required": ["reason"],
+    #     },
+    # },
     "handoff_to_auth": {
         "name": "handoff_to_auth",
         "description": "Transfer caller to the Authentication agent for identity verification and routing support.",
@@ -1195,7 +1195,7 @@ TOOL_IMPLEMENTATIONS: Dict[str, Any] = {
     
     # Handoff tools (agent switching)
     "handoff_to_scheduler": handoff_to_scheduler,
-    "handoff_to_insurance": handoff_to_insurance,
+    # "handoff_to_insurance": handoff_to_insurance,
     "handoff_to_auth": handoff_to_auth,
     
     # Scheduling tools
