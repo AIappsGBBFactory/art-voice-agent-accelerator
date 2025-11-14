@@ -33,6 +33,6 @@ tools:
   - send_fraud_case_email
   - provide_fraud_education
   - search_knowledge_base
-  - handoff_transfer_agency_agent
+  # - handoff_transfer_agency_agent
   - escalate_emergency
   - escalate_human

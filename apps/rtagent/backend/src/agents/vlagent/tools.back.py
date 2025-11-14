@@ -35,6 +35,8 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
     DEFAULT_DATABASE_NAME,
     DEFAULT_NUM_CANDIDATES,
     DEFAULT_TOP_K,
+    VENMO_COLLECTION_NAME,
+    infer_collection_from_query,
     schedule_cosmos_retriever_warmup,
     one_shot_query,
 )
@@ -284,7 +286,7 @@ TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
                 },
                 "collection": {
                     "type": "string",
-                    "description": "Override Cosmos DB collection name (defaults to vectorstorecollection).",
+                    "description": "Override Cosmos DB collection name (defaults to paypal).",
                 },
             },
             "required": ["query"],
@@ -474,6 +476,7 @@ async def search_knowledge_base(
     default_num_candidates = DEFAULT_NUM_CANDIDATES
     default_database = DEFAULT_DATABASE_NAME
     default_collection = DEFAULT_COLLECTION_NAME
+    doc_type = (doc_type or "").strip()
     default_vector_index = (
         os.environ.get("VOICELIVE_KB_VECTOR_INDEX")
         or os.environ.get("AZURE_COSMOS_VECTOR_INDEX_NAME")
@@ -490,7 +493,14 @@ async def search_knowledge_base(
         effective_num_candidates = effective_top_k
 
     effective_database = (database or "").strip() or default_database
-    effective_collection = (collection or "").strip() or default_collection
+    raw_collection = (collection or "").strip()
+
+    if raw_collection:
+        effective_collection = raw_collection
+    elif doc_type and "venmo" in doc_type.lower():
+        effective_collection = VENMO_COLLECTION_NAME
+    else:
+        effective_collection = infer_collection_from_query(query_text, default=default_collection)
 
     preface_message = f"Let me look '{query_text}' up for you." if query_text else "Let me check that for you."
 
@@ -1157,7 +1167,7 @@ async def handoff_to_auth(reason: str, details: str = "") -> Dict[str, Any]:
     """Trigger handoff to the Authentication agent for broader assistance."""
     handoff_logger3 = get_logger("voicelive.handoff")
     handoff_logger3.info(
-        "🔀 [Handoff] VenmoAgent → AuthAgent | Reason: %s | Details: %s",
+        "🔀 [Handoff] PayPalAgent → AuthAgent | Reason: %s | Details: %s",
         reason,
         details or "<none>",
     )

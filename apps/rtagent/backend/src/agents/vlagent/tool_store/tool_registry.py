@@ -8,7 +8,7 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.handoffs import (
 )
 from apps.rtagent.backend.src.agents.vlagent.handoffs import (
     handoff_to_auth,
-    handoff_venmo_agent,
+    handoff_paypal_agent,
 )
 
 from apps.rtagent.backend.src.agents.vlagent.tool_store.financial_mfa_auth import (
@@ -72,7 +72,7 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.schemas import (
     handoff_to_compliance_schema,
     handoff_to_trading_schema,
     handoff_to_auth_schema,
-    handoff_venmo_agent_schema,
+    handoff_paypal_agent_schema,
     find_information_schema,
     handoff_claim_schema,
     handoff_general_schema,
@@ -108,7 +108,7 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "calculate_liquidation_proceeds": calculate_liquidation_proceeds,
     "handoff_to_compliance": handoff_to_compliance,
     "handoff_to_trading": handoff_to_trading,
-    "handoff_venmo_agent": handoff_venmo_agent,
+    "handoff_paypal_agent": handoff_paypal_agent,
     "handoff_to_auth": handoff_to_auth,
     # "handoff_claim_agent": handoff_claim_agent,
     # "find_information_for_policy": find_information_for_policy,
@@ -144,7 +144,7 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": calculate_liquidation_proceeds_schema},
     {"type": "function", "function": handoff_to_compliance_schema},
     {"type": "function", "function": handoff_to_trading_schema},
-    {"type": "function", "function": handoff_venmo_agent_schema},
+    {"type": "function", "function": handoff_paypal_agent_schema},
     {"type": "function", "function": handoff_to_auth_schema},
     # {"type": "function", "function": handoff_claim_schema},
     # {"type": "function", "function": find_information_schema},
