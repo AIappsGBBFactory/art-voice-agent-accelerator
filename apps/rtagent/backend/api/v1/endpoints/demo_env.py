@@ -91,7 +91,7 @@ class DemoUserLookupResponse(DemoUserResponse):
     """Alias to reuse DemoUserResponse shape for lookup endpoint."""
 
 
-DEMOS_TTL_SECONDS = int(os.getenv("DEMO_USER_TTL_SECONDS", "3600"))
+DEMOS_TTL_SECONDS = int(os.getenv("DEMO_USER_TTL_SECONDS", "86400"))
 PROFILE_TEMPLATES = (
     {
         "key": "contoso_exec",

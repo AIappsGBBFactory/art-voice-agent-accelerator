@@ -73,6 +73,8 @@ const DEFAULT_SCENARIOS = [
   },
 ];
 
+const PANEL_CLASSNAME = 'demo-scenarios-panel';
+
 const styles = {
   container: {
     position: 'fixed',
@@ -129,6 +131,8 @@ const styles = {
     backdropFilter: 'blur(16px)',
     transition: 'opacity 0.2s ease, transform 0.2s ease',
     overflowY: 'auto',
+    scrollbarWidth: 'none',
+    msOverflowStyle: 'none',
   },
   panelHidden: {
     opacity: 0,
@@ -209,7 +213,12 @@ const DemoScenariosWidget = ({ scenarios = DEFAULT_SCENARIOS }) => {
 
   return (
     <div style={styles.container} aria-live="polite">
+      <style>{`
+        .${PANEL_CLASSNAME}::-webkit-scrollbar { display: none; }
+        .${PANEL_CLASSNAME} { scrollbar-width: none; -ms-overflow-style: none; }
+      `}</style>
       <div
+        className={PANEL_CLASSNAME}
         style={{
           ...styles.panel,
           ...(open ? styles.panelVisible : styles.panelHidden),

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Box, Card, CardContent, CardHeader, Chip, Divider, IconButton, LinearProgress, Paper, Typography } from '@mui/material';
 import BuildCircleRoundedIcon from '@mui/icons-material/BuildCircleRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
@@ -2217,46 +2218,42 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
  * ------------------------------------------------------------------ */
 const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }) => {
   const [waveOffset, setWaveOffset] = useState(0);
-  const [amplitude, setAmplitude] = useState(5);
+  const [amplitude, setAmplitude] = useState(0);
   const animationRef = useRef();
-  
+  const combinedLevelRef = useRef(0);
+
   useEffect(() => {
+    combinedLevelRef.current = Math.max(audioLevel, outputAudioLevel);
+  }, [audioLevel, outputAudioLevel]);
+
+  useEffect(() => {
+    let lastTs = performance.now();
+
     const animate = () => {
-      setWaveOffset(prev => (prev + (speaker ? 2 : 1)) % 1000);
-      
-      setAmplitude(() => {
-        // React to actual audio levels first, then fall back to speaker state
-        if (audioLevel > 0.01) {
-          const scaledLevel = audioLevel * 25;
-          const smoothVariation = Math.sin(Date.now() * 0.002) * (scaledLevel * 0.2);
-          return Math.max(8, scaledLevel + smoothVariation);
-        }
-        if (outputAudioLevel > 0.01) {
-          const scaledLevel = outputAudioLevel * 20;
-          const smoothVariation = Math.sin(Date.now() * 0.0018) * (scaledLevel * 0.25);
-          return Math.max(6, scaledLevel + smoothVariation);
-        }
-        if (speaker) {
-          const time = Date.now() * 0.002;
-          const baseAmplitude = 10;
-          const rhythmicVariation = Math.sin(time) * 5;
-          return baseAmplitude + rhythmicVariation;
-        }
-        // Idle state - return a flat line (no wobble)
-        return 0;
+      const now = performance.now();
+      const delta = now - lastTs;
+      lastTs = now;
+
+      const activity = combinedLevelRef.current;
+      const targetAmplitude = activity > 0.02 ? activity * 46 : 0;
+      setAmplitude((prev) => {
+        const eased = prev + (targetAmplitude - prev) * 0.15;
+        return Math.abs(eased) < 0.05 ? 0 : eased;
       });
-      
+
+      const waveSpeed = 0.6 + activity * 3;
+      setWaveOffset((prev) => (prev + waveSpeed * (delta / 16)) % 1000);
+
       animationRef.current = requestAnimationFrame(animate);
     };
-    
+
     animationRef.current = requestAnimationFrame(animate);
-    
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [speaker, audioLevel, outputAudioLevel]);
+  }, []);
   
   const generateWavePath = () => {
     const width = 750;
@@ -2374,7 +2371,7 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
           color: '#666',
           whiteSpace: 'nowrap'
         }}>
-          Input: {(audioLevel * 100).toFixed(1)}% | Amp: {amplitude.toFixed(1)}
+          Input: {(audioLevel * 100).toFixed(1)}% | Output: {(outputAudioLevel * 100).toFixed(1)}% | Amp: {amplitude.toFixed(1)}
         </div>
       )}
     </div>
@@ -2926,6 +2923,8 @@ function RealTimeVoiceApp() {
   
   const [audioLevel, setAudioLevel] = useState(0);
   const audioLevelRef = useRef(0);
+  const [outputAudioLevel, setOutputAudioLevel] = useState(0);
+  const outputAudioLevelRef = useRef(0);
   const metricsRef = useRef(createMetricsState());
 
   const workletSource = `
@@ -2995,6 +2994,27 @@ function RealTimeVoiceApp() {
       output[i] = sample0 + (sample1 - sample0) * frac;
     }
     return output;
+  }, []);
+
+  const updateOutputLevelMeter = useCallback((samples) => {
+    let nextLevel = outputAudioLevelRef.current;
+    if (samples && samples.length) {
+      let sumSquares = 0;
+      for (let i = 0; i < samples.length; i += 1) {
+        const sample = samples[i] || 0;
+        sumSquares += sample * sample;
+      }
+      const rms = Math.sqrt(sumSquares / samples.length);
+      const normalized = Math.min(1, rms * 10);
+      nextLevel = nextLevel * 0.6 + normalized * 0.4;
+    } else {
+      nextLevel *= 0.85;
+    }
+    if (nextLevel < 0.001) {
+      nextLevel = 0;
+    }
+    outputAudioLevelRef.current = nextLevel;
+    setOutputAudioLevel(nextLevel);
   }, []);
 
   // Initialize playback audio context and worklet (call on user gesture)
@@ -3262,6 +3282,20 @@ function RealTimeVoiceApp() {
   },[messages]);
 
   useEffect(() => {
+    if (outputAudioLevel <= 0) {
+      return undefined;
+    }
+    const decayId = window.setTimeout(() => {
+      const next = Math.max(0, outputAudioLevelRef.current * 0.8 - 0.001);
+      outputAudioLevelRef.current = next;
+      setOutputAudioLevel(next);
+    }, 140);
+    return () => {
+      window.clearTimeout(decayId);
+    };
+  }, [outputAudioLevel]);
+
+  useEffect(() => {
     return () => {
       if (processorRef.current) {
         try { 
@@ -3486,6 +3520,10 @@ function RealTimeVoiceApp() {
       appendSystemMessage("🛑 Session stopped", { tone: "warning" });
       setActiveSpeaker("System");
       setRecording(false);
+      audioLevelRef.current = 0;
+      setAudioLevel(0);
+      outputAudioLevelRef.current = 0;
+      setOutputAudioLevel(0);
       appendLog("🛑 PCM streaming stopped");
     };
 
@@ -3730,6 +3768,7 @@ function RealTimeVoiceApp() {
 
           if (!hasData) {
             playbackActiveRef.current = !isFinalChunk;
+            updateOutputLevelMeter();
             return;
           }
 
@@ -3758,6 +3797,7 @@ function RealTimeVoiceApp() {
               }
             }
             pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
+            updateOutputLevelMeter(samples);
             appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
           } else {
             logger.warn("Audio playback not initialized, attempting init...");
@@ -3776,6 +3816,7 @@ function RealTimeVoiceApp() {
                 }
               }
               pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
+              updateOutputLevelMeter(samples);
               appendLog("🔊 TTS audio playing (after init)");
             } else {
               logger.error("Failed to initialize audio playback");
@@ -4163,7 +4204,7 @@ function RealTimeVoiceApp() {
             isActive={recording} 
             speaker={activeSpeaker} 
             audioLevel={audioLevel}
-            outputAudioLevel={0}
+            outputAudioLevel={outputAudioLevel}
           />
           <div style={styles.sectionDivider}></div>
         </div>
@@ -4401,19 +4442,22 @@ function RealTimeVoiceApp() {
           </button>
         </div>
       )}
-      {showDemoForm && (
-        <>
-          <div style={styles.demoFormBackdrop} onClick={() => setShowDemoForm(false)} />
-          <div style={styles.demoFormOverlay}>
-            <TemporaryUserForm
-              apiBaseUrl={API_BASE_URL}
-              onClose={() => setShowDemoForm(false)}
-              sessionId={sessionId}
-              onSuccess={handleDemoCreated}
-            />
-          </div>
-        </>
-      )}
+      {showDemoForm && typeof document !== 'undefined' &&
+        createPortal(
+          <>
+            <div style={styles.demoFormBackdrop} onClick={() => setShowDemoForm(false)} />
+            <div style={styles.demoFormOverlay}>
+              <TemporaryUserForm
+                apiBaseUrl={API_BASE_URL}
+                onClose={() => setShowDemoForm(false)}
+                sessionId={sessionId}
+                onSuccess={handleDemoCreated}
+              />
+            </div>
+          </>,
+          document.body
+        )
+      }
       </div>
       <DemoScenariosWidget />
     </div>
