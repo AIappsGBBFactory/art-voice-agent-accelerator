@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Avatar,
   Typography,
@@ -71,8 +71,22 @@ const SectionTitle = ({ icon, children }) => (
 /* ------------------------------------------------------------------ *
  *  PROFILE BUTTON COMPONENT WITH MATERIAL UI
  * ------------------------------------------------------------------ */
-const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => {
+const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile, highlight = false }) => {
   const [panelOpen, setPanelOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(false);
+  const lastProfileIdentityRef = useRef(null);
+  const highlightTimeoutRef = useRef(null);
+
+  const startHighlight = useCallback(() => {
+    setHighlighted(true);
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlighted(false);
+      highlightTimeoutRef.current = null;
+    }, 3200);
+  }, []);
 
   const handleClick = () => {
     if (!profile) {
@@ -80,13 +94,70 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
       onCreateProfile?.();
       return;
     }
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+      highlightTimeoutRef.current = null;
+    }
+    setHighlighted(false);
     setPanelOpen(!panelOpen);
   };
 
   const handlePanelClose = () => {
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+      highlightTimeoutRef.current = null;
+    }
+    setHighlighted(false);
     setPanelOpen(false);
     onMenuClose?.();
   };
+
+  useEffect(() => {
+    if (!profile) {
+      lastProfileIdentityRef.current = null;
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current);
+        highlightTimeoutRef.current = null;
+      }
+      setHighlighted(false);
+      setPanelOpen(false);
+      return () => {};
+    }
+
+    const identity =
+      profile?.sessionId ||
+      profile?.entryId ||
+      profile?.profile?.id ||
+      profile?.profile?.full_name ||
+      profile?.profile?.email;
+
+    if (!identity || lastProfileIdentityRef.current === identity) {
+      return () => {};
+    }
+
+    lastProfileIdentityRef.current = identity;
+    setPanelOpen(true);
+    startHighlight();
+
+    return () => {
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current);
+        highlightTimeoutRef.current = null;
+      }
+    };
+  }, [profile, startHighlight]);
+
+  useEffect(() => {
+    if (highlight) {
+      startHighlight();
+    }
+  }, [highlight, startHighlight]);
+
+  useEffect(() => () => {
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+    }
+  }, []);
 
   // Utility functions
   const formatCurrency = (value) => {
@@ -167,51 +238,9 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
     }
   };
 
-  // No profile state - show "New Demo Profile" button
+  // No profile state - button handled upstream
   if (!profile) {
-    return (
-      <>
-        <Box 
-          onClick={handleClick}
-          sx={{ 
-            position: 'absolute',
-            top: '56px', // Align with logged-in profile button
-            right: '16px', // Align with logged-in profile button
-            padding: '8px 16px',
-            borderRadius: '18px',
-            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.9) 0%, rgba(79, 70, 229, 0.95) 100%)',
-            backdropFilter: 'blur(12px)',
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            zIndex: 100,
-            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3), 0 2px 6px rgba(0, 0, 0, 0.1)',
-            '&:hover': {
-              background: 'linear-gradient(135deg, rgba(99, 102, 241, 1) 0%, rgba(79, 70, 229, 1) 100%)',
-              transform: 'translateY(-2px) scale(1.02)',
-              boxShadow: '0 8px 20px rgba(99, 102, 241, 0.4), 0 4px 10px rgba(0, 0, 0, 0.15)',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-            },
-            '&:active': {
-              transform: 'translateY(-1px) scale(1.01)',
-            }
-          }}
-        >
-          <Typography sx={{ 
-            fontSize: '11px', 
-            fontWeight: 600, 
-            color: '#fff',
-            letterSpacing: '0.3px',
-            textTransform: 'uppercase'
-          }}>
-            New Demo Profile
-          </Typography>
-        </Box>
-      </>
-    );
+    return null;
   }
 
   const profileData = profile.profile;
@@ -235,9 +264,7 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
       <Box 
         onClick={handleClick}
         sx={{ 
-          position: 'absolute',
-          top: '56px',
-          right: '16px',
+          position: 'relative',
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
@@ -247,13 +274,29 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
           border: '2px solid #e2e8f0',
           cursor: 'pointer',
           transition: 'all 0.2s ease',
-          zIndex: 100,
           boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
           maxWidth: '160px',
+          flexShrink: 0,
+          marginLeft: '4px',
+          animation: highlighted ? 'profileButtonPulse 1.5s ease-in-out 3' : 'none',
           '&:hover': {
             background: 'linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)',
             transform: 'scale(1.02)',
             boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+          },
+          '@keyframes profileButtonPulse': {
+            '0%': {
+              boxShadow: '0 0 0 0 rgba(103, 216, 239, 0.55)',
+              transform: 'scale(1)'
+            },
+            '70%': {
+              boxShadow: '0 0 0 10px rgba(103, 216, 239, 0)',
+              transform: 'scale(1.04)'
+            },
+            '100%': {
+              boxShadow: '0 0 0 0 rgba(103, 216, 239, 0)',
+              transform: 'scale(1)'
+            }
           }
         }}
       >

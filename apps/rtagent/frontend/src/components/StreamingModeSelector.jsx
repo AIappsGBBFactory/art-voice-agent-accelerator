@@ -3,9 +3,15 @@ import React from 'react';
 const containerStyle = {
   display: 'flex',
   flexDirection: 'column',
-  gap: '6px',
+  gap: '8px',
   width: '100%',
-  maxWidth: '280px',
+  maxWidth: '320px',
+  padding: '10px 12px',
+  borderRadius: '14px',
+  background: 'rgba(255,255,255,0.9)',
+  border: '1px solid rgba(226,232,240,0.8)',
+  boxShadow: '0 8px 20px rgba(15,23,42,0.12)',
+  boxSizing: 'border-box',
 };
 
 const headerStyle = {
@@ -20,7 +26,7 @@ const headerStyle = {
 
 const badgeStyle = {
   fontSize: '9px',
-  padding: '2px 6px',
+  padding: '2px 8px',
   borderRadius: '999px',
   backgroundColor: 'rgba(59, 130, 246, 0.12)',
   color: '#2563eb',
@@ -31,28 +37,30 @@ const badgeStyle = {
 const optionsRowStyle = {
   display: 'flex',
   flexDirection: 'column',
-  gap: '6px',
+  gap: '8px',
+  width: '100%',
 };
 
 const baseCardStyle = {
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'flex-start',
-  gap: '5px',
-  padding: '10px 11px',
+  gap: '6px',
+  padding: '10px 12px',
   width: '100%',
-  borderRadius: '14px',
+  borderRadius: '12px',
   border: '1px solid rgba(226,232,240,0.9)',
-  background: 'linear-gradient(135deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,0.8) 100%)',
+  background: '#f8fafc',
   cursor: 'pointer',
   transition: 'all 0.2s ease',
-  boxShadow: '0 4px 10px rgba(15, 23, 42, 0.05)',
+  boxShadow: '0 4px 8px rgba(15, 23, 42, 0.08)',
+  textAlign: 'left',
 };
 
 const selectedCardStyle = {
-  borderColor: 'rgba(59,130,246,0.8)',
-  boxShadow: '0 10px 20px -10px rgba(59,130,246,0.35)',
-  transform: 'translateY(-0.5px)',
+  borderColor: 'rgba(99,102,241,0.85)',
+  boxShadow: '0 8px 16px rgba(99,102,241,0.22)',
+  background: 'linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(224,231,255,0.9) 100%)',
 };
 
 const optionHeaderStyle = {
@@ -102,6 +110,12 @@ const hintStyle = {
   fontWeight: 600,
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
+};
+
+const footerNoteStyle = {
+  fontSize: '9px',
+  color: '#94a3b8',
+  lineHeight: 1.4,
 };
 
 const STREAMING_MODE_OPTIONS = [
@@ -166,6 +180,9 @@ function StreamingModeSelector({ value, onChange, disabled = false }) {
             </button>
           );
         })}
+      </div>
+      <div style={footerNoteStyle}>
+        Active mode applies to ACS PSTN calls only. Browser/WebRTC streaming remains unchanged.
       </div>
     </div>
   );
