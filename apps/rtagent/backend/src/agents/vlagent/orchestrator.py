@@ -67,6 +67,12 @@ class LiveOrchestrator:
         self._pending_greeting_agent: Optional[str] = None
         self._last_user_message: Optional[str] = None
 
+        if self.messenger:
+            try:
+                self.messenger.set_active_agent(self.active)
+            except AttributeError:
+                logger.debug("Messenger does not support set_active_agent", exc_info=True)
+
         if self.active not in self.agents:
             raise ValueError(f"Start agent '{self.active}' not found in registry")
 
@@ -131,6 +137,11 @@ class LiveOrchestrator:
         self.active = agent_name
 
         try:
+            if self.messenger:
+                try:
+                    self.messenger.set_active_agent(agent_name)
+                except AttributeError:
+                    logger.debug("Messenger does not support set_active_agent", exc_info=True)
             await agent.apply_session(
                 self.conn,
                 system_vars=system_vars,
@@ -243,11 +254,22 @@ class LiveOrchestrator:
             # Preserve the raw utterance for downstream agents even if they use custom field names.
             args.setdefault("user_last_utterance", last_user_message)
 
+        MFA_TOOL_NAMES = {"send_mfa_code", "resend_mfa_code"}
+
         if self.messenger:
             try:
                 await self.messenger.notify_tool_start(call_id=call_id, name=name, args=args)
             except Exception:
                 logger.debug("Tool start messenger notification failed", exc_info=True)
+            if name in MFA_TOOL_NAMES:
+                try:
+                    await self.messenger.send_status_update(
+                        text="Sending a verification code to your email…",
+                        sender=self.active,
+                        event_label="mfa_status_update",
+                    )
+                except Exception:
+                    logger.debug("Failed to emit MFA status update", exc_info=True)
 
         start_ts = time.perf_counter()
         result: Dict[str, Any] = {}

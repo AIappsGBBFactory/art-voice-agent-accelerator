@@ -393,6 +393,7 @@ const styles = {
     padding: "18px 26px 22px 16px",
     width: "100%",
     overflowY: "auto",
+    overflowX: "hidden",
     backgroundColor: "#ffffff",
     borderBottom: "1px solid #e2e8f0",
     display: "flex",
@@ -438,6 +439,7 @@ const styles = {
     gap: "18px",
     flex: 1,
     overflowY: "auto",
+    overflowX: "hidden",
     padding: "0 6px 16px",
   },
   
@@ -668,15 +670,16 @@ const styles = {
     bottom: "120px",
     right: "32px",
     background: "white",
-    padding: "20px",
-    borderRadius: "20px", // More rounded - changed from 16px to 20px
-    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-    border: "1px solid #e2e8f0",
+    padding: "16px",
+    borderRadius: "18px",
+    boxShadow: "0 12px 28px rgba(15,23,42,0.12)",
+    border: "1px solid rgba(226,232,240,0.75)",
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: "10px",
+    width: "280px",
     minWidth: "240px",
-    maxWidth: "360px",
+    maxWidth: "300px",
     zIndex: 90,
   },
   
@@ -713,6 +716,24 @@ const styles = {
     minWidth: "280px",
     maxWidth: "320px",
     backdropFilter: "blur(8px)",
+  },
+
+  maskToggleButton: {
+    fontSize: "9px",
+    padding: "4px 8px",
+    borderRadius: "6px",
+    border: "1px solid rgba(59,130,246,0.4)",
+    background: "rgba(59,130,246,0.08)",
+    color: "#2563eb",
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+  },
+
+  maskToggleButtonActive: {
+    background: "rgba(59,130,246,0.16)",
+    color: "#1d4ed8",
+    borderColor: "rgba(37,99,235,0.5)",
   },
 
   backendHeader: {
@@ -1363,6 +1384,7 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
   const [showStatistics, setShowStatistics] = useState(false);
   const [showAcsHover, setShowAcsHover] = useState(false);
   const [acsTooltipPos, setAcsTooltipPos] = useState(null);
+  const [revealApiUrl, setRevealApiUrl] = useState(false);
   const summaryRef = useRef(null);
 
   // Track screen width for responsive positioning
@@ -1660,6 +1682,42 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
   // Determine if should be expanded (either clicked open or hovered)
   const shouldBeExpanded = isClickedOpen || isExpanded;
 
+  const maskApiUrl = (value) => {
+    if (!value) {
+      return "";
+    }
+    try {
+      const parsed = new URL(value);
+      const protocol = parsed.protocol.replace(":", "");
+      const hostParts = parsed.hostname.split(".");
+      const primary = hostParts.shift() || "";
+      const maskSegment = (segment) => {
+        if (segment.length <= 3) {
+          return "•".repeat(segment.length || 3);
+        }
+        const prefix = segment.slice(0, 2);
+        const suffix = segment.slice(-2);
+        const middle = "•".repeat(Math.max(segment.length - 4, 2));
+        return `${prefix}${middle}${suffix}`;
+      };
+      const maskedPrimary = maskSegment(primary);
+      const maskedHost = hostParts.length > 0 ? `${maskedPrimary}.${hostParts.join(".")}` : maskedPrimary;
+      const path = parsed.pathname && parsed.pathname !== "/" ? "/…" : "/";
+      return `${protocol}://${maskedHost}${path}`;
+    } catch {
+      const safe = String(value);
+      if (safe.length <= 4) {
+        return "•".repeat(safe.length);
+      }
+      return `${safe.slice(0, 2)}${"•".repeat(Math.max(safe.length - 4, 2))}${safe.slice(-2)}`;
+    }
+  };
+
+  const displayedApiUrl = revealApiUrl ? url : maskApiUrl(url);
+  const maskToggleStyle = revealApiUrl
+    ? { ...styles.maskToggleButton, ...styles.maskToggleButtonActive }
+    : styles.maskToggleButton;
+
   return (
     <div 
       style={getResponsiveStyle()} 
@@ -1722,16 +1780,38 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
                   🌐 Backend API Entry Point
                 </div>
                 <div style={{
-                  color: "#64748b",
-                  fontSize: "9px",
-                  fontFamily: "monospace",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
                   marginBottom: "6px",
-                  padding: "3px 6px",
-                  backgroundColor: "white",
-                  borderRadius: "4px",
-                  border: "1px solid #f1f5f9",
                 }}>
-                  {url}
+                  <div style={{
+                    color: "#64748b",
+                    fontSize: "9px",
+                    fontFamily: "monospace",
+                    padding: "3px 6px",
+                    backgroundColor: "white",
+                    borderRadius: "4px",
+                    border: "1px solid #f1f5f9",
+                    flex: "1 1 auto",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {displayedApiUrl}
+                  </div>
+                  <button
+                    type="button"
+                    style={maskToggleStyle}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setRevealApiUrl((prev) => !prev);
+                    }}
+                  >
+                    {revealApiUrl ? "Mask" : "Reveal"}
+                  </button>
                 </div>
                 <div style={{
                   color: "#64748b",
@@ -3627,23 +3707,31 @@ function RealTimeVoiceApp() {
       }
       
       // Handle audio_data messages from backend TTS
-      if (payload.type === "audio_data" && payload.data) {
+      if (payload.type === "audio_data") {
         try {
           logger.debug("🔊 Received audio_data message:", {
             frame_index: payload.frame_index,
             total_frames: payload.total_frames,
             sample_rate: payload.sample_rate,
-            data_length: payload.data.length,
+            data_length: payload.data ? payload.data.length : 0,
             is_final: payload.is_final
           });
 
-          registerAudioFrame(payload.frame_index, payload.is_final === true);
+          const hasData = typeof payload.data === "string" && payload.data.length > 0;
 
           const isFinalChunk =
             payload.is_final === true ||
             (Number.isFinite(payload.total_frames) &&
               Number.isFinite(payload.frame_index) &&
               payload.frame_index + 1 >= payload.total_frames);
+
+          const frameIndex = Number.isFinite(payload.frame_index) ? payload.frame_index : 0;
+          registerAudioFrame(frameIndex, isFinalChunk);
+
+          if (!hasData) {
+            playbackActiveRef.current = !isFinalChunk;
+            return;
+          }
 
           // Decode base64 -> Int16 -> Float32 [-1, 1]
           const bstr = atob(payload.data);

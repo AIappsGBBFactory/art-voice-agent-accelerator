@@ -341,13 +341,74 @@ class CallEventHandlers:
             # Extract disconnect reason
             event_data = context.get_event_data()
             disconnect_reason = event_data.get("callConnectionState")
+            call_props = event_data.get("callConnectionProperties", {})
+            end_time_iso = call_props.get("endTime")
 
             logger.info(
                 f"📞 Call disconnected: {context.call_connection_id}, reason: {disconnect_reason}"
             )
 
+            # Notify session listeners about the disconnect event
+            session_id = await CallEventHandlers._resolve_session_id(context)
+            if session_id and context.app_state:
+                try:
+                    reason_label: Optional[str] = None
+                    if isinstance(disconnect_reason, str) and disconnect_reason:
+                        reason_label = disconnect_reason.replace("_", " ").strip().title()
+                    message_lines = ["📞 Call disconnected"]
+                    if reason_label:
+                        message_lines.append(f"Reason: {reason_label}")
+                    if end_time_iso:
+                        message_lines.append(f"Ended: {end_time_iso}")
+                    await broadcast_message(
+                        None,
+                        "\n".join(message_lines),
+                        sender="System",
+                        app_state=context.app_state,
+                        session_id=session_id,
+                    )
+                    logger.info(
+                        "📨 Broadcast call_disconnected to session %s (call=%s)",
+                        session_id,
+                        context.call_connection_id,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Failed to broadcast call disconnected status for %s: %s",
+                        context.call_connection_id,
+                        exc,
+                    )
+
             # Clean up call state
             await CallEventHandlers._cleanup_call_state(context)
+
+    @staticmethod
+    async def _resolve_session_id(context: CallEventContext) -> Optional[str]:
+        """Resolve the session identifier tied to a call connection."""
+        if not context.app_state:
+            return None
+
+        browser_session_id: Optional[str] = None
+        redis_pool = getattr(context.app_state, "redis_pool", None)
+        if redis_pool:
+            try:
+                redis_value = await redis_pool.get(
+                    f"call_session_mapping:{context.call_connection_id}"
+                )
+                if redis_value:
+                    browser_session_id = (
+                        redis_value.decode("utf-8")
+                        if isinstance(redis_value, (bytes, bytearray))
+                        else str(redis_value)
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to resolve browser session ID for call %s: %s",
+                    context.call_connection_id,
+                    exc,
+                )
+
+        return browser_session_id or context.call_connection_id
 
     @staticmethod
     async def handle_create_call_failed(context: CallEventContext) -> None:
