@@ -1,7 +1,7 @@
 agent:
   name: AuthAgent
-  greeting: "Hello! You've reached XYMZ Financial Services. I can help with transfer agency support, Venmo questions, or fraud reporting. To get started, may I have your full name please?"
-  return_greeting: "Welcome back to XYMZ Financial Services. For security, I'll confirm your name again and we'll continue." 
+  greeting: "Hello! You've reached PayPal Support. I can help with PayPal or Venmo questions as well as assisting with investigations such as Fraud. To get started, may I have your full name please?"
+  return_greeting: "Welcome back to PayPal Support. For security, I'll confirm your name again and we'll continue."
 
 prompts:
   path: voice_agent_authentication.jinja
@@ -13,7 +13,7 @@ session:
 
   voice:
     type: azure-standard
-    name: en-US-AvaNeural
+    name: en-US-AndrewMultilingualNeural
     rate: "-2%"
 
   turn_detection:
@@ -26,13 +26,13 @@ session:
 tools:
   - verify_client_identity
   - verify_fraud_client_identity
-  # - send_mfa_code
-  # - resend_mfa_code
-  # - verify_mfa_code
+  - send_mfa_code
+  - resend_mfa_code
+  - verify_mfa_code
   - check_transaction_authorization
   - detect_voicemail_and_end_call
   - escalate_emergency
   - escalate_human
-  - handoff_transfer_agency_agent
+  # - handoff_transfer_agency_agent
   - handoff_fraud_agent
-  - handoff_venmo_agent
+  - handoff_paypal_agent

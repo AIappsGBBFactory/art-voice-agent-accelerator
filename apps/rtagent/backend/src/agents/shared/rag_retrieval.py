@@ -40,8 +40,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOP_K = 20
 DEFAULT_NUM_CANDIDATES = 80
 COSMOS_VECTOR_DIMENSION_LIMIT = 2000
-DEFAULT_DATABASE_NAME = "paypalragdb"
-DEFAULT_COLLECTION_NAME = "vectorstorecollection"
+DEFAULT_DATABASE_NAME = "vectordb"
+DEFAULT_COLLECTION_NAME = "paypal"
+VENMO_COLLECTION_NAME = "venmo"
 
 
 class AzureIdentityTokenCallback(OIDCCallback):
@@ -166,6 +167,17 @@ def connect_to_cosmos(
         authMechanismProperties=auth_properties,
     )
     return client[database_name]
+
+
+def infer_collection_from_query(query: str, *, default: str = DEFAULT_COLLECTION_NAME) -> str:
+    """Pick an appropriate collection based on brand keywords in the query."""
+
+    text = (query or "").lower()
+    if "venmo" in text:
+        return VENMO_COLLECTION_NAME
+    if "paypal" in text:
+        return DEFAULT_COLLECTION_NAME
+    return default
 
 
 def normalize_similarity(similarity: str) -> str:

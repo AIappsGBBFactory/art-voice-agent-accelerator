@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -53,12 +54,14 @@ class LiveOrchestrator:
         handoff_map: Dict[str, str],
         start_agent: str = "AutoAuth",
         audio_processor=None,
+        messenger=None,
     ):
         self.conn = conn
         self.agents = agents
         self.handoff_map = handoff_map
         self.active = start_agent
         self.audio = audio_processor
+        self.messenger = messenger
         self.visited_agents: set = set()  # Track which agents have been visited
         self._pending_greeting: Optional[str] = None
         self._pending_greeting_agent: Optional[str] = None
@@ -177,6 +180,9 @@ class LiveOrchestrator:
         # Execute tool via centralized tools.py
         logger.info("Executing tool: %s with args: %s", name, args)
 
+        notify_status = "success"
+        notify_error: Optional[str] = None
+
         last_user_message = (self._last_user_message or "").strip()
         if is_handoff_tool(name) and last_user_message:
             # Pre-populate commonly used handoff fields so the caller is not asked to repeat themselves.
@@ -186,14 +192,63 @@ class LiveOrchestrator:
             # Preserve the raw utterance for downstream agents even if they use custom field names.
             args.setdefault("user_last_utterance", last_user_message)
 
-        result = await execute_tool(name, args)
-        
+        if self.messenger:
+            try:
+                await self.messenger.notify_tool_start(call_id=call_id, name=name, args=args)
+            except Exception:
+                logger.debug("Tool start messenger notification failed", exc_info=True)
+
+        start_ts = time.perf_counter()
+        result: Dict[str, Any] = {}
+
+        try:
+            result = await execute_tool(name, args)
+        except Exception as exc:
+            notify_status = "error"
+            notify_error = str(exc)
+            if self.messenger:
+                try:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id,
+                        name=name,
+                        status="error",
+                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                        error=notify_error,
+                    )
+                except Exception:
+                    logger.debug("Tool end messenger notification failed", exc_info=True)
+            raise
+
+        error_payload: Optional[str] = None
+        if isinstance(result, dict):
+            for key in ("success", "ok", "authenticated"):
+                if key in result and not result[key]:
+                    notify_status = "error"
+                    break
+            if notify_status == "error":
+                err_val = result.get("message") or result.get("error")
+                if err_val:
+                    error_payload = str(err_val)
+
         # Check if this is a handoff tool
         if is_handoff_tool(name):
             # Extract target agent from handoff_map
             target = self.handoff_map.get(name)
             if not target:
                 logger.warning("Handoff tool '%s' not in handoff_map", name)
+                notify_status = "error"
+                if self.messenger:
+                    try:
+                        await self.messenger.notify_tool_end(
+                            call_id=call_id,
+                            name=name,
+                            status=notify_status,
+                            elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                            result=result if isinstance(result, dict) else None,
+                            error="handoff_target_missing",
+                        )
+                    except Exception:
+                        logger.debug("Tool end messenger notification failed", exc_info=True)
                 return False
             
             # Build context from tool result
@@ -241,6 +296,18 @@ class LiveOrchestrator:
             # Clear the cached user message once the handoff has completed.
             self._last_user_message = None
             # Note: _switch_to triggers greeting automatically via apply_session(say=...)
+            if self.messenger:
+                try:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id,
+                        name=name,
+                        status=notify_status,
+                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                        result=result if isinstance(result, dict) else None,
+                        error=error_payload,
+                    )
+                except Exception:
+                    logger.debug("Tool end messenger notification failed", exc_info=True)
             return True
         
         else:
@@ -260,16 +327,28 @@ class LiveOrchestrator:
                 success_indicator,
                 pretty_result,
             )
-            
+
             output_item = FunctionCallOutputItem(
                 call_id=call_id,
-                output=json.dumps(result)  # SDK expects JSON string
+                output=json.dumps(result),  # SDK expects JSON string
             )
-            
+
             await self.conn.conversation.item.create(item=output_item)
             logger.debug("Created function_call_output item for call_id=%s", call_id)
-            
+
             await self.conn.response.create()
+            if self.messenger:
+                try:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id,
+                        name=name,
+                        status=notify_status,
+                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                        result=result if isinstance(result, dict) else None,
+                        error=error_payload,
+                    )
+                except Exception:
+                    logger.debug("Tool end messenger notification failed", exc_info=True)
             return False
 
     async def handle_event(self, event):
@@ -328,6 +407,11 @@ class LiveOrchestrator:
             full_transcript = getattr(event, "transcript", "")
             if full_transcript:
                 logger.info("[%s] Agent: %s", self.active, full_transcript)
+                if self.messenger:
+                    try:
+                        await self.messenger.send_assistant_message(full_transcript, sender=self.active)
+                    except Exception:
+                        logger.debug("Failed to relay assistant transcript to session UI", exc_info=True)
 
         elif et == ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE:
             await self._execute_tool_call(

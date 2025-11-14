@@ -8,7 +8,8 @@ import inspect
 import json
 import os
 import time
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeAlias, Union
 
 from azure.ai.voicelive.models import FunctionTool
 from pydantic import BaseModel
@@ -20,6 +21,8 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
     DEFAULT_DATABASE_NAME,
     DEFAULT_NUM_CANDIDATES,
     DEFAULT_TOP_K,
+    VENMO_COLLECTION_NAME,
+    infer_collection_from_query,
     one_shot_query,
     schedule_cosmos_retriever_warmup,
 )
@@ -31,7 +34,7 @@ from .handoffs import (
     escalate_human as vl_escalate_human,
     handoff_fraud_agent as vl_handoff_fraud_agent,
     handoff_transfer_agency_agent as vl_handoff_transfer_agency_agent,
-    handoff_venmo_agent as vl_handoff_venmo_agent,
+    handoff_paypal_agent as vl_handoff_paypal_agent,
     handoff_to_auth as vl_handoff_to_auth,
 )
 
@@ -59,12 +62,24 @@ _VL_SCHEMAS_BY_NAME: Dict[str, Dict[str, Any]] = {
 }
 
 
-FINANCIAL_TOOL_NAMES: Tuple[str, ...] = (
+ToolExecutor: TypeAlias = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """Declarative metadata used to register VoiceLive tools."""
+
+    name: str
+    schema: Optional[Dict[str, Any]] = None
+    executor: Optional[ToolExecutor] = None
+    is_handoff: bool = False
+
+
+# Tools that rely on the upstream ART implementation without overrides.
+STANDARD_TOOL_NAMES: Tuple[str, ...] = (
     "verify_client_identity",
     "verify_fraud_client_identity",
-    "send_mfa_code",
     "verify_mfa_code",
-    "resend_mfa_code",
     "check_transaction_authorization",
     "analyze_recent_transactions",
     "check_suspicious_activity",
@@ -78,29 +93,41 @@ FINANCIAL_TOOL_NAMES: Tuple[str, ...] = (
     "get_drip_positions",
     "check_compliance_status",
     "calculate_liquidation_proceeds",
-    "handoff_fraud_agent",
-    "handoff_transfer_agency_agent",
     "handoff_to_compliance",
     "handoff_to_trading",
-    "handoff_venmo_agent",
-    "handoff_to_auth",
-    "escalate_human",
     "escalate_emergency",
     "detect_voicemail_and_end_call",
     "confirm_voicemail_and_end_call",
 )
 
 
-TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {}
-for _tool_name in FINANCIAL_TOOL_NAMES:
-    schema = _VL_SCHEMAS_BY_NAME.get(_tool_name)
-    if not schema:
-        logger.warning("Schema not found for tool '%s'; skipping registration", _tool_name)
-        continue
-    TOOL_SCHEMAS[_tool_name] = schema
+REGISTERED_TOOLS: Dict[str, ToolSpec] = {}
 
 
-TOOL_SCHEMAS["search_knowledge_base"] = {
+def register_tool(
+    name: str,
+    *,
+    schema: Optional[Dict[str, Any]] = None,
+    executor: Optional[ToolExecutor] = None,
+    is_handoff: bool = False,
+) -> None:
+    """Central helper to register a tool spec once."""
+
+    if name in REGISTERED_TOOLS:
+        logger.warning("Tool '%s' already registered; overriding previous spec", name)
+    REGISTERED_TOOLS[name] = ToolSpec(
+        name=name,
+        schema=schema,
+        executor=executor,
+        is_handoff=is_handoff,
+    )
+
+
+for tool_name in STANDARD_TOOL_NAMES:
+    register_tool(tool_name)
+
+
+SEARCH_KB_SCHEMA: Dict[str, Any] = {
     "name": "search_knowledge_base",
     "description": (
         "Retrieve institutional knowledge-base snippets from the Cosmos vector index. "
@@ -129,7 +156,7 @@ TOOL_SCHEMAS["search_knowledge_base"] = {
             },
             "collection": {
                 "type": "string",
-                "description": "Override Cosmos DB collection name if using a non-default index.",
+                "description": "Override Cosmos DB collection name (defaults to paypal; use venmo for Venmo queries).",
             },
             "doc_type": {
                 "type": "string",
@@ -141,9 +168,10 @@ TOOL_SCHEMAS["search_knowledge_base"] = {
     },
 }
 
-TOOL_SCHEMAS["get_venmo_account_summary"] = {
-    "name": "get_venmo_account_summary",
-    "description": "Retrieve the caller's Venmo account summary, including current balance, after identity verification is complete.",
+
+PAYPAL_ACCOUNT_SCHEMA: Dict[str, Any] = {
+    "name": "get_paypal_account_summary",
+    "description": "Retrieve the caller's PayPal account summary, including current balance, after identity verification is complete.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -165,9 +193,10 @@ TOOL_SCHEMAS["get_venmo_account_summary"] = {
     },
 }
 
-TOOL_SCHEMAS["get_venmo_transactions"] = {
-    "name": "get_venmo_transactions",
-    "description": "Retrieve the caller's recent Venmo transactions after authentication for activity review.",
+
+PAYPAL_TRANSACTIONS_SCHEMA: Dict[str, Any] = {
+    "name": "get_paypal_transactions",
+    "description": "Retrieve the caller's recent PayPal transactions after authentication for activity review.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -187,16 +216,6 @@ TOOL_SCHEMAS["get_venmo_transactions"] = {
     },
 }
 
-
-HANDOFF_TOOL_NAMES: Tuple[str, ...] = (
-    "handoff_fraud_agent",
-    "handoff_transfer_agency_agent",
-    "handoff_to_compliance",
-    "handoff_to_trading",
-    "handoff_venmo_agent",
-    "handoff_to_auth",
-)
-
 ToolExecutor = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
 
 _USERS_MANAGER: Optional[CosmosDBMongoCoreManager] = None
@@ -212,7 +231,7 @@ def _get_users_manager() -> CosmosDBMongoCoreManager:
     return _USERS_MANAGER
 
 
-async def _execute_get_venmo_account_summary(arguments: Dict[str, Any]) -> Dict[str, Any]:
+async def _execute_get_paypal_account_summary(arguments: Dict[str, Any]) -> Dict[str, Any]:
     client_id = (arguments.get("client_id") or "").strip()
     full_name = (arguments.get("full_name") or "").strip()
     institution_name = (arguments.get("institution_name") or "").strip()
@@ -230,7 +249,7 @@ async def _execute_get_venmo_account_summary(arguments: Dict[str, Any]) -> Dict[
     try:
         raw_result = await asyncio.to_thread(manager.read_document, query)
     except Exception as exc:
-        logger.error("Failed to load Venmo account summary | query=%s err=%s", query, exc)
+        logger.error("Failed to load PayPal account summary | query=%s err=%s", query, exc)
         return {
             "success": False,
             "message": "Account lookup temporarily unavailable. Please retry or route to authentication.",
@@ -249,7 +268,7 @@ async def _execute_get_venmo_account_summary(arguments: Dict[str, Any]) -> Dict[
 
     return {
         "success": True,
-        "message": f"Retrieved Venmo account summary for {raw_result.get('full_name', client_id or full_name)}.",
+        "message": f"Retrieved PayPal account summary for {raw_result.get('full_name', client_id or full_name)}.",
         "client_id": raw_result.get("client_id") or raw_result.get("_id"),
         "full_name": raw_result.get("full_name"),
         "institution_name": raw_result.get("institution_name"),
@@ -263,7 +282,7 @@ async def _execute_get_venmo_account_summary(arguments: Dict[str, Any]) -> Dict[
     }
 
 
-async def _execute_get_venmo_transactions(arguments: Dict[str, Any]) -> Dict[str, Any]:
+async def _execute_get_paypal_transactions(arguments: Dict[str, Any]) -> Dict[str, Any]:
     client_id = (arguments.get("client_id") or "").strip()
     limit_raw = arguments.get("limit")
 
@@ -286,7 +305,7 @@ async def _execute_get_venmo_transactions(arguments: Dict[str, Any]) -> Dict[str
     try:
         raw_result = await asyncio.to_thread(manager.read_document, query)
     except Exception as exc:
-        logger.error("Failed to load Venmo transactions | client_id=%s err=%s", client_id, exc)
+        logger.error("Failed to load PayPal transactions | client_id=%s err=%s", client_id, exc)
         return {
             "success": False,
             "message": "Unable to retrieve transactions right now. Please retry or escalate.",
@@ -320,7 +339,7 @@ async def _execute_get_venmo_transactions(arguments: Dict[str, Any]) -> Dict[str
 
     return {
         "success": True,
-        "message": f"Retrieved {len(formatted)} recent Venmo transactions.",
+        "message": f"Retrieved {len(formatted)} recent PayPal transactions.",
         "client_id": raw_result.get("client_id") or raw_result.get("_id"),
         "transactions": formatted,
     }
@@ -348,21 +367,6 @@ async def _execute_resend_mfa_code(arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
     forced_args["delivery_method"] = "email"
     return await _call_art_tool("resend_mfa_code", forced_args)
-
-
-_CUSTOM_EXECUTORS: Dict[str, ToolExecutor] = {
-    "send_mfa_code": _execute_send_mfa_code,
-    "resend_mfa_code": _execute_resend_mfa_code,
-    "handoff_fraud_agent": vl_handoff_fraud_agent,
-    "handoff_transfer_agency_agent": vl_handoff_transfer_agency_agent,
-    "handoff_venmo_agent": vl_handoff_venmo_agent,
-    "handoff_to_auth": vl_handoff_to_auth,
-    "escalate_human": vl_escalate_human,
-    "get_venmo_account_summary": _execute_get_venmo_account_summary,
-    "get_venmo_transactions": _execute_get_venmo_transactions,
-}
-
-
 def _cleanup_context(data: Dict[str, Any]) -> Dict[str, Any]:
     """Strip falsy values to keep handoff payloads compact."""
 
@@ -523,8 +527,15 @@ async def _execute_search_knowledge_base(arguments: Dict[str, Any]) -> Dict[str,
     top_k = arguments.get("top_k")
     num_candidates = arguments.get("num_candidates")
     database = (arguments.get("database") or "").strip() or DEFAULT_DATABASE_NAME
-    collection = (arguments.get("collection") or "").strip() or DEFAULT_COLLECTION_NAME
+    raw_collection = (arguments.get("collection") or "").strip()
     doc_type = (arguments.get("doc_type") or "").strip()
+
+    collection = raw_collection
+    if not collection:
+        if doc_type and "venmo" in doc_type.lower():
+            collection = VENMO_COLLECTION_NAME
+        else:
+            collection = infer_collection_from_query(query, default=VENMO_COLLECTION_NAME)
 
     effective_top_k = int(top_k) if isinstance(top_k, int) and top_k > 0 else DEFAULT_TOP_K
     effective_candidates = int(num_candidates) if isinstance(num_candidates, int) and num_candidates > 0 else DEFAULT_NUM_CANDIDATES
@@ -601,18 +612,41 @@ async def _execute_search_knowledge_base(arguments: Dict[str, Any]) -> Dict[str,
     }
 
 
+register_tool("send_mfa_code", executor=_execute_send_mfa_code)
+register_tool("resend_mfa_code", executor=_execute_resend_mfa_code)
+register_tool("handoff_fraud_agent", executor=vl_handoff_fraud_agent, is_handoff=True)
+register_tool("handoff_transfer_agency_agent", executor=vl_handoff_transfer_agency_agent, is_handoff=True)
+register_tool("handoff_paypal_agent", executor=vl_handoff_paypal_agent, is_handoff=True)
+register_tool("handoff_to_auth", executor=vl_handoff_to_auth, is_handoff=True)
+register_tool("escalate_human", executor=vl_escalate_human)
+register_tool("search_knowledge_base", schema=SEARCH_KB_SCHEMA, executor=_execute_search_knowledge_base)
+register_tool("get_paypal_account_summary", schema=PAYPAL_ACCOUNT_SCHEMA, executor=_execute_get_paypal_account_summary)
+register_tool("get_paypal_transactions", schema=PAYPAL_TRANSACTIONS_SCHEMA, executor=_execute_get_paypal_transactions)
+
+HANDOFF_TOOL_NAMES: Tuple[str, ...] = tuple(
+    spec.name for spec in REGISTERED_TOOLS.values() if spec.is_handoff
+)
+
+TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {}
+for spec in REGISTERED_TOOLS.values():
+    schema = spec.schema or _VL_SCHEMAS_BY_NAME.get(spec.name)
+    if not schema:
+        logger.warning(
+            "Schema not found for tool '%s'; skipping registration",
+            spec.name,
+        )
+        continue
+    TOOL_SCHEMAS[spec.name] = schema
+
 TOOL_EXECUTORS: Dict[str, ToolExecutor] = {}
-for _name in TOOL_SCHEMAS:
-    if _name == "search_knowledge_base":
-        TOOL_EXECUTORS[_name] = _execute_search_knowledge_base
+for spec in REGISTERED_TOOLS.values():
+    if spec.executor:
+        TOOL_EXECUTORS[spec.name] = spec.executor
         continue
-    if _name in _CUSTOM_EXECUTORS:
-        TOOL_EXECUTORS[_name] = _CUSTOM_EXECUTORS[_name]
+    if spec.name not in VL_FUNCTIONS:
+        logger.warning("Implementation not found for tool '%s'; skipping", spec.name)
         continue
-    if _name not in VL_FUNCTIONS:
-        logger.warning("Implementation not found for tool '%s'; skipping", _name)
-        continue
-    TOOL_EXECUTORS[_name] = _make_art_executor(_name)
+    TOOL_EXECUTORS[spec.name] = _make_art_executor(spec.name)
 
 
 def build_function_tools(tools_cfg: List[Union[str, Dict[str, Any]]] | None) -> List[FunctionTool]:

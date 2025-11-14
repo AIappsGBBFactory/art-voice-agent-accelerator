@@ -388,7 +388,14 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
       setStatus({
         type: 'success',
         message: 'Demo profile ready. Check the User Profile panel for details.',
-        data: { safety_notice: data?.safety_notice },
+        data: {
+          safety_notice: data?.safety_notice,
+          institution_name: data?.profile?.institution_name,
+          company_code: data?.profile?.company_code,
+          company_code_last4:
+            data?.profile?.company_code_last4 ||
+            data?.profile?.company_code?.slice?.(-4),
+        },
       });
       onSuccess?.(data);
       setFormState({ full_name: '', email: '', phone_number: '', preferred_channel: 'email' });
@@ -667,6 +674,26 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
                 {status.data.safety_notice}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {status.type === 'success' && (
+        <div style={{ ...formStyles.resultCard, animation: 'slideInUp 0.35s ease-out' }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Demo Profile Snapshot
+          </div>
+          <div>
+            <strong>Institution:</strong>{' '}
+            {status.data?.institution_name || '—'}
+          </div>
+          <div>
+            <strong>Company Code:</strong>{' '}
+            {status.data?.company_code || '—'}
+          </div>
+          <div>
+            <strong>Code Last 4:</strong>{' '}
+            {status.data?.company_code_last4 || status.data?.company_code?.slice?.(-4) || '—'}
           </div>
         </div>
       )}

@@ -28,6 +28,6 @@ tools:
   - check_compliance_status
   - search_knowledge_base
   - handoff_to_trading
-  - handoff_transfer_agency_agent
+  # - handoff_transfer_agency_agent
   - escalate_emergency
   - escalate_human

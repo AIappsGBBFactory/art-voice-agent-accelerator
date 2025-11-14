@@ -225,6 +225,9 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
   const tier = resolveRelationshipTier(profileData);
   const ssnLast4 = profileData?.verification_codes?.ssn4 || '----';
   const verificationCodes = profileData?.verification_codes ?? {};
+  const institutionName = profileData?.institution_name || 'Demo Institution';
+  const companyCode = profileData?.company_code;
+  const companyCodeLast4 = profileData?.company_code_last4 || companyCode?.slice?.(-4) || '----';
 
   return (
     <>
@@ -438,6 +441,14 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
             </Box>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               <Chip
+                label={`Institution • ${institutionName}`}
+                sx={{
+                  backgroundColor: '#f1f5f9',
+                  color: '#1f2937',
+                  fontWeight: 600,
+                }}
+              />
+              <Chip
                 label={`Employee • ${verificationCodes.employee_id4 || '----'}`}
                 sx={{
                   backgroundColor: '#f1f5f9',
@@ -453,7 +464,18 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile }) => 
                   fontWeight: 600,
                 }}
               />
+              <Chip
+                label={`Company Code • ${companyCodeLast4}`}
+                sx={{
+                  backgroundColor: '#f1f5f9',
+                  color: '#1f2937',
+                  fontWeight: 600,
+                }}
+              />
             </Box>
+            <Typography sx={{ fontSize: '11px', color: '#475569', fontWeight: 600, mt: 1 }}>
+              Institution: {institutionName}
+            </Typography>
             <Typography sx={{ fontSize: '10px', color: '#b91c1c', fontWeight: 600 }}>
               Demo use only — do not capture or reuse outside this sandbox.
             </Typography>

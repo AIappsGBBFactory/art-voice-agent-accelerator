@@ -429,10 +429,10 @@ handoff_transfer_agency_agent_schema: Dict[str, Any] = {
     },
 }
 
-handoff_venmo_agent_schema: Dict[str, Any] = {
-    "name": "handoff_venmo_agent",
+handoff_paypal_agent_schema: Dict[str, Any] = {
+    "name": "handoff_paypal_agent",
     "description": (
-        "Transfer the caller to the Venmo support specialist with a concise summary of the issue. "
+        "Transfer the caller to the PayPal/Venmo support specialist with a concise summary of the issue. "
         "Include the caller's name, issue overview, and institution metadata when available."
     ),
     "parameters": {
@@ -440,7 +440,7 @@ handoff_venmo_agent_schema: Dict[str, Any] = {
         "properties": {
             "caller_name": {
                 "type": "string",
-                "description": "Full name of the caller requesting Venmo assistance.",
+                "description": "Full name of the caller requesting PayPal or Venmo assistance.",
             },
             "client_id": {
                 "type": "string",
@@ -448,11 +448,11 @@ handoff_venmo_agent_schema: Dict[str, Any] = {
             },
             "issue_summary": {
                 "type": "string",
-                "description": "Short summary of the Venmo topic the specialist should pick up.",
+                "description": "Short summary of the PayPal/Venmo topic the specialist should pick up.",
             },
             "inquiry_type": {
                 "type": "string",
-                "description": "Categorised Venmo inquiry type (e.g., payments, limits, disputes).",
+                "description": "Categorised PayPal/Venmo inquiry type (e.g., payments, limits, disputes).",
             },
             "institution_name": {
                 "type": "string",
@@ -460,7 +460,7 @@ handoff_venmo_agent_schema: Dict[str, Any] = {
             },
             "session_overrides": {
                 "type": "object",
-                "description": "Optional session overrides to apply when Venmo agent becomes active.",
+                "description": "Optional session overrides to apply when the PayPal agent becomes active.",
             },
         },
         "required": ["caller_name"],

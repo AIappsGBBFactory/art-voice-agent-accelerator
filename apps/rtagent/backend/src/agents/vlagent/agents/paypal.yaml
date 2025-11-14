@@ -1,10 +1,10 @@
 agent:
-  name: VenmoAgent
-  greeting: "Hi! You're speaking with Venmo Support. I can help with payments, limits, disputes, or account questions. What do you need help with?"
-  return_greeting: "Welcome back to Venmo Support. What would you like to cover next?"
+  name: PayPalAgent
+  greeting: "Hello! You're speaking with PayPal Support. I can help with payments, account limits, disputes, or balance questions. How can I help today?"
+  return_greeting: "Welcome back to PayPal Support. What would you like to cover next?"
 
 prompts:
-  path: venmo_agent.jinja
+  path: paypal_agent.jinja
 
 session:
   modalities: [TEXT, AUDIO]
@@ -13,7 +13,7 @@ session:
 
   voice:
     type: azure-standard
-    name: en-US-JennyNeural
+    name: en-US-GuyNeural
     rate: "-1%"
 
   turn_detection:
@@ -29,9 +29,11 @@ tools:
   - send_mfa_code
   - verify_mfa_code
   - resend_mfa_code
-  - get_venmo_account_summary
-  - get_venmo_transactions
+  - get_paypal_account_summary
+  - get_paypal_transactions
   - search_knowledge_base
   - handoff_to_auth
+  - handoff_fraud_agent
+  - handoff_to_compliance
   - escalate_emergency
   - escalate_human

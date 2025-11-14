@@ -70,7 +70,7 @@ async def handoff_general_agent(args: HandoffGeneralArgs) -> Dict[str, Any]:
     }
     return _build_handoff_payload(
         target_agent="GeneralInfoAgent",
-        message="Routing you to our general information specialist...",
+        message="Thanks for holding. A general information specialist will join momentarily.",
         summary=topic,
         context=context,
         extra={"should_interrupt_playback": True},
@@ -111,7 +111,7 @@ async def handoff_claim_agent(args: HandoffClaimArgs) -> Dict[str, Any]:
     }
     return _build_handoff_payload(
         target_agent="ClaimsIntake",
-        message="Connecting you with our claims intake specialist...",
+        message="Thanks for holding. Our claims intake specialist will take it from here.",
         summary=claim_intent or "claims_support",
         context=context,
         extra={"should_interrupt_playback": True},
@@ -144,7 +144,7 @@ async def escalate_human(args: EscalateHumanArgs) -> Dict[str, Any]:
 
     return {
         "success": True,
-        "message": "Transferring you to a human specialist.",
+        "message": "Thanks for waiting. A human specialist will join now.",
         "handoff": "human_agent",
         "route_reason": route_reason,
         "caller_name": caller_name,
@@ -172,7 +172,7 @@ async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
     institution_name = (args.get("institution_name") or "").strip()
     service_type = (args.get("service_type") or "fraud_reporting").strip()
     summary = (args.get("summary") or "Caller transferred to Fraud Detection specialist.").strip()
-    message = (args.get("message") or "Connecting you with our fraud detection specialist...").strip()
+    message = (args.get("message") or "Thanks for holding. Our fraud detection team will step in now.").strip()
     session_overrides = args.get("session_overrides")
 
     if not caller_name or not client_id:
@@ -225,7 +225,7 @@ async def handoff_transfer_agency_agent(args: HandoffTransferAgencyArgs) -> Dict
     institution_name = (args.get("institution_name") or "").strip()
     service_type = (args.get("service_type") or "transfer_agency").strip()
     summary = (args.get("summary") or "Caller transferred to Transfer Agency specialist.").strip()
-    message = (args.get("message") or "Connecting you with our transfer agency specialist...").strip()
+    message = (args.get("message") or "Thanks for holding. A transfer agency specialist will take it from here.").strip()
     session_overrides = args.get("session_overrides")
 
     if not caller_name or not client_id:
@@ -259,7 +259,7 @@ async def handoff_transfer_agency_agent(args: HandoffTransferAgencyArgs) -> Dict
     return payload
 
 
-class HandoffVenmoArgs(TypedDict, total=False):
+class HandoffPayPalArgs(TypedDict, total=False):
     caller_name: str
     client_id: str
     issue_summary: str
@@ -270,13 +270,13 @@ class HandoffVenmoArgs(TypedDict, total=False):
     session_overrides: Dict[str, Any]
 
 
-async def handoff_venmo_agent(args: HandoffVenmoArgs) -> Dict[str, Any]:
+async def handoff_paypal_agent(args: HandoffPayPalArgs) -> Dict[str, Any]:
     if not isinstance(args, dict):
-        raise TypeError("handoff_venmo_agent expects a dict of arguments")
+        raise TypeError("handoff_paypal_agent expects a dict of arguments")
 
     caller_name = (args.get("caller_name") or "").strip()
     client_id = (args.get("client_id") or "").strip()
-    issue_summary = (args.get("issue_summary") or "Venmo support request").strip()
+    issue_summary = (args.get("issue_summary") or "PayPal or Venmo support request").strip()
     inquiry_type = (args.get("inquiry_type") or "general_support").strip()
     institution_name = (args.get("institution_name") or "").strip()
     details = (args.get("details") or "").strip()
@@ -284,10 +284,10 @@ async def handoff_venmo_agent(args: HandoffVenmoArgs) -> Dict[str, Any]:
     session_overrides = args.get("session_overrides")
 
     # if not caller_name:
-    #     raise ValueError("'caller_name' is required for Venmo handoff")
+    #     raise ValueError("'caller_name' is required for PayPal/Venmo handoff")
 
     logger.info(
-        "💸 Hand-off to VenmoAgent | client_id=%s caller=%s issue=%s",
+        "💸 Hand-off to PayPalAgent | client_id=%s caller=%s issue=%s",
         client_id,
         caller_name,
         issue_summary,
@@ -312,8 +312,8 @@ async def handoff_venmo_agent(args: HandoffVenmoArgs) -> Dict[str, Any]:
         extra["session_overrides"] = session_overrides
 
     payload = _build_handoff_payload(
-        target_agent="VenmoAgent",
-        message="Connecting you with our Venmo support specialist...",
+        target_agent="PayPalAgent",
+        message="Thanks for holding. A PayPal and Venmo specialist will join shortly.",
         summary=details or user_last_utterance or issue_summary,
         context=context,
         extra=extra,
@@ -362,7 +362,7 @@ async def handoff_to_auth(args: HandoffToAuthArgs) -> Dict[str, Any]:
 
     payload = _build_handoff_payload(
         target_agent="AuthAgent",
-        message="Routing you to our authentication specialist for further assistance...",
+        message="Thanks for holding. Our authentication specialist will continue from here.",
         summary=reason,
         context=context,
         extra=extra,

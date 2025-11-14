@@ -14,5 +14,5 @@ HANDOFF_MAP: Dict[str, str] = {
     "handoff_transfer_agency_agent": "TransferAgency",
     "handoff_to_compliance": "ComplianceDesk",
     "handoff_to_trading": "TradingDesk",
-    "handoff_venmo_agent": "VenmoAgent",
+    "handoff_paypal_agent": "PayPalAgent",
 }

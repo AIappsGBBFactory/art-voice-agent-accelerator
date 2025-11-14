@@ -22,6 +22,15 @@ from utils.ml_logging import get_logger
 from apps.rtagent.backend.src.agents.vlagent.settings import get_settings
 from apps.rtagent.backend.src.agents.vlagent.registry import load_registry, HANDOFF_MAP
 from apps.rtagent.backend.src.agents.vlagent.orchestrator import LiveOrchestrator
+from apps.rtagent.backend.src.ws_helpers.shared_ws import (
+	send_session_envelope,
+	send_user_transcript,
+)
+from apps.rtagent.backend.src.ws_helpers.envelopes import make_envelope
+from apps.rtagent.backend.src.agents.vlagent.tool_store.tools_helper import (
+	push_tool_start,
+	push_tool_end,
+)
 
 import logging
 
@@ -39,6 +48,111 @@ _TRACED_EVENTS = {
 }
 
 _DTMF_FLUSH_DELAY_SECONDS = 1.5
+
+
+class _SessionMessenger:
+	"""Bridge VoiceLive events to the session-aware WebSocket manager."""
+
+	def __init__(self, websocket: WebSocket) -> None:
+		self._ws = websocket
+
+	@property
+	def _session_id(self) -> Optional[str]:
+		return getattr(self._ws.state, "session_id", None)
+
+	@property
+	def _call_id(self) -> Optional[str]:
+		return getattr(self._ws.state, "call_connection_id", None)
+
+	def _can_emit(self) -> bool:
+		return bool(self._session_id)
+
+	async def send_user_message(self, text: str) -> None:
+		"""Forward a user transcript to all session listeners."""
+		if not text or not self._can_emit():
+			return
+
+		await send_user_transcript(
+			self._ws,
+			text,
+			session_id=self._session_id,
+			conn_id=None,
+			broadcast_only=True,
+		)
+
+	async def send_assistant_message(self, text: str, *, sender: Optional[str] = None) -> None:
+		"""Emit assistant transcript chunks to the frontend chat UI."""
+		if not text or not self._can_emit():
+			return
+
+		sender_name = sender or "Assistant"
+		payload = {
+			"type": "assistant",
+			"message": text,
+			"content": text,
+			"streaming": False,
+		}
+		envelope = make_envelope(
+			etype="event",
+			sender=sender_name,
+			payload=payload,
+			topic="session",
+			session_id=self._session_id,
+			call_id=self._call_id,
+		)
+
+		await send_session_envelope(
+			self._ws,
+			envelope,
+			session_id=self._session_id,
+			conn_id=None,
+			event_label="voicelive_assistant_transcript",
+			broadcast_only=True,
+		)
+
+	async def notify_tool_start(self, *, call_id: Optional[str], name: Optional[str], args: Dict[str, Any]) -> None:
+		"""Relay tool start events to the session dashboard."""
+		if not self._can_emit() or not call_id or not name:
+			return
+		try:
+			await push_tool_start(
+				self._ws,
+				call_id,
+				name,
+				args,
+				is_acs=True,
+				session_id=self._session_id,
+			)
+		except Exception:
+			logger.debug("Failed to emit tool_start frame for VoiceLive session", exc_info=True)
+
+	async def notify_tool_end(
+		self,
+		*,
+		call_id: Optional[str],
+		name: Optional[str],
+		status: str,
+		elapsed_ms: float,
+		result: Optional[Dict[str, Any]] = None,
+		error: Optional[str] = None,
+	) -> None:
+		"""Relay tool completion events (success or failure)."""
+		if not self._can_emit() or not call_id or not name:
+			return
+		try:
+			await push_tool_end(
+				self._ws,
+				call_id,
+				name,
+				status,
+				elapsed_ms,
+				result=result,
+				error=error,
+				is_acs=True,
+				session_id=self._session_id,
+			)
+		except Exception:
+			logger.debug("Failed to emit tool_end frame for VoiceLive session", exc_info=True)
 
 class VoiceLiveSDKHandler:
 	"""Minimal VoiceLive handler that mirrors the vlagent multi-agent sample.
@@ -62,6 +176,7 @@ class VoiceLiveSDKHandler:
 		self.websocket = websocket
 		self.session_id = session_id
 		self.call_connection_id = call_connection_id or session_id
+		self._messenger = _SessionMessenger(websocket)
 
 		self._settings = None
 		self._credential: Optional[Union[AzureKeyCredential, TokenCredential]] = None
@@ -78,6 +193,7 @@ class VoiceLiveSDKHandler:
 		self._dtmf_flush_task: Optional[asyncio.Task] = None
 		self._dtmf_flush_delay = _DTMF_FLUSH_DELAY_SECONDS
 		self._dtmf_lock = asyncio.Lock()
+		self._last_user_transcript: Optional[str] = None
 
 	async def start(self) -> None:
 		"""Establish VoiceLive connection and start event processing."""
@@ -108,6 +224,7 @@ class VoiceLiveSDKHandler:
 				handoff_map=HANDOFF_MAP,
 				start_agent=self._settings.start_agent,
 				audio_processor=None,
+				messenger=self._messenger,
 			)
 
 			await self._orchestrator.start()
@@ -244,6 +361,17 @@ class VoiceLiveSDKHandler:
 			return
 
 		etype = event.type if hasattr(event, "type") else None
+		if etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
+			transcript = getattr(event, "transcript", "")
+			if transcript and transcript != self._last_user_transcript:
+				await self._messenger.send_user_message(transcript)
+				logger.info(
+					"[VoiceLiveSDK] User transcript | session=%s text='%s'",
+					self.session_id,
+					transcript,
+				)
+				self._last_user_transcript = transcript
+			return
 		if etype == ServerEventType.RESPONSE_AUDIO_DELTA:
 			response_id = getattr(event, "response_id", None)
 			if response_id:
@@ -275,6 +403,9 @@ class VoiceLiveSDKHandler:
 			await self._send_stop_audio()
 			self._stop_audio_pending = False
 
+		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
+			logger.info("🎤 User stopped speaking")
+			logger.info("🤔 Processing...")
 
 		elif etype == ServerEventType.RESPONSE_AUDIO_DONE:
 			logger.debug(
@@ -287,15 +418,10 @@ class VoiceLiveSDKHandler:
 				self._active_response_ids.discard(response_id)
 		elif etype == ServerEventType.ERROR:
 			await self._handle_server_error(event)
-		elif etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
-			transcript = getattr(event, "transcript", "")
-			if transcript:
-				logger.info(
-					"[VoiceLiveSDK] User transcript | session=%s text='%s'",
-					self.session_id,
-					transcript,
-				)
-
+	
+		elif etype == ServerEventType.CONVERSATION_ITEM_CREATED:
+			logger.debug("Conversation item created: %s", event.item.id)
+	
 	async def _send_audio_delta(self, audio_bytes: bytes) -> None:
 		pcm_bytes = self._to_pcm_bytes(audio_bytes)
 		if not pcm_bytes:

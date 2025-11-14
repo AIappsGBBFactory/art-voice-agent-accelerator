@@ -1414,11 +1414,10 @@ async def send_fraud_case_email(args: SendFraudCaseEmailArgs) -> SendFraudCaseEm
         
         # Get fraud case details for rich email content
         try:
-            fraud_cases_manager = get_fraud_cosmos_manager()
-            fraud_case_data = await asyncio.to_thread(
-                fraud_cases_manager.query_documents,
-                {"case_id": fraud_case_id, "client_id": client_id},
-                limit=1,
+            fraud_case_data = await db_manager.query_documents(
+                collection_name="fraud_cases",
+                query={"case_id": fraud_case_id, "client_id": client_id},
+                limit=1
             )
             
             if fraud_case_data and len(fraud_case_data) > 0:

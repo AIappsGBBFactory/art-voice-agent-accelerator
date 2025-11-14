@@ -8,16 +8,17 @@ const DEFAULT_SCENARIOS = [
       'Ask the agent to summarize what Venmo Purchase Protection covers for sellers according to the help center.',
       'Follow up with a question about Instant Transfer fees (e.g., "If I move $2,000 today, what fee does Venmo list?").',
       'Request the Venmo help guidance on debit card ATM limits and have the agent read back the key numbers.',
+      'Close the loop by asking for citation links so you can verify RAG grounding.',
     ],
   },
   {
     title: 'Report Venmo Fraud & Trigger MFA',
-    focus: 'Exercise the verify_fraud_client_identity -> MFA tooling',
+    focus: 'Exercise the verify_fraud_client_identity -> MFA tooling before handoff',
     steps: [
       'Begin with "I need to report fraud on my Venmo account" to route into the fraud track.',
       'Provide profile details (full name, DOB, SSN4) when the agent asks for verification.',
       'When prompted, approve sending the MFA code, then respond with a code like 184512 to finish the check.',
-      'Ask the agent to freeze the account and escalate or hand off once identity is confirmed.',
+      'Ask the agent to freeze the Venmo balance, flag risky merchants, and warm-transfer to the Fraud Agent for deeper review.',
     ],
   },
   {
@@ -28,6 +29,47 @@ const DEFAULT_SCENARIOS = [
       'Pose a RAG question: "What does the Venmo help article say about linked cards being declined?"',
       'Next, request "How much is in my Venmo balance right now?" so the agent has to verify identity with MFA.',
       'After passing MFA, ask for "my most recent transactions" or "any Venmo Credit Card payments pending."',
+      'Wrap up by requesting a proactive alert if large transfers resume, showcasing multi-turn memory.',
+    ],
+  },
+  {
+    title: 'Fraud Agent Card Freeze',
+    focus: 'Use apps/rtagent/backend/src/agents/vlagent/agents/fraud.yaml tooling to block cards',
+    steps: [
+      'After Venmo alerts you to odd charges, say "Route me to the fraud agent so we can freeze my card."',
+      'Share transaction IDs or merchants that look suspicious and let the Fraud Agent summarize anomalies.',
+      'Authorize a temporary card block plus reissuance; confirm the agent records case notes and risk score.',
+      'Ask for downstream coordination with Compliance so the block reason is documented for regulators.',
+    ],
+  },
+  {
+    title: 'Authentication Agent Gatekeeper',
+    focus: 'Hit auth.yaml to validate identities before handoffs',
+    steps: [
+      'Say "Before we proceed, I want to pass through the authentication agent."',
+      'Provide multi-factor evidence (email, last 4 SSN, employee ID) and confirm the agent checks `verify_client_identity`.',
+      'Once cleared, request a handoff to the Venmo or Fraud agent and observe how the profile context carries forward.',
+      'Ask the receiving agent to repeat the verified identity details to prove context sync.',
+    ],
+  },
+  {
+    title: 'Compliance Review + RAG Citations',
+    focus: 'Exercise compliance.yaml prompts with knowledge grounding',
+    steps: [
+      'Request "Connect me with the compliance agent to review my call notes."',
+      'Ask for an outline of required disclosures for DRIP liquidations or ACH disputes and listen for citations.',
+      'Challenge the agent with "Where in the policy library did you pull that guidance?" to test RAG metadata.',
+      'Finish by asking for a summary email that documents risk controls applied during the call.',
+    ],
+  },
+  {
+    title: 'Transfer Agency & Escrow Flow',
+    focus: 'Use transfer.yaml to coordinate payouts after identity checks',
+    steps: [
+      'Start with the authentication agent to capture SSN4 + MFA, then say "Transfer me to the transfer agency specialist."',
+      'Ask about pending DRIP payouts or escrow disbursements; request a breakdown by beneficiary.',
+      'Initiate a change request (e.g., "move today’s payment to my brokerage account") and confirm dual-control steps.',
+      'Have the agent escalate to Compliance if the transaction exceeds limits, demonstrating multi-agent orchestration.',
     ],
   },
 ];
