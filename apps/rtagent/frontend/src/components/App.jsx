@@ -1,16 +1,19 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, Card, CardContent, CardHeader, Chip, Divider, IconButton, LinearProgress, Typography } from '@mui/material';
+import { Box, Card, CardContent, CardHeader, Chip, Divider, IconButton, LinearProgress, Paper, Typography } from '@mui/material';
 import BuildCircleRoundedIcon from '@mui/icons-material/BuildCircleRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import HourglassTopRoundedIcon from '@mui/icons-material/HourglassTopRounded';
+import InfoRoundedIcon from '@mui/icons-material/InfoRounded';
 import MicOffRoundedIcon from '@mui/icons-material/MicOffRounded';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
 import PhoneDisabledRoundedIcon from '@mui/icons-material/PhoneDisabledRounded';
 import PhoneRoundedIcon from '@mui/icons-material/PhoneRounded';
+import PhoneInTalkRoundedIcon from '@mui/icons-material/PhoneInTalkRounded';
 import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import KeyboardArrowUpRoundedIcon from '@mui/icons-material/KeyboardArrowUpRounded';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import "reactflow/dist/style.css";
 import TemporaryUserForm from './TemporaryUserForm';
 import StreamingModeSelector from './StreamingModeSelector.jsx';
@@ -139,6 +142,96 @@ const buildSessionProfile = (raw, fallbackSessionId, previous) => {
     expiresAt: expiresAtValue,
     safetyNotice: safetyNoticeValue,
   };
+};
+
+const formatStatusTimestamp = (isoValue) => {
+  if (!isoValue) {
+    return null;
+  }
+  const date = isoValue instanceof Date ? isoValue : new Date(isoValue);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
+
+const inferStatusTone = (textValue = "") => {
+  const normalized = textValue.toLowerCase();
+  const matchesAny = (needles) => needles.some((needle) => normalized.includes(needle));
+  if (textValue.includes("❌") || textValue.includes("🚫") || matchesAny(["error", "fail", "critical"])) {
+    return "error";
+  }
+  if (textValue.includes("✅") || textValue.includes("🎉") || matchesAny(["success", "ready", "connected", "restarted", "completed"])) {
+    return "success";
+  }
+  if (textValue.includes("⚠️") || textValue.includes("🛑") || textValue.includes("📵") || matchesAny(["stopp", "ended", "disconnect", "hang up", "warning"])) {
+    return "warning";
+  }
+  return "info";
+};
+
+const buildSystemMessage = (text, options = {}) => {
+  const timestamp = options.timestamp ?? new Date().toISOString();
+  const statusTone = options.statusTone ?? options.tone ?? inferStatusTone(text);
+  return {
+    speaker: "System",
+    text,
+    statusTone,
+    timestamp,
+    statusCaption: options.statusCaption ?? null,
+  };
+};
+
+const STATUS_TONE_META = {
+  info: {
+    label: "System Update",
+    accent: "#2563eb",
+    background: "linear-gradient(135deg, rgba(37,99,235,0.08), rgba(14,116,144,0.06))",
+    border: "1px solid rgba(37,99,235,0.18)",
+    icon: InfoRoundedIcon,
+    textColor: "#0f172a",
+    captionColor: "rgba(15,23,42,0.65)",
+  },
+  success: {
+    label: "All Set",
+    accent: "#059669",
+    background: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(56,189,248,0.05))",
+    border: "1px solid rgba(34,197,94,0.24)",
+    icon: CheckCircleRoundedIcon,
+    textColor: "#064e3b",
+    captionColor: "rgba(6,78,59,0.7)",
+  },
+  warning: {
+    label: "Heads Up",
+    accent: "#f59e0b",
+    background: "linear-gradient(135deg, rgba(245,158,11,0.14), rgba(249,115,22,0.08))",
+    border: "1px solid rgba(245,158,11,0.28)",
+    icon: WarningAmberRoundedIcon,
+    textColor: "#7c2d12",
+    captionColor: "rgba(124,45,18,0.7)",
+  },
+  call: {
+    label: "Call Live",
+    accent: "#0ea5e9",
+    background: "linear-gradient(135deg, rgba(14,165,233,0.14), rgba(45,212,191,0.08))",
+    border: "1px solid rgba(14,165,233,0.24)",
+    icon: PhoneInTalkRoundedIcon,
+    textColor: "#0f172a",
+    captionColor: "rgba(15,23,42,0.55)",
+  },
+  error: {
+    label: "Action Needed",
+    accent: "#ef4444",
+    background: "linear-gradient(135deg, rgba(239,68,68,0.12), rgba(249,115,22,0.05))",
+    border: "1px solid rgba(239,68,68,0.26)",
+    icon: ErrorOutlineRoundedIcon,
+    textColor: "#7f1d1d",
+    captionColor: "rgba(127,29,29,0.7)",
+  },
 };
 
 // Component styles
@@ -2212,10 +2305,31 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
  *  CHAT BUBBLE
  * ------------------------------------------------------------------ */
 const ChatBubble = ({ message }) => {
+  if (message?.type === "divider") {
+    return (
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
+        <Divider textAlign="center" sx={{ width: "100%", maxWidth: 560 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "#94a3b8",
+              fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+            }}
+          >
+            {message.label || formatStatusTimestamp(message.timestamp) || "—"}
+          </Typography>
+        </Divider>
+      </Box>
+    );
+  }
+
   const { speaker, text, isTool, streaming } = message;
   const isUser = speaker === "User";
   const isSpecialist = speaker?.includes("Specialist");
   const isAuthAgent = speaker === "Auth Agent";
+  const isSystem = speaker === "System" && !isTool;
   
   if (isTool) {
     const safeText = text ?? "";
@@ -2367,6 +2481,104 @@ const ChatBubble = ({ message }) => {
     );
   }
   
+  if (isSystem) {
+    const toneKey = message.statusTone && STATUS_TONE_META[message.statusTone] ? message.statusTone : inferStatusTone(text);
+    const tone = STATUS_TONE_META[toneKey] ?? STATUS_TONE_META.info;
+    const ToneIcon = tone.icon;
+    const timestampLabel = formatStatusTimestamp(message.timestamp);
+    const lines = (text || "").split("\n").filter(Boolean);
+
+    return (
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            width: "100%",
+            maxWidth: 560,
+            borderRadius: 3,
+            padding: "12px 16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+            background: tone.background,
+            border: tone.border,
+            color: tone.textColor,
+            backdropFilter: "blur(18px)",
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.5 }}>
+            <Box
+              sx={{
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                background: "rgba(255,255,255,0.6)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 12px 24px rgba(15,23,42,0.12)",
+              }}
+            >
+              <ToneIcon sx={{ fontSize: 22, color: tone.accent }} />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography
+                variant="caption"
+                sx={{
+                  textTransform: "uppercase",
+                  letterSpacing: "0.14em",
+                  fontWeight: 600,
+                  color: tone.accent,
+                }}
+              >
+                {tone.label}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  marginTop: 0.5,
+                  whiteSpace: "pre-wrap",
+                  fontSize: "0.92rem",
+                  lineHeight: 1.5,
+                  color: tone.textColor,
+                }}
+              >
+                {lines.map((line, idx) => (
+                  <React.Fragment key={idx}>
+                    {idx > 0 && <br />}
+                    {line}
+                  </React.Fragment>
+                ))}
+              </Typography>
+              {message.statusCaption && (
+                <Typography
+                  variant="caption"
+                  sx={{ display: "block", marginTop: 0.75, color: tone.captionColor }}
+                >
+                  {message.statusCaption}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+          {timestampLabel && <Divider sx={{ borderColor: "rgba(148,163,184,0.35)" }} />}
+          {timestampLabel && (
+            <Typography
+              variant="caption"
+              sx={{
+                alignSelf: "flex-end",
+                color: tone.captionColor,
+                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                letterSpacing: "0.08em",
+              }}
+            >
+              {timestampLabel}
+            </Typography>
+          )}
+        </Paper>
+      </Box>
+    );
+  }
+  
   const bubbleStyle = isUser ? styles.userBubble : styles.assistantBubble;
 
   return (
@@ -2447,6 +2659,28 @@ function RealTimeVoiceApp() {
   // Profile menu state moved to ProfileButton component
   // Profile menu state moved to ProfileButton component
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
+
+  const appendSystemMessage = useCallback((text, options = {}) => {
+    const timestamp = options.timestamp ?? new Date().toISOString();
+    const baseMessage = buildSystemMessage(text, { ...options, timestamp });
+    const shouldInsertDivider = options.withDivider === true;
+    const dividerLabel = shouldInsertDivider
+      ? options.dividerLabel ?? `Call disconnected · ${formatStatusTimestamp(timestamp)}`
+      : null;
+    setMessages((prev) => [
+      ...prev,
+      baseMessage,
+      ...(shouldInsertDivider
+        ? [
+            {
+              type: "divider",
+              label: dividerLabel,
+              timestamp,
+            },
+          ]
+        : []),
+    ]);
+  }, [setMessages]);
   const handleSystemStatus = useCallback((nextStatus) => {
     setSystemStatus((prev) =>
       prev.status === nextStatus.status && prev.acsOnlyIssue === nextStatus.acsOnlyIssue
@@ -2746,9 +2980,9 @@ function RealTimeVoiceApp() {
       ),
     }));
     setProfilePanelOpen(true);
-    setMessages((prev) => [...prev, { speaker: "System", text: messageLines.join('\n') }]);
+    appendSystemMessage(messageLines.join('\n'), { tone: "warning" });
     appendLog('Synthetic demo profile issued with sandbox identifiers');
-  }, [appendLog, sessionId]);
+  }, [appendLog, appendSystemMessage, sessionId]);
 
   const publishMetricsSummary = useCallback(
     (label, detail) => {
@@ -2994,7 +3228,6 @@ function RealTimeVoiceApp() {
   }, [log]);
 
   const startRecognition = async () => {
-      setMessages([]);
       appendLog("🎤 PCM streaming started");
 
       await initializeAudioPlayback();
@@ -3170,20 +3403,21 @@ function RealTimeVoiceApp() {
       }
       
       // Add session stopped message instead of clearing everything
-      setMessages(m => [...m, { 
-        speaker: "System", 
-        text: "🛑 Session stopped" 
-      }]);
+      appendSystemMessage("🛑 Session stopped", { tone: "warning" });
       setActiveSpeaker("System");
       setRecording(false);
       appendLog("🛑 PCM streaming stopped");
     };
 
     const pushIfChanged = (arr, msg) => {
-      if (arr.length === 0) return [...arr, msg];
+      const normalizedMsg =
+        msg?.speaker === "System"
+          ? buildSystemMessage(msg.text ?? "", msg)
+          : msg;
+      if (arr.length === 0) return [...arr, normalizedMsg];
       const last = arr[arr.length - 1];
-      if (last.speaker === msg.speaker && last.text === msg.text) return arr;
-      return [...arr, msg];
+      if (last.speaker === normalizedMsg.speaker && last.text === normalizedMsg.text) return arr;
+      return [...arr, normalizedMsg];
     };
 
     const handleSocketMessage = async (event) => {
@@ -3716,12 +3950,12 @@ function RealTimeVoiceApp() {
         appendLog(`Call error: ${json.detail||res.statusText}`);
         return;
       }
-      // show in chat
+      // show in chat with dedicated system card
       const readableMode = selectedStreamingModeLabel || selectedStreamingMode;
-      setMessages(m => [
-        ...m,
-        { speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber} · Mode: ${readableMode}` }
-      ]);
+      appendSystemMessage("📞 Call started", {
+        tone: "call",
+        statusCaption: `→ ${targetPhoneNumber} · Mode: ${readableMode}`,
+      });
       appendLog(`📞 Call initiated (mode: ${readableMode})`);
       setShowPhoneInput(false);
 
@@ -3896,10 +4130,10 @@ function RealTimeVoiceApp() {
                   
                   // Add welcome message
                   setTimeout(() => {
-                    setMessages([{ 
-                      speaker: "System", 
-                      text: "✅ Session restarted with new ID. Ready for a fresh conversation!" 
-                    }]);
+                    appendSystemMessage(
+                      "✅ Session restarted with new ID. Ready for a fresh conversation!",
+                      { tone: "success" }
+                    );
                   }, 500);
                 }}
               >
@@ -3994,10 +4228,13 @@ function RealTimeVoiceApp() {
                     // Hang up call
                     stopRecognition();
                     setCallActive(false);
-                    setMessages(prev => [...prev, { 
-                      speaker: "System",
-                      text: "📞 Call ended" 
-                    }]);
+                    const endedAt = new Date().toISOString();
+                    appendSystemMessage("📞 Call ended", {
+                      tone: "warning",
+                      timestamp: endedAt,
+                      withDivider: true,
+                      dividerLabel: `Call disconnected · ${formatStatusTimestamp(endedAt)}`,
+                    });
                   } else {
                     // Show phone input
                     setShowPhoneInput(!showPhoneInput);
