@@ -10,6 +10,9 @@
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
   background-color: #242424;
+  --scrollbar-track: rgba(148, 163, 184, 0.18);
+  --scrollbar-thumb: rgba(71, 85, 105, 0.42);
+  --scrollbar-thumb-hover: rgba(71, 85, 105, 0.62);
 }
 
 /* Background will be set dynamically via JavaScript */
@@ -127,6 +130,9 @@ button:focus-visible {
   :root {
     color: #213547;
     background-color: #ffffff;
+    --scrollbar-track: rgba(148, 163, 184, 0.2);
+    --scrollbar-thumb: rgba(51, 65, 85, 0.38);
+    --scrollbar-thumb-hover: rgba(51, 65, 85, 0.56);
   }
 
   body {
@@ -142,4 +148,30 @@ button:focus-visible {
   button {
     background-color: #f9f9f9;
   }
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }

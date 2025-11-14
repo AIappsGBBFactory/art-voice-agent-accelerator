@@ -98,23 +98,14 @@ class LiveOrchestrator:
             is_first_visit
         )
         
-        # Choose greeting based on visit history
-        if system_vars.get("greeting"):
-            greeting = system_vars["greeting"]
-        elif is_first_visit:
-            greeting = agent.greeting
-        else:
-            greeting = agent.return_greeting or f"Welcome back! How can I help you?"
-        
-        handoff_message = system_vars.get("handoff_message")
-        combined_greeting = " ".join(
-            segment.strip()
-            for segment in (handoff_message, greeting)
-            if segment and segment.strip()
+        greeting = self._select_pending_greeting(
+            agent=agent,
+            agent_name=agent_name,
+            system_vars=system_vars,
+            is_first_visit=is_first_visit,
         )
-
-        if combined_greeting:
-            self._pending_greeting = combined_greeting
+        if greeting:
+            self._pending_greeting = greeting
             self._pending_greeting_agent = agent_name
         else:
             self._pending_greeting = None
@@ -137,6 +128,8 @@ class LiveOrchestrator:
                 if key not in system_vars and handoff_context.get(key) is not None:
                     system_vars[key] = handoff_context.get(key)
 
+        self.active = agent_name
+
         try:
             await agent.apply_session(
                 self.conn,
@@ -146,10 +139,68 @@ class LiveOrchestrator:
         except Exception:
             logger.exception("Failed to apply session for agent '%s'", agent_name)
             raise
-
-        self.active = agent_name
         
         logger.info("[Active Agent] %s is now active", self.active)
+
+    def _select_pending_greeting(
+        self,
+        *,
+        agent: "AzureVoiceLiveAgent",
+        agent_name: str,
+        system_vars: dict,
+        is_first_visit: bool,
+    ) -> Optional[str]:
+        """Return a contextual greeting the agent should deliver once the session is ready."""
+
+        explicit = system_vars.get("greeting")
+        if explicit:
+            return explicit.strip() or None
+
+        # Prefer agent defaults when there's no transfer context.
+        handoff_context = system_vars.get("handoff_context") or {}
+        has_handoff = bool(
+            handoff_context
+            or system_vars.get("handoff_message")
+            or system_vars.get("handoff_reason")
+        )
+
+        if not has_handoff:
+            if is_first_visit:
+                return (agent.greeting or "").strip() or None
+            return (agent.return_greeting or "Welcome back! How can I help you?").strip()
+
+        caller = (
+            handoff_context.get("caller_name")
+            if isinstance(handoff_context, dict)
+            else None
+        ) or system_vars.get("caller_name") or "there"
+
+        intent = None
+        if isinstance(handoff_context, dict):
+            intent = (
+                handoff_context.get("issue_summary")
+                or handoff_context.get("details")
+                or handoff_context.get("reason")
+            )
+        intent = (
+            system_vars.get("handoff_reason")
+            or system_vars.get("issue_summary")
+            or system_vars.get("details")
+            or intent
+        )
+
+        intro = agent.return_greeting if not is_first_visit else agent.greeting
+        intro = (intro or f"Hi, I'm {agent_name}.").strip()
+
+        if intent:
+            intent = intent.strip().rstrip(".")
+            return f"Hi {caller}, {intro} I understand you're calling about {intent}. Let's get started."
+
+        handoff_message = (system_vars.get("handoff_message") or "").strip()
+        if handoff_message:
+            return f"Hi {caller}, {intro} {handoff_message}"
+
+        return f"Hi {caller}, {intro}".strip()
 
     async def _execute_tool_call(self, call_id: Optional[str], name: Optional[str], args_json: Optional[str]) -> bool:
         """
@@ -361,9 +412,17 @@ class LiveOrchestrator:
             voice_info = getattr(session_obj, "voice", None) if session_obj else None
             logger.info("Session ready: %s | voice=%s", session_id, voice_info)
             if self.audio:
+                await self.audio.stop_playback()
+            try:
+                await self.conn.response.cancel()
+            except Exception:
+                logger.debug("response.cancel() failed during session_ready", exc_info=True)
+            if self.audio:
                 await self.audio.start_capture()
 
-            if self._pending_greeting and self._pending_greeting_agent == self.active:
+            if self._pending_greeting and (
+                self._pending_greeting_agent == self.active
+            ):
                 try:
                     await self.agents[self.active].trigger_response(
                         self.conn,

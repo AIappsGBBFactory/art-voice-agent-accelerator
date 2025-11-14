@@ -43,6 +43,9 @@ _TRACED_EVENTS = {
 	ServerEventType.RESPONSE_DONE.value,
 	ServerEventType.RESPONSE_AUDIO_DONE.value,
 	ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED.value,
+	ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_DELTA.value,
+	ServerEventType.SESSION_UPDATED.value,
+	ServerEventType.SESSION_CREATED.value,
 	ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED.value,
 	ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED.value,
 }
@@ -406,6 +409,7 @@ class VoiceLiveSDKHandler:
 		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
 			logger.info("🎤 User stopped speaking")
 			logger.info("🤔 Processing...")
+
 
 		elif etype == ServerEventType.RESPONSE_AUDIO_DONE:
 			logger.debug(

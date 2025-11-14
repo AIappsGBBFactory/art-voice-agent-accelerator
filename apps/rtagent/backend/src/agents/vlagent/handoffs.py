@@ -70,7 +70,7 @@ async def handoff_general_agent(args: HandoffGeneralArgs) -> Dict[str, Any]:
     }
     return _build_handoff_payload(
         target_agent="GeneralInfoAgent",
-        message="Thanks for holding. A general information specialist will join momentarily.",
+        message="",
         summary=topic,
         context=context,
         extra={"should_interrupt_playback": True},
@@ -111,7 +111,7 @@ async def handoff_claim_agent(args: HandoffClaimArgs) -> Dict[str, Any]:
     }
     return _build_handoff_payload(
         target_agent="ClaimsIntake",
-        message="Thanks for holding. Our claims intake specialist will take it from here.",
+        message="",
         summary=claim_intent or "claims_support",
         context=context,
         extra={"should_interrupt_playback": True},
@@ -169,10 +169,10 @@ async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
 
     caller_name = (args.get("caller_name") or "").strip()
     client_id = (args.get("client_id") or "").strip()
-    institution_name = (args.get("institution_name") or "").strip()
+    institution_name = (args.get("institution_name") or "Personal PayPal").strip()
     service_type = (args.get("service_type") or "fraud_reporting").strip()
-    summary = (args.get("summary") or "Caller transferred to Fraud Detection specialist.").strip()
-    message = (args.get("message") or "Thanks for holding. Our fraud detection team will step in now.").strip()
+    summary = (args.get("summary") or "").strip()
+    message = (args.get("message") or "").strip()
     session_overrides = args.get("session_overrides")
 
     if not caller_name or not client_id:
@@ -224,8 +224,8 @@ async def handoff_transfer_agency_agent(args: HandoffTransferAgencyArgs) -> Dict
     client_id = (args.get("client_id") or "").strip()
     institution_name = (args.get("institution_name") or "").strip()
     service_type = (args.get("service_type") or "transfer_agency").strip()
-    summary = (args.get("summary") or "Caller transferred to Transfer Agency specialist.").strip()
-    message = (args.get("message") or "Thanks for holding. A transfer agency specialist will take it from here.").strip()
+    summary = (args.get("summary") or "").strip()
+    message = (args.get("message") or "").strip()
     session_overrides = args.get("session_overrides")
 
     if not caller_name or not client_id:
@@ -313,7 +313,7 @@ async def handoff_paypal_agent(args: HandoffPayPalArgs) -> Dict[str, Any]:
 
     payload = _build_handoff_payload(
         target_agent="PayPalAgent",
-        message="Thanks for holding. A PayPal and Venmo specialist will join shortly.",
+        message="",
         summary=details or user_last_utterance or issue_summary,
         context=context,
         extra=extra,
@@ -362,7 +362,7 @@ async def handoff_to_auth(args: HandoffToAuthArgs) -> Dict[str, Any]:
 
     payload = _build_handoff_payload(
         target_agent="AuthAgent",
-        message="Thanks for holding. Our authentication specialist will continue from here.",
+        message="",
         summary=reason,
         context=context,
         extra=extra,
