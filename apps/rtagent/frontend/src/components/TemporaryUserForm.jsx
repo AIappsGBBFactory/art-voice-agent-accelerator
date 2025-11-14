@@ -8,17 +8,14 @@ const formStyles = {
     padding: '24px 28px 28px 28px',
     maxWidth: '420px',
     width: '420px',
-    borderRadius: '24px',
-    border: '1px solid rgba(226, 232, 240, 0.8)',
-    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.98) 100%)',
-    backdropFilter: 'blur(20px)',
+    borderRadius: '20px',
+    border: '1px solid #e2e8f0',
+    backgroundColor: '#ffffff',
+    boxShadow: '0 10px 40px rgba(15, 23, 42, 0.12)',
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
     position: 'relative',
-    overflow: 'hidden',
-    transform: 'translateY(0)',
-    transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
   },
   headerRow: {
     display: 'flex',
@@ -36,10 +33,7 @@ const formStyles = {
   title: {
     fontSize: '20px',
     fontWeight: 700,
-    background: 'linear-gradient(135deg, #1e293b 0%, #3b82f6 100%)',
-    backgroundClip: 'text',
-    WebkitBackgroundClip: 'text',
-    WebkitTextFillColor: 'transparent',
+    color: '#1e293b',
     margin: 0,
     letterSpacing: '-0.025em',
   },
@@ -51,7 +45,7 @@ const formStyles = {
     fontWeight: 400,
   },
   closeButton: {
-    background: 'rgba(148, 163, 184, 0.1)',
+    background: '#f1f5f9',
     border: 'none',
     color: '#64748b',
     fontSize: '16px',
@@ -68,21 +62,20 @@ const formStyles = {
     flexShrink: 0,
   },
   closeButtonHover: {
-    background: 'rgba(239, 68, 68, 0.1)',
+    background: '#fee2e2',
     color: '#ef4444',
     transform: 'scale(1.05)',
   },
   warning: {
     fontSize: '12px',
     color: '#dc2626',
-    background: 'linear-gradient(135deg, rgba(254, 242, 242, 0.9) 0%, rgba(252, 165, 165, 0.1) 100%)',
-    border: '1px solid rgba(252, 165, 165, 0.3)',
+    background: '#fef2f2',
+    border: '1px solid #fecaca',
     borderRadius: '12px',
     padding: '12px 16px',
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    backdropFilter: 'blur(10px)',
     fontWeight: 500,
   },
   form: {
@@ -107,12 +100,27 @@ const formStyles = {
     letterSpacing: '0.025em',
     marginBottom: '2px',
     transition: 'color 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
   },
   labelFocused: {
     color: '#3b82f6',
   },
+  labelText: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    whiteSpace: 'nowrap',
+  },
+  labelExtras: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    flexShrink: 0,
+  },
   requiredBadge: {
-    marginLeft: '8px',
     padding: '2px 6px',
     borderRadius: '999px',
     backgroundColor: 'rgba(239, 68, 68, 0.12)',
@@ -133,9 +141,8 @@ const formStyles = {
     fontSize: '14px',
     color: '#1f2937',
     outline: 'none',
-    background: 'rgba(255, 255, 255, 0.8)',
-    backdropFilter: 'blur(10px)',
-    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05), inset 0 1px 2px rgba(0, 0, 0, 0.02)',
+    background: '#ffffff',
+    boxShadow: 'inset 0 1px 2px rgba(15, 23, 42, 0.05)',
     transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
     fontWeight: 500,
     WebkitTextFillColor: '#1f2937',
@@ -145,9 +152,8 @@ const formStyles = {
   },
   inputFocused: {
     borderColor: '#3b82f6',
-    background: 'rgba(255, 255, 255, 0.95)',
-    boxShadow: '0 0 0 4px rgba(59, 130, 246, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05)',
-    transform: 'translateY(-1px)',
+    background: '#f8fafc',
+    boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.1)',
   },
   inputError: {
     borderColor: '#ef4444',
@@ -166,9 +172,9 @@ const formStyles = {
     fontSize: '14px',
     fontWeight: 600,
     cursor: 'pointer',
-    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 50%, #1e40af 100%)',
+    backgroundColor: '#2563eb',
     color: '#ffffff',
-    boxShadow: '0 10px 25px -5px rgba(59, 130, 246, 0.4), 0 4px 6px -2px rgba(59, 130, 246, 0.2)',
+    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.25)',
     transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
     position: 'relative',
     overflow: 'hidden',
@@ -176,8 +182,8 @@ const formStyles = {
     minWidth: '140px',
   },
   buttonHover: {
-    transform: 'translateY(-2px) scale(1.02)',
-    boxShadow: '0 15px 35px -5px rgba(59, 130, 246, 0.5), 0 8px 15px -5px rgba(59, 130, 246, 0.3)',
+    transform: 'translateY(-1px)',
+    boxShadow: '0 6px 16px rgba(37, 99, 235, 0.3)',
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -203,23 +209,22 @@ const formStyles = {
     display: 'flex',
     alignItems: 'center',
     gap: '10px',
-    backdropFilter: 'blur(10px)',
-    border: '1px solid transparent',
+    border: '1px solid #e2e8f0',
     transition: 'all 0.3s ease',
   },
   statusSuccess: {
-    background: 'linear-gradient(135deg, rgba(240, 253, 244, 0.9) 0%, rgba(187, 247, 208, 0.2) 100%)',
-    border: '1px solid rgba(34, 197, 94, 0.2)',
+    backgroundColor: '#ecfdf5',
+    borderColor: 'rgba(34, 197, 94, 0.4)',
     color: '#059669',
   },
   statusError: {
-    background: 'linear-gradient(135deg, rgba(254, 242, 242, 0.9) 0%, rgba(252, 165, 165, 0.2) 100%)',
-    border: '1px solid rgba(239, 68, 68, 0.2)',
+    backgroundColor: '#fef2f2',
+    borderColor: 'rgba(239, 68, 68, 0.4)',
     color: '#dc2626',
   },
   statusPending: {
-    background: 'linear-gradient(135deg, rgba(254, 243, 199, 0.9) 0%, rgba(253, 230, 138, 0.2) 100%)',
-    border: '1px solid rgba(234, 179, 8, 0.25)',
+    backgroundColor: '#fefce8',
+    borderColor: 'rgba(234, 179, 8, 0.4)',
     color: '#92400e',
   },
   statusIcon: {
@@ -248,14 +253,14 @@ const formStyles = {
     borderRadius: '999px',
     border: '1px solid',
     borderColor: active ? '#1d4ed8' : 'rgba(148,163,184,0.5)',
-    background: active ? 'linear-gradient(135deg, #3b82f6, #1d4ed8)' : '#fff',
+    backgroundColor: active ? '#1d4ed8' : '#f8fafc',
     color: active ? '#fff' : '#1f2937',
     fontWeight: 600,
     fontSize: '12px',
     letterSpacing: '0.05em',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
-    boxShadow: active ? '0 6px 16px rgba(59,130,246,0.35)' : 'none',
+    boxShadow: active ? '0 4px 10px rgba(59,130,246,0.25)' : 'none',
   }),
   lookupHelper: {
     fontSize: '12px',
@@ -266,13 +271,12 @@ const formStyles = {
     borderRadius: '12px',
     border: '1px solid rgba(226, 232, 240, 0.8)',
     padding: '16px 20px',
-    background: 'linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.6) 100%)',
-    backdropFilter: 'blur(10px)',
+    backgroundColor: '#f8fafc',
     display: 'grid',
     gap: '8px',
     fontSize: '13px',
     color: '#0f172a',
-    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+    boxShadow: '0 2px 8px rgba(15, 23, 42, 0.07)',
   },
   resultList: {
     margin: '6px 0 0',
@@ -283,27 +287,26 @@ const formStyles = {
   ssnBanner: {
     padding: '14px 16px',
     borderRadius: '12px',
-    background: 'linear-gradient(135deg, #f97316 0%, #ef4444 100%)',
+    backgroundColor: '#f97316',
     color: '#ffffff',
     fontWeight: 700,
     fontSize: '14px',
     textAlign: 'center',
     letterSpacing: '0.5px',
-    boxShadow: '0 8px 25px -8px rgba(239, 68, 68, 0.4)',
+    boxShadow: '0 4px 12px rgba(249, 115, 22, 0.35)',
   },
   cautionBox: {
     marginTop: '12px',
     padding: '12px 16px',
     borderRadius: '12px',
-    background: 'linear-gradient(135deg, rgba(254, 242, 242, 0.9) 0%, rgba(252, 165, 165, 0.1) 100%)',
-    border: '1px solid rgba(239, 68, 68, 0.2)',
+    backgroundColor: '#fef2f2',
+    border: '1px solid rgba(239, 68, 68, 0.3)',
     color: '#b91c1c',
     fontSize: '12px',
     fontWeight: 600,
     textAlign: 'center',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
-    backdropFilter: 'blur(10px)',
   },
 };
 
@@ -331,7 +334,7 @@ if (!document.head.querySelector('style[data-form-animations]')) {
   document.head.appendChild(styleSheet);
 }
 
-const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
+const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
   const [formState, setFormState] = useState({
     full_name: '',
     email: '',
@@ -557,7 +560,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
             }} 
             htmlFor="full_name"
           >
-            <span>Full Name</span>
+            <span style={formStyles.labelText}>Full Name</span>
             <span style={formStyles.requiredBadge}>Required</span>
           </label>
           <div style={formStyles.inputContainer}>
@@ -597,8 +600,8 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
             }} 
             htmlFor="email"
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>Email Address</span>
+            <span style={formStyles.labelText}>Email Address</span>
+            <div style={formStyles.labelExtras}>
               <span style={formStyles.requiredBadge}>Required</span>
               <Tooltip
                 title="Provide a valid, accessible email address for MFA verification during the demo."
@@ -859,5 +862,7 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
     </section>
   );
 };
+
+const TemporaryUserForm = React.memo(TemporaryUserFormComponent);
 
 export default TemporaryUserForm;
