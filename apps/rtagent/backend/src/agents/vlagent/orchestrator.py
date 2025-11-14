@@ -3,20 +3,46 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from azure.ai.voicelive.models import ServerEventType, FunctionCallOutputItem
-from .tools import execute_tool, is_handoff_tool
+from .financial_tools import execute_tool, is_handoff_tool
+
+if TYPE_CHECKING:
+    from .base import AzureVoiceLiveAgent
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.orchestrator")
 
+
+def _sanitize_handoff_context(raw: Any) -> Dict[str, Any]:
+    """Remove control flags so prompt variables stay clean."""
+
+    if not isinstance(raw, dict):
+        return {}
+
+    disallowed = {
+        "success",
+        "handoff",
+        "target_agent",
+        "message",
+        "handoff_summary",
+        "should_interrupt_playback",
+        "session_overrides",
+    }
+    return {
+        key: value
+        for key, value in raw.items()
+        if key not in disallowed and value not in (None, "", [], {})
+    }
+
 class LiveOrchestrator:
     """
     Orchestrates agent switching and tool execution for VoiceLive multi-agent system.
-    
-    All tool execution flows through tools.py for centralized management:
+
+    All tool execution flows through financial_tools.py for centralized management:
     - Handoff tools → trigger agent switching
     - Business tools → execute and return results to model
     """
@@ -28,15 +54,24 @@ class LiveOrchestrator:
         handoff_map: Dict[str, str],
         start_agent: str = "AutoAuth",
         audio_processor=None,
+        messenger=None,
     ):
         self.conn = conn
         self.agents = agents
         self.handoff_map = handoff_map
         self.active = start_agent
         self.audio = audio_processor
+        self.messenger = messenger
         self.visited_agents: set = set()  # Track which agents have been visited
         self._pending_greeting: Optional[str] = None
         self._pending_greeting_agent: Optional[str] = None
+        self._last_user_message: Optional[str] = None
+
+        if self.messenger:
+            try:
+                self.messenger.set_active_agent(self.active)
+            except AttributeError:
+                logger.debug("Messenger does not support set_active_agent", exc_info=True)
 
         if self.active not in self.agents:
             raise ValueError(f"Start agent '{self.active}' not found in registry")
@@ -69,37 +104,114 @@ class LiveOrchestrator:
             is_first_visit
         )
         
-        # Choose greeting based on visit history
-        if system_vars.get("greeting"):
-            greeting = system_vars["greeting"]
-        elif is_first_visit:
-            greeting = agent.greeting
-        else:
-            greeting = agent.return_greeting or f"Welcome back! How can I help you?"
-        
-        handoff_message = system_vars.get("handoff_message")
-        combined_greeting = " ".join(
-            segment.strip()
-            for segment in (handoff_message, greeting)
-            if segment and segment.strip()
+        greeting = self._select_pending_greeting(
+            agent=agent,
+            agent_name=agent_name,
+            system_vars=system_vars,
+            is_first_visit=is_first_visit,
         )
-
-        if combined_greeting:
-            self._pending_greeting = combined_greeting
+        if greeting:
+            self._pending_greeting = greeting
             self._pending_greeting_agent = agent_name
         else:
             self._pending_greeting = None
             self._pending_greeting_agent = None
 
-        await agent.apply_session(
-            self.conn,
-            system_vars=system_vars,
-            say=None,
-        )
+        handoff_context = _sanitize_handoff_context(system_vars.get("handoff_context"))
+        if handoff_context:
+            system_vars["handoff_context"] = handoff_context
+            for key in (
+                "caller_name",
+                "client_id",
+                "institution_name",
+                "service_type",
+                "case_id",
+                "issue_summary",
+                "details",
+                "handoff_reason",
+                "user_last_utterance",
+            ):
+                if key not in system_vars and handoff_context.get(key) is not None:
+                    system_vars[key] = handoff_context.get(key)
 
         self.active = agent_name
+
+        try:
+            if self.messenger:
+                try:
+                    self.messenger.set_active_agent(agent_name)
+                except AttributeError:
+                    logger.debug("Messenger does not support set_active_agent", exc_info=True)
+            await agent.apply_session(
+                self.conn,
+                system_vars=system_vars,
+                say=None,
+            )
+        except Exception:
+            logger.exception("Failed to apply session for agent '%s'", agent_name)
+            raise
         
         logger.info("[Active Agent] %s is now active", self.active)
+
+    def _select_pending_greeting(
+        self,
+        *,
+        agent: "AzureVoiceLiveAgent",
+        agent_name: str,
+        system_vars: dict,
+        is_first_visit: bool,
+    ) -> Optional[str]:
+        """Return a contextual greeting the agent should deliver once the session is ready."""
+
+        explicit = system_vars.get("greeting")
+        if explicit:
+            return explicit.strip() or None
+
+        # Prefer agent defaults when there's no transfer context.
+        handoff_context = system_vars.get("handoff_context") or {}
+        has_handoff = bool(
+            handoff_context
+            or system_vars.get("handoff_message")
+            or system_vars.get("handoff_reason")
+        )
+
+        if not has_handoff:
+            if is_first_visit:
+                return (agent.greeting or "").strip() or None
+            return (agent.return_greeting or "Welcome back! How can I help you?").strip()
+
+        caller = (
+            handoff_context.get("caller_name")
+            if isinstance(handoff_context, dict)
+            else None
+        ) or system_vars.get("caller_name") or "there"
+
+        intent = None
+        if isinstance(handoff_context, dict):
+            intent = (
+                handoff_context.get("issue_summary")
+                or handoff_context.get("details")
+                or handoff_context.get("reason")
+            )
+        intent = (
+            system_vars.get("handoff_reason")
+            or system_vars.get("issue_summary")
+            or system_vars.get("details")
+            or intent
+        )
+
+        intro = agent.return_greeting if not is_first_visit else agent.greeting
+        intro = (intro or f"Hi, I'm {agent_name}.").strip()
+
+        if intent:
+            intent = intent.strip().rstrip(".")
+            return f"Hi {caller}, {intro} I understand you're calling about {intent}. Let's get started."
+
+        handoff_message = (system_vars.get("handoff_message") or "").strip()
+        if handoff_message:
+            return f"Hi {caller}, {intro} {handoff_message}"
+
+        return f"Hi {caller}, {intro}".strip()
 
     async def _execute_tool_call(self, call_id: Optional[str], name: Optional[str], args_json: Optional[str]) -> bool:
         """
@@ -129,30 +241,117 @@ class LiveOrchestrator:
         
         # Execute tool via centralized tools.py
         logger.info("Executing tool: %s with args: %s", name, args)
-        result = await execute_tool(name, args)
-        
+
+        notify_status = "success"
+        notify_error: Optional[str] = None
+
+        last_user_message = (self._last_user_message or "").strip()
+        if is_handoff_tool(name) and last_user_message:
+            # Pre-populate commonly used handoff fields so the caller is not asked to repeat themselves.
+            for field in ("details", "issue_summary", "summary", "topic", "handoff_reason"):
+                if not args.get(field):
+                    args[field] = last_user_message
+            # Preserve the raw utterance for downstream agents even if they use custom field names.
+            args.setdefault("user_last_utterance", last_user_message)
+
+        MFA_TOOL_NAMES = {"send_mfa_code", "resend_mfa_code"}
+
+        if self.messenger:
+            try:
+                await self.messenger.notify_tool_start(call_id=call_id, name=name, args=args)
+            except Exception:
+                logger.debug("Tool start messenger notification failed", exc_info=True)
+            if name in MFA_TOOL_NAMES:
+                try:
+                    await self.messenger.send_status_update(
+                        text="Sending a verification code to your email…",
+                        sender=self.active,
+                        event_label="mfa_status_update",
+                    )
+                except Exception:
+                    logger.debug("Failed to emit MFA status update", exc_info=True)
+
+        start_ts = time.perf_counter()
+        result: Dict[str, Any] = {}
+
+        try:
+            result = await execute_tool(name, args)
+        except Exception as exc:
+            notify_status = "error"
+            notify_error = str(exc)
+            if self.messenger:
+                try:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id,
+                        name=name,
+                        status="error",
+                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                        error=notify_error,
+                    )
+                except Exception:
+                    logger.debug("Tool end messenger notification failed", exc_info=True)
+            raise
+
+        error_payload: Optional[str] = None
+        if isinstance(result, dict):
+            for key in ("success", "ok", "authenticated"):
+                if key in result and not result[key]:
+                    notify_status = "error"
+                    break
+            if notify_status == "error":
+                err_val = result.get("message") or result.get("error")
+                if err_val:
+                    error_payload = str(err_val)
+
         # Check if this is a handoff tool
         if is_handoff_tool(name):
             # Extract target agent from handoff_map
             target = self.handoff_map.get(name)
             if not target:
                 logger.warning("Handoff tool '%s' not in handoff_map", name)
+                notify_status = "error"
+                if self.messenger:
+                    try:
+                        await self.messenger.notify_tool_end(
+                            call_id=call_id,
+                            name=name,
+                            status=notify_status,
+                            elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                            result=result if isinstance(result, dict) else None,
+                            error="handoff_target_missing",
+                        )
+                    except Exception:
+                        logger.debug("Tool end messenger notification failed", exc_info=True)
                 return False
             
             # Build context from tool result
-            handoff_context = result.get("handoff_context") or {}
+            raw_handoff_context = result.get("handoff_context") if isinstance(result, dict) else {}
+            handoff_context: Dict[str, Any] = {}
+            if isinstance(raw_handoff_context, dict):
+                handoff_context = dict(raw_handoff_context)
+            if last_user_message:
+                handoff_context.setdefault("user_last_utterance", last_user_message)
+                handoff_context.setdefault("details", last_user_message)
+            handoff_context = _sanitize_handoff_context(handoff_context)
+            session_overrides = result.get("session_overrides")
+            if not isinstance(session_overrides, dict) or not session_overrides:
+                session_overrides = None
             ctx = {
                 "handoff_reason": result.get("handoff_summary")
                 or handoff_context.get("reason")
                 or args.get("reason", "unspecified"),
                 "details": handoff_context.get("details")
                 or result.get("details")
-                or args.get("details", ""),
+                or args.get("details")
+                or last_user_message,
                 "previous_agent": self.active,
                 "handoff_context": handoff_context,
                 "handoff_message": result.get("message"),
-                "session_overrides": result.get("session_overrides"),
             }
+            if last_user_message:
+                ctx.setdefault("user_last_utterance", last_user_message)
+            if session_overrides:
+                ctx["session_overrides"] = session_overrides
             
             logger.info(
                 "[Handoff Tool] '%s' triggered | %s → %s",
@@ -167,7 +366,21 @@ class LiveOrchestrator:
                 logger.debug("response.cancel() failed during handoff", exc_info=True)
 
             await self._switch_to(target, ctx)
+            # Clear the cached user message once the handoff has completed.
+            self._last_user_message = None
             # Note: _switch_to triggers greeting automatically via apply_session(say=...)
+            if self.messenger:
+                try:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id,
+                        name=name,
+                        status=notify_status,
+                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                        result=result if isinstance(result, dict) else None,
+                        error=error_payload,
+                    )
+                except Exception:
+                    logger.debug("Tool end messenger notification failed", exc_info=True)
             return True
         
         else:
@@ -187,16 +400,28 @@ class LiveOrchestrator:
                 success_indicator,
                 pretty_result,
             )
-            
+
             output_item = FunctionCallOutputItem(
                 call_id=call_id,
-                output=json.dumps(result)  # SDK expects JSON string
+                output=json.dumps(result),  # SDK expects JSON string
             )
-            
+
             await self.conn.conversation.item.create(item=output_item)
             logger.debug("Created function_call_output item for call_id=%s", call_id)
-            
+
             await self.conn.response.create()
+            if self.messenger:
+                try:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id,
+                        name=name,
+                        status=notify_status,
+                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                        result=result if isinstance(result, dict) else None,
+                        error=error_payload,
+                    )
+                except Exception:
+                    logger.debug("Tool end messenger notification failed", exc_info=True)
             return False
 
     async def handle_event(self, event):
@@ -209,9 +434,17 @@ class LiveOrchestrator:
             voice_info = getattr(session_obj, "voice", None) if session_obj else None
             logger.info("Session ready: %s | voice=%s", session_id, voice_info)
             if self.audio:
+                await self.audio.stop_playback()
+            try:
+                await self.conn.response.cancel()
+            except Exception:
+                logger.debug("response.cancel() failed during session_ready", exc_info=True)
+            if self.audio:
                 await self.audio.start_capture()
 
-            if self._pending_greeting and self._pending_greeting_agent == self.active:
+            if self._pending_greeting and (
+                self._pending_greeting_agent == self.active
+            ):
                 try:
                     await self.agents[self.active].trigger_response(
                         self.conn,
@@ -240,6 +473,7 @@ class LiveOrchestrator:
             user_transcript = getattr(event, "transcript", "")
             if user_transcript:
                 logger.info("[USER] Says: %s", user_transcript)
+                self._last_user_message = user_transcript.strip()
 
         elif et == ServerEventType.RESPONSE_AUDIO_DELTA:
             if self.audio:
@@ -254,6 +488,11 @@ class LiveOrchestrator:
             full_transcript = getattr(event, "transcript", "")
             if full_transcript:
                 logger.info("[%s] Agent: %s", self.active, full_transcript)
+                if self.messenger:
+                    try:
+                        await self.messenger.send_assistant_message(full_transcript, sender=self.active)
+                    except Exception:
+                        logger.debug("Failed to relay assistant transcript to session UI", exc_info=True)
 
         elif et == ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE:
             await self._execute_tool_call(

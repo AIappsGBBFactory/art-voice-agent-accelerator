@@ -3,31 +3,46 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from jinja2 import Environment, FileSystemLoader, ChoiceLoader, TemplateNotFound
+
+
 class PromptManager:
-    """Tiny token replacer; swap in a full Jinja engine if you prefer."""
+    """Render VoiceLive prompts, falling back to VLAgent templates when needed."""
+
     def __init__(self, template_dir: Optional[Path] = None) -> None:
         if template_dir is None:
-            # Import here to avoid circular dependency
+            # Import locally to avoid circular imports
             from .settings import get_settings
+
             template_dir = get_settings().templates_path
-        self._dir = Path(template_dir) if not isinstance(template_dir, Path) else template_dir
+
+        primary_dir = Path(template_dir) if not isinstance(template_dir, Path) else template_dir
+
+        agents_root = Path(__file__).resolve().parent
+        vl_templates = agents_root / "templates"
+
+        loaders = []
+        if vl_templates.exists():
+            loaders.append(FileSystemLoader(str(vl_templates)))
+        if primary_dir.exists():
+            loaders.append(FileSystemLoader(str(primary_dir)))
+
+        if not loaders:
+            raise FileNotFoundError(
+                "No prompt directories available. Checked VoiceLive templates and VLAgent fallback."
+            )
+
+        self._env = Environment(loader=ChoiceLoader(loaders), autoescape=False)
 
     def get_prompt(self, path_or_name: str, **vars) -> str:
-        """Load and render a prompt template with variable substitution."""
-        p = Path(path_or_name)
-        
-        # Try as absolute path first, then relative to template_dir
-        if p.is_absolute() and p.is_file():
-            file_path = p
-        elif (self._dir / path_or_name).is_file():
-            file_path = self._dir / path_or_name
-        else:
+        """Load and render a prompt template."""
+
+        try:
+            template = self._env.get_template(path_or_name)
+        except TemplateNotFound as exc:
+            searched_paths = [loader.searchpath for loader in self._env.loader.loaders]  # type: ignore[attr-defined]
             raise FileNotFoundError(
-                f"Template not found: {path_or_name}\n"
-                f"Searched in: {self._dir}"
-            )
-        
-        text = file_path.read_text(encoding="utf-8")
-        for k, v in vars.items():
-            text = text.replace(f"{{{{{k}}}}}", str(v))
-        return text
+                f"Template not found: {path_or_name}. Checked directories: {searched_paths}"
+            ) from exc
+
+        return template.render(**vars)

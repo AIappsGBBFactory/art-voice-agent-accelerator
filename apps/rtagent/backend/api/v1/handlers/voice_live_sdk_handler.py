@@ -22,6 +22,15 @@ from utils.ml_logging import get_logger
 from apps.rtagent.backend.src.agents.vlagent.settings import get_settings
 from apps.rtagent.backend.src.agents.vlagent.registry import load_registry, HANDOFF_MAP
 from apps.rtagent.backend.src.agents.vlagent.orchestrator import LiveOrchestrator
+from apps.rtagent.backend.src.ws_helpers.shared_ws import (
+	send_session_envelope,
+	send_user_transcript,
+)
+from apps.rtagent.backend.src.ws_helpers.envelopes import make_envelope
+from apps.rtagent.backend.src.agents.vlagent.tool_store.tools_helper import (
+	push_tool_start,
+	push_tool_end,
+)
 
 import logging
 
@@ -34,10 +43,166 @@ _TRACED_EVENTS = {
 	ServerEventType.RESPONSE_DONE.value,
 	ServerEventType.RESPONSE_AUDIO_DONE.value,
 	ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED.value,
+	ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_DELTA.value,
+	ServerEventType.SESSION_UPDATED.value,
+	ServerEventType.SESSION_CREATED.value,
 	ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED.value,
 	ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED.value,
 }
 
+_DTMF_FLUSH_DELAY_SECONDS = 1.5
+
+
+class _SessionMessenger:
+	"""Bridge VoiceLive events to the session-aware WebSocket manager."""
+
+	def __init__(self, websocket: WebSocket) -> None:
+		self._ws = websocket
+		self._default_sender: Optional[str] = None
+
+	def set_active_agent(self, agent_name: Optional[str]) -> None:
+		"""Update the default sender name used for assistant/system envelopes."""
+		self._default_sender = agent_name or None
+
+	@property
+	def _session_id(self) -> Optional[str]:
+		return getattr(self._ws.state, "session_id", None)
+
+	@property
+	def _call_id(self) -> Optional[str]:
+		return getattr(self._ws.state, "call_connection_id", None)
+
+	def _can_emit(self) -> bool:
+		return bool(self._session_id)
+
+	async def send_user_message(self, text: str) -> None:
+		"""Forward a user transcript to all session listeners."""
+		if not text or not self._can_emit():
+			return
+
+		await send_user_transcript(
+			self._ws,
+			text,
+			session_id=self._session_id,
+			conn_id=None,
+			broadcast_only=True,
+		)
+
+	async def send_assistant_message(self, text: str, *, sender: Optional[str] = None) -> None:
+		"""Emit assistant transcript chunks to the frontend chat UI."""
+		if not text or not self._can_emit():
+			return
+
+		sender_name = sender or self._default_sender or "Assistant"
+		payload = {
+			"type": "assistant",
+			"message": text,
+			"content": text,
+			"streaming": False,
+		}
+		envelope = make_envelope(
+			etype="event",
+			sender=sender_name,
+			payload=payload,
+			topic="session",
+			session_id=self._session_id,
+			call_id=self._call_id,
+		)
+
+		await send_session_envelope(
+			self._ws,
+			envelope,
+			session_id=self._session_id,
+			conn_id=None,
+			event_label="voicelive_assistant_transcript",
+			broadcast_only=True,
+		)
+
+	async def send_status_update(
+		self,
+		text: str,
+		*,
+		tone: Optional[str] = None,
+		caption: Optional[str] = None,
+		sender: Optional[str] = None,
+		event_label: str = "voicelive_status_update",
+	) -> None:
+		"""Emit a system status envelope for richer UI feedback."""
+		if not text or not self._can_emit():
+			return
+
+		payload: Dict[str, Any] = {
+			"type": "status",
+			"message": text,
+			"content": text,
+		}
+		if tone:
+			payload["statusTone"] = tone
+		if caption:
+			payload["statusCaption"] = caption
+		sender_name = sender or self._default_sender or "System"
+
+		envelope = make_envelope(
+			etype="status",
+			sender=sender_name,
+			payload=payload,
+			topic="session",
+			session_id=self._session_id,
+			call_id=self._call_id,
+		)
+
+		await send_session_envelope(
+			self._ws,
+			envelope,
+			session_id=self._session_id,
+			conn_id=None,
+			event_label=event_label,
+			broadcast_only=True,
+		)
+
+	async def notify_tool_start(self, *, call_id: Optional[str], name: Optional[str], args: Dict[str, Any]) -> None:
+		"""Relay tool start events to the session dashboard."""
+		if not self._can_emit() or not call_id or not name:
+			return
+		try:
+			await push_tool_start(
+				self._ws,
+				call_id,
+				name,
+				args,
+				is_acs=True,
+				session_id=self._session_id,
+			)
+		except Exception:
+			logger.debug("Failed to emit tool_start frame for VoiceLive session", exc_info=True)
+
+	async def notify_tool_end(
+		self,
+		*,
+		call_id: Optional[str],
+		name: Optional[str],
+		status: str,
+		elapsed_ms: float,
+		result: Optional[Dict[str, Any]] = None,
+		error: Optional[str] = None,
+	) -> None:
+		"""Relay tool completion events (success or failure)."""
+		if not self._can_emit() or not call_id or not name:
+			return
+		try:
+			await push_tool_end(
+				self._ws,
+				call_id,
+				name,
+				status,
+				elapsed_ms,
+				result=result,
+				error=error,
+				is_acs=True,
+				session_id=self._session_id,
+			)
+		except Exception:
+			logger.debug("Failed to emit tool_end frame for VoiceLive session", exc_info=True)
 
 class VoiceLiveSDKHandler:
 	"""Minimal VoiceLive handler that mirrors the vlagent multi-agent sample.
@@ -61,6 +226,7 @@ class VoiceLiveSDKHandler:
 		self.websocket = websocket
 		self.session_id = session_id
 		self.call_connection_id = call_connection_id or session_id
+		self._messenger = _SessionMessenger(websocket)
 
 		self._settings = None
 		self._credential: Optional[Union[AzureKeyCredential, TokenCredential]] = None
@@ -73,6 +239,13 @@ class VoiceLiveSDKHandler:
 		self._acs_sample_rate = 16000
 		self._active_response_ids: set[str] = set()
 		self._stop_audio_pending = False
+		self._response_audio_frames: Dict[str, int] = {}
+		self._fallback_audio_frame_index = 0
+		self._dtmf_digits: list[str] = []
+		self._dtmf_flush_task: Optional[asyncio.Task] = None
+		self._dtmf_flush_delay = _DTMF_FLUSH_DELAY_SECONDS
+		self._dtmf_lock = asyncio.Lock()
+		self._last_user_transcript: Optional[str] = None
 
 	async def start(self) -> None:
 		"""Establish VoiceLive connection and start event processing."""
@@ -103,6 +276,7 @@ class VoiceLiveSDKHandler:
 				handoff_map=HANDOFF_MAP,
 				start_agent=self._settings.start_agent,
 				audio_processor=None,
+				messenger=self._messenger,
 			)
 
 			await self._orchestrator.start()
@@ -126,6 +300,16 @@ class VoiceLiveSDKHandler:
 
 		self._running = False
 		self._shutdown.set()
+
+		if self._dtmf_flush_task:
+			self._dtmf_flush_task.cancel()
+			try:
+				await self._dtmf_flush_task
+			except asyncio.CancelledError:
+				pass
+			finally:
+				self._dtmf_flush_task = None
+		self._dtmf_digits.clear()
 
 		if self._event_task:
 			self._event_task.cancel()
@@ -199,7 +383,8 @@ class VoiceLiveSDKHandler:
 
 		if kind == "DtmfData":
 			tone = (payload.get("dtmfData") or payload.get("DtmfData") or {}).get("data")
-			logger.info("Received DTMF tone %s | session=%s", tone, self.session_id)
+			await self._handle_dtmf_tone(tone)
+			return
 
 	async def _event_loop(self) -> None:
 		"""Consume VoiceLive events, orchestrate tools, and stream audio to ACS."""
@@ -228,13 +413,24 @@ class VoiceLiveSDKHandler:
 			return
 
 		etype = event.type if hasattr(event, "type") else None
-		if etype == ServerEventType.RESPONSE_AUDIO_DELTA:
+		if etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
+			transcript = getattr(event, "transcript", "")
+			if transcript and transcript != self._last_user_transcript:
+				await self._messenger.send_user_message(transcript)
+				logger.info(
+					"[VoiceLiveSDK] User transcript | session=%s text='%s'",
+					self.session_id,
+					transcript,
+				)
+				self._last_user_transcript = transcript
+			return
+		elif etype == ServerEventType.RESPONSE_AUDIO_DELTA:
 			response_id = getattr(event, "response_id", None)
 			if response_id:
 				self._active_response_ids.add(response_id)
 			self._stop_audio_pending = False
-			await self._send_audio_delta(event.delta)
-
+			await self._send_audio_delta(event.delta, response_id=response_id)
+		
 		elif etype == ServerEventType.RESPONSE_DONE:
 			response_id = self._extract_response_id(event)
 			if response_id:
@@ -259,6 +455,41 @@ class VoiceLiveSDKHandler:
 			await self._send_stop_audio()
 			self._stop_audio_pending = False
 
+		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
+			logger.info("🎤 User paused speaking")
+			logger.info("🤖 Generating assistant reply")
+			await self._messenger.send_user_message("...")
+
+		elif etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_DELTA:
+			transcript_text = getattr(event, "transcript", "") or getattr(event, "delta", "")
+			if not transcript_text:
+				return
+			session_id = self._messenger._session_id
+			if not session_id:
+				return
+			payload = {
+				"type": "user",
+				"message": "...",
+				"content": transcript_text,
+				"streaming": True,
+			}
+			envelope = make_envelope(
+				etype="event",
+				sender="User",
+				payload=payload,
+				topic="session",
+				session_id=session_id,
+				call_id=self.call_connection_id,
+			)
+			await send_session_envelope(
+				self.websocket,
+				envelope,
+				session_id=session_id,
+				conn_id=None,
+				event_label="voicelive_user_transcript_delta",
+				broadcast_only=True,
+			)
+
 
 		elif etype == ServerEventType.RESPONSE_AUDIO_DONE:
 			logger.debug(
@@ -269,24 +500,23 @@ class VoiceLiveSDKHandler:
 			response_id = getattr(event, "response_id", None)
 			if response_id:
 				self._active_response_ids.discard(response_id)
+				await self._emit_audio_frame_to_ui(response_id, data_b64=None, frame_index=self._final_frame_index(response_id), is_final=True)
+			else:
+				await self._emit_audio_frame_to_ui(None, data_b64=None, frame_index=self._final_frame_index(None), is_final=True)
 		elif etype == ServerEventType.ERROR:
-			await self._send_error(event)
-		elif etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
-			transcript = getattr(event, "transcript", "")
-			if transcript:
-				logger.info(
-					"[VoiceLiveSDK] User transcript | session=%s text='%s'",
-					self.session_id,
-					transcript,
-				)
-
-	async def _send_audio_delta(self, audio_bytes: bytes) -> None:
+			await self._handle_server_error(event)
+	
+		elif etype == ServerEventType.CONVERSATION_ITEM_CREATED:
+			logger.debug("Conversation item created: %s", event.item.id)
+	
+	async def _send_audio_delta(self, audio_bytes: bytes, *, response_id: Optional[str]) -> None:
 		pcm_bytes = self._to_pcm_bytes(audio_bytes)
 		if not pcm_bytes:
 			return
 
 		# Resample VoiceLive 24 kHz PCM to match ACS expectations.
 		resampled = self._resample_audio(pcm_bytes)
+		frame_index = self._allocate_frame_index(response_id)
 		message = {
 			"kind": "AudioData",
 			"AudioData": {"data": resampled},
@@ -299,8 +529,58 @@ class VoiceLiveSDKHandler:
 				len(pcm_bytes),
 			)
 			await self.websocket.send_json(message)
+			await self._emit_audio_frame_to_ui(
+				response_id,
+				data_b64=resampled,
+				frame_index=frame_index,
+				is_final=False,
+			)
 		except Exception:
 			logger.debug("Failed to relay audio delta", exc_info=True)
+
+	async def _emit_audio_frame_to_ui(
+		self,
+		response_id: Optional[str],
+		*,
+		data_b64: Optional[str],
+		frame_index: int,
+		is_final: bool,
+	) -> None:
+		if not self._websocket_open:
+			return
+		payload = {
+			"type": "audio_data",
+			"frame_index": frame_index,
+			"total_frames": None,
+			"sample_rate": self._acs_sample_rate,
+			"is_final": is_final,
+			"response_id": response_id,
+		}
+		if data_b64:
+			payload["data"] = data_b64
+		try:
+			await self.websocket.send_json(payload)
+		except Exception:
+			logger.debug("Failed to emit UI audio frame", exc_info=True)
+
+	def _allocate_frame_index(self, response_id: Optional[str]) -> int:
+		if response_id:
+			current = self._response_audio_frames.get(response_id, 0)
+			self._response_audio_frames[response_id] = current + 1
+			return current
+		current = self._fallback_audio_frame_index
+		self._fallback_audio_frame_index += 1
+		return current
+
+	def _final_frame_index(self, response_id: Optional[str]) -> int:
+		if response_id and response_id in self._response_audio_frames:
+			next_idx = self._response_audio_frames.pop(response_id)
+			return max(next_idx - 1, 0)
+		if not response_id:
+			final_idx = max(self._fallback_audio_frame_index - 1, 0)
+			self._fallback_audio_frame_index = 0
+			return final_idx
+		return 0
 
 	async def _send_stop_audio(self) -> None:
 		if self._stop_audio_pending:
@@ -325,6 +605,147 @@ class VoiceLiveSDKHandler:
 			await self.websocket.send_json(error_info)
 		except Exception:
 			logger.debug("Failed to send error message", exc_info=True)
+
+	async def _handle_server_error(self, event: Any) -> None:
+		error_obj = getattr(event, "error", None)
+		code = getattr(error_obj, "code", "VoiceLiveError")
+		message = getattr(error_obj, "message", "Unknown VoiceLive error")
+		details = getattr(error_obj, "details", None)
+
+		logger.error(
+			"[VoiceLiveSDK] Server error received | session=%s call=%s code=%s message=%s",
+			self.session_id,
+			self.call_connection_id,
+			code,
+			message,
+		)
+		if details:
+			logger.error(
+				"[VoiceLiveSDK] Error details | session=%s call=%s details=%s",
+				self.session_id,
+				self.call_connection_id,
+				details,
+			)
+
+		await self._send_stop_audio()
+		await self._send_error(event)
+
+	async def _handle_dtmf_tone(self, raw_tone: Any) -> None:
+		normalized = self._normalize_dtmf_tone(raw_tone)
+		if not normalized:
+			logger.debug("Ignoring invalid DTMF tone %s | session=%s", raw_tone, self.session_id)
+			return
+
+		if normalized == "#":
+			self._cancel_dtmf_flush_timer()
+			await self._flush_dtmf_buffer(reason="terminator")
+			return
+		if normalized == "*":
+			await self._clear_dtmf_buffer()
+			return
+
+		async with self._dtmf_lock:
+			self._dtmf_digits.append(normalized)
+			buffer_len = len(self._dtmf_digits)
+		logger.info(
+			"Received DTMF tone %s (buffer_len=%s) | session=%s",
+			normalized,
+			buffer_len,
+			self.session_id,
+		)
+		self._schedule_dtmf_flush()
+
+	def _schedule_dtmf_flush(self) -> None:
+		self._cancel_dtmf_flush_timer()
+		self._dtmf_flush_task = asyncio.create_task(self._delayed_dtmf_flush())
+
+	def _cancel_dtmf_flush_timer(self) -> None:
+		if self._dtmf_flush_task:
+			self._dtmf_flush_task.cancel()
+			self._dtmf_flush_task = None
+
+	async def _delayed_dtmf_flush(self) -> None:
+		try:
+			await asyncio.sleep(self._dtmf_flush_delay)
+			await self._flush_dtmf_buffer(reason="timeout")
+		except asyncio.CancelledError:
+			return
+		finally:
+			self._dtmf_flush_task = None
+
+	async def _flush_dtmf_buffer(self, *, reason: str) -> None:
+		async with self._dtmf_lock:
+			if not self._dtmf_digits:
+				return
+			sequence = "".join(self._dtmf_digits)
+			self._dtmf_digits.clear()
+		await self._send_dtmf_user_message(sequence, reason=reason)
+
+	async def _clear_dtmf_buffer(self) -> None:
+		self._cancel_dtmf_flush_timer()
+		async with self._dtmf_lock:
+			if self._dtmf_digits:
+				logger.info(
+					"Clearing DTMF buffer without forwarding (buffer_len=%s) | session=%s",
+					len(self._dtmf_digits),
+					self.session_id,
+				)
+			self._dtmf_digits.clear()
+
+	async def _send_dtmf_user_message(self, digits: str, *, reason: str) -> None:
+		if not digits or not self._connection:
+			return
+		item = {
+			"type": "message",
+			"role": "user",
+			"content": [{"type": "input_text", "text": digits}],
+		}
+		try:
+			await self._connection.conversation.item.create(item=item)
+			await self._connection.response.create()
+			logger.info(
+				"Forwarded DTMF sequence (%s digits) via %s | session=%s",
+				len(digits),
+				reason,
+				self.session_id,
+			)
+		except Exception:
+			logger.exception("Failed to forward DTMF digits to VoiceLive | session=%s", self.session_id)
+
+	@staticmethod
+	def _normalize_dtmf_tone(raw_tone: Any) -> Optional[str]:
+		if raw_tone is None:
+			return None
+		tone = str(raw_tone).strip().lower()
+		tone_map = {
+			"0": "0",
+			"zero": "0",
+			"1": "1",
+			"one": "1",
+			"2": "2",
+			"two": "2",
+			"3": "3",
+			"three": "3",
+			"4": "4",
+			"four": "4",
+			"5": "5",
+			"five": "5",
+			"6": "6",
+			"six": "6",
+			"7": "7",
+			"seven": "7",
+			"8": "8",
+			"eight": "8",
+			"9": "9",
+			"nine": "9",
+			"*": "*",
+			"star": "*",
+			"asterisk": "*",
+			"#": "#",
+			"pound": "#",
+			"hash": "#",
+		}
+		return tone_map.get(tone)
 
 	def _to_pcm_bytes(self, audio_payload: Any) -> Optional[bytes]:
 		if isinstance(audio_payload, bytes):
@@ -440,4 +861,3 @@ class VoiceLiveSDKHandler:
 
 
 __all__ = ["VoiceLiveSDKHandler"]
-

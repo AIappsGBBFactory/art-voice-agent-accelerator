@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Tuple
 
 from fastapi import WebSocket
 from opentelemetry import trace
@@ -15,7 +15,8 @@ from .registry import (
 )
 from .specialists import run_fraud_agent, run_agency_agent, run_compliance_agent, run_trading_agent
 from .termination import maybe_terminate_if_escalated
-from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message
+from apps.rtagent.backend.src.ws_helpers.envelopes import make_envelope
+from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message, send_session_envelope
 from apps.rtagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
     create_service_dependency_attrs,
@@ -131,9 +132,13 @@ async def route_turn(
                 if await maybe_terminate_if_escalated(cm, ws, is_acs=is_acs):
                     return
 
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("💥 route_turn crash – session=%s", cm.session_id)
             span.set_attribute("orchestrator.error", "exception")
+            try:
+                await _emit_orchestrator_error_status(ws, cm, exc)
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.debug("Failed to emit orchestrator error status", exc_info=True)
             raise
         finally:
             # Ensure core-memory is persisted even if a downstream component failed.
@@ -158,3 +163,60 @@ def bind_default_handlers() -> None:
     register_specialist("Compliance", run_compliance_agent)  # ← AML/FATCA verification
     register_specialist("Trading", run_trading_agent)       # ← Complex trade execution
     
+
+def _summarize_orchestrator_exception(exc: Exception) -> Tuple[str, str, str]:
+    """Return user-friendly message, caption, and tone for frontend display."""
+    text = str(exc) or exc.__class__.__name__
+    lowered = text.lower()
+
+    if "responsibleaipolicyviolation" in lowered or "content_filter" in lowered:
+        return (
+            "🚫 Response blocked by content policy",
+            "Azure OpenAI flagged the last response. Try rephrasing or adjusting the prompt.",
+            "warning",
+        )
+
+    if "badrequest" in lowered or "400" in lowered:
+        excerpt = text[:220]
+        return (
+            "⚠️ Assistant could not complete the request",
+            excerpt,
+            "warning",
+        )
+
+    excerpt = text[:220]
+    return (
+        "❌ Assistant ran into an unexpected error",
+        excerpt,
+        "error",
+    )
+
+
+async def _emit_orchestrator_error_status(ws: WebSocket, cm: "MemoManager", exc: Exception) -> None:
+    """Send a structured status envelope to the frontend describing orchestrator failures."""
+    message, caption, tone = _summarize_orchestrator_exception(exc)
+
+    session_id = getattr(cm, "session_id", None) or getattr(ws.state, "session_id", None)
+    call_id = getattr(ws.state, "call_connection_id", None) or getattr(cm, "call_connection_id", None)
+    envelope = make_envelope(
+        etype="status",
+        sender="System",
+        payload={
+            "message": message,
+            "statusTone": tone,
+            "statusCaption": caption,
+        },
+        topic="session",
+        session_id=session_id,
+        call_id=call_id,
+    )
+
+    await send_session_envelope(
+        ws,
+        envelope,
+        session_id=session_id,
+        conn_id=getattr(ws.state, "conn_id", None),
+        event_label="orchestrator_error",
+        broadcast_only=False,
+    )
+

@@ -15,8 +15,9 @@ from azure.core.messaging import CloudEvent
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
+from config import ENABLE_ACS_CALL_RECORDING, AZURE_STORAGE_CONTAINER_URL
 from utils.ml_logging import get_logger
-from .types import CallEventContext, CallEventHandler, ACSEventTypes
+from .types import CallEventContext, CallEventHandler, ACSEventTypes, RecordingPreferences
 
 logger = get_logger("v1.events.processor")
 tracer = trace.get_tracer(__name__)
@@ -39,6 +40,10 @@ class CallEventProcessor:
 
         # Active calls being tracked
         self._active_calls: Set[str] = set()
+
+        # Recording state tracking
+        self._recording_lock = asyncio.Lock()
+        self._recordings_started: Set[str] = set()
 
         # Simple metrics
         self._stats = {
@@ -153,8 +158,10 @@ class CallEventProcessor:
         # Track active calls
         if event.type == ACSEventTypes.CALL_CONNECTED:
             self._active_calls.add(call_connection_id)
+            await self._maybe_start_call_recording(call_connection_id, event, request_state)
         elif event.type == ACSEventTypes.CALL_DISCONNECTED:
             self._active_calls.discard(call_connection_id)
+            await self._mark_recording_finished(call_connection_id)
 
         # Create event context
         context = self._create_event_context(event, call_connection_id, request_state)
@@ -226,6 +233,7 @@ class CallEventProcessor:
             acs_caller=getattr(request_state, "acs_caller", None),
             clients=getattr(request_state, "clients", []),
             app_state=request_state,  # Pass full app state for ConnectionManager access
+            recording_preferences=getattr(request_state, "recording_preferences", None),
         )
 
     async def _execute_handlers(
@@ -287,6 +295,138 @@ class CallEventProcessor:
         :rtype: Set[str]
         """
         return self._active_calls.copy()
+
+    async def _maybe_start_call_recording(
+        self, call_connection_id: str, event: CloudEvent, request_state: Any
+    ) -> None:
+        """Start ACS call recording when enabled via feature toggle."""
+
+        recording_preferences = getattr(request_state, "recording_preferences", None)
+        recording_requested: Optional[bool] = None
+        if isinstance(recording_preferences, RecordingPreferences):
+            recording_requested = recording_preferences.enabled
+        elif isinstance(recording_preferences, dict):
+            recording_requested = recording_preferences.get(call_connection_id)
+
+        if recording_requested is None:
+            redis_mgr = getattr(request_state, "redis", None)
+            if redis_mgr:
+                try:
+                    stored_pref = await redis_mgr.get_value_async(
+                        f"call_recording_preference:{call_connection_id}"
+                    )
+                    if stored_pref is not None:
+                        lowered = stored_pref.strip().lower()
+                        if lowered in {"true", "1", "yes", "on"}:
+                            recording_requested = True
+                        elif lowered in {"false", "0", "no", "off"}:
+                            recording_requested = False
+                except Exception as exc:
+                    logger.debug(
+                        "Unable to load recording preference from redis",
+                        exc_info=False,
+                        extra={
+                            "call_connection_id": call_connection_id,
+                            "error": str(exc),
+                        },
+                    )
+
+        recording_default = ENABLE_ACS_CALL_RECORDING
+
+        if recording_requested is not None:
+            should_record = recording_requested
+        else:
+            should_record = recording_default
+
+        if not should_record:
+            return
+
+        if not AZURE_STORAGE_CONTAINER_URL:
+            logger.debug(
+                "Call recording skipped: AZURE_STORAGE_CONTAINER_URL not configured",
+                extra={"call_connection_id": call_connection_id},
+            )
+            return
+
+        acs_caller = getattr(request_state, "acs_caller", None)
+        if not acs_caller:
+            logger.debug(
+                "Call recording skipped: ACS caller unavailable",
+                extra={"call_connection_id": call_connection_id},
+            )
+            return
+
+        async with self._recording_lock:
+            if call_connection_id in self._recordings_started:
+                return
+
+        server_call_id = None
+        try:
+            data = event.data if isinstance(event.data, dict) else None
+            if data:
+                server_call_id = data.get("serverCallId") or data.get("server_call_id")
+
+            if not server_call_id:
+                call_connection = acs_caller.get_call_connection(call_connection_id)
+                if call_connection:
+                    try:
+                        properties = await asyncio.to_thread(
+                            call_connection.get_call_properties
+                        )
+                        server_call_id = getattr(
+                            properties, "server_call_id", None
+                        ) or getattr(properties, "serverCallId", None)
+                    except Exception as exc:
+                        logger.debug(
+                            "Failed to fetch serverCallId from call properties",
+                            exc_info=False,
+                            extra={
+                                "call_connection_id": call_connection_id,
+                                "error": str(exc),
+                            },
+                        )
+
+            if not server_call_id:
+                logger.debug(
+                    "Call recording skipped: serverCallId unavailable",
+                    extra={"call_connection_id": call_connection_id},
+                )
+                return
+
+            try:
+                await asyncio.to_thread(acs_caller.start_recording, server_call_id)
+                async with self._recording_lock:
+                    self._recordings_started.add(call_connection_id)
+                logger.info(
+                    "Started ACS call recording",
+                    extra={
+                        "call_connection_id": call_connection_id,
+                        "server_call_id": server_call_id,
+                    },
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to start ACS call recording",
+                    extra={
+                        "call_connection_id": call_connection_id,
+                        "server_call_id": server_call_id,
+                        "error": str(exc),
+                    },
+                )
+        except Exception as exc:
+            logger.error(
+                "Unexpected error during ACS call recording setup",
+                extra={
+                    "call_connection_id": call_connection_id,
+                    "error": str(exc),
+                },
+            )
+
+    async def _mark_recording_finished(self, call_connection_id: str) -> None:
+        """Clear recording state when a call ends."""
+
+        async with self._recording_lock:
+            self._recordings_started.discard(call_connection_id)
 
 
 # Global processor instance

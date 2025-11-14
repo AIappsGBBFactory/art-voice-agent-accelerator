@@ -1,0 +1,35 @@
+agent:
+  name: TransferAgency
+  greeting: "Thank you for holding the line. This is the Transfer Agency desk. I can help with DRIP liquidations, dividend reinvestment updates, or institutional servicing. How can I assist you today?"
+  return_greeting: "Welcome back to the Transfer Agency desk. Let's pick up where we left off."
+
+prompts:
+  path: voice_agent_transfer_agency.jinja
+
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+
+  voice:
+    type: azure-standard
+    name: en-US-EmmaNeural
+    rate: "-3%"
+
+  turn_detection:
+    threshold: 0.5
+    prefix_padding_ms: 250
+    silence_duration_ms: 700
+
+  tool_choice: auto
+
+tools:
+  - get_client_data
+  - get_drip_positions
+  - check_compliance_status
+  - calculate_liquidation_proceeds
+  - search_knowledge_base
+  - handoff_to_compliance
+  - handoff_to_trading
+  - escalate_emergency
+  - escalate_human
