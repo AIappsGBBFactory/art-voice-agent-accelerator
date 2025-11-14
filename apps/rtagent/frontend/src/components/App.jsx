@@ -1749,7 +1749,7 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
           opacity: 0.7,
           marginTop: "2px",
         }}>
-          {displayUrl}
+          {displayedApiUrl}
         </div>
       )}
 
