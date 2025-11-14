@@ -58,6 +58,11 @@ class _SessionMessenger:
 
 	def __init__(self, websocket: WebSocket) -> None:
 		self._ws = websocket
+		self._default_sender: Optional[str] = None
+
+	def set_active_agent(self, agent_name: Optional[str]) -> None:
+		"""Update the default sender name used for assistant/system envelopes."""
+		self._default_sender = agent_name or None
 
 	@property
 	def _session_id(self) -> Optional[str]:
@@ -88,7 +93,7 @@ class _SessionMessenger:
 		if not text or not self._can_emit():
 			return
 
-		sender_name = sender or "Assistant"
+		sender_name = sender or self._default_sender or "Assistant"
 		payload = {
 			"type": "assistant",
 			"message": text,
@@ -110,6 +115,48 @@ class _SessionMessenger:
 			session_id=self._session_id,
 			conn_id=None,
 			event_label="voicelive_assistant_transcript",
+			broadcast_only=True,
+		)
+
+	async def send_status_update(
+		self,
+		text: str,
+		*,
+		tone: Optional[str] = None,
+		caption: Optional[str] = None,
+		sender: Optional[str] = None,
+		event_label: str = "voicelive_status_update",
+	) -> None:
+		"""Emit a system status envelope for richer UI feedback."""
+		if not text or not self._can_emit():
+			return
+
+		payload: Dict[str, Any] = {
+			"type": "status",
+			"message": text,
+			"content": text,
+		}
+		if tone:
+			payload["statusTone"] = tone
+		if caption:
+			payload["statusCaption"] = caption
+		sender_name = sender or self._default_sender or "System"
+
+		envelope = make_envelope(
+			etype="status",
+			sender=sender_name,
+			payload=payload,
+			topic="session",
+			session_id=self._session_id,
+			call_id=self._call_id,
+		)
+
+		await send_session_envelope(
+			self._ws,
+			envelope,
+			session_id=self._session_id,
+			conn_id=None,
+			event_label=event_label,
 			broadcast_only=True,
 		)
 
@@ -192,6 +239,8 @@ class VoiceLiveSDKHandler:
 		self._acs_sample_rate = 16000
 		self._active_response_ids: set[str] = set()
 		self._stop_audio_pending = False
+		self._response_audio_frames: Dict[str, int] = {}
+		self._fallback_audio_frame_index = 0
 		self._dtmf_digits: list[str] = []
 		self._dtmf_flush_task: Optional[asyncio.Task] = None
 		self._dtmf_flush_delay = _DTMF_FLUSH_DELAY_SECONDS
@@ -375,13 +424,13 @@ class VoiceLiveSDKHandler:
 				)
 				self._last_user_transcript = transcript
 			return
-		if etype == ServerEventType.RESPONSE_AUDIO_DELTA:
+		elif etype == ServerEventType.RESPONSE_AUDIO_DELTA:
 			response_id = getattr(event, "response_id", None)
 			if response_id:
 				self._active_response_ids.add(response_id)
 			self._stop_audio_pending = False
-			await self._send_audio_delta(event.delta)
-
+			await self._send_audio_delta(event.delta, response_id=response_id)
+		
 		elif etype == ServerEventType.RESPONSE_DONE:
 			response_id = self._extract_response_id(event)
 			if response_id:
@@ -407,8 +456,39 @@ class VoiceLiveSDKHandler:
 			self._stop_audio_pending = False
 
 		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
-			logger.info("🎤 User stopped speaking")
-			logger.info("🤔 Processing...")
+			logger.info("🎤 User paused speaking")
+			logger.info("🤖 Generating assistant reply")
+			await self._messenger.send_user_message("...")
+
+		elif etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_DELTA:
+			transcript_text = getattr(event, "transcript", "") or getattr(event, "delta", "")
+			if not transcript_text:
+				return
+			session_id = self._messenger._session_id
+			if not session_id:
+				return
+			payload = {
+				"type": "user",
+				"message": "...",
+				"content": transcript_text,
+				"streaming": True,
+			}
+			envelope = make_envelope(
+				etype="event",
+				sender="User",
+				payload=payload,
+				topic="session",
+				session_id=session_id,
+				call_id=self.call_connection_id,
+			)
+			await send_session_envelope(
+				self.websocket,
+				envelope,
+				session_id=session_id,
+				conn_id=None,
+				event_label="voicelive_user_transcript_delta",
+				broadcast_only=True,
+			)
 
 
 		elif etype == ServerEventType.RESPONSE_AUDIO_DONE:
@@ -420,19 +500,23 @@ class VoiceLiveSDKHandler:
 			response_id = getattr(event, "response_id", None)
 			if response_id:
 				self._active_response_ids.discard(response_id)
+				await self._emit_audio_frame_to_ui(response_id, data_b64=None, frame_index=self._final_frame_index(response_id), is_final=True)
+			else:
+				await self._emit_audio_frame_to_ui(None, data_b64=None, frame_index=self._final_frame_index(None), is_final=True)
 		elif etype == ServerEventType.ERROR:
 			await self._handle_server_error(event)
 	
 		elif etype == ServerEventType.CONVERSATION_ITEM_CREATED:
 			logger.debug("Conversation item created: %s", event.item.id)
 	
-	async def _send_audio_delta(self, audio_bytes: bytes) -> None:
+	async def _send_audio_delta(self, audio_bytes: bytes, *, response_id: Optional[str]) -> None:
 		pcm_bytes = self._to_pcm_bytes(audio_bytes)
 		if not pcm_bytes:
 			return
 
 		# Resample VoiceLive 24 kHz PCM to match ACS expectations.
 		resampled = self._resample_audio(pcm_bytes)
+		frame_index = self._allocate_frame_index(response_id)
 		message = {
 			"kind": "AudioData",
 			"AudioData": {"data": resampled},
@@ -445,8 +529,58 @@ class VoiceLiveSDKHandler:
 				len(pcm_bytes),
 			)
 			await self.websocket.send_json(message)
+			await self._emit_audio_frame_to_ui(
+				response_id,
+				data_b64=resampled,
+				frame_index=frame_index,
+				is_final=False,
+			)
 		except Exception:
 			logger.debug("Failed to relay audio delta", exc_info=True)
+
+	async def _emit_audio_frame_to_ui(
+		self,
+		response_id: Optional[str],
+		*,
+		data_b64: Optional[str],
+		frame_index: int,
+		is_final: bool,
+	) -> None:
+		if not self._websocket_open:
+			return
+		payload = {
+			"type": "audio_data",
+			"frame_index": frame_index,
+			"total_frames": None,
+			"sample_rate": self._acs_sample_rate,
+			"is_final": is_final,
+			"response_id": response_id,
+		}
+		if data_b64:
+			payload["data"] = data_b64
+		try:
+			await self.websocket.send_json(payload)
+		except Exception:
+			logger.debug("Failed to emit UI audio frame", exc_info=True)
+
+	def _allocate_frame_index(self, response_id: Optional[str]) -> int:
+		if response_id:
+			current = self._response_audio_frames.get(response_id, 0)
+			self._response_audio_frames[response_id] = current + 1
+			return current
+		current = self._fallback_audio_frame_index
+		self._fallback_audio_frame_index += 1
+		return current
+
+	def _final_frame_index(self, response_id: Optional[str]) -> int:
+		if response_id and response_id in self._response_audio_frames:
+			next_idx = self._response_audio_frames.pop(response_id)
+			return max(next_idx - 1, 0)
+		if not response_id:
+			final_idx = max(self._fallback_audio_frame_index - 1, 0)
+			self._fallback_audio_frame_index = 0
+			return final_idx
+		return 0
 
 	async def _send_stop_audio(self) -> None:
 		if self._stop_audio_pending:

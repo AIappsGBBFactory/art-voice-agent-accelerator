@@ -236,6 +236,32 @@ const formStyles = {
     color: '#dc2626',
     fontWeight: 600,
   },
+  modeSwitcher: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: '12px',
+    marginTop: '8px',
+  },
+  modeButton: (active) => ({
+    flex: 1,
+    padding: '10px 12px',
+    borderRadius: '999px',
+    border: '1px solid',
+    borderColor: active ? '#1d4ed8' : 'rgba(148,163,184,0.5)',
+    background: active ? 'linear-gradient(135deg, #3b82f6, #1d4ed8)' : '#fff',
+    color: active ? '#fff' : '#1f2937',
+    fontWeight: 600,
+    fontSize: '12px',
+    letterSpacing: '0.05em',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    boxShadow: active ? '0 6px 16px rgba(59,130,246,0.35)' : 'none',
+  }),
+  lookupHelper: {
+    fontSize: '12px',
+    color: '#475569',
+    marginTop: '4px',
+  },
   resultCard: {
     borderRadius: '12px',
     border: '1px solid rgba(226, 232, 240, 0.8)',
@@ -319,9 +345,14 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
   const [touchedFields, setTouchedFields] = useState({});
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
+  const [mode, setMode] = useState('create'); // 'create' | 'lookup'
+  const [lookupEmail, setLookupEmail] = useState('');
+  const [lookupPending, setLookupPending] = useState(false);
+  const [lookupError, setLookupError] = useState('');
+
   const submitDisabled = useMemo(
-    () => status.type === 'pending',
-    [status.type],
+    () => status.type === 'pending' || lookupPending,
+    [status.type, lookupPending],
   );
 
   const handleChange = (event) => {
@@ -410,6 +441,51 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
     }
   };
 
+  const handleLookup = async (event) => {
+    event.preventDefault();
+    if (lookupPending) {
+      return;
+    }
+    const emailValue = lookupEmail.trim();
+    if (!emailValue) {
+      setLookupError('Email is required to lookup a demo profile.');
+      return;
+    }
+    setLookupError('');
+    setLookupPending(true);
+    setStatus({ type: 'pending', message: 'Looking up demo profile…', data: null });
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/v1/demo-env/temporary-user?email=${encodeURIComponent(emailValue)}&session_id=${encodeURIComponent(sessionId)}`
+      );
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail?.detail || `Lookup failed (${response.status})`);
+      }
+      const data = await response.json();
+      setStatus({
+        type: 'success',
+        message: `Loaded demo profile for ${data?.profile?.full_name || emailValue}.`,
+        data: {
+          safety_notice: data?.safety_notice,
+          institution_name: data?.profile?.institution_name,
+          company_code: data?.profile?.company_code,
+          company_code_last4: data?.profile?.company_code_last4 || data?.profile?.company_code?.slice?.(-4),
+        },
+      });
+      setLookupEmail('');
+      onSuccess?.(data);
+    } catch (error) {
+      setStatus({
+        type: 'error',
+        message: error.message || 'Unable to lookup demo profile.',
+        data: null,
+      });
+    } finally {
+      setLookupPending(false);
+    }
+  };
+
   const showRequiredError = (fieldName) => {
     if (fieldName !== 'full_name' && fieldName !== 'email') {
       return false;
@@ -452,6 +528,26 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
         <span>Demo environment - All data is automatically purged after 24 hours</span>
       </div>
 
+      <div style={formStyles.modeSwitcher}>
+        <button
+          type="button"
+          style={formStyles.modeButton(mode === 'create')}
+          onClick={() => setMode('create')}
+          disabled={lookupPending}
+        >
+          Create Profile
+        </button>
+        <button
+          type="button"
+          style={formStyles.modeButton(mode === 'lookup')}
+          onClick={() => setMode('lookup')}
+          disabled={lookupPending}
+        >
+          Lookup by Email
+        </button>
+      </div>
+
+      {mode === 'create' ? (
       <form style={formStyles.form} onSubmit={handleSubmit}>
         <div style={formStyles.formRow}>
           <label 
@@ -651,6 +747,67 @@ const TemporaryUserForm = ({ apiBaseUrl, onClose, sessionId, onSuccess }) => {
           </button>
         </div>
       </form>
+      ) : (
+      <form
+        style={{ ...formStyles.form, gridTemplateColumns: '1fr', marginTop: '8px' }}
+        onSubmit={handleLookup}
+      >
+        <div style={formStyles.formRow}>
+          <label
+            style={{
+              ...formStyles.label,
+              ...(focusedField === 'lookup_email' ? formStyles.labelFocused : {}),
+            }}
+            htmlFor="lookup_email"
+          >
+            Lookup Email
+          </label>
+          <div style={formStyles.inputContainer}>
+            <input
+              id="lookup_email"
+              type="email"
+              value={lookupEmail}
+              onChange={(e) => setLookupEmail(e.target.value)}
+              onFocus={() => setFocusedField('lookup_email')}
+              onBlur={() => setFocusedField(null)}
+              placeholder="someone@example.com"
+              style={{
+                ...formStyles.input,
+                ...(focusedField === 'lookup_email' ? formStyles.inputFocused : {}),
+                ...(lookupError ? formStyles.inputError : {}),
+              }}
+            />
+          </div>
+          <div
+            style={{
+              ...formStyles.helperText,
+              ...(lookupError ? formStyles.helperTextWarning : {}),
+            }}
+          >
+            {lookupError || 'Enter the email used when the demo profile was created.'}
+          </div>
+        </div>
+        <div style={formStyles.buttonRow}>
+          <button
+            type="submit"
+            style={{
+              ...formStyles.button,
+              ...(lookupPending ? formStyles.buttonDisabled : {}),
+              ...(isButtonHovered && !lookupPending ? formStyles.buttonHover : {}),
+            }}
+            onMouseEnter={() => setIsButtonHovered(true)}
+            onMouseLeave={() => setIsButtonHovered(false)}
+            disabled={lookupPending}
+          >
+            {lookupPending && <span style={formStyles.buttonLoader}></span>}
+            {lookupPending ? 'Looking Up…' : 'Lookup Demo Profile'}
+          </button>
+        </div>
+        <div style={formStyles.lookupHelper}>
+          Don’t see the email? Create a new profile in the tab above.
+        </div>
+      </form>
+      )}
 
       {status.type !== 'idle' && status.message && (
         <div

@@ -15,7 +15,9 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
     VENMO_COLLECTION_NAME,
     infer_collection_from_query,
     one_shot_query,
+    _get_cached_retriever,
 )
+from src.aoai import client as aoai_client_module
 
 kb_logger = get_logger("voicelive.tools.financial.kb")
 handoff_logger = get_logger("voicelive.tools.financial.handoff")
@@ -71,26 +73,34 @@ async def execute_search_knowledge_base(arguments: Dict[str, Any]) -> Dict[str, 
     )
 
     start = time.perf_counter()
-    try:
-        results, metrics = await asyncio.to_thread(
-            one_shot_query,
-            query,
-            top_k=effective_top_k,
-            num_candidates=effective_candidates,
-            database=database,
-            collection=collection,
-            filters=filters,
-            vector_index=vector_index,
-            include_metrics=True,
-        )
-    except Exception as exc:
-        kb_logger.error("Knowledge base search failed for '%s': %s", query, exc)
-        return {
-            "success": False,
-            "message": "Knowledge lookup encountered a temporary issue. Try tightening the question or escalate if it persists.",
-            "results": [],
-            "error": str(exc),
-        }
+    retry_auth = False
+    for attempt in range(2):
+        try:
+            results, metrics = await asyncio.to_thread(
+                one_shot_query,
+                query,
+                top_k=effective_top_k,
+                num_candidates=effective_candidates,
+                database=database,
+                collection=collection,
+                filters=filters,
+                vector_index=vector_index,
+                include_metrics=True,
+            )
+            break
+        except Exception as exc:
+            if _is_embedding_auth_error(exc) and not retry_auth:
+                retry_auth = True
+                kb_logger.warning("Embedding auth failure detected; refreshing Azure OpenAI client and retriever cache.")
+                _refresh_embedding_stack()
+                continue
+            kb_logger.error("Knowledge base search failed for '%s': %s", query, exc)
+            return {
+                "success": False,
+                "message": "Knowledge lookup encountered a temporary issue. Try tightening the question or escalate if it persists.",
+                "results": [],
+                "error": str(exc),
+            }
 
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     metrics = metrics or {}
@@ -209,6 +219,20 @@ def coerce_handoff_payload(tool_name: str, payload: Dict[str, Any]) -> Dict[str,
     )
     payload_out["success"] = success
     return payload_out
+
+
+def _is_embedding_auth_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "azure openai embeddings request failed" in message and ("401" in message or "unauthorized" in message)
+
+
+def _refresh_embedding_stack() -> None:
+    try:
+        aoai_client_module.client = aoai_client_module.create_azure_openai_client()
+        _get_cached_retriever.cache_clear()
+        kb_logger.info("Azure OpenAI client and retriever cache refreshed after auth failure.")
+    except Exception as refresh_exc:  # noqa: BLE001
+        kb_logger.error("Failed to refresh Azure OpenAI client after auth failure: %s", refresh_exc)
 
 
 __all__ = [
