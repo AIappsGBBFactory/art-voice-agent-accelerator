@@ -13,7 +13,7 @@ session:
 
   voice:
     type: azure-standard
-    name: en-US-GuyNeural
+    name: en-US-Ava:DragonHDLatestNeural
     rate: "-1%"
 
   turn_detection:

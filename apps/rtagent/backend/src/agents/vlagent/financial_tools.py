@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import os
 import time
+
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeAlias, Union
 
@@ -36,6 +36,11 @@ from .handoffs import (
     handoff_transfer_agency_agent as vl_handoff_transfer_agency_agent,
     handoff_paypal_agent as vl_handoff_paypal_agent,
     handoff_to_auth as vl_handoff_to_auth,
+)
+from .tool_store.financial_helpers import (
+    execute_search_knowledge_base,
+    normalize_tool_result,
+    coerce_handoff_payload,
 )
 
 logger = get_logger("voicelive.tools.financial")
@@ -367,34 +372,6 @@ async def _execute_resend_mfa_code(arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
     forced_args["delivery_method"] = "email"
     return await _call_art_tool("resend_mfa_code", forced_args)
-def _cleanup_context(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Strip falsy values to keep handoff payloads compact."""
-
-    return {key: value for key, value in (data or {}).items() if value not in (None, "", [], {}, False)}
-
-
-def _build_handoff_payload(
-    *,
-    target_agent: str,
-    message: str,
-    summary: str,
-    context: Dict[str, Any],
-    extra: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Create orchestrator-compatible payload for agent switching."""
-
-    payload: Dict[str, Any] = {
-        "handoff": True,
-        "target_agent": target_agent,
-        "message": message,
-        "handoff_summary": summary,
-        "handoff_context": context,
-    }
-    if extra:
-        payload.update(extra)
-    return payload
-
-
 def _prepare_args(fn: Callable[..., Any], raw_args: Dict[str, Any]) -> Tuple[List[Any], Dict[str, Any]]:
     """Coerce VoiceLive dict arguments into the tool's declared signature."""
 
@@ -417,67 +394,6 @@ def _prepare_args(fn: Callable[..., Any], raw_args: Dict[str, Any]) -> Tuple[Lis
     return [], raw_args
 
 
-def _normalize_result(result: Any) -> Dict[str, Any]:
-    """Convert tool results into JSON-serialisable dictionaries."""
-
-    if result is None:
-        return {"success": False, "message": "Tool returned no data."}
-
-    if hasattr(result, "model_dump"):
-        result = result.model_dump()
-    elif hasattr(result, "dict") and callable(getattr(result, "dict")):
-        try:
-            result = result.dict()
-        except TypeError:
-            pass
-
-    if isinstance(result, str):
-        try:
-            result = json.loads(result)
-        except json.JSONDecodeError:
-            return {"success": False, "message": result}
-
-    if isinstance(result, dict) and "ok" in result:
-        data = result.get("data") if isinstance(result.get("data"), dict) else {}
-        normalised = {
-            "success": bool(result.get("ok")),
-            "message": result.get("message", ""),
-        }
-        normalised.update(data)
-        return normalised
-
-    if isinstance(result, dict):
-        return result
-
-    return {"success": True, "value": result}
-
-
-def _coerce_handoff(tool_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Translate upstream handoff payloads into orchestrator format."""
-
-    data = dict(payload or {})
-    success = bool(data.pop("success", True))
-    message = data.pop("message", f"Transferring to {data.get('target_agent') or tool_name}.")
-    summary = data.pop("handoff_summary", message)
-    target = data.pop("target_agent", data.pop("handoff", tool_name))
-    session_overrides = data.pop("session_overrides", None)
-    should_interrupt = bool(data.pop("should_interrupt_playback", True))
-
-    extra: Dict[str, Any] = {"handoff": True, "should_interrupt_playback": should_interrupt}
-    if session_overrides:
-        extra["session_overrides"] = session_overrides
-
-    payload_out = _build_handoff_payload(
-        target_agent=str(target or tool_name),
-        message=message,
-        summary=summary,
-        context=_cleanup_context(data),
-        extra=extra,
-    )
-    payload_out["success"] = success
-    return payload_out
-
-
 async def _call_art_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Invoke an VLAgent tool and normalise its response."""
 
@@ -492,7 +408,7 @@ async def _call_art_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str,
     else:
         result = await asyncio.to_thread(fn, *positional, **keyword)
 
-    return _normalize_result(result)
+    return normalize_tool_result(result)
 
 
 async def _execute_art_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -502,7 +418,7 @@ async def _execute_art_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[s
     if tool_name in HANDOFF_TOOL_NAMES:
         if not payload.get("success", True):
             return payload
-        return _coerce_handoff(tool_name, payload)
+        return coerce_handoff_payload(tool_name, payload)
     return payload
 
 
@@ -619,7 +535,7 @@ register_tool("handoff_transfer_agency_agent", executor=vl_handoff_transfer_agen
 register_tool("handoff_paypal_agent", executor=vl_handoff_paypal_agent, is_handoff=True)
 register_tool("handoff_to_auth", executor=vl_handoff_to_auth, is_handoff=True)
 register_tool("escalate_human", executor=vl_escalate_human)
-register_tool("search_knowledge_base", schema=SEARCH_KB_SCHEMA, executor=_execute_search_knowledge_base)
+register_tool("search_knowledge_base", schema=SEARCH_KB_SCHEMA, executor=execute_search_knowledge_base)
 register_tool("get_paypal_account_summary", schema=PAYPAL_ACCOUNT_SCHEMA, executor=_execute_get_paypal_account_summary)
 register_tool("get_paypal_transactions", schema=PAYPAL_TRANSACTIONS_SCHEMA, executor=_execute_get_paypal_transactions)
 

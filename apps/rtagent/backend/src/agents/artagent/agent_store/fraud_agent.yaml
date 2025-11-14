@@ -17,7 +17,7 @@ model:
   max_completion_tokens: 2040
 
 voice:
-  name: en-US-Andrew:DragonHDLatestNeural # Professional, reassuring male voice
+  name: en-US-ShimmerTurboMultilingualNeural # Professional, reassuring male voice
   style: professional # Professional style for fraud concerns  
   rate: "+0%" # Normal rate for clear communication
 

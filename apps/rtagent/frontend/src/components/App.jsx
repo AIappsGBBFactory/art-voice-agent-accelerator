@@ -1,4 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Box, Card, CardContent, CardHeader, Chip, Divider, IconButton, LinearProgress, Typography } from '@mui/material';
+import BuildCircleRoundedIcon from '@mui/icons-material/BuildCircleRounded';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
+import HourglassTopRoundedIcon from '@mui/icons-material/HourglassTopRounded';
+import MicOffRoundedIcon from '@mui/icons-material/MicOffRounded';
+import MicRoundedIcon from '@mui/icons-material/MicRounded';
+import PhoneDisabledRoundedIcon from '@mui/icons-material/PhoneDisabledRounded';
+import PhoneRoundedIcon from '@mui/icons-material/PhoneRounded';
+import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
+import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
+import KeyboardArrowUpRoundedIcon from '@mui/icons-material/KeyboardArrowUpRounded';
 import "reactflow/dist/style.css";
 import TemporaryUserForm from './TemporaryUserForm';
 import StreamingModeSelector from './StreamingModeSelector.jsx';
@@ -151,7 +163,7 @@ const styles = {
     width: "100%",
     maxWidth: "100%",
     height: "90vh",
-    maxHeight: "900px",
+    maxHeight: "920px",
     background: "white",
     borderRadius: "20px",
     boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
@@ -213,25 +225,44 @@ const styles = {
   waveformSection: {
     backgroundColor: "#f1f5f9",
     background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
-    padding: "12px 4px",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     borderBottom: "1px solid #e2e8f0",
-    height: "22%",
-    minHeight: "90px",
     position: "relative",
+    transition: "all 0.2s ease",
+    cursor: "pointer",
   },
-  
-  waveformSectionTitle: {
-    fontSize: "12px",
-    fontWeight: "500",
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: "0.5px",
-    marginBottom: "8px",
-    opacity: 0.8,
+  waveformSectionExpanded: {
+    padding: "18px 22px 20px 22px",
+    minHeight: "110px",
+    gap: "14px",
+  },
+  waveformSectionCollapsed: {
+    padding: "10px 22px 12px 22px",
+    minHeight: "0",
+    alignItems: "flex-start",
+    justifyContent: "flex-start",
+    gap: "6px",
+  },
+  waveformHeader: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  waveformHint: {
+    fontSize: "11px",
+    color: "#94a3b8",
+    fontWeight: 500,
+    letterSpacing: "0.1px",
+  },
+  waveformCollapsedLine: {
+    width: "100%",
+    height: "2px",
+    borderRadius: "999px",
+    background: "linear-gradient(90deg, rgba(148,163,184,0.05), rgba(148,163,184,0.35), rgba(148,163,184,0.05))",
   },
   
   // Section divider line - more subtle
@@ -266,7 +297,7 @@ const styles = {
   
   chatSection: {
     flex: 1,
-    padding: "15px 20px 15px 5px",
+    padding: "18px 26px 22px 16px",
     width: "100%",
     overflowY: "auto",
     backgroundColor: "#ffffff",
@@ -311,16 +342,16 @@ const styles = {
   messageContainer: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px",
+    gap: "18px",
     flex: 1,
     overflowY: "auto",
-    padding: "0",
+    padding: "0 6px 16px",
   },
   
   userMessage: {
     alignSelf: "flex-end",
-    maxWidth: "75%",
-    marginRight: "15px",
+    maxWidth: "78%",
+    marginRight: "20px",
     marginBottom: "4px",
   },
   
@@ -342,8 +373,8 @@ const styles = {
   // Assistant message (left aligned - teal bubble)
   assistantMessage: {
     alignSelf: "flex-start",
-    maxWidth: "80%", // Increased width for maximum space usage
-    marginLeft: "0px", // No left margin - flush to edge
+    maxWidth: "82%", // Increased width for maximum space usage
+    marginLeft: "4px", // No left margin - flush to edge
     marginBottom: "4px",
   },
   
@@ -376,13 +407,13 @@ const styles = {
   
   // Control section - blended footer design
   controlSection: {
-    padding: "12px",
+    padding: "12px 18px",
     backgroundColor: "#f1f5f9",
     background: "linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
-    height: "15%",
+    height: "14%",
     minHeight: "100px",
     borderTop: "1px solid #e2e8f0",
     position: "relative",
@@ -399,31 +430,8 @@ const styles = {
     width: "fit-content",
   },
   
-  controlButton: (isActive, variant = 'default') => {
-    // Base styles for all buttons
-    return {
-      width: "56px",
-      height: "56px",
-      borderRadius: "50%",
-      border: "none",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      cursor: "pointer",
-      fontSize: "20px",
-      transition: "all 0.3s ease",
-      position: "relative",
-      background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-      color: isActive ? "#10b981" : "#64748b",
-      transform: isActive ? "scale(1.05)" : "scale(1)",
-      boxShadow: isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
-        "0 2px 8px rgba(0,0,0,0.08)",
-    };
-  },
-
   // Enhanced button styles with hover effects
-  resetButton: (isActive, isHovered) => ({
+  resetButton: (isHovered) => ({
     width: "56px",
     height: "56px",
     borderRadius: "50%",
@@ -436,13 +444,15 @@ const styles = {
     transition: "all 0.3s ease",
     position: "relative",
     background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-    color: isActive ? "#10b981" : "#64748b",
-    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
+    color: "#1f2937",
+    transform: isHovered ? "scale(1.08)" : "scale(1)",
     boxShadow: isHovered ? 
       "0 8px 24px rgba(100,116,139,0.3), 0 0 0 3px rgba(100,116,139,0.15)" :
-      (isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
-        "0 2px 8px rgba(0,0,0,0.08)"),
+      "0 2px 8px rgba(0,0,0,0.08)",
+    padding: 0,
+    '& svg': {
+      color: isHovered ? "#0F172A" : "#1f2937",
+    },
   }),
 
   micButton: (isActive, isHovered) => ({
@@ -461,14 +471,18 @@ const styles = {
       (isActive ? "linear-gradient(135deg, #10b981, #059669)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
       "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
     color: isHovered ? 
-      (isActive ? "white" : "#16a34a") :
-      (isActive ? "#10b981" : "#64748b"),
+      (isActive ? "white" : "#0f172a") :
+      (isActive ? "#0ea5e9" : "#1f2937"),
     transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
     boxShadow: isHovered ? 
       "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
       (isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
+        "0 6px 20px rgba(14,165,233,0.3), 0 0 0 3px rgba(14,165,233,0.15)" : 
         "0 2px 8px rgba(0,0,0,0.08)"),
+    padding: 0,
+    '& svg': {
+      color: isHovered ? (isActive ? "#f8fafc" : "#0f172a") : (isActive ? "#0284c7" : "#1f2937"),
+    },
   }),
 
   phoneButton: (isActive, isHovered, isDisabled = false) => {
@@ -483,6 +497,11 @@ const styles = {
       fontSize: "20px",
       transition: "all 0.3s ease",
       position: "relative",
+      color: "#1f2937",
+      padding: 0,
+      '& svg': {
+        color: "#1f2937",
+      },
     };
 
     if (isDisabled) {
@@ -494,6 +513,10 @@ const styles = {
         transform: "scale(1)",
         boxShadow: "inset 0 0 0 1px rgba(148, 163, 184, 0.3)",
         opacity: 0.7,
+        padding: 0,
+        '& svg': {
+          color: "#94a3b8",
+        },
       };
     }
 
@@ -504,14 +527,18 @@ const styles = {
         (isActive ? "linear-gradient(135deg, #3f75a8ff, #2b5d8f)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
         "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
       color: isHovered ? 
-        (isActive ? "white" : "#3f75a8ff") :
-        (isActive ? "#3f75a8ff" : "#64748b"),
+        (isActive ? "white" : "#1f2937") :
+        (isActive ? "#2563eb" : "#1f2937"),
       transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
       boxShadow: isHovered ? 
-        "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
+        "0 8px 25px rgba(37,99,235,0.25), 0 0 0 4px rgba(37,99,235,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
         (isActive ? 
-          "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
+          "0 6px 20px rgba(37,99,235,0.35), 0 0 0 3px rgba(37,99,235,0.15)" : 
           "0 2px 8px rgba(0,0,0,0.08)"),
+      padding: 0,
+      '& svg': {
+        color: isHovered ? (isActive ? "#f8fafc" : "#0f172a") : (isActive ? "#2563eb" : "#1f2937"),
+      },
     };
   },
 
@@ -545,8 +572,8 @@ const styles = {
   // Input section for phone calls
   phoneInputSection: {
     position: "absolute",
-    bottom: "60px", // Moved lower from 140px to 60px to avoid blocking chat bubbles
-    left: "500px", // Moved further to the right from 400px to 500px
+    bottom: "120px",
+    right: "32px",
     background: "white",
     padding: "20px",
     borderRadius: "20px", // More rounded - changed from 16px to 20px
@@ -556,6 +583,7 @@ const styles = {
     flexDirection: "column",
     gap: "12px",
     minWidth: "240px",
+    maxWidth: "360px",
     zIndex: 90,
   },
   
@@ -2026,27 +2054,23 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
       setAmplitude(() => {
         // React to actual audio levels first, then fall back to speaker state
         if (audioLevel > 0.01) {
-          // User is speaking - use real audio level
           const scaledLevel = audioLevel * 25;
           const smoothVariation = Math.sin(Date.now() * 0.002) * (scaledLevel * 0.2);
           return Math.max(8, scaledLevel + smoothVariation);
-        } else if (outputAudioLevel > 0.01) {
-          // Assistant is speaking - use output audio level
+        }
+        if (outputAudioLevel > 0.01) {
           const scaledLevel = outputAudioLevel * 20;
           const smoothVariation = Math.sin(Date.now() * 0.0018) * (scaledLevel * 0.25);
           return Math.max(6, scaledLevel + smoothVariation);
-        } else if (speaker) {
-          // Active speaking fallback - gentle rhythmic movement
+        }
+        if (speaker) {
           const time = Date.now() * 0.002;
           const baseAmplitude = 10;
           const rhythmicVariation = Math.sin(time) * 5;
           return baseAmplitude + rhythmicVariation;
-        } else {
-          // Idle state - gentle breathing pattern
-          const time = Date.now() * 0.0008;
-          const breathingAmplitude = 3 + Math.sin(time) * 1.5;
-          return breathingAmplitude;
         }
+        // Idle state - return a flat line (no wobble)
+        return 0;
       });
       
       animationRef.current = requestAnimationFrame(animate);
@@ -2102,19 +2126,37 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
   const generateMultipleWaves = () => {
     const waves = [];
     
-    let baseColor, opacity;
+    let baseColor;
+    let opacity;
     if (speaker === "User") {
       baseColor = "#ef4444";
-      opacity = 0.8;
+      opacity = 0.85;
     } else if (speaker === "Assistant") {
       baseColor = "#67d8ef";
-      opacity = 0.8;
+      opacity = 0.85;
     } else {
       baseColor = "#3b82f6";
-      opacity = 0.4;
+      opacity = 0.45;
     }
-    
-    // Main wave
+
+    if (amplitude <= 0.5) {
+      baseColor = "#cbd5e1";
+      waves.push(
+        <line
+          key="wave-idle"
+          x1="0"
+          y1="40"
+          x2="750"
+          y2="40"
+          stroke={baseColor}
+          strokeWidth="2"
+          strokeLinecap="round"
+          opacity={0.75}
+        />
+      );
+      return waves;
+    }
+
     waves.push(
       <path
         key="wave1"
@@ -2126,8 +2168,7 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
         strokeLinecap="round"
       />
     );
-    
-    // Secondary wave
+
     waves.push(
       <path
         key="wave2"
@@ -2177,20 +2218,152 @@ const ChatBubble = ({ message }) => {
   const isAuthAgent = speaker === "Auth Agent";
   
   if (isTool) {
+    const safeText = text ?? "";
+    const [headline = "", ...detailLines] = safeText.split("\n");
+    const detailText = detailLines.join("\n").trim();
+    const toolMatch = headline.match(/tool\s+([\w-]+)/i);
+    const toolName = toolMatch?.[1]?.replace(/_/g, " ") ?? "Tool";
+    const progressMatch = headline.match(/(\d+)%/);
+    const progressValue = progressMatch ? Number(progressMatch[1]) : null;
+    const isSuccess = /completed/i.test(headline);
+    const isFailure = /failed/i.test(headline);
+    const isStart = /started/i.test(headline);
+    const statusLabel = isSuccess
+      ? "Completed"
+      : isFailure
+      ? "Failed"
+      : progressValue !== null
+      ? "In Progress"
+      : isStart
+      ? "Started"
+      : "Update";
+    const chipColor = isSuccess ? "success" : isFailure ? "error" : "info";
+    const chipIcon = isSuccess
+      ? <CheckCircleRoundedIcon fontSize="small" />
+      : isFailure
+      ? <ErrorOutlineRoundedIcon fontSize="small" />
+      : <HourglassTopRoundedIcon fontSize="small" />;
+    const subheaderText = headline
+      .replace(/^🛠️\s*/u, "")
+      .replace(/tool\s+[\w-]+\s*/i, "")
+      .trim();
+
+    let parsedJson = null;
+    if (detailText) {
+      try {
+        parsedJson = JSON.parse(detailText);
+      } catch (err) {
+        logger.debug?.("Failed to parse tool payload", { err, detailText });
+      }
+    }
+
+    const cardGradient = isFailure
+      ? "linear-gradient(135deg, #f87171, #ef4444)"
+      : isSuccess
+      ? "linear-gradient(135deg, #34d399, #10b981)"
+      : "linear-gradient(135deg, #8b5cf6, #6366f1)";
+    const hasContent = Boolean(detailText) || (progressValue !== null && !Number.isNaN(progressValue));
+
     return (
-      <div style={{ ...styles.assistantMessage, alignSelf: "center" }}>
-        <div style={{
-          ...styles.assistantBubble,
-          background: "#8b5cf6",
-          textAlign: "center",
-          fontSize: "14px",
-        }}>
-
-                                                                                                            
-
-                            {text}
-        </div>
-      </div>
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
+        <Card
+          elevation={6}
+          sx={{
+            width: "100%",
+            maxWidth: 600,
+            borderRadius: 3,
+            background: cardGradient,
+            color: "#f8fafc",
+            border: "1px solid rgba(255,255,255,0.16)",
+            boxShadow: "0 18px 40px rgba(99,102,241,0.28)",
+          }}
+        >
+          <CardHeader
+            avatar={<BuildCircleRoundedIcon sx={{ color: "#e0e7ff" }} />}
+            title={
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, letterSpacing: 0.4 }}>
+                {toolName}
+              </Typography>
+            }
+            subheader={subheaderText || null}
+            subheaderTypographyProps={{
+              sx: {
+                color: "rgba(248,250,252,0.78)",
+                textTransform: "uppercase",
+                fontSize: "0.7rem",
+                letterSpacing: "0.08em",
+                fontWeight: 600,
+              },
+            }}
+            action={
+              <Chip
+                label={statusLabel}
+                color={chipColor}
+                variant="outlined"
+                size="small"
+                icon={chipIcon}
+                sx={{
+                  color: chipColor === "success" ? "#064e3b" : chipColor === "error" ? "#7f1d1d" : "#0f172a",
+                  borderColor: "rgba(248,250,252,0.4)",
+                  backgroundColor: "rgba(248,250,252,0.15)",
+                  '& .MuiChip-icon': {
+                    color: chipColor === "success" ? "#047857" : chipColor === "error" ? "#dc2626" : "#1e293b",
+                  },
+                }}
+              />
+            }
+            sx={{
+              '& .MuiCardHeader-action': { alignSelf: "center" },
+              pb: hasContent ? 0 : 1,
+            }}
+          />
+          {hasContent && <Divider sx={{ borderColor: "rgba(248,250,252,0.2)" }} />}
+          {hasContent && (
+            <CardContent sx={{ pt: 2, pb: 2, color: "rgba(248,250,252,0.92)" }}>
+              {progressValue !== null && !isSuccess && !isFailure && (
+                <Box sx={{ mb: detailText ? 2 : 0 }}>
+                  <LinearProgress
+                    variant="determinate"
+                    value={Math.max(0, Math.min(100, progressValue))}
+                    sx={{
+                      height: 8,
+                      borderRadius: 999,
+                      backgroundColor: "rgba(15,23,42,0.25)",
+                      '& .MuiLinearProgress-bar': { backgroundColor: "#f8fafc" },
+                    }}
+                  />
+                </Box>
+              )}
+              {parsedJson ? (
+                <Box
+                  component="pre"
+                  sx={{
+                    m: 0,
+                    backgroundColor: "rgba(15,23,42,0.35)",
+                    borderRadius: 2,
+                    p: 2,
+                    fontFamily:
+                      'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                    fontSize: "0.75rem",
+                    maxHeight: 260,
+                    overflowX: "auto",
+                    overflowY: "auto",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {JSON.stringify(parsedJson, null, 2)}
+                </Box>
+              ) : (
+                detailText && (
+                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {detailText}
+                  </Typography>
+                )
+              )}
+            </CardContent>
+          )}
+        </Card>
+      </Box>
     );
   }
   
@@ -2318,6 +2491,27 @@ function RealTimeVoiceApp() {
     }
   }, [selectedStreamingMode]);
 
+  useEffect(() => {
+    if (!showPhoneInput) {
+      return undefined;
+    }
+
+    const handleOutsideClick = (event) => {
+      const panelNode = phonePanelRef.current;
+      const buttonNode = phoneButtonRef.current;
+      if (panelNode && panelNode.contains(event.target)) {
+        return;
+      }
+      if (buttonNode && buttonNode.contains(event.target)) {
+        return;
+      }
+      setShowPhoneInput(false);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showPhoneInput]);
+
   const handleStreamingModeChange = useCallback(
     (mode) => {
       if (!mode || mode === selectedStreamingMode) {
@@ -2331,6 +2525,44 @@ function RealTimeVoiceApp() {
 
   const selectedStreamingModeLabel = StreamingModeSelector.getLabel(
     selectedStreamingMode,
+  );
+
+  const updateToolMessage = useCallback(
+    (toolName, transformer, fallbackMessage) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        let targetIndex = -1;
+
+        for (let idx = next.length - 1; idx >= 0; idx -= 1) {
+          const candidate = next[idx];
+          if (candidate?.isTool && candidate.text?.includes(`tool ${toolName}`)) {
+            targetIndex = idx;
+            break;
+          }
+        }
+
+        if (targetIndex === -1) {
+          if (!fallbackMessage) {
+            return prev;
+          }
+          const fallback =
+            typeof fallbackMessage === "function"
+              ? fallbackMessage()
+              : fallbackMessage;
+          return [...prev, fallback];
+        }
+
+        const current = next[targetIndex];
+        const updated = transformer(current);
+        if (!updated || updated === current) {
+          return prev;
+        }
+
+        next[targetIndex] = updated;
+        return next;
+      });
+    },
+    [setMessages],
   );
 
   // Health monitoring (disabled)
@@ -2359,6 +2591,7 @@ function RealTimeVoiceApp() {
   const messageContainerRef = useRef(null);
   const socketRef = useRef(null);
   const phoneButtonRef = useRef(null);
+  const phonePanelRef = useRef(null);
 
   // Audio processing refs
   const audioContextRef = useRef(null);
@@ -3366,35 +3599,53 @@ function RealTimeVoiceApp() {
       
     
       if (type === "tool_progress") {
-        setMessages((prev) =>
-          prev.map((m, i, arr) =>
-            i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
-              ? { ...m, text: `🛠️ tool ${payload.tool} ${payload.pct}% 🔄` }
-              : m,
-          ),
+        const pctNumeric = Number(payload.pct);
+        const pctText = Number.isFinite(pctNumeric)
+          ? `${pctNumeric}%`
+          : payload.pct
+          ? `${payload.pct}`
+          : "progress";
+        updateToolMessage(
+          payload.tool,
+          (message) => ({
+            ...message,
+            text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
+          }),
+          () => ({
+            speaker: "Assistant",
+            isTool: true,
+            text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
+          }),
         );
-        appendLog(`⚙️ ${payload.tool} ${payload.pct}%`);
+        appendLog(`⚙️ ${payload.tool} ${pctText}`);
         return;
       }
     
       if (type === "tool_end") {
 
-      
+        const resultPayload =
+          payload.result ?? payload.output ?? payload.data ?? payload.response;
+        const serializedResult =
+          resultPayload !== undefined
+            ? JSON.stringify(resultPayload, null, 2)
+            : null;
         const finalText =
           payload.status === "success"
-            ? `🛠️ tool ${payload.tool} completed ✔️\n${JSON.stringify(
-                payload.result,
-                null,
-                2,
-              )}`
+            ? `🛠️ tool ${payload.tool} completed ✔️${
+                serializedResult ? `\n${serializedResult}` : ""
+              }`
             : `🛠️ tool ${payload.tool} failed ❌\n${payload.error}`;
-      
-        setMessages((prev) =>
-          prev.map((m, i, arr) =>
-            i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
-              ? { ...m, text: finalText }
-              : m,
-          ),
+        updateToolMessage(
+          payload.tool,
+          (message) => ({
+            ...message,
+            text: finalText,
+          }),
+          {
+            speaker: "Assistant",
+            isTool: true,
+            text: finalText,
+          },
         );
       
         appendLog(`⚙️ ${payload.tool} ${payload.status} (${payload.elapsedMs} ms)`);
@@ -3472,6 +3723,7 @@ function RealTimeVoiceApp() {
         { speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber} · Mode: ${readableMode}` }
       ]);
       appendLog(`📞 Call initiated (mode: ${readableMode})`);
+      setShowPhoneInput(false);
 
       // relay WS WITH session_id to monitor THIS session (including phone calls)
       logger.info('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor session:', currentSessionId);
@@ -3585,7 +3837,6 @@ function RealTimeVoiceApp() {
 
         {/* Waveform Section */}
         <div style={styles.waveformSection}>
-          <div style={styles.waveformSectionTitle}>Voice Activity</div>
           <WaveformVisualization 
             isActive={recording} 
             speaker={activeSpeaker} 
@@ -3611,8 +3862,10 @@ function RealTimeVoiceApp() {
             
             {/* LEFT: Reset/Restart Session Button */}
             <div style={{ position: 'relative' }}>
-              <button
-                style={styles.resetButton(false, resetHovered)}
+              <IconButton
+                disableRipple
+                aria-label="Reset session"
+                sx={styles.resetButton(resetHovered)}
                 onMouseEnter={() => {
                   setShowResetTooltip(true);
                   setResetHovered(true);
@@ -3650,8 +3903,8 @@ function RealTimeVoiceApp() {
                   }, 500);
                 }}
               >
-                ⟲
-              </button>
+                <RestartAltRoundedIcon fontSize="medium" />
+              </IconButton>
               
               {/* Tooltip */}
               <div 
@@ -3666,8 +3919,10 @@ function RealTimeVoiceApp() {
 
             {/* MIDDLE: Microphone Button */}
             <div style={{ position: 'relative' }}>
-              <button
-                style={styles.micButton(recording, micHovered)}
+              <IconButton
+                disableRipple
+                aria-label={recording ? "Stop microphone" : "Start microphone"}
+                sx={styles.micButton(recording, micHovered)}
                 onMouseEnter={() => {
                   setShowMicTooltip(true);
                   setMicHovered(true);
@@ -3678,8 +3933,12 @@ function RealTimeVoiceApp() {
                 }}
                 onClick={recording ? stopRecognition : startRecognition}
               >
-                {recording ? "🛑" : "🎤"}
-              </button>
+                {recording ? (
+                  <MicOffRoundedIcon fontSize="medium" />
+                ) : (
+                  <MicRoundedIcon fontSize="medium" />
+                )}
+              </IconButton>
               
               {/* Tooltip */}
               <div 
@@ -3714,9 +3973,11 @@ function RealTimeVoiceApp() {
                 setPhoneDisabledPos(null);
               }}
             >
-              <button
+              <IconButton
                 ref={phoneButtonRef}
-                style={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
+                disableRipple
+                aria-label={callActive ? "Hang up call" : "Place call"}
+                sx={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
                 disabled={isCallDisabled}
                 title={
                   isCallDisabled
@@ -3743,8 +4004,12 @@ function RealTimeVoiceApp() {
                   }
                 }}
               >
-                {callActive ? "📵" : "📞"}
-              </button>
+                {callActive ? (
+                  <PhoneDisabledRoundedIcon fontSize="medium" />
+                ) : (
+                  <PhoneRoundedIcon fontSize="medium" />
+                )}
+              </IconButton>
               
               {/* Tooltip */}
               {!isCallDisabled && (
@@ -3775,7 +4040,7 @@ function RealTimeVoiceApp() {
 
         {/* Phone Input Panel */}
       {showPhoneInput && (
-        <div style={styles.phoneInputSection}>
+        <div ref={phonePanelRef} style={styles.phoneInputSection}>
           <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
             {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
           </div>

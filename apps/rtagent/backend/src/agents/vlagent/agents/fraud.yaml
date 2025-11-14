@@ -13,7 +13,7 @@ session:
 
   voice:
     type: azure-standard
-    name: en-US-BrandonNeural
+    name: en-US-OnyxTurboMultilingualNeural
     rate: "0%"
 
   turn_detection:
