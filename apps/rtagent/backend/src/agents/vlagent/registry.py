@@ -9,7 +9,10 @@ def load_registry(agents_dir: str = "agents") -> Dict[str, AzureVoiceLiveAgent]:
 
 # Map function names → agent names in the registry
 HANDOFF_MAP: Dict[str, str] = {
-    "handoff_to_scheduler": "Scheduler",
-    "handoff_to_insurance": "Insurance",
     "handoff_to_auth": "AuthAgent",
+    "handoff_fraud_agent": "FraudAgent",
+    "handoff_transfer_agency_agent": "TransferAgency",
+    "handoff_to_compliance": "ComplianceDesk",
+    "handoff_to_trading": "TradingDesk",
+    "handoff_paypal_agent": "PayPalAgent",
 }

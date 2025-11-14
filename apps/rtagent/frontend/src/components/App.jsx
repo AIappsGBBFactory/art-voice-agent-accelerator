@@ -1,8 +1,26 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Box, Button, Card, CardContent, CardHeader, Chip, Divider, IconButton, LinearProgress, Paper, Typography } from '@mui/material';
+import BuildCircleRoundedIcon from '@mui/icons-material/BuildCircleRounded';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
+import HourglassTopRoundedIcon from '@mui/icons-material/HourglassTopRounded';
+import InfoRoundedIcon from '@mui/icons-material/InfoRounded';
+import MicOffRoundedIcon from '@mui/icons-material/MicOffRounded';
+import MicRoundedIcon from '@mui/icons-material/MicRounded';
+import PhoneDisabledRoundedIcon from '@mui/icons-material/PhoneDisabledRounded';
+import PhoneRoundedIcon from '@mui/icons-material/PhoneRounded';
+import PhoneInTalkRoundedIcon from '@mui/icons-material/PhoneInTalkRounded';
+import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
+import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
+import KeyboardArrowUpRoundedIcon from '@mui/icons-material/KeyboardArrowUpRounded';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
+import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import "reactflow/dist/style.css";
 import TemporaryUserForm from './TemporaryUserForm';
 import StreamingModeSelector from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
+import DemoScenariosWidget from './DemoScenariosWidget.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import logger from '../utils/logger.js';
 
@@ -58,6 +76,166 @@ const toMs = (value) => (typeof value === "number" ? Math.round(value) : undefin
 const STREAM_MODE_STORAGE_KEY = 'rtagent.streamingMode';
 const STREAM_MODE_FALLBACK = 'voice_live';
 
+const buildSessionProfile = (raw, fallbackSessionId, previous) => {
+  if (!raw && !previous) {
+    return null;
+  }
+  const container = raw ?? {};
+  const data = container.data ?? {};
+  const demoMeta = container.demo_metadata
+    ?? container.demoMetadata
+    ?? data.demo_metadata
+    ?? data.demoMetadata
+    ?? {};
+  const sessionValue = container.session_id
+    ?? container.sessionId
+    ?? data.session_id
+    ?? data.sessionId
+    ?? demoMeta.session_id
+    ?? previous?.sessionId
+    ?? fallbackSessionId;
+  const profileValue = container.profile
+    ?? data.profile
+    ?? demoMeta.profile
+    ?? previous?.profile
+    ?? null;
+  const rawTransactions = container.transactions ?? data.transactions;
+  const metaTransactions = demoMeta.transactions;
+  const transactionsValue = Array.isArray(rawTransactions) && rawTransactions.length
+    ? rawTransactions
+    : Array.isArray(metaTransactions) && metaTransactions.length
+    ? metaTransactions
+    : previous?.transactions ?? [];
+  const interactionPlanValue = container.interaction_plan
+    ?? container.interactionPlan
+    ?? data.interaction_plan
+    ?? data.interactionPlan
+    ?? demoMeta.interaction_plan
+    ?? previous?.interactionPlan
+    ?? null;
+  const entryIdValue = container.entry_id
+    ?? container.entryId
+    ?? data.entry_id
+    ?? data.entryId
+    ?? demoMeta.entry_id
+    ?? previous?.entryId
+    ?? null;
+  const expiresAtValue = container.expires_at
+    ?? container.expiresAt
+    ?? data.expires_at
+    ?? data.expiresAt
+    ?? demoMeta.expires_at
+    ?? previous?.expiresAt
+    ?? null;
+  const safetyNoticeValue = container.safety_notice
+    ?? container.safetyNotice
+    ?? data.safety_notice
+    ?? data.safetyNotice
+    ?? demoMeta.safety_notice
+    ?? previous?.safetyNotice
+    ?? null;
+
+  return {
+    sessionId: sessionValue,
+    profile: profileValue,
+    transactions: transactionsValue,
+    interactionPlan: interactionPlanValue,
+    entryId: entryIdValue,
+    expiresAt: expiresAtValue,
+    safetyNotice: safetyNoticeValue,
+  };
+};
+
+const formatStatusTimestamp = (isoValue) => {
+  if (!isoValue) {
+    return null;
+  }
+  const date = isoValue instanceof Date ? isoValue : new Date(isoValue);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
+
+const inferStatusTone = (textValue = "") => {
+  const normalized = textValue.toLowerCase();
+  const matchesAny = (needles) => needles.some((needle) => normalized.includes(needle));
+  if (textValue.includes("❌") || textValue.includes("🚫") || matchesAny(["error", "fail", "critical"])) {
+    return "error";
+  }
+  if (textValue.includes("✅") || textValue.includes("🎉") || matchesAny(["success", "ready", "connected", "restarted", "completed"])) {
+    return "success";
+  }
+  if (textValue.includes("⚠️") || textValue.includes("🛑") || textValue.includes("📵") || matchesAny(["stopp", "ended", "disconnect", "hang up", "warning"])) {
+    return "warning";
+  }
+  return "info";
+};
+
+const buildSystemMessage = (text, options = {}) => {
+  const timestamp = options.timestamp ?? new Date().toISOString();
+  const statusTone = options.statusTone ?? options.tone ?? inferStatusTone(text);
+  return {
+    speaker: "System",
+    text,
+    statusTone,
+    timestamp,
+    statusCaption: options.statusCaption ?? null,
+  };
+};
+
+const STATUS_TONE_META = {
+  info: {
+    label: "System Update",
+    accent: "#2563eb",
+    background: "linear-gradient(135deg, rgba(37,99,235,0.08), rgba(14,116,144,0.06))",
+    border: "1px solid rgba(37,99,235,0.18)",
+    icon: InfoRoundedIcon,
+    textColor: "#0f172a",
+    captionColor: "rgba(15,23,42,0.65)",
+  },
+  success: {
+    label: "All Set",
+    accent: "#059669",
+    background: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(56,189,248,0.05))",
+    border: "1px solid rgba(34,197,94,0.24)",
+    icon: CheckCircleRoundedIcon,
+    textColor: "#064e3b",
+    captionColor: "rgba(6,78,59,0.7)",
+  },
+  warning: {
+    label: "Heads Up",
+    accent: "#f59e0b",
+    background: "linear-gradient(135deg, rgba(245,158,11,0.14), rgba(249,115,22,0.08))",
+    border: "1px solid rgba(245,158,11,0.28)",
+    icon: WarningAmberRoundedIcon,
+    textColor: "#7c2d12",
+    captionColor: "rgba(124,45,18,0.7)",
+  },
+  call: {
+    label: "Call Live",
+    accent: "#0ea5e9",
+    background: "linear-gradient(135deg, rgba(14,165,233,0.14), rgba(45,212,191,0.08))",
+    border: "1px solid rgba(14,165,233,0.24)",
+    icon: PhoneInTalkRoundedIcon,
+    textColor: "#0f172a",
+    captionColor: "rgba(15,23,42,0.55)",
+  },
+  error: {
+    label: "Action Needed",
+    accent: "#ef4444",
+    background: "linear-gradient(135deg, rgba(239,68,68,0.12), rgba(249,115,22,0.05))",
+    border: "1px solid rgba(239,68,68,0.26)",
+    icon: ErrorOutlineRoundedIcon,
+    textColor: "#7f1d1d",
+    captionColor: "rgba(127,29,29,0.7)",
+  },
+};
+
 // Component styles
 const styles = {
   root: {
@@ -77,102 +255,183 @@ const styles = {
   },
   
   mainContainer: {
+    position: "relative",
     width: "100%",
     maxWidth: "100%",
     height: "90vh",
-    maxHeight: "900px",
+    maxHeight: "920px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
+    paddingTop: "18px",
+  },
+
+  mainShell: {
+    position: "relative",
+    flex: 1,
     background: "white",
     borderRadius: "20px",
     boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-    border: "0px solid #ce1010ff",
+    border: "0px solid transparent",
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
   },
 
-  appHeader: {
-    backgroundColor: "#f8fafc",
-    background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
-    padding: "16px 24px 12px 24px",
-    borderBottom: "1px solid #e2e8f0",
+  helpButtonDock: {
+    position: "fixed",
+    top: "20px",
+    left: "24px",
+    width: "46px",
+    height: "46px",
+    borderRadius: "50%",
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    boxShadow: "0 12px 30px rgba(15,23,42,0.25)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    position: "relative",
+    zIndex: 100,
+  },
+  backendIndicatorDock: {
+    position: "fixed",
+    bottom: "20px",
+    left: "28px",
+    transform: "scale(0.94)",
+    transformOrigin: "bottom left",
+    filter: "drop-shadow(0 12px 30px rgba(15,23,42,0.25))",
+    zIndex: 7,
   },
 
-  appTitleContainer: {
+  appHeader: {
+    position: "relative",
+    backgroundColor: "#f8fafc",
+    background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+    padding: "20px 24px 18px 24px",
+    borderBottom: "1px solid #e2e8f0",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "4px",
+    gap: "18px",
+    minHeight: "96px",
   },
 
-  appTitleWrapper: {
+  appHeaderIdentity: {
     display: "flex",
+    flexDirection: "column",
     alignItems: "center",
     gap: "8px",
+    padding: "16px 24px",
+    borderRadius: "22px",
+    background: "linear-gradient(140deg, rgba(255,255,255,0.97), rgba(248,250,252,0.92))",
+    border: "1px solid rgba(148,163,184,0.18)",
+    boxShadow: "0 16px 32px rgba(15,23,42,0.08)",
+    width: "100%",
+    maxWidth: "420px",
   },
 
-  appTitleIcon: {
-    fontSize: "20px",
-    opacity: 0.7,
+  appTitleBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    minWidth: 0,
+    alignItems: "center",
+    textAlign: "center",
   },
 
   appTitle: {
-    fontSize: "18px",
-    fontWeight: "600",
-    color: "#334155",
-    textAlign: "center",
+    fontSize: "16px",
+    fontWeight: "800",
+    color: "#0f172a",
     margin: 0,
-    letterSpacing: "0.1px",
+    letterSpacing: "-0.02em",
+    // textTransform: "uppercase",
   },
 
   appSubtitle: {
-    fontSize: "12px",
-    fontWeight: "400",
-    color: "#64748b",
-    textAlign: "center",
+    fontSize: "11px",
+    color: "#475569",
     margin: 0,
-    letterSpacing: "0.1px",
-    maxWidth: "350px",
-    lineHeight: "1.3",
-    opacity: 0.8,
+    maxWidth: "320px",
+    lineHeight: "1.35",
+  },
+
+  appHeaderFooter: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "16px",
+    flexWrap: "wrap",
+    width: "100%",
+    maxWidth: "520px",
+    margin: "0 auto",
+  },
+
+  sessionTag: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "7px 14px",
+    borderRadius: "999px",
+    background: "rgba(248,250,252,0.9)",
+    border: "1px solid rgba(148,163,184,0.28)",
+    fontSize: "10px",
+    color: "#1f2937",
+    whiteSpace: "nowrap",
+    boxShadow: "none",
+    flexShrink: 0,
   },
   waveformSection: {
-    backgroundColor: "#f1f5f9",
-    background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
-    padding: "12px 4px",
+    position: "relative",
+    // padding: "18px 28px 20px 28px",
+    background: "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,1) 100%)",
+    borderBottom: "1px solid rgba(148,163,184,0.18)",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    justifyContent: "center",
-    borderBottom: "1px solid #e2e8f0",
-    height: "22%",
-    minHeight: "90px",
-    position: "relative",
+    gap: "10px",
+    overflow: "visible",
+    boxShadow: "inset 0 -10px 20px rgba(15,23,42,0.04)",
   },
-  
-  waveformSectionTitle: {
-    fontSize: "12px",
-    fontWeight: "500",
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: "0.5px",
-    marginBottom: "8px",
-    opacity: 0.8,
+  waveformSectionCollapsed: {
+    padding: "10px 22px 12px 22px",
+    minHeight: "0",
+    alignItems: "flex-start",
+    justifyContent: "flex-start",
+    gap: "6px",
+  },
+  waveformHeader: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  waveformHint: {
+    fontSize: "11px",
+    color: "#94a3b8",
+    fontWeight: 500,
+    letterSpacing: "0.1px",
+  },
+  waveformCollapsedLine: {
+    width: "100%",
+    height: "2px",
+    borderRadius: "999px",
+    background: "linear-gradient(90deg, rgba(148,163,184,0.05), rgba(148,163,184,0.35), rgba(148,163,184,0.05))",
   },
   
   // Section divider line - more subtle
   sectionDivider: {
     position: "absolute",
-    bottom: "-1px",
-    left: "20%",
-    right: "20%",
+    bottom: 0,
+    left: "24px",
+    right: "24px",
     height: "1px",
-    backgroundColor: "#cbd5e1",
-    borderRadius: "0.5px",
-    opacity: 0.6,
+    backgroundColor: "rgba(148,163,184,0.35)",
+    borderRadius: "999px",
+    opacity: 0.7,
+    pointerEvents: "none",
+    zIndex: 0,
   },
   
   waveformContainer: {
@@ -180,26 +439,27 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
-    height: "60%",
-    padding: "0 10px",
-    background: "radial-gradient(ellipse at center, rgba(100, 116, 139, 0.05) 0%, transparent 70%)",
-    borderRadius: "6px",
+    height: "72px",
+    padding: "0 16px",
+    background: "radial-gradient(ellipse at center, rgba(100, 116, 139, 0.08) 0%, transparent 70%)",
+    borderRadius: "10px",
   },
   
   waveformSvg: {
     width: "100%",
-    height: "60px",
-    filter: "drop-shadow(0 1px 2px rgba(100, 116, 139, 0.1))",
+    height: "72px",
+    filter: "drop-shadow(0 2px 6px rgba(100, 116, 139, 0.15))",
     transition: "filter 0.3s ease",
   },
   
   chatSection: {
     flex: 1,
-    padding: "15px 20px 15px 5px",
     width: "100%",
     overflowY: "auto",
+    overflowX: "hidden",
     backgroundColor: "#ffffff",
-    borderBottom: "1px solid #e2e8f0",
+    borderTop: "1px solid rgba(148,163,184,0.14)",
+    borderBottom: "1px solid rgba(148,163,184,0.12)",
     display: "flex",
     flexDirection: "column",
     position: "relative",
@@ -240,16 +500,17 @@ const styles = {
   messageContainer: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px",
+    gap: "18px",
     flex: 1,
     overflowY: "auto",
-    padding: "0",
+    overflowX: "hidden",
+    padding: "6px 6px 18px",
   },
   
   userMessage: {
     alignSelf: "flex-end",
-    maxWidth: "75%",
-    marginRight: "15px",
+    maxWidth: "78%",
+    marginRight: "20px",
     marginBottom: "4px",
   },
   
@@ -271,8 +532,8 @@ const styles = {
   // Assistant message (left aligned - teal bubble)
   assistantMessage: {
     alignSelf: "flex-start",
-    maxWidth: "80%", // Increased width for maximum space usage
-    marginLeft: "0px", // No left margin - flush to edge
+    maxWidth: "82%", // Increased width for maximum space usage
+    marginLeft: "4px", // No left margin - flush to edge
     marginBottom: "4px",
   },
   
@@ -305,14 +566,12 @@ const styles = {
   
   // Control section - blended footer design
   controlSection: {
-    padding: "12px",
+    padding: "12px 18px 14px",
     backgroundColor: "#f1f5f9",
     background: "linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
-    height: "15%",
-    minHeight: "100px",
     borderTop: "1px solid #e2e8f0",
     position: "relative",
   },
@@ -328,31 +587,8 @@ const styles = {
     width: "fit-content",
   },
   
-  controlButton: (isActive, variant = 'default') => {
-    // Base styles for all buttons
-    return {
-      width: "56px",
-      height: "56px",
-      borderRadius: "50%",
-      border: "none",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      cursor: "pointer",
-      fontSize: "20px",
-      transition: "all 0.3s ease",
-      position: "relative",
-      background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-      color: isActive ? "#10b981" : "#64748b",
-      transform: isActive ? "scale(1.05)" : "scale(1)",
-      boxShadow: isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
-        "0 2px 8px rgba(0,0,0,0.08)",
-    };
-  },
-
   // Enhanced button styles with hover effects
-  resetButton: (isActive, isHovered) => ({
+  resetButton: (isHovered) => ({
     width: "56px",
     height: "56px",
     borderRadius: "50%",
@@ -365,13 +601,15 @@ const styles = {
     transition: "all 0.3s ease",
     position: "relative",
     background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-    color: isActive ? "#10b981" : "#64748b",
-    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
+    color: "#1f2937",
+    transform: isHovered ? "scale(1.08)" : "scale(1)",
     boxShadow: isHovered ? 
       "0 8px 24px rgba(100,116,139,0.3), 0 0 0 3px rgba(100,116,139,0.15)" :
-      (isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
-        "0 2px 8px rgba(0,0,0,0.08)"),
+      "0 2px 8px rgba(0,0,0,0.08)",
+    padding: 0,
+    '& svg': {
+      color: isHovered ? "#0F172A" : "#1f2937",
+    },
   }),
 
   micButton: (isActive, isHovered) => ({
@@ -390,14 +628,18 @@ const styles = {
       (isActive ? "linear-gradient(135deg, #10b981, #059669)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
       "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
     color: isHovered ? 
-      (isActive ? "white" : "#16a34a") :
-      (isActive ? "#10b981" : "#64748b"),
+      (isActive ? "white" : "#0f172a") :
+      (isActive ? "#0ea5e9" : "#1f2937"),
     transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
     boxShadow: isHovered ? 
       "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
       (isActive ? 
-        "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
+        "0 6px 20px rgba(14,165,233,0.3), 0 0 0 3px rgba(14,165,233,0.15)" : 
         "0 2px 8px rgba(0,0,0,0.08)"),
+    padding: 0,
+    '& svg': {
+      color: isHovered ? (isActive ? "#f8fafc" : "#0f172a") : (isActive ? "#0284c7" : "#1f2937"),
+    },
   }),
 
   phoneButton: (isActive, isHovered, isDisabled = false) => {
@@ -412,6 +654,11 @@ const styles = {
       fontSize: "20px",
       transition: "all 0.3s ease",
       position: "relative",
+      color: "#1f2937",
+      padding: 0,
+      '& svg': {
+        color: "#1f2937",
+      },
     };
 
     if (isDisabled) {
@@ -423,6 +670,10 @@ const styles = {
         transform: "scale(1)",
         boxShadow: "inset 0 0 0 1px rgba(148, 163, 184, 0.3)",
         opacity: 0.7,
+        padding: 0,
+        '& svg': {
+          color: "#94a3b8",
+        },
       };
     }
 
@@ -433,14 +684,18 @@ const styles = {
         (isActive ? "linear-gradient(135deg, #3f75a8ff, #2b5d8f)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
         "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
       color: isHovered ? 
-        (isActive ? "white" : "#3f75a8ff") :
-        (isActive ? "#3f75a8ff" : "#64748b"),
+        (isActive ? "white" : "#1f2937") :
+        (isActive ? "#2563eb" : "#1f2937"),
       transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
       boxShadow: isHovered ? 
-        "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
+        "0 8px 25px rgba(37,99,235,0.25), 0 0 0 4px rgba(37,99,235,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
         (isActive ? 
-          "0 6px 20px rgba(16,185,129,0.3), 0 0 0 3px rgba(16,185,129,0.1)" : 
+          "0 6px 20px rgba(37,99,235,0.35), 0 0 0 3px rgba(37,99,235,0.15)" : 
           "0 2px 8px rgba(0,0,0,0.08)"),
+      padding: 0,
+      '& svg': {
+        color: isHovered ? (isActive ? "#f8fafc" : "#0f172a") : (isActive ? "#2563eb" : "#1f2937"),
+      },
     };
   },
 
@@ -468,37 +723,42 @@ const styles = {
 
   buttonTooltipVisible: {
     opacity: 1,
-    transform: 'translateX(-50%) translateY(-2px)',
+    transform: 'translateX(-50%) translateY(+2px)',
   },
   
   // Input section for phone calls
   phoneInputSection: {
     position: "absolute",
-    bottom: "60px", // Moved lower from 140px to 60px to avoid blocking chat bubbles
-    left: "500px", // Moved further to the right from 400px to 500px
-    background: "white",
-    padding: "20px",
-    borderRadius: "20px", // More rounded - changed from 16px to 20px
-    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-    border: "1px solid #e2e8f0",
-    display: "flex",
+    bottom: "120px",
+    right: "32px",
+    padding: "16px",
+    borderRadius: "18px",
+    background: "rgba(255,255,255,0.96)",
+    border: "1px solid rgba(226,232,240,0.9)",
+    boxShadow: "0 20px 30px rgba(15,23,42,0.18)",
+    fontSize: "12px",
     flexDirection: "column",
     gap: "12px",
-    minWidth: "240px",
+    minWidth: "280px",
+    maxWidth: "320px",
     zIndex: 90,
   },
   
+  phoneInputRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    width: "100%",
+  },
+  
   phoneInput: {
-    padding: "12px 16px",
+    flex: 1,
+    padding: "10px 12px",
     border: "1px solid #d1d5db",
-    borderRadius: "12px", // More rounded - changed from 8px to 12px
+    borderRadius: "12px",
     fontSize: "14px",
     outline: "none",
     transition: "border-color 0.2s ease, box-shadow 0.2s ease",
-    "&:focus": {
-      borderColor: "#10b981",
-      boxShadow: "0 0 0 3px rgba(16,185,129,0.1)"
-    }
   },
   
 
@@ -521,6 +781,24 @@ const styles = {
     minWidth: "280px",
     maxWidth: "320px",
     backdropFilter: "blur(8px)",
+  },
+
+  maskToggleButton: {
+    fontSize: "9px",
+    padding: "4px 8px",
+    borderRadius: "6px",
+    border: "1px solid rgba(59,130,246,0.4)",
+    background: "rgba(59,130,246,0.08)",
+    color: "#2563eb",
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+  },
+
+  maskToggleButtonActive: {
+    background: "rgba(59,130,246,0.16)",
+    color: "#1d4ed8",
+    borderColor: "rgba(37,99,235,0.5)",
   },
 
   backendHeader: {
@@ -622,10 +900,11 @@ const styles = {
   // Call Me button style (rectangular box)
   callMeButton: (isActive, isDisabled = false) => ({
     padding: "12px 24px",
+    marginTop: "4px",
     background: isDisabled ? "linear-gradient(135deg, #e2e8f0, #cbd5e1)" : (isActive ? "#ef4444" : "#67d8ef"),
     color: isDisabled ? "#94a3b8" : "white",
     border: "none",
-    borderRadius: "8px", // More box-like - less rounded
+    borderRadius: "16px", // More box-like - less rounded
     cursor: isDisabled ? "not-allowed" : "pointer",
     fontSize: "14px",
     fontWeight: "600",
@@ -670,9 +949,7 @@ const styles = {
 
   // Help button in top right corner
   helpButton: {
-    position: "absolute",
-    top: "16px",
-    right: "16px",
+    position: "relative",
     width: "32px",
     height: "32px",
     borderRadius: "50%",
@@ -685,8 +962,9 @@ const styles = {
     justifyContent: "center",
     fontSize: "14px",
     transition: "all 0.2s ease",
-    zIndex: 99999,
     boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+    flexShrink: 0,
+    zIndex: 20,
   },
 
   helpButtonHover: {
@@ -697,30 +975,66 @@ const styles = {
   },
 
   industryTag: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  topTabsContainer: {
     position: "absolute",
-    top: "40px",
-    left: "20px",
-    padding: "6px 12px",
-    borderRadius: "12px",
-    border: "1px solid rgba(102, 126, 234, 0.3)",
-    background: "rgba(102, 126, 234, 0.15)",
-    backdropFilter: "blur(12px)",
-    color: "#667eea",
-    fontSize: "9px",
-    fontWeight: "600",
+    top: "-8px",
+    left: "36px",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    zIndex: 0,
+  },
+  topTab: (active, palette = {}) => {
+    const {
+      background = "linear-gradient(135deg, #334155, #1f2937)",
+      color = "#f8fafc",
+      borderColor = "rgba(51,65,85,0.45)",
+      shadow = "0 10px 22px rgba(30,64,175,0.22)",
+      textShadow = "0 1px 2px rgba(15,23,42,0.45)",
+    } = palette;
+    return {
+      padding: "7px 18px",
+      borderRadius: "12px 12px 0 0",
+      border: active ? `1px solid ${borderColor}` : "1px solid rgba(148,163,184,0.45)",
+      borderBottom: active ? "1px solid transparent" : "1px solid rgba(148,163,184,0.5)",
+      background: active ? background : "rgba(148,163,184,0.08)",
+      color: active ? color : "#475569",
+      gap: "12px",
+      flexWrap: "wrap",
+      fontSize: "9px",
+      fontWeight: 700,
+      textTransform: "uppercase",
+      letterSpacing: "0.14em",
+      boxShadow: active ? shadow : "inset 0 -1px 0 rgba(148,163,184,0.4)",
+      cursor: active ? "default" : "pointer",
+      transition: "all 0.24s ease",
+      textShadow: active ? textShadow : "none",
+    };
+  },
+  createProfileButton: {
     textTransform: "uppercase",
-    letterSpacing: "0.8px",
-    boxShadow: "0 2px 8px rgba(102, 126, 234, 0.2)",
-    zIndex: 1000,
-    userSelect: "none",
-    whiteSpace: "nowrap",
-    maxWidth: "fit-content",
+    letterSpacing: "0.12em",
+    fontWeight: 600,
+    fontSize: "11px",
+    padding: "10px 20px",
+    borderRadius: "18px",
+    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+    boxShadow: "0 10px 22px rgba(99,102,241,0.28)",
+    color: "#f8fafc",
+    border: "1px solid rgba(255,255,255,0.25)",
+  },
+  createProfileButtonHover: {
+    boxShadow: "0 14px 26px rgba(99,102,241,0.33)",
   },
 
   helpTooltip: {
     position: "absolute",
-    top: "40px",
-    right: "0px",
+    top: "calc(100% + 6px)",
+    left: "56px",
     background: "white",
     border: "1px solid #e2e8f0",
     borderRadius: "12px",
@@ -730,7 +1044,7 @@ const styles = {
     fontSize: "12px",
     lineHeight: "1.5",
     color: "#334155",
-    zIndex: 99999,
+    zIndex: 25,
     opacity: 0,
     transform: "translateY(-8px)",
     pointerEvents: "none",
@@ -750,6 +1064,7 @@ const styles = {
     marginBottom: "8px",
     display: "flex",
     alignItems: "center",
+    flexShrink: 0,
     gap: "6px",
   },
 
@@ -775,18 +1090,20 @@ const styles = {
     bottom: 0,
     backgroundColor: "rgba(0, 0, 0, 0.1)",
     backdropFilter: "blur(2px)",
-    zIndex: 1490,
+    zIndex: 12000,
   },
   demoFormOverlay: {
     position: "fixed",
-    top: "80px",
-    right: "24px",
-    bottom: "24px",
-    zIndex: 1500,
-    maxHeight: "calc(100vh - 120px)",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    zIndex: 12010,
+    maxHeight: "calc(100vh - 80px)",
     overflowY: "auto",
     display: "flex",
-    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "16px",
   },
   profileButtonWrapper: {
     margin: "0 24px",
@@ -1128,25 +1445,55 @@ const HelpButton = () => {
  *  INDUSTRY TAG COMPONENT
  * ------------------------------------------------------------------ */
 const IndustryTag = () => {
-  // Determine branch-based industry tag
-  const getIndustryTag = () => {
+  // Determine branch-based industry tag and palette
+  const getIndustryPresentation = () => {
     const currentBranch = import.meta.env.VITE_BRANCH_NAME || 'finance';
-    
-    // When promoted to production (main branch) → Insurance Edition
+
     if (currentBranch === 'main') {
-      return 'Insurance Edition';
-    } 
-    // Current branch (finance/capitalmarkets) → Finance Edition
-    else if (currentBranch.includes('finance') || currentBranch.includes('capitalmarkets')) {
-      return 'Finance Edition';
+      return {
+        label: 'Insurance Edition',
+        palette: {
+          background: 'linear-gradient(135deg, #0ea5e9, #10b981)',
+          color: '#0f172a',
+          borderColor: 'rgba(14,165,233,0.35)',
+          shadow: '0 12px 28px rgba(14,165,233,0.24)',
+          textShadow: '0 1px 2px rgba(15,23,42,0.3)',
+        },
+      };
     }
-    
-    return 'Finance Edition'; // Default fallback
+
+    if (currentBranch.includes('finance') || currentBranch.includes('capitalmarkets')) {
+      return {
+        label: 'Finance Edition',
+        palette: {
+          background: 'linear-gradient(135deg, #4338ca, #6366f1)',
+          color: '#f8fafc',
+          borderColor: 'rgba(99,102,241,0.45)',
+          shadow: '0 12px 28px rgba(99,102,241,0.25)',
+          textShadow: '0 1px 2px rgba(30,64,175,0.4)',
+        },
+      };
+    }
+
+    return {
+      label: 'Finance Edition',
+      palette: {
+        background: 'linear-gradient(135deg, #4338ca, #6366f1)',
+        color: '#f8fafc',
+        borderColor: 'rgba(99,102,241,0.45)',
+        shadow: '0 12px 28px rgba(99,102,241,0.25)',
+        textShadow: '0 1px 2px rgba(30,64,175,0.4)',
+      },
+    };
   };
 
+  const { label, palette } = getIndustryPresentation();
+
   return (
-    <div style={styles.industryTag}>
-      {getIndustryTag()}
+    <div style={styles.topTabsContainer}>
+      <div style={styles.topTab(true, palette)}>
+        {label}
+      </div>
     </div>
   );
 };
@@ -1171,6 +1518,7 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
   const [showStatistics, setShowStatistics] = useState(false);
   const [showAcsHover, setShowAcsHover] = useState(false);
   const [acsTooltipPos, setAcsTooltipPos] = useState(null);
+  const [revealApiUrl, setRevealApiUrl] = useState(false);
   const summaryRef = useRef(null);
 
   // Track screen width for responsive positioning
@@ -1468,6 +1816,42 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
   // Determine if should be expanded (either clicked open or hovered)
   const shouldBeExpanded = isClickedOpen || isExpanded;
 
+  const maskApiUrl = (value) => {
+    if (!value) {
+      return "";
+    }
+    try {
+      const parsed = new URL(value);
+      const protocol = parsed.protocol.replace(":", "");
+      const hostParts = parsed.hostname.split(".");
+      const primary = hostParts.shift() || "";
+      const maskSegment = (segment) => {
+        if (segment.length <= 3) {
+          return "•".repeat(segment.length || 3);
+        }
+        const prefix = segment.slice(0, 2);
+        const suffix = segment.slice(-2);
+        const middle = "•".repeat(Math.max(segment.length - 4, 2));
+        return `${prefix}${middle}${suffix}`;
+      };
+      const maskedPrimary = maskSegment(primary);
+      const maskedHost = hostParts.length > 0 ? `${maskedPrimary}.${hostParts.join(".")}` : maskedPrimary;
+      const path = parsed.pathname && parsed.pathname !== "/" ? "/…" : "/";
+      return `${protocol}://${maskedHost}${path}`;
+    } catch {
+      const safe = String(value);
+      if (safe.length <= 4) {
+        return "•".repeat(safe.length);
+      }
+      return `${safe.slice(0, 2)}${"•".repeat(Math.max(safe.length - 4, 2))}${safe.slice(-2)}`;
+    }
+  };
+
+  const displayedApiUrl = revealApiUrl ? url : maskApiUrl(url);
+  const maskToggleStyle = revealApiUrl
+    ? { ...styles.maskToggleButton, ...styles.maskToggleButtonActive }
+    : styles.maskToggleButton;
+
   return (
     <div 
       style={getResponsiveStyle()} 
@@ -1499,7 +1883,7 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
           opacity: 0.7,
           marginTop: "2px",
         }}>
-          {displayUrl}
+          {displayedApiUrl}
         </div>
       )}
 
@@ -1530,16 +1914,38 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
                   🌐 Backend API Entry Point
                 </div>
                 <div style={{
-                  color: "#64748b",
-                  fontSize: "9px",
-                  fontFamily: "monospace",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
                   marginBottom: "6px",
-                  padding: "3px 6px",
-                  backgroundColor: "white",
-                  borderRadius: "4px",
-                  border: "1px solid #f1f5f9",
                 }}>
-                  {url}
+                  <div style={{
+                    color: "#64748b",
+                    fontSize: "9px",
+                    fontFamily: "monospace",
+                    padding: "3px 6px",
+                    backgroundColor: "white",
+                    borderRadius: "4px",
+                    border: "1px solid #f1f5f9",
+                    flex: "1 1 auto",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {displayedApiUrl}
+                  </div>
+                  <button
+                    type="button"
+                    style={maskToggleStyle}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setRevealApiUrl((prev) => !prev);
+                    }}
+                  >
+                    {revealApiUrl ? "Mask" : "Reveal"}
+                  </button>
                 </div>
                 <div style={{
                   color: "#64748b",
@@ -1943,52 +2349,71 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
 /* ------------------------------------------------------------------ *
  *  WAVEFORM COMPONENT - SIMPLE & SMOOTH
  * ------------------------------------------------------------------ */
-const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }) => {
+const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel = 0, bargeInActive = false }) => {
   const [waveOffset, setWaveOffset] = useState(0);
-  const [amplitude, setAmplitude] = useState(5);
+  const [amplitude, setAmplitude] = useState(0);
+  const [speakerState, setSpeakerState] = useState({ user: false, assistant: false });
   const animationRef = useRef();
-  
+  const combinedLevelRef = useRef(0);
+  const USER_THRESHOLD = 0.015;
+  const ASSISTANT_THRESHOLD = 0.006;
+  const userDisplayActive = speakerState.user || activeSpeaker === "User";
+  const assistantDisplayActive = speakerState.assistant || activeSpeaker === "Assistant";
+  const bothDisplayActive = userDisplayActive && assistantDisplayActive;
+
   useEffect(() => {
+    const target = Math.max(audioLevel, outputAudioLevel);
+    const previous = combinedLevelRef.current;
+    const mix = target > previous ? 0.4 : 0.18;
+    const next = previous + (target - previous) * mix;
+    combinedLevelRef.current = next < 0.004 ? 0 : next;
+
+    setSpeakerState((prev) => ({
+      user: audioLevel > USER_THRESHOLD
+        ? true
+        : audioLevel < USER_THRESHOLD * 0.6
+          ? false
+          : prev.user,
+      assistant: outputAudioLevel > ASSISTANT_THRESHOLD
+        ? true
+        : outputAudioLevel < ASSISTANT_THRESHOLD * 0.6
+          ? false
+          : prev.assistant,
+    }));
+  }, [audioLevel, outputAudioLevel]);
+
+  useEffect(() => {
+    let lastTs = performance.now();
+
     const animate = () => {
-      setWaveOffset(prev => (prev + (speaker ? 2 : 1)) % 1000);
-      
-      setAmplitude(() => {
-        // React to actual audio levels first, then fall back to speaker state
-        if (audioLevel > 0.01) {
-          // User is speaking - use real audio level
-          const scaledLevel = audioLevel * 25;
-          const smoothVariation = Math.sin(Date.now() * 0.002) * (scaledLevel * 0.2);
-          return Math.max(8, scaledLevel + smoothVariation);
-        } else if (outputAudioLevel > 0.01) {
-          // Assistant is speaking - use output audio level
-          const scaledLevel = outputAudioLevel * 20;
-          const smoothVariation = Math.sin(Date.now() * 0.0018) * (scaledLevel * 0.25);
-          return Math.max(6, scaledLevel + smoothVariation);
-        } else if (speaker) {
-          // Active speaking fallback - gentle rhythmic movement
-          const time = Date.now() * 0.002;
-          const baseAmplitude = 10;
-          const rhythmicVariation = Math.sin(time) * 5;
-          return baseAmplitude + rhythmicVariation;
-        } else {
-          // Idle state - gentle breathing pattern
-          const time = Date.now() * 0.0008;
-          const breathingAmplitude = 3 + Math.sin(time) * 1.5;
-          return breathingAmplitude;
-        }
+      const now = performance.now();
+      const delta = now - lastTs;
+      lastTs = now;
+
+      const activity = combinedLevelRef.current;
+      const normalized = Math.min(1, Math.pow(activity * 1.1, 0.88));
+      const targetAmplitude = normalized < 0.015
+        ? 0
+        : (36 * normalized) + (18 * normalized * normalized) + (bargeInActive ? 6 : 0);
+      setAmplitude((prev) => {
+        const mix = targetAmplitude > prev ? 0.22 : 0.12;
+        const eased = prev + (targetAmplitude - prev) * mix;
+        return eased < 0.4 ? 0 : eased;
       });
-      
+
+      const waveSpeed = 0.45 + normalized * 2.3;
+      setWaveOffset((prev) => (prev + waveSpeed * (delta / 16)) % 1000);
+
       animationRef.current = requestAnimationFrame(animate);
     };
-    
+
     animationRef.current = requestAnimationFrame(animate);
-    
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [speaker, audioLevel, outputAudioLevel]);
+  }, [bargeInActive]);
   
   const generateWavePath = () => {
     const width = 750;
@@ -2031,38 +2456,55 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
   const generateMultipleWaves = () => {
     const waves = [];
     
-    let baseColor, opacity;
-    if (speaker === "User") {
+    let baseColor;
+    let opacity = 0.85;
+    if (bothDisplayActive) {
+      baseColor = "url(#waveGradientBarge)";
+    } else if (userDisplayActive) {
       baseColor = "#ef4444";
-      opacity = 0.8;
-    } else if (speaker === "Assistant") {
+    } else if (assistantDisplayActive) {
       baseColor = "#67d8ef";
-      opacity = 0.8;
     } else {
       baseColor = "#3b82f6";
-      opacity = 0.4;
+      opacity = 0.45;
     }
-    
-    // Main wave
+
+    if (amplitude <= 0.8) {
+      baseColor = "#cbd5e1";
+      waves.push(
+        <line
+          key="wave-idle"
+          x1="0"
+          y1="40"
+          x2="750"
+          y2="40"
+          stroke={baseColor}
+          strokeWidth="2"
+          strokeLinecap="round"
+          opacity={0.75}
+        />
+      );
+      return waves;
+    }
+
     waves.push(
       <path
         key="wave1"
         d={generateWavePath()}
         stroke={baseColor}
-        strokeWidth={speaker ? "3" : "2"}
+        strokeWidth={userDisplayActive || assistantDisplayActive ? "3" : "2"}
         fill="none"
         opacity={opacity}
         strokeLinecap="round"
       />
     );
-    
-    // Secondary wave
+
     waves.push(
       <path
         key="wave2"
         d={generateSecondaryWave()}
         stroke={baseColor}
-        strokeWidth={speaker ? "2" : "1.5"}
+        strokeWidth={userDisplayActive || assistantDisplayActive ? "2" : "1.5"}
         fill="none"
         opacity={opacity * 0.5}
         strokeLinecap="round"
@@ -2075,6 +2517,13 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
   return (
     <div style={styles.waveformContainer}>
       <svg style={styles.waveformSvg} viewBox="0 0 750 80" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <linearGradient id="waveGradientBarge" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#ef4444" />
+            <stop offset="50%" stopColor="#8b5cf6" />
+            <stop offset="100%" stopColor="#67d8ef" />
+          </linearGradient>
+        </defs>
         {generateMultipleWaves()}
       </svg>
       
@@ -2089,7 +2538,7 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
           color: '#666',
           whiteSpace: 'nowrap'
         }}>
-          Input: {(audioLevel * 100).toFixed(1)}% | Amp: {amplitude.toFixed(1)}
+          Input: {(audioLevel * 100).toFixed(1)}% | Output: {(outputAudioLevel * 100).toFixed(1)}% | Amp: {amplitude.toFixed(1)} | Speaker: {bothDisplayActive ? 'Barge-In' : (userDisplayActive ? 'User' : assistantDisplayActive ? 'Assistant' : (activeSpeaker || 'Idle'))}
         </div>
       )}
     </div>
@@ -2100,26 +2549,277 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
  *  CHAT BUBBLE
  * ------------------------------------------------------------------ */
 const ChatBubble = ({ message }) => {
+  if (message?.type === "divider") {
+    return (
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
+        <Divider textAlign="center" sx={{ width: "100%", maxWidth: 560 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "#94a3b8",
+              fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+            }}
+          >
+            {message.label || formatStatusTimestamp(message.timestamp) || "—"}
+          </Typography>
+        </Divider>
+      </Box>
+    );
+  }
+
   const { speaker, text, isTool, streaming } = message;
   const isUser = speaker === "User";
   const isSpecialist = speaker?.includes("Specialist");
   const isAuthAgent = speaker === "Auth Agent";
+  const isSystem = speaker === "System" && !isTool;
   
   if (isTool) {
+    const safeText = text ?? "";
+    const [headline = "", ...detailLines] = safeText.split("\n");
+    const detailText = detailLines.join("\n").trim();
+    const toolMatch = headline.match(/tool\s+([\w-]+)/i);
+    const toolName = toolMatch?.[1]?.replace(/_/g, " ") ?? "Tool";
+    const progressMatch = headline.match(/(\d+)%/);
+    const progressValue = progressMatch ? Number(progressMatch[1]) : null;
+    const isSuccess = /completed/i.test(headline);
+    const isFailure = /failed/i.test(headline);
+    const isStart = /started/i.test(headline);
+    const statusLabel = isSuccess
+      ? "Completed"
+      : isFailure
+      ? "Failed"
+      : progressValue !== null
+      ? "In Progress"
+      : isStart
+      ? "Started"
+      : "Update";
+    const chipColor = isSuccess ? "success" : isFailure ? "error" : "info";
+    const chipIcon = isSuccess
+      ? <CheckCircleRoundedIcon fontSize="small" />
+      : isFailure
+      ? <ErrorOutlineRoundedIcon fontSize="small" />
+      : <HourglassTopRoundedIcon fontSize="small" />;
+    const subheaderText = headline
+      .replace(/^🛠️\s*/u, "")
+      .replace(/tool\s+[\w-]+\s*/i, "")
+      .trim();
+
+    let parsedJson = null;
+    if (detailText) {
+      try {
+        parsedJson = JSON.parse(detailText);
+      } catch (err) {
+        logger.debug?.("Failed to parse tool payload", { err, detailText });
+      }
+    }
+
+    const cardGradient = isFailure
+      ? "linear-gradient(135deg, #f87171, #ef4444)"
+      : isSuccess
+      ? "linear-gradient(135deg, #34d399, #10b981)"
+      : "linear-gradient(135deg, #8b5cf6, #6366f1)";
+    const hasContent = Boolean(detailText) || (progressValue !== null && !Number.isNaN(progressValue));
+
     return (
-      <div style={{ ...styles.assistantMessage, alignSelf: "center" }}>
-        <div style={{
-          ...styles.assistantBubble,
-          background: "#8b5cf6",
-          textAlign: "center",
-          fontSize: "14px",
-        }}>
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
+        <Card
+          elevation={6}
+          sx={{
+            width: "100%",
+            maxWidth: 600,
+            borderRadius: 3,
+            background: cardGradient,
+            color: "#f8fafc",
+            border: "1px solid rgba(255,255,255,0.16)",
+            boxShadow: "0 18px 40px rgba(99,102,241,0.28)",
+          }}
+        >
+          <CardHeader
+            avatar={<BuildCircleRoundedIcon sx={{ color: "#e0e7ff" }} />}
+            title={
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, letterSpacing: 0.4 }}>
+                {toolName}
+              </Typography>
+            }
+            subheader={subheaderText || null}
+            subheaderTypographyProps={{
+              sx: {
+                color: "rgba(248,250,252,0.78)",
+                textTransform: "uppercase",
+                fontSize: "0.7rem",
+                letterSpacing: "0.08em",
+                fontWeight: 600,
+              },
+            }}
+            action={
+              <Chip
+                label={statusLabel}
+                color={chipColor}
+                variant="outlined"
+                size="small"
+                icon={chipIcon}
+                sx={{
+                  color: chipColor === "success" ? "#064e3b" : chipColor === "error" ? "#7f1d1d" : "#0f172a",
+                  borderColor: "rgba(248,250,252,0.4)",
+                  backgroundColor: "rgba(248,250,252,0.15)",
+                  '& .MuiChip-icon': {
+                    color: chipColor === "success" ? "#047857" : chipColor === "error" ? "#dc2626" : "#1e293b",
+                  },
+                }}
+              />
+            }
+            sx={{
+              '& .MuiCardHeader-action': { alignSelf: "center" },
+              pb: hasContent ? 0 : 1,
+            }}
+          />
+          {hasContent && <Divider sx={{ borderColor: "rgba(248,250,252,0.2)" }} />}
+          {hasContent && (
+            <CardContent sx={{ pt: 2, pb: 2, color: "rgba(248,250,252,0.92)" }}>
+              {progressValue !== null && !isSuccess && !isFailure && (
+                <Box sx={{ mb: detailText ? 2 : 0 }}>
+                  <LinearProgress
+                    variant="determinate"
+                    value={Math.max(0, Math.min(100, progressValue))}
+                    sx={{
+                      height: 8,
+                      borderRadius: 999,
+                      backgroundColor: "rgba(15,23,42,0.25)",
+                      '& .MuiLinearProgress-bar': { backgroundColor: "#f8fafc" },
+                    }}
+                  />
+                </Box>
+              )}
+              {parsedJson ? (
+                <Box
+                  component="pre"
+                  sx={{
+                    m: 0,
+                    backgroundColor: "rgba(15,23,42,0.35)",
+                    borderRadius: 2,
+                    p: 2,
+                    fontFamily:
+                      'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                    fontSize: "0.75rem",
+                    maxHeight: 260,
+                    overflowX: "auto",
+                    overflowY: "auto",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {JSON.stringify(parsedJson, null, 2)}
+                </Box>
+              ) : (
+                detailText && (
+                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {detailText}
+                  </Typography>
+                )
+              )}
+            </CardContent>
+          )}
+        </Card>
+      </Box>
+    );
+  }
+  
+  if (isSystem) {
+    const toneKey = message.statusTone && STATUS_TONE_META[message.statusTone] ? message.statusTone : inferStatusTone(text);
+    const tone = STATUS_TONE_META[toneKey] ?? STATUS_TONE_META.info;
+    const ToneIcon = tone.icon;
+    const timestampLabel = formatStatusTimestamp(message.timestamp);
+    const lines = (text || "").split("\n").filter(Boolean);
 
-                                                                                                            
-
-                            {text}
-        </div>
-      </div>
+    return (
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            width: "100%",
+            maxWidth: 560,
+            borderRadius: 3,
+            padding: "12px 16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+            background: tone.background,
+            border: tone.border,
+            color: tone.textColor,
+            backdropFilter: "blur(18px)",
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.5 }}>
+            <Box
+              sx={{
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                background: "rgba(255,255,255,0.6)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 12px 24px rgba(15,23,42,0.12)",
+              }}
+            >
+              <ToneIcon sx={{ fontSize: 22, color: tone.accent }} />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography
+                variant="caption"
+                sx={{
+                  textTransform: "uppercase",
+                  letterSpacing: "0.14em",
+                  fontWeight: 600,
+                  color: tone.accent,
+                }}
+              >
+                {tone.label}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  marginTop: 0.5,
+                  whiteSpace: "pre-wrap",
+                  fontSize: "0.92rem",
+                  lineHeight: 1.5,
+                  color: tone.textColor,
+                }}
+              >
+                {lines.map((line, idx) => (
+                  <React.Fragment key={idx}>
+                    {idx > 0 && <br />}
+                    {line}
+                  </React.Fragment>
+                ))}
+              </Typography>
+              {message.statusCaption && (
+                <Typography
+                  variant="caption"
+                  sx={{ display: "block", marginTop: 0.75, color: tone.captionColor }}
+                >
+                  {message.statusCaption}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+          {timestampLabel && <Divider sx={{ borderColor: "rgba(148,163,184,0.35)" }} />}
+          {timestampLabel && (
+            <Typography
+              variant="caption"
+              sx={{
+                alignSelf: "flex-end",
+                color: tone.captionColor,
+                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                letterSpacing: "0.08em",
+              }}
+            >
+              {timestampLabel}
+            </Typography>
+          )}
+        </Paper>
+      </Box>
     );
   }
   
@@ -2199,10 +2899,31 @@ function RealTimeVoiceApp() {
     return fallbackStreamMode;
   });
   const [sessionProfiles, setSessionProfiles] = useState({});
-  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
   // Profile menu state moved to ProfileButton component
   // Profile menu state moved to ProfileButton component
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
+
+  const appendSystemMessage = useCallback((text, options = {}) => {
+    const timestamp = options.timestamp ?? new Date().toISOString();
+    const baseMessage = buildSystemMessage(text, { ...options, timestamp });
+    const shouldInsertDivider = options.withDivider === true;
+    const dividerLabel = shouldInsertDivider
+      ? options.dividerLabel ?? `Call disconnected · ${formatStatusTimestamp(timestamp)}`
+      : null;
+    setMessages((prev) => [
+      ...prev,
+      baseMessage,
+      ...(shouldInsertDivider
+        ? [
+            {
+              type: "divider",
+              label: dividerLabel,
+              timestamp,
+            },
+          ]
+        : []),
+    ]);
+  }, [setMessages]);
   const handleSystemStatus = useCallback((nextStatus) => {
     setSystemStatus((prev) =>
       prev.status === nextStatus.status && prev.acsOnlyIssue === nextStatus.acsOnlyIssue
@@ -2222,6 +2943,20 @@ function RealTimeVoiceApp() {
   const [phoneHovered, setPhoneHovered] = useState(false);
   const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
   const [showDemoForm, setShowDemoForm] = useState(false);
+  const [createProfileHovered, setCreateProfileHovered] = useState(false);
+  const demoFormCloseTimeoutRef = useRef(null);
+  const profileHighlightTimeoutRef = useRef(null);
+  const [profileHighlight, setProfileHighlight] = useState(false);
+  const triggerProfileHighlight = useCallback(() => {
+    setProfileHighlight(true);
+    if (profileHighlightTimeoutRef.current) {
+      clearTimeout(profileHighlightTimeoutRef.current);
+    }
+    profileHighlightTimeoutRef.current = window.setTimeout(() => {
+      setProfileHighlight(false);
+      profileHighlightTimeoutRef.current = null;
+    }, 3500);
+  }, []);
   const isCallDisabled =
     systemStatus.status === "degraded" && systemStatus.acsOnlyIssue;
 
@@ -2232,6 +2967,19 @@ function RealTimeVoiceApp() {
       setPhoneDisabledPos(null);
     }
   }, [isCallDisabled, phoneDisabledPos]);
+
+  useEffect(() => {
+    return () => {
+      if (demoFormCloseTimeoutRef.current) {
+        clearTimeout(demoFormCloseTimeoutRef.current);
+        demoFormCloseTimeoutRef.current = null;
+      }
+      if (profileHighlightTimeoutRef.current) {
+        clearTimeout(profileHighlightTimeoutRef.current);
+        profileHighlightTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2247,6 +2995,27 @@ function RealTimeVoiceApp() {
     }
   }, [selectedStreamingMode]);
 
+  useEffect(() => {
+    if (!showPhoneInput) {
+      return undefined;
+    }
+
+    const handleOutsideClick = (event) => {
+      const panelNode = phonePanelRef.current;
+      const buttonNode = phoneButtonRef.current;
+      if (panelNode && panelNode.contains(event.target)) {
+        return;
+      }
+      if (buttonNode && buttonNode.contains(event.target)) {
+        return;
+      }
+      setShowPhoneInput(false);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showPhoneInput]);
+
   const handleStreamingModeChange = useCallback(
     (mode) => {
       if (!mode || mode === selectedStreamingMode) {
@@ -2260,6 +3029,44 @@ function RealTimeVoiceApp() {
 
   const selectedStreamingModeLabel = StreamingModeSelector.getLabel(
     selectedStreamingMode,
+  );
+
+  const updateToolMessage = useCallback(
+    (toolName, transformer, fallbackMessage) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        let targetIndex = -1;
+
+        for (let idx = next.length - 1; idx >= 0; idx -= 1) {
+          const candidate = next[idx];
+          if (candidate?.isTool && candidate.text?.includes(`tool ${toolName}`)) {
+            targetIndex = idx;
+            break;
+          }
+        }
+
+        if (targetIndex === -1) {
+          if (!fallbackMessage) {
+            return prev;
+          }
+          const fallback =
+            typeof fallbackMessage === "function"
+              ? fallbackMessage()
+              : fallbackMessage;
+          return [...prev, fallback];
+        }
+
+        const current = next[targetIndex];
+        const updated = transformer(current);
+        if (!updated || updated === current) {
+          return prev;
+        }
+
+        next[targetIndex] = updated;
+        return next;
+      });
+    },
+    [setMessages],
   );
 
   // Health monitoring (disabled)
@@ -2288,6 +3095,7 @@ function RealTimeVoiceApp() {
   const messageContainerRef = useRef(null);
   const socketRef = useRef(null);
   const phoneButtonRef = useRef(null);
+  const phonePanelRef = useRef(null);
 
   // Audio processing refs
   const audioContextRef = useRef(null);
@@ -2308,6 +3116,8 @@ function RealTimeVoiceApp() {
   
   const [audioLevel, setAudioLevel] = useState(0);
   const audioLevelRef = useRef(0);
+  const [outputAudioLevel, setOutputAudioLevel] = useState(0);
+  const outputAudioLevelRef = useRef(0);
   const metricsRef = useRef(createMetricsState());
 
   const workletSource = `
@@ -2317,38 +3127,66 @@ function RealTimeVoiceApp() {
         this.queue = [];
         this.readIndex = 0;
         this.samplesProcessed = 0;
+        this.meter = 0;
+        this.meterSamples = 0;
+        this.meterInterval = sampleRate / 20; // ~50ms cadence
         this.port.onmessage = (e) => {
           if (e.data?.type === 'push') {
-            // payload is Float32Array
             this.queue.push(e.data.payload);
           } else if (e.data?.type === 'clear') {
-            // Clear all queued audio data for immediate interruption
             this.queue = [];
             this.readIndex = 0;
+            this.meter = 0;
+            this.meterSamples = 0;
+            this.port.postMessage({ type: 'meter', value: 0 });
           }
         };
       }
       process(inputs, outputs) {
-        const out = outputs[0][0]; // mono
-        let i = 0;
-        while (i < out.length) {
+        const out = outputs[0][0];
+        let writeIndex = 0;
+        let sumSquares = 0;
+
+        while (writeIndex < out.length) {
           if (this.queue.length === 0) {
-            // no data: output silence
-            for (; i < out.length; i++) out[i] = 0;
             break;
           }
+
           const chunk = this.queue[0];
           const remain = chunk.length - this.readIndex;
-          const toCopy = Math.min(remain, out.length - i);
-          out.set(chunk.subarray(this.readIndex, this.readIndex + toCopy), i);
-          i += toCopy;
+          const toCopy = Math.min(remain, out.length - writeIndex);
+
+          for (let n = 0; n < toCopy; n += 1) {
+            const sample = chunk[this.readIndex + n] || 0;
+            out[writeIndex + n] = sample;
+            sumSquares += sample * sample;
+          }
+
+          writeIndex += toCopy;
           this.readIndex += toCopy;
+
           if (this.readIndex >= chunk.length) {
             this.queue.shift();
             this.readIndex = 0;
           }
         }
-        this.samplesProcessed += out.length;
+
+        if (writeIndex < out.length) {
+          out.fill(0, writeIndex);
+        }
+
+        const frameSamples = out.length;
+        const rmsInstant = frameSamples > 0 ? Math.sqrt(sumSquares / frameSamples) : 0;
+        const smoothing = rmsInstant > this.meter ? 0.35 : 0.15;
+        this.meter = this.meter + (rmsInstant - this.meter) * smoothing;
+        this.meterSamples += frameSamples;
+
+        if (this.meterSamples >= this.meterInterval) {
+          this.meterSamples = 0;
+          this.port.postMessage({ type: 'meter', value: this.meter });
+        }
+
+        this.samplesProcessed += frameSamples;
         return true;
       }
     }
@@ -2379,6 +3217,35 @@ function RealTimeVoiceApp() {
     return output;
   }, []);
 
+  const updateOutputLevelMeter = useCallback((samples, meterValue) => {
+    const previous = outputAudioLevelRef.current;
+    let target = previous;
+
+    if (typeof meterValue === "number" && Number.isFinite(meterValue)) {
+      target = Math.min(1, Math.max(0, meterValue * 1.35));
+    } else if (samples && samples.length) {
+      let sumSquares = 0;
+      for (let i = 0; i < samples.length; i += 1) {
+        const sample = samples[i] || 0;
+        sumSquares += sample * sample;
+      }
+      const rms = Math.sqrt(sumSquares / samples.length);
+      target = Math.min(1, rms * 10);
+    } else {
+      target = previous * 0.75;
+    }
+
+    const blend = target > previous ? 0.35 : 0.2;
+    let nextLevel = previous + (target - previous) * blend;
+
+    if (nextLevel < 0.002) {
+      nextLevel = 0;
+    }
+
+    outputAudioLevelRef.current = nextLevel;
+    setOutputAudioLevel(nextLevel);
+  }, []);
+
   // Initialize playback audio context and worklet (call on user gesture)
   const initializeAudioPlayback = async () => {
     if (playbackAudioContextRef.current) return; // Already initialized
@@ -2400,6 +3267,11 @@ function RealTimeVoiceApp() {
         outputChannelCount: [1]
       });
       sink.connect(audioCtx.destination);
+      sink.port.onmessage = (event) => {
+        if (event?.data?.type === 'meter') {
+          updateOutputLevelMeter(undefined, event.data.value ?? 0);
+        }
+      };
       
       // Resume on user gesture
       await audioCtx.resume();
@@ -2419,6 +3291,7 @@ function RealTimeVoiceApp() {
   const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
   // Formatting functions moved to ProfileButton component
   const activeSessionProfile = sessionProfiles[sessionId];
+  const hasActiveProfile = Boolean(activeSessionProfile?.profile);
   
   const handleDemoCreated = useCallback((demoPayload) => {
     if (!demoPayload) {
@@ -2427,6 +3300,7 @@ function RealTimeVoiceApp() {
     const ssn = demoPayload?.profile?.verification_codes?.ssn4;
     const notice = demoPayload?.safety_notice ?? 'Demo data only.';
     const sessionKey = demoPayload.session_id ?? sessionId;
+    const previouslyHadProfile = Boolean(sessionProfiles[sessionKey]?.profile);
     const messageLines = [
       '🚨 DEMO PROFILE GENERATED 🚨',
       ssn ? `Temporary SSN Last 4: ${ssn}` : null,
@@ -2435,17 +3309,25 @@ function RealTimeVoiceApp() {
     ].filter(Boolean);
     setSessionProfiles((prev) => ({
       ...prev,
-      [sessionKey]: {
-        sessionId: sessionKey,
-        profile: demoPayload.profile,
-        expiresAt: demoPayload.expires_at,
-        safetyNotice: notice,
-      },
+      [sessionKey]: buildSessionProfile(
+        demoPayload,
+        sessionKey,
+        prev[sessionKey],
+      ),
     }));
-    setProfilePanelOpen(true);
-    setMessages((prev) => [...prev, { speaker: "System", text: messageLines.join('\n') }]);
+    appendSystemMessage(messageLines.join('\n'), { tone: "warning" });
     appendLog('Synthetic demo profile issued with sandbox identifiers');
-  }, [appendLog, sessionId]);
+    if (!previouslyHadProfile) {
+      triggerProfileHighlight();
+    }
+    if (demoFormCloseTimeoutRef.current) {
+      clearTimeout(demoFormCloseTimeoutRef.current);
+    }
+    demoFormCloseTimeoutRef.current = window.setTimeout(() => {
+      setShowDemoForm(false);
+      demoFormCloseTimeoutRef.current = null;
+    }, 1000);
+  }, [appendLog, appendSystemMessage, sessionId, sessionProfiles, triggerProfileHighlight, setShowDemoForm]);
 
   const publishMetricsSummary = useCallback(
     (label, detail) => {
@@ -2645,6 +3527,23 @@ function RealTimeVoiceApp() {
   },[messages]);
 
   useEffect(() => {
+    if (outputAudioLevel <= 0) {
+      return undefined;
+    }
+    const decayId = window.setTimeout(() => {
+      let next = outputAudioLevelRef.current * 0.78;
+      if (next < 0.002) {
+        next = 0;
+      }
+      outputAudioLevelRef.current = next;
+      setOutputAudioLevel(next);
+    }, 140);
+    return () => {
+      window.clearTimeout(decayId);
+    };
+  }, [outputAudioLevel]);
+
+  useEffect(() => {
     return () => {
       if (processorRef.current) {
         try { 
@@ -2656,6 +3555,14 @@ function RealTimeVoiceApp() {
       if (audioContextRef.current) {
         try { 
           audioContextRef.current.close(); 
+        } catch (e) {
+          logger.warn("Cleanup error:", e);
+        }
+      }
+      if (pcmSinkRef.current) {
+        try {
+          pcmSinkRef.current.port.onmessage = null;
+          pcmSinkRef.current = null;
         } catch (e) {
           logger.warn("Cleanup error:", e);
         }
@@ -2691,7 +3598,6 @@ function RealTimeVoiceApp() {
   }, [log]);
 
   const startRecognition = async () => {
-      setMessages([]);
       appendLog("🎤 PCM streaming started");
 
       await initializeAudioPlayback();
@@ -2801,7 +3707,10 @@ function RealTimeVoiceApp() {
           sum += float32[i] * float32[i];
         }
         const rms = Math.sqrt(sum / float32.length);
-        const level = Math.min(1, rms * 10); // Scale and clamp to 0-1
+        const target = Math.min(1, rms * 10);
+        const previous = audioLevelRef.current;
+        const smoothing = target > previous ? 0.32 : 0.18;
+        const level = previous + (target - previous) * smoothing;
         
         audioLevelRef.current = level;
         setAudioLevel(level);
@@ -2867,20 +3776,25 @@ function RealTimeVoiceApp() {
       }
       
       // Add session stopped message instead of clearing everything
-      setMessages(m => [...m, { 
-        speaker: "System", 
-        text: "🛑 Session stopped" 
-      }]);
+      appendSystemMessage("🛑 Session stopped", { tone: "warning" });
       setActiveSpeaker("System");
       setRecording(false);
+      audioLevelRef.current = 0;
+      setAudioLevel(0);
+      outputAudioLevelRef.current = 0;
+      setOutputAudioLevel(0);
       appendLog("🛑 PCM streaming stopped");
     };
 
     const pushIfChanged = (arr, msg) => {
-      if (arr.length === 0) return [...arr, msg];
+      const normalizedMsg =
+        msg?.speaker === "System"
+          ? buildSystemMessage(msg.text ?? "", msg)
+          : msg;
+      if (arr.length === 0) return [...arr, normalizedMsg];
       const last = arr[arr.length - 1];
-      if (last.speaker === msg.speaker && last.text === msg.text) return arr;
-      return [...arr, msg];
+      if (last.speaker === normalizedMsg.speaker && last.text === normalizedMsg.text) return arr;
+      return [...arr, normalizedMsg];
     };
 
     const handleSocketMessage = async (event) => {
@@ -3090,23 +4004,32 @@ function RealTimeVoiceApp() {
       }
       
       // Handle audio_data messages from backend TTS
-      if (payload.type === "audio_data" && payload.data) {
+      if (payload.type === "audio_data") {
         try {
           logger.debug("🔊 Received audio_data message:", {
             frame_index: payload.frame_index,
             total_frames: payload.total_frames,
             sample_rate: payload.sample_rate,
-            data_length: payload.data.length,
+            data_length: payload.data ? payload.data.length : 0,
             is_final: payload.is_final
           });
 
-          registerAudioFrame(payload.frame_index, payload.is_final === true);
+          const hasData = typeof payload.data === "string" && payload.data.length > 0;
 
           const isFinalChunk =
             payload.is_final === true ||
             (Number.isFinite(payload.total_frames) &&
               Number.isFinite(payload.frame_index) &&
               payload.frame_index + 1 >= payload.total_frames);
+
+          const frameIndex = Number.isFinite(payload.frame_index) ? payload.frame_index : 0;
+          registerAudioFrame(frameIndex, isFinalChunk);
+
+          if (!hasData) {
+            playbackActiveRef.current = !isFinalChunk;
+            updateOutputLevelMeter();
+            return;
+          }
 
           // Decode base64 -> Int16 -> Float32 [-1, 1]
           const bstr = atob(payload.data);
@@ -3133,6 +4056,7 @@ function RealTimeVoiceApp() {
               }
             }
             pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
+            updateOutputLevelMeter(samples);
             appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
           } else {
             logger.warn("Audio playback not initialized, attempting init...");
@@ -3151,6 +4075,7 @@ function RealTimeVoiceApp() {
                 }
               }
               pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
+              updateOutputLevelMeter(samples);
               appendLog("🔊 TTS audio playing (after init)");
             } else {
               logger.error("Failed to initialize audio playback");
@@ -3176,20 +4101,19 @@ function RealTimeVoiceApp() {
       const txt = content || message;
       const msgType = (type || "").toLowerCase();
 
-      if (msgType === "session_profile") {
+      if (msgType === "session_profile" || msgType === "demo_profile") {
         const sessionKey = payload.session_id ?? sessionId;
-        const profileData = payload.profile ?? payload.data?.profile;
-        if (sessionKey && profileData) {
-          setSessionProfiles((prev) => ({
-            ...prev,
-            [sessionKey]: {
-              sessionId: sessionKey,
-              profile: profileData,
-              expiresAt: payload.expires_at ?? payload.expiresAt,
-              safetyNotice: payload.safety_notice ?? payload.safetyNotice,
-            },
-          }));
-          setProfilePanelOpen(true);
+        if (sessionKey) {
+          setSessionProfiles((prev) => {
+            const normalized = buildSessionProfile(payload, sessionKey, prev[sessionKey]);
+            if (!normalized) {
+              return prev;
+            }
+            return {
+              ...prev,
+              [sessionKey]: normalized,
+            };
+          });
           appendLog(`Session profile acknowledged for ${sessionKey}`);
         }
         return;
@@ -3296,35 +4220,53 @@ function RealTimeVoiceApp() {
       
     
       if (type === "tool_progress") {
-        setMessages((prev) =>
-          prev.map((m, i, arr) =>
-            i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
-              ? { ...m, text: `🛠️ tool ${payload.tool} ${payload.pct}% 🔄` }
-              : m,
-          ),
+        const pctNumeric = Number(payload.pct);
+        const pctText = Number.isFinite(pctNumeric)
+          ? `${pctNumeric}%`
+          : payload.pct
+          ? `${payload.pct}`
+          : "progress";
+        updateToolMessage(
+          payload.tool,
+          (message) => ({
+            ...message,
+            text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
+          }),
+          () => ({
+            speaker: "Assistant",
+            isTool: true,
+            text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
+          }),
         );
-        appendLog(`⚙️ ${payload.tool} ${payload.pct}%`);
+        appendLog(`⚙️ ${payload.tool} ${pctText}`);
         return;
       }
     
       if (type === "tool_end") {
 
-      
+        const resultPayload =
+          payload.result ?? payload.output ?? payload.data ?? payload.response;
+        const serializedResult =
+          resultPayload !== undefined
+            ? JSON.stringify(resultPayload, null, 2)
+            : null;
         const finalText =
           payload.status === "success"
-            ? `🛠️ tool ${payload.tool} completed ✔️\n${JSON.stringify(
-                payload.result,
-                null,
-                2,
-              )}`
+            ? `🛠️ tool ${payload.tool} completed ✔️${
+                serializedResult ? `\n${serializedResult}` : ""
+              }`
             : `🛠️ tool ${payload.tool} failed ❌\n${payload.error}`;
-      
-        setMessages((prev) =>
-          prev.map((m, i, arr) =>
-            i === arr.length - 1 && m.text.startsWith(`🛠️ tool ${payload.tool}`)
-              ? { ...m, text: finalText }
-              : m,
-          ),
+        updateToolMessage(
+          payload.tool,
+          (message) => ({
+            ...message,
+            text: finalText,
+          }),
+          {
+            speaker: "Assistant",
+            isTool: true,
+            text: finalText,
+          },
         );
       
         appendLog(`⚙️ ${payload.tool} ${payload.status} (${payload.elapsedMs} ms)`);
@@ -3395,13 +4337,14 @@ function RealTimeVoiceApp() {
         appendLog(`Call error: ${json.detail||res.statusText}`);
         return;
       }
-      // show in chat
+      // show in chat with dedicated system card
       const readableMode = selectedStreamingModeLabel || selectedStreamingMode;
-      setMessages(m => [
-        ...m,
-        { speaker:"Assistant", text:`📞 Call started → ${targetPhoneNumber} · Mode: ${readableMode}` }
-      ]);
+      appendSystemMessage("📞 Call started", {
+        tone: "call",
+        statusCaption: `→ ${targetPhoneNumber} · Mode: ${readableMode}`,
+      });
       appendLog(`📞 Call initiated (mode: ${readableMode})`);
+      setShowPhoneInput(false);
 
       // relay WS WITH session_id to monitor THIS session (including phone calls)
       logger.info('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor session:', currentSessionId);
@@ -3475,74 +4418,91 @@ function RealTimeVoiceApp() {
   return (
     <div style={styles.root}>
       <div style={styles.mainContainer}>
-        {/* Backend Status Indicator */}
-        <BackendIndicator url={API_BASE_URL} onStatusChange={handleSystemStatus} />
-
-        {/* App Header */}
-        <div style={styles.appHeader}>
-          {/* Top Left Industry Tag */}
-          <IndustryTag />
-          <div style={styles.appTitleContainer}>
-            <div style={styles.appTitleWrapper}>
-              <span style={styles.appTitleIcon}>🎙️</span>
-              <h1 style={styles.appTitle}>ARTAgent</h1>
-            </div>
-            <p style={styles.appSubtitle}>Transforming customer interactions with real-time, intelligent voice interactions</p>
-            <div style={{
-              fontSize: '10px',
-              color: '#94a3b8',
-              marginTop: '4px',
-              fontFamily: 'monospace',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}>
-              <span>💬</span>
-              <span>Session: {sessionId}</span>
-            </div>
-          </div>
-          {/* Top Right Help Button */}
+        <IndustryTag />
+        <div style={styles.helpButtonDock}>
           <HelpButton />
-          
-          {/* Profile Button - positioned relative to header */}
-          <ProfileButton 
-            profile={activeSessionProfile} 
-            sessionId={sessionId}
-            onMenuClose={() => setProfilePanelOpen(false)}
-            onCreateProfile={() => setShowDemoForm(true)}
-          />
         </div>
-
-        {/* Waveform Section */}
-        <div style={styles.waveformSection}>
-          <div style={styles.waveformSectionTitle}>Voice Activity</div>
-          <WaveformVisualization 
-            isActive={recording} 
-            speaker={activeSpeaker} 
-            audioLevel={audioLevel}
-            outputAudioLevel={0}
-          />
-          <div style={styles.sectionDivider}></div>
+        <div style={styles.backendIndicatorDock}>
+          <BackendIndicator url={API_BASE_URL} onStatusChange={handleSystemStatus} />
         </div>
+        <div style={styles.mainShell}>
 
-        {/* Chat Messages */}
-        <div style={styles.chatSection} ref={chatRef}>
-          <div style={styles.chatSectionIndicator}></div>
-          <div style={styles.messageContainer} ref={messageContainerRef}>
-            {messages.map((message, index) => (
-              <ChatBubble key={index} message={message} />
-            ))}
+          {/* App Header */}
+          <div style={styles.appHeader}>
+            <div style={styles.appHeaderIdentity}>
+              <div style={styles.appTitleBlock}>
+                <h1 style={styles.appTitle}>🎙️ ARTAgent</h1>
+                <p style={styles.appSubtitle}>Transforming customer interactions with real-time, intelligent voice experiences.</p>
+              </div>
+            </div>
+
+            <div style={styles.appHeaderFooter}>
+              <div style={styles.sessionTag}>
+                <span style={styles.sessionTagIcon}>💬</span>
+                <div>
+                  <div style={styles.sessionTagLabel}>Active Session</div>
+                  <code style={styles.sessionTagValue}>{sessionId}</code>
+                </div>
+              </div>
+
+              <div style={styles.appHeaderActions}>
+                {hasActiveProfile ? (
+                  <ProfileButton 
+                    profile={activeSessionProfile} 
+                    sessionId={sessionId}
+                    highlight={profileHighlight}
+                    onCreateProfile={() => setShowDemoForm(true)}
+                  />
+                ) : (
+                  <Button
+                    variant="contained"
+                    disableElevation
+                    startIcon={<BoltRoundedIcon fontSize="small" />}
+                    onMouseEnter={() => setCreateProfileHovered(true)}
+                    onMouseLeave={() => setCreateProfileHovered(false)}
+                    onClick={() => setShowDemoForm(true)}
+                    sx={{
+                      ...styles.createProfileButton,
+                      ...(createProfileHovered ? styles.createProfileButtonHover : {}),
+                    }}
+                  >
+                    Create Demo Profile
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* Control Buttons - Clean 3-button layout */}
-        <div style={styles.controlSection}>
-          <div style={styles.controlContainer}>
-            
+            {/* Waveform Section */}
+            <div style={styles.waveformSection}>
+              <WaveformVisualization 
+                activeSpeaker={activeSpeaker} 
+                audioLevel={audioLevel}
+                outputAudioLevel={outputAudioLevel}
+              />
+              <div style={styles.sectionDivider}></div>
+            </div>
+
+            {/* Chat Messages */}
+            <div style={styles.chatSection} ref={chatRef}>
+              <div style={styles.chatSectionIndicator}></div>
+              <div style={styles.messageContainer} ref={messageContainerRef}>
+                {messages.map((message, index) => (
+                  <ChatBubble key={index} message={message} />
+                ))}
+              </div>
+            </div>
+
+            {/* Control Buttons - Clean 3-button layout */}
+            <div style={styles.controlSection}>
+              <div style={styles.controlContainer}>
+                
             {/* LEFT: Reset/Restart Session Button */}
             <div style={{ position: 'relative' }}>
-              <button
-                style={styles.resetButton(false, resetHovered)}
+              <IconButton
+                disableRipple
+                aria-label="Reset session"
+                sx={styles.resetButton(resetHovered)}
                 onMouseEnter={() => {
                   setShowResetTooltip(true);
                   setResetHovered(true);
@@ -3556,7 +4516,6 @@ function RealTimeVoiceApp() {
                   const newSessionId = createNewSessionId();
                   setSessionId(newSessionId);
                   setSessionProfiles({});
-                  setProfilePanelOpen(false);
                   // Close existing WebSocket if connected
                   if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
                     logger.info('🔌 Closing WebSocket for session reset...');
@@ -3573,15 +4532,15 @@ function RealTimeVoiceApp() {
                   
                   // Add welcome message
                   setTimeout(() => {
-                    setMessages([{ 
-                      speaker: "System", 
-                      text: "✅ Session restarted with new ID. Ready for a fresh conversation!" 
-                    }]);
+                    appendSystemMessage(
+                      "✅ Session restarted with new ID. Ready for a fresh conversation!",
+                      { tone: "success" }
+                    );
                   }, 500);
                 }}
               >
-                ⟲
-              </button>
+                <RestartAltRoundedIcon fontSize="medium" />
+              </IconButton>
               
               {/* Tooltip */}
               <div 
@@ -3596,8 +4555,10 @@ function RealTimeVoiceApp() {
 
             {/* MIDDLE: Microphone Button */}
             <div style={{ position: 'relative' }}>
-              <button
-                style={styles.micButton(recording, micHovered)}
+              <IconButton
+                disableRipple
+                aria-label={recording ? "Stop microphone" : "Start microphone"}
+                sx={styles.micButton(recording, micHovered)}
                 onMouseEnter={() => {
                   setShowMicTooltip(true);
                   setMicHovered(true);
@@ -3608,8 +4569,12 @@ function RealTimeVoiceApp() {
                 }}
                 onClick={recording ? stopRecognition : startRecognition}
               >
-                {recording ? "🛑" : "🎤"}
-              </button>
+                {recording ? (
+                  <MicOffRoundedIcon fontSize="medium" />
+                ) : (
+                  <MicRoundedIcon fontSize="medium" />
+                )}
+              </IconButton>
               
               {/* Tooltip */}
               <div 
@@ -3644,9 +4609,11 @@ function RealTimeVoiceApp() {
                 setPhoneDisabledPos(null);
               }}
             >
-              <button
+              <IconButton
                 ref={phoneButtonRef}
-                style={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
+                disableRipple
+                aria-label={callActive ? "Hang up call" : "Place call"}
+                sx={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
                 disabled={isCallDisabled}
                 title={
                   isCallDisabled
@@ -3663,18 +4630,25 @@ function RealTimeVoiceApp() {
                     // Hang up call
                     stopRecognition();
                     setCallActive(false);
-                    setMessages(prev => [...prev, { 
-                      speaker: "System",
-                      text: "📞 Call ended" 
-                    }]);
+                    const endedAt = new Date().toISOString();
+                    appendSystemMessage("📞 Call ended", {
+                      tone: "warning",
+                      timestamp: endedAt,
+                      withDivider: true,
+                      dividerLabel: `Call disconnected · ${formatStatusTimestamp(endedAt)}`,
+                    });
                   } else {
                     // Show phone input
                     setShowPhoneInput(!showPhoneInput);
                   }
                 }}
               >
-                {callActive ? "📵" : "📞"}
-              </button>
+                {callActive ? (
+                  <PhoneDisabledRoundedIcon fontSize="medium" />
+                ) : (
+                  <PhoneRoundedIcon fontSize="medium" />
+                )}
+              </IconButton>
               
               {/* Tooltip */}
               {!isCallDisabled && (
@@ -3705,7 +4679,7 @@ function RealTimeVoiceApp() {
 
         {/* Phone Input Panel */}
       {showPhoneInput && (
-        <div style={styles.phoneInputSection}>
+        <div ref={phonePanelRef} style={styles.phoneInputSection}>
           <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
             {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
           </div>
@@ -3714,49 +4688,53 @@ function RealTimeVoiceApp() {
             onChange={handleStreamingModeChange}
             disabled={callActive || isCallDisabled}
           />
-          <div style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.5 }}>
-            Active mode: {selectedStreamingModeLabel || selectedStreamingMode}. Applies to ACS PSTN calls only. Browser/WebRTC streaming remains unchanged.
+          <div style={styles.phoneInputRow}>
+            <input
+              type="tel"
+              value={targetPhoneNumber}
+              onChange={(e) => setTargetPhoneNumber(e.target.value)}
+              placeholder="+15551234567"
+              style={styles.phoneInput}
+              disabled={callActive || isCallDisabled}
+            />
+            <button
+              onClick={callActive ? stopRecognition : startACSCall}
+              style={styles.callMeButton(callActive, isCallDisabled)}
+              title={
+                callActive
+                  ? "🔴 Hang up call"
+                  : isCallDisabled
+                    ? "Configure Azure Communication Services to enable calling"
+                    : "📞 Start phone call"
+              }
+              disabled={callActive || isCallDisabled}
+            >
+              {callActive ? "🔴 Hang Up" : "📞 Call Me"}
+            </button>
           </div>
-          <input
-            type="tel"
-            value={targetPhoneNumber}
-            onChange={(e) => setTargetPhoneNumber(e.target.value)}
-            placeholder="+15551234567"
-            style={styles.phoneInput}
-            disabled={callActive || isCallDisabled}
-          />
-          <button
-            onClick={callActive ? stopRecognition : startACSCall}
-            style={styles.callMeButton(callActive, isCallDisabled)}
-            title={
-              callActive
-                ? "🔴 Hang up call"
-                : isCallDisabled
-                  ? "Configure Azure Communication Services to enable calling"
-                  : "📞 Start phone call"
-            }
-            disabled={callActive || isCallDisabled}
-          >
-            {callActive ? "🔴 Hang Up" : "📞 Call Me"}
-          </button>
         </div>
       )}
-      {showDemoForm && (
-        <>
-          <div style={styles.demoFormBackdrop} onClick={() => setShowDemoForm(false)} />
-          <div style={styles.demoFormOverlay}>
-            <TemporaryUserForm
-              apiBaseUrl={API_BASE_URL}
-              onClose={() => setShowDemoForm(false)}
-              sessionId={sessionId}
-              onSuccess={handleDemoCreated}
-            />
-          </div>
-        </>
-      )}
+        {showDemoForm && typeof document !== 'undefined' &&
+          createPortal(
+            <>
+              <div style={styles.demoFormBackdrop} onClick={() => setShowDemoForm(false)} />
+              <div style={styles.demoFormOverlay}>
+                <TemporaryUserForm
+                  apiBaseUrl={API_BASE_URL}
+                  onClose={() => setShowDemoForm(false)}
+                  sessionId={sessionId}
+                  onSuccess={handleDemoCreated}
+                />
+              </div>
+            </>,
+            document.body
+          )
+        }
       </div>
     </div>
-  );
+    <DemoScenariosWidget />
+  </div>
+);
 }
 
 // Main App component wrapper

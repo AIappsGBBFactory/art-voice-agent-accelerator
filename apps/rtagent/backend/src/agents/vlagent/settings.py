@@ -31,7 +31,7 @@ class VoiceLiveSettings(BaseSettings):
     azure_client_secret: Optional[str] = Field(default=None, description="Azure AD client secret")
     
     # Application Configuration
-    start_agent: str = Field(default="VenmoAgent", description="Initial agent to start with")
+    start_agent: str = Field(default="AuthAgent", description="Initial agent to start with")
     agents_dir: str = Field(default="agents", description="Directory containing agent YAML files")
     templates_dir: str = Field(default="templates", description="Directory containing prompt templates")
     

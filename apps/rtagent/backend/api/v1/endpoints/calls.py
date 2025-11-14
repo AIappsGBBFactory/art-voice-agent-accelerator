@@ -5,7 +5,7 @@ Call Management Endpoints
 REST API endpoints for managing phone calls through Azure Communication Services.
 """
 
-from typing import List, Optional
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
@@ -41,6 +41,29 @@ import os
 logger = get_logger("api.v1.calls")
 tracer = trace.get_tracer(__name__)
 router = APIRouter()
+
+_BOOL_TRUE = {"true", "1", "yes", "on"}
+_BOOL_FALSE = {"false", "0", "no", "off"}
+
+
+def _coerce_optional_bool(value: Any) -> Optional[bool]:
+    """Normalize loosely-typed boolean inputs to strict Optional[bool]."""
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _BOOL_TRUE:
+            return True
+        if lowered in _BOOL_FALSE:
+            return False
+        return None
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    return None
 
 
 def create_call_event(event_type: str, call_id: str, data: dict) -> CloudEvent:
@@ -216,15 +239,25 @@ async def initiate_call(
                             stream_mode=str(effective_stream_mode),
                         )
 
+                record_call_override: Optional[bool] = _coerce_optional_bool(
+                    request.record_call
+                )
+                if record_call_override is None and request.context:
+                    record_call_override = _coerce_optional_bool(
+                        request.context.get("record_call")
+                    )
+
                 result = await acs_handler.start_outbound_call(
                     acs_caller=http_request.app.state.acs_caller,
                     target_number=request.target_number,
                     redis_mgr=http_request.app.state.redis,
                     browser_session_id=browser_session_id,  # 🎯 Pass browser session for coordination
                     stream_mode=effective_stream_mode,
+                    record_call=record_call_override,
                 )
                 if result.get("status") == "success":
                     call_id = result.get("callId")
+                    recording_enabled = result.get("recording_enabled")
 
                     # Pre-initialize a Voice Live session bound to this call (no audio yet, no pool)
                     try:
@@ -275,6 +308,7 @@ async def initiate_call(
                             "api_version": "v1",
                             "status": "initiating",
                             "streaming_mode": str(effective_stream_mode),
+                            "recording_enabled": recording_enabled,
                         },
                     )
 
@@ -292,10 +326,12 @@ async def initiate_call(
                         message=result.get("message", "call initiated successfully"),
                         streaming_mode=effective_stream_mode,
                         initiated_at=result.get("initiated_at"),
+                        recording_enabled=recording_enabled,
                         details={
                             "api_version": "v1",
                             "acs_result": result,
                             "streaming_mode": str(effective_stream_mode),
+                            "recording_enabled": recording_enabled,
                         },
                     )
 
@@ -560,45 +596,91 @@ async def answer_inbound_call(
         try:
             request_body = await http_request.json()
 
+            def _extract_recording_override(payload: Any) -> Optional[bool]:
+                if isinstance(payload, dict):
+                    candidates = [
+                        payload.get("recordCall"),
+                        payload.get("record_call"),
+                        payload.get("recordingEnabled"),
+                    ]
+                    for candidate in candidates:
+                        coerced = _coerce_optional_bool(candidate)
+                        if coerced is not None:
+                            return coerced
+
+                    data_section = payload.get("data")
+                    if data_section is not None:
+                        return _extract_recording_override(data_section)
+
+                    return None
+
+                if isinstance(payload, list):
+                    for item in payload:
+                        coerced = _extract_recording_override(item)
+                        if coerced is not None:
+                            return coerced
+                return None
+
+            record_call_override = None
+            query_value = (
+                http_request.query_params.get("recordCall")
+                or http_request.query_params.get("record_call")
+            )
+            record_call_override = _coerce_optional_bool(query_value)
+            if record_call_override is None:
+                record_call_override = _extract_recording_override(request_body)
+
             # Create handler with orchestrator injection
             acs_handler = ACSLifecycleHandler()
 
             with trace_acs_dependency(
                 tracer, logger, "acs_lifecycle", "accept_inbound_call"
             ) as dep_op:
+                
+                # Sample Payload for D365 Transfer
+                # 'id' = '14bd8e31-bd47-4ae3-bbf6-21b103c21ba3_1fb971cadf0143cda27019ac20805d7c.8759326'
+                # 'topic' = '/subscriptions/46c8d580-4e4e-43b3-b3db-4a2daea037b1/resourcegroups/devops-shared/providers/microsoft.communication/communicationservices/acs-local-test'
+                # 'subject' = '/phoneCall/caller/+18557047380/recipient/+18666881708'
+                # 'data' = {'to': {'kind': 'phoneNumber', 'rawId': '4:+18666881708', 'phoneNumber': {...}}, 'from': {'kind': 'phoneNumber', 'rawId': '4:+18557047380', 'phoneNumber': {...}}, 'serverCallId': 'aHR0cHM6Ly9hcGkuZmxpZ2h0cHJveHkuc2t5cGUuY29tL2FwaS92Mi9jcC9jb252LXVzZWEyLTA1LXByb2QtY...EyOC0yNy0xMjMmZT02Mzg5ODE1MjIwNzIwOTgwNDM=', 'callerDisplayName': '', 'incomingCallContext': 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJjYyI6Ikg0c0lBQUFBQUFBQUE4MVliWS9idUJIK0s0SUwzS...FNzUjBDUGk0a3NOYmI2WkRzUEl4R0VhSEZwS0EifQ.', 'correlationId': '14bd8e31-bd47-4ae3-bbf6-21b103c21ba3'}
+                # 'eventType' = 'Microsoft.Communication.IncomingCall'
+                # 'dataVersion' = '1.0'
+                # 'metadataVersion' = '1'
+                # 'eventTime' = '2025-11-12T22:39:21.3416931Z'
                 result = await acs_handler.accept_inbound_call(
                     request_body=request_body,
                     acs_caller=http_request.app.state.acs_caller,
+                    redis_mgr=getattr(http_request.app.state, "redis", None),
+                    record_call=record_call_override,
                 )
 
-            op.log_info("Inbound call processed successfully")
-            # Attempt to pre-initialize Voice Live for this inbound call (no pool)
-            try:
-                if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
-                    # Extract call_connection_id from response body
-                    body_bytes = result.body if hasattr(result, "body") else None
-                    if body_bytes and hasattr(http_request.app.state, "conn_manager"):
-                        import json
+            # op.log_info("Inbound call processed successfully")
+            # # Attempt to pre-initialize Voice Live for this inbound call (no pool)
+            # try:
+            #     if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
+            #         # Extract call_connection_id from response body
+            #         body_bytes = result.body if hasattr(result, "body") else None
+            #         if body_bytes and hasattr(http_request.app.state, "conn_manager"):
+            #             import json
 
-                        body = json.loads(body_bytes.decode("utf-8"))
-                        call_connection_id = body.get("call_connection_id")
-                        if call_connection_id:
-                            agent_yaml = os.getenv(
-                                "VOICE_LIVE_AGENT_YAML",
-                                "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
-                            )
-                            lva_agent = build_lva_from_yaml(
-                                agent_yaml, enable_audio_io=False
-                            )
-                            await asyncio.to_thread(lva_agent.connect)
-                            await http_request.app.state.conn_manager.set_call_context(
-                                call_connection_id, {"lva_agent": lva_agent}
-                            )
-                            logger.info(
-                                f"Pre-initialized Voice Live agent for inbound call {call_connection_id}"
-                            )
-            except Exception as e:
-                logger.debug(f"Voice Live preinit (inbound) skipped: {e}")
+            #             body = json.loads(body_bytes.decode("utf-8"))
+            #             call_connection_id = body.get("call_connection_id")
+            #             if call_connection_id:
+            #                 agent_yaml = os.getenv(
+            #                     "VOICE_LIVE_AGENT_YAML",
+            #                     "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
+            #                 )
+            #                 lva_agent = build_lva_from_yaml(
+            #                     agent_yaml, enable_audio_io=False
+            #                 )
+            #                 await asyncio.to_thread(lva_agent.connect)
+            #                 await http_request.app.state.conn_manager.set_call_context(
+            #                     call_connection_id, {"lva_agent": lva_agent}
+            #                 )
+            #                 logger.info(
+            #                     f"Pre-initialized Voice Live agent for inbound call {call_connection_id}"
+            #                 )
+            # except Exception as e:
+            #     logger.debug(f"Voice Live preinit (inbound) skipped: {e}")
 
             return result
 

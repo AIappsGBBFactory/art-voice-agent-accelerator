@@ -4,6 +4,7 @@ uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 pydantic[email]
 pydantic-settings>=2.1.0
+pydantic_core==2.33.2
 starlette>=0.27.0
 redis>=5.0.0
 redis-entraid>=1.0.0
@@ -22,6 +23,11 @@ azure-communication-email
 azure-communication-identity>=1.5.0
 azure-keyvault-secrets>=4.7.0
 azure-eventgrid>=4.10.0
+
+azure-ai-agents==1.2.0b5
+azure-ai-ml==1.28.1
+azure-ai-projects==1.0.0
+azure-ai-voicelive==1.0.0
 
 # Azure monitoring and telemetry
 azure-monitor-opentelemetry>=1.6.11

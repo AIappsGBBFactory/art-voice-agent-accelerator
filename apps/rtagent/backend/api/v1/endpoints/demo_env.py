@@ -87,7 +87,11 @@ class DemoUserResponse(BaseModel):
     safety_notice: str
 
 
-DEMOS_TTL_SECONDS = int(os.getenv("DEMO_USER_TTL_SECONDS", "3600"))
+class DemoUserLookupResponse(DemoUserResponse):
+    """Alias to reuse DemoUserResponse shape for lookup endpoint."""
+
+
+DEMOS_TTL_SECONDS = int(os.getenv("DEMO_USER_TTL_SECONDS", "86400"))
 PROFILE_TEMPLATES = (
     {
         "key": "contoso_exec",
@@ -410,6 +414,18 @@ def _format_iso_z(value: datetime | str) -> str:
     return str(value)
 
 
+def _parse_iso8601(value: datetime | str | None) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        normalized = value.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            pass
+    return datetime.now(tz=timezone.utc)
+
+
 def _serialize_demo_user(response: DemoUserResponse) -> dict:
     profile_payload = response.profile.model_dump(mode="json")
     base_fields = {
@@ -417,11 +433,14 @@ def _serialize_demo_user(response: DemoUserResponse) -> dict:
         for key in (
             "client_id",
             "full_name",
+            "email",
+            "phone_number",
             "institution_name",
             "company_code",
             "company_code_last4",
             "client_type",
             "authorization_level",
+            "relationship_tier",
             "max_transaction_limit",
             "mfa_required_threshold",
             "contact_info",
@@ -517,4 +536,93 @@ async def create_temporary_user(
         safety_notice="Demo data only. Never enter real customer or personal information in this sandbox.",
     )
     await _persist_demo_user(response)
+    return response
+
+
+@router.get(
+    "/temporary-user",
+    response_model=DemoUserLookupResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def lookup_demo_user(
+    email: EmailStr,
+    session_id: str | None = None,
+) -> DemoUserLookupResponse:
+    """Retrieve the latest synthetic demo profile by email if it exists."""
+
+    database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+    container_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
+
+    def _query() -> dict | None:
+        manager = CosmosDBMongoCoreManager(
+            database_name=database_name,
+            collection_name=container_name,
+        )
+        try:
+            # Order by TTL descending so newest entry is returned first
+            return manager.collection.find_one(
+                {"contact_info.email": str(email)},
+                sort=[("ttl", -1)],
+            )
+        finally:
+            manager.close_connection()
+
+    try:
+        document = await asyncio.to_thread(_query)
+    except (NetworkTimeout, PyMongoError) as exc:
+        logger.exception("Failed to lookup demo profile for email=%s", email, exc_info=exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to lookup demo profile.",
+        ) from exc
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No demo profile found for that email.",
+        )
+
+    demo_metadata = document.get("demo_metadata") or {}
+    profile_payload = document.copy()
+    # Remove internal fields that aren't part of DemoUserProfile
+    for key in ("demo_metadata", "_id", "ttl", "expires_at"):
+        profile_payload.pop(key, None)
+
+    contact_info = profile_payload.get("contact_info") or {}
+    profile_payload["email"] = (
+        profile_payload.get("email")
+        or contact_info.get("email")
+        or "demo@example.com"
+    )
+    profile_payload["phone_number"] = (
+        profile_payload.get("phone_number")
+        or contact_info.get("phone")
+    )
+    relationship_context = (
+        profile_payload.get("customer_intelligence", {})
+        .get("relationship_context", {})
+    )
+    profile_payload["relationship_tier"] = (
+        profile_payload.get("relationship_tier")
+        or relationship_context.get("relationship_tier")
+        or "Gold"
+    )
+
+    profile_model = DemoUserProfile.model_validate(profile_payload)
+    transactions_payload = demo_metadata.get("transactions") or []
+    interaction_payload = demo_metadata.get("interaction_plan") or {}
+
+    response = DemoUserLookupResponse(
+        entry_id=demo_metadata.get("entry_id", document.get("_id", "")),
+        expires_at=_parse_iso8601(
+            demo_metadata.get("expires_at") or document.get("expires_at")
+        ),
+        profile=profile_model,
+        transactions=[DemoTransaction.model_validate(txn) for txn in transactions_payload],
+        interaction_plan=DemoInteractionPlan.model_validate(interaction_payload),
+        session_id=session_id or demo_metadata.get("session_id"),
+        safety_notice=demo_metadata.get(
+            "safety_notice", "Demo data only. Never enter real customer or personal information in this sandbox."
+        ),
+    )
     return response

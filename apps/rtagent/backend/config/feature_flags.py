@@ -26,6 +26,12 @@ ENABLE_AUTH_VALIDATION = os.getenv("ENABLE_AUTH_VALIDATION", "false").lower() in
     "on",
 )
 
+# Azure Communication Services
+ENABLE_ACS_CALL_RECORDING = (
+    os.getenv("ENABLE_ACS_CALL_RECORDING", "false").lower()
+    in ("true", "1", "yes", "on")
+)
+
 # Environment and debugging
 DEBUG_MODE = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes", "on")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()

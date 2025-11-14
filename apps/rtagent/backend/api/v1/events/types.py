@@ -15,6 +15,14 @@ from src.stateful.state_managment import MemoManager
 
 
 @dataclass
+class RecordingPreferences:
+    """Call-scoped recording preferences supplied by upstream handlers."""
+
+    enabled: bool
+    server_call_id: Optional[str] = None
+
+
+@dataclass
 class CallEventContext:
     """
     Simplified context for call event processing.
@@ -31,6 +39,7 @@ class CallEventContext:
     acs_caller: Optional[Any] = None
     clients: Optional[list] = None
     app_state: Optional[Any] = None  # For accessing ConnectionManager
+    recording_preferences: Optional[RecordingPreferences] = None
 
     def get_event_data(self) -> Dict[str, Any]:
         """

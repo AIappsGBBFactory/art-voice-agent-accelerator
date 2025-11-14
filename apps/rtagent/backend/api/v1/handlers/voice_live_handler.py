@@ -16,7 +16,7 @@ import asyncio
 import base64
 import logging
 import time
-import numpy as np
+import audioop
 from datetime import datetime, timezone
 from typing import Dict, Union, Literal, Optional, Set, Callable, Awaitable
 from typing_extensions import TypedDict, Required
@@ -773,49 +773,52 @@ class VoiceLiveHandler:
             # Decode base64 audio data
             audio_bytes = base64.b64decode(audio_b64)
 
-            # Azure Voice Live outputs 24kHz 16-bit PCM, ACS expects 16kHz
-            source_rate = 24000
-            target_rate = self.sample_rate  # From ACS metadata (16000)
+            source_rate = AUDIO_SAMPLE_RATE  # Voice Live output rate (24 kHz)
+            target_rate = self.sample_rate or 16000  # ACS metadata (typically 16 kHz)
+            channels = self.channels or 1
 
             if source_rate == target_rate:
-                # No resampling needed
                 return audio_b64
 
-            # Convert bytes to numpy array (16-bit PCM)
-            audio_np = np.frombuffer(audio_bytes, dtype=np.int16)
+            if target_rate <= 0 or source_rate <= 0:
+                logger.warning(
+                    "Invalid sample rates for resampling (source=%s, target=%s). Returning original audio.",
+                    source_rate,
+                    target_rate,
+                )
+                return audio_b64
 
-            #  resampling using numpy interpolation
-            # Calculate the resampling ratio
-            resample_ratio = target_rate / source_rate  # 16000/24000 = 0.667
+            try:
+                # audioop.ratecv performs band-limited interpolation for better quality
+                resampled_bytes, _ = audioop.ratecv(
+                    audio_bytes,
+                    2,  # width (16-bit PCM)
+                    channels,
+                    source_rate,
+                    target_rate,
+                    None,
+                )
+            except audioop.error as err:
+                logger.error(
+                    "audioop.ratecv failed for session %s: %s", self.session_id, err
+                )
+                return audio_b64
 
-            # Create new sample indices
-            original_length = len(audio_np)
-            new_length = int(original_length * resample_ratio)
-
-            # Use linear interpolation to resample
-            original_indices = np.arange(original_length)
-            new_indices = np.linspace(0, original_length - 1, new_length)
-            resampled_audio = np.interp(
-                new_indices, original_indices, audio_np.astype(np.float32)
-            )
-
-            # Convert back to int16 and then to bytes
-            resampled_int16 = resampled_audio.astype(np.int16)
-            resampled_bytes = resampled_int16.tobytes()
-
-            # Encode back to base64
             resampled_b64 = base64.b64encode(resampled_bytes).decode("utf-8")
 
             logger.debug(
-                f"Resampled audio from {source_rate}Hz to {target_rate}Hz for session {self.session_id} "
-                f"(original: {len(audio_bytes)} bytes, resampled: {len(resampled_bytes)} bytes)"
+                "Resampled audio from %s Hz to %s Hz for session %s (original: %d bytes, resampled: %d bytes)",
+                source_rate,
+                target_rate,
+                self.session_id,
+                len(audio_bytes),
+                len(resampled_bytes),
             )
 
             return resampled_b64
 
         except Exception as e:
             logger.error(f"Error resampling audio for session {self.session_id}: {e}")
-            # Return original audio if resampling fails
             return audio_b64
 
     async def _handle_text_response(self, event: dict) -> None:

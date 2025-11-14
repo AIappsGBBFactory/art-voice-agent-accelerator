@@ -3,21 +3,30 @@ import React from 'react';
 const containerStyle = {
   display: 'flex',
   flexDirection: 'column',
-  gap: '10px',
+  gap: '8px',
+  width: '100%',
+  maxWidth: '320px',
+  padding: '10px 12px',
+  borderRadius: '14px',
+  background: 'rgba(255,255,255,0.9)',
+  border: '1px solid rgba(226,232,240,0.8)',
+  boxShadow: '0 8px 20px rgba(15,23,42,0.12)',
+  boxSizing: 'border-box',
 };
 
 const headerStyle = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  fontSize: '12px',
+  fontSize: '11px',
   color: '#475569',
   fontWeight: 600,
+  letterSpacing: '0.03em',
 };
 
 const badgeStyle = {
-  fontSize: '10px',
-  padding: '2px 6px',
+  fontSize: '9px',
+  padding: '2px 8px',
   borderRadius: '999px',
   backgroundColor: 'rgba(59, 130, 246, 0.12)',
   color: '#2563eb',
@@ -29,6 +38,7 @@ const optionsRowStyle = {
   display: 'flex',
   flexDirection: 'column',
   gap: '8px',
+  width: '100%',
 };
 
 const baseCardStyle = {
@@ -36,20 +46,34 @@ const baseCardStyle = {
   flexDirection: 'column',
   alignItems: 'flex-start',
   gap: '6px',
-  padding: '12px',
+  padding: '10px 12px',
   width: '100%',
-  borderRadius: '14px',
+  borderRadius: '12px',
   border: '1px solid rgba(226,232,240,0.9)',
-  background: 'linear-gradient(135deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,0.8) 100%)',
+  background: '#f8fafc',
   cursor: 'pointer',
   transition: 'all 0.2s ease',
-  boxShadow: '0 4px 12px rgba(15, 23, 42, 0.05)',
+  boxShadow: '0 4px 8px rgba(15, 23, 42, 0.08)',
+  textAlign: 'left',
 };
 
 const selectedCardStyle = {
-  borderColor: 'rgba(59,130,246,0.8)',
-  boxShadow: '0 10px 24px -8px rgba(59,130,246,0.35)',
-  transform: 'translateY(-1px)',
+  borderColor: 'rgba(99,102,241,0.85)',
+  boxShadow: '0 8px 16px rgba(99,102,241,0.22)',
+  background: 'linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(224,231,255,0.9) 100%)',
+};
+
+const optionHeaderStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  width: '100%',
+};
+
+const textBlockStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '1px',
 };
 
 const disabledCardStyle = {
@@ -59,29 +83,39 @@ const disabledCardStyle = {
 };
 
 const iconStyle = {
-  fontSize: '20px',
+  fontSize: '18px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: '26px',
 };
 
 const titleStyle = {
-  fontSize: '13px',
+  fontSize: '12px',
   fontWeight: 700,
   color: '#0f172a',
   margin: 0,
 };
 
 const descriptionStyle = {
-  fontSize: '11px',
+  fontSize: '10px',
   color: '#475569',
   margin: 0,
   lineHeight: 1.5,
 };
 
 const hintStyle = {
-  fontSize: '10px',
+  fontSize: '9px',
   color: '#1d4ed8',
   fontWeight: 600,
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
+};
+
+const footerNoteStyle = {
+  fontSize: '9px',
+  color: '#94a3b8',
+  lineHeight: 1.4,
 };
 
 const STREAMING_MODE_OPTIONS = [
@@ -135,15 +169,20 @@ function StreamingModeSelector({ value, onChange, disabled = false }) {
               }}
               disabled={disabled}
             >
-              <span style={iconStyle}>{option.icon}</span>
-              <div>
-                <p style={titleStyle}>{option.label}</p>
-                <p style={descriptionStyle}>{option.description}</p>
+              <div style={optionHeaderStyle}>
+                <span style={iconStyle}>{option.icon}</span>
+                <div style={textBlockStyle}>
+                  <p style={titleStyle}>{option.label}</p>
+                  <p style={descriptionStyle}>{option.description}</p>
+                </div>
               </div>
               {option.hint && isSelected && <span style={hintStyle}>{option.hint}</span>}
             </button>
           );
         })}
+      </div>
+      <div style={footerNoteStyle}>
+        Active mode applies to ACS PSTN calls only. Browser/WebRTC streaming remains unchanged.
       </div>
     </div>
   );
