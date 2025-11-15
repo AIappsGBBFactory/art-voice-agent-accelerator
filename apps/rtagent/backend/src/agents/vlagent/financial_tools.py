@@ -26,6 +26,12 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
     one_shot_query,
     schedule_cosmos_retriever_warmup,
 )
+from .tool_store.call_transfer import (
+    TRANSFER_CALL_SCHEMA,
+    transfer_call_to_destination,
+    TRANSFER_CALL_CENTER_SCHEMA,
+    transfer_call_to_call_center,
+)
 from .tool_store.tool_registry import (
     available_tools as VL_AVAILABLE_TOOLS,
     function_mapping as VL_FUNCTIONS,
@@ -103,6 +109,7 @@ STANDARD_TOOL_NAMES: Tuple[str, ...] = (
     "escalate_emergency",
     "detect_voicemail_and_end_call",
     "confirm_voicemail_and_end_call",
+    "transfer_call_to_call_center",
 )
 
 
@@ -538,6 +545,16 @@ register_tool("escalate_human", executor=vl_escalate_human)
 register_tool("search_knowledge_base", schema=SEARCH_KB_SCHEMA, executor=execute_search_knowledge_base)
 register_tool("get_paypal_account_summary", schema=PAYPAL_ACCOUNT_SCHEMA, executor=_execute_get_paypal_account_summary)
 register_tool("get_paypal_transactions", schema=PAYPAL_TRANSACTIONS_SCHEMA, executor=_execute_get_paypal_transactions)
+register_tool(
+    "transfer_call_to_destination",
+    schema=TRANSFER_CALL_SCHEMA,
+    executor=transfer_call_to_destination,
+)
+register_tool(
+    "transfer_call_to_call_center",
+    schema=TRANSFER_CALL_CENTER_SCHEMA,
+    executor=transfer_call_to_call_center,
+)
 
 HANDOFF_TOOL_NAMES: Tuple[str, ...] = tuple(
     spec.name for spec in REGISTERED_TOOLS.values() if spec.is_handoff

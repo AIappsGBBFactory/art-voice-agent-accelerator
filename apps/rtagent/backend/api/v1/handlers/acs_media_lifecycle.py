@@ -26,7 +26,7 @@ import base64
 import time
 
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Union, Set
+from typing import Optional, Callable, Union, Set, Dict, Any
 from enum import Enum
 
 from fastapi import WebSocket
@@ -44,6 +44,7 @@ from apps.rtagent.backend.src.ws_helpers.shared_ws import (
 )
 from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
 from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
+from apps.rtagent.backend.src.services.acs.call_transfer import transfer_call as transfer_call_service
 from src.enums.stream_modes import StreamMode
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.stateful.state_managment import MemoManager
@@ -1315,6 +1316,30 @@ class ACSMediaHandler:
             )
         except Exception as e:
             logger.error(f"[{self.call_connection_id}] Media message error: {e}")
+
+    async def transfer_call(
+        self,
+        target: str,
+        *,
+        operation_context: Optional[str] = None,
+        operation_callback_url: Optional[str] = None,
+        transferee: Optional[str] = None,
+        sip_headers: Optional[Dict[str, str]] = None,
+        voip_headers: Optional[Dict[str, str]] = None,
+        source_caller_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Transfer the active ACS call via the shared Call Automation helper."""
+
+        return await transfer_call_service(
+            call_connection_id=self.call_connection_id,
+            target_address=target,
+            operation_context=operation_context,
+            operation_callback_url=operation_callback_url,
+            transferee=transferee,
+            sip_headers=sip_headers,
+            voip_headers=voip_headers,
+            source_caller_id=source_caller_id,
+        )
 
     async def stop(self):
         """Stop all threads."""

@@ -33,6 +33,7 @@ tools:
   - detect_voicemail_and_end_call
   - escalate_emergency
   - escalate_human
+  - transfer_call_to_call_center
   # - handoff_transfer_agency_agent
   - handoff_fraud_agent
   - handoff_paypal_agent
