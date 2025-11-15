@@ -72,6 +72,14 @@ class _SessionMessenger:
 	def _call_id(self) -> Optional[str]:
 		return getattr(self._ws.state, "call_connection_id", None)
 
+	@property
+	def session_id(self) -> Optional[str]:
+		return self._session_id
+
+	@property
+	def call_id(self) -> Optional[str]:
+		return self._call_id
+
 	def _can_emit(self) -> bool:
 		return bool(self._session_id)
 
@@ -277,6 +285,7 @@ class VoiceLiveSDKHandler:
 				start_agent=self._settings.start_agent,
 				audio_processor=None,
 				messenger=self._messenger,
+				call_connection_id=self.call_connection_id,
 			)
 
 			await self._orchestrator.start()

@@ -44,6 +44,7 @@ from utils.ml_logging import get_logger
 from .acs_media_lifecycle import ACSMediaHandler
 from ..events import get_call_event_processor
 from ..dependencies.orchestrator import get_orchestrator
+from apps.rtagent.backend.src.services.acs.call_transfer import transfer_call as transfer_call_service
 
 
 logger = get_logger("v1.api.handlers.acs_lifecycle")
@@ -209,6 +210,44 @@ class ACSLifecycleHandler:
 
         except Exception as e:
             self.logger.error(f"Failed to emit call event {event_type}: {e}")
+
+    async def transfer_call(
+        self,
+        call_connection_id: str,
+        target: str,
+        *,
+        operation_context: Optional[str] = None,
+        operation_callback_url: Optional[str] = None,
+        transferee: Optional[str] = None,
+        sip_headers: Optional[Dict[str, str]] = None,
+        voip_headers: Optional[Dict[str, str]] = None,
+        source_caller_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Transfer the specified ACS call to a new participant."""
+
+        result = await transfer_call_service(
+            call_connection_id=call_connection_id,
+            target_address=target,
+            operation_context=operation_context,
+            operation_callback_url=operation_callback_url,
+            transferee=transferee,
+            sip_headers=sip_headers,
+            voip_headers=voip_headers,
+            source_caller_id=source_caller_id,
+        )
+
+        if result.get("success"):
+            await self._emit_call_event(
+                "call.transfer.started",
+                call_connection_id,
+                {
+                    "target": target,
+                    "operationContext": result.get("call_transfer", {}).get("operation_context"),
+                    "status": result.get("call_transfer", {}).get("status"),
+                },
+            )
+
+        return result
 
     async def start_outbound_call(
         self,
