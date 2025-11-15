@@ -272,7 +272,7 @@ const styles = {
     flex: 1,
     background: "white",
     borderRadius: "20px",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+    boxShadow: "0 12px 32px rgba(15,23,42,0.12)",
     border: "0px solid transparent",
     display: "flex",
     flexDirection: "column",
@@ -288,11 +288,12 @@ const styles = {
     borderRadius: "50%",
     background: "#ffffff",
     border: "1px solid #e2e8f0",
-    boxShadow: "0 12px 30px rgba(15,23,42,0.25)",
+    boxShadow: "0 6px 18px rgba(15,23,42,0.18)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 100,
+    willChange: "transform",
   },
   backendIndicatorDock: {
     position: "fixed",
@@ -300,7 +301,7 @@ const styles = {
     left: "28px",
     transform: "scale(0.94)",
     transformOrigin: "bottom left",
-    filter: "drop-shadow(0 12px 30px rgba(15,23,42,0.25))",
+    boxShadow: "0 6px 18px rgba(15,23,42,0.18)",
     zIndex: 7,
   },
 
@@ -326,7 +327,7 @@ const styles = {
     borderRadius: "22px",
     background: "linear-gradient(140deg, rgba(255,255,255,0.97), rgba(248,250,252,0.92))",
     border: "1px solid rgba(148,163,184,0.18)",
-    boxShadow: "0 16px 32px rgba(15,23,42,0.08)",
+    boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
     width: "100%",
     maxWidth: "420px",
   },
@@ -442,7 +443,7 @@ const styles = {
     height: "72px",
     padding: "0 16px",
     background: "radial-gradient(ellipse at center, rgba(100, 116, 139, 0.08) 0%, transparent 70%)",
-    borderRadius: "10px",
+    borderRadius: "0px",
   },
   
   waveformSvg: {
@@ -566,9 +567,8 @@ const styles = {
   
   // Control section - blended footer design
   controlSection: {
-    padding: "12px 18px 14px",
-    backgroundColor: "#f1f5f9",
-    background: "linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)",
+    padding: "10px 16px 14px",
+    background: "#f5f7fb",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
@@ -578,12 +578,12 @@ const styles = {
   
   controlContainer: {
     display: "flex",
-    gap: "8px",
-    background: "white",
-    padding: "12px 16px",
-    borderRadius: "24px",
-    boxShadow: "0 4px 16px rgba(100, 116, 139, 0.08), 0 1px 4px rgba(100, 116, 139, 0.04)",
-    border: "1px solid #e2e8f0",
+    gap: "10px",
+    background: "rgba(255,255,255,0.9)",
+    padding: "12px 18px",
+    borderRadius: "22px",
+    boxShadow: "0 4px 14px rgba(15,23,42,0.12)",
+    border: "1px solid rgba(226,232,240,0.9)",
     width: "fit-content",
   },
   
@@ -701,29 +701,28 @@ const styles = {
 
   // Tooltip styles
   buttonTooltip: {
-    position: 'absolute',
-    bottom: '-45px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    background: 'rgba(51, 65, 85, 0.95)',
+    position: 'fixed',
+    left: 0,
+    top: 0,
+    transform: 'translate(-50%, 0)',
+    background: 'rgba(30, 41, 59, 0.92)',
     color: '#f1f5f9',
     padding: '8px 12px',
     borderRadius: '8px',
     fontSize: '11px',
     fontWeight: '500',
     whiteSpace: 'nowrap',
-    backdropFilter: 'blur(10px)',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    boxShadow: '0 4px 10px rgba(15,23,42,0.18)',
+    border: '1px solid rgba(255,255,255,0.08)',
     pointerEvents: 'none',
     opacity: 0,
-    transition: 'opacity 0.2s ease, transform 0.2s ease',
-    zIndex: 1000,
+    transition: 'opacity 0.18s ease, transform 0.18s ease',
+    zIndex: 80,
   },
 
   buttonTooltipVisible: {
     opacity: 1,
-    transform: 'translateX(-50%) translateY(+2px)',
+    transform: 'translate(-50%, 0)',
   },
   
   // Input section for phone calls
@@ -776,11 +775,10 @@ const styles = {
     borderRadius: "12px",
     fontSize: "11px",
     color: "#64748b",
-    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-    zIndex: 1000,
+    boxShadow: "0 6px 18px rgba(15,23,42,0.16)",
+    zIndex: 60,
     minWidth: "280px",
     maxWidth: "320px",
-    backdropFilter: "blur(8px)",
   },
 
   maskToggleButton: {
@@ -1088,8 +1086,7 @@ const styles = {
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
-    backdropFilter: "blur(2px)",
+    backgroundColor: "rgba(15, 23, 42, 0.25)",
     zIndex: 12000,
   },
   demoFormOverlay: {
@@ -1098,12 +1095,15 @@ const styles = {
     left: "50%",
     transform: "translate(-50%, -50%)",
     zIndex: 12010,
-    maxHeight: "calc(100vh - 80px)",
-    overflowY: "auto",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: "16px",
+    padding: "8px",
+    maxWidth: "100vw",
+    maxHeight: "calc(100vh - 80px)",
+    overflowY: "auto",
+    scrollbarWidth: "none",
+    msOverflowStyle: "none",
   },
   profileButtonWrapper: {
     margin: "0 24px",
@@ -1191,6 +1191,13 @@ styleSheet.textContent = `
     100% {
       box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
     }
+  }
+  .demo-form-overlay {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .demo-form-overlay::-webkit-scrollbar {
+    display: none;
   }
 `;
 document.head.appendChild(styleSheet);
@@ -2349,12 +2356,13 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
 /* ------------------------------------------------------------------ *
  *  WAVEFORM COMPONENT - SIMPLE & SMOOTH
  * ------------------------------------------------------------------ */
-const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel = 0, bargeInActive = false }) => {
+const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, outputAudioLevelRef, bargeInActive = false }) => {
   const [waveOffset, setWaveOffset] = useState(0);
   const [amplitude, setAmplitude] = useState(0);
   const [speakerState, setSpeakerState] = useState({ user: false, assistant: false });
   const animationRef = useRef();
   const combinedLevelRef = useRef(0);
+  const latestLevelsRef = useRef({ input: 0, output: 0 });
   const USER_THRESHOLD = 0.015;
   const ASSISTANT_THRESHOLD = 0.006;
   const userDisplayActive = speakerState.user || activeSpeaker === "User";
@@ -2362,25 +2370,44 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
   const bothDisplayActive = userDisplayActive && assistantDisplayActive;
 
   useEffect(() => {
-    const target = Math.max(audioLevel, outputAudioLevel);
-    const previous = combinedLevelRef.current;
-    const mix = target > previous ? 0.4 : 0.18;
-    const next = previous + (target - previous) * mix;
-    combinedLevelRef.current = next < 0.004 ? 0 : next;
+    let rafId;
+    const updateLevels = () => {
+      const inputLevel = audioLevelRef?.current ?? 0;
+      const outputLevel = outputAudioLevelRef?.current ?? 0;
+      latestLevelsRef.current = { input: inputLevel, output: outputLevel };
 
-    setSpeakerState((prev) => ({
-      user: audioLevel > USER_THRESHOLD
-        ? true
-        : audioLevel < USER_THRESHOLD * 0.6
-          ? false
-          : prev.user,
-      assistant: outputAudioLevel > ASSISTANT_THRESHOLD
-        ? true
-        : outputAudioLevel < ASSISTANT_THRESHOLD * 0.6
-          ? false
-          : prev.assistant,
-    }));
-  }, [audioLevel, outputAudioLevel]);
+      const target = Math.max(inputLevel, outputLevel);
+      const previous = combinedLevelRef.current;
+      const mix = target > previous ? 0.4 : 0.18;
+      const next = previous + (target - previous) * mix;
+      combinedLevelRef.current = next < 0.004 ? 0 : next;
+
+      setSpeakerState((prev) => {
+        const nextUser = inputLevel > USER_THRESHOLD
+          ? true
+          : inputLevel < USER_THRESHOLD * 0.6
+            ? false
+            : prev.user;
+        const nextAssistant = outputLevel > ASSISTANT_THRESHOLD
+          ? true
+          : outputLevel < ASSISTANT_THRESHOLD * 0.6
+            ? false
+            : prev.assistant;
+        if (prev.user === nextUser && prev.assistant === nextAssistant) {
+          return prev;
+        }
+        return { user: nextUser, assistant: nextAssistant };
+      });
+
+      rafId = requestAnimationFrame(updateLevels);
+    };
+    rafId = requestAnimationFrame(updateLevels);
+    return () => {
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+    };
+  }, [audioLevelRef, outputAudioLevelRef]);
 
   useEffect(() => {
     let lastTs = performance.now();
@@ -2514,6 +2541,9 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
     return waves;
   };
   
+  const audioLevel = latestLevelsRef.current.input;
+  const outputAudioLevel = latestLevelsRef.current.output;
+
   return (
     <div style={styles.waveformContainer}>
       <svg style={styles.waveformSvg} viewBox="0 0 750 80" preserveAspectRatio="xMidYMid meet">
@@ -2543,7 +2573,189 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
       )}
     </div>
   );
-};
+});
+
+/* ------------------------------------------------------------------ *
+ *  CONVERSATION CONTROLS (Reset, Mic, Call)
+ * ------------------------------------------------------------------ */
+const ConversationControls = React.memo(({
+  recording,
+  callActive,
+  isCallDisabled,
+  onResetSession,
+  onMicToggle,
+  onPhoneButtonClick,
+  phoneButtonRef,
+}) => {
+  const [resetHovered, setResetHovered] = useState(false);
+  const [micHovered, setMicHovered] = useState(false);
+  const [phoneHovered, setPhoneHovered] = useState(false);
+  const [showResetTooltip, setShowResetTooltip] = useState(false);
+  const [showMicTooltip, setShowMicTooltip] = useState(false);
+  const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
+  const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
+  const [resetTooltipPos, setResetTooltipPos] = useState(null);
+  const [micTooltipPos, setMicTooltipPos] = useState(null);
+  const [phoneTooltipPos, setPhoneTooltipPos] = useState(null);
+
+  const handlePhoneMouseEnter = useCallback((event) => {
+    setShowPhoneTooltip(true);
+    const target = phoneButtonRef?.current || event?.currentTarget;
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      setPhoneTooltipPos({
+        top: rect.bottom + 12,
+        left: rect.left + rect.width / 2,
+      });
+      setPhoneDisabledPos({
+        top: rect.bottom + 12,
+        left: rect.left + rect.width / 2,
+      });
+    }
+    if (!isCallDisabled) {
+      setPhoneHovered(true);
+    }
+  }, [isCallDisabled, phoneButtonRef]);
+
+  const handlePhoneMouseLeave = useCallback(() => {
+    setShowPhoneTooltip(false);
+    setPhoneHovered(false);
+    setPhoneDisabledPos(null);
+    setPhoneTooltipPos(null);
+  }, []);
+
+  return (
+    <div style={styles.controlSection}>
+      <div style={styles.controlContainer}>
+        {/* Reset */}
+        <div style={{ position: 'relative' }}>
+          <IconButton
+            disableRipple
+            aria-label="Reset session"
+            sx={styles.resetButton(resetHovered)}
+            onMouseEnter={(event) => {
+              setShowResetTooltip(true);
+              setResetHovered(true);
+              const rect = event.currentTarget.getBoundingClientRect();
+              setResetTooltipPos({
+                top: rect.bottom + 12,
+                left: rect.left + rect.width / 2,
+              });
+            }}
+            onMouseLeave={() => {
+              setShowResetTooltip(false);
+              setResetHovered(false);
+              setResetTooltipPos(null);
+            }}
+            onClick={onResetSession}
+          >
+            <RestartAltRoundedIcon fontSize="medium" />
+          </IconButton>
+          {showResetTooltip && resetTooltipPos && (
+            <div
+              style={{
+                ...styles.buttonTooltip,
+                top: resetTooltipPos.top,
+                left: resetTooltipPos.left,
+                ...(showResetTooltip ? styles.buttonTooltipVisible : {}),
+              }}
+            >
+              Reset conversation & start fresh
+            </div>
+          )}
+        </div>
+
+        {/* Mic */}
+        <div style={{ position: 'relative' }}>
+          <IconButton
+            disableRipple
+            aria-label={recording ? "Stop microphone" : "Start microphone"}
+            sx={styles.micButton(recording, micHovered)}
+            onMouseEnter={(event) => {
+              setShowMicTooltip(true);
+              setMicHovered(true);
+              const rect = event.currentTarget.getBoundingClientRect();
+              setMicTooltipPos({
+                top: rect.bottom + 12,
+                left: rect.left + rect.width / 2,
+              });
+            }}
+            onMouseLeave={() => {
+              setShowMicTooltip(false);
+              setMicHovered(false);
+              setMicTooltipPos(null);
+            }}
+            onClick={onMicToggle}
+          >
+            {recording ? (
+              <MicOffRoundedIcon fontSize="medium" />
+            ) : (
+              <MicRoundedIcon fontSize="medium" />
+            )}
+          </IconButton>
+          {showMicTooltip && micTooltipPos && (
+            <div
+              style={{
+                ...styles.buttonTooltip,
+                top: micTooltipPos.top,
+                left: micTooltipPos.left,
+                ...(showMicTooltip ? styles.buttonTooltipVisible : {}),
+              }}
+            >
+              {recording ? "Stop recording your voice" : "Start voice conversation"}
+            </div>
+          )}
+        </div>
+
+        {/* Call */}
+        <div
+          style={{ position: 'relative' }}
+          onMouseEnter={handlePhoneMouseEnter}
+          onMouseLeave={handlePhoneMouseLeave}
+        >
+          <IconButton
+            ref={phoneButtonRef}
+            disableRipple
+            aria-label={callActive ? "Hang up call" : "Place call"}
+            sx={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
+            disabled={isCallDisabled}
+            onClick={onPhoneButtonClick}
+          >
+            {callActive ? (
+              <PhoneDisabledRoundedIcon fontSize="medium" />
+            ) : (
+              <PhoneRoundedIcon fontSize="medium" />
+            )}
+          </IconButton>
+          {!isCallDisabled && showPhoneTooltip && phoneTooltipPos && (
+            <div
+              style={{
+                ...styles.buttonTooltip,
+                top: phoneTooltipPos.top,
+                left: phoneTooltipPos.left,
+                ...(showPhoneTooltip ? styles.buttonTooltipVisible : {}),
+              }}
+            >
+              {callActive ? "Hang up the phone call" : "Make a phone call"}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {isCallDisabled && showPhoneTooltip && phoneDisabledPos && (
+        <div
+          style={{
+            ...styles.phoneDisabledDialog,
+            top: phoneDisabledPos.top,
+            left: phoneDisabledPos.left,
+          }}
+        >
+          ⚠️ Outbound calling is disabled. Update backend .env with Azure Communication Services settings (ACS_CONNECTION_STRING, ACS_SOURCE_PHONE_NUMBER, ACS_ENDPOINT) to enable this feature.
+        </div>
+      )}
+    </div>
+  );
+});
 
 /* ------------------------------------------------------------------ *
  *  CHAT BUBBLE
@@ -2932,17 +3144,9 @@ function RealTimeVoiceApp() {
     );
   }, []);
 
-  // Tooltip states
-  const [showResetTooltip, setShowResetTooltip] = useState(false);
-  const [showMicTooltip, setShowMicTooltip] = useState(false);
-  const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
-
-  // Hover states
-  const [resetHovered, setResetHovered] = useState(false);
-  const [micHovered, setMicHovered] = useState(false);
-  const [phoneHovered, setPhoneHovered] = useState(false);
-  const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
   const [showDemoForm, setShowDemoForm] = useState(false);
+  const openDemoForm = useCallback(() => setShowDemoForm(true), [setShowDemoForm]);
+  const closeDemoForm = useCallback(() => setShowDemoForm(false), [setShowDemoForm]);
   const [createProfileHovered, setCreateProfileHovered] = useState(false);
   const demoFormCloseTimeoutRef = useRef(null);
   const profileHighlightTimeoutRef = useRef(null);
@@ -2963,10 +3167,8 @@ function RealTimeVoiceApp() {
   useEffect(() => {
     if (isCallDisabled) {
       setShowPhoneInput(false);
-    } else if (phoneDisabledPos) {
-      setPhoneDisabledPos(null);
     }
-  }, [isCallDisabled, phoneDisabledPos]);
+  }, [isCallDisabled]);
 
   useEffect(() => {
     return () => {
@@ -3015,6 +3217,21 @@ function RealTimeVoiceApp() {
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [showPhoneInput]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    if (!showDemoForm) {
+      document.body.style.removeProperty('overflow');
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow || '';
+    };
+  }, [showDemoForm]);
 
   const handleStreamingModeChange = useCallback(
     (mode) => {
@@ -3114,10 +3331,39 @@ function RealTimeVoiceApp() {
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   
-  const [audioLevel, setAudioLevel] = useState(0);
   const audioLevelRef = useRef(0);
-  const [outputAudioLevel, setOutputAudioLevel] = useState(0);
   const outputAudioLevelRef = useRef(0);
+  const outputLevelDecayTimeoutRef = useRef(null);
+  const startRecognitionRef = useRef(null);
+  const stopRecognitionRef = useRef(null);
+
+  const cancelOutputLevelDecay = useCallback(() => {
+    if (outputLevelDecayTimeoutRef.current && typeof window !== 'undefined') {
+      window.clearTimeout(outputLevelDecayTimeoutRef.current);
+      outputLevelDecayTimeoutRef.current = null;
+    }
+  }, []);
+
+  const scheduleOutputLevelDecay = useCallback(() => {
+    if (typeof window === 'undefined') {
+      outputAudioLevelRef.current = 0;
+      return;
+    }
+    cancelOutputLevelDecay();
+    const decayStep = () => {
+      let next = outputAudioLevelRef.current * 0.78;
+      if (next < 0.002) {
+        next = 0;
+      }
+      outputAudioLevelRef.current = next;
+      if (next > 0) {
+        outputLevelDecayTimeoutRef.current = window.setTimeout(decayStep, 160);
+      } else {
+        outputLevelDecayTimeoutRef.current = null;
+      }
+    };
+    outputLevelDecayTimeoutRef.current = window.setTimeout(decayStep, 200);
+  }, [cancelOutputLevelDecay]);
   const metricsRef = useRef(createMetricsState());
 
   const workletSource = `
@@ -3243,8 +3489,8 @@ function RealTimeVoiceApp() {
     }
 
     outputAudioLevelRef.current = nextLevel;
-    setOutputAudioLevel(nextLevel);
-  }, []);
+    scheduleOutputLevelDecay();
+  }, [scheduleOutputLevelDecay]);
 
   // Initialize playback audio context and worklet (call on user gesture)
   const initializeAudioPlayback = async () => {
@@ -3300,21 +3546,24 @@ function RealTimeVoiceApp() {
     const ssn = demoPayload?.profile?.verification_codes?.ssn4;
     const notice = demoPayload?.safety_notice ?? 'Demo data only.';
     const sessionKey = demoPayload.session_id ?? sessionId;
-    const previouslyHadProfile = Boolean(sessionProfiles[sessionKey]?.profile);
+    let previouslyHadProfile = false;
     const messageLines = [
       '🚨 DEMO PROFILE GENERATED 🚨',
       ssn ? `Temporary SSN Last 4: ${ssn}` : null,
       notice,
       'NEVER enter real customer or personal data in this environment.',
     ].filter(Boolean);
-    setSessionProfiles((prev) => ({
-      ...prev,
-      [sessionKey]: buildSessionProfile(
-        demoPayload,
-        sessionKey,
-        prev[sessionKey],
-      ),
-    }));
+    setSessionProfiles((prev) => {
+      previouslyHadProfile = Boolean(prev[sessionKey]?.profile);
+      return {
+        ...prev,
+        [sessionKey]: buildSessionProfile(
+          demoPayload,
+          sessionKey,
+          prev[sessionKey],
+        ),
+      };
+    });
     appendSystemMessage(messageLines.join('\n'), { tone: "warning" });
     appendLog('Synthetic demo profile issued with sandbox identifiers');
     if (!previouslyHadProfile) {
@@ -3324,10 +3573,63 @@ function RealTimeVoiceApp() {
       clearTimeout(demoFormCloseTimeoutRef.current);
     }
     demoFormCloseTimeoutRef.current = window.setTimeout(() => {
-      setShowDemoForm(false);
+      closeDemoForm();
       demoFormCloseTimeoutRef.current = null;
     }, 1000);
-  }, [appendLog, appendSystemMessage, sessionId, sessionProfiles, triggerProfileHighlight, setShowDemoForm]);
+  }, [appendLog, appendSystemMessage, sessionId, triggerProfileHighlight, closeDemoForm]);
+
+  const handleResetSession = useCallback(() => {
+    const newSessionId = createNewSessionId();
+    setSessionId(newSessionId);
+    setSessionProfiles({});
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      logger.info('🔌 Closing WebSocket for session reset...');
+      try {
+        socketRef.current.close();
+      } catch (error) {
+        logger.warn('Error closing socket during reset', error);
+      }
+    }
+    setMessages([]);
+    setActiveSpeaker(null);
+    stopRecognitionRef.current?.();
+    setCallActive(false);
+    setShowPhoneInput(false);
+    appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
+    setTimeout(() => {
+      appendSystemMessage(
+        "✅ Session restarted with new ID. Ready for a fresh conversation!",
+        { tone: "success" },
+      );
+    }, 500);
+  }, [appendLog, appendSystemMessage, setSessionId, setSessionProfiles, setMessages, setActiveSpeaker, setCallActive, setShowPhoneInput]);
+
+  const handleMicToggle = useCallback(() => {
+    if (recording) {
+      stopRecognitionRef.current?.();
+    } else {
+      startRecognitionRef.current?.();
+    }
+  }, [recording]);
+
+  const handlePhoneButtonClick = useCallback(() => {
+    if (isCallDisabled) {
+      return;
+    }
+    if (callActive) {
+      stopRecognitionRef.current?.();
+      setCallActive(false);
+      const endedAt = new Date().toISOString();
+      appendSystemMessage("📞 Call ended", {
+        tone: "warning",
+        timestamp: endedAt,
+        withDivider: true,
+        dividerLabel: `Call disconnected · ${formatStatusTimestamp(endedAt)}`,
+      });
+      return;
+    }
+    setShowPhoneInput((prev) => !prev);
+  }, [isCallDisabled, callActive, appendSystemMessage, setCallActive, setShowPhoneInput]);
 
   const publishMetricsSummary = useCallback(
     (label, detail) => {
@@ -3527,23 +3829,6 @@ function RealTimeVoiceApp() {
   },[messages]);
 
   useEffect(() => {
-    if (outputAudioLevel <= 0) {
-      return undefined;
-    }
-    const decayId = window.setTimeout(() => {
-      let next = outputAudioLevelRef.current * 0.78;
-      if (next < 0.002) {
-        next = 0;
-      }
-      outputAudioLevelRef.current = next;
-      setOutputAudioLevel(next);
-    }, 140);
-    return () => {
-      window.clearTimeout(decayId);
-    };
-  }, [outputAudioLevel]);
-
-  useEffect(() => {
     return () => {
       if (processorRef.current) {
         try { 
@@ -3589,8 +3874,11 @@ function RealTimeVoiceApp() {
         }
         socketRef.current = null;
       }
+      cancelOutputLevelDecay();
+      outputAudioLevelRef.current = 0;
+      audioLevelRef.current = 0;
     };
-  }, []);
+  }, [cancelOutputLevelDecay]);
 
   useEffect(() => {
     if (log.includes("Call connected"))  setCallActive(true);
@@ -3713,7 +4001,6 @@ function RealTimeVoiceApp() {
         const level = previous + (target - previous) * smoothing;
         
         audioLevelRef.current = level;
-        setAudioLevel(level);
 
         // Debug: Log a sample of mic data
 
@@ -3780,11 +4067,13 @@ function RealTimeVoiceApp() {
       setActiveSpeaker("System");
       setRecording(false);
       audioLevelRef.current = 0;
-      setAudioLevel(0);
       outputAudioLevelRef.current = 0;
-      setOutputAudioLevel(0);
+      cancelOutputLevelDecay();
       appendLog("🛑 PCM streaming stopped");
     };
+
+    startRecognitionRef.current = startRecognition;
+    stopRecognitionRef.current = stopRecognition;
 
     const pushIfChanged = (arr, msg) => {
       const normalizedMsg =
@@ -4451,7 +4740,7 @@ function RealTimeVoiceApp() {
                     profile={activeSessionProfile} 
                     sessionId={sessionId}
                     highlight={profileHighlight}
-                    onCreateProfile={() => setShowDemoForm(true)}
+                    onCreateProfile={openDemoForm}
                   />
                 ) : (
                   <Button
@@ -4460,7 +4749,7 @@ function RealTimeVoiceApp() {
                     startIcon={<BoltRoundedIcon fontSize="small" />}
                     onMouseEnter={() => setCreateProfileHovered(true)}
                     onMouseLeave={() => setCreateProfileHovered(false)}
-                    onClick={() => setShowDemoForm(true)}
+                    onClick={openDemoForm}
                     sx={{
                       ...styles.createProfileButton,
                       ...(createProfileHovered ? styles.createProfileButtonHover : {}),
@@ -4477,8 +4766,8 @@ function RealTimeVoiceApp() {
             <div style={styles.waveformSection}>
               <WaveformVisualization 
                 activeSpeaker={activeSpeaker} 
-                audioLevel={audioLevel}
-                outputAudioLevel={outputAudioLevel}
+                audioLevelRef={audioLevelRef}
+                outputAudioLevelRef={outputAudioLevelRef}
               />
               <div style={styles.sectionDivider}></div>
             </div>
@@ -4494,188 +4783,15 @@ function RealTimeVoiceApp() {
             </div>
 
             {/* Control Buttons - Clean 3-button layout */}
-            <div style={styles.controlSection}>
-              <div style={styles.controlContainer}>
-                
-            {/* LEFT: Reset/Restart Session Button */}
-            <div style={{ position: 'relative' }}>
-              <IconButton
-                disableRipple
-                aria-label="Reset session"
-                sx={styles.resetButton(resetHovered)}
-                onMouseEnter={() => {
-                  setShowResetTooltip(true);
-                  setResetHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setShowResetTooltip(false);
-                  setResetHovered(false);
-                }}
-                onClick={() => {
-                  // Reset entire session - clear chat and restart with new session ID
-                  const newSessionId = createNewSessionId();
-                  setSessionId(newSessionId);
-                  setSessionProfiles({});
-                  // Close existing WebSocket if connected
-                  if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-                    logger.info('🔌 Closing WebSocket for session reset...');
-                    socketRef.current.close();
-                  }
-                  
-                  // Reset UI state
-                  setMessages([]);
-                  setActiveSpeaker(null);
-                  stopRecognition();
-                  setCallActive(false);
-                  setShowPhoneInput(false);
-                  appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
-                  
-                  // Add welcome message
-                  setTimeout(() => {
-                    appendSystemMessage(
-                      "✅ Session restarted with new ID. Ready for a fresh conversation!",
-                      { tone: "success" }
-                    );
-                  }, 500);
-                }}
-              >
-                <RestartAltRoundedIcon fontSize="medium" />
-              </IconButton>
-              
-              {/* Tooltip */}
-              <div 
-                style={{
-                  ...styles.buttonTooltip,
-                  ...(showResetTooltip ? styles.buttonTooltipVisible : {})
-                }}
-              >
-                Reset conversation & start fresh
-              </div>
-            </div>
-
-            {/* MIDDLE: Microphone Button */}
-            <div style={{ position: 'relative' }}>
-              <IconButton
-                disableRipple
-                aria-label={recording ? "Stop microphone" : "Start microphone"}
-                sx={styles.micButton(recording, micHovered)}
-                onMouseEnter={() => {
-                  setShowMicTooltip(true);
-                  setMicHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setShowMicTooltip(false);
-                  setMicHovered(false);
-                }}
-                onClick={recording ? stopRecognition : startRecognition}
-              >
-                {recording ? (
-                  <MicOffRoundedIcon fontSize="medium" />
-                ) : (
-                  <MicRoundedIcon fontSize="medium" />
-                )}
-              </IconButton>
-              
-              {/* Tooltip */}
-              <div 
-                style={{
-                  ...styles.buttonTooltip,
-                  ...(showMicTooltip ? styles.buttonTooltipVisible : {})
-                }}
-              >
-                {recording ? "Stop recording your voice" : "Start voice conversation"}
-              </div>
-            </div>
-
-            {/* RIGHT: Phone Call Button */}
-            <div 
-              style={{ position: 'relative' }}
-              onMouseEnter={() => {
-                setShowPhoneTooltip(true);
-                if (isCallDisabled && phoneButtonRef.current) {
-                  const rect = phoneButtonRef.current.getBoundingClientRect();
-                  setPhoneDisabledPos({
-                    top: rect.bottom + 12,
-                    left: rect.left + rect.width / 2,
-                  });
-                }
-                if (!isCallDisabled) {
-                  setPhoneHovered(true);
-                }
-              }}
-              onMouseLeave={() => {
-                setShowPhoneTooltip(false);
-                setPhoneHovered(false);
-                setPhoneDisabledPos(null);
-              }}
-            >
-              <IconButton
-                ref={phoneButtonRef}
-                disableRipple
-                aria-label={callActive ? "Hang up call" : "Place call"}
-                sx={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
-                disabled={isCallDisabled}
-                title={
-                  isCallDisabled
-                    ? undefined
-                    : callActive
-                      ? "Hang up the phone call"
-                      : "Make a phone call"
-                }
-                onClick={() => {
-                  if (isCallDisabled) {
-                    return;
-                  }
-                  if (callActive) {
-                    // Hang up call
-                    stopRecognition();
-                    setCallActive(false);
-                    const endedAt = new Date().toISOString();
-                    appendSystemMessage("📞 Call ended", {
-                      tone: "warning",
-                      timestamp: endedAt,
-                      withDivider: true,
-                      dividerLabel: `Call disconnected · ${formatStatusTimestamp(endedAt)}`,
-                    });
-                  } else {
-                    // Show phone input
-                    setShowPhoneInput(!showPhoneInput);
-                  }
-                }}
-              >
-                {callActive ? (
-                  <PhoneDisabledRoundedIcon fontSize="medium" />
-                ) : (
-                  <PhoneRoundedIcon fontSize="medium" />
-                )}
-              </IconButton>
-              
-              {/* Tooltip */}
-              {!isCallDisabled && (
-                <div 
-                  style={{
-                    ...styles.buttonTooltip,
-                    ...(showPhoneTooltip ? styles.buttonTooltipVisible : {})
-                  }}
-                >
-                  {callActive ? "Hang up the phone call" : "Make a phone call"}
-                </div>
-              )}
-              {isCallDisabled && showPhoneTooltip && phoneDisabledPos && (
-                <div
-                  style={{
-                    ...styles.phoneDisabledDialog,
-                    top: phoneDisabledPos.top,
-                    left: phoneDisabledPos.left,
-                  }}
-                >
-                  ⚠️ Outbound calling is disabled. Update backend .env with Azure Communication Services settings (ACS_CONNECTION_STRING, ACS_SOURCE_PHONE_NUMBER, ACS_ENDPOINT) to enable this feature.
-                </div>
-              )}
-            </div>
-
-          </div>
-        </div>
+            <ConversationControls
+              recording={recording}
+              callActive={callActive}
+              isCallDisabled={isCallDisabled}
+              onResetSession={handleResetSession}
+              onMicToggle={handleMicToggle}
+              onPhoneButtonClick={handlePhoneButtonClick}
+              phoneButtonRef={phoneButtonRef}
+            />
 
         {/* Phone Input Panel */}
       {showPhoneInput && (
@@ -4717,11 +4833,11 @@ function RealTimeVoiceApp() {
         {showDemoForm && typeof document !== 'undefined' &&
           createPortal(
             <>
-              <div style={styles.demoFormBackdrop} onClick={() => setShowDemoForm(false)} />
-              <div style={styles.demoFormOverlay}>
+              <div style={styles.demoFormBackdrop} onClick={closeDemoForm} />
+              <div className="demo-form-overlay" style={styles.demoFormOverlay}>
                 <TemporaryUserForm
                   apiBaseUrl={API_BASE_URL}
-                  onClose={() => setShowDemoForm(false)}
+                  onClose={closeDemoForm}
                   sessionId={sessionId}
                   onSuccess={handleDemoCreated}
                 />

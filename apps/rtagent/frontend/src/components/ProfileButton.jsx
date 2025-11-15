@@ -71,7 +71,7 @@ const SectionTitle = ({ icon, children }) => (
 /* ------------------------------------------------------------------ *
  *  PROFILE BUTTON COMPONENT WITH MATERIAL UI
  * ------------------------------------------------------------------ */
-const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile, highlight = false }) => {
+const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfile, highlight = false }) => {
   const [panelOpen, setPanelOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(false);
   const lastProfileIdentityRef = useRef(null);
@@ -636,4 +636,12 @@ const ProfileButton = ({ profile, sessionId, onMenuClose, onCreateProfile, highl
   );
 };
 
-export default ProfileButton;
+const areProfileButtonPropsEqual = (prevProps, nextProps) => (
+  prevProps.profile === nextProps.profile &&
+  prevProps.sessionId === nextProps.sessionId &&
+  prevProps.highlight === nextProps.highlight &&
+  prevProps.onCreateProfile === nextProps.onCreateProfile &&
+  prevProps.onMenuClose === nextProps.onMenuClose
+);
+
+export default React.memo(ProfileButtonComponent, areProfileButtonPropsEqual);
