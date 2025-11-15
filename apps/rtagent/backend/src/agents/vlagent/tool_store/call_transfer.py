@@ -235,6 +235,7 @@ async def transfer_call_to_call_center(arguments: Dict[str, Any]) -> Dict[str, A
         call_connection_id=payload.call_connection_id,
         target_address=target,
         operation_context=operation_context,
+        auto_detect_transferee=True,
     )
 
     if result.get("success"):

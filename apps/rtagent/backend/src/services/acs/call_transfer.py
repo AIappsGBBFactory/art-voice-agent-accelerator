@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from azure.communication.callautomation import (
     CallAutomationClient,
@@ -20,6 +20,11 @@ from apps.rtagent.backend.src.services.acs.acs_caller import initialize_acs_call
 from src.acs.acs_helper import AcsCaller
 from utils.ml_logging import get_logger
 
+if TYPE_CHECKING:  # pragma: no cover - typing assistance only
+    from azure.communication.callautomation import CallParticipant
+else:  # noqa: D401 - runtime alias for older SDKs lacking CallParticipant export
+    CallParticipant = Any  # type: ignore[assignment]
+
 logger = get_logger("services.acs.call_transfer")
 tracer = trace.get_tracer(__name__)
 
@@ -33,6 +38,7 @@ class TransferRequest:
     operation_context: Optional[str] = None
     operation_callback_url: Optional[str] = None
     transferee: Optional[str] = None
+    transferee_identifier: Optional[CommunicationIdentifier] = None
     sip_headers: Optional[Mapping[str, str]] = None
     voip_headers: Optional[Mapping[str, str]] = None
     source_caller_id: Optional[str] = None
@@ -68,7 +74,7 @@ def _prepare_transfer_args(request: TransferRequest) -> Tuple[str, Dict[str, Any
         kwargs["operation_context"] = request.operation_context
     if request.operation_callback_url:
         kwargs["operation_callback_url"] = request.operation_callback_url
-    transferee_identifier = _build_optional_target(request.transferee)
+    transferee_identifier = request.transferee_identifier or _build_optional_target(request.transferee)
     if transferee_identifier:
         kwargs["transferee"] = transferee_identifier
     if request.sip_headers:
@@ -103,6 +109,8 @@ async def transfer_call(
     acs_caller: Optional[AcsCaller] = None,
     acs_client: Optional[CallAutomationClient] = None,
     call_connection: Optional[CallConnectionClient] = None,
+    transferee_identifier: Optional[CommunicationIdentifier] = None,
+    auto_detect_transferee: bool = False,
 ) -> Dict[str, Any]:
     """Transfer the active ACS call to the specified target participant."""
 
@@ -120,12 +128,16 @@ async def transfer_call(
     if conn is None:
         return {"success": False, "message": f"Call connection '{call_connection_id}' is not available."}
 
+    if auto_detect_transferee and not transferee_identifier and not transferee:
+        transferee_identifier = await _discover_transferee(conn)
+
     request = TransferRequest(
         call_connection_id=call_connection_id,
         target_address=target_address,
         operation_context=operation_context,
         operation_callback_url=operation_callback_url,
         transferee=transferee,
+        transferee_identifier=transferee_identifier,
         sip_headers=sip_headers,
         voip_headers=voip_headers,
         source_caller_id=source_caller_id,
@@ -143,6 +155,8 @@ async def transfer_call(
     }
     if request.transferee:
         attributes["transfer.transferee"] = request.transferee
+    if request.transferee_identifier:
+        attributes["transfer.transferee_raw_id"] = getattr(request.transferee_identifier, "raw_id", str(request.transferee_identifier))
 
     with tracer.start_as_current_span(
         "acs.transfer_call",
@@ -199,11 +213,74 @@ async def transfer_call(
                 "status": str(status_value),
                 "operation_context": operation_context_value,
                 "target": target_address,
-                "transferee": transferee,
+                "transferee": transferee or getattr(transferee_identifier, "raw_id", transferee_identifier),
             },
             "should_interrupt_playback": True,
             "terminate_session": True,
         }
+
+
+async def _discover_transferee(call_conn: CallConnectionClient) -> Optional[CommunicationIdentifier]:
+    """Best-effort discovery of the active caller participant for transfer operations."""
+
+    participants = await _list_participants(call_conn)
+    if not participants:
+        logger.warning("No participants returned when attempting to detect transferee.")
+        return None
+
+    identifier = _select_transferee_identifier(participants)
+    if identifier:
+        logger.debug("Auto-detected transferee identifier: %s", getattr(identifier, "raw_id", identifier))
+    else:
+        logger.warning("Unable to auto-detect transferee identifier from participants list.")
+    return identifier
+
+
+async def _list_participants(call_conn: CallConnectionClient) -> Iterable[CallParticipant]:
+    """Fetch participants using whichever API the installed SDK exposes."""
+
+    def _sync_list() -> Iterable[CallParticipant]:
+        if hasattr(call_conn, "get_participants"):
+            return call_conn.get_participants()  # type: ignore[attr-defined]
+        if hasattr(call_conn, "list_participants"):
+            return call_conn.list_participants()  # type: ignore[attr-defined]
+        return []
+
+    try:
+        participants = await asyncio.to_thread(_sync_list)
+        return getattr(participants, "value", getattr(participants, "participants", participants)) or []
+    except Exception as exc:  # pragma: no cover - defensive logging only
+        logger.warning("Failed to list participants for transfer auto-detect: %s", exc)
+        return []
+
+
+def _select_transferee_identifier(participants: Iterable[CallParticipant]) -> Optional[CommunicationIdentifier]:
+    """Pick the most appropriate candidate to transfer away (the active caller)."""
+
+    phone_candidates: list[CommunicationIdentifier] = []
+    other_candidates: list[CommunicationIdentifier] = []
+
+    for participant in participants:
+        identifier = getattr(participant, "identifier", None)
+        if not isinstance(identifier, CommunicationIdentifier):
+            continue
+
+        if isinstance(identifier, PhoneNumberIdentifier):
+            phone_candidates.append(identifier)
+            continue
+
+        raw_id = getattr(identifier, "raw_id", "")
+        if isinstance(raw_id, str) and raw_id.startswith("4:"):
+            phone_candidates.append(identifier)
+            continue
+
+        other_candidates.append(identifier)
+
+    if phone_candidates:
+        return phone_candidates[0]
+    if other_candidates:
+        return other_candidates[0]
+    return None
 
 
 __all__ = ["transfer_call"]
