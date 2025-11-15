@@ -49,6 +49,69 @@ async def test_transfer_call_requires_call_id():
 
 
 @pytest.mark.asyncio
+async def test_transfer_call_auto_detects_transferee(monkeypatch):
+    invoked = {}
+
+    class StubConnection:
+        def transfer_call_to_participant(self, identifier, **kwargs):
+            invoked["identifier"] = identifier
+            invoked["kwargs"] = kwargs
+            return types.SimpleNamespace(status="completed", operation_context="ctx")
+
+    async def immediate_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    fake_identifier = types.SimpleNamespace(raw_id="4:+15551234567")
+
+    async def fake_discover(call_conn):
+        return fake_identifier
+
+    monkeypatch.setattr(call_transfer_module.asyncio, "to_thread", immediate_to_thread)
+    monkeypatch.setattr(call_transfer_module, "_discover_transferee", fake_discover)
+
+    result = await call_transfer_module.transfer_call(
+        call_connection_id="call-789",
+        target_address="+15557654321",
+        call_connection=StubConnection(),
+        auto_detect_transferee=True,
+    )
+
+    assert result["success"] is True
+    assert result["call_transfer"]["transferee"] == fake_identifier.raw_id
+    assert invoked["kwargs"]["transferee"] is fake_identifier
+
+
+@pytest.mark.asyncio
+async def test_transfer_call_auto_detect_transferee_handles_absence(monkeypatch):
+    invoked = {}
+
+    class StubConnection:
+        def transfer_call_to_participant(self, identifier, **kwargs):
+            invoked["identifier"] = identifier
+            invoked["kwargs"] = kwargs
+            return types.SimpleNamespace(status="completed", operation_context="ctx")
+
+    async def immediate_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    async def fake_discover(call_conn):
+        return None
+
+    monkeypatch.setattr(call_transfer_module.asyncio, "to_thread", immediate_to_thread)
+    monkeypatch.setattr(call_transfer_module, "_discover_transferee", fake_discover)
+
+    result = await call_transfer_module.transfer_call(
+        call_connection_id="call-790",
+        target_address="+15557654321",
+        call_connection=StubConnection(),
+        auto_detect_transferee=True,
+    )
+
+    assert result["success"] is True
+    assert "transferee" not in invoked["kwargs"]
+
+
+@pytest.mark.asyncio
 async def test_transfer_tool_delegates(monkeypatch):
     recorded = {}
 
@@ -91,6 +154,7 @@ async def test_transfer_call_center_tool_uses_environment(monkeypatch):
     assert result["success"] is True
     assert recorded["target_address"] == "sip:center@example.com"
     assert recorded["call_connection_id"] == "call-789"
+    assert recorded["auto_detect_transferee"] is True
 
 
 @pytest.mark.asyncio
@@ -130,3 +194,4 @@ async def test_transfer_call_center_tool_respects_override(monkeypatch):
     assert result["success"] is True
     assert recorded["target_address"] == "+15551231234"
     assert recorded["operation_context"] == "session-9"
+    assert recorded["auto_detect_transferee"] is True
