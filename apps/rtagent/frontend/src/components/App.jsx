@@ -36,7 +36,23 @@ const wsBaseCandidate = wsPlaceholder.startsWith('__')
   ? import.meta.env.VITE_WS_BASE_URL || API_BASE_URL
   : wsPlaceholder;
 
-const WS_URL = wsBaseCandidate.replace(/^http/i, 'ws').replace(/^ws$/, 'ws');
+const toWsUrl = (value) => {
+  if (!value || typeof value !== 'string') {
+    return 'ws://localhost';
+  }
+  if (/^wss?:\/\//i.test(value)) {
+    return value;
+  }
+  if (/^https:\/\//i.test(value)) {
+    return value.replace(/^https:\/\//i, 'wss://');
+  }
+  if (/^http:\/\//i.test(value)) {
+    return value.replace(/^http:\/\//i, 'ws://');
+  }
+  return value;
+};
+
+const WS_URL = toWsUrl(wsBaseCandidate);
 
 // Session management utilities
 const getOrCreateSessionId = () => {
@@ -298,17 +314,10 @@ const styles = {
     position: "fixed",
     top: "20px",
     left: "24px",
-    width: "46px",
-    height: "46px",
-    borderRadius: "50%",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 6px 18px rgba(15,23,42,0.18)",
     display: "flex",
     alignItems: "center",
-    justifyContent: "center",
-    zIndex: 100,
-    willChange: "transform",
+    gap: "12px",
+    zIndex: 120,
   },
   backendIndicatorDock: {
     position: "fixed",
@@ -1061,8 +1070,8 @@ const styles = {
 
   helpTooltip: {
     position: "absolute",
-    top: "calc(100% + 6px)",
-    left: "56px",
+    top: "calc(100% + 10px)",
+    left: 0,
     background: "white",
     border: "1px solid #e2e8f0",
     borderRadius: "12px",
@@ -1550,9 +1559,9 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
   const [screenWidth, setScreenWidth] = useState(window.innerWidth);
   const [showAgentConfig, setShowAgentConfig] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState(null);
-  const [configChanges, setConfigChanges] = useState({});
-  const [updateStatus, setUpdateStatus] = useState({});
-  const [showStatistics, setShowStatistics] = useState(false);
+  // const [configChanges, setConfigChanges] = useState({});
+  // const [updateStatus, setUpdateStatus] = useState({});
+  // const [showStatistics, setShowStatistics] = useState(false);
   const [showAcsHover, setShowAcsHover] = useState(false);
   const [acsTooltipPos, setAcsTooltipPos] = useState(null);
   const [revealApiUrl, setRevealApiUrl] = useState(false);
@@ -1637,56 +1646,56 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
     }
   };
 
-  // Update agent configuration
-  const updateAgentConfig = async (agentName, config) => {
-    try {
-      setUpdateStatus({...updateStatus, [agentName]: 'updating'});
+  // // Update agent configuration
+  // const updateAgentConfig = async (agentName, config) => {
+  //   try {
+  //     setUpdateStatus({...updateStatus, [agentName]: 'updating'});
       
-      const response = await fetch(`${url}/api/v1/agents/${agentName}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(config),
-      });
+  //     const response = await fetch(`${url}/api/v1/agents/${agentName}`, {
+  //       method: 'PUT',
+  //       headers: {
+  //         'Content-Type': 'application/json',
+  //       },
+  //       body: JSON.stringify(config),
+  //     });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+  //     if (!response.ok) {
+  //       throw new Error(`HTTP ${response.status}`);
+  //     }
 
-      const data = await response.json();
+  //     const data = await response.json();
       
-      setUpdateStatus({...updateStatus, [agentName]: 'success'});
+  //     setUpdateStatus({...updateStatus, [agentName]: 'success'});
       
-      // Refresh agents data
-      checkAgents();
+  //     // Refresh agents data
+  //     checkAgents();
       
-      // Clear success status after 3 seconds
-      setTimeout(() => {
-        setUpdateStatus(prev => {
-          const newStatus = {...prev};
-          delete newStatus[agentName];
-          return newStatus;
-        });
-      }, 3000);
+  //     // Clear success status after 3 seconds
+  //     setTimeout(() => {
+  //       setUpdateStatus(prev => {
+  //         const newStatus = {...prev};
+  //         delete newStatus[agentName];
+  //         return newStatus;
+  //       });
+  //     }, 3000);
       
-      return data;
-    } catch (err) {
-      logger.error("Agent config update failed:", err);
-      setUpdateStatus({...updateStatus, [agentName]: 'error'});
+  //     return data;
+  //   } catch (err) {
+  //     logger.error("Agent config update failed:", err);
+  //     setUpdateStatus({...updateStatus, [agentName]: 'error'});
       
-      // Clear error status after 5 seconds
-      setTimeout(() => {
-        setUpdateStatus(prev => {
-          const newStatus = {...prev};
-          delete newStatus[agentName];
-          return newStatus;
-        });
-      }, 5000);
+  //     // Clear error status after 5 seconds
+  //     setTimeout(() => {
+  //       setUpdateStatus(prev => {
+  //         const newStatus = {...prev};
+  //         delete newStatus[agentName];
+  //         return newStatus;
+  //       });
+  //     }, 5000);
       
-      throw err;
-    }
-  };
+  //     throw err;
+  //   }
+  // };
 
   useEffect(() => {
     // Parse and format the URL for display
@@ -1696,7 +1705,7 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
       const protocol = urlObj.protocol.replace(':', '');
       
       // Shorten Azure URLs
-      if (host.includes('.azurewebsites.net')) {
+      if (host.includes('.azurecontainerapps.io')) {
         const appName = host.split('.')[0];
         setDisplayUrl(`${protocol}://${appName}.azure...`);
       } else if (host === 'localhost') {
@@ -2766,7 +2775,7 @@ const ConversationControls = React.memo(({
             disableRipple
             aria-label={callActive ? "Hang up call" : "Place call"}
             sx={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
-            disabled={isCallDisabled}
+            disabled={isCallDisabled && !callActive}
             onClick={onPhoneButtonClick}
           >
             {callActive ? (
@@ -3812,7 +3821,7 @@ function RealTimeVoiceApp() {
   }, [recording]);
 
   const handlePhoneButtonClick = useCallback(() => {
-    if (isCallDisabled) {
+    if (isCallDisabled && !callActive) {
       return;
     }
     if (callActive) {
@@ -4078,11 +4087,6 @@ function RealTimeVoiceApp() {
       audioLevelRef.current = 0;
     };
   }, [cancelOutputLevelDecay]);
-
-  useEffect(() => {
-    if (log.includes("Call connected"))  setCallActive(true);
-    if (log.includes("Call ended"))      setCallActive(false);
-  }, [log]);
 
   const startRecognition = async (modeOverride) => {
       appendLog("🎤 PCM streaming started");
@@ -4395,8 +4399,9 @@ function RealTimeVoiceApp() {
             content: actualPayload.message
           };
         } else {
-          // For other envelope types, use the payload directly
+          // For other envelope types, use the payload directly and retain the type
           payload = {
+            type: envelopeType,
             ...actualPayload,
             sender: envelopeSender,
             speaker: envelopeSender
@@ -4406,12 +4411,40 @@ function RealTimeVoiceApp() {
         logger.debug("📨 Transformed envelope to legacy format:", payload);
       }
 
+      if (payload.event_type === "call_connected") {
+        setCallActive(true);
+        appendLog("📞 Call connected");
+        return;
+      }
+
+      if (payload.event_type === "call_disconnected") {
+        setCallActive(false);
+        setActiveSpeaker(null);
+        const reasonLabel =
+          typeof payload.disconnect_reason === "string"
+            ? payload.disconnect_reason.split("_").join(" ").toUpperCase()
+            : payload.disconnect_reason;
+        const captionParts = [];
+        if (reasonLabel) captionParts.push(`Reason: ${reasonLabel}`);
+        if (payload.ended_at) captionParts.push(formatStatusTimestamp(payload.ended_at));
+        appendSystemMessage("📞 Call disconnected", {
+          tone: "warning",
+          statusCaption: captionParts.join(" • ") || undefined,
+          withDivider: true,
+          dividerLabel: captionParts.length ? captionParts.join(" • ") : undefined,
+        });
+        appendLog("📞 Call ended");
+        return;
+      }
+
       if (payload.type === "session_end") {
         const reason = payload.reason || "UNKNOWN";
         terminationReasonRef.current = reason;
         if (reason === "HUMAN_HANDOFF") {
           shouldReconnectRef.current = false;
         }
+        setCallActive(false);
+        setShowPhoneInput(false);
         const normalizedReason =
           typeof reason === "string" ? reason.split("_").join(" ") : String(reason);
         const reasonText =
@@ -4884,28 +4917,25 @@ function RealTimeVoiceApp() {
               topic: obj.topic
             });
             
-            // Extract actual message from envelope
-            if (obj.payload.message) {
-              processedObj = {
-                type: obj.type,
-                sender: obj.sender,
-                message: obj.payload.message
-              };
-            } else if (obj.payload.text) {
-              processedObj = {
-                type: obj.type,
-                sender: obj.sender,
-                message: obj.payload.text
-              };
-            } else {
-              // Fallback to using the whole payload as message
-              processedObj = {
-                type: obj.type,
-                sender: obj.sender,
-                message: JSON.stringify(obj.payload)
-              };
-            }
+            processedObj = {
+              type: obj.type,
+              sender: obj.sender,
+              ...obj.payload,
+            };
             logger.debug("📨 Transformed relay envelope:", processedObj);
+          }
+
+          if (processedObj.event_type === "call_connected") {
+            setCallActive(true);
+            appendLog("📞 Call connected");
+            return;
+          }
+
+          if (processedObj.event_type === "call_disconnected") {
+            setCallActive(false);
+            setActiveSpeaker(null);
+            appendLog("📞 Call ended");
+            return;
           }
           
           if (processedObj.type?.startsWith("tool_")) {
@@ -4941,6 +4971,7 @@ function RealTimeVoiceApp() {
       <div style={styles.mainContainer}>
         <IndustryTag />
         <div style={styles.helpButtonDock}>
+          <DemoScenariosWidget inline />
           <HelpButton />
         </div>
         <div style={styles.backendIndicatorDock}>
@@ -5107,7 +5138,6 @@ function RealTimeVoiceApp() {
       open={showProfilePanel}
       onClose={() => setShowProfilePanel(false)}
     />
-    <DemoScenariosWidget />
   </div>
 );
 }
