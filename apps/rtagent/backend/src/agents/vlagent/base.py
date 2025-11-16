@@ -19,7 +19,7 @@ from azure.ai.voicelive.models import (
     AzureCustomVoice,
     OpenAIVoice,
     RequestSession,
-    AudioInputTranscriptionOptions
+    AudioInputTranscriptionOptions,
 )
 from .prompts import PromptManager
 from .financial_tools import build_function_tools
@@ -27,6 +27,9 @@ from src.speech.phrase_list_manager import get_global_phrase_snapshot
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.agents")
+
+_REQUEST_SESSION_FIELDS = set(getattr(RequestSession, "_attribute_map", {}).keys())
+_SUPPORTS_AUDIO_TRANSCRIPTION_OPTIONS = "audio_input_transcription_options" in _REQUEST_SESSION_FIELDS
 
 def _mods(values: List[str] | None) -> List[Modality]:
     vals = [v.lower() for v in (values or ["TEXT", "AUDIO"])]
@@ -245,7 +248,13 @@ class AzureVoiceLiveAgent:
         )
 
         if phrase_options:
-            kwargs["audio_input_transcription_options"] = phrase_options
+            if _SUPPORTS_AUDIO_TRANSCRIPTION_OPTIONS:
+                kwargs["audio_input_transcription_options"] = phrase_options
+            else:
+                logger.debug(
+                    "[%s] VoiceLive SDK lacks audio_input_transcription_options; skipping phrase bias",
+                    self.name,
+                )
         
         if voice_payload:
             kwargs["voice"] = voice_payload  # Per-agent voice

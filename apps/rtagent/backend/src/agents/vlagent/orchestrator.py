@@ -1,6 +1,7 @@
 # orchestrator.py
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import time
@@ -62,6 +63,8 @@ class LiveOrchestrator:
         audio_processor=None,
         messenger=None,
         call_connection_id: Optional[str] = None,
+        *,
+        transport: str = "acs",
     ):
         self.conn = conn
         self.agents = agents
@@ -75,6 +78,8 @@ class LiveOrchestrator:
         self._last_user_message: Optional[str] = None
         self.call_connection_id = call_connection_id
         self._call_center_triggered = False
+        self._transport = transport
+        self._greeting_tasks: set[asyncio.Task] = set()
 
         if self.messenger:
             try:
@@ -96,6 +101,8 @@ class LiveOrchestrator:
         previous_agent = self.active
         agent = self.agents[agent_name]
         
+        self._cancel_pending_greeting_tasks()
+
         # Always work with a copy so we do not mutate upstream state.
         system_vars = dict(system_vars or {})
         system_vars.setdefault("previous_agent", previous_agent)
@@ -156,11 +163,59 @@ class LiveOrchestrator:
                 system_vars=system_vars,
                 say=None,
             )
+            if self._pending_greeting and self._pending_greeting_agent == agent_name:
+                self._schedule_greeting_fallback(agent_name)
         except Exception:
             logger.exception("Failed to apply session for agent '%s'", agent_name)
             raise
         
         logger.info("[Active Agent] %s is now active", self.active)
+
+    def _transport_supports_acs(self) -> bool:
+        return self._transport == "acs"
+
+    def _cancel_pending_greeting_tasks(self) -> None:
+        if not self._greeting_tasks:
+            return
+        for task in list(self._greeting_tasks):
+            task.cancel()
+        self._greeting_tasks.clear()
+
+    def _schedule_greeting_fallback(self, agent_name: str) -> None:
+        if not self._pending_greeting or not self._pending_greeting_agent:
+            return
+
+        async def _fallback() -> None:
+            try:
+                await asyncio.sleep(0.35)
+                if (
+                    self._pending_greeting
+                    and self._pending_greeting_agent == agent_name
+                ):
+                    logger.debug(
+                        "[GreetingFallback] Triggering fallback introduction for %s",
+                        agent_name,
+                    )
+                    try:
+                        await self.agents[agent_name].trigger_response(
+                            self.conn,
+                            say=self._pending_greeting,
+                        )
+                    finally:
+                        self._pending_greeting = None
+                        self._pending_greeting_agent = None
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("[GreetingFallback] Failed to deliver greeting", exc_info=True)
+
+        task = asyncio.create_task(
+            _fallback(),
+            name=f"voicelive-greeting-fallback-{agent_name}",
+        )
+
+        task.add_done_callback(lambda t: self._greeting_tasks.discard(t))
+        self._greeting_tasks.add(task)
 
     def _select_pending_greeting(
         self,
@@ -249,9 +304,9 @@ class LiveOrchestrator:
             args = {}
         
         if name in TRANSFER_TOOL_NAMES:
-            if (not args.get("call_connection_id")) and self.call_connection_id:
+            if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.call_connection_id:
                 args.setdefault("call_connection_id", self.call_connection_id)
-            if (not args.get("call_connection_id")) and self.messenger:
+            if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.messenger:
                 fallback_call_id = getattr(self.messenger, "call_id", None)
                 if fallback_call_id:
                     args.setdefault("call_connection_id", fallback_call_id)
@@ -501,6 +556,7 @@ class LiveOrchestrator:
             if self._pending_greeting and (
                 self._pending_greeting_agent == self.active
             ):
+                self._cancel_pending_greeting_tasks()
                 try:
                     await self.agents[self.active].trigger_response(
                         self.conn,
@@ -581,7 +637,7 @@ class LiveOrchestrator:
         logger.info("[Auto Transfer] Triggering call center transfer due to phrase match: '%s'", transcript)
 
         args: Dict[str, Any] = {}
-        if self.call_connection_id:
+        if self._transport_supports_acs() and self.call_connection_id:
             args["call_connection_id"] = self.call_connection_id
         if self.messenger:
             session_id = getattr(self.messenger, "session_id", None)
