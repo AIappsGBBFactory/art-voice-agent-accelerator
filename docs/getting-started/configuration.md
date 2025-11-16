@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD046 MD032 -->
 # :material-cog: Configuration Guide
 
 !!! info "Fine-Tune Your Voice Agent"
@@ -28,6 +29,7 @@ code .env  # VS Code
     | `AZURE_SPEECH_REGION` | ✅ | Azure region identifier | `eastus`, `westeurope` |
     | `AZURE_SPEECH_ENDPOINT` | Optional | Custom endpoint URL | `https://custom.cognitiveservices.azure.com` |
     | `AZURE_SPEECH_RESOURCE_ID` | Optional | Full resource ID for managed identity | `/subscriptions/.../accounts/speech-svc` |
+    | `SPEECH_RECOGNIZER_DEFAULT_PHRASES` | Optional | Comma-separated phrases to bias recognition | `contoso,fabrikam,adatum` |
 
 === "Azure Communication Services"
     | Variable | Required | Description | Example |
@@ -402,6 +404,8 @@ if __name__ == '__main__':
         for issue in issues:
             print(f'  - {issue}')
 ```
+
+<!-- markdownlint-enable MD046 MD032 -->
 
 ### Quick Configuration Test
 

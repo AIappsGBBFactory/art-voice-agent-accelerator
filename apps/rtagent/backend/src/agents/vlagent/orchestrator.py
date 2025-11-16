@@ -20,7 +20,8 @@ logger = get_logger("voicelive.orchestrator")
 TRANSFER_TOOL_NAMES = {"transfer_call_to_destination", "transfer_call_to_call_center"}
 
 CALL_CENTER_TRIGGER_PHRASES = {
-    "please route me to the call center",
+    "transfer to call center",
+    "transfer me to the call center",
 }
 
 
@@ -504,13 +505,13 @@ class LiveOrchestrator:
                 text = str(value)
                 safe_result[key] = text if len(text) <= 50 else f"{text[:47]}..."
             pretty_result = json.dumps(safe_result, indent=2, ensure_ascii=False)
-            logger.info(
-                "[%s] Tool '%s' %s | Result:\n%s",
-                self.active,
-                name,
-                success_indicator,
-                pretty_result,
-            )
+            # logger.info(
+            #     "[%s] Tool '%s' %s | Result:\n%s",
+            #     self.active,
+            #     name,
+            #     success_indicator,
+            #     pretty_result,
+            # )
 
             output_item = FunctionCallOutputItem(
                 call_id=call_id,

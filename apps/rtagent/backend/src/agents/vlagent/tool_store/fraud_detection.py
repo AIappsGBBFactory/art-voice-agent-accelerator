@@ -909,7 +909,14 @@ async def create_fraud_case(args: CreateFraudCaseArgs) -> CreateFraudCaseResult:
                 "priority_level": "low",
                 "next_steps": ["Provide complete fraud details"],
                 "estimated_resolution_time": "N/A",
-                "contact_reference": "N/A"
+                "contact_reference": "N/A",
+                "database_success": False,
+                "handoff_context": None,
+                "handoff_summary": None,
+                "handoff_message": None,
+                "handoff": False,
+                "target_agent": None,
+                "should_interrupt_playback": None,
             }
         
         # Generate case number
@@ -1026,7 +1033,14 @@ async def create_fraud_case(args: CreateFraudCaseArgs) -> CreateFraudCaseResult:
             "priority_level": "low",
             "next_steps": ["System error - escalate to supervisor"],
             "estimated_resolution_time": "N/A",
-            "contact_reference": "N/A"
+            "contact_reference": "N/A",
+            "database_success": False,
+            "handoff_context": None,
+            "handoff_summary": None,
+            "handoff_message": None,
+            "handoff": False,
+            "target_agent": None,
+            "should_interrupt_playback": None,
         }
 
 
