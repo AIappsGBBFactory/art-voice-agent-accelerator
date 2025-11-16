@@ -20,17 +20,23 @@ import "reactflow/dist/style.css";
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
+import ProfileDetailsPanel from './ProfileDetailsPanel.jsx';
 import DemoScenariosWidget from './DemoScenariosWidget.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import logger from '../utils/logger.js';
 
 // Environment configuration
 const backendPlaceholder = '__BACKEND_URL__';
-const API_BASE_URL = backendPlaceholder.startsWith('__') 
+const API_BASE_URL = backendPlaceholder.startsWith('__')
   ? import.meta.env.VITE_BACKEND_BASE_URL || 'http://localhost:8000'
   : backendPlaceholder;
 
-const WS_URL = API_BASE_URL.replace(/^https?/, "wss");
+const wsPlaceholder = '__WS_URL__';
+const wsBaseCandidate = wsPlaceholder.startsWith('__')
+  ? import.meta.env.VITE_WS_BASE_URL || API_BASE_URL
+  : wsPlaceholder;
+
+const WS_URL = wsBaseCandidate.replace(/^http/i, 'ws').replace(/^ws$/, 'ws');
 
 // Session management utilities
 const getOrCreateSessionId = () => {
@@ -3221,6 +3227,8 @@ function RealTimeVoiceApp() {
   const demoFormCloseTimeoutRef = useRef(null);
   const profileHighlightTimeoutRef = useRef(null);
   const [profileHighlight, setProfileHighlight] = useState(false);
+  const [showProfilePanel, setShowProfilePanel] = useState(false);
+  const lastProfileIdRef = useRef(null);
   const realtimePanelRef = useRef(null);
   const realtimePanelAnchorRef = useRef(null);
   const triggerProfileHighlight = useCallback(() => {
@@ -3715,6 +3723,19 @@ function RealTimeVoiceApp() {
   // Formatting functions moved to ProfileButton component
   const activeSessionProfile = sessionProfiles[sessionId];
   const hasActiveProfile = Boolean(activeSessionProfile?.profile);
+  useEffect(() => {
+    const profilePayload = activeSessionProfile?.profile;
+    const nextId = profilePayload?.id || activeSessionProfile?.sessionId || null;
+    if (!nextId) {
+      lastProfileIdRef.current = null;
+      setShowProfilePanel(false);
+      return;
+    }
+    if (lastProfileIdRef.current !== nextId) {
+      lastProfileIdRef.current = nextId;
+      setShowProfilePanel(true);
+    }
+  }, [activeSessionProfile]);
   
   const handleDemoCreated = useCallback((demoPayload) => {
     if (!demoPayload) {
@@ -4933,11 +4954,11 @@ function RealTimeVoiceApp() {
 
               <div style={styles.appHeaderActions}>
                 {hasActiveProfile ? (
-                  <ProfileButton 
-                    profile={activeSessionProfile} 
-                    sessionId={sessionId}
+                  <ProfileButton
+                    profile={activeSessionProfile}
                     highlight={profileHighlight}
                     onCreateProfile={openDemoForm}
+                    onTogglePanel={() => setShowProfilePanel((prev) => !prev)}
                   />
                 ) : (
                   <Button
@@ -5066,6 +5087,12 @@ function RealTimeVoiceApp() {
         }
       </div>
     </div>
+    <ProfileDetailsPanel
+      profile={activeSessionProfile}
+      sessionId={sessionId}
+      open={showProfilePanel}
+      onClose={() => setShowProfilePanel(false)}
+    />
     <DemoScenariosWidget />
   </div>
 );
