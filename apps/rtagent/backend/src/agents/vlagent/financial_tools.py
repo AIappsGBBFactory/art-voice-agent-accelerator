@@ -29,8 +29,8 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
 from .tool_store.call_transfer import (
     TRANSFER_CALL_SCHEMA,
     transfer_call_to_destination,
-    TRANSFER_CALL_CENTER_SCHEMA,
-    transfer_call_to_call_center,
+    # TRANSFER_CALL_CENTER_SCHEMA,
+    # transfer_call_to_call_center,
 )
 from .tool_store.tool_registry import (
     available_tools as VL_AVAILABLE_TOOLS,
@@ -109,7 +109,7 @@ STANDARD_TOOL_NAMES: Tuple[str, ...] = (
     "escalate_emergency",
     "detect_voicemail_and_end_call",
     "confirm_voicemail_and_end_call",
-    "transfer_call_to_call_center",
+    # "transfer_call_to_call_center",
 )
 
 
@@ -550,11 +550,11 @@ register_tool(
     schema=TRANSFER_CALL_SCHEMA,
     executor=transfer_call_to_destination,
 )
-register_tool(
-    "transfer_call_to_call_center",
-    schema=TRANSFER_CALL_CENTER_SCHEMA,
-    executor=transfer_call_to_call_center,
-)
+# register_tool(
+#     "transfer_call_to_call_center",
+#     schema=TRANSFER_CALL_CENTER_SCHEMA,
+#     executor=transfer_call_to_call_center,
+# )
 
 HANDOFF_TOOL_NAMES: Tuple[str, ...] = tuple(
     spec.name for spec in REGISTERED_TOOLS.values() if spec.is_handoff
