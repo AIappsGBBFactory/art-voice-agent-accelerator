@@ -193,9 +193,37 @@ async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
         "institution_name": institution_name,
         "service_type": service_type,
     }
+
+    readable_service = (service_type or "fraud support").replace("_", " ")
+    if not summary:
+        summary = readable_service
+    if not message:
+        message = (
+            f"I'm taking over as your fraud specialist for {institution_name}."
+            if institution_name
+            else "I'm taking over as your fraud specialist."
+        )
+
+    effective_greeting: Optional[str] = None
+    if caller_name and institution_name:
+        effective_greeting = (
+            f"Hi {caller_name}, thanks for waiting. I'm the fraud specialist for {institution_name}. Let's secure your account together."
+        )
+    elif caller_name:
+        effective_greeting = f"Hi {caller_name}, thanks for waiting. I'm your fraud specialist."
+    elif institution_name:
+        effective_greeting = (
+            f"Thanks for holding. I'm the fraud specialist for {institution_name}."
+        )
+
     extra: Dict[str, Any] = {"should_interrupt_playback": True}
-    if session_overrides:
-        extra["session_overrides"] = session_overrides
+    merged_overrides: Dict[str, Any] = {}
+    if isinstance(session_overrides, dict):
+        merged_overrides.update(session_overrides)
+    if effective_greeting and not merged_overrides.get("greeting"):
+        merged_overrides["greeting"] = effective_greeting
+    if merged_overrides:
+        extra["session_overrides"] = merged_overrides
 
     payload = _build_handoff_payload(
         target_agent="FraudAgent",
