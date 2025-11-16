@@ -183,7 +183,7 @@ async def transfer_call_to_destination(arguments: Dict[str, Any]) -> Dict[str, A
     if not payload.call_connection_id:
         return {
             "success": False,
-            "message": "call_connection_id is required to transfer an ACS call.",
+            "message": "No active ACS call to transfer. Try the telephony experience if you need a live representative.",
         }
 
     operation_context = payload.operation_context or payload.session_id or payload.call_connection_id
@@ -215,7 +215,7 @@ async def transfer_call_to_call_center(arguments: Dict[str, Any]) -> Dict[str, A
     if not payload.call_connection_id:
         return {
             "success": False,
-            "message": "call_connection_id is required to transfer an ACS call.",
+            "message": "No active ACS call to route. Please use the telephony experience if you need a live representative.",
         }
 
     target = _resolve_call_center_target(payload.target_override)
