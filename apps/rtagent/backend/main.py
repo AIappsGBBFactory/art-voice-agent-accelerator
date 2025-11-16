@@ -47,7 +47,7 @@ from src.speech.phrase_list_manager import (
     load_default_phrases_from_env,
     set_global_phrase_manager,
 )
-from .src.services import AzureOpenAIClient, CosmosDBMongoCoreManager, AzureRedisManager, SpeechSynthesizer, StreamingSpeechRecognizerFromBytes
+from apps.rtagent.backend.src.services import AzureOpenAIClient, CosmosDBMongoCoreManager, AzureRedisManager, SpeechSynthesizer, StreamingSpeechRecognizerFromBytes
 from src.aoai.client_manager import AoaiClientManager
 from apps.rtagent.backend.config.app_config import AppConfig
 from apps.rtagent.backend.config.app_settings import (
