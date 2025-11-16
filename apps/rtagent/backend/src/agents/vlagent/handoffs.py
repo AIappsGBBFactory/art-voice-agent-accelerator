@@ -169,7 +169,7 @@ async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
 
     caller_name = (args.get("caller_name") or "").strip()
     client_id = (args.get("client_id") or "").strip()
-    institution_name = (args.get("institution_name") or "Personal PayPal").strip()
+    institution_name = (args.get("institution_name") or "").strip()
     service_type = (args.get("service_type") or "fraud_reporting").strip()
     summary = (args.get("summary") or "").strip()
     message = (args.get("message") or "").strip()
@@ -177,6 +177,8 @@ async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
 
     if not caller_name or not client_id:
         raise ValueError("'caller_name' and 'client_id' are required for fraud handoff")
+    if not institution_name:
+        raise ValueError("'institution_name' is required for fraud handoff verification")
 
     logger.info(
         "🛡️ Hand-off to FraudAgent | client_id=%s caller=%s institution=%s",

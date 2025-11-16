@@ -81,10 +81,12 @@ from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.postcall.push import build_and_flush
 from src.stateful.state_managment import MemoManager
 from src.pools.session_manager import SessionContext
+from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
 
 # V1 components
 from ..dependencies.orchestrator import get_orchestrator
+from ..handlers.voice_live_sdk_handler import VoiceLiveSDKHandler
 from ..schemas.realtime import (
     RealtimeStatusResponse,
     DashboardConnectionResponse,
@@ -99,6 +101,10 @@ tracer = trace.get_tracer(__name__)
 _STATE_SENTINEL = object()
 
 router = APIRouter()
+
+_VOICE_LIVE_SPEECH_RMS_THRESHOLD = 650.0
+_VOICE_LIVE_SILENCE_GAP_SECONDS = 0.35
+_VOICE_LIVE_PCM_SAMPLE_RATE = 16000
 
 
 
@@ -318,6 +324,7 @@ async def dashboard_relay_endpoint(
 async def browser_conversation_endpoint(
     websocket: WebSocket,
     session_id: Optional[str] = Query(None),
+    streaming_mode: Optional[str] = Query(None),
     orchestrator: Optional[callable] = Depends(get_orchestrator),
 ) -> None:
     """
@@ -332,6 +339,7 @@ async def browser_conversation_endpoint(
         websocket: WebSocket connection from browser client for voice interaction.
         session_id: Optional session ID for conversation persistence and state
                    management across reconnections.
+        streaming_mode: Optional streaming mode override for realtime sessions.
         orchestrator: Injected conversation orchestrator for processing user
                      interactions and generating responses.
 
@@ -346,6 +354,16 @@ async def browser_conversation_endpoint(
     """
     memory_manager = None
     conn_id = None
+    requested_stream_mode = None
+    if streaming_mode:
+        try:
+            requested_stream_mode = StreamMode.from_string(
+                streaming_mode.strip().lower()
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    effective_stream_mode = requested_stream_mode or StreamMode.REALTIME
+    websocket.state.stream_mode = str(effective_stream_mode)
 
     try:
         # Use provided session_id or generate collision-resistant session ID
@@ -358,7 +376,9 @@ async def browser_conversation_endpoint(
                 session_id = str(uuid.uuid4())
 
         logger.info(
-            f"[{session_id}] Conversation WebSocket connection established"
+            "[%s] Conversation WebSocket connection established (mode=%s)",
+            session_id,
+            str(effective_stream_mode),
         )
         with tracer.start_as_current_span(
             "api.v1.realtime.conversation_connect",
@@ -368,6 +388,7 @@ async def browser_conversation_endpoint(
                 "realtime.session_id": session_id,
                 "realtime.endpoint": "conversation",
                 "network.protocol.name": "websocket",
+                "stream.mode": str(effective_stream_mode),
                 "orchestrator.name": getattr(orchestrator, "name", "unknown")
                 if orchestrator
                 else "default",
@@ -385,10 +406,16 @@ async def browser_conversation_endpoint(
             # Store conn_id on websocket state for consistent access
             websocket.state.conn_id = conn_id
 
-            # Initialize conversation session
-            memory_manager, session_metadata = await _initialize_conversation_session(
-                websocket, session_id, conn_id, orchestrator
-            )
+            if effective_stream_mode == StreamMode.VOICE_LIVE:
+                memory_manager, session_metadata = await _initialize_voice_live_session(
+                    websocket, session_id, conn_id
+                )
+            else:
+                memory_manager, session_metadata = (
+                    await _initialize_conversation_session(
+                        websocket, session_id, conn_id, orchestrator
+                    )
+                )
 
             # Register session thread-safely
             await websocket.app.state.session_manager.add_session(
@@ -412,14 +439,22 @@ async def browser_conversation_endpoint(
                 operation="conversation_connect",
                 session_id=session_id,
                 conn_id=conn_id,
+                stream_mode=str(effective_stream_mode),
                 total_sessions=session_count,
                 api_version="v1",
             )
 
-        # Process conversation messages
-        await _process_conversation_messages(
-            websocket, session_id, memory_manager, orchestrator, conn_id
-        )
+        # Process conversation messages based on stream mode
+        if effective_stream_mode == StreamMode.VOICE_LIVE:
+            await _process_voice_live_messages(
+                websocket,
+                session_id,
+                conn_id,
+            )
+        else:
+            await _process_conversation_messages(
+                websocket, session_id, memory_manager, orchestrator, conn_id
+            )
 
     except WebSocketDisconnect as e:
         _log_conversation_disconnect(e, session_id)
@@ -435,6 +470,125 @@ async def browser_conversation_endpoint(
 # ============================================================================
 # V1 Architecture Helper Functions
 # ============================================================================
+
+
+async def _initialize_voice_live_session(
+    websocket: WebSocket,
+    session_id: str,
+    conn_id: str,
+) -> tuple[MemoManager, Dict[str, Any]]:
+    """Initialize realtime session metadata for Voice Live streaming mode."""
+
+    redis_mgr = websocket.app.state.redis
+    memory_manager = MemoManager.from_redis(session_id, redis_mgr)
+
+    session_context = getattr(websocket.state, "session_context", None)
+    if not isinstance(session_context, SessionContext) or session_context.session_id != session_id:
+        session_context = SessionContext(
+            session_id=session_id,
+            memory_manager=memory_manager,
+            websocket=websocket,
+        )
+        websocket.state.session_context = session_context
+
+    websocket.state.cm = memory_manager
+    websocket.state.session_id = session_id
+
+    # Track orchestrator tasks for cancellation (even if unused in Voice Live mode)
+    orchestration_tasks = set()
+    websocket.state.orchestration_tasks = orchestration_tasks
+    websocket.state.tts_client = None
+    websocket.state.lt = None
+    websocket.state.is_synthesizing = False
+    websocket.state.audio_playing = False
+    websocket.state.tts_cancel_requested = False
+    cancel_event = asyncio.Event()
+    websocket.state.tts_cancel_event = cancel_event
+    try:
+        websocket.state._loop = asyncio.get_running_loop()
+    except RuntimeError:
+        websocket.state._loop = None
+
+    initial_metadata = {
+        "cm": memory_manager,
+        "session_id": session_id,
+        "stream_mode": str(StreamMode.VOICE_LIVE),
+        "greeting_sent": True,
+        "tts_client": None,
+        "lt": None,
+        "is_synthesizing": False,
+        "audio_playing": False,
+        "tts_cancel_requested": False,
+        "tts_cancel_event": cancel_event,
+    }
+
+    for key, value in initial_metadata.items():
+        session_context.set_metadata_nowait(key, value)
+        setattr(websocket.state, key, value)
+
+    conn_manager = websocket.app.state.conn_manager
+    connection = conn_manager._conns.get(conn_id)
+    if connection:
+        handler_ref = connection.meta.handler
+        if handler_ref is None:
+            connection.meta.handler = dict(initial_metadata)
+        elif isinstance(handler_ref, dict):
+            handler_ref.update(initial_metadata)
+        else:
+            for key, value in initial_metadata.items():
+                setattr(handler_ref, key, value)
+
+    def get_metadata(key: str, default=None):
+        return _get_connection_metadata(websocket, key, default)
+
+    def set_metadata(key: str, value):
+        if not _set_connection_metadata(websocket, key, value):
+            setattr(websocket.state, key, value)
+
+    def signal_tts_cancel() -> None:
+        cancel_evt = get_metadata("tts_cancel_event")
+        if not cancel_evt:
+            return
+
+        loop = getattr(websocket.state, "_loop", None)
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(cancel_evt.set)
+            return
+
+        try:
+            cancel_evt.set()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "[%s] Unable to signal Voice Live cancel event immediately: %s",
+                session_id,
+                exc,
+            )
+
+    barge_in_controller = BargeInController(
+        websocket=websocket,
+        session_id=session_id,
+        conn_id=conn_id,
+        get_metadata=get_metadata,
+        set_metadata=set_metadata,
+        signal_tts_cancel=signal_tts_cancel,
+        logger=logger,
+    )
+    websocket.state.barge_in_controller = barge_in_controller
+
+    initial_metadata.update(
+        {
+            "request_barge_in": barge_in_controller.request,
+            "last_barge_in_ts": 0.0,
+            "barge_in_inflight": False,
+            "last_barge_in_trigger": None,
+        }
+    )
+    set_metadata("request_barge_in", barge_in_controller.request)
+    set_metadata("last_barge_in_ts", 0.0)
+    set_metadata("barge_in_inflight", False)
+    set_metadata("last_barge_in_trigger", None)
+
+    return memory_manager, initial_metadata
 
 
 async def _initialize_conversation_session(
@@ -730,6 +884,7 @@ async def _initialize_conversation_session(
                     session_id,
                     send_exc,
                 )
+        request_barge_in = get_metadata("request_barge_in")
         try:
             now = time.monotonic()
             is_synth = get_metadata("is_synthesizing", False)
@@ -752,25 +907,22 @@ async def _initialize_conversation_session(
                 set_metadata_threadsafe("audio_playing", False)
                 set_metadata_threadsafe("is_synthesizing", False)
             elif cancel_requested:
-                request_cancel = get_metadata("request_barge_in")
                 set_metadata_threadsafe("tts_cancel_requested", False)
-                
-            if callable(request_cancel):
-                request_cancel("stt_partial", "partial")
-            else:
-                # Fall back to direct barge-in if helper is unavailable.
-                loop = getattr(websocket.state, "_loop", None)
-                if loop and loop.is_running():
-                    loop.call_soon_threadsafe(
-                        asyncio.create_task,
-                        _perform_barge_in("stt_partial", "partial"),
-                    )
-                else:
-                    asyncio.create_task(
-                        _perform_barge_in("stt_partial", "partial")
-                    )
-        except Exception as e:
-            logger.debug(f"Failed to dispatch barge-in request from partial: {e}")
+
+            if callable(request_barge_in):
+                request_barge_in("stt_partial", "partial")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "[%s] Failed to dispatch barge-in request from partial: %s",
+                session_id,
+                exc,
+            )
+        else:
+            if not callable(request_barge_in):
+                logger.debug(
+                    "[%s] No barge-in handler registered; skipping realtime barge-in",
+                    session_id,
+                )
 
     def on_cancel(evt) -> None:
         try:
@@ -854,6 +1006,125 @@ async def _initialize_conversation_session(
         getattr(stt_tier, "value", "unknown"),
     )
     return memory_manager, initial_metadata
+
+
+async def _process_voice_live_messages(
+    websocket: WebSocket,
+    session_id: str,
+    conn_id: str,
+) -> None:
+    """Process realtime PCM frames when Voice Live streaming mode is active."""
+
+    handler = VoiceLiveSDKHandler(
+        websocket=websocket,
+        session_id=session_id,
+        call_connection_id=session_id,
+        transport="realtime",
+    )
+    speech_active = False
+    silence_started_at: Optional[float] = None
+
+    with tracer.start_as_current_span(
+        "api.v1.realtime.process_voice_live",
+        attributes={"session_id": session_id},
+    ) as span:
+        try:
+            await handler.start()
+            websocket.state.voice_live_handler = handler
+
+            conn_meta = await websocket.app.state.conn_manager.get_connection_meta(
+                conn_id
+            )
+            if conn_meta:
+                if not conn_meta.handler:
+                    conn_meta.handler = {}
+                conn_meta.handler["voice_live_handler"] = handler
+
+            try:
+                ready_envelope = make_status_envelope(
+                    "Voice Live orchestration connected",
+                    sender="System",
+                    topic="session",
+                    session_id=session_id,
+                )
+                await websocket.app.state.conn_manager.send_to_connection(
+                    conn_id, ready_envelope
+                )
+            except Exception:
+                logger.debug(
+                    "[%s] Unable to send Voice Live readiness status",
+                    session_id,
+                    exc_info=True,
+                )
+
+            while (
+                websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED
+            ):
+                raw_message = await websocket.receive()
+                msg_type = raw_message.get("type")
+
+                if msg_type in {"websocket.close", "websocket.disconnect"}:
+                    raise WebSocketDisconnect(code=raw_message.get("code", 1000))
+
+                if msg_type != "websocket.receive":
+                    continue
+
+                audio_bytes = raw_message.get("bytes")
+                if audio_bytes:
+                    await handler.handle_pcm_chunk(
+                        audio_bytes, sample_rate=_VOICE_LIVE_PCM_SAMPLE_RATE
+                    )
+
+                    rms_value = _pcm16le_rms(audio_bytes)
+                    now = time.perf_counter()
+                    if rms_value >= _VOICE_LIVE_SPEECH_RMS_THRESHOLD:
+                        speech_active = True
+                        silence_started_at = None
+                    elif speech_active:
+                        if silence_started_at is None:
+                            silence_started_at = now
+                        elif now - silence_started_at >= _VOICE_LIVE_SILENCE_GAP_SECONDS:
+                            await handler.commit_audio_buffer()
+                            speech_active = False
+                            silence_started_at = None
+                    continue
+
+                text_payload = raw_message.get("text")
+                if text_payload:
+                    try:
+                        payload = json.loads(text_payload)
+                    except json.JSONDecodeError:
+                        continue
+                    kind = payload.get("kind") or payload.get("type")
+                    if kind == "StopAudio":
+                        await handler.commit_audio_buffer()
+
+        except WebSocketDisconnect:
+            raise
+        except Exception as exc:
+            logger.error(
+                "[%s] Error processing Voice Live realtime messages: %s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+        finally:
+            if speech_active:
+                try:
+                    await handler.commit_audio_buffer()
+                except Exception:
+                    logger.debug(
+                        "[%s] Unable to commit Voice Live buffer during cleanup",
+                        session_id,
+                        exc_info=True,
+                    )
+            await handler.stop()
+            if getattr(websocket.state, "voice_live_handler", None) is handler:
+                websocket.state.voice_live_handler = None
 
 
 async def _process_dashboard_messages(websocket: WebSocket, client_id: str) -> None:

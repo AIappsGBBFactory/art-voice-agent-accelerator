@@ -180,6 +180,13 @@ class CreateFraudCaseResult(TypedDict):
     next_steps: List[str]
     estimated_resolution_time: str
     contact_reference: str
+    database_success: bool
+    handoff_context: Optional[Dict[str, Any]]
+    handoff_summary: Optional[str]
+    handoff_message: Optional[str]
+    handoff: Optional[bool]
+    target_agent: Optional[str]
+    should_interrupt_playback: Optional[bool]
 
 class BlockCardArgs(TypedDict):
     """Arguments for emergency card blocking."""
@@ -972,7 +979,7 @@ async def create_fraud_case(args: CreateFraudCaseArgs) -> CreateFraudCaseResult:
         contact_reference = f"Reference your case number {case_number} in all communications"
         
         # Always return success to customer (with fallback case number if needed)
-        return {
+        result: Dict[str, Any] = {
             "case_created": True,  # Always True for customer experience
             "case_number": case_number,
             "priority_level": priority_level,
@@ -981,6 +988,35 @@ async def create_fraud_case(args: CreateFraudCaseArgs) -> CreateFraudCaseResult:
             "contact_reference": contact_reference,
             "database_success": case_created  # Track actual database status internally
         }
+
+        # Signal orchestrator to escalate the caller to a human fraud specialist immediately.
+        result.setdefault(
+            "handoff_context",
+            {
+                "caller_name": args.get("caller_name"),
+                "client_id": client_id,
+                "institution_name": args.get("institution_name"),
+                "case_id": case_number,
+                "reason": "fraud_case_opened",
+                "details": description,
+            },
+        )
+        result.setdefault(
+            "handoff_summary",
+            f"Fraud case {case_number} opened for {fraud_type}"
+        )
+        result.setdefault(
+            "handoff_message",
+            "I'm connecting you with our live fraud team right now to take it from here."
+        )
+        result.setdefault("handoff", True)
+        result.setdefault("target_agent", "FraudAgent")
+        result.setdefault("should_interrupt_playback", True)
+
+        if name := args.get("target_agent_override"):
+            result["target_agent"] = name
+
+        return result
         
     except Exception as e:
         logger.error(f"❌ Error creating fraud case: {e}", exc_info=True)

@@ -29,8 +29,8 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
 from .tool_store.call_transfer import (
     TRANSFER_CALL_SCHEMA,
     transfer_call_to_destination,
-    # TRANSFER_CALL_CENTER_SCHEMA,
-    # transfer_call_to_call_center,
+    TRANSFER_CALL_CENTER_SCHEMA,
+    transfer_call_to_call_center,
 )
 from .tool_store.tool_registry import (
     available_tools as VL_AVAILABLE_TOOLS,
@@ -47,6 +47,9 @@ from .tool_store.financial_helpers import (
     execute_search_knowledge_base,
     normalize_tool_result,
     coerce_handoff_payload,
+)
+from .tool_store.fraud_detection import (
+    create_fraud_case,
 )
 
 logger = get_logger("voicelive.tools.financial")
@@ -94,7 +97,6 @@ STANDARD_TOOL_NAMES: Tuple[str, ...] = (
     "check_transaction_authorization",
     "analyze_recent_transactions",
     "check_suspicious_activity",
-    "create_fraud_case",
     "create_transaction_dispute",
     "block_card_emergency",
     "provide_fraud_education",
@@ -537,6 +539,7 @@ async def _execute_search_knowledge_base(arguments: Dict[str, Any]) -> Dict[str,
 
 register_tool("send_mfa_code", executor=_execute_send_mfa_code)
 register_tool("resend_mfa_code", executor=_execute_resend_mfa_code)
+register_tool("create_fraud_case", executor=create_fraud_case, is_handoff=True)
 register_tool("handoff_fraud_agent", executor=vl_handoff_fraud_agent, is_handoff=True)
 register_tool("handoff_transfer_agency_agent", executor=vl_handoff_transfer_agency_agent, is_handoff=True)
 register_tool("handoff_paypal_agent", executor=vl_handoff_paypal_agent, is_handoff=True)
@@ -550,11 +553,12 @@ register_tool(
     schema=TRANSFER_CALL_SCHEMA,
     executor=transfer_call_to_destination,
 )
-# register_tool(
-#     "transfer_call_to_call_center",
-#     schema=TRANSFER_CALL_CENTER_SCHEMA,
-#     executor=transfer_call_to_call_center,
-# )
+register_tool(
+    "transfer_call_to_call_center",
+    schema=TRANSFER_CALL_CENTER_SCHEMA,
+    executor=transfer_call_to_call_center,
+    is_handoff=True,
+)
 
 HANDOFF_TOOL_NAMES: Tuple[str, ...] = tuple(
     spec.name for spec in REGISTERED_TOOLS.values() if spec.is_handoff
