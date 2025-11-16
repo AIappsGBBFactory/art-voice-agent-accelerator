@@ -76,6 +76,16 @@ const toTitleCase = (value) => {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 };
 
+const maskSecretValue = (value) => {
+  if (!value) return '—';
+  if (value.length <= 6) {
+    return '••••••';
+  }
+  const prefix = value.slice(0, 3);
+  const suffix = value.slice(-2);
+  return `${prefix}••••••${suffix}`;
+};
+
 const resolveRelationshipTier = (profileData) => (
   profileData?.relationship_tier
   || profileData?.customer_intelligence?.relationship_context?.relationship_tier
@@ -242,7 +252,7 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
                 <SectionTitle icon="🔐">MFA Settings</SectionTitle>
                 <ProfileDetailRow label="Enabled" value={mfaSettings.enabled ? 'Yes' : 'No'} />
                 <ProfileDetailRow label="Preferred Method" value={data?.contact_info?.preferred_mfa_method ?? '—'} />
-                <ProfileDetailRow label="Secret Key" value={mfaSettings.secret_key || '—'} multiline />
+                <ProfileDetailRow label="Secret Key" value={maskSecretValue(mfaSettings.secret_key)} multiline />
                 <ProfileDetailRow label="Code Expiry (min)" value={mfaSettings.code_expiry_minutes} />
                 <ProfileDetailRow label="Max Attempts" value={mfaSettings.max_attempts} />
               </>

@@ -4262,6 +4262,20 @@ function RealTimeVoiceApp() {
         }
         audioContextRef.current = null;
       }
+      if (micStreamRef.current) {
+        try {
+          micStreamRef.current.getTracks().forEach((track) => {
+            try {
+              track.stop();
+            } catch (trackError) {
+              logger.warn("Error stopping mic track:", trackError);
+            }
+          });
+        } catch (streamError) {
+          logger.warn("Error releasing microphone stream:", streamError);
+        }
+        micStreamRef.current = null;
+      }
       playbackActiveRef.current = false;
       
       shouldReconnectRef.current = false;
