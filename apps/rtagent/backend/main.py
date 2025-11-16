@@ -42,6 +42,11 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from src.pools.connection_manager import ThreadSafeConnectionManager
 from src.pools.session_metrics import ThreadSafeSessionMetrics
+from src.speech.phrase_list_manager import (
+    PhraseListManager,
+    load_default_phrases_from_env,
+    set_global_phrase_manager,
+)
 from .src.services import AzureOpenAIClient, CosmosDBMongoCoreManager, AzureRedisManager, SpeechSynthesizer, StreamingSpeechRecognizerFromBytes
 from src.aoai.client_manager import AoaiClientManager
 from config.app_config import AppConfig
@@ -315,11 +320,17 @@ async def lifespan(app: FastAPI):
                 AUDIO_FORMAT,
             )
 
+            phrase_manager = getattr(app.state, "speech_phrase_manager", None)
+            initial_bias = []
+            if phrase_manager:
+                initial_bias = await phrase_manager.snapshot()
+
             return StreamingSpeechRecognizerFromBytes(
                 use_semantic_segmentation=VAD_SEMANTIC_SEGMENTATION,
                 vad_silence_timeout_ms=SILENCE_DURATION_MS,
                 candidate_languages=RECOGNIZED_LANGUAGE,
                 audio_format=AUDIO_FORMAT,
+                initial_phrases=initial_bias,
             )
         logger.info("Initializing on-demand speech providers")
 
@@ -370,6 +381,58 @@ async def lifespan(app: FastAPI):
             collection_name=AZURE_COSMOS_COLLECTION_NAME,
         )
         app.state.acs_caller = initialize_acs_caller_instance()
+
+        initial_bias = load_default_phrases_from_env()
+        app.state.speech_phrase_manager = PhraseListManager(
+            initial_phrases=initial_bias,
+        )
+        set_global_phrase_manager(app.state.speech_phrase_manager)
+
+        async def hydrate_from_cosmos() -> None:
+            cosmos_manager = getattr(app.state, "cosmos", None)
+            if not cosmos_manager:
+                return
+
+            def fetch_existing_names() -> list[str]:
+                projection = {"full_name": 1, "institution_name": 1}
+                limit_raw = os.getenv("SPEECH_RECOGNIZER_COSMOS_BIAS_LIMIT", "500")
+                try:
+                    limit = int(limit_raw)
+                except ValueError:
+                    limit = 500
+
+                documents = cosmos_manager.query_documents(
+                    {
+                        "full_name": {"$exists": True, "$type": "string"},
+                    },
+                    projection=projection,
+                    limit=limit if limit > 0 else None,
+                )
+                names_set: set[str] = set()
+                for document in documents:
+                    for field in ("full_name", "institution_name"):
+                        value = str(document.get(field, "")).strip()
+                        if value:
+                            names_set.add(value)
+                return list(names_set)
+
+            try:
+                names = await asyncio.to_thread(fetch_existing_names)
+                if not names:
+                    return
+                added = await app.state.speech_phrase_manager.add_phrases(names)
+                logger.info(
+                    "Hydrated speech phrase list with %s entries from Cosmos",
+                    added,
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging only
+                logger.warning(
+                    "Unable to hydrate speech phrase list from Cosmos",
+                    extra={"error": str(exc)},
+                )
+
+        await hydrate_from_cosmos()
+
         logger.info("external services ready")
 
     add_step("services", start_external_services)

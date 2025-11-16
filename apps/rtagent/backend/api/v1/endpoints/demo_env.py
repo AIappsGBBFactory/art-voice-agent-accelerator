@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from pymongo.errors import NetworkTimeout, PyMongoError
 
@@ -500,6 +500,32 @@ async def _persist_demo_user(response: DemoUserResponse) -> None:
         ) from exc
 
 
+async def _append_phrase_bias_entries(profile: DemoUserProfile, request: Request) -> None:
+    """Add demo user's key identifiers to the shared phrase list manager if configured."""
+
+    manager = getattr(request.app.state, "speech_phrase_manager", None)
+    if not manager:
+        return
+
+    try:
+        added = await manager.add_phrases(
+            [profile.full_name, profile.institution_name]
+        )
+        if added:
+            total = len(await manager.snapshot())
+            logger.info(
+                "Phrase list updated from demo profile",
+                extra={
+                    "profile": profile.full_name,
+                    "institution": profile.institution_name,
+                    "new_entries": added,
+                    "total_entries": total,
+                },
+            )
+    except Exception:  # pragma: no cover - defensive logging only
+        logger.debug("Could not append phrase bias entry", exc_info=True)
+
+
 @router.post(
     "/temporary-user",
     response_model=DemoUserResponse,
@@ -507,6 +533,7 @@ async def _persist_demo_user(response: DemoUserResponse) -> None:
 )
 async def create_temporary_user(
     payload: DemoUserRequest,
+    request: Request,
     rng: Random = Depends(_rng_dependency),
 ) -> DemoUserResponse:
     """Create a synthetic 24-hour demo user record.
@@ -536,6 +563,7 @@ async def create_temporary_user(
         safety_notice="Demo data only. Never enter real customer or personal information in this sandbox.",
     )
     await _persist_demo_user(response)
+    await _append_phrase_bias_entries(profile, request)
     return response
 
 
