@@ -304,15 +304,16 @@ class CallEventHandlers:
                         f"🎯 Broadcasting call_connected to session: {session_id} (browser_session_id={browser_session_id}, call_connection_id={context.call_connection_id})"
                     )
 
-                    envelope = make_status_envelope(
+                    status_envelope = make_status_envelope(
                         message="📞 Call connected",
-                        sender="ACS",
+                        sender="System",
+                        topic="session",
                         session_id=session_id,
                     )
 
                     await broadcast_session_envelope(
                         app_state=context.app_state,
-                        envelope=envelope,
+                        envelope=status_envelope,
                         session_id=session_id,
                         event_label="call_connected_broadcast",
                     )
@@ -359,15 +360,16 @@ class CallEventHandlers:
                         message_lines.append(f"Reason: {reason_label}")
                     if end_time_iso:
                         message_lines.append(f"Ended: {end_time_iso}")
-                    envelope = make_status_envelope(
-                        message="📞 Call disconnected",
-                        sender="ACS",
+                    status_envelope = make_status_envelope(
+                        message="\n".join(message_lines),
+                        sender="System",
+                        topic="session",
                         session_id=session_id,
                     )
 
                     await broadcast_session_envelope(
                         app_state=context.app_state,
-                        envelope=envelope,
+                        envelope=status_envelope,
                         session_id=session_id,
                         event_label="call_disconnected_broadcast",
                     )
