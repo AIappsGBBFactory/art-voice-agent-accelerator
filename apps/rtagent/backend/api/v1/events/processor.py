@@ -18,7 +18,6 @@ from opentelemetry.trace import SpanKind
 from config import ENABLE_ACS_CALL_RECORDING, AZURE_STORAGE_CONTAINER_URL
 from utils.ml_logging import get_logger
 from .types import CallEventContext, CallEventHandler, ACSEventTypes, RecordingPreferences
-from ..utils.session_keys import resolve_memo_session_id
 
 logger = get_logger("v1.events.processor")
 tracer = trace.get_tracer(__name__)
@@ -165,7 +164,7 @@ class CallEventProcessor:
             await self._mark_recording_finished(call_connection_id)
 
         # Create event context
-        context = await self._create_event_context(event, call_connection_id, request_state)
+        context = self._create_event_context(event, call_connection_id, request_state)
 
         # Get handlers for this event type
         handlers = self._handlers.get(event.type, [])
@@ -197,7 +196,7 @@ class CallEventProcessor:
             logger.error(f"Error extracting call connection ID: {e}")
         return None
 
-    async def _create_event_context(
+    def _create_event_context(
         self, event: CloudEvent, call_connection_id: str, request_state: Any
     ) -> CallEventContext:
         """
@@ -214,33 +213,23 @@ class CallEventProcessor:
         """
         # Extract dependencies from request state
         memo_manager = None
-        redis_mgr = getattr(request_state, "redis", None)
-        memo_session_id: Optional[str] = call_connection_id
-        if redis_mgr:
-            memo_session_id = await resolve_memo_session_id(
-                redis_mgr,
-                call_connection_id,
-                fallback_session_id=call_connection_id,
-            )
-
+        if hasattr(request_state, "redis") and request_state.redis:
             try:
                 from src.stateful.state_managment import MemoManager
 
                 memo_manager = MemoManager.from_redis(
-                    session_id=memo_session_id or call_connection_id,
-                    redis_mgr=redis_mgr,
+                    session_id=call_connection_id, redis_mgr=request_state.redis
                 )
-                memo_manager.session_id = memo_session_id or call_connection_id
-                memo_manager._redis_manager = redis_mgr
             except Exception:
-                memo_manager = None
+                # Skip memo manager if Redis not available (e.g., in demo)
+                pass
 
         return CallEventContext(
             event=event,
             call_connection_id=call_connection_id,
             event_type=event.type,
             memo_manager=memo_manager,
-            redis_mgr=redis_mgr,
+            redis_mgr=getattr(request_state, "redis", None),
             acs_caller=getattr(request_state, "acs_caller", None),
             clients=getattr(request_state, "clients", []),
             app_state=request_state,  # Pass full app state for ConnectionManager access
