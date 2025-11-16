@@ -76,6 +76,7 @@ const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfi
   const [highlighted, setHighlighted] = useState(false);
   const lastProfileIdentityRef = useRef(null);
   const highlightTimeoutRef = useRef(null);
+  const [renderPanelContent, setRenderPanelContent] = useState(false);
 
   const startHighlight = useCallback(() => {
     setHighlighted(true);
@@ -99,7 +100,13 @@ const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfi
       highlightTimeoutRef.current = null;
     }
     setHighlighted(false);
-    setPanelOpen(!panelOpen);
+    setPanelOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setRenderPanelContent(true);
+      }
+      return next;
+    });
   };
 
   const handlePanelClose = () => {
@@ -111,6 +118,17 @@ const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfi
     setPanelOpen(false);
     onMenuClose?.();
   };
+
+  useEffect(() => {
+    if (panelOpen) {
+      setRenderPanelContent(true);
+      return undefined;
+    }
+    const timeout = window.setTimeout(() => {
+      setRenderPanelContent(false);
+    }, 320);
+    return () => window.clearTimeout(timeout);
+  }, [panelOpen]);
 
   useEffect(() => {
     if (!profile) {
@@ -257,6 +275,9 @@ const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfi
   const institutionName = profileData?.institution_name || 'Demo Institution';
   const companyCode = profileData?.company_code;
   const companyCodeLast4 = profileData?.company_code_last4 || companyCode?.slice?.(-4) || '----';
+  const institutionSnippet = institutionName?.length > 30
+    ? `${institutionName.slice(0, 27)}…`
+    : institutionName;
 
   return (
     <>
@@ -331,10 +352,17 @@ const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfi
               fontSize: '9px',
               color: '#64748b',
               lineHeight: 1,
-              fontFamily: 'monospace'
+              display: 'flex',
+              flexWrap: 'wrap',
+              columnGap: '6px',
+              rowGap: '2px',
+              whiteSpace: 'normal'
             }}
+            component="div"
           >
-            ***{ssnLast4}
+            <span style={{ fontWeight: 600 }}>{institutionSnippet}</span>
+            <span style={{ opacity: 0.8 }}>Co · ***{companyCodeLast4}</span>
+            <span style={{ opacity: 0.8 }}>SSN · ***{ssnLast4}</span>
           </Typography>
         </Box>
       </Box>
@@ -373,6 +401,8 @@ const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfi
           overflow: 'hidden'
         }}
       >
+        {renderPanelContent && (
+        <>
         {/* Panel Header */}
         <Box sx={{
           padding: '24px',
@@ -524,7 +554,7 @@ const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfi
             </Typography>
           </Box>
 
-          <Divider sx={{ my: 0 }} />
+        <Divider sx={{ my: 0 }} />
 
           <Box>
             <SectionTitle icon="🪪">Identity Snapshot</SectionTitle>
@@ -631,6 +661,8 @@ const ProfileButtonComponent = ({ profile, sessionId, onMenuClose, onCreateProfi
             </Box>
           )}
         </Box>
+        </>
+        )}
       </Box>
     </>
   );
