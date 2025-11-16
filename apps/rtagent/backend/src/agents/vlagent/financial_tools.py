@@ -111,7 +111,7 @@ STANDARD_TOOL_NAMES: Tuple[str, ...] = (
     "escalate_emergency",
     "detect_voicemail_and_end_call",
     "confirm_voicemail_and_end_call",
-    # "transfer_call_to_call_center",
+    "transfer_call_to_call_center",
 )
 
 
@@ -553,12 +553,11 @@ register_tool(
     schema=TRANSFER_CALL_SCHEMA,
     executor=transfer_call_to_destination,
 )
-register_tool(
-    "transfer_call_to_call_center",
-    schema=TRANSFER_CALL_CENTER_SCHEMA,
-    executor=transfer_call_to_call_center,
-    is_handoff=True,
-)
+# register_tool(
+#     "transfer_call_to_call_center",
+#     schema=TRANSFER_CALL_CENTER_SCHEMA,
+#     executor=transfer_call_to_call_center,
+# )
 
 HANDOFF_TOOL_NAMES: Tuple[str, ...] = tuple(
     spec.name for spec in REGISTERED_TOOLS.values() if spec.is_handoff
