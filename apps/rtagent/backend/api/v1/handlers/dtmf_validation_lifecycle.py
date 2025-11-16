@@ -28,6 +28,7 @@ from opentelemetry.trace import SpanKind
 
 from utils.ml_logging import get_logger
 from ..events.types import CallEventContext
+from apps.rtagent.backend.src.services.acs.session_terminator import terminate_session
 
 logger = get_logger("v1.handlers.dtmf_validation_lifecycle")
 tracer = trace.get_tracer(__name__)
@@ -273,9 +274,113 @@ class DTMFValidationLifecycle:
                     "aws_connect_validation_pending", False
                 )
                 context.memo_manager.set_context("dtmf_validated", False)
+                if context.redis_mgr:
+                    stream_key = DTMFValidationLifecycle.DTMF_VALIDATION_STREAM_KEY_FORMAT.format(
+                        call_connection_id=context.call_connection_id
+                    )
+                    await context.redis_mgr.add_event_async(
+                        stream_key=stream_key,
+                        data={"validation_status": "completed", "result": "failure"},
+                    )
+                    await context.memo_manager.persist_to_redis_async(context.redis_mgr)
+                await DTMFValidationLifecycle._cancel_call_for_validation_failure(
+                    context
+                )
 
         except Exception as e:
             logger.error(f"❌ Error completing AWS Connect validation: {e}")
+            await DTMFValidationLifecycle._cancel_call_for_validation_failure(context)
+
+    @staticmethod
+    async def _validate_sequence(
+        context: CallEventContext, sequence: Optional[str]
+    ) -> bool:
+        """Validate a user-entered DTMF sequence."""
+        try:
+            memo = getattr(context, "memo_manager", None)
+            if not memo:
+                return False
+
+            normalized = (sequence or "").strip()
+            is_valid = normalized.isdigit() and len(normalized) >= 4
+
+            if is_valid:
+                memo.update_context("dtmf_validated", True)
+                memo.update_context("dtmf_validation_gate_open", True)
+            else:
+                memo.update_context("dtmf_validated", False)
+                memo.update_context("dtmf_validation_gate_open", False)
+                await DTMFValidationLifecycle._cancel_call_for_validation_failure(
+                    context
+                )
+
+            if context.redis_mgr:
+                await memo.persist_to_redis_async(context.redis_mgr)
+
+            return is_valid
+        except Exception as exc:
+            logger.error(f"❌ Error validating DTMF sequence: {exc}")
+            return False
+
+    @staticmethod
+    async def cancel_call_for_dtmf_failure(context: CallEventContext) -> None:
+        """Public helper to cancel a call after DTMF validation failure."""
+        await DTMFValidationLifecycle._cancel_call_for_validation_failure(context)
+
+    @staticmethod
+    async def _cancel_call_for_validation_failure(
+        context: CallEventContext,
+    ) -> None:
+        """Cancel the call when validation fails."""
+        memo = getattr(context, "memo_manager", None)
+
+        if memo:
+            memo.set_context("call_cancelled_dtmf_failure", True)
+            memo.set_context("dtmf_validation_gate_open", False)
+            try:
+                if context.redis_mgr:
+                    await memo.persist_to_redis_async(context.redis_mgr)
+            except Exception as exc:
+                logger.debug(f"Persist failure during DTMF cancel: {exc}")
+
+        # Emit failure event to Redis
+        try:
+            if context.redis_mgr:
+                await context.redis_mgr.publish_event_async(
+                    stream_key=DTMFValidationLifecycle.DTMF_VALIDATION_STREAM_KEY_FORMAT.format(
+                        call_connection_id=context.call_connection_id
+                    ),
+                    data={
+                        "validation_status": "failed",
+                        "call_connection_id": context.call_connection_id,
+                    },
+                )
+        except Exception as exc:
+            logger.debug(f"Redis publish failure during DTMF cancel: {exc}")
+
+        # Prefer terminating via session terminator if websocket available
+        try:
+            if getattr(context, "websocket", None):
+                await terminate_session(
+                    ws=context.websocket,
+                    memo_manager=memo,
+                    is_acs=True,
+                    call_connection_id=context.call_connection_id,
+                )
+                return
+        except Exception as exc:
+            logger.warning(f"terminate_session failed during DTMF cancel: {exc}")
+
+        # Fallback to direct hang-up if terminator not available
+        try:
+            if context.acs_caller:
+                call_conn = context.acs_caller.get_call_connection(
+                    context.call_connection_id
+                )
+                if call_conn:
+                    call_conn.hang_up(is_for_everyone=True)
+        except Exception as exc:
+            logger.error(f"Direct hang-up failed during DTMF cancel: {exc}")
 
     # ============================================================================
     # DTMF Validation Blocking Logic
