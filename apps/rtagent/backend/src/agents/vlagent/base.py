@@ -19,12 +19,17 @@ from azure.ai.voicelive.models import (
     AzureCustomVoice,
     OpenAIVoice,
     RequestSession,
+    AudioInputTranscriptionOptions,
 )
 from .prompts import PromptManager
 from .financial_tools import build_function_tools
+from src.speech.phrase_list_manager import get_global_phrase_snapshot
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.agents")
+
+_REQUEST_SESSION_FIELDS = set(getattr(RequestSession, "_attribute_map", {}).keys())
+_SUPPORTS_AUDIO_TRANSCRIPTION_OPTIONS = "audio_input_transcription_options" in _REQUEST_SESSION_FIELDS
 
 def _mods(values: List[str] | None) -> List[Modality]:
     vals = [v.lower() for v in (values or ["TEXT", "AUDIO"])]
@@ -219,6 +224,21 @@ class AzureVoiceLiveAgent:
 
         
         # Build session update with per-agent configuration
+        phrase_snapshot: List[str] = []
+        try:
+            phrase_snapshot = await get_global_phrase_snapshot()
+        except Exception:
+            logger.debug("[%s] Unable to load phrase bias snapshot", self.name, exc_info=True)
+
+        phrase_options = None
+        if phrase_snapshot:
+            phrase_options = AudioInputTranscriptionOptions(phrase_list=phrase_snapshot)
+            logger.info(
+                "[%s] Applying %s phrase bias entries to transcription",
+                self.name,
+                len(phrase_snapshot),
+            )
+
         kwargs: Dict[str, Any] = dict(
             modalities=self.modalities,
             instructions=instructions,
@@ -226,6 +246,15 @@ class AzureVoiceLiveAgent:
             output_audio_format=self.output_audio_format,
             turn_detection=self.turn_detection,  # Per-agent VAD settings
         )
+
+        if phrase_options:
+            if _SUPPORTS_AUDIO_TRANSCRIPTION_OPTIONS:
+                kwargs["audio_input_transcription_options"] = phrase_options
+            else:
+                logger.debug(
+                    "[%s] VoiceLive SDK lacks audio_input_transcription_options; skipping phrase bias",
+                    self.name,
+                )
         
         if voice_payload:
             kwargs["voice"] = voice_payload  # Per-agent voice
@@ -238,6 +267,13 @@ class AzureVoiceLiveAgent:
         # Apply all per-agent settings to the session
         session_payload = RequestSession(**kwargs)
         def _preview(value: Any, limit: int = 50) -> str:
+            if isinstance(value, AudioInputTranscriptionOptions):
+                try:
+                    phrases = value.phrase_list  # type: ignore[attr-defined]
+                except AttributeError:
+                    phrases = []
+                count = len(phrases or [])
+                return f"AudioInputTranscriptionOptions(phrases={count})"
             text = repr(value)
             return text if len(text) <= limit else f"{text[:limit - 3]}..."
         payload_preview = "\n".join(

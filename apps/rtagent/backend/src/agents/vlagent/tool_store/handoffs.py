@@ -210,6 +210,11 @@ async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
 
         if not caller_name or not client_id:
             return _json(False, "Both 'caller_name' and 'client_id' must be provided.")
+        if not institution_name:
+            return _json(
+                False,
+                "Please confirm the institution or business name before transferring."
+            )
 
         logger.info(
             "🛡️ Hand-off to Fraud agent – client_id=%s caller=%s institution=%s", 
@@ -245,6 +250,11 @@ async def handoff_transfer_agency_agent(args: HandoffTransferAgencyArgs) -> Dict
 
         if not caller_name or not client_id:
             return _json(False, "Both 'caller_name' and 'client_id' must be provided.")
+        if not institution_name:
+            return _json(
+                False,
+                "Collect the institution or account name before routing to a specialist."
+            )
 
         logger.info(
             "🏦 Hand-off to Transfer Agency – client_id=%s caller=%s institution=%s", 

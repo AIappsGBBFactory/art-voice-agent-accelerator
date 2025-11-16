@@ -1,6 +1,7 @@
 # orchestrator.py
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import time
@@ -15,6 +16,13 @@ if TYPE_CHECKING:
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.orchestrator")
+
+TRANSFER_TOOL_NAMES = {"transfer_call_to_destination", "transfer_call_to_call_center"}
+
+CALL_CENTER_TRIGGER_PHRASES = {
+    "transfer to call center",
+    "transfer me to the call center",
+}
 
 
 def _sanitize_handoff_context(raw: Any) -> Dict[str, Any]:
@@ -55,6 +63,9 @@ class LiveOrchestrator:
         start_agent: str = "AutoAuth",
         audio_processor=None,
         messenger=None,
+        call_connection_id: Optional[str] = None,
+        *,
+        transport: str = "acs",
     ):
         self.conn = conn
         self.agents = agents
@@ -66,6 +77,10 @@ class LiveOrchestrator:
         self._pending_greeting: Optional[str] = None
         self._pending_greeting_agent: Optional[str] = None
         self._last_user_message: Optional[str] = None
+        self.call_connection_id = call_connection_id
+        self._call_center_triggered = False
+        self._transport = transport
+        self._greeting_tasks: set[asyncio.Task] = set()
 
         if self.messenger:
             try:
@@ -87,6 +102,8 @@ class LiveOrchestrator:
         previous_agent = self.active
         agent = self.agents[agent_name]
         
+        self._cancel_pending_greeting_tasks()
+
         # Always work with a copy so we do not mutate upstream state.
         system_vars = dict(system_vars or {})
         system_vars.setdefault("previous_agent", previous_agent)
@@ -147,11 +164,59 @@ class LiveOrchestrator:
                 system_vars=system_vars,
                 say=None,
             )
+            if self._pending_greeting and self._pending_greeting_agent == agent_name:
+                self._schedule_greeting_fallback(agent_name)
         except Exception:
             logger.exception("Failed to apply session for agent '%s'", agent_name)
             raise
         
         logger.info("[Active Agent] %s is now active", self.active)
+
+    def _transport_supports_acs(self) -> bool:
+        return self._transport == "acs"
+
+    def _cancel_pending_greeting_tasks(self) -> None:
+        if not self._greeting_tasks:
+            return
+        for task in list(self._greeting_tasks):
+            task.cancel()
+        self._greeting_tasks.clear()
+
+    def _schedule_greeting_fallback(self, agent_name: str) -> None:
+        if not self._pending_greeting or not self._pending_greeting_agent:
+            return
+
+        async def _fallback() -> None:
+            try:
+                await asyncio.sleep(0.35)
+                if (
+                    self._pending_greeting
+                    and self._pending_greeting_agent == agent_name
+                ):
+                    logger.debug(
+                        "[GreetingFallback] Triggering fallback introduction for %s",
+                        agent_name,
+                    )
+                    try:
+                        await self.agents[agent_name].trigger_response(
+                            self.conn,
+                            say=self._pending_greeting,
+                        )
+                    finally:
+                        self._pending_greeting = None
+                        self._pending_greeting_agent = None
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("[GreetingFallback] Failed to deliver greeting", exc_info=True)
+
+        task = asyncio.create_task(
+            _fallback(),
+            name=f"voicelive-greeting-fallback-{agent_name}",
+        )
+
+        task.add_done_callback(lambda t: self._greeting_tasks.discard(t))
+        self._greeting_tasks.add(task)
 
     def _select_pending_greeting(
         self,
@@ -239,6 +304,18 @@ class LiveOrchestrator:
             logger.warning("Could not parse tool arguments for '%s'; using empty dict", name)
             args = {}
         
+        if name in TRANSFER_TOOL_NAMES:
+            if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.call_connection_id:
+                args.setdefault("call_connection_id", self.call_connection_id)
+            if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.messenger:
+                fallback_call_id = getattr(self.messenger, "call_id", None)
+                if fallback_call_id:
+                    args.setdefault("call_connection_id", fallback_call_id)
+            if self.messenger:
+                session_id = getattr(self.messenger, "session_id", None)
+                if session_id:
+                    args.setdefault("session_id", session_id)
+
         # Execute tool via centralized tools.py
         logger.info("Executing tool: %s with args: %s", name, args)
 
@@ -302,6 +379,41 @@ class LiveOrchestrator:
                 err_val = result.get("message") or result.get("error")
                 if err_val:
                     error_payload = str(err_val)
+
+        if name in TRANSFER_TOOL_NAMES and notify_status != "error" and isinstance(result, dict):
+            takeover_message = result.get("message") or "Transferring call to destination."
+            if self.messenger:
+                try:
+                    await self.messenger.send_status_update(
+                        text=takeover_message,
+                        sender=self.active,
+                        event_label="acs_call_transfer_status",
+                    )
+                except Exception:
+                    logger.debug("Failed to emit transfer status update", exc_info=True)
+            try:
+                if result.get("should_interrupt_playback", True):
+                    await self.conn.response.cancel()
+            except Exception:
+                logger.debug("response.cancel() failed during transfer", exc_info=True)
+            if self.audio:
+                try:
+                    await self.audio.stop_playback()
+                except Exception:
+                    logger.debug("Audio stop playback failed during transfer", exc_info=True)
+            if self.messenger:
+                try:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id,
+                        name=name,
+                        status=notify_status,
+                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                        result=result,
+                        error=error_payload,
+                    )
+                except Exception:
+                    logger.debug("Tool end messenger notification failed", exc_info=True)
+            return False
 
         # Check if this is a handoff tool
         if is_handoff_tool(name):
@@ -393,13 +505,13 @@ class LiveOrchestrator:
                 text = str(value)
                 safe_result[key] = text if len(text) <= 50 else f"{text[:47]}..."
             pretty_result = json.dumps(safe_result, indent=2, ensure_ascii=False)
-            logger.info(
-                "[%s] Tool '%s' %s | Result:\n%s",
-                self.active,
-                name,
-                success_indicator,
-                pretty_result,
-            )
+            # logger.info(
+            #     "[%s] Tool '%s' %s | Result:\n%s",
+            #     self.active,
+            #     name,
+            #     success_indicator,
+            #     pretty_result,
+            # )
 
             output_item = FunctionCallOutputItem(
                 call_id=call_id,
@@ -445,6 +557,7 @@ class LiveOrchestrator:
             if self._pending_greeting and (
                 self._pending_greeting_agent == self.active
             ):
+                self._cancel_pending_greeting_tasks()
                 try:
                     await self.agents[self.active].trigger_response(
                         self.conn,
@@ -474,6 +587,7 @@ class LiveOrchestrator:
             if user_transcript:
                 logger.info("[USER] Says: %s", user_transcript)
                 self._last_user_message = user_transcript.strip()
+                await self._maybe_trigger_call_center_transfer(user_transcript)
 
         elif et == ServerEventType.RESPONSE_AUDIO_DELTA:
             if self.audio:
@@ -506,3 +620,107 @@ class LiveOrchestrator:
 
         elif et == ServerEventType.ERROR:
             logger.error("VoiceLive error: %s", getattr(event.error, "message", "unknown"))
+
+    async def _maybe_trigger_call_center_transfer(self, transcript: str) -> None:
+        """Detect trigger phrases and initiate automatic call center transfer."""
+
+        if self._call_center_triggered:
+            return
+
+        normalized = transcript.strip().lower()
+        if not normalized:
+            return
+
+        if not any(phrase in normalized for phrase in CALL_CENTER_TRIGGER_PHRASES):
+            return
+
+        self._call_center_triggered = True
+        logger.info("[Auto Transfer] Triggering call center transfer due to phrase match: '%s'", transcript)
+
+        args: Dict[str, Any] = {}
+        if self._transport_supports_acs() and self.call_connection_id:
+            args["call_connection_id"] = self.call_connection_id
+        if self.messenger:
+            session_id = getattr(self.messenger, "session_id", None)
+            if session_id:
+                args["session_id"] = session_id
+
+        await self._trigger_call_center_transfer(args)
+
+    async def _trigger_call_center_transfer(self, args: Dict[str, Any]) -> None:
+        """Invoke the call center transfer tool and handle playback cleanup."""
+
+        tool_name = "transfer_call_to_call_center"
+
+        if self.messenger:
+            try:
+                await self.messenger.send_status_update(
+                    text="Routing you to a call center representative…",
+                    sender=self.active,
+                    event_label="acs_call_transfer_status",
+                )
+            except Exception:
+                logger.debug("Failed to emit pre-transfer status update", exc_info=True)
+
+        try:
+            result = await execute_tool(tool_name, args)
+        except Exception:
+            self._call_center_triggered = False
+            logger.exception("Automatic call center transfer failed unexpectedly")
+            if self.messenger:
+                try:
+                    await self.messenger.send_status_update(
+                        text="We encountered an issue reaching the call center. Staying with the virtual agent for now.",
+                        sender=self.active,
+                        event_label="acs_call_transfer_status",
+                    )
+                except Exception:
+                    logger.debug("Failed to emit transfer failure status", exc_info=True)
+            return
+
+        if not isinstance(result, dict) or not result.get("success"):
+            self._call_center_triggered = False
+            error_message = None
+            if isinstance(result, dict):
+                error_message = result.get("message") or result.get("error")
+            logger.warning(
+                "Automatic call center transfer request was rejected | result=%s",
+                result,
+            )
+            if self.messenger:
+                try:
+                    await self.messenger.send_status_update(
+                        text=error_message or "Unable to reach the call center right now. I'll stay on the line with you.",
+                        sender=self.active,
+                        event_label="acs_call_transfer_status",
+                    )
+                except Exception:
+                    logger.debug("Failed to emit transfer rejection status", exc_info=True)
+            return
+
+        takeover_message = result.get(
+            "message",
+            "Routing you to a live call center representative now.",
+        )
+
+        if self.messenger:
+            try:
+                await self.messenger.send_status_update(
+                    text=takeover_message,
+                    sender=self.active,
+                    event_label="acs_call_transfer_status",
+                )
+            except Exception:
+                logger.debug("Failed to emit transfer success status", exc_info=True)
+
+        try:
+            if result.get("should_interrupt_playback", True):
+                await self.conn.response.cancel()
+        except Exception:
+            logger.debug("response.cancel() failed during automatic call center transfer", exc_info=True)
+
+        if self.audio:
+            try:
+                await self.audio.stop_playback()
+            except Exception:
+                logger.debug("Audio stop playback failed during automatic call center transfer", exc_info=True)

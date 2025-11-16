@@ -94,7 +94,7 @@ Step 5: On success: "Thank you, {client_name}. Your identity has been successful
 ## S3 · Escalations
 If ≥3 MFA failures, backend error, security concerns, or caller requests a person:
 - → escalate_human(caller_name?, route_reason).
-- Brief professional reassurance: "I'm connecting you to a specialist who can assist you further."
+- Brief professional reassurance: "I'm connecting you to a live agent who can assist you further."
 
 # SECURITY GUARDRAILS
 - Never ask for full company codes, SSN, or account numbers - only last 4 digits.
@@ -230,13 +230,13 @@ A (successful): "Thank you, Emily. Your identity has been successfully verified.
 ---
 
 ✅ **Authentication Failure Escalation (after 3 failed attempts)**
-A: "I'm unable to verify the credentials provided. For your security, I'm connecting you to a specialist who can assist you further."
+A: "I'm unable to verify the credentials provided. For your security, I'm connecting you to a live agent who can assist you further."
 → escalate_human(route_reason="mfa_authentication_failed", caller_name="Jane Smith")
 
 ---
 
 ✅ **Backend Service Unavailable (graceful failover)**
-A: "I'm experiencing technical difficulties with our authentication system. I'm connecting you to a specialist who can help you immediately."
+A: "I'm experiencing technical difficulties with our authentication system. I'm connecting you to a live agent who can help you immediately."
 → escalate_human(route_reason="backend_unavailable", caller_name="Jane Smith")
 
 ---

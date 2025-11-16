@@ -142,7 +142,17 @@ async def route_turn(
             raise
         finally:
             # Ensure core-memory is persisted even if a downstream component failed.
-            await cm.persist_to_redis_async(redis_mgr)
+            try:
+                if hasattr(cm, "persist_to_redis_async"):
+                    await cm.persist_to_redis_async(redis_mgr)
+                elif hasattr(cm, "persist_background"):
+                    await cm.persist_background(redis_mgr)
+            except Exception as persist_exc:
+                logger.warning(
+                    "Failed to persist orchestrator memory for session %s: %s",
+                    getattr(cm, "session_id", "unknown"),
+                    persist_exc,
+                )
 
 
 
@@ -219,4 +229,3 @@ async def _emit_orchestrator_error_status(ws: WebSocket, cm: "MemoManager", exc:
         event_label="orchestrator_error",
         broadcast_only=False,
     )
-

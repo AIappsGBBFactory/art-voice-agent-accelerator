@@ -37,6 +37,12 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.transfer_agency_tools im
     handoff_to_compliance,
     handoff_to_trading,
 )
+from apps.rtagent.backend.src.agents.vlagent.tool_store.call_transfer import (
+    TRANSFER_CALL_SCHEMA,
+    transfer_call_to_destination,
+    TRANSFER_CALL_CENTER_SCHEMA,
+    transfer_call_to_call_center,
+)
 from apps.rtagent.backend.src.agents.vlagent.tool_store.voicemail import (
     detect_voicemail_and_end_call,
     confirm_voicemail_and_end_call,
@@ -114,6 +120,8 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     # "find_information_for_policy": find_information_for_policy,
     "detect_voicemail_and_end_call": detect_voicemail_and_end_call,
     "confirm_voicemail_and_end_call": confirm_voicemail_and_end_call,
+    "transfer_call_to_destination": transfer_call_to_destination,
+    "transfer_call_to_call_center": transfer_call_to_call_center,
 }
 
 
@@ -150,6 +158,8 @@ available_tools: List[Dict[str, Any]] = [
     # {"type": "function", "function": find_information_schema},
     {"type": "function", "function": detect_voicemail_schema},
     {"type": "function", "function": confirm_voicemail_schema},
+    {"type": "function", "function": TRANSFER_CALL_SCHEMA},
+    {"type": "function", "function": TRANSFER_CALL_CENTER_SCHEMA},
 ]
 
 TOOL_REGISTRY: dict[str, dict] = {t["function"]["name"]: t for t in available_tools}
