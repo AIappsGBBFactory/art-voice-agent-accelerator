@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 
 const containerStyle = {
   display: 'flex',
@@ -24,14 +24,27 @@ const headerStyle = {
   letterSpacing: '0.03em',
 };
 
-const badgeStyle = {
+const badgeBaseStyle = {
   fontSize: '9px',
   padding: '2px 8px',
   borderRadius: '999px',
-  backgroundColor: 'rgba(59, 130, 246, 0.12)',
-  color: '#2563eb',
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
+};
+
+const badgeToneStyles = {
+  default: {
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    color: '#2563eb',
+  },
+  realtime: {
+    backgroundColor: 'rgba(14,165,233,0.15)',
+    color: '#0e7490',
+  },
+  neutral: {
+    backgroundColor: 'rgba(148,163,184,0.18)',
+    color: '#475569',
+  },
 };
 
 const optionsRowStyle = {
@@ -118,7 +131,16 @@ const footerNoteStyle = {
   lineHeight: 1.4,
 };
 
-const STREAMING_MODE_OPTIONS = [
+const VOICE_LIVE_BASE_CONFIG = Object.freeze({
+  orchestrator: 'voice_live_orchestration',
+  contextKey: 'streaming_mode',
+  endpoints: {
+    acs: '/api/v1/calls/initiate',
+    realtime: '/api/v1/realtime/conversation',
+  },
+});
+
+const ACS_STREAMING_MODE_OPTIONS = [
   {
     value: 'voice_live',
     label: 'Voice Live',
@@ -126,40 +148,96 @@ const STREAMING_MODE_OPTIONS = [
     description:
       'Ultra-low latency playback via Azure AI Voice Live. Ideal for PSTN calls with barge-in.',
     hint: 'Recommended',
+    config: {
+      ...VOICE_LIVE_BASE_CONFIG,
+      entryPoint: 'acs',
+    },
   },
   {
     value: 'media',
-    label: 'Media Handler',
-    icon: '🎧',
+    label: 'Custom Speech Cascade',
+    icon: '🌐',
     description:
-      'Three-thread ACS media pipeline with custom orchestration. Best for advanced agent control.',
+      'Composable STT → LLM → TTS cascade with full control over models, agent policies, voice personas, and adaptive routing.',
+    config: {
+      orchestrator: 'acs_media_pipeline',
+      contextKey: 'streaming_mode',
+      endpoints: {
+        acs: '/api/v1/calls/initiate',
+      },
+    },
   },
-  // {
-  //   value: 'transcription',
-  //   label: 'Transcription',
-  //   icon: '📝',
-  //   description:
-  //     'Capture audio for speech-to-text only. Choose when you do not need TTS playback.',
-  // },
 ];
 
-function StreamingModeSelector({ value, onChange, disabled = false }) {
+const REALTIME_STREAMING_MODE_OPTIONS = [
+  {
+    value: 'voice_live',
+    label: 'Voice Live Orchestration',
+    icon: '⚡️',
+    description:
+      'Route /realtime sessions through the Voice Live orchestrator for dual-stream control.',
+    hint: 'Voice Live stack',
+    config: {
+      ...VOICE_LIVE_BASE_CONFIG,
+      entryPoint: 'realtime',
+    },
+  },
+  {
+    value: 'realtime',
+    label: 'Custom Speech Cascade',
+    icon: '🌐',
+    description:
+      'Composable STT → LLM → TTS cascade with full control over models, agent policies, voice personas, and adaptive routing.',
+    config: {
+      orchestrator: 'browser_sdk_relay',
+      endpoints: {
+        realtime: '/api/v1/realtime/conversation',
+      },
+    },
+  },
+];
+
+const buildGetLabel = (options) => (streamMode) => {
+  const match = options.find((option) => option.value === streamMode);
+  return match ? match.label : streamMode;
+};
+
+const getBadgeStyle = (tone = 'default') => ({
+  ...badgeBaseStyle,
+  ...(badgeToneStyles[tone] || badgeToneStyles.default),
+});
+
+function StreamingModeSelector({
+  title = 'Streaming mode',
+  badgeText,
+  badgeTone = 'default',
+  options = ACS_STREAMING_MODE_OPTIONS,
+  value,
+  onChange,
+  onOptionSelect,
+  disabled = false,
+  footnote,
+}) {
+  const resolvedOptions = Array.isArray(options) ? options : [];
+  const badgeStyles = useMemo(() => getBadgeStyle(badgeTone), [badgeTone]);
+
   return (
     <div style={containerStyle}>
       <div style={headerStyle}>
-        <span>ACS Streaming Mode</span>
-        <span style={badgeStyle}>Per call</span>
+        <span>{title}</span>
+        {badgeText ? <span style={badgeStyles}>{badgeText}</span> : null}
       </div>
       <div style={optionsRowStyle}>
-        {STREAMING_MODE_OPTIONS.map((option) => {
+        {resolvedOptions.map((option) => {
           const isSelected = option.value === value;
           return (
             <button
               key={option.value}
               type="button"
               onClick={() => {
-                if (!disabled && option.value !== value) {
-                  onChange?.(option.value);
+                if (!disabled) {
+                  onOptionSelect?.(option);
+                  onChange?.(option.value, option);
                 }
               }}
               style={{
@@ -181,17 +259,47 @@ function StreamingModeSelector({ value, onChange, disabled = false }) {
           );
         })}
       </div>
-      <div style={footerNoteStyle}>
-        Active mode applies to ACS PSTN calls only. Browser/WebRTC streaming remains unchanged.
-      </div>
+      {footnote ? <div style={footerNoteStyle}>{footnote}</div> : null}
     </div>
   );
 }
 
-StreamingModeSelector.options = STREAMING_MODE_OPTIONS;
-StreamingModeSelector.getLabel = (streamMode) => {
-  const match = STREAMING_MODE_OPTIONS.find((option) => option.value === streamMode);
-  return match ? match.label : streamMode;
-};
+function AcsStreamingModeSelector({ onConfigChange, ...props }) {
+  return (
+    <StreamingModeSelector
+      title="ACS Streaming Mode"
+      badgeText="Telephony"
+      badgeTone="default"
+      options={ACS_STREAMING_MODE_OPTIONS}
+      footnote="Active mode applies to ACS PSTN calls only. Browser/WebRTC streaming remains unchanged."
+      onOptionSelect={(option) => onConfigChange?.(option?.config ?? null)}
+      {...props}
+    />
+  );
+}
+
+function RealtimeStreamingModeSelector({ onConfigChange, ...props }) {
+  return (
+    <StreamingModeSelector
+      title="Realtime streaming mode"
+      badgeText="wss server"
+      badgeTone="realtime"
+      options={REALTIME_STREAMING_MODE_OPTIONS}
+      footnote="Applies to the /realtime WebSocket endpoint and Voice Live orchestration pipeline."
+      onOptionSelect={(option) => onConfigChange?.(option?.config ?? null)}
+      {...props}
+    />
+  );
+}
+
+StreamingModeSelector.options = ACS_STREAMING_MODE_OPTIONS;
+StreamingModeSelector.getLabel = buildGetLabel(ACS_STREAMING_MODE_OPTIONS);
+
+AcsStreamingModeSelector.options = ACS_STREAMING_MODE_OPTIONS;
+AcsStreamingModeSelector.getLabel = buildGetLabel(ACS_STREAMING_MODE_OPTIONS);
+
+RealtimeStreamingModeSelector.options = REALTIME_STREAMING_MODE_OPTIONS;
+RealtimeStreamingModeSelector.getLabel = buildGetLabel(REALTIME_STREAMING_MODE_OPTIONS);
 
 export default StreamingModeSelector;
+export { AcsStreamingModeSelector, RealtimeStreamingModeSelector };

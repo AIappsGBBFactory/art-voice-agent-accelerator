@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Box, Button, Card, CardContent, CardHeader, Chip, Divider, IconButton, LinearProgress, Paper, Typography } from '@mui/material';
 import BuildCircleRoundedIcon from '@mui/icons-material/BuildCircleRounded';
@@ -18,19 +18,25 @@ import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import "reactflow/dist/style.css";
 import TemporaryUserForm from './TemporaryUserForm';
-import StreamingModeSelector from './StreamingModeSelector.jsx';
+import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
+import ProfileDetailsPanel from './ProfileDetailsPanel.jsx';
 import DemoScenariosWidget from './DemoScenariosWidget.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import logger from '../utils/logger.js';
 
 // Environment configuration
 const backendPlaceholder = '__BACKEND_URL__';
-const API_BASE_URL = backendPlaceholder.startsWith('__') 
+const API_BASE_URL = backendPlaceholder.startsWith('__')
   ? import.meta.env.VITE_BACKEND_BASE_URL || 'http://localhost:8000'
   : backendPlaceholder;
 
-const WS_URL = API_BASE_URL.replace(/^https?/, "wss");
+const wsPlaceholder = '__WS_URL__';
+const wsBaseCandidate = wsPlaceholder.startsWith('__')
+  ? import.meta.env.VITE_WS_BASE_URL || API_BASE_URL
+  : wsPlaceholder;
+
+const WS_URL = wsBaseCandidate.replace(/^http/i, 'ws').replace(/^ws$/, 'ws');
 
 // Session management utilities
 const getOrCreateSessionId = () => {
@@ -75,6 +81,15 @@ const toMs = (value) => (typeof value === "number" ? Math.round(value) : undefin
 
 const STREAM_MODE_STORAGE_KEY = 'rtagent.streamingMode';
 const STREAM_MODE_FALLBACK = 'voice_live';
+const REALTIME_STREAM_MODE_STORAGE_KEY = 'rtagent.realtimeStreamingMode';
+const REALTIME_STREAM_MODE_FALLBACK = 'realtime';
+const PANEL_MARGIN = 16;
+
+const smoothValue = (prev, target, deltaMs, attackMs, releaseMs) => {
+  const timeConstant = target > prev ? attackMs : releaseMs;
+  const mix = 1 - Math.exp(-Math.max(deltaMs, 0) / Math.max(timeConstant, 1));
+  return prev + (target - prev) * mix;
+};
 
 const buildSessionProfile = (raw, fallbackSessionId, previous) => {
   if (!raw && !previous) {
@@ -272,7 +287,7 @@ const styles = {
     flex: 1,
     background: "white",
     borderRadius: "20px",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+    boxShadow: "0 12px 32px rgba(15,23,42,0.12)",
     border: "0px solid transparent",
     display: "flex",
     flexDirection: "column",
@@ -288,11 +303,12 @@ const styles = {
     borderRadius: "50%",
     background: "#ffffff",
     border: "1px solid #e2e8f0",
-    boxShadow: "0 12px 30px rgba(15,23,42,0.25)",
+    boxShadow: "0 6px 18px rgba(15,23,42,0.18)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 100,
+    willChange: "transform",
   },
   backendIndicatorDock: {
     position: "fixed",
@@ -300,7 +316,7 @@ const styles = {
     left: "28px",
     transform: "scale(0.94)",
     transformOrigin: "bottom left",
-    filter: "drop-shadow(0 12px 30px rgba(15,23,42,0.25))",
+    boxShadow: "0 6px 18px rgba(15,23,42,0.18)",
     zIndex: 7,
   },
 
@@ -326,7 +342,7 @@ const styles = {
     borderRadius: "22px",
     background: "linear-gradient(140deg, rgba(255,255,255,0.97), rgba(248,250,252,0.92))",
     border: "1px solid rgba(148,163,184,0.18)",
-    boxShadow: "0 16px 32px rgba(15,23,42,0.08)",
+    boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
     width: "100%",
     maxWidth: "420px",
   },
@@ -442,7 +458,7 @@ const styles = {
     height: "72px",
     padding: "0 16px",
     background: "radial-gradient(ellipse at center, rgba(100, 116, 139, 0.08) 0%, transparent 70%)",
-    borderRadius: "10px",
+    borderRadius: "0px",
   },
   
   waveformSvg: {
@@ -566,9 +582,8 @@ const styles = {
   
   // Control section - blended footer design
   controlSection: {
-    padding: "12px 18px 14px",
-    backgroundColor: "#f1f5f9",
-    background: "linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)",
+    padding: "10px 16px 14px",
+    background: "#f5f7fb",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
@@ -578,12 +593,12 @@ const styles = {
   
   controlContainer: {
     display: "flex",
-    gap: "8px",
-    background: "white",
-    padding: "12px 16px",
-    borderRadius: "24px",
-    boxShadow: "0 4px 16px rgba(100, 116, 139, 0.08), 0 1px 4px rgba(100, 116, 139, 0.04)",
-    border: "1px solid #e2e8f0",
+    gap: "10px",
+    background: "rgba(255,255,255,0.9)",
+    padding: "12px 18px",
+    borderRadius: "22px",
+    boxShadow: "0 4px 14px rgba(15,23,42,0.12)",
+    border: "1px solid rgba(226,232,240,0.9)",
     width: "fit-content",
   },
   
@@ -701,29 +716,43 @@ const styles = {
 
   // Tooltip styles
   buttonTooltip: {
-    position: 'absolute',
-    bottom: '-45px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    background: 'rgba(51, 65, 85, 0.95)',
+    position: 'fixed',
+    left: 0,
+    top: 0,
+    transform: 'translate(-50%, 0)',
+    background: 'rgba(30, 41, 59, 0.92)',
     color: '#f1f5f9',
     padding: '8px 12px',
     borderRadius: '8px',
     fontSize: '11px',
     fontWeight: '500',
     whiteSpace: 'nowrap',
-    backdropFilter: 'blur(10px)',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    boxShadow: '0 4px 10px rgba(15,23,42,0.18)',
+    border: '1px solid rgba(255,255,255,0.08)',
     pointerEvents: 'none',
     opacity: 0,
-    transition: 'opacity 0.2s ease, transform 0.2s ease',
-    zIndex: 1000,
+    transition: 'opacity 0.18s ease, transform 0.18s ease',
+    zIndex: 80,
   },
 
   buttonTooltipVisible: {
     opacity: 1,
-    transform: 'translateX(-50%) translateY(+2px)',
+    transform: 'translate(-50%, 0)',
+  },
+
+  realtimeModeDock: {
+    width: '100%',
+    padding: '0 24px',
+    marginTop: '12px',
+    position: 'relative',
+    minHeight: '1px',
+  },
+
+  realtimeModePanel: {
+    position: 'fixed',
+    width: '100%',
+    maxWidth: '360px',
+    zIndex: 120,
   },
   
   // Input section for phone calls
@@ -776,11 +805,10 @@ const styles = {
     borderRadius: "12px",
     fontSize: "11px",
     color: "#64748b",
-    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-    zIndex: 1000,
+    boxShadow: "0 6px 18px rgba(15,23,42,0.16)",
+    zIndex: 60,
     minWidth: "280px",
     maxWidth: "320px",
-    backdropFilter: "blur(8px)",
   },
 
   maskToggleButton: {
@@ -1088,8 +1116,7 @@ const styles = {
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
-    backdropFilter: "blur(2px)",
+    backgroundColor: "rgba(15, 23, 42, 0.25)",
     zIndex: 12000,
   },
   demoFormOverlay: {
@@ -1098,12 +1125,15 @@ const styles = {
     left: "50%",
     transform: "translate(-50%, -50%)",
     zIndex: 12010,
-    maxHeight: "calc(100vh - 80px)",
-    overflowY: "auto",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: "16px",
+    padding: "8px",
+    maxWidth: "100vw",
+    maxHeight: "calc(100vh - 80px)",
+    overflowY: "auto",
+    scrollbarWidth: "none",
+    msOverflowStyle: "none",
   },
   profileButtonWrapper: {
     margin: "0 24px",
@@ -1191,6 +1221,13 @@ styleSheet.textContent = `
     100% {
       box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
     }
+  }
+  .demo-form-overlay {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .demo-form-overlay::-webkit-scrollbar {
+    display: none;
   }
 `;
 document.head.appendChild(styleSheet);
@@ -2349,12 +2386,15 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
 /* ------------------------------------------------------------------ *
  *  WAVEFORM COMPONENT - SIMPLE & SMOOTH
  * ------------------------------------------------------------------ */
-const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel = 0, bargeInActive = false }) => {
-  const [waveOffset, setWaveOffset] = useState(0);
-  const [amplitude, setAmplitude] = useState(0);
+const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, outputAudioLevelRef, bargeInActive = false }) => {
+  const [waveRenderState, setWaveRenderState] = useState({ amplitude: 0, offset: 0 });
   const [speakerState, setSpeakerState] = useState({ user: false, assistant: false });
   const animationRef = useRef();
   const combinedLevelRef = useRef(0);
+  const latestLevelsRef = useRef({ input: 0, output: 0 });
+  const levelTimestampRef = useRef(performance.now());
+  const lastVisualUpdateRef = useRef(performance.now());
+  const waveRenderRef = useRef({ amplitude: 0, offset: 0 });
   const USER_THRESHOLD = 0.015;
   const ASSISTANT_THRESHOLD = 0.006;
   const userDisplayActive = speakerState.user || activeSpeaker === "User";
@@ -2362,25 +2402,46 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
   const bothDisplayActive = userDisplayActive && assistantDisplayActive;
 
   useEffect(() => {
-    const target = Math.max(audioLevel, outputAudioLevel);
-    const previous = combinedLevelRef.current;
-    const mix = target > previous ? 0.4 : 0.18;
-    const next = previous + (target - previous) * mix;
-    combinedLevelRef.current = next < 0.004 ? 0 : next;
+    let rafId;
+    const updateLevels = () => {
+      const now = performance.now();
+      const deltaMs = now - (levelTimestampRef.current || now);
+      levelTimestampRef.current = now;
+      const inputLevel = audioLevelRef?.current ?? 0;
+      const outputLevel = outputAudioLevelRef?.current ?? 0;
+      latestLevelsRef.current = { input: inputLevel, output: outputLevel };
 
-    setSpeakerState((prev) => ({
-      user: audioLevel > USER_THRESHOLD
-        ? true
-        : audioLevel < USER_THRESHOLD * 0.6
-          ? false
-          : prev.user,
-      assistant: outputAudioLevel > ASSISTANT_THRESHOLD
-        ? true
-        : outputAudioLevel < ASSISTANT_THRESHOLD * 0.6
-          ? false
-          : prev.assistant,
-    }));
-  }, [audioLevel, outputAudioLevel]);
+      const target = Math.max(inputLevel, outputLevel);
+      const previous = combinedLevelRef.current;
+      const next = smoothValue(previous, target, deltaMs, 85, 260);
+      combinedLevelRef.current = next < 0.004 ? 0 : next;
+
+      setSpeakerState((prev) => {
+        const nextUser = inputLevel > USER_THRESHOLD
+          ? true
+          : inputLevel < USER_THRESHOLD * 0.6
+            ? false
+            : prev.user;
+        const nextAssistant = outputLevel > ASSISTANT_THRESHOLD
+          ? true
+          : outputLevel < ASSISTANT_THRESHOLD * 0.6
+            ? false
+            : prev.assistant;
+        if (prev.user === nextUser && prev.assistant === nextAssistant) {
+          return prev;
+        }
+        return { user: nextUser, assistant: nextAssistant };
+      });
+
+      rafId = requestAnimationFrame(updateLevels);
+    };
+    rafId = requestAnimationFrame(updateLevels);
+    return () => {
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+    };
+  }, [audioLevelRef, outputAudioLevelRef]);
 
   useEffect(() => {
     let lastTs = performance.now();
@@ -2395,14 +2456,26 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
       const targetAmplitude = normalized < 0.015
         ? 0
         : (36 * normalized) + (18 * normalized * normalized) + (bargeInActive ? 6 : 0);
-      setAmplitude((prev) => {
-        const mix = targetAmplitude > prev ? 0.22 : 0.12;
-        const eased = prev + (targetAmplitude - prev) * mix;
-        return eased < 0.4 ? 0 : eased;
-      });
+      const prevAmplitude = waveRenderRef.current.amplitude;
+      const easedAmplitude = smoothValue(prevAmplitude, targetAmplitude, delta, 110, 260);
+      const finalAmplitude = easedAmplitude < 0.35 ? 0 : easedAmplitude;
 
-      const waveSpeed = 0.45 + normalized * 2.3;
-      setWaveOffset((prev) => (prev + waveSpeed * (delta / 16)) % 1000);
+      const prevOffset = waveRenderRef.current.offset;
+      const waveSpeed = 0.38 + normalized * 2.1;
+      const nextOffset = (prevOffset + waveSpeed * (delta / 16)) % 1000;
+
+      const nowTs = now;
+      const needsUpdate =
+        Math.abs(finalAmplitude - prevAmplitude) > 0.35 ||
+        Math.abs(nextOffset - prevOffset) > 0.9 ||
+        nowTs - lastVisualUpdateRef.current > 48;
+
+      if (needsUpdate) {
+        const nextState = { amplitude: finalAmplitude, offset: nextOffset };
+        waveRenderRef.current = nextState;
+        lastVisualUpdateRef.current = nowTs;
+        setWaveRenderState(nextState);
+      }
 
       animationRef.current = requestAnimationFrame(animate);
     };
@@ -2420,13 +2493,13 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
     const height = 100;
     const centerY = height / 2;
     const frequency = 0.02;
-    const points = 100;
-    
+    const points = 160;
+
     let path = `M 0 ${centerY}`;
-    
+
     for (let i = 0; i <= points; i++) {
       const x = (i / points) * width;
-      const y = centerY + Math.sin((x * frequency + waveOffset * 0.1)) * amplitude;
+      const y = centerY + Math.sin((x * frequency + waveRenderState.offset * 0.1)) * waveRenderState.amplitude;
       path += ` L ${x} ${y}`;
     }
     
@@ -2438,14 +2511,14 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
     const width = 750;
     const height = 100;
     const centerY = height / 2;
-    const frequency = 0.025;
-    const points = 100;
-    
+    const frequency = 0.0245;
+    const points = 140;
+
     let path = `M 0 ${centerY}`;
-    
+
     for (let i = 0; i <= points; i++) {
       const x = (i / points) * width;
-      const y = centerY + Math.sin((x * frequency + waveOffset * 0.12)) * (amplitude * 0.6);
+      const y = centerY + Math.sin((x * frequency + waveRenderState.offset * 0.12)) * (waveRenderState.amplitude * 0.6);
       path += ` L ${x} ${y}`;
     }
     
@@ -2469,7 +2542,7 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
       opacity = 0.45;
     }
 
-    if (amplitude <= 0.8) {
+    if (waveRenderState.amplitude <= 0.8) {
       baseColor = "#cbd5e1";
       waves.push(
         <line
@@ -2514,6 +2587,9 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
     return waves;
   };
   
+  const audioLevel = latestLevelsRef.current.input;
+  const outputAudioLevel = latestLevelsRef.current.output;
+
   return (
     <div style={styles.waveformContainer}>
       <svg style={styles.waveformSvg} viewBox="0 0 750 80" preserveAspectRatio="xMidYMid meet">
@@ -2538,12 +2614,196 @@ const WaveformVisualization = ({ activeSpeaker, audioLevel = 0, outputAudioLevel
           color: '#666',
           whiteSpace: 'nowrap'
         }}>
-          Input: {(audioLevel * 100).toFixed(1)}% | Output: {(outputAudioLevel * 100).toFixed(1)}% | Amp: {amplitude.toFixed(1)} | Speaker: {bothDisplayActive ? 'Barge-In' : (userDisplayActive ? 'User' : assistantDisplayActive ? 'Assistant' : (activeSpeaker || 'Idle'))}
+          Input: {(audioLevel * 100).toFixed(1)}% | Output: {(outputAudioLevel * 100).toFixed(1)}% | Amp: {waveRenderState.amplitude.toFixed(1)} | Speaker: {bothDisplayActive ? 'Barge-In' : (userDisplayActive ? 'User' : assistantDisplayActive ? 'Assistant' : (activeSpeaker || 'Idle'))}
         </div>
       )}
     </div>
   );
-};
+});
+
+/* ------------------------------------------------------------------ *
+ *  CONVERSATION CONTROLS (Reset, Mic, Call)
+ * ------------------------------------------------------------------ */
+const ConversationControls = React.memo(({
+  recording,
+  callActive,
+  isCallDisabled,
+  onResetSession,
+  onMicToggle,
+  onPhoneButtonClick,
+  phoneButtonRef,
+  micButtonRef,
+}) => {
+  const [resetHovered, setResetHovered] = useState(false);
+  const [micHovered, setMicHovered] = useState(false);
+  const [phoneHovered, setPhoneHovered] = useState(false);
+  const [showResetTooltip, setShowResetTooltip] = useState(false);
+  const [showMicTooltip, setShowMicTooltip] = useState(false);
+  const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
+  const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
+  const [resetTooltipPos, setResetTooltipPos] = useState(null);
+  const [micTooltipPos, setMicTooltipPos] = useState(null);
+  const [phoneTooltipPos, setPhoneTooltipPos] = useState(null);
+
+  const handlePhoneMouseEnter = useCallback((event) => {
+    setShowPhoneTooltip(true);
+    const target = phoneButtonRef?.current || event?.currentTarget;
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      setPhoneTooltipPos({
+        top: rect.bottom + 12,
+        left: rect.left + rect.width / 2,
+      });
+      setPhoneDisabledPos({
+        top: rect.bottom + 12,
+        left: rect.left + rect.width / 2,
+      });
+    }
+    if (!isCallDisabled) {
+      setPhoneHovered(true);
+    }
+  }, [isCallDisabled, phoneButtonRef]);
+
+  const handlePhoneMouseLeave = useCallback(() => {
+    setShowPhoneTooltip(false);
+    setPhoneHovered(false);
+    setPhoneDisabledPos(null);
+    setPhoneTooltipPos(null);
+  }, []);
+
+  return (
+    <div style={styles.controlSection}>
+      <div style={styles.controlContainer}>
+        {/* Reset */}
+        <div style={{ position: 'relative' }}>
+          <IconButton
+            disableRipple
+            aria-label="Reset session"
+            sx={styles.resetButton(resetHovered)}
+            onMouseEnter={(event) => {
+              setShowResetTooltip(true);
+              setResetHovered(true);
+              const rect = event.currentTarget.getBoundingClientRect();
+              setResetTooltipPos({
+                top: rect.bottom + 12,
+                left: rect.left + rect.width / 2,
+              });
+            }}
+            onMouseLeave={() => {
+              setShowResetTooltip(false);
+              setResetHovered(false);
+              setResetTooltipPos(null);
+            }}
+            onClick={onResetSession}
+          >
+            <RestartAltRoundedIcon fontSize="medium" />
+          </IconButton>
+          {showResetTooltip && resetTooltipPos && (
+            <div
+              style={{
+                ...styles.buttonTooltip,
+                top: resetTooltipPos.top,
+                left: resetTooltipPos.left,
+                ...(showResetTooltip ? styles.buttonTooltipVisible : {}),
+              }}
+            >
+              Reset conversation & start fresh
+            </div>
+          )}
+        </div>
+
+        {/* Mic */}
+        <div style={{ position: 'relative' }}>
+          <IconButton
+            disableRipple
+            aria-label={recording ? "Stop microphone" : "Start microphone"}
+            sx={styles.micButton(recording, micHovered)}
+            ref={micButtonRef}
+            onMouseEnter={(event) => {
+              setShowMicTooltip(true);
+              setMicHovered(true);
+              const rect = event.currentTarget.getBoundingClientRect();
+              setMicTooltipPos({
+                top: rect.bottom + 12,
+                left: rect.left + rect.width / 2,
+              });
+            }}
+            onMouseLeave={() => {
+              setShowMicTooltip(false);
+              setMicHovered(false);
+              setMicTooltipPos(null);
+            }}
+            onClick={onMicToggle}
+          >
+            {recording ? (
+              <MicOffRoundedIcon fontSize="medium" />
+            ) : (
+              <MicRoundedIcon fontSize="medium" />
+            )}
+          </IconButton>
+          {showMicTooltip && micTooltipPos && (
+            <div
+              style={{
+                ...styles.buttonTooltip,
+                top: micTooltipPos.top,
+                left: micTooltipPos.left,
+                ...(showMicTooltip ? styles.buttonTooltipVisible : {}),
+              }}
+            >
+              {recording ? "Stop recording your voice" : "Start voice conversation"}
+            </div>
+          )}
+        </div>
+
+        {/* Call */}
+        <div
+          style={{ position: 'relative' }}
+          onMouseEnter={handlePhoneMouseEnter}
+          onMouseLeave={handlePhoneMouseLeave}
+        >
+          <IconButton
+            ref={phoneButtonRef}
+            disableRipple
+            aria-label={callActive ? "Hang up call" : "Place call"}
+            sx={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
+            disabled={isCallDisabled}
+            onClick={onPhoneButtonClick}
+          >
+            {callActive ? (
+              <PhoneDisabledRoundedIcon fontSize="medium" />
+            ) : (
+              <PhoneRoundedIcon fontSize="medium" />
+            )}
+          </IconButton>
+          {!isCallDisabled && showPhoneTooltip && phoneTooltipPos && (
+            <div
+              style={{
+                ...styles.buttonTooltip,
+                top: phoneTooltipPos.top,
+                left: phoneTooltipPos.left,
+                ...(showPhoneTooltip ? styles.buttonTooltipVisible : {}),
+              }}
+            >
+              {callActive ? "Hang up the phone call" : "Make a phone call"}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {isCallDisabled && showPhoneTooltip && phoneDisabledPos && (
+        <div
+          style={{
+            ...styles.phoneDisabledDialog,
+            top: phoneDisabledPos.top,
+            left: phoneDisabledPos.left,
+          }}
+        >
+          ⚠️ Outbound calling is disabled. Update backend .env with Azure Communication Services settings (ACS_CONNECTION_STRING, ACS_SOURCE_PHONE_NUMBER, ACS_ENDPOINT) to enable this feature.
+        </div>
+      )}
+    </div>
+  );
+});
 
 /* ------------------------------------------------------------------ *
  *  CHAT BUBBLE
@@ -2871,15 +3131,25 @@ function RealTimeVoiceApp() {
   const [callActive, setCallActive] = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState(null);
   const [showPhoneInput, setShowPhoneInput] = useState(false);
+  const [showRealtimeModePanel, setShowRealtimeModePanel] = useState(false);
+  const [pendingRealtimeStart, setPendingRealtimeStart] = useState(false);
+  const [realtimePanelCoords, setRealtimePanelCoords] = useState({ top: 0, left: 0 });
   const [systemStatus, setSystemStatus] = useState({
     status: "checking",
     acsOnlyIssue: false,
   });
-  const streamingModeOptions = StreamingModeSelector.options ?? [];
+  const streamingModeOptions = AcsStreamingModeSelector.options ?? [];
+  const realtimeStreamingModeOptions = RealtimeStreamingModeSelector.options ?? [];
   const allowedStreamModes = streamingModeOptions.map((option) => option.value);
   const fallbackStreamMode = allowedStreamModes.includes(STREAM_MODE_FALLBACK)
     ? STREAM_MODE_FALLBACK
     : allowedStreamModes[0] || STREAM_MODE_FALLBACK;
+  const allowedRealtimeStreamModes = realtimeStreamingModeOptions.map((option) => option.value);
+  const fallbackRealtimeStreamMode = allowedRealtimeStreamModes.includes(
+    REALTIME_STREAM_MODE_FALLBACK,
+  )
+    ? REALTIME_STREAM_MODE_FALLBACK
+    : allowedRealtimeStreamModes[0] || REALTIME_STREAM_MODE_FALLBACK;
   const [selectedStreamingMode, setSelectedStreamingMode] = useState(() => {
     const allowed = new Set(allowedStreamModes);
     if (typeof window !== 'undefined') {
@@ -2897,6 +3167,24 @@ function RealTimeVoiceApp() {
       return envMode;
     }
     return fallbackStreamMode;
+  });
+  const [selectedRealtimeStreamingMode, setSelectedRealtimeStreamingMode] = useState(() => {
+    const allowed = new Set(allowedRealtimeStreamModes);
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = window.localStorage.getItem(REALTIME_STREAM_MODE_STORAGE_KEY);
+        if (stored && allowed.has(stored)) {
+          return stored;
+        }
+      } catch (err) {
+        logger.warn('Failed to read stored realtime streaming mode preference', err);
+      }
+    }
+    const envMode = (import.meta.env.VITE_REALTIME_STREAMING_MODE || '').toLowerCase();
+    if (envMode && allowed.has(envMode)) {
+      return envMode;
+    }
+    return fallbackRealtimeStreamMode;
   });
   const [sessionProfiles, setSessionProfiles] = useState({});
   // Profile menu state moved to ProfileButton component
@@ -2932,21 +3220,17 @@ function RealTimeVoiceApp() {
     );
   }, []);
 
-  // Tooltip states
-  const [showResetTooltip, setShowResetTooltip] = useState(false);
-  const [showMicTooltip, setShowMicTooltip] = useState(false);
-  const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
-
-  // Hover states
-  const [resetHovered, setResetHovered] = useState(false);
-  const [micHovered, setMicHovered] = useState(false);
-  const [phoneHovered, setPhoneHovered] = useState(false);
-  const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
   const [showDemoForm, setShowDemoForm] = useState(false);
+  const openDemoForm = useCallback(() => setShowDemoForm(true), [setShowDemoForm]);
+  const closeDemoForm = useCallback(() => setShowDemoForm(false), [setShowDemoForm]);
   const [createProfileHovered, setCreateProfileHovered] = useState(false);
   const demoFormCloseTimeoutRef = useRef(null);
   const profileHighlightTimeoutRef = useRef(null);
   const [profileHighlight, setProfileHighlight] = useState(false);
+  const [showProfilePanel, setShowProfilePanel] = useState(false);
+  const lastProfileIdRef = useRef(null);
+  const realtimePanelRef = useRef(null);
+  const realtimePanelAnchorRef = useRef(null);
   const triggerProfileHighlight = useCallback(() => {
     setProfileHighlight(true);
     if (profileHighlightTimeoutRef.current) {
@@ -2963,10 +3247,8 @@ function RealTimeVoiceApp() {
   useEffect(() => {
     if (isCallDisabled) {
       setShowPhoneInput(false);
-    } else if (phoneDisabledPos) {
-      setPhoneDisabledPos(null);
     }
-  }, [isCallDisabled, phoneDisabledPos]);
+  }, [isCallDisabled]);
 
   useEffect(() => {
     return () => {
@@ -2996,6 +3278,20 @@ function RealTimeVoiceApp() {
   }, [selectedStreamingMode]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        REALTIME_STREAM_MODE_STORAGE_KEY,
+        selectedRealtimeStreamingMode,
+      );
+    } catch (err) {
+      logger.warn('Failed to persist realtime streaming mode preference', err);
+    }
+  }, [selectedRealtimeStreamingMode]);
+
+  useEffect(() => {
     if (!showPhoneInput) {
       return undefined;
     }
@@ -3016,6 +3312,83 @@ function RealTimeVoiceApp() {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [showPhoneInput]);
 
+  useEffect(() => {
+    if (!showRealtimeModePanel) {
+      setPendingRealtimeStart(false);
+      return undefined;
+    }
+
+    const handleRealtimeOutsideClick = (event) => {
+      const panelNode = realtimePanelRef.current;
+      if (panelNode && panelNode.contains(event.target)) {
+        return;
+      }
+      setShowRealtimeModePanel(false);
+    };
+
+    document.addEventListener('mousedown', handleRealtimeOutsideClick);
+    return () => document.removeEventListener('mousedown', handleRealtimeOutsideClick);
+  }, [showRealtimeModePanel]);
+
+  useEffect(() => {
+    if (recording) {
+      setShowRealtimeModePanel(false);
+    }
+  }, [recording]);
+
+  useLayoutEffect(() => {
+    if (!showRealtimeModePanel) {
+      return undefined;
+    }
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const updatePosition = () => {
+      const anchorEl = micButtonRef.current || realtimePanelAnchorRef.current;
+      const panelEl = realtimePanelRef.current;
+      if (!anchorEl || !panelEl) {
+        return;
+      }
+      const anchorRect = anchorEl.getBoundingClientRect();
+      const panelRect = panelEl.getBoundingClientRect();
+      let top = anchorRect.top - panelRect.height - PANEL_MARGIN;
+      if (top < PANEL_MARGIN) {
+        top = anchorRect.bottom + PANEL_MARGIN;
+      }
+      let left = anchorRect.left + anchorRect.width / 2 - panelRect.width / 2;
+      const maxLeft = window.innerWidth - panelRect.width - PANEL_MARGIN;
+      left = Math.min(
+        Math.max(left, PANEL_MARGIN),
+        Math.max(PANEL_MARGIN, maxLeft),
+      );
+      setRealtimePanelCoords({ top, left });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [showRealtimeModePanel]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    if (!showDemoForm) {
+      document.body.style.removeProperty('overflow');
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow || '';
+    };
+  }, [showDemoForm]);
+
   const handleStreamingModeChange = useCallback(
     (mode) => {
       if (!mode || mode === selectedStreamingMode) {
@@ -3027,9 +3400,37 @@ function RealTimeVoiceApp() {
     [selectedStreamingMode],
   );
 
-  const selectedStreamingModeLabel = StreamingModeSelector.getLabel(
+  const handleRealtimeStreamingModeChange = useCallback(
+    (mode) => {
+      if (!mode) {
+        return;
+      }
+      if (mode !== selectedRealtimeStreamingMode) {
+        setSelectedRealtimeStreamingMode(mode);
+        logger.info(`🎚️ [FRONTEND] Realtime streaming mode updated to ${mode}`);
+      }
+      const shouldStart = pendingRealtimeStart && !recording;
+      setPendingRealtimeStart(false);
+      setShowRealtimeModePanel(false);
+      if (shouldStart) {
+        startRecognitionRef.current?.(mode);
+      }
+    },
+    [pendingRealtimeStart, recording, selectedRealtimeStreamingMode],
+  );
+
+  const selectedStreamingModeLabel = AcsStreamingModeSelector.getLabel(
     selectedStreamingMode,
   );
+  const selectedRealtimeStreamingModeLabel = RealtimeStreamingModeSelector.getLabel(
+    selectedRealtimeStreamingMode,
+  );
+  const selectedRealtimeModeConfig = useMemo(() => {
+    const match = realtimeStreamingModeOptions.find(
+      (option) => option.value === selectedRealtimeStreamingMode,
+    );
+    return match?.config ?? null;
+  }, [realtimeStreamingModeOptions, selectedRealtimeStreamingMode]);
 
   const updateToolMessage = useCallback(
     (toolName, transformer, fallbackMessage) => {
@@ -3096,6 +3497,7 @@ function RealTimeVoiceApp() {
   const socketRef = useRef(null);
   const phoneButtonRef = useRef(null);
   const phonePanelRef = useRef(null);
+  const micButtonRef = useRef(null);
 
   // Audio processing refs
   const audioContextRef = useRef(null);
@@ -3114,10 +3516,39 @@ function RealTimeVoiceApp() {
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   
-  const [audioLevel, setAudioLevel] = useState(0);
   const audioLevelRef = useRef(0);
-  const [outputAudioLevel, setOutputAudioLevel] = useState(0);
   const outputAudioLevelRef = useRef(0);
+  const outputLevelDecayTimeoutRef = useRef(null);
+  const startRecognitionRef = useRef(null);
+  const stopRecognitionRef = useRef(null);
+
+  const cancelOutputLevelDecay = useCallback(() => {
+    if (outputLevelDecayTimeoutRef.current && typeof window !== 'undefined') {
+      window.clearTimeout(outputLevelDecayTimeoutRef.current);
+      outputLevelDecayTimeoutRef.current = null;
+    }
+  }, []);
+
+  const scheduleOutputLevelDecay = useCallback(() => {
+    if (typeof window === 'undefined') {
+      outputAudioLevelRef.current = 0;
+      return;
+    }
+    cancelOutputLevelDecay();
+    const decayStep = () => {
+      let next = outputAudioLevelRef.current * 0.78;
+      if (next < 0.002) {
+        next = 0;
+      }
+      outputAudioLevelRef.current = next;
+      if (next > 0) {
+        outputLevelDecayTimeoutRef.current = window.setTimeout(decayStep, 160);
+      } else {
+        outputLevelDecayTimeoutRef.current = null;
+      }
+    };
+    outputLevelDecayTimeoutRef.current = window.setTimeout(decayStep, 200);
+  }, [cancelOutputLevelDecay]);
   const metricsRef = useRef(createMetricsState());
 
   const workletSource = `
@@ -3243,8 +3674,8 @@ function RealTimeVoiceApp() {
     }
 
     outputAudioLevelRef.current = nextLevel;
-    setOutputAudioLevel(nextLevel);
-  }, []);
+    scheduleOutputLevelDecay();
+  }, [scheduleOutputLevelDecay]);
 
   // Initialize playback audio context and worklet (call on user gesture)
   const initializeAudioPlayback = async () => {
@@ -3292,6 +3723,19 @@ function RealTimeVoiceApp() {
   // Formatting functions moved to ProfileButton component
   const activeSessionProfile = sessionProfiles[sessionId];
   const hasActiveProfile = Boolean(activeSessionProfile?.profile);
+  useEffect(() => {
+    const profilePayload = activeSessionProfile?.profile;
+    const nextId = profilePayload?.id || activeSessionProfile?.sessionId || null;
+    if (!nextId) {
+      lastProfileIdRef.current = null;
+      setShowProfilePanel(false);
+      return;
+    }
+    if (lastProfileIdRef.current !== nextId) {
+      lastProfileIdRef.current = nextId;
+      setShowProfilePanel(true);
+    }
+  }, [activeSessionProfile]);
   
   const handleDemoCreated = useCallback((demoPayload) => {
     if (!demoPayload) {
@@ -3300,21 +3744,24 @@ function RealTimeVoiceApp() {
     const ssn = demoPayload?.profile?.verification_codes?.ssn4;
     const notice = demoPayload?.safety_notice ?? 'Demo data only.';
     const sessionKey = demoPayload.session_id ?? sessionId;
-    const previouslyHadProfile = Boolean(sessionProfiles[sessionKey]?.profile);
+    let previouslyHadProfile = false;
     const messageLines = [
       '🚨 DEMO PROFILE GENERATED 🚨',
       ssn ? `Temporary SSN Last 4: ${ssn}` : null,
       notice,
       'NEVER enter real customer or personal data in this environment.',
     ].filter(Boolean);
-    setSessionProfiles((prev) => ({
-      ...prev,
-      [sessionKey]: buildSessionProfile(
-        demoPayload,
-        sessionKey,
-        prev[sessionKey],
-      ),
-    }));
+    setSessionProfiles((prev) => {
+      previouslyHadProfile = Boolean(prev[sessionKey]?.profile);
+      return {
+        ...prev,
+        [sessionKey]: buildSessionProfile(
+          demoPayload,
+          sessionKey,
+          prev[sessionKey],
+        ),
+      };
+    });
     appendSystemMessage(messageLines.join('\n'), { tone: "warning" });
     appendLog('Synthetic demo profile issued with sandbox identifiers');
     if (!previouslyHadProfile) {
@@ -3324,10 +3771,64 @@ function RealTimeVoiceApp() {
       clearTimeout(demoFormCloseTimeoutRef.current);
     }
     demoFormCloseTimeoutRef.current = window.setTimeout(() => {
-      setShowDemoForm(false);
+      closeDemoForm();
       demoFormCloseTimeoutRef.current = null;
     }, 1000);
-  }, [appendLog, appendSystemMessage, sessionId, sessionProfiles, triggerProfileHighlight, setShowDemoForm]);
+  }, [appendLog, appendSystemMessage, sessionId, triggerProfileHighlight, closeDemoForm]);
+
+  const handleResetSession = useCallback(() => {
+    const newSessionId = createNewSessionId();
+    setSessionId(newSessionId);
+    setSessionProfiles({});
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      logger.info('🔌 Closing WebSocket for session reset...');
+      try {
+        socketRef.current.close();
+      } catch (error) {
+        logger.warn('Error closing socket during reset', error);
+      }
+    }
+    setMessages([]);
+    setActiveSpeaker(null);
+    stopRecognitionRef.current?.();
+    setCallActive(false);
+    setShowPhoneInput(false);
+    appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
+    setTimeout(() => {
+      appendSystemMessage(
+        "✅ Session restarted with new ID. Ready for a fresh conversation!",
+        { tone: "success" },
+      );
+    }, 500);
+  }, [appendLog, appendSystemMessage, setSessionId, setSessionProfiles, setMessages, setActiveSpeaker, setCallActive, setShowPhoneInput]);
+
+  const handleMicToggle = useCallback(() => {
+    if (recording) {
+      stopRecognitionRef.current?.();
+    } else {
+      setPendingRealtimeStart(true);
+      setShowRealtimeModePanel(true);
+    }
+  }, [recording]);
+
+  const handlePhoneButtonClick = useCallback(() => {
+    if (isCallDisabled) {
+      return;
+    }
+    if (callActive) {
+      stopRecognitionRef.current?.();
+      setCallActive(false);
+      const endedAt = new Date().toISOString();
+      appendSystemMessage("📞 Call ended", {
+        tone: "warning",
+        timestamp: endedAt,
+        withDivider: true,
+        dividerLabel: `Call disconnected · ${formatStatusTimestamp(endedAt)}`,
+      });
+      return;
+    }
+    setShowPhoneInput((prev) => !prev);
+  }, [isCallDisabled, callActive, appendSystemMessage, setCallActive, setShowPhoneInput]);
 
   const publishMetricsSummary = useCallback(
     (label, detail) => {
@@ -3527,23 +4028,6 @@ function RealTimeVoiceApp() {
   },[messages]);
 
   useEffect(() => {
-    if (outputAudioLevel <= 0) {
-      return undefined;
-    }
-    const decayId = window.setTimeout(() => {
-      let next = outputAudioLevelRef.current * 0.78;
-      if (next < 0.002) {
-        next = 0;
-      }
-      outputAudioLevelRef.current = next;
-      setOutputAudioLevel(next);
-    }, 140);
-    return () => {
-      window.clearTimeout(decayId);
-    };
-  }, [outputAudioLevel]);
-
-  useEffect(() => {
     return () => {
       if (processorRef.current) {
         try { 
@@ -3589,20 +4073,32 @@ function RealTimeVoiceApp() {
         }
         socketRef.current = null;
       }
+      cancelOutputLevelDecay();
+      outputAudioLevelRef.current = 0;
+      audioLevelRef.current = 0;
     };
-  }, []);
+  }, [cancelOutputLevelDecay]);
 
   useEffect(() => {
     if (log.includes("Call connected"))  setCallActive(true);
     if (log.includes("Call ended"))      setCallActive(false);
   }, [log]);
 
-  const startRecognition = async () => {
+  const startRecognition = async (modeOverride) => {
       appendLog("🎤 PCM streaming started");
 
       await initializeAudioPlayback();
 
       const sessionId = getOrCreateSessionId();
+      const realtimeMode = modeOverride || selectedRealtimeStreamingMode;
+      const realtimeReadableMode =
+        selectedRealtimeStreamingModeLabel || realtimeMode;
+      const activeRealtimeConfig = modeOverride
+        ? (realtimeStreamingModeOptions.find((option) => option.value === realtimeMode)?.config ?? null)
+        : selectedRealtimeModeConfig;
+      const baseConversationUrl = `${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&streaming_mode=${encodeURIComponent(
+        realtimeMode,
+      )}`;
       resetMetrics(sessionId);
       assistantStreamGenerationRef.current = 0;
       terminationReasonRef.current = null;
@@ -3613,10 +4109,20 @@ function RealTimeVoiceApp() {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
-      logger.info('🔗 [FRONTEND] Starting conversation WebSocket with session_id:', sessionId);
+      logger.info(
+        '🔗 [FRONTEND] Starting conversation WebSocket with session_id: %s (realtime_mode=%s)',
+        sessionId,
+        realtimeReadableMode,
+      );
+      if (activeRealtimeConfig) {
+        logger.debug(
+          '[FRONTEND] Realtime streaming mode config:',
+          activeRealtimeConfig,
+        );
+      }
 
       const connectSocket = (isReconnect = false) => {
-        const ws = new WebSocket(`${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}`);
+        const ws = new WebSocket(baseConversationUrl);
         ws.binaryType = "arraybuffer";
 
         ws.onopen = () => {
@@ -3624,7 +4130,7 @@ function RealTimeVoiceApp() {
           logger.info(
             "WebSocket connection %s to backend at:",
             isReconnect ? "RECONNECTED" : "OPENED",
-            `${WS_URL}/api/v1/realtime/conversation`,
+            baseConversationUrl,
           );
           reconnectAttemptsRef.current = 0;
         };
@@ -3713,7 +4219,6 @@ function RealTimeVoiceApp() {
         const level = previous + (target - previous) * smoothing;
         
         audioLevelRef.current = level;
-        setAudioLevel(level);
 
         // Debug: Log a sample of mic data
 
@@ -3780,11 +4285,13 @@ function RealTimeVoiceApp() {
       setActiveSpeaker("System");
       setRecording(false);
       audioLevelRef.current = 0;
-      setAudioLevel(0);
       outputAudioLevelRef.current = 0;
-      setOutputAudioLevel(0);
+      cancelOutputLevelDecay();
       appendLog("🛑 PCM streaming stopped");
     };
+
+    startRecognitionRef.current = startRecognition;
+    stopRecognitionRef.current = stopRecognition;
 
     const pushIfChanged = (arr, msg) => {
       const normalizedMsg =
@@ -4447,11 +4954,11 @@ function RealTimeVoiceApp() {
 
               <div style={styles.appHeaderActions}>
                 {hasActiveProfile ? (
-                  <ProfileButton 
-                    profile={activeSessionProfile} 
-                    sessionId={sessionId}
+                  <ProfileButton
+                    profile={activeSessionProfile}
                     highlight={profileHighlight}
-                    onCreateProfile={() => setShowDemoForm(true)}
+                    onCreateProfile={openDemoForm}
+                    onTogglePanel={() => setShowProfilePanel((prev) => !prev)}
                   />
                 ) : (
                   <Button
@@ -4460,7 +4967,7 @@ function RealTimeVoiceApp() {
                     startIcon={<BoltRoundedIcon fontSize="small" />}
                     onMouseEnter={() => setCreateProfileHovered(true)}
                     onMouseLeave={() => setCreateProfileHovered(false)}
-                    onClick={() => setShowDemoForm(true)}
+                    onClick={openDemoForm}
                     sx={{
                       ...styles.createProfileButton,
                       ...(createProfileHovered ? styles.createProfileButtonHover : {}),
@@ -4477,8 +4984,8 @@ function RealTimeVoiceApp() {
             <div style={styles.waveformSection}>
               <WaveformVisualization 
                 activeSpeaker={activeSpeaker} 
-                audioLevel={audioLevel}
-                outputAudioLevel={outputAudioLevel}
+                audioLevelRef={audioLevelRef}
+                outputAudioLevelRef={outputAudioLevelRef}
               />
               <div style={styles.sectionDivider}></div>
             </div>
@@ -4494,188 +5001,18 @@ function RealTimeVoiceApp() {
             </div>
 
             {/* Control Buttons - Clean 3-button layout */}
-            <div style={styles.controlSection}>
-              <div style={styles.controlContainer}>
-                
-            {/* LEFT: Reset/Restart Session Button */}
-            <div style={{ position: 'relative' }}>
-              <IconButton
-                disableRipple
-                aria-label="Reset session"
-                sx={styles.resetButton(resetHovered)}
-                onMouseEnter={() => {
-                  setShowResetTooltip(true);
-                  setResetHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setShowResetTooltip(false);
-                  setResetHovered(false);
-                }}
-                onClick={() => {
-                  // Reset entire session - clear chat and restart with new session ID
-                  const newSessionId = createNewSessionId();
-                  setSessionId(newSessionId);
-                  setSessionProfiles({});
-                  // Close existing WebSocket if connected
-                  if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-                    logger.info('🔌 Closing WebSocket for session reset...');
-                    socketRef.current.close();
-                  }
-                  
-                  // Reset UI state
-                  setMessages([]);
-                  setActiveSpeaker(null);
-                  stopRecognition();
-                  setCallActive(false);
-                  setShowPhoneInput(false);
-                  appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
-                  
-                  // Add welcome message
-                  setTimeout(() => {
-                    appendSystemMessage(
-                      "✅ Session restarted with new ID. Ready for a fresh conversation!",
-                      { tone: "success" }
-                    );
-                  }, 500);
-                }}
-              >
-                <RestartAltRoundedIcon fontSize="medium" />
-              </IconButton>
-              
-              {/* Tooltip */}
-              <div 
-                style={{
-                  ...styles.buttonTooltip,
-                  ...(showResetTooltip ? styles.buttonTooltipVisible : {})
-                }}
-              >
-                Reset conversation & start fresh
-              </div>
-            </div>
+            <ConversationControls
+              recording={recording}
+              callActive={callActive}
+              isCallDisabled={isCallDisabled}
+              onResetSession={handleResetSession}
+              onMicToggle={handleMicToggle}
+              onPhoneButtonClick={handlePhoneButtonClick}
+              phoneButtonRef={phoneButtonRef}
+              micButtonRef={micButtonRef}
+            />
 
-            {/* MIDDLE: Microphone Button */}
-            <div style={{ position: 'relative' }}>
-              <IconButton
-                disableRipple
-                aria-label={recording ? "Stop microphone" : "Start microphone"}
-                sx={styles.micButton(recording, micHovered)}
-                onMouseEnter={() => {
-                  setShowMicTooltip(true);
-                  setMicHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setShowMicTooltip(false);
-                  setMicHovered(false);
-                }}
-                onClick={recording ? stopRecognition : startRecognition}
-              >
-                {recording ? (
-                  <MicOffRoundedIcon fontSize="medium" />
-                ) : (
-                  <MicRoundedIcon fontSize="medium" />
-                )}
-              </IconButton>
-              
-              {/* Tooltip */}
-              <div 
-                style={{
-                  ...styles.buttonTooltip,
-                  ...(showMicTooltip ? styles.buttonTooltipVisible : {})
-                }}
-              >
-                {recording ? "Stop recording your voice" : "Start voice conversation"}
-              </div>
-            </div>
-
-            {/* RIGHT: Phone Call Button */}
-            <div 
-              style={{ position: 'relative' }}
-              onMouseEnter={() => {
-                setShowPhoneTooltip(true);
-                if (isCallDisabled && phoneButtonRef.current) {
-                  const rect = phoneButtonRef.current.getBoundingClientRect();
-                  setPhoneDisabledPos({
-                    top: rect.bottom + 12,
-                    left: rect.left + rect.width / 2,
-                  });
-                }
-                if (!isCallDisabled) {
-                  setPhoneHovered(true);
-                }
-              }}
-              onMouseLeave={() => {
-                setShowPhoneTooltip(false);
-                setPhoneHovered(false);
-                setPhoneDisabledPos(null);
-              }}
-            >
-              <IconButton
-                ref={phoneButtonRef}
-                disableRipple
-                aria-label={callActive ? "Hang up call" : "Place call"}
-                sx={styles.phoneButton(callActive, phoneHovered, isCallDisabled)}
-                disabled={isCallDisabled}
-                title={
-                  isCallDisabled
-                    ? undefined
-                    : callActive
-                      ? "Hang up the phone call"
-                      : "Make a phone call"
-                }
-                onClick={() => {
-                  if (isCallDisabled) {
-                    return;
-                  }
-                  if (callActive) {
-                    // Hang up call
-                    stopRecognition();
-                    setCallActive(false);
-                    const endedAt = new Date().toISOString();
-                    appendSystemMessage("📞 Call ended", {
-                      tone: "warning",
-                      timestamp: endedAt,
-                      withDivider: true,
-                      dividerLabel: `Call disconnected · ${formatStatusTimestamp(endedAt)}`,
-                    });
-                  } else {
-                    // Show phone input
-                    setShowPhoneInput(!showPhoneInput);
-                  }
-                }}
-              >
-                {callActive ? (
-                  <PhoneDisabledRoundedIcon fontSize="medium" />
-                ) : (
-                  <PhoneRoundedIcon fontSize="medium" />
-                )}
-              </IconButton>
-              
-              {/* Tooltip */}
-              {!isCallDisabled && (
-                <div 
-                  style={{
-                    ...styles.buttonTooltip,
-                    ...(showPhoneTooltip ? styles.buttonTooltipVisible : {})
-                  }}
-                >
-                  {callActive ? "Hang up the phone call" : "Make a phone call"}
-                </div>
-              )}
-              {isCallDisabled && showPhoneTooltip && phoneDisabledPos && (
-                <div
-                  style={{
-                    ...styles.phoneDisabledDialog,
-                    top: phoneDisabledPos.top,
-                    left: phoneDisabledPos.left,
-                  }}
-                >
-                  ⚠️ Outbound calling is disabled. Update backend .env with Azure Communication Services settings (ACS_CONNECTION_STRING, ACS_SOURCE_PHONE_NUMBER, ACS_ENDPOINT) to enable this feature.
-                </div>
-              )}
-            </div>
-
-          </div>
-        </div>
+            <div style={styles.realtimeModeDock} ref={realtimePanelAnchorRef} />
 
         {/* Phone Input Panel */}
       {showPhoneInput && (
@@ -4683,7 +5020,7 @@ function RealTimeVoiceApp() {
           <div style={{ marginBottom: '8px', fontSize: '12px', color: '#64748b' }}>
             {callActive ? '📞 Call in progress' : '📞 Enter your phone number to get a call'}
           </div>
-          <StreamingModeSelector
+          <AcsStreamingModeSelector
             value={selectedStreamingMode}
             onChange={handleStreamingModeChange}
             disabled={callActive || isCallDisabled}
@@ -4714,14 +5051,32 @@ function RealTimeVoiceApp() {
           </div>
         </div>
       )}
+        {showRealtimeModePanel && typeof document !== 'undefined' &&
+          createPortal(
+            <div
+              ref={realtimePanelRef}
+              style={{
+                ...styles.realtimeModePanel,
+                top: realtimePanelCoords.top,
+                left: realtimePanelCoords.left,
+              }}
+            >
+              <RealtimeStreamingModeSelector
+                value={selectedRealtimeStreamingMode}
+                onChange={handleRealtimeStreamingModeChange}
+                disabled={recording}
+              />
+            </div>,
+            document.body,
+          )}
         {showDemoForm && typeof document !== 'undefined' &&
           createPortal(
             <>
-              <div style={styles.demoFormBackdrop} onClick={() => setShowDemoForm(false)} />
-              <div style={styles.demoFormOverlay}>
+              <div style={styles.demoFormBackdrop} onClick={closeDemoForm} />
+              <div className="demo-form-overlay" style={styles.demoFormOverlay}>
                 <TemporaryUserForm
                   apiBaseUrl={API_BASE_URL}
-                  onClose={() => setShowDemoForm(false)}
+                  onClose={closeDemoForm}
                   sessionId={sessionId}
                   onSuccess={handleDemoCreated}
                 />
@@ -4732,6 +5087,12 @@ function RealTimeVoiceApp() {
         }
       </div>
     </div>
+    <ProfileDetailsPanel
+      profile={activeSessionProfile}
+      sessionId={sessionId}
+      open={showProfilePanel}
+      onClose={() => setShowProfilePanel(false)}
+    />
     <DemoScenariosWidget />
   </div>
 );
