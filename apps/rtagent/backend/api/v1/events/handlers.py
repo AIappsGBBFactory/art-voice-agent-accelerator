@@ -24,6 +24,10 @@ from opentelemetry.trace import SpanKind
 from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_message
 from utils.ml_logging import get_logger
 from .types import CallEventContext, ACSEventTypes
+from ..utils.session_keys import (
+    build_phone_session_id,
+    persist_call_phone_identifier,
+)
 
 from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
     DTMFValidationLifecycle,
@@ -69,6 +73,14 @@ class CallEventHandlers:
 
             logger.info(f"   Target: {target_number}, API: {api_version}")
 
+            normalized_phone = None
+            if target_number:
+                normalized_phone = await persist_call_phone_identifier(
+                    context.redis_mgr,
+                    context.call_connection_id,
+                    target_number,
+                )
+
             # Initialize call tracking and state
             if context.memo_manager:
                 try:
@@ -79,6 +91,16 @@ class CallEventHandlers:
                         context.memo_manager.update_context(
                             "target_number", target_number
                         )
+                    if normalized_phone:
+                        phone_session = build_phone_session_id(normalized_phone)
+                        context.memo_manager.update_context(
+                            "caller_phone_identifier", normalized_phone
+                        )
+                        context.memo_manager.update_context(
+                            "memo_session_key", phone_session
+                        )
+                        if context.memo_manager.session_id != phone_session:
+                            context.memo_manager.session_id = phone_session
                     if context.redis_mgr:
                         await context.memo_manager.persist_to_redis_async(
                             context.redis_mgr
@@ -108,6 +130,12 @@ class CallEventHandlers:
 
             logger.info(f"📞 Inbound call received from {caller_id}")
 
+            normalized_phone = await persist_call_phone_identifier(
+                context.redis_mgr,
+                context.call_connection_id,
+                caller_id,
+            )
+
             # Initialize inbound call state
             if context.memo_manager:
                 try:
@@ -115,6 +143,16 @@ class CallEventHandlers:
                     context.memo_manager.update_context("caller_id", caller_id)
                     context.memo_manager.update_context("caller_info", caller_info)
                     context.memo_manager.update_context("api_version", "v1")
+                    if normalized_phone:
+                        phone_session = build_phone_session_id(normalized_phone)
+                        context.memo_manager.update_context(
+                            "caller_phone_identifier", normalized_phone
+                        )
+                        context.memo_manager.update_context(
+                            "memo_session_key", phone_session
+                        )
+                        if context.memo_manager.session_id != phone_session:
+                            context.memo_manager.session_id = phone_session
                     if context.redis_mgr:
                         await context.memo_manager.persist_to_redis_async(
                             context.redis_mgr
@@ -264,6 +302,12 @@ class CallEventHandlers:
                 f"   Caller phone number: {caller_id if caller_id else 'unknown'}"
             )
 
+            normalized_phone = await persist_call_phone_identifier(
+                context.redis_mgr,
+                context.call_connection_id,
+                caller_id,
+            )
+
             if DTMF_VALIDATION_ENABLED:
                 try:
                     await DTMFValidationLifecycle.setup_aws_connect_validation_flow(
@@ -319,6 +363,28 @@ class CallEventHandlers:
                     )
             except Exception as e:
                 logger.error(f"Failed to broadcast call connected: {e}")
+
+            if context.memo_manager and normalized_phone:
+                try:
+                    phone_session = build_phone_session_id(normalized_phone)
+                    context.memo_manager.update_context(
+                        "caller_phone_identifier", normalized_phone
+                    )
+                    context.memo_manager.update_context(
+                        "memo_session_key", phone_session
+                    )
+                    if context.memo_manager.session_id != phone_session:
+                        context.memo_manager.session_id = phone_session
+                    if context.redis_mgr:
+                        await context.memo_manager.persist_to_redis_async(
+                            context.redis_mgr
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Failed to persist phone memo mapping for %s: %s",
+                        context.call_connection_id,
+                        exc,
+                    )
 
             # Note: Greeting and conversation flow will be triggered AFTER validation succeeds
 

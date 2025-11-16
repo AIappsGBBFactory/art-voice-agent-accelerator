@@ -34,5 +34,6 @@ tools:
   - provide_fraud_education
   - search_knowledge_base
   # - handoff_transfer_agency_agent
+  - transfer_call_to_call_center
   - escalate_emergency
   - escalate_human

@@ -24,9 +24,10 @@ import json
 import threading
 import base64
 import time
+import os
 
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Union, Set
+from typing import Optional, Callable, Union, Set, Dict, Any
 from enum import Enum
 
 from fastapi import WebSocket
@@ -44,6 +45,7 @@ from apps.rtagent.backend.src.ws_helpers.shared_ws import (
 )
 from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
 from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
+from apps.rtagent.backend.src.services.acs.call_transfer import transfer_call as transfer_call_service
 from src.enums.stream_modes import StreamMode
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.stateful.state_managment import MemoManager
@@ -213,36 +215,30 @@ class ThreadBridge:
                     f"[{self.call_connection_id}] Enqueued speech event type={event.event_type.value} qsize={speech_queue.qsize()}"
                 )
         except asyncio.QueueFull:
-            # Emergency clear oldest events if queue is consistently full
-            queue_size = speech_queue.qsize()
             logger.warning(
-                f"[{self.call_connection_id}] Speech queue full (size={queue_size}), attempting emergency clear"
+                f"[{self.call_connection_id}] Speech queue full, evicting oldest event"
             )
-            
-            # Try to clear old events to make room for new ones
-            cleared_count = 0
-            max_clear = min(3, queue_size // 2)  # Clear up to 3 events or half the queue
-            
-            for _ in range(max_clear):
-                try:
-                    old_event = speech_queue.get_nowait()
-                    cleared_count += 1
-                    logger.debug(
-                        f"[{self.call_connection_id}] Cleared old event: {old_event.event_type.value}"
-                    )
-                except asyncio.QueueEmpty:
-                    break
-            
-            # Now try to add the new event
+            evicted_event = None
+            try:
+                evicted_event = speech_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                logger.debug(
+                    f"[{self.call_connection_id}] Queue reported full but empty on eviction attempt"
+                )
+
+            if evicted_event:
+                logger.info(
+                    f"[{self.call_connection_id}] Dropped oldest speech event type={evicted_event.event_type.value}"
+                )
+
             try:
                 speech_queue.put_nowait(event)
                 logger.info(
-                    f"[{self.call_connection_id}] After emergency clear ({cleared_count} events), "
-                    f"successfully queued {event.event_type.value} (qsize={speech_queue.qsize()})"
+                    f"[{self.call_connection_id}] Queued replacement speech event type={event.event_type.value}"
                 )
             except asyncio.QueueFull:
                 logger.error(
-                    f"[{self.call_connection_id}] Queue still full after emergency clear, dropping event {event.event_type.value}"
+                    f"[{self.call_connection_id}] Queue still full after eviction; dropping {event.event_type.value}"
                 )
         except Exception:
             # Fallback to run_coroutine_threadsafe
@@ -278,7 +274,7 @@ class SpeechSDKThread:
         thread_bridge: ThreadBridge,
         barge_in_handler: Callable,
         speech_queue: asyncio.Queue,
-        websocket: WebSocket,
+        websocket: Optional[WebSocket] = None,
     ):
         self.call_connection_id = call_connection_id
         self.recognizer = recognizer
@@ -369,7 +365,7 @@ class SpeechSDKThread:
                     )
                 trimmed = text.strip()
                 loop = self.thread_bridge.main_loop
-                if loop and not loop.is_closed():
+                if loop and not loop.is_closed() and self.websocket:
                     try:
                         asyncio.run_coroutine_threadsafe(
                             send_user_partial_transcript(
@@ -1261,6 +1257,13 @@ class ACSMediaHandler:
         # Lifecycle management
         self.running = False
         self._stopped = False
+        disable_env = os.getenv("ACSMEDIA_DISABLE_ROUTE_THREAD_AUTOSTART")
+        pytest_detected = os.getenv("PYTEST_CURRENT_TEST")
+        self._auto_start_route_thread = True
+        if disable_env and disable_env.lower() in {"1", "true", "yes"}:
+            self._auto_start_route_thread = False
+        elif pytest_detected:
+            self._auto_start_route_thread = False
 
     async def start(self):
         """Start all three threads."""
@@ -1294,7 +1297,13 @@ class ACSMediaHandler:
                 await asyncio.get_running_loop().run_in_executor(
                     None, self.speech_sdk_thread.start_recognizer
                 )
-                await self.route_turn_thread.start()
+                if self._auto_start_route_thread:
+                    await self.route_turn_thread.start()
+                else:
+                    logger.info(
+                        "[%s] RouteTurnThread auto-start skipped (test mode)",
+                        self.call_connection_id,
+                    )
 
                 logger.info(f"[{self.call_connection_id}] Media handler started")
             except Exception as e:
@@ -1315,6 +1324,30 @@ class ACSMediaHandler:
             )
         except Exception as e:
             logger.error(f"[{self.call_connection_id}] Media message error: {e}")
+
+    async def transfer_call(
+        self,
+        target: str,
+        *,
+        operation_context: Optional[str] = None,
+        operation_callback_url: Optional[str] = None,
+        transferee: Optional[str] = None,
+        sip_headers: Optional[Dict[str, str]] = None,
+        voip_headers: Optional[Dict[str, str]] = None,
+        source_caller_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Transfer the active ACS call via the shared Call Automation helper."""
+
+        return await transfer_call_service(
+            call_connection_id=self.call_connection_id,
+            target_address=target,
+            operation_context=operation_context,
+            operation_callback_url=operation_callback_url,
+            transferee=transferee,
+            sip_headers=sip_headers,
+            voip_headers=voip_headers,
+            source_caller_id=source_caller_id,
+        )
 
     async def stop(self):
         """Stop all threads."""
