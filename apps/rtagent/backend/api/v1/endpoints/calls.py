@@ -261,34 +261,41 @@ async def initiate_call(
 
                     # Pre-initialize a Voice Live session bound to this call (no audio yet, no pool)
                     try:
-                        if (
-                            effective_stream_mode == StreamMode.VOICE_LIVE
-                            and hasattr(http_request.app.state, "conn_manager")
-                        ):
-                            agent_yaml = os.getenv(
-                                "VOICE_LIVE_AGENT_YAML",
-                                "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
-                            )
-                            lva_agent = build_lva_from_yaml(
-                                agent_yaml, enable_audio_io=False
-                            )
-                            await asyncio.to_thread(lva_agent.connect)
-                            # Store for media WS to claim later
+                        # Store browser-session mapping and optionally the Voice Live agent
+                        if hasattr(http_request.app.state, "conn_manager"):
+                            base_context = {
+                                "target_number": request.target_number,
+                                "browser_session_id": browser_session_id,
+                                "streaming_mode": str(effective_stream_mode),
+                            }
                             await http_request.app.state.conn_manager.set_call_context(
-                                call_id,
-                                {
-                                    "lva_agent": lva_agent,
-                                    "target_number": request.target_number,
-                                    "browser_session_id": browser_session_id,
-                                    "streaming_mode": str(effective_stream_mode),
-                                },
+                                call_id, base_context
                             )
-                            logger.info(
-                                f"Pre-initialized Voice Live agent for outbound call {call_id}"
-                            )
+
+                            if effective_stream_mode == StreamMode.VOICE_LIVE:
+                                try:
+                                    agent_yaml = os.getenv(
+                                        "VOICE_LIVE_AGENT_YAML",
+                                        "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
+                                    )
+                                    lva_agent = build_lva_from_yaml(
+                                        agent_yaml, enable_audio_io=False
+                                    )
+                                    await asyncio.to_thread(lva_agent.connect)
+                                    base_context["lva_agent"] = lva_agent
+                                    await http_request.app.state.conn_manager.set_call_context(
+                                        call_id, base_context
+                                    )
+                                    logger.info(
+                                        f"Pre-initialized Voice Live agent for outbound call {call_id}"
+                                    )
+                                except Exception as agent_exc:
+                                    logger.warning(
+                                        f"Voice Live pre-initialization skipped for {call_id}: {agent_exc}"
+                                    )
                     except Exception as e:
                         logger.warning(
-                            f"Voice Live pre-initialization skipped for {call_id}: {e}"
+                            f"Failed to persist call context for {call_id}: {e}"
                         )
 
                     # Create V1 event processor instance and emit call initiation event
