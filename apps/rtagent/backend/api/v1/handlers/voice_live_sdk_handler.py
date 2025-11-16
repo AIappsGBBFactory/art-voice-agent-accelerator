@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 import numpy as np
 from fastapi import WebSocket
@@ -25,6 +25,7 @@ from apps.rtagent.backend.src.agents.vlagent.orchestrator import LiveOrchestrato
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
 	send_session_envelope,
 	send_user_transcript,
+	_set_connection_metadata,
 )
 from apps.rtagent.backend.src.ws_helpers.envelopes import make_envelope
 from apps.rtagent.backend.src.agents.vlagent.tool_store.tools_helper import (
@@ -212,6 +213,9 @@ class _SessionMessenger:
 		except Exception:
 			logger.debug("Failed to emit tool_end frame for VoiceLive session", exc_info=True)
 
+VoiceLiveTransport = Literal["acs", "realtime"]
+
+
 class VoiceLiveSDKHandler:
 	"""Minimal VoiceLive handler that mirrors the vlagent multi-agent sample.
 
@@ -230,11 +234,14 @@ class VoiceLiveSDKHandler:
 		websocket: WebSocket,
 		session_id: str,
 		call_connection_id: Optional[str] = None,
+		transport: VoiceLiveTransport = "acs",
 	) -> None:
 		self.websocket = websocket
 		self.session_id = session_id
 		self.call_connection_id = call_connection_id or session_id
 		self._messenger = _SessionMessenger(websocket)
+		self._transport: VoiceLiveTransport = transport
+		self._manual_commit_enabled = transport == "acs"
 
 		self._settings = None
 		self._credential: Optional[Union[AzureKeyCredential, TokenCredential]] = None
@@ -254,6 +261,41 @@ class VoiceLiveSDKHandler:
 		self._dtmf_flush_delay = _DTMF_FLUSH_DELAY_SECONDS
 		self._dtmf_lock = asyncio.Lock()
 		self._last_user_transcript: Optional[str] = None
+
+	def _set_metadata(self, key: str, value: Any) -> None:
+		if not _set_connection_metadata(self.websocket, key, value):
+			setattr(self.websocket.state, key, value)
+
+	def _mark_audio_playback(self, active: bool, *, reset_cancel: bool = True) -> None:
+		self._set_metadata("audio_playing", active)
+		if reset_cancel:
+			self._set_metadata("tts_cancel_requested", False)
+
+	def _trigger_barge_in(
+		self,
+		trigger: str,
+		stage: str,
+		*,
+		energy_level: Optional[float] = None,
+		reset_audio_state: bool = True,
+	) -> None:
+		request_fn = getattr(self.websocket.state, "request_barge_in", None)
+		if callable(request_fn):
+			try:
+				kwargs: Dict[str, Any] = {}
+				if energy_level is not None:
+					kwargs["energy_level"] = energy_level
+				request_fn(trigger, stage, **kwargs)
+			except Exception:
+				logger.debug("Failed to dispatch barge-in request", exc_info=True)
+		else:
+			logger.debug(
+				"[%s] No barge-in handler available for realtime trigger", self.session_id
+			)
+
+		self._set_metadata("tts_cancel_requested", True)
+		if reset_audio_state:
+			self._mark_audio_playback(False, reset_cancel=False)
 
 	async def start(self) -> None:
 		"""Establish VoiceLive connection and start event processing."""
@@ -286,6 +328,7 @@ class VoiceLiveSDKHandler:
 				audio_processor=None,
 				messenger=self._messenger,
 				call_connection_id=self.call_connection_id,
+				transport=self._transport,
 			)
 
 			await self._orchestrator.start()
@@ -387,13 +430,34 @@ class VoiceLiveSDKHandler:
 			return
 
 		if kind == "StopAudio":
-			await self._commit_input_buffer()
+			if self._manual_commit_enabled:
+				await self._commit_input_buffer()
 			return
 
 		if kind == "DtmfData":
 			tone = (payload.get("dtmfData") or payload.get("DtmfData") or {}).get("data")
 			await self._handle_dtmf_tone(tone)
 			return
+
+	async def handle_pcm_chunk(self, audio_bytes: bytes, sample_rate: int = 16000) -> None:
+		"""Forward raw PCM frames (e.g., from realtime WS) to VoiceLive."""
+		if not self._running or not self._connection or not audio_bytes:
+			return
+
+		try:
+			encoded = base64.b64encode(audio_bytes).decode("utf-8")
+		except Exception:
+			logger.debug("Failed to encode realtime PCM chunk for VoiceLive", exc_info=True)
+			return
+
+		self._acs_sample_rate = sample_rate or self._acs_sample_rate
+		await self._connection.input_audio_buffer.append(audio=encoded)
+
+	async def commit_audio_buffer(self) -> None:
+		"""Commit the current VoiceLive input buffer to trigger response generation."""
+		if not self._manual_commit_enabled:
+			return
+		await self._commit_input_buffer()
 
 	async def _event_loop(self) -> None:
 		"""Consume VoiceLive events, orchestrate tools, and stream audio to ACS."""
@@ -451,8 +515,13 @@ class VoiceLiveSDKHandler:
 				if self._should_stop_for_response(event) and response_id in self._active_response_ids:
 					await self._send_stop_audio()
 				self._active_response_ids.discard(response_id)
+				self._mark_audio_playback(False)
 			else:
-				logger.debug("[VoiceLive] Response done without audio playback | session=%s", self.session_id)
+				logger.debug(
+					"[VoiceLive] Response done without audio playback | session=%s",
+					self.session_id,
+				)
+				self._mark_audio_playback(False)
 
 		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED:
 			# User started speaking - stop assistant playback
@@ -461,12 +530,19 @@ class VoiceLiveSDKHandler:
 				self.session_id,
 			)
 			self._active_response_ids.clear()
+			energy = getattr(event, "speech_energy", None)
+			self._trigger_barge_in(
+				"voicelive_vad",
+				"speech_started",
+				energy_level=energy,
+			)
 			await self._send_stop_audio()
 			self._stop_audio_pending = False
 
 		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
 			logger.info("🎤 User paused speaking")
 			logger.info("🤖 Generating assistant reply")
+			self._mark_audio_playback(False)
 			await self._messenger.send_user_message("...")
 
 		elif etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_DELTA:
@@ -514,6 +590,7 @@ class VoiceLiveSDKHandler:
 				await self._emit_audio_frame_to_ui(None, data_b64=None, frame_index=self._final_frame_index(None), is_final=True)
 		elif etype == ServerEventType.ERROR:
 			await self._handle_server_error(event)
+			self._mark_audio_playback(False)
 	
 		elif etype == ServerEventType.CONVERSATION_ITEM_CREATED:
 			logger.debug("Conversation item created: %s", event.item.id)
@@ -526,18 +603,20 @@ class VoiceLiveSDKHandler:
 		# Resample VoiceLive 24 kHz PCM to match ACS expectations.
 		resampled = self._resample_audio(pcm_bytes)
 		frame_index = self._allocate_frame_index(response_id)
-		message = {
-			"kind": "AudioData",
-			"AudioData": {"data": resampled},
-			"StopAudio": None,
-		}
 		try:
 			logger.debug(
 				"[VoiceLiveSDK] Sending audio delta | session=%s bytes=%s",
 				self.session_id,
 				len(pcm_bytes),
 			)
-			await self.websocket.send_json(message)
+			self._mark_audio_playback(True)
+			if self._transport == "acs":
+				message = {
+					"kind": "AudioData",
+					"AudioData": {"data": resampled},
+					"StopAudio": None,
+				}
+				await self.websocket.send_json(message)
 			await self._emit_audio_frame_to_ui(
 				response_id,
 				data_b64=resampled,
@@ -557,6 +636,8 @@ class VoiceLiveSDKHandler:
 	) -> None:
 		if not self._websocket_open:
 			return
+		if is_final:
+			self._mark_audio_playback(False)
 		payload = {
 			"type": "audio_data",
 			"frame_index": frame_index,
@@ -592,6 +673,10 @@ class VoiceLiveSDKHandler:
 		return 0
 
 	async def _send_stop_audio(self) -> None:
+		self._mark_audio_playback(False, reset_cancel=False)
+		if self._transport != "acs":
+			self._stop_audio_pending = False
+			return
 		if self._stop_audio_pending:
 			return
 		stop_message = {"kind": "StopAudio", "AudioData": None, "StopAudio": {}}

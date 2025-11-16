@@ -718,6 +718,18 @@ create_fraud_case_schema: Dict[str, Any] = {
                 "description": "Estimated financial loss in USD (optional).",
                 "minimum": 0,
             },
+            "caller_name": {
+                "type": "string",
+                "description": "Client name to include in the human fraud handoff context (optional).",
+            },
+            "institution_name": {
+                "type": "string",
+                "description": "Institution or brand name associated with the fraud case (optional).",
+            },
+            "target_agent_override": {
+                "type": "string",
+                "description": "Override the default handoff target if a different specialist should receive the case (optional).",
+            },
         },
         "required": ["client_id", "fraud_type", "description"],
         "additionalProperties": False,
