@@ -71,7 +71,6 @@ from ..handlers.acs_media_lifecycle import ACSMediaHandler
 from ..handlers.voice_live_sdk_handler import VoiceLiveSDKHandler
 
 from ..dependencies.orchestrator import get_orchestrator
-from ..utils.session_keys import resolve_memo_session_id
 
 logger = get_logger("api.v1.endpoints.media")
 tracer = trace.get_tracer(__name__)
@@ -415,46 +414,30 @@ async def _create_media_handler(
 
     redis_mgr = websocket.app.state.redis
 
-    memo_session_id = session_id
-    if stream_mode == StreamMode.MEDIA and call_connection_id:
-        memo_session_id = await resolve_memo_session_id(
-            redis_mgr,
-            call_connection_id,
-            fallback_session_id=session_id,
-        )
-
+    # Load conversation memory - ensure we always have a valid memory manager
+    # IMPORTANT: Use call_connection_id for Redis lookup but session_id for memory session ID
+    # This ensures proper session isolation while maintaining call state continuity
     try:
-        if redis_mgr:
-            memory_manager = MemoManager.from_redis(
-                memo_session_id or session_id,
-                redis_mgr,
+        memory_manager = MemoManager.from_redis(call_connection_id, redis_mgr)
+        if memory_manager is None:
+            logger.warning(
+                f"Memory manager from Redis returned None for {call_connection_id}, creating new one with session_id: {session_id}"
             )
-            memory_manager._redis_manager = redis_mgr
+            memory_manager = MemoManager(session_id=session_id)
         else:
-            memory_manager = MemoManager(session_id=memo_session_id or session_id)
+            # Update the session_id in case we loaded from a different session mapping
+            memory_manager.session_id = session_id
+            logger.info(
+                f"Updated memory manager session_id to: {session_id} (call_connection_id: {call_connection_id})"
+            )
     except Exception as e:
         logger.error(
-            "Failed to load memory manager for call %s: %s",
-            call_connection_id,
-            e,
+            f"Failed to load memory manager from Redis for {call_connection_id}: {e}"
         )
-        memory_manager = MemoManager(session_id=memo_session_id or session_id)
-
-    memory_manager.session_id = memo_session_id or session_id
-    try:
-        memory_manager.update_context("memo_session_key", memory_manager.session_id)
-    except Exception:  # noqa: BLE001
-        logger.debug(
-            "Unable to record memo session key for %s",
-            memory_manager.session_id,
-            exc_info=True,
+        logger.info(
+            f"Creating new memory manager for session_id: {session_id} (call_connection_id: {call_connection_id})"
         )
-
-    logger.debug(
-        "Resolved memo session | call=%s session=%s",
-        call_connection_id,
-        memory_manager.session_id,
-    )
+        memory_manager = MemoManager(session_id=session_id)
 
     # Initialize latency tracking with proper connection manager access
     # Use connection_id stored during registration instead of direct WebSocket state access

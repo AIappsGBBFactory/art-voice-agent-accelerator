@@ -206,67 +206,136 @@ const styles = {
   },
 };
 
-const DemoScenariosWidget = ({ scenarios = DEFAULT_SCENARIOS }) => {
+const DemoScenariosWidget = ({ scenarios = DEFAULT_SCENARIOS, inline = false }) => {
   const [open, setOpen] = useState(false);
 
   const togglePanel = () => setOpen((prev) => !prev);
 
+  const containerStyle = inline
+    ? {
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        pointerEvents: 'auto',
+        gap: '6px',
+      }
+    : styles.container;
+
+  const panelStyle = {
+    ...styles.panel,
+    ...(inline
+      ? {
+          position: 'absolute',
+          top: 'calc(100% + 10px)',
+          left: 0,
+          width: '320px',
+          maxHeight: '60vh',
+          marginTop: 0,
+          transform: 'none',
+          boxShadow: '0 18px 35px rgba(15,23,42,0.25)',
+          border: '1px solid rgba(15,23,42,0.08)',
+        }
+      : {}),
+  };
+
+  const visibilityStyle = inline
+    ? open
+      ? { display: 'block', opacity: 1, transform: 'none' }
+      : { display: 'none' }
+    : open
+    ? styles.panelVisible
+    : styles.panelHidden;
+
+  const toggleButtonStyle = inline
+    ? {
+        ...styles.toggleButton(open),
+        padding: '8px 14px',
+        fontSize: '12px',
+        boxShadow: '0 8px 18px rgba(15,23,42,0.2)',
+        position: 'relative',
+        zIndex: 2,
+      }
+    : styles.toggleButton(open);
+
+  const renderPanel = () => (
+    <div
+      className={PANEL_CLASSNAME}
+      style={{
+        ...panelStyle,
+        ...visibilityStyle,
+      }}
+      role="dialog"
+      aria-label="Demo script scenarios"
+      aria-hidden={!open}
+    >
+      <div style={styles.panelHeader}>
+        <div style={styles.panelTitle}>Demo Script Scenarios</div>
+        <button
+          type="button"
+          style={styles.closeButton}
+          aria-label="Hide demo script scenarios"
+          onClick={togglePanel}
+        >
+          ×
+        </button>
+      </div>
+      <div style={styles.helperText}>
+        Use these sample prompts to showcase common workflows during the demo.
+      </div>
+      <div style={styles.scenarioList}>
+        {scenarios.map((scenario) => (
+          <div key={scenario.title} style={styles.scenarioCard}>
+            <div style={styles.scenarioTitle}>{scenario.title}</div>
+            {scenario.focus && <div style={styles.scenarioFocus}>{scenario.focus}</div>}
+            <ol style={styles.scenarioSteps}>
+              {(scenario.steps || []).map((step) => (
+                <li key={step} style={styles.scenarioStep}>
+                  {step}
+                </li>
+              ))}
+            </ol>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
-    <div style={styles.container} aria-live="polite">
+    <div style={containerStyle} aria-live="polite">
       <style>{`
         .${PANEL_CLASSNAME}::-webkit-scrollbar { display: none; }
         .${PANEL_CLASSNAME} { scrollbar-width: none; -ms-overflow-style: none; }
       `}</style>
-      <div
-        className={PANEL_CLASSNAME}
-        style={{
-          ...styles.panel,
-          ...(open ? styles.panelVisible : styles.panelHidden),
-        }}
-        role="dialog"
-        aria-label="Demo script scenarios"
-        aria-hidden={!open}
-      >
-        <div style={styles.panelHeader}>
-          <div style={styles.panelTitle}>Demo Script Scenarios</div>
+      {inline ? (
+        <>
           <button
             type="button"
-            style={styles.closeButton}
-            aria-label="Hide demo script scenarios"
             onClick={togglePanel}
+            style={toggleButtonStyle}
+            aria-expanded={open}
+            aria-label="Toggle demo script scenarios"
           >
-            ×
+            <span style={styles.iconBadge}>🎬</span>
+            <span>Scenarios</span>
           </button>
-        </div>
-        <div style={styles.helperText}>
-          Use these sample prompts to showcase common workflows during the demo.
-        </div>
-        <div style={styles.scenarioList}>
-          {scenarios.map((scenario) => (
-            <div key={scenario.title} style={styles.scenarioCard}>
-              <div style={styles.scenarioTitle}>{scenario.title}</div>
-              {scenario.focus && <div style={styles.scenarioFocus}>{scenario.focus}</div>}
-              <ol style={styles.scenarioSteps}>
-                {(scenario.steps || []).map((step) => (
-                  <li key={step} style={styles.scenarioStep}>
-                    {step}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ))}
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={togglePanel}
-        style={styles.toggleButton(open)}
-        aria-expanded={open}
-        aria-label="Toggle demo script scenarios"
-      >
-        <span style={styles.iconBadge}>🎬</span>
-        <span>Scenarios</span>
-      </button>
+          {renderPanel()}
+        </>
+      ) : (
+        <>
+          {renderPanel()}
+          <button
+            type="button"
+            onClick={togglePanel}
+            style={toggleButtonStyle}
+            aria-expanded={open}
+            aria-label="Toggle demo script scenarios"
+          >
+            <span style={styles.iconBadge}>🎬</span>
+            <span>Scenarios</span>
+          </button>
+        </>
+      )}
     </div>
   );
 };

@@ -133,7 +133,7 @@ async def send_user_transcript(
     and the UI render user bubbles consistently.
     """
     payload_session_id = session_id or getattr(ws.state, "session_id", None)
-    resolved_conn = None if broadcast_only else (conn_id or getattr(ws.state, "conn_id", None))
+    resolved_conn = conn_id or getattr(ws.state, "conn_id", None)
 
     envelope_payload = make_envelope(
         etype="event",
@@ -228,6 +228,35 @@ async def send_session_envelope(
     resolved_conn_id = conn_id or getattr(ws.state, "conn_id", None)
     resolved_session_id = session_id or getattr(ws.state, "session_id", None)
 
+    if manager and resolved_session_id and broadcast_only:
+        try:
+            sent = await broadcast_session_envelope(
+                ws.app.state,
+                envelope,
+                session_id=resolved_session_id,
+                event_label=event_label,
+            )
+            if sent:
+                return True
+            logger.debug(
+                "Session broadcast delivered no envelopes",
+                extra={
+                    "session_id": resolved_session_id,
+                    "conn_id": resolved_conn_id,
+                    "event": event_label,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Session broadcast failed",
+                extra={
+                    "session_id": resolved_session_id,
+                    "conn_id": resolved_conn_id,
+                    "event": event_label,
+                    "error": str(exc),
+                },
+            )
+
     if manager and resolved_conn_id and not broadcast_only:
         try:
             sent = await manager.send_to_connection(resolved_conn_id, envelope)
@@ -251,21 +280,25 @@ async def send_session_envelope(
                     "error": str(exc),
                 },
             )
-
-    if manager and resolved_session_id:
-        try:
-            await manager.broadcast_session(resolved_session_id, envelope)
-            return False
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "Session broadcast fallback failed",
-                extra={
-                    "session_id": resolved_session_id,
-                    "conn_id": resolved_conn_id,
-                    "event": event_label,
-                    "error": str(exc),
-                },
-            )
+            if manager and resolved_session_id:
+                try:
+                    await broadcast_session_envelope(
+                        ws.app.state,
+                        envelope,
+                        session_id=resolved_session_id,
+                        event_label=event_label,
+                    )
+                    return False
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Session broadcast fallback failed",
+                        extra={
+                            "session_id": resolved_session_id,
+                            "conn_id": resolved_conn_id,
+                            "event": event_label,
+                            "error": str(exc),
+                        },
+                    )
 
     if _ws_is_connected(ws):
         try:
@@ -1067,17 +1100,10 @@ async def broadcast_message(
     session_id: str = None,
 ):
     """
-    Session-safe broadcast message using ConnectionManager.
+    Session-safe broadcast helper (deprecated).
 
-    This function requires session_id for proper session isolation.
-    Messages will only be sent to connections within the specified session.
-
-    Args:
-        connected_clients: Legacy parameter (ignored for safety)
-        message: Message content to broadcast
-        sender: Message sender identifier
-        app_state: Application state containing conn_manager
-        session_id: REQUIRED - Session ID for proper isolation
+    Constructs a status envelope and delegates to broadcast_session_envelope so
+    downstream consumers always receive structured payloads.
     """
     if not app_state or not hasattr(app_state, "conn_manager"):
         raise ValueError("broadcast_message requires app_state with conn_manager")
@@ -1090,13 +1116,66 @@ async def broadcast_message(
 
     envelope = make_status_envelope(message, sender=sender, session_id=session_id)
 
-    sent_count = await app_state.conn_manager.broadcast_session(session_id, envelope)
+    sent_count = await broadcast_session_envelope(
+        app_state,
+        envelope,
+        session_id=session_id,
+        event_label="legacy_status",
+    )
 
     logger.info(
-        f"Session-safe broadcast: {sender}: {message[:50]}... "
-        f"(sent to {sent_count} clients in session {session_id})",
-        extra={"session_id": session_id, "sender": sender, "sent_count": sent_count},
+        "Session-safe broadcast",
+        extra={
+            "session_id": session_id,
+            "sender": sender,
+            "sent_count": sent_count,
+            "preview": message[:50],
+        },
     )
+
+
+async def broadcast_session_envelope(
+    app_state,
+    envelope: Dict[str, Any],
+    *,
+    session_id: Optional[str] = None,
+    event_label: str = "unspecified",
+) -> int:
+    """
+    Broadcast a fully constructed envelope to all connections in a session.
+
+    Args:
+        app_state: FastAPI application state containing the connection manager.
+        envelope: Pre-built message envelope to send.
+        session_id: Optional override for the target session.
+        event_label: Log-friendly label describing the envelope.
+
+    Returns:
+        int: Number of connections the envelope was delivered to.
+    """
+    if not app_state or not hasattr(app_state, "conn_manager"):
+        raise ValueError("broadcast_session_envelope requires app_state with conn_manager")
+
+    target_session = session_id or envelope.get("session_id")
+    if not target_session:
+        raise ValueError("session_id must be provided for envelope broadcasts")
+
+    sent_count = await app_state.conn_manager.broadcast_session(
+        target_session,
+        envelope,
+    )
+
+    logger.info(
+        "Session envelope broadcast",
+        extra={
+            "session_id": target_session,
+            "event": event_label,
+            "sent_count": sent_count,
+            "envelope_type": envelope.get("type"),
+            "sender": envelope.get("sender"),
+        },
+    )
+    return sent_count
 
 
 # Re-export for convenience
@@ -1105,6 +1184,7 @@ __all__ = [
     "send_response_to_acs",
     "push_final",
     "broadcast_message",
+    "broadcast_session_envelope",
     "send_session_envelope",
     "get_connection_metadata",
 ]
