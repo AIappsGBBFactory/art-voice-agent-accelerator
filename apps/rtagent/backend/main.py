@@ -42,10 +42,10 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from src.pools.connection_manager import ThreadSafeConnectionManager
 from src.pools.session_metrics import ThreadSafeSessionMetrics
-from .src.services import AzureOpenAIClient, CosmosDBMongoCoreManager, AzureRedisManager, SpeechSynthesizer, StreamingSpeechRecognizerFromBytes
+from apps.rtagent.backend.src.services import AzureOpenAIClient, CosmosDBMongoCoreManager, AzureRedisManager, SpeechSynthesizer, StreamingSpeechRecognizerFromBytes
 from src.aoai.client_manager import AoaiClientManager
-from config.app_config import AppConfig
-from config.app_settings import (
+from apps.rtagent.backend.config.app_config import AppConfig
+from apps.rtagent.backend.config.app_settings import (
     AGENT_AUTH_CONFIG,
     AGENT_FRAUD_CONFIG,
     AGENT_AGENCY_CONFIG,
