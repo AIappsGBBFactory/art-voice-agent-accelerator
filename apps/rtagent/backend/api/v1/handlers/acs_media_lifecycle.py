@@ -638,7 +638,7 @@ class RouteTurnThread:
                         self.websocket,
                         event.text,
                         session_id=session_for_emit,
-                        conn_id=None,
+                        conn_id=getattr(self.websocket, "_call_connection_id", None),
                         broadcast_only=True,
                     )
                 except Exception as e:
