@@ -917,12 +917,6 @@ async def _initialize_conversation_session(
                 session_id,
                 exc,
             )
-        else:
-            if not callable(request_barge_in):
-                logger.debug(
-                    "[%s] No barge-in handler registered; skipping realtime barge-in",
-                    session_id,
-                )
 
     def on_cancel(evt) -> None:
         try:
