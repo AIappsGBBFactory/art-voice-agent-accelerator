@@ -60,6 +60,7 @@ class _SessionMessenger:
 	def __init__(self, websocket: WebSocket) -> None:
 		self._ws = websocket
 		self._default_sender: Optional[str] = None
+		self._missing_session_warned = False
 
 	def set_active_agent(self, agent_name: Optional[str]) -> None:
 		"""Update the default sender name used for assistant/system envelopes."""
@@ -82,7 +83,17 @@ class _SessionMessenger:
 		return self._call_id
 
 	def _can_emit(self) -> bool:
-		return bool(self._session_id)
+		if self._session_id:
+			self._missing_session_warned = False
+			return True
+
+		if not self._missing_session_warned:
+			logger.warning(
+				"[VoiceLive] Unable to emit envelope - websocket missing session_id (call=%s)",
+				self._call_id,
+			)
+			self._missing_session_warned = True
+		return False
 
 	async def send_user_message(self, text: str) -> None:
 		"""Forward a user transcript to all session listeners."""
