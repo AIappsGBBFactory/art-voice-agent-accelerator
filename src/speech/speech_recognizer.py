@@ -10,7 +10,7 @@ It integrates with OpenTelemetry for observability, enabling detailed tracing an
 
 import json
 import os
-from typing import Callable, List, Optional, Final
+from typing import Callable, Iterable, List, Optional, Final
 
 import azure.cognitiveservices.speech as speechsdk
 from dotenv import load_dotenv
@@ -22,6 +22,10 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 # Import centralized span attributes enum
 from src.enums.monitoring import SpanAttr
 from src.speech.auth_manager import SpeechTokenManager, get_speech_token_manager
+from src.speech.phrase_list_manager import (
+    DEFAULT_PHRASE_LIST_ENV,
+    parse_phrase_entries,
+)
 from utils.ml_logging import get_logger
 
 # Set up logger
@@ -137,6 +141,7 @@ class StreamingSpeechRecognizerFromBytes:
         "fr-FR",
         "de-DE",
         "it-IT",
+        "ko-KR",
     ]
 
     def __init__(
@@ -156,6 +161,8 @@ class StreamingSpeechRecognizerFromBytes:
         # Observability -------------------------------------------------
         call_connection_id: str | None = None,
         enable_tracing: bool = True,
+        # Phrase list biasing ------------------------------------------
+        initial_phrases: Iterable[str] | None = None,
     ):
         """
         Initialize the streaming speech recognizer with comprehensive configuration.
@@ -198,6 +205,12 @@ class StreamingSpeechRecognizerFromBytes:
                 correlation in tracing and logging. If None, uses "unknown".
             enable_tracing (bool): Enable OpenTelemetry tracing with Azure
                 Monitor integration for performance monitoring. Default: True.
+
+        Phrase Biasing:
+            initial_phrases (Optional[Iterable[str]]): Iterable of phrases to
+                pre-populate the recognizer bias list in addition to any
+                environment defaults. Useful for seeding runtime metadata such
+                as customer names.
 
         Attributes Initialized:
             - Authentication configuration and credentials
@@ -261,6 +274,12 @@ class StreamingSpeechRecognizerFromBytes:
 
         self.push_stream = None
         self.speech_recognizer = None
+        self._phrase_list_phrases: set[str] = set()
+        self._phrase_list_weight: Optional[float] = None
+        self._phrase_list_grammar = None
+        self._apply_default_phrase_list_from_env()
+        if initial_phrases:
+            self.add_phrases(initial_phrases)
 
         # Initialize tracing
         self.tracer = None
@@ -276,6 +295,21 @@ class StreamingSpeechRecognizerFromBytes:
                 self.enable_tracing = False
 
         self.cfg = self._create_speech_config()
+
+    def _apply_default_phrase_list_from_env(self) -> None:
+        """Populate phrase biases from the configured environment variable."""
+
+        raw_values = os.getenv(DEFAULT_PHRASE_LIST_ENV, "")
+        parsed = parse_phrase_entries(raw_values)
+        if not parsed:
+            return
+
+        self._phrase_list_phrases.update(parsed)
+        logger.debug(
+            "Loaded %s default phrase list entries from %s",
+            len(parsed),
+            DEFAULT_PHRASE_LIST_ENV,
+        )
 
     def set_call_connection_id(self, call_connection_id: str) -> None:
         """
@@ -644,6 +678,85 @@ class StreamingSpeechRecognizerFromBytes:
             stream_format=stream_format
         )
 
+    def add_phrase(self, phrase: str) -> None:
+        """Add a phrase to the bias list.
+
+        Inputs:
+            phrase: Text to prioritise during recognition.
+        Outputs:
+            None. Updates internal state and reapplies biasing if the recogniser is active.
+        Latency:
+            Performs local SDK updates only; impact is negligible and no network I/O occurs.
+        """
+
+        normalized = (phrase or "").strip()
+        if not normalized:
+            return
+
+        if normalized in self._phrase_list_phrases:
+            return
+
+        self._phrase_list_phrases.add(normalized)
+        if self.speech_recognizer:
+            self._apply_phrase_list()
+
+    def add_phrases(self, phrases: Iterable[str]) -> None:
+        """Add multiple phrases to the bias list in a single call.
+
+        Inputs:
+            phrases: Iterable of phrases to favour during recognition.
+        Outputs:
+            None. Stored phrases are applied immediately when the recogniser is active.
+        Latency:
+            Iterates locally over the iterable; only invokes SDK reconfiguration once per call.
+        """
+
+        added = False
+        for phrase in phrases or []:
+            normalized = (phrase or "").strip()
+            if normalized and normalized not in self._phrase_list_phrases:
+                self._phrase_list_phrases.add(normalized)
+                added = True
+
+        if added and self.speech_recognizer:
+            self._apply_phrase_list()
+
+    def clear_phrase_list(self) -> None:
+        """Remove all phrase biases currently configured.
+
+        Inputs:
+            None.
+        Outputs:
+            None. Clears stored phrases and updates the active recogniser when running.
+        Latency:
+            Local operation; clearing the SDK phrase list is synchronous and low latency.
+        """
+
+        if not self._phrase_list_phrases and self._phrase_list_weight is None:
+            return
+
+        self._phrase_list_phrases.clear()
+        if self.speech_recognizer:
+            self._apply_phrase_list()
+
+    def set_phrase_list_weight(self, weight: Optional[float]) -> None:
+        """Set the weight applied to the phrase list bias.
+
+        Inputs:
+            weight: Positive float accepted by Azure Speech, or None to reset.
+        Outputs:
+            None. Stores the preference and reapplies configuration when active.
+        Latency:
+            Local SDK call only; no network traffic and minimal overhead.
+        """
+
+        if weight is not None and weight <= 0:
+            raise ValueError("Phrase list weight must be a positive value or None.")
+
+        self._phrase_list_weight = weight
+        if self.speech_recognizer:
+            self._apply_phrase_list()
+
     def start(self) -> None:
         """
         Start continuous speech recognition with comprehensive tracing.
@@ -900,6 +1013,9 @@ class StreamingSpeechRecognizerFromBytes:
                 str(self.vad_silence_timeout_ms),
             )
 
+        if self._phrase_list_phrases or self._phrase_list_weight is not None:
+            self._apply_phrase_list()
+
         # ------------------------------------------------------------------ #
         # 6. Wire callbacks / health telemetry
         # ------------------------------------------------------------------ #
@@ -1115,6 +1231,46 @@ class StreamingSpeechRecognizerFromBytes:
                 self._session_span.add_event("audio_stream_closed")
                 self._session_span.end()
                 self._session_span = None
+
+    def _apply_phrase_list(self) -> None:
+        """Apply the stored phrase list state to the active recogniser.
+
+        Inputs:
+            None (operates on internal state).
+        Outputs:
+            None. Updates the SDK grammar object as needed.
+        Latency:
+            Only invokes local Speech SDK APIs; no network round trips are triggered.
+        """
+
+        if not self.speech_recognizer:
+            return
+
+        phrase_list = speechsdk.PhraseListGrammar.from_recognizer(
+            self.speech_recognizer
+        )
+
+        try:
+            phrase_list.clear()
+        except AttributeError:
+            logger.debug("PhraseListGrammar.clear unavailable; proceeding without reset.")
+
+        for phrase in sorted(self._phrase_list_phrases):
+            phrase_list.addPhrase(phrase)
+
+        if self._phrase_list_weight is not None:
+            try:
+                phrase_list.setWeight(self._phrase_list_weight)
+            except AttributeError:
+                logger.warning(
+                    "PhraseListGrammar.setWeight unavailable; weight change skipped."
+                )
+
+        self._phrase_list_grammar = phrase_list
+        logger.info(
+            "Applied speech phrase list",
+            extra={"phrase_count": len(self._phrase_list_phrases)},
+        )
 
     @staticmethod
     def _extract_lang(evt) -> str:

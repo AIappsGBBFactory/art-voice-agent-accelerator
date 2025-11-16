@@ -35,5 +35,6 @@ tools:
   - handoff_to_auth
   - handoff_fraud_agent
   - handoff_to_compliance
+  - transfer_call_to_call_center
   - escalate_emergency
   - escalate_human
