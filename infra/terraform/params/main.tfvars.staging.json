@@ -34,6 +34,12 @@
       "version": "2025-04-14",
       "sku_name": "DataZoneStandard",
       "capacity": 500
+    },
+    {
+      "name": "text-embedding-3-large",
+      "version": "2025-04-14",
+      "sku_name": "DataZoneStandard",
+      "capacity": 500
     }
   ],
   "mongo_database_name": "audioagentdb-stg",
