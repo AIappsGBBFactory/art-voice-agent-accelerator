@@ -309,6 +309,9 @@ const STATUS_TONE_META = {
     accent: "#2563eb",
     background: "linear-gradient(135deg, rgba(37,99,235,0.08), rgba(14,116,144,0.06))",
     border: "1px solid rgba(37,99,235,0.18)",
+    borderColor: "rgba(37,99,235,0.18)",
+    surface: "rgba(37,99,235,0.12)",
+    iconBackground: "rgba(37,99,235,0.14)",
     icon: InfoRoundedIcon,
     textColor: "#0f172a",
     captionColor: "rgba(15,23,42,0.65)",
@@ -318,6 +321,9 @@ const STATUS_TONE_META = {
     accent: "#059669",
     background: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(56,189,248,0.05))",
     border: "1px solid rgba(34,197,94,0.24)",
+    borderColor: "rgba(34,197,94,0.24)",
+    surface: "rgba(16,185,129,0.14)",
+    iconBackground: "rgba(16,185,129,0.18)",
     icon: CheckCircleRoundedIcon,
     textColor: "#064e3b",
     captionColor: "rgba(6,78,59,0.7)",
@@ -327,6 +333,9 @@ const STATUS_TONE_META = {
     accent: "#f59e0b",
     background: "linear-gradient(135deg, rgba(245,158,11,0.14), rgba(249,115,22,0.08))",
     border: "1px solid rgba(245,158,11,0.28)",
+    borderColor: "rgba(245,158,11,0.28)",
+    surface: "rgba(245,158,11,0.16)",
+    iconBackground: "rgba(245,158,11,0.22)",
     icon: WarningAmberRoundedIcon,
     textColor: "#7c2d12",
     captionColor: "rgba(124,45,18,0.7)",
@@ -336,6 +345,9 @@ const STATUS_TONE_META = {
     accent: "#0ea5e9",
     background: "linear-gradient(135deg, rgba(14,165,233,0.14), rgba(45,212,191,0.08))",
     border: "1px solid rgba(14,165,233,0.24)",
+    borderColor: "rgba(14,165,233,0.24)",
+    surface: "rgba(14,165,233,0.16)",
+    iconBackground: "rgba(14,165,233,0.22)",
     icon: PhoneInTalkRoundedIcon,
     textColor: "#0f172a",
     captionColor: "rgba(15,23,42,0.55)",
@@ -345,6 +357,9 @@ const STATUS_TONE_META = {
     accent: "#ef4444",
     background: "linear-gradient(135deg, rgba(239,68,68,0.12), rgba(249,115,22,0.05))",
     border: "1px solid rgba(239,68,68,0.26)",
+    borderColor: "rgba(239,68,68,0.26)",
+    surface: "rgba(239,68,68,0.14)",
+    iconBackground: "rgba(239,68,68,0.2)",
     icon: ErrorOutlineRoundedIcon,
     textColor: "#7f1d1d",
     captionColor: "rgba(127,29,29,0.7)",
@@ -3168,93 +3183,97 @@ const ChatBubble = ({ message }) => {
     const ToneIcon = tone.icon;
     const timestampLabel = formatStatusTimestamp(message.timestamp);
     const lines = (text || "").split("\n").filter(Boolean);
+    const surfaceColor = tone.surface ?? tone.background ?? "rgba(15,23,42,0.04)";
+    const borderColor = tone.borderColor ?? (tone.border ? tone.border.replace(/^1px\s+solid\s+/u, "") : "rgba(148,163,184,0.28)");
+    const iconBackground = tone.iconBackground ?? "rgba(148,163,184,0.25)";
 
     return (
-      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 0.75 }}>
         <Paper
           elevation={0}
           sx={{
-            width: "100%",
-            maxWidth: 560,
-            borderRadius: 3,
-            padding: "12px 16px",
             display: "flex",
-            flexDirection: "column",
-            gap: 1,
-            background: tone.background,
-            border: tone.border,
+            alignItems: "flex-start",
+            gap: 1.25,
+            px: 1.75,
+            py: 1,
+            borderRadius: 2.5,
+            border: `1px solid ${borderColor}`,
+            background: surfaceColor,
             color: tone.textColor,
-            backdropFilter: "blur(18px)",
+            backdropFilter: "blur(12px)",
+            width: "max-content",
+            maxWidth: "88%",
+            boxShadow: "0 10px 24px rgba(15,23,42,0.08)",
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.5 }}>
-            <Box
-              sx={{
-                width: 36,
-                height: 36,
-                borderRadius: "50%",
-                background: "rgba(255,255,255,0.6)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                boxShadow: "0 12px 24px rgba(15,23,42,0.12)",
-              }}
-            >
-              <ToneIcon sx={{ fontSize: 22, color: tone.accent }} />
-            </Box>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box
+            sx={{
+              width: 28,
+              height: 28,
+              borderRadius: "50%",
+              background: iconBackground,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: tone.accent,
+              flexShrink: 0,
+            }}
+          >
+            <ToneIcon sx={{ fontSize: 18 }} />
+          </Box>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, minWidth: 0 }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
               <Typography
                 variant="caption"
                 sx={{
                   textTransform: "uppercase",
-                  letterSpacing: "0.14em",
+                  letterSpacing: "0.1em",
                   fontWeight: 600,
                   color: tone.accent,
                 }}
               >
                 {toneLabel}
               </Typography>
-              <Typography
-                variant="body2"
-                sx={{
-                  marginTop: 0.5,
-                  whiteSpace: "pre-wrap",
-                  fontSize: "0.92rem",
-                  lineHeight: 1.5,
-                  color: tone.textColor,
-                }}
-              >
-                {lines.map((line, idx) => (
-                  <React.Fragment key={idx}>
-                    {idx > 0 && <br />}
-                    {line}
-                  </React.Fragment>
-                ))}
-              </Typography>
-              {message.statusCaption && (
+              {timestampLabel && (
                 <Typography
                   variant="caption"
-                  sx={{ display: "block", marginTop: 0.75, color: tone.captionColor }}
+                  sx={{
+                    color: tone.captionColor,
+                    fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                    letterSpacing: "0.04em",
+                  }}
                 >
-                  {message.statusCaption}
+                  {timestampLabel}
                 </Typography>
               )}
             </Box>
-          </Box>
-          {timestampLabel && <Divider sx={{ borderColor: "rgba(148,163,184,0.35)" }} />}
-          {timestampLabel && (
             <Typography
-              variant="caption"
+              variant="body2"
               sx={{
-                alignSelf: "flex-end",
-                color: tone.captionColor,
-                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                letterSpacing: "0.08em",
+                whiteSpace: "pre-wrap",
+                fontSize: "0.82rem",
+                lineHeight: 1.45,
+                color: tone.textColor,
+                wordBreak: "break-word",
               }}
             >
-              {timestampLabel}
+              {lines.map((line, idx) => (
+                <React.Fragment key={idx}>
+                  {idx > 0 && <br />}
+                  {line}
+                </React.Fragment>
+              ))}
             </Typography>
-          )}
+            {message.statusCaption && (
+              <Typography
+                variant="caption"
+                sx={{ display: "block", color: tone.captionColor }}
+              >
+                {message.statusCaption}
+              </Typography>
+            )}
+          </Box>
         </Paper>
       </Box>
     );
