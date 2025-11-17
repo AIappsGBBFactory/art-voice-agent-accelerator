@@ -201,6 +201,9 @@ class BlockCardResult(TypedDict):
     replacement_timeline: str
     temporary_access_options: List[str]
     next_steps: List[str]
+    confirmation_required: bool
+    mfa_session_id: Optional[str]
+    mfa_delivery_address: Optional[str]
 
 class FraudEducationArgs(TypedDict):
     """Arguments for fraud education."""
@@ -1019,6 +1022,7 @@ async def create_fraud_case(args: CreateFraudCaseArgs) -> CreateFraudCaseResult:
         result.setdefault("handoff", True)
         result.setdefault("target_agent", "FraudAgent")
         result.setdefault("should_interrupt_playback", True)
+        result.setdefault("call_center_transfer", True)
 
         if name := args.get("target_agent_override"):
             result["target_agent"] = name
@@ -1063,7 +1067,10 @@ async def block_card_emergency(args: BlockCardArgs) -> BlockCardResult:
                 "confirmation_number": "",
                 "replacement_timeline": "Unable to process without verification",
                 "temporary_access_options": [],
-                "next_steps": [error.customer_message]
+                "next_steps": [error.customer_message],
+                "confirmation_required": False,
+                "mfa_session_id": None,
+                "mfa_delivery_address": None,
             }
         
         logger.info(f"🚫 Emergency card block for client: {client_id}, card: ****{card_last_4}", 
@@ -1077,22 +1084,87 @@ async def block_card_emergency(args: BlockCardArgs) -> BlockCardResult:
 
         if not card_blocked:
             logger.warning(
-                f"⚠️ Card block requires manual authorization for client {client_id}",
+                "⚠️ Card block requires manual authorization for client %s",
+                client_id,
                 extra={"client_id": client_id, "card_last_4": card_last_4},
             )
-            error = FraudProtectionError.card_block_failed()
-            next_steps_failure = [
-                error.customer_message,
-                "I'm escalating you to a live fraud specialist right now so they can finalize the block immediately.",
-                "If we get disconnected, call the number on the back of your card to ensure it is blocked.",
-                "Monitor your recent transactions—any new unauthorized charges will be disputed and credited back.",
+
+            mfa_session_id: Optional[str] = None
+            mfa_delivery_address: Optional[str] = None
+            mfa_sent = False
+
+            try:
+                from .financial_mfa_auth import send_mfa_code  # Local import to avoid circular dependency
+            except ImportError:
+                send_mfa_code = None  # type: ignore
+
+            if send_mfa_code is not None:
+                try:
+                    mfa_args = {
+                        "client_id": client_id,
+                        "delivery_method": "email",
+                        "intent": "card_block_confirmation",
+                        "transaction_amount": None,
+                        "transaction_type": block_reason or "card_block",
+                    }
+                    mfa_result = await send_mfa_code(mfa_args)
+                    mfa_sent = bool(mfa_result.get("sent"))
+                    if mfa_sent:
+                        mfa_session_id = mfa_result.get("session_id")
+                        mfa_delivery_address = mfa_result.get("delivery_address")
+                        logger.info(
+                            "📧 MFA confirmation required for card block | client=%s session=%s",
+                            client_id,
+                            extra={
+                                "client_id": client_id,
+                                "card_last_4": card_last_4,
+                                "mfa_session_id": mfa_session_id,
+                                "delivery_address": mfa_delivery_address,
+                            },
+                        )
+                except Exception as mfa_error:
+                    logger.error(
+                        "❌ Failed to send MFA confirmation for card block | client=%s error=%s",
+                        client_id,
+                        mfa_error,
+                        exc_info=True,
+                    )
+
+            if not mfa_sent:
+                error = FraudProtectionError.card_block_failed()
+                next_steps_failure = [
+                    error.customer_message,
+                    "I'm escalating you to a live fraud specialist right now so they can finalize the block immediately.",
+                    "If we get disconnected, call the number on the back of your card to ensure it is blocked.",
+                    "Monitor your recent transactions—any new unauthorized charges will be disputed and credited back.",
+                ]
+                return {
+                    "card_blocked": False,
+                    "confirmation_number": "",
+                    "replacement_timeline": "Manual fraud team authorization required",
+                    "temporary_access_options": [],
+                    "next_steps": next_steps_failure,
+                    "confirmation_required": False,
+                    "mfa_session_id": None,
+                    "mfa_delivery_address": None,
+                }
+
+            confirmation_steps = [
+                "I've locked your card while we wait for email confirmation.",
+                "Check your email for a 6-digit security code and read it back to me so I can finalize the block.",
+                "If the email does not arrive within 2 minutes, let me know and I'll resend it.",
+                "Do not use the card until we finish this confirmation step together.",
             ]
+
             return {
                 "card_blocked": False,
                 "confirmation_number": "",
-                "replacement_timeline": "Manual fraud team authorization required",
+                "replacement_timeline": "Pending confirmation of the emailed verification code",
                 "temporary_access_options": [],
-                "next_steps": next_steps_failure,
+                "next_steps": confirmation_steps,
+                "confirmation_required": True,
+                "mfa_session_id": mfa_session_id,
+                "mfa_delivery_address": mfa_delivery_address,
             }
 
         # Standard replacement timeline
@@ -1124,7 +1196,10 @@ async def block_card_emergency(args: BlockCardArgs) -> BlockCardResult:
             "confirmation_number": confirmation_number,
             "replacement_timeline": replacement_timeline,
             "temporary_access_options": temporary_access_options,
-            "next_steps": next_steps
+            "next_steps": next_steps,
+            "confirmation_required": False,
+            "mfa_session_id": None,
+            "mfa_delivery_address": None,
         }
         
     except Exception as e:
@@ -1135,7 +1210,10 @@ async def block_card_emergency(args: BlockCardArgs) -> BlockCardResult:
             "confirmation_number": "",
             "replacement_timeline": "Manual blocking required",
             "temporary_access_options": [],
-            "next_steps": [error.customer_message]
+            "next_steps": [error.customer_message],
+            "confirmation_required": False,
+            "mfa_session_id": None,
+            "mfa_delivery_address": None,
         }
 
 

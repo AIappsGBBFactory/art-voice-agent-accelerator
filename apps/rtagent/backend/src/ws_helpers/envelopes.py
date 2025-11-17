@@ -48,12 +48,17 @@ def make_status_envelope(
     session_id: Optional[str] = None,
     call_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    label: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create status message envelope."""
+    payload = {"message": message}
+    if label:
+        payload["label"] = label
+
     return make_envelope(
         etype="status",
         sender=sender,
-        payload={"message": message},
+        payload=payload,
         topic=topic,
         session_id=session_id,
         call_id=call_id,
