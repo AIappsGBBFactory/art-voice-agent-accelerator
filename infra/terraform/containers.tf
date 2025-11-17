@@ -241,14 +241,14 @@ resource "azurerm_container_app" "backend" {
         name        = "AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING"
         secret_name = "acs-connection-string"
       }
-      env {
-        name  = "AZURE_EMAIL_SENDER_ADDRESS"
-        value = format(
-          "%s@%s",
-          local.email_sender_username,
-          azurerm_email_communication_service_domain.managed.from_sender_domain
-        )
-      }
+      # env {
+      #   name  = "AZURE_EMAIL_SENDER_ADDRESS"
+      #   value = format(
+      #     "%s@%s",
+      #     local.email_sender_username,
+      #     azurerm_email_communication_service_domain.managed.from_sender_domain
+      #   )
+      # }
       env {
         name        = "AZURE_COMMUNICATION_SMS_CONNECTION_STRING"
         secret_name = "acs-connection-string"
