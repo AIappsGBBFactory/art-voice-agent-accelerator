@@ -92,8 +92,16 @@ TRANSFER_CALL_CENTER_SCHEMA: Dict[str, Any] = {
                 "type": "string",
                 "description": "Override the configured call center target for this invocation only (testing).",
             },
+            "confirmation_context": {
+                "type": "string",
+                "description": (
+                    "Required: short transcript or summary proving the caller explicitly requested a call center/live representative twice "
+                    "and confirmed after the clarifying question. Include the caller quote(s) for auditing."
+                ),
+                "minLength": 12,
+            },
         },
-        "required": [],
+        "required": ["confirmation_context"],
         "additionalProperties": False,
     },
 }
@@ -137,13 +145,14 @@ class CallCenterTransferPayload(BaseModel):
     operation_context: Optional[str] = None
     session_id: Optional[str] = None
     target_override: Optional[str] = Field(None, min_length=1)
+    confirmation_context: str = Field(..., min_length=12)
 
     class Config:
         extra = "forbid"
 
     def sanitized(self) -> "CallCenterTransferPayload":
         data = self.model_dump()
-        for key in ("call_connection_id", "operation_context", "session_id", "target_override"):
+        for key in ("call_connection_id", "operation_context", "session_id", "target_override", "confirmation_context"):
             if data.get(key):
                 data[key] = data[key].strip()
         return CallCenterTransferPayload(**data)
@@ -216,6 +225,28 @@ async def transfer_call_to_call_center(arguments: Dict[str, Any]) -> Dict[str, A
         return {
             "success": False,
             "message": "No active ACS call to route. Please use the telephony experience if you need a live representative.",
+        }
+
+    confirmation_context = (payload.confirmation_context or "").strip()
+    if not confirmation_context:
+        return {
+            "success": False,
+            "message": (
+                "Call center transfer blocked: provide confirmation_context summarizing the caller's explicit request "
+                "and your post-clarifier confirmation before invoking this last-resort tool."
+            ),
+        }
+
+    lowered_context = confirmation_context.lower()
+    if not any(
+        phrase in lowered_context
+        for phrase in ("call center", "live representative", "live agent", "human agent")
+    ):
+        return {
+            "success": False,
+            "message": (
+                "Call center transfer blocked: confirmation_context must document that the caller insisted on a call center/live representative."
+            ),
         }
 
     target = _resolve_call_center_target(payload.target_override)

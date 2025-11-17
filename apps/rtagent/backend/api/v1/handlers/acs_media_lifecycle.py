@@ -1133,6 +1133,8 @@ class MainEventLoop:
 
         greeting_text = getattr(acs_handler, "greeting_text", None)
         if not greeting_text:
+            greeting_text = GREETING
+        if not greeting_text:
             self.greeting_played = True
             return
 

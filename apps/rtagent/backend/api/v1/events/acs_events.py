@@ -634,6 +634,20 @@ class CallEventHandlers:
                         exc,
                     )
 
+        # Final fallback: use connection manager call context (if available)
+        conn_manager = getattr(context.app_state, "conn_manager", None)
+        if conn_manager and hasattr(conn_manager, "get_call_context"):
+            try:
+                ctx = await conn_manager.get_call_context(key_suffix)
+                if ctx:
+                    return ctx.get("browser_session_id") or ctx.get("session_id")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to fetch session mapping %s via conn_manager: %s",
+                    key_suffix,
+                    exc,
+                )
+
         return None
 
     @staticmethod

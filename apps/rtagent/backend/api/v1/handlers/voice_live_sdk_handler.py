@@ -27,13 +27,14 @@ from apps.rtagent.backend.src.ws_helpers.shared_ws import (
 	send_user_transcript,
 	_set_connection_metadata,
 )
-from apps.rtagent.backend.src.ws_helpers.envelopes import make_envelope
+from apps.rtagent.backend.src.ws_helpers.envelopes import (
+	make_envelope,
+	make_assistant_streaming_envelope,
+)
 from apps.rtagent.backend.src.agents.vlagent.tool_store.tools_helper import (
 	push_tool_start,
 	push_tool_end,
 )
-
-import logging
 
 logger = get_logger("api.v1.handlers.voice_live_sdk_handler")
 tracer = trace.get_tracer(__name__)
@@ -53,6 +54,64 @@ _TRACED_EVENTS = {
 
 _DTMF_FLUSH_DELAY_SECONDS = 1.5
 
+_AGENT_LABELS = {
+	"PayPalAgent": "PayPal Specialist",
+	"FraudAgent": "Fraud Specialist",
+	"ComplianceDesk": "Compliance Specialist",
+	"AuthAgent": "Auth Agent",
+	"TransferAgency": "Transfer Agency Specialist",
+	"TradingDesk": "Trading Specialist",
+}
+
+
+def _resolve_agent_label(agent_name: Optional[str]) -> Optional[str]:
+	if not agent_name:
+		return None
+	return _AGENT_LABELS.get(agent_name, agent_name)
+
+
+def _safe_primitive(value: Any) -> Any:
+	if value is None or isinstance(value, (str, int, float, bool)):
+		return value
+	if isinstance(value, (list, tuple)):
+		return [_safe_primitive(v) for v in value]
+	if isinstance(value, dict):
+		return {k: _safe_primitive(v) for k, v in value.items()}
+	return str(value)
+
+
+def _serialize_session_config(session_obj: Any) -> Optional[Dict[str, Any]]:
+	if not session_obj:
+		return None
+
+	for attr in ("model_dump", "to_dict", "as_dict", "dict"):
+		method = getattr(session_obj, attr, None)
+		if callable(method):
+			try:
+				data = method()
+				if isinstance(data, dict):
+					return data
+			except Exception:
+				logger.debug("Failed to serialize session via %s", attr, exc_info=True)
+
+	serializer = getattr(session_obj, "serialize", None) or getattr(session_obj, "to_json", None)
+	if callable(serializer):
+		try:
+			data = serializer()
+			if isinstance(data, str):
+				return json.loads(data)
+			if isinstance(data, dict):
+				return data
+		except Exception:
+			logger.debug("Failed to serialize session via serializer", exc_info=True)
+
+	try:
+		raw = vars(session_obj)
+	except Exception:
+		return None
+
+	return {k: _safe_primitive(v) for k, v in raw.items()}
+
 
 class _SessionMessenger:
 	"""Bridge VoiceLive events to the session-aware WebSocket manager."""
@@ -64,7 +123,7 @@ class _SessionMessenger:
 
 	def set_active_agent(self, agent_name: Optional[str]) -> None:
 		"""Update the default sender name used for assistant/system envelopes."""
-		self._default_sender = agent_name or None
+		self._default_sender = _resolve_agent_label(agent_name) or agent_name or None
 
 	@property
 	def _session_id(self) -> Optional[str]:
@@ -108,12 +167,15 @@ class _SessionMessenger:
 			broadcast_only=True,
 		)
 
+	def _resolve_sender(self, sender: Optional[str]) -> str:
+		return _resolve_agent_label(sender) or self._default_sender or "Assistant"
+
 	async def send_assistant_message(self, text: str, *, sender: Optional[str] = None) -> None:
 		"""Emit assistant transcript chunks to the frontend chat UI."""
 		if not text or not self._can_emit():
 			return
 
-		sender_name = sender or self._default_sender or "Assistant"
+		sender_name = self._resolve_sender(sender)
 		payload = {
 			"type": "assistant",
 			"message": text,
@@ -135,6 +197,93 @@ class _SessionMessenger:
 			session_id=self._session_id,
 			conn_id=None,
 			event_label="voicelive_assistant_transcript",
+			broadcast_only=True,
+		)
+
+	async def send_assistant_streaming(self, text: str, *, sender: Optional[str] = None) -> None:
+		"""Emit assistant streaming deltas for progressive rendering."""
+		if not text or not self._can_emit():
+			return
+
+		sender_name = self._resolve_sender(sender)
+		envelope = make_assistant_streaming_envelope(
+			text,
+			sender=sender_name,
+			session_id=self._session_id,
+			call_id=self._call_id,
+		)
+		await send_session_envelope(
+			self._ws,
+			envelope,
+			session_id=self._session_id,
+			conn_id=None,
+			event_label="voicelive_assistant_streaming",
+			broadcast_only=True,
+		)
+
+	async def send_session_update(
+		self,
+		*,
+		agent_name: Optional[str],
+		session_obj: Optional[Any],
+		transport: Optional[str] = None,
+	) -> None:
+		"""Broadcast session configuration updates to the UI."""
+		if not self._can_emit():
+			return
+
+		payload: Dict[str, Any] = {
+			"event_type": "session_updated",
+			"agent_label": _resolve_agent_label(agent_name),
+			"agent_name": agent_name,
+			"transport": transport,
+			"session": _serialize_session_config(session_obj),
+		}
+
+		agent_label_display = payload.get("agent_label") or agent_name
+		if agent_label_display:
+			payload["agent_label"] = agent_label_display
+			payload.setdefault("active_agent_label", agent_label_display)
+			payload.setdefault(
+				"message",
+				f"Active agent: {agent_label_display}",
+			)
+
+		if session_obj:
+			payload["session_id"] = getattr(session_obj, "id", None)
+
+			voice = getattr(session_obj, "voice", None)
+			if voice:
+				payload["voice"] = {
+					"name": getattr(voice, "name", None),
+					"type": getattr(voice, "type", None),
+					"rate": getattr(voice, "rate", None),
+					"style": getattr(voice, "style", None),
+				}
+
+			turn_detection = getattr(session_obj, "turn_detection", None)
+			if turn_detection:
+				payload["turn_detection"] = {
+					"type": getattr(turn_detection, "type", None),
+					"threshold": getattr(turn_detection, "threshold", None),
+					"silence_duration_ms": getattr(turn_detection, "silence_duration_ms", None),
+				}
+
+		envelope = make_envelope(
+			etype="event",
+			sender="System",
+			payload=payload,
+			topic="session",
+			session_id=self._session_id,
+			call_id=self._call_id,
+		)
+
+		await send_session_envelope(
+			self._ws,
+			envelope,
+			session_id=self._session_id,
+			conn_id=None,
+			event_label="voicelive_session_updated",
 			broadcast_only=True,
 		)
 
@@ -160,7 +309,7 @@ class _SessionMessenger:
 			payload["statusTone"] = tone
 		if caption:
 			payload["statusCaption"] = caption
-		sender_name = sender or self._default_sender or "System"
+		sender_name = self._resolve_sender(sender) if (sender or self._default_sender) else "System"
 
 		envelope = make_envelope(
 			etype="status",

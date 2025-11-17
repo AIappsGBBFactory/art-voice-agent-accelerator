@@ -55,7 +55,7 @@ from apps.rtagent.backend.api.v1.schemas.media import (
 )
 
 # Import from config system
-from config import ACS_STREAMING_MODE
+from config import ACS_STREAMING_MODE, GREETING
 from config.app_settings import ENABLE_AUTH_VALIDATION
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.enums.stream_modes import StreamMode
@@ -71,6 +71,9 @@ from ..handlers.acs_media_lifecycle import ACSMediaHandler
 from ..handlers.voice_live_sdk_handler import VoiceLiveSDKHandler
 
 from ..dependencies.orchestrator import get_orchestrator
+from apps.rtagent.backend.src.orchestration.artagent.greetings import (
+	create_personalized_greeting,
+)
 
 logger = get_logger("api.v1.endpoints.media")
 tracer = trace.get_tracer(__name__)
@@ -79,27 +82,93 @@ router = APIRouter()
 
 
 async def _resolve_call_stream_mode(redis_mgr, call_connection_id: Optional[str]) -> StreamMode:
-    """Resolve the effective streaming mode for a call, respecting overrides."""
+	"""Resolve the effective streaming mode for a call, respecting overrides."""
 
-    if not call_connection_id or redis_mgr is None:
-        return ACS_STREAMING_MODE
+	if not call_connection_id or redis_mgr is None:
+		return ACS_STREAMING_MODE
 
-    try:
-        stored_value = await redis_mgr.get_value_async(
-            f"call_stream_mode:{call_connection_id}"
-        )
-        if stored_value:
-            if isinstance(stored_value, bytes):
-                stored_value = stored_value.decode("utf-8")
-            return StreamMode.from_string(str(stored_value))
-    except Exception as exc:
-        logger.warning(
-            "Unable to resolve stream mode override for %s: %s",
-            call_connection_id,
-            exc,
-        )
+	try:
+		stored_value = await redis_mgr.get_value_async(
+			f"call_stream_mode:{call_connection_id}"
+		)
+		if stored_value:
+			if isinstance(stored_value, bytes):
+				stored_value = stored_value.decode("utf-8")
+			return StreamMode.from_string(str(stored_value))
+	except Exception as exc:
+		logger.warning(
+			"Unable to resolve stream mode override for %s: %s",
+			call_connection_id,
+			exc,
+		)
 
-    return ACS_STREAMING_MODE
+	return ACS_STREAMING_MODE
+
+
+def _derive_contextual_greeting(memory_manager: Optional[MemoManager]) -> str:
+	"""
+	Build the initial greeting for ACS playback using stored conversation context.
+
+	If customer intelligence exists we generate a hyper-personalized greeting;
+	otherwise we synthesize a lightweight acknowledgement using any persisted
+	caller/topic metadata. Falls back to GREETING if no context is available.
+	"""
+	greeting_text = GREETING
+	if not memory_manager:
+		return greeting_text
+
+	try:
+		caller_name = (memory_manager.get_value_from_corememory("caller_name", "") or "").strip()
+		active_agent = (memory_manager.get_value_from_corememory("active_agent", "") or "").strip() or "Support"
+		institution_name = (memory_manager.get_value_from_corememory("institution_name", "") or "").strip()
+		topic = (memory_manager.get_value_from_corememory("topic", "") or "").strip()
+		handoff_context = memory_manager.get_value_from_corememory("handoff_context", {}) or {}
+		if isinstance(handoff_context, dict):
+			topic = topic or (handoff_context.get("issue_summary") or handoff_context.get("details") or "")
+			if not institution_name:
+				institution_name = (handoff_context.get("institution_name") or "").strip()
+
+		customer_intelligence = memory_manager.get_value_from_corememory(
+			"customer_intelligence", None
+		)
+
+		if customer_intelligence:
+			greeting_text = create_personalized_greeting(
+				caller_name=caller_name or None,
+				agent_name=active_agent,
+				customer_intelligence=customer_intelligence,
+				institution_name=institution_name or "our team",
+				topic=topic or "your account",
+			)
+		else:
+			name_or_fallback = caller_name.split()[0] if caller_name else "there"
+			topic_clause = (
+				f"I understand you're calling about {topic}. "
+				if topic
+				else ""
+			)
+			institution_clause = (
+				f" with {institution_name}" if institution_name else ""
+			)
+			greeting_text = (
+				f"Hi {name_or_fallback}, you're speaking with our {active_agent} specialist{institution_clause}. "
+				f"{topic_clause}How can I help you today?"
+			)
+
+		if greeting_text:
+			try:
+				memory_manager.update_corememory("current_greeting", greeting_text)
+			except Exception:
+				logger.debug("Unable to persist contextual greeting to memory", exc_info=True)
+		else:
+			greeting_text = GREETING
+	except Exception:
+		logger.debug("Falling back to default ACS greeting text", exc_info=True)
+		greeting_text = GREETING
+
+	return greeting_text or GREETING
+
+
 
 
 @router.get("/status", response_model=dict, summary="Get Media Streaming Status")
@@ -547,6 +616,7 @@ async def _create_media_handler(
             recognizer=per_conn_recognizer,
             memory_manager=memory_manager,
             session_id=session_id,
+            greeting_text=_derive_contextual_greeting(memory_manager),
             stream_mode=stream_mode,
         )
 

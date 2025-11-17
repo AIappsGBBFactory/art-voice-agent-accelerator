@@ -373,8 +373,9 @@ const styles = {
     position: "relative",
     width: "100%",
     maxWidth: "100%",
-    height: "90vh",
-    maxHeight: "920px",
+    height: "calc(100vh - 32px)",
+    minHeight: "calc(100vh - 32px)",
+    maxHeight: "calc(100vh - 32px)",
     display: "flex",
     flexDirection: "column",
     alignItems: "stretch",
@@ -2923,9 +2924,20 @@ const ChatBubble = ({ message }) => {
   }
 
   if (message?.type === "event") {
-    const eventLabel = formatEventTypeLabel(message.eventType || message.event_type);
+    const eventType = message.eventType || message.event_type;
+    const eventLabel = formatEventTypeLabel(eventType);
     const timestampLabel = formatStatusTimestamp(message.timestamp);
-    const detailText = message.summary ?? describeEventData(message.data);
+    const baseDetail = message.summary ?? describeEventData(message.data);
+    const isSessionUpdate = eventType === "session_updated";
+    const inferredAgentLabel =
+      message.data?.active_agent_label ??
+      message.data?.agent_label ??
+      message.data?.agentLabel ??
+      message.data?.agent_name ??
+      null;
+    const detailText = isSessionUpdate
+      ? message.summary ?? message.data?.message ?? (inferredAgentLabel ? `Active agent: ${inferredAgentLabel}` : baseDetail)
+      : baseDetail;
     return (
       <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 0.5 }}>
         <Paper
@@ -3676,6 +3688,7 @@ function RealTimeVoiceApp() {
   const chatRef = useRef(null);
   const messageContainerRef = useRef(null);
   const socketRef = useRef(null);
+  const relaySocketRef = useRef(null);
   const phoneButtonRef = useRef(null);
   const phonePanelRef = useRef(null);
   const micButtonRef = useRef(null);
@@ -3901,6 +3914,20 @@ function RealTimeVoiceApp() {
 
 
   const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
+
+  const closeRelaySocket = useCallback((reason = "client stop") => {
+    const relaySocket = relaySocketRef.current;
+    if (!relaySocket) {
+      return;
+    }
+    try {
+      relaySocket.close(1000, reason);
+    } catch (error) {
+      logger.warn("Error closing relay socket:", error);
+    } finally {
+      relaySocketRef.current = null;
+    }
+  }, []);
   // Formatting functions moved to ProfileButton component
   const activeSessionProfile = sessionProfiles[sessionId];
   const hasActiveProfile = Boolean(activeSessionProfile?.profile);
@@ -3957,6 +3984,12 @@ function RealTimeVoiceApp() {
     }, 1000);
   }, [appendLog, appendSystemMessage, sessionId, triggerProfileHighlight, closeDemoForm]);
 
+  useEffect(() => {
+    return () => {
+      closeRelaySocket("component unmount");
+    };
+  }, [closeRelaySocket]);
+
   const handleResetSession = useCallback(() => {
     const newSessionId = createNewSessionId();
     setSessionId(newSessionId);
@@ -3975,6 +4008,7 @@ function RealTimeVoiceApp() {
     setCallActive(false);
     setCurrentCallId(null);
     setShowPhoneInput(false);
+    closeRelaySocket("session reset");
     appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
     setTimeout(() => {
       appendSystemMessage(
@@ -3982,7 +4016,7 @@ function RealTimeVoiceApp() {
         { tone: "success" },
       );
     }, 500);
-  }, [appendLog, appendSystemMessage, setSessionId, setSessionProfiles, setMessages, setActiveSpeaker, setCallActive, setShowPhoneInput]);
+  }, [appendLog, appendSystemMessage, closeRelaySocket, setSessionId, setSessionProfiles, setMessages, setActiveSpeaker, setCallActive, setShowPhoneInput]);
 
   const handleMicToggle = useCallback(() => {
     if (recording) {
@@ -4031,10 +4065,12 @@ function RealTimeVoiceApp() {
       setActiveSpeaker(null);
       setShowPhoneInput(false);
       setCurrentCallId(null);
+      closeRelaySocket("call terminated");
     }
   }, [
     API_BASE_URL,
     appendLog,
+    closeRelaySocket,
     callActive,
     currentCallId,
     setCallActive,
@@ -4590,7 +4626,12 @@ function RealTimeVoiceApp() {
         let flattenedPayload;
 
         // Transform envelope back to legacy format for compatibility
-        if (envelopeType === "event" && actualPayload.message) {
+        if (
+          envelopeType === "event" &&
+          actualPayload.message &&
+          !actualPayload.event_type &&
+          !actualPayload.eventType
+        ) {
           // Status/chat message in envelope
           flattenedPayload = {
             type: "assistant",
@@ -4641,29 +4682,106 @@ function RealTimeVoiceApp() {
         logger.debug("📨 Transformed envelope to legacy format:", payload);
       }
 
+      const normalizedEventType =
+        payload.event_type ||
+        payload.eventType ||
+        (typeof payload.type === "string" && payload.type.startsWith("event_")
+          ? payload.type
+          : undefined);
+
+      if (normalizedEventType) {
+        payload.event_type = normalizedEventType;
+      }
+
+      if (normalizedEventType === "session_updated") {
+        const combinedData = {
+          ...(typeof payload.event_data === "object" && payload.event_data ? payload.event_data : {}),
+          ...(typeof payload.data === "object" && payload.data ? payload.data : {}),
+        };
+
+        if (typeof payload.session === "object" && payload.session) {
+          combinedData.session = combinedData.session ?? payload.session;
+        }
+
+        let candidateAgent =
+          payload.active_agent_label ||
+          payload.agent_label ||
+          payload.agentLabel ||
+          payload.agent_name ||
+          combinedData.active_agent_label ||
+          combinedData.agent_label ||
+          combinedData.agentLabel ||
+          combinedData.agent_name;
+
+        if (!candidateAgent) {
+          const sessionInfo = combinedData.session;
+          if (sessionInfo && typeof sessionInfo === "object") {
+            candidateAgent =
+              sessionInfo.active_agent_label ||
+              sessionInfo.activeAgentLabel ||
+              sessionInfo.active_agent ||
+              sessionInfo.agent_label ||
+              sessionInfo.agentLabel ||
+              sessionInfo.agent_name ||
+              sessionInfo.agentName ||
+              sessionInfo.current_agent ||
+              sessionInfo.currentAgent ||
+              sessionInfo.handoff_target ||
+              sessionInfo.handoffTarget;
+          }
+        }
+
+        const agentLabel =
+          typeof candidateAgent === "string" ? candidateAgent.trim() : null;
+
+        if (agentLabel) {
+          const label = agentLabel;
+          combinedData.active_agent_label = combinedData.active_agent_label ?? label;
+          combinedData.agent_label = combinedData.agent_label ?? label;
+          combinedData.agent_name = combinedData.agent_name ?? label;
+          payload.active_agent_label = payload.active_agent_label ?? label;
+          payload.agent_label = payload.agent_label ?? label;
+          payload.agent_name = payload.agent_name ?? label;
+        }
+
+        const displayLabel = combinedData.active_agent_label || combinedData.agent_label;
+        const resolvedMessage =
+          payload.message ||
+          payload.summary ||
+          combinedData.message ||
+          (displayLabel ? `Active agent: ${displayLabel}` : null);
+
+        if (resolvedMessage) {
+          combinedData.message = resolvedMessage;
+          payload.summary = payload.summary ?? resolvedMessage;
+          payload.message = payload.message ?? resolvedMessage;
+        }
+
+        if (!combinedData.timestamp && payload.ts) {
+          combinedData.timestamp = payload.ts;
+        }
+
+        payload.data = combinedData;
+        payload.event_data = combinedData;
+        if (payload.type !== "event") {
+          payload.type = "event";
+        }
+      }
+
       if (payload.event_type === "call_connected") {
         setCallActive(true);
         appendLog("📞 Call connected");
+        payload.summary = payload.summary ?? "Call connected";
+        payload.type = payload.type ?? "event";
       }
 
       if (payload.event_type === "call_disconnected") {
         setCallActive(false);
         setActiveSpeaker(null);
-        const reasonLabel =
-          typeof payload.disconnect_reason === "string"
-            ? payload.disconnect_reason.split("_").join(" ").toUpperCase()
-            : payload.disconnect_reason;
-        const captionParts = [];
-        if (reasonLabel) captionParts.push(`Reason: ${reasonLabel}`);
-        if (payload.ended_at) captionParts.push(formatStatusTimestamp(payload.ended_at));
-        appendSystemMessage("📞 Call disconnected", {
-          tone: "warning",
-          statusCaption: captionParts.join(" • ") || undefined,
-          withDivider: true,
-          dividerLabel: captionParts.length ? captionParts.join(" • ") : undefined,
-          statusLabel: formatEventTypeLabel(payload.event_type || "Call Disconnected"),
-        });
+        closeRelaySocket("call disconnected");
         appendLog("📞 Call ended");
+        payload.summary = payload.summary ?? "Call disconnected";
+        payload.type = payload.type ?? "event";
       }
 
       if (payload.type === "session_end") {
@@ -4989,6 +5107,15 @@ function RealTimeVoiceApp() {
       }
 
       if (msgType === "assistant" || msgType === "status" || speaker === "Assistant") {
+        if (msgType === "status") {
+          const normalizedStatus = (txt || "").toLowerCase();
+          if (
+            normalizedStatus.includes("call connected") ||
+            normalizedStatus.includes("call disconnected")
+          ) {
+            return;
+          }
+        }
         const assistantSpeaker = speaker || "Assistant";
         registerAssistantFinal(assistantSpeaker);
         setActiveSpeaker("Assistant");
@@ -5009,20 +5136,19 @@ function RealTimeVoiceApp() {
           messageOptions.timestamp = payload.ts || payload.timestamp;
         }
         setMessages(prev => {
-          const latest = prev.at(-1);
-          if (
-            latest?.streaming &&
-            latest?.speaker === assistantSpeaker
-          ) {
-            return prev.map((m, i) =>
-              i === prev.length - 1
-                ? {
-                    ...m,
-                    text: txt,
-                    streaming: false,
-                  }
-                : m,
-            );
+          for (let idx = prev.length - 1; idx >= 0; idx -= 1) {
+            const candidate = prev[idx];
+            if (candidate?.streaming) {
+              return prev.map((m, i) =>
+                i === idx
+                  ? {
+                      ...m,
+                      ...messageOptions,
+                      streaming: false,
+                    }
+                  : m,
+              );
+            }
           }
           return pushIfChanged(prev, {
             ...messageOptions,
@@ -5185,7 +5311,9 @@ function RealTimeVoiceApp() {
 
       // relay WS WITH session_id to monitor THIS session (including phone calls)
       logger.info('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor session:', currentSessionId);
+      closeRelaySocket("starting new call");
       const relay = new WebSocket(`${WS_URL}/api/v1/realtime/dashboard/relay?session_id=${currentSessionId}`);
+      relaySocketRef.current = relay;
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({data}) => {
         try {
@@ -5208,36 +5336,16 @@ function RealTimeVoiceApp() {
             logger.debug("📨 Transformed relay envelope:", processedObj);
           }
 
-          if (processedObj.event_type === "call_connected") {
-            setCallActive(true);
-            appendLog("📞 Call connected");
-            return;
-          }
-
-      if (processedObj.event_type === "call_disconnected") {
-        setCallActive(false);
-        setActiveSpeaker(null);
-        setCurrentCallId(null);
-            appendLog("📞 Call ended");
-            return;
-          }
-          
-          if (processedObj.type?.startsWith("tool_")) {
-            handleSocketMessage({ data: JSON.stringify(processedObj) });
-            return;
-          }
-          const { sender, message } = processedObj;
-          if (sender && message) {
-            setMessages(m => [...m, { speaker: sender, text: message }]);
-            setActiveSpeaker(sender);
-            appendLog(`[Relay] ${sender}: ${message}`);
-          }
+          handleSocketMessage({ data: JSON.stringify(processedObj) });
         } catch (error) {
           logger.error("Relay parse error:", error);
           appendLog("Relay parse error");
         }
       };
       relay.onclose = () => {
+        if (relaySocketRef.current === relay) {
+          relaySocketRef.current = null;
+        }
         appendLog("Relay WS disconnected");
         setCallActive(false);
         setActiveSpeaker(null);
