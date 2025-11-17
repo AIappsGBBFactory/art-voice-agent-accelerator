@@ -16,11 +16,11 @@ resource "azurerm_email_communication_service_domain" "managed" {
 }
 
 
-resource "azurerm_email_communication_service_domain_sender_username" "default" {
-  email_service_domain_id = azurerm_email_communication_service_domain.managed.id
-  name                              = local.email_sender_username
-  display_name                          = local.email_sender_display_name
-}
+# resource "azurerm_email_communication_service_domain_sender_username" "default" {
+#   email_service_domain_id = azurerm_email_communication_service_domain.managed.id
+#   name                              = local.email_sender_username
+#   display_name                          = local.email_sender_display_name
+# }
 
 
 
