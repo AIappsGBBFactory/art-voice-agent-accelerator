@@ -6,7 +6,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from azure.ai.voicelive.models import ServerEventType, FunctionCallOutputItem
 from .financial_tools import execute_tool, is_handoff_tool
@@ -24,6 +24,13 @@ CALL_CENTER_TRIGGER_PHRASES = {
     "transfer me to the call center",
 }
 
+_PAYPAL_AGENT_NAME = "PayPalAgent"
+_PAYPAL_SEARCH_PREFACE_MESSAGES: Tuple[str, ...] = (
+    "Got it, checking now.",
+    "One sec while I look.",
+    "Sure, let me pull that up.",
+    "Let me take a quick look.",
+)
 
 def _sanitize_handoff_context(raw: Any) -> Dict[str, Any]:
     """Remove control flags so prompt variables stay clean."""
@@ -81,6 +88,7 @@ class LiveOrchestrator:
         self._call_center_triggered = False
         self._transport = transport
         self._greeting_tasks: set[asyncio.Task] = set()
+        self._search_preface_index = 0
 
         if self.messenger:
             try:
@@ -175,6 +183,43 @@ class LiveOrchestrator:
     def _transport_supports_acs(self) -> bool:
         return self._transport == "acs"
 
+    def _should_emit_paypal_search_preface(self, tool_name: Optional[str]) -> bool:
+        return (
+            tool_name == "search_knowledge_base"
+            and self.active == _PAYPAL_AGENT_NAME
+            and self.active in self.agents
+            and not self._pending_greeting
+            and bool(_PAYPAL_SEARCH_PREFACE_MESSAGES)
+        )
+
+    def _next_paypal_search_preface(self) -> str:
+        if not _PAYPAL_SEARCH_PREFACE_MESSAGES:
+            return "Checking now."
+        idx = self._search_preface_index % len(_PAYPAL_SEARCH_PREFACE_MESSAGES)
+        self._search_preface_index = (self._search_preface_index + 1) % len(
+            _PAYPAL_SEARCH_PREFACE_MESSAGES
+        )
+        return _PAYPAL_SEARCH_PREFACE_MESSAGES[idx]
+
+    async def _maybe_emit_paypal_search_preface(self, tool_name: Optional[str]) -> None:
+        if not self._should_emit_paypal_search_preface(tool_name):
+            return
+        agent = self.agents.get(self.active)
+        if not agent or not self.conn:
+            return
+        message = self._next_paypal_search_preface()
+        logger.debug(
+            "[PayPal Preface] Emitting search filler: '%s' | agent=%s",
+            message,
+            self.active,
+        )
+        try:
+            await agent.trigger_response(self.conn, say=message)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("Failed to send PayPal search preface", exc_info=True)
+
     def _cancel_pending_greeting_tasks(self) -> None:
         if not self._greeting_tasks:
             return
@@ -202,13 +247,23 @@ class LiveOrchestrator:
                             self.conn,
                             say=self._pending_greeting,
                         )
-                    finally:
-                        self._pending_greeting = None
-                        self._pending_greeting_agent = None
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.debug(
+                            "[GreetingFallback] Failed to deliver greeting",
+                            exc_info=True,
+                        )
+                        return
+                    self._pending_greeting = None
+                    self._pending_greeting_agent = None
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.debug("[GreetingFallback] Failed to deliver greeting", exc_info=True)
+                logger.debug(
+                    "[GreetingFallback] Unexpected error in fallback task",
+                    exc_info=True,
+                )
 
         task = asyncio.create_task(
             _fallback(),
@@ -321,6 +376,8 @@ class LiveOrchestrator:
 
         notify_status = "success"
         notify_error: Optional[str] = None
+
+        await self._maybe_emit_paypal_search_preface(name)
 
         last_user_message = (self._last_user_message or "").strip()
         if is_handoff_tool(name) and last_user_message:
@@ -557,6 +614,15 @@ class LiveOrchestrator:
             session_id = getattr(session_obj, "id", "unknown") if session_obj else "unknown"
             voice_info = getattr(session_obj, "voice", None) if session_obj else None
             logger.info("Session ready: %s | voice=%s", session_id, voice_info)
+            if self.messenger:
+                try:
+                    await self.messenger.send_session_update(
+                        agent_name=self.active,
+                        session_obj=session_obj,
+                        transport=self._transport,
+                    )
+                except Exception:
+                    logger.debug("Failed to emit session update envelope", exc_info=True)
             if self.audio:
                 await self.audio.stop_playback()
             try:
@@ -575,7 +641,15 @@ class LiveOrchestrator:
                         self.conn,
                         say=self._pending_greeting,
                     )
-                finally:
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "[Greeting] Session-ready trigger failed; retrying via fallback",
+                        exc_info=True,
+                    )
+                    self._schedule_greeting_fallback(self.active)
+                else:
                     self._pending_greeting = None
                     self._pending_greeting_agent = None
 
@@ -606,8 +680,15 @@ class LiveOrchestrator:
                 await self.audio.queue_audio(event.delta)
 
         elif et == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA:
-            # Collect transcription deltas (don't log each token to reduce noise)
-            pass
+            transcript_delta = getattr(event, "delta", "") or getattr(event, "transcript", "")
+            if transcript_delta and self.messenger:
+                try:
+                    await self.messenger.send_assistant_streaming(
+                        transcript_delta,
+                        sender=self.active,
+                    )
+                except Exception:
+                    logger.debug("Failed to relay assistant streaming delta", exc_info=True)
 
         elif et == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DONE:
             # Log complete transcript only
