@@ -73,6 +73,21 @@ log_section() {
     echo ""
 }
 
+derive_ws_url() {
+    local input="$1"
+    if [ -z "$input" ]; then
+        echo ""
+        return 0
+    fi
+
+    case "$input" in
+        https://*) echo "${input/https:\/\//wss://}" ;;
+        http://*) echo "${input/http:\/\//ws://}" ;;
+        wss://*|ws://*) echo "$input" ;;
+        *) echo "$input" ;;
+    esac
+}
+
 # Log CI/CD mode status
 log_ci_mode() {
     if [ "$INTERACTIVE_MODE" = "false" ]; then
@@ -354,6 +369,7 @@ update_frontend_backend_url() {
     local resource_group
     local frontend_name
     local chosen_url
+    local ws_url
 
     resource_group=$(get_azd_env_value "AZURE_RESOURCE_GROUP")
     frontend_name=$(get_azd_env_value "FRONTEND_CONTAINER_APP_NAME")
@@ -369,11 +385,23 @@ update_frontend_backend_url() {
         return 1
     fi
 
+    ws_url=$(derive_ws_url "$chosen_url")
+    if [ -z "$ws_url" ]; then
+        log_warning "Unable to derive WS_URL from $chosen_url; websocket placeholder will remain unchanged."
+    else
+        log_info "Derived WS_URL for frontend: $ws_url"
+    fi
+
     log_info "Setting BACKEND_URL on frontend: $chosen_url"
+    local env_args=(--set-env-vars "BACKEND_URL=$chosen_url")
+    if [ -n "$ws_url" ]; then
+        env_args+=(--set-env-vars "WS_URL=$ws_url")
+    fi
+
     az containerapp update \
         --name "$frontend_name" \
         --resource-group "$resource_group" \
-        --set-env-vars "BACKEND_URL=$chosen_url" \
+        "${env_args[@]}" \
         --output none || {
             log_error "Failed to set BACKEND_URL on frontend container app"
             return 1

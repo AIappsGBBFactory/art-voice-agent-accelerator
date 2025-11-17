@@ -1,4 +1,30 @@
 # ============================================================================
+# AZURE COMMUNICATION SERVICES EMAIL
+# ============================================================================
+# resource "azurerm_email_communication_service" "main" {
+#   name                = local.resource_names.email_service
+#   resource_group_name = azurerm_resource_group.main.name
+#   data_location       = var.acs_data_location
+#   tags                = local.tags
+# }
+
+# resource "azurerm_email_communication_service_domain" "managed" {
+#   name                             = local.resource_names.email_domain
+#   email_service_id                 = azurerm_email_communication_service.main.id
+#   domain_management                = "AzureManaged"
+#   user_engagement_tracking_enabled = false
+# }
+
+
+# resource "azurerm_email_communication_service_domain_sender_username" "default" {
+#   email_service_domain_id = azurerm_email_communication_service_domain.managed.id
+#   name                              = local.email_sender_username
+#   display_name                          = local.email_sender_display_name
+# }
+
+
+
+# ============================================================================
 # AZURE COMMUNICATION SERVICES
 # ============================================================================
 resource "azapi_resource" "acs" {
@@ -227,3 +253,4 @@ resource "azurerm_eventgrid_system_topic" "acs" {
 
 #   depends_on = [azurerm_eventgrid_system_topic.acs]
 # }
+
