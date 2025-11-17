@@ -298,6 +298,11 @@ async def terminate_session(
             "call_connection_id_present": bool(call_connection_id),
         },
     )
+    try:
+        if hasattr(ws, "state"):
+            setattr(ws.state, "acs_session_terminated", True)
+    except Exception:
+        pass
 
     # Resolve ACS client from app state if not passed
     resolved_acs_client: Optional[CallAutomationClient] = acs_client

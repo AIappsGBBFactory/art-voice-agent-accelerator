@@ -207,6 +207,89 @@ const inferStatusTone = (textValue = "") => {
   return "info";
 };
 
+const formatEventTypeLabel = (value = "") => {
+  if (!value) return "System Event";
+  return value
+    .split(/[_\s]+/u)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+};
+
+const shortenIdentifier = (value) => {
+  if (typeof value !== "string") return value;
+  return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
+};
+
+const describeEventData = (data = {}) => {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  const summaryParts = [];
+  const seen = new Set();
+  const prioritizedKeys = [
+    "message",
+    "reason_label",
+    "disconnect_reason",
+    "caller_id",
+    "call_connection_id",
+    "browser_session_id",
+    "connected_at",
+    "ended_at",
+  ];
+
+  const formatKey = (key) =>
+    key
+      .split(/[_\s]+/u)
+      .filter(Boolean)
+      .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+      .join(" ");
+
+  const formatValue = (key, value) => {
+    if (value == null) return value;
+    if (typeof value === "number") return value;
+    if (typeof value !== "string") return value;
+    if (key.includes("id")) return shortenIdentifier(value);
+    if (key.includes("reason")) {
+      return value
+        .split(/[_\s]+/u)
+        .filter(Boolean)
+        .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+        .join(" ");
+    }
+    if (key.endsWith("_at")) {
+      return formatStatusTimestamp(value) ?? value;
+    }
+    return value;
+  };
+
+  const appendSummary = (key, rawValue) => {
+    if (rawValue == null || seen.has(key)) {
+      return;
+    }
+    const formattedValue = formatValue(key, rawValue);
+    if (formattedValue === undefined || formattedValue === null || formattedValue === "") {
+      return;
+    }
+    summaryParts.push(`${formatKey(key)}: ${formattedValue}`);
+    seen.add(key);
+  };
+
+  prioritizedKeys.forEach((key) => appendSummary(key, data[key]));
+
+  if (!summaryParts.length) {
+    Object.entries(data).forEach(([key, value]) => {
+      if (seen.has(key)) return;
+      if (typeof value === "string" || typeof value === "number") {
+        appendSummary(key, value);
+      }
+    });
+  }
+
+  return summaryParts.length ? summaryParts.slice(0, 2).join(" • ") : null;
+};
+
 const buildSystemMessage = (text, options = {}) => {
   const timestamp = options.timestamp ?? new Date().toISOString();
   const statusTone = options.statusTone ?? options.tone ?? inferStatusTone(text);
@@ -216,12 +299,13 @@ const buildSystemMessage = (text, options = {}) => {
     statusTone,
     timestamp,
     statusCaption: options.statusCaption ?? null,
+    statusLabel: options.statusLabel ?? null,
   };
 };
 
 const STATUS_TONE_META = {
   info: {
-    label: "System Update",
+    label: "System Message",
     accent: "#2563eb",
     background: "linear-gradient(135deg, rgba(37,99,235,0.08), rgba(14,116,144,0.06))",
     border: "1px solid rgba(37,99,235,0.18)",
@@ -230,7 +314,7 @@ const STATUS_TONE_META = {
     captionColor: "rgba(15,23,42,0.65)",
   },
   success: {
-    label: "All Set",
+    label: "Event",
     accent: "#059669",
     background: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(56,189,248,0.05))",
     border: "1px solid rgba(34,197,94,0.24)",
@@ -239,7 +323,7 @@ const STATUS_TONE_META = {
     captionColor: "rgba(6,78,59,0.7)",
   },
   warning: {
-    label: "Heads Up",
+    label: "Warning",
     accent: "#f59e0b",
     background: "linear-gradient(135deg, rgba(245,158,11,0.14), rgba(249,115,22,0.08))",
     border: "1px solid rgba(245,158,11,0.28)",
@@ -2838,6 +2922,77 @@ const ChatBubble = ({ message }) => {
     );
   }
 
+  if (message?.type === "event") {
+    const eventLabel = formatEventTypeLabel(message.eventType || message.event_type);
+    const timestampLabel = formatStatusTimestamp(message.timestamp);
+    const detailText = message.summary ?? describeEventData(message.data);
+    return (
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 0.5 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            px: 1.5,
+            py: 0.75,
+            borderRadius: 2,
+            border: "1px solid rgba(148, 163, 184, 0.25)",
+            background: "rgba(15, 23, 42, 0.55)",
+            width: "max-content",
+            maxWidth: "90%",
+            color: "#e2e8f0",
+          }}
+        >
+          <Box
+            sx={{
+              width: 28,
+              height: 28,
+              borderRadius: "999px",
+              background: "rgba(94, 234, 212, 0.18)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#5eead4",
+            }}
+          >
+            <InfoRoundedIcon fontSize="small" />
+          </Box>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                color: "#e2e8f0",
+              }}
+            >
+              {eventLabel}
+              {timestampLabel && (
+                <Typography
+                  component="span"
+                  variant="caption"
+                  sx={{ fontWeight: 400, opacity: 0.7, ml: 1 }}
+                >
+                  {timestampLabel}
+                </Typography>
+              )}
+            </Typography>
+            {detailText && (
+              <Typography
+                variant="body2"
+                sx={{ color: "#cbd5f5", fontSize: "0.78rem", lineHeight: 1.4 }}
+              >
+                {detailText}
+              </Typography>
+            )}
+          </Box>
+        </Paper>
+      </Box>
+    );
+  }
+
   const { speaker, text, isTool, streaming } = message;
   const isUser = speaker === "User";
   const isSpecialist = speaker?.includes("Specialist");
@@ -2997,6 +3152,7 @@ const ChatBubble = ({ message }) => {
   if (isSystem) {
     const toneKey = message.statusTone && STATUS_TONE_META[message.statusTone] ? message.statusTone : inferStatusTone(text);
     const tone = STATUS_TONE_META[toneKey] ?? STATUS_TONE_META.info;
+    const toneLabel = message.statusLabel || tone.label;
     const ToneIcon = tone.icon;
     const timestampLabel = formatStatusTimestamp(message.timestamp);
     const lines = (text || "").split("\n").filter(Boolean);
@@ -3044,7 +3200,7 @@ const ChatBubble = ({ message }) => {
                   color: tone.accent,
                 }}
               >
-                {tone.label}
+                {toneLabel}
               </Typography>
               <Typography
                 variant="body2"
@@ -3199,9 +3355,25 @@ function RealTimeVoiceApp() {
   // Profile menu state moved to ProfileButton component
   // Profile menu state moved to ProfileButton component
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
+  const [currentCallId, setCurrentCallId] = useState(null);
 
   const appendSystemMessage = useCallback((text, options = {}) => {
     const timestamp = options.timestamp ?? new Date().toISOString();
+
+    if (options.variant === "session_stop") {
+      const dividerLabel =
+        options.dividerLabel ?? `Session paused · ${formatStatusTimestamp(timestamp)}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: "divider",
+          label: dividerLabel,
+          timestamp,
+        },
+      ]);
+      return;
+    }
+
     const baseMessage = buildSystemMessage(text, { ...options, timestamp });
     const shouldInsertDivider = options.withDivider === true;
     const dividerLabel = shouldInsertDivider
@@ -3801,6 +3973,7 @@ function RealTimeVoiceApp() {
     setActiveSpeaker(null);
     stopRecognitionRef.current?.();
     setCallActive(false);
+    setCurrentCallId(null);
     setShowPhoneInput(false);
     appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
     setTimeout(() => {
@@ -3820,24 +3993,64 @@ function RealTimeVoiceApp() {
     }
   }, [recording]);
 
+  const terminateACSCall = useCallback(async () => {
+    if (!callActive && !currentCallId) {
+      stopRecognitionRef.current?.();
+      return;
+    }
+
+    const payload =
+      currentCallId != null
+        ? {
+            call_id: currentCallId,
+            session_id: getOrCreateSessionId(),
+            reason: "normal",
+          }
+        : null;
+    try {
+      if (payload) {
+        const res = await fetch(`${API_BASE_URL}/api/v1/calls/terminate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const errorBody = await res.json().catch(() => ({}));
+          appendLog(
+            `Hangup failed: ${errorBody.detail || res.statusText || res.status}`
+          );
+        } else {
+          appendLog("📴 Hangup requested");
+        }
+      }
+    } catch (err) {
+      appendLog(`Hangup error: ${err?.message || err}`);
+    } finally {
+      stopRecognitionRef.current?.();
+      setCallActive(false);
+      setActiveSpeaker(null);
+      setShowPhoneInput(false);
+      setCurrentCallId(null);
+    }
+  }, [
+    API_BASE_URL,
+    appendLog,
+    callActive,
+    currentCallId,
+    setCallActive,
+    setShowPhoneInput,
+  ]);
+
   const handlePhoneButtonClick = useCallback(() => {
     if (isCallDisabled && !callActive) {
       return;
     }
     if (callActive) {
-      stopRecognitionRef.current?.();
-      setCallActive(false);
-      const endedAt = new Date().toISOString();
-      appendSystemMessage("📞 Call ended", {
-        tone: "warning",
-        timestamp: endedAt,
-        withDivider: true,
-        dividerLabel: `Call disconnected · ${formatStatusTimestamp(endedAt)}`,
-      });
+      terminateACSCall();
       return;
     }
     setShowPhoneInput((prev) => !prev);
-  }, [isCallDisabled, callActive, appendSystemMessage, setCallActive, setShowPhoneInput]);
+  }, [isCallDisabled, callActive, setShowPhoneInput, terminateACSCall]);
 
   const publishMetricsSummary = useCallback(
     (label, detail) => {
@@ -4298,8 +4511,8 @@ function RealTimeVoiceApp() {
         socketRef.current = null;
       }
       
-      // Add session stopped message instead of clearing everything
-      appendSystemMessage("🛑 Session stopped", { tone: "warning" });
+      // Add session stopped divider instead of card
+      appendSystemMessage("🛑 Session stopped", { variant: "session_stop" });
       setActiveSpeaker("System");
       setRecording(false);
       audioLevelRef.current = 0;
@@ -4359,62 +4572,78 @@ function RealTimeVoiceApp() {
       // --- NEW: Handle envelope format from backend ---
       // If message is in envelope format, extract the actual payload
       if (payload.type && payload.sender && payload.payload && payload.ts) {
+        const envelope = payload;
         logger.debug("📨 Received envelope message:", {
-          type: payload.type,
-          sender: payload.sender,
-          topic: payload.topic,
-          session_id: payload.session_id
+          type: envelope.type,
+          sender: envelope.sender,
+          topic: envelope.topic,
+          session_id: envelope.session_id,
         });
-        
-        // Extract the actual message from the envelope
-        const envelopeType = payload.type;
-        const envelopeSender = payload.sender;
-        const actualPayload = payload.payload;
-        
+
+        const envelopeType = envelope.type;
+        const envelopeSender = envelope.sender;
+        const envelopeTimestamp = envelope.ts;
+        const envelopeSessionId = envelope.session_id;
+        const envelopeTopic = envelope.topic;
+        const actualPayload = envelope.payload ?? {};
+
+        let flattenedPayload;
+
         // Transform envelope back to legacy format for compatibility
         if (envelopeType === "event" && actualPayload.message) {
           // Status/chat message in envelope
-          payload = {
+          flattenedPayload = {
             type: "assistant",
             sender: envelopeSender,
             speaker: envelopeSender,
             message: actualPayload.message,
-            content: actualPayload.message
+            content: actualPayload.message,
           };
         } else if (envelopeType === "assistant_streaming" && actualPayload.content) {
           // Streaming response in envelope
-          payload = {
+          flattenedPayload = {
             type: "assistant_streaming",
             sender: envelopeSender,
             speaker: envelopeSender,
-            content: actualPayload.content
+            content: actualPayload.content,
           };
         } else if (envelopeType === "status" && actualPayload.message) {
           // Status message in envelope
-          payload = {
+          flattenedPayload = {
             type: "status",
             sender: envelopeSender,
             speaker: envelopeSender,
             message: actualPayload.message,
-            content: actualPayload.message
+            content: actualPayload.message,
+            statusLabel: actualPayload.label || actualPayload.status_label,
           };
         } else {
           // For other envelope types, use the payload directly and retain the type
-          payload = {
-            type: envelopeType,
+          flattenedPayload = {
             ...actualPayload,
+            type: envelopeType,
             sender: envelopeSender,
-            speaker: envelopeSender
+            speaker: envelopeSender,
           };
         }
-        
+
+        if (envelopeTimestamp && !flattenedPayload.ts) {
+          flattenedPayload.ts = envelopeTimestamp;
+        }
+        if (envelopeSessionId && !flattenedPayload.session_id) {
+          flattenedPayload.session_id = envelopeSessionId;
+        }
+        if (envelopeTopic && !flattenedPayload.topic) {
+          flattenedPayload.topic = envelopeTopic;
+        }
+
+        payload = flattenedPayload;
         logger.debug("📨 Transformed envelope to legacy format:", payload);
       }
 
       if (payload.event_type === "call_connected") {
         setCallActive(true);
         appendLog("📞 Call connected");
-        return;
       }
 
       if (payload.event_type === "call_disconnected") {
@@ -4432,9 +4661,9 @@ function RealTimeVoiceApp() {
           statusCaption: captionParts.join(" • ") || undefined,
           withDivider: true,
           dividerLabel: captionParts.length ? captionParts.join(" • ") : undefined,
+          statusLabel: formatEventTypeLabel(payload.event_type || "Call Disconnected"),
         });
         appendLog("📞 Call ended");
-        return;
       }
 
       if (payload.type === "session_end") {
@@ -4554,6 +4783,39 @@ function RealTimeVoiceApp() {
         );
         setActiveSpeaker("System");
         appendLog("🤝 Escalated to live agent");
+        return;
+      }
+
+      if (payload.type === "event") {
+        const eventType =
+          payload.event_type ||
+          payload.eventType ||
+          payload.name ||
+          payload.data?.event_type ||
+          "event";
+        const rawEventData =
+          payload.data ??
+          payload.event_data ??
+          (typeof payload.payload === "object" ? payload.payload : null);
+        const eventData =
+          rawEventData && typeof rawEventData === "object" ? rawEventData : {};
+        const eventTimestamp = payload.ts || new Date().toISOString();
+        const eventSpeaker = payload.speaker || payload.sender || "System";
+        const eventTopic = payload.topic || "session";
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: "event",
+            speaker: eventSpeaker,
+            eventType,
+            data: eventData,
+            timestamp: eventTimestamp,
+            topic: eventTopic,
+            sessionId: payload.session_id || sessionId,
+          },
+        ]);
+        appendLog(`📡 Event received: ${eventType}`);
         return;
       }
       
@@ -4730,6 +4992,22 @@ function RealTimeVoiceApp() {
         const assistantSpeaker = speaker || "Assistant";
         registerAssistantFinal(assistantSpeaker);
         setActiveSpeaker("Assistant");
+        const messageOptions = {
+          speaker: assistantSpeaker,
+          text: txt,
+        };
+        if (payload.statusLabel) {
+          messageOptions.statusLabel = payload.statusLabel;
+        }
+        if (payload.statusTone) {
+          messageOptions.statusTone = payload.statusTone;
+        }
+        if (payload.statusCaption) {
+          messageOptions.statusCaption = payload.statusCaption;
+        }
+        if (payload.ts || payload.timestamp) {
+          messageOptions.timestamp = payload.ts || payload.timestamp;
+        }
         setMessages(prev => {
           const latest = prev.at(-1);
           if (
@@ -4747,8 +5025,7 @@ function RealTimeVoiceApp() {
             );
           }
           return pushIfChanged(prev, {
-            speaker: assistantSpeaker,
-            text: txt,
+            ...messageOptions,
           });
         });
 
@@ -4891,11 +5168,17 @@ function RealTimeVoiceApp() {
         appendLog(`Call error: ${json.detail||res.statusText}`);
         return;
       }
+      const newCallId = json.call_id ?? json.callId ?? null;
+      setCurrentCallId(newCallId);
+      if (!newCallId) {
+        appendLog("⚠️ Call initiated but call_id missing from response");
+      }
       // show in chat with dedicated system card
       const readableMode = selectedStreamingModeLabel || selectedStreamingMode;
       appendSystemMessage("📞 Call started", {
         tone: "call",
         statusCaption: `→ ${targetPhoneNumber} · Mode: ${readableMode}`,
+        statusLabel: "Call Initiated",
       });
       appendLog(`📞 Call initiated (mode: ${readableMode})`);
       setShowPhoneInput(false);
@@ -4931,9 +5214,10 @@ function RealTimeVoiceApp() {
             return;
           }
 
-          if (processedObj.event_type === "call_disconnected") {
-            setCallActive(false);
-            setActiveSpeaker(null);
+      if (processedObj.event_type === "call_disconnected") {
+        setCallActive(false);
+        setActiveSpeaker(null);
+        setCurrentCallId(null);
             appendLog("📞 Call ended");
             return;
           }

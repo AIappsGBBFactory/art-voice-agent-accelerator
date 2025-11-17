@@ -480,6 +480,18 @@ class LiveOrchestrator:
             await self._switch_to(target, ctx)
             # Clear the cached user message once the handoff has completed.
             self._last_user_message = None
+
+            if result.get("call_center_transfer"):
+                transfer_args: Dict[str, Any] = {}
+                if self._transport_supports_acs() and self.call_connection_id:
+                    transfer_args["call_connection_id"] = self.call_connection_id
+                if self.messenger:
+                    session_id = getattr(self.messenger, "session_id", None)
+                    if session_id:
+                        transfer_args["session_id"] = session_id
+                if transfer_args:
+                    self._call_center_triggered = True
+                    await self._trigger_call_center_transfer(transfer_args)
             # Note: _switch_to triggers greeting automatically via apply_session(say=...)
             if self.messenger:
                 try:
