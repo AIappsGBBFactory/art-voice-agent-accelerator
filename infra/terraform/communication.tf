@@ -23,10 +23,6 @@ resource "azurerm_email_communication_service_domain_sender_username" "default" 
 }
 
 
-resource "azurerm_communication_service_email_domain_association" "main" {
-  communication_service_id = azapi_resource.acs.id
-  email_service_domain_id  = azurerm_email_communication_service_domain.managed.id
-}
 
 # ============================================================================
 # AZURE COMMUNICATION SERVICES
@@ -257,3 +253,4 @@ resource "azurerm_eventgrid_system_topic" "acs" {
 
 #   depends_on = [azurerm_eventgrid_system_topic.acs]
 # }
+
