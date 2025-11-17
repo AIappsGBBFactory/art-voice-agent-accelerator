@@ -37,8 +37,8 @@
     },
     {
       "name": "text-embedding-3-large",
-      "version": "2025-04-14",
-      "sku_name": "DataZoneStandard",
+      "version": "2024-12-01-preview",
+      "sku_name": "GlobalStandard",
       "capacity": 500
     }
   ],
