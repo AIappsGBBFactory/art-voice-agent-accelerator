@@ -14,6 +14,7 @@ Key Features:
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from azure.core.messaging import CloudEvent
 from azure.communication.callautomation import PhoneNumberIdentifier
@@ -22,7 +23,10 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
 from apps.rtagent.backend.src.ws_helpers.shared_ws import broadcast_session_envelope
-from apps.rtagent.backend.src.ws_helpers.envelopes import make_envelope, make_status_envelope
+from apps.rtagent.backend.src.ws_helpers.envelopes import (
+    make_event_envelope,
+    make_status_envelope,
+)
 
 from utils.ml_logging import get_logger
 from .types import CallEventContext, ACSEventTypes
@@ -145,8 +149,6 @@ class CallEventHandlers:
             # Update call state with answer information
             if context.memo_manager:
                 try:
-                    from datetime import datetime
-
                     context.memo_manager.update_context("call_answered", True)
                     context.memo_manager.update_context(
                         "answered_at", datetime.utcnow().isoformat() + "Z"
@@ -193,6 +195,10 @@ class CallEventHandlers:
                 await CallEventHandlers.handle_answer_call_failed(context)
             elif context.event_type == ACSEventTypes.PARTICIPANTS_UPDATED:
                 await CallEventHandlers.handle_participants_updated(context)
+            elif context.event_type == ACSEventTypes.CALL_TRANSFER_ACCEPTED:
+                await CallEventHandlers.handle_call_transfer_accepted(context)
+            elif context.event_type == ACSEventTypes.CALL_TRANSFER_FAILED:
+                await CallEventHandlers.handle_call_transfer_failed(context)
             elif context.event_type == ACSEventTypes.DTMF_TONE_RECEIVED:
                 await DTMFValidationLifecycle.handle_dtmf_tone_received(context)
             elif context.event_type == ACSEventTypes.PLAY_COMPLETED:
@@ -279,23 +285,9 @@ class CallEventHandlers:
             # Broadcast connection status to WebSocket clients
             try:
                 if context.app_state:
-                    # Get browser session_id from Redis mapping (call_connection_id -> browser_session_id)
-                    browser_session_id = None
-                    if (
-                        hasattr(context.app_state, "redis_pool")
-                        and context.app_state.redis_pool
-                    ):
-                        try:
-                            redis = context.app_state.redis_pool
-                            browser_session_id = await redis.get(
-                                f"call_session_mapping:{context.call_connection_id}"
-                            )
-                            if browser_session_id:
-                                browser_session_id = browser_session_id.decode("utf-8")
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to get browser session ID from Redis: {e}"
-                            )
+                    browser_session_id = await CallEventHandlers._lookup_browser_session_id(
+                        context
+                    )
 
                     # Use browser session_id if available, fallback to call_connection_id
                     session_id = browser_session_id or context.call_connection_id
@@ -309,6 +301,7 @@ class CallEventHandlers:
                         sender="System",
                         topic="session",
                         session_id=session_id,
+                        label="Call Connected",
                     )
 
                     await broadcast_session_envelope(
@@ -316,6 +309,18 @@ class CallEventHandlers:
                         envelope=status_envelope,
                         session_id=session_id,
                         event_label="call_connected_broadcast",
+                    )
+                    await CallEventHandlers._broadcast_session_event_envelope(
+                        context=context,
+                        session_id=session_id,
+                        event_type="call_connected",
+                        event_data={
+                            "call_connection_id": context.call_connection_id,
+                            "browser_session_id": browser_session_id,
+                            "caller_id": caller_id,
+                            "connected_at": datetime.utcnow().isoformat() + "Z",
+                        },
+                        event_label="call_connected_event",
                     )
             except Exception as e:
                 logger.error(f"Failed to broadcast call connected: {e}")
@@ -365,6 +370,7 @@ class CallEventHandlers:
                         sender="System",
                         topic="session",
                         session_id=session_id,
+                        label="Call Disconnected",
                     )
 
                     await broadcast_session_envelope(
@@ -372,6 +378,18 @@ class CallEventHandlers:
                         envelope=status_envelope,
                         session_id=session_id,
                         event_label="call_disconnected_broadcast",
+                    )
+                    await CallEventHandlers._broadcast_session_event_envelope(
+                        context=context,
+                        session_id=session_id,
+                        event_type="call_disconnected",
+                        event_data={
+                            "call_connection_id": context.call_connection_id,
+                            "disconnect_reason": disconnect_reason,
+                            "reason_label": reason_label,
+                            "ended_at": end_time_iso,
+                        },
+                        event_label="call_disconnected_event",
                     )
                     logger.info(
                         "📨 Broadcast call_disconnected to session %s (call=%s)",
@@ -389,32 +407,262 @@ class CallEventHandlers:
             await CallEventHandlers._cleanup_call_state(context)
 
     @staticmethod
+    async def handle_call_transfer_accepted(context: CallEventContext) -> None:
+        """
+        Handle call transfer accepted events by notifying the UI session.
+        """
+        event_data = context.get_event_data()
+        session_id = await CallEventHandlers._resolve_session_id(context)
+        if not session_id or not context.app_state:
+            logger.warning(
+                "Call transfer accepted but session context missing for call %s",
+                context.call_connection_id,
+            )
+            return
+
+        operation_context = event_data.get("operationContext") or event_data.get(
+            "operation_context"
+        )
+        target_label = CallEventHandlers._describe_transfer_target(event_data)
+
+        message_lines = ["🔄 Call transfer accepted"]
+        if target_label:
+            message_lines.append(f"Target: {target_label}")
+        if operation_context:
+            message_lines.append(f"Context: {operation_context}")
+
+        try:
+            status_envelope = make_status_envelope(
+                message="\n".join(message_lines),
+                sender="ACS",
+                topic="session",
+                session_id=session_id,
+                label="Transfer Accepted",
+            )
+
+            await broadcast_session_envelope(
+                app_state=context.app_state,
+                envelope=status_envelope,
+                session_id=session_id,
+                event_label="call_transfer_accepted_status",
+            )
+
+            await CallEventHandlers._broadcast_session_event_envelope(
+                context=context,
+                session_id=session_id,
+                event_type="call_transfer_accepted",
+                event_data={
+                    "call_connection_id": context.call_connection_id,
+                    "operation_context": operation_context,
+                    "target": target_label,
+                    "raw_event": event_data,
+                },
+                event_label="call_transfer_accepted_event",
+            )
+        except Exception as exc:
+            logger.error("Failed to broadcast call transfer accepted: %s", exc)
+
+    @staticmethod
+    async def handle_call_transfer_failed(context: CallEventContext) -> None:
+        """
+        Handle call transfer failure events by notifying the UI session.
+        """
+        event_data = context.get_event_data()
+        session_id = await CallEventHandlers._resolve_session_id(context)
+        if not session_id or not context.app_state:
+            logger.warning(
+                "Call transfer failed but session context missing for call %s",
+                context.call_connection_id,
+            )
+            return
+
+        operation_context = event_data.get("operationContext") or event_data.get(
+            "operation_context"
+        )
+        target_label = CallEventHandlers._describe_transfer_target(event_data)
+        result_info = event_data.get("resultInformation") or {}
+        failure_reason = (
+            result_info.get("message")
+            or result_info.get("subCode")
+            or event_data.get("errorMessage")
+            or "Unknown reason"
+        )
+
+        message_lines = ["⚠️ Call transfer failed"]
+        if target_label:
+            message_lines.append(f"Target: {target_label}")
+        if failure_reason:
+            message_lines.append(f"Reason: {failure_reason}")
+        if operation_context:
+            message_lines.append(f"Context: {operation_context}")
+
+        try:
+            status_envelope = make_status_envelope(
+                message="\n".join(message_lines),
+                sender="ACS",
+                topic="session",
+                session_id=session_id,
+                label="Transfer Failed",
+            )
+
+            await broadcast_session_envelope(
+                app_state=context.app_state,
+                envelope=status_envelope,
+                session_id=session_id,
+                event_label="call_transfer_failed_status",
+            )
+
+            await CallEventHandlers._broadcast_session_event_envelope(
+                context=context,
+                session_id=session_id,
+                event_type="call_transfer_failed",
+                event_data={
+                    "call_connection_id": context.call_connection_id,
+                    "operation_context": operation_context,
+                    "target": target_label,
+                    "reason": failure_reason,
+                    "raw_event": event_data,
+                },
+                event_label="call_transfer_failed_event",
+            )
+        except Exception as exc:
+            logger.error("Failed to broadcast call transfer failure: %s", exc)
+
+    @staticmethod
     async def _resolve_session_id(context: CallEventContext) -> Optional[str]:
         """Resolve the session identifier tied to a call connection."""
         if not context.app_state:
             return None
 
-        browser_session_id: Optional[str] = None
-        redis_pool = getattr(context.app_state, "redis_pool", None)
-        if redis_pool:
-            try:
-                redis_value = await redis_pool.get(
-                    f"call_session_mapping:{context.call_connection_id}"
-                )
-                if redis_value:
-                    browser_session_id = (
-                        redis_value.decode("utf-8")
-                        if isinstance(redis_value, (bytes, bytearray))
-                        else str(redis_value)
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to resolve browser session ID for call %s: %s",
-                    context.call_connection_id,
-                    exc,
-                )
+        browser_session_id: Optional[str] = await CallEventHandlers._lookup_browser_session_id(
+            context
+        )
 
         return browser_session_id or context.call_connection_id
+
+    @staticmethod
+    async def _broadcast_session_event_envelope(
+        *,
+        context: CallEventContext,
+        session_id: Optional[str],
+        event_type: str,
+        event_data: Dict[str, Any],
+        event_label: str,
+    ) -> None:
+        """Broadcast a structured event envelope to the UI session if available."""
+        if not session_id or not context.app_state:
+            return
+
+        clean_payload = {
+            key: value for key, value in (event_data or {}).items() if value is not None
+        }
+        if "call_connection_id" not in clean_payload and context.call_connection_id:
+            clean_payload["call_connection_id"] = context.call_connection_id
+
+        try:
+            event_envelope = make_event_envelope(
+                event_type=event_type,
+                event_data=clean_payload,
+                sender="ACS",
+                topic="session",
+                session_id=session_id,
+            )
+            await broadcast_session_envelope(
+                app_state=context.app_state,
+                envelope=event_envelope,
+                session_id=session_id,
+                event_label=event_label,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to broadcast %s event for session %s (call=%s): %s",
+                event_type,
+                session_id,
+                context.call_connection_id,
+                exc,
+            )
+
+    @staticmethod
+    async def _lookup_browser_session_id(
+        context: CallEventContext,
+    ) -> Optional[str]:
+        """Retrieve the browser session ID mapped to a call connection."""
+        key_suffix = context.call_connection_id
+        if not key_suffix:
+            return None
+
+        keys_to_try = [
+            f"call_session_map:{key_suffix}",
+            f"call_session_mapping:{key_suffix}",
+        ]
+
+        # Prefer direct Redis pool for minimal overhead
+        redis_pool = getattr(context.app_state, "redis_pool", None)
+        if redis_pool:
+            for redis_key in keys_to_try:
+                try:
+                    redis_value = await redis_pool.get(redis_key)
+                    if redis_value:
+                        return (
+                            redis_value.decode("utf-8")
+                            if isinstance(redis_value, (bytes, bytearray))
+                            else str(redis_value)
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to fetch session mapping %s via redis_pool: %s",
+                        redis_key,
+                        exc,
+                    )
+
+        # Fallback to redis manager helper if available
+        redis_mgr = getattr(context, "redis_mgr", None)
+        if redis_mgr and hasattr(redis_mgr, "get_value_async"):
+            for redis_key in keys_to_try:
+                try:
+                    redis_value = await redis_mgr.get_value_async(redis_key)
+                    if redis_value:
+                        return (
+                            redis_value.decode("utf-8")
+                            if isinstance(redis_value, (bytes, bytearray))
+                            else str(redis_value)
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to fetch session mapping %s via redis_mgr: %s",
+                        redis_key,
+                        exc,
+                    )
+
+        return None
+
+    @staticmethod
+    def _describe_transfer_target(event_data: Dict[str, Any]) -> Optional[str]:
+        """Best-effort extraction of the transfer destination label."""
+        candidate = (
+            event_data.get("targetParticipant")
+            or event_data.get("target")
+            or event_data.get("destination")
+        )
+        if not candidate:
+            targets = event_data.get("targets")
+            if isinstance(targets, list) and targets:
+                candidate = targets[0]
+
+        if isinstance(candidate, str):
+            return candidate
+
+        if isinstance(candidate, dict):
+            phone = (
+                candidate.get("phoneNumber", {}).get("value")
+                if isinstance(candidate.get("phoneNumber"), dict)
+                else candidate.get("phoneNumber")
+            )
+            raw_id = candidate.get("rawId") or candidate.get("raw_id")
+            user = candidate.get("user", {}).get("communicationUserId")
+            return phone or raw_id or user
+
+        return None
 
     @staticmethod
     async def handle_create_call_failed(context: CallEventContext) -> None:

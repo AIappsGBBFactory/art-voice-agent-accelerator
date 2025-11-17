@@ -24,6 +24,7 @@ from apps.rtagent.backend.api.v1.schemas.call import (
     CallHangupResponse,
     CallListResponse,
     CallUpdateRequest,
+    CallTerminateRequest,
 )
 from src.enums import SpanAttr
 from utils.ml_logging import get_logger
@@ -34,7 +35,6 @@ from ..dependencies.orchestrator import get_orchestrator
 from ..events import CallEventProcessor, ACSEventTypes
 from src.enums.stream_modes import StreamMode
 from config import ACS_STREAMING_MODE
-from apps.rtagent.backend.src.agents.Lvagent.factory import build_lva_from_yaml
 import asyncio
 import os
 
@@ -261,34 +261,20 @@ async def initiate_call(
 
                     # Pre-initialize a Voice Live session bound to this call (no audio yet, no pool)
                     try:
-                        if (
-                            effective_stream_mode == StreamMode.VOICE_LIVE
-                            and hasattr(http_request.app.state, "conn_manager")
-                        ):
-                            agent_yaml = os.getenv(
-                                "VOICE_LIVE_AGENT_YAML",
-                                "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
-                            )
-                            lva_agent = build_lva_from_yaml(
-                                agent_yaml, enable_audio_io=False
-                            )
-                            await asyncio.to_thread(lva_agent.connect)
-                            # Store for media WS to claim later
+                        # Store browser-session mapping and optionally the Voice Live agent
+                        if hasattr(http_request.app.state, "conn_manager"):
+                            base_context = {
+                                "target_number": request.target_number,
+                                "browser_session_id": browser_session_id,
+                                "streaming_mode": str(effective_stream_mode),
+                            }
                             await http_request.app.state.conn_manager.set_call_context(
-                                call_id,
-                                {
-                                    "lva_agent": lva_agent,
-                                    "target_number": request.target_number,
-                                    "browser_session_id": browser_session_id,
-                                    "streaming_mode": str(effective_stream_mode),
-                                },
+                                call_id, base_context
                             )
-                            logger.info(
-                                f"Pre-initialized Voice Live agent for outbound call {call_id}"
-                            )
+
                     except Exception as e:
                         logger.warning(
-                            f"Voice Live pre-initialization skipped for {call_id}: {e}"
+                            f"Failed to persist call context for {call_id}: {e}"
                         )
 
                     # Create V1 event processor instance and emit call initiation event
@@ -514,8 +500,62 @@ async def list_calls(
             op.set_error(str(e))
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to list calls: {str(e)}",
-            )
+        detail=f"Failed to list calls: {str(e)}",
+    )
+
+
+@router.post(
+    "/terminate",
+    response_model=CallHangupResponse,
+    summary="Terminate Active Call",
+    description="Request hangup for an active ACS call by call_id (call_connection_id).",
+    tags=["Call Management"],
+)
+async def terminate_call(request: Request, payload: CallTerminateRequest) -> CallHangupResponse:
+    """Terminate an active ACS call and clean up associated browser session."""
+    conn_manager = getattr(request.app.state, "conn_manager", None)
+    acs_caller = getattr(request.app.state, "acs_caller", None)
+    if conn_manager is None or acs_caller is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ACS infrastructure not initialized",
+        )
+
+    acs_client = getattr(acs_caller, "client", None)
+    if not acs_client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ACS client unavailable",
+        )
+
+    try:
+        call_conn = acs_client.get_call_connection(payload.call_id)
+        await asyncio.wait_for(
+            call_conn.hang_up(is_for_everyone=True),
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Timed out waiting for ACS hangup",
+        )
+    except Exception as exc:
+        logger.error("ACS hangup failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to terminate ACS call",
+        ) from exc
+
+    try:
+        await conn_manager.pop_call_context(payload.call_id)
+    except Exception:
+        logger.debug("Failed to remove call context for %s", payload.call_id)
+
+    return CallHangupResponse(
+        call_id=payload.call_id,
+        status="terminated",
+        message="Call hangup requested",
+    )
 
 
 @router.post(

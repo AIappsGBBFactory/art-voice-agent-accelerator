@@ -67,6 +67,9 @@ locals {
   # Generate a unique resource token
   resource_token = random_string.resource_token.result
 
+  email_sender_username     = "noreply"
+  email_sender_display_name = "Real-Time Voice Notifications"
+
   # Common tags
   tags = {
     "azd-env-name"    = var.environment_name
@@ -95,6 +98,8 @@ locals {
     log_analytics      = "log-${local.resource_token}"
     app_insights       = "ai-${local.resource_token}"
     container_env      = "cae-${var.name}-${var.environment_name}-${local.resource_token}"
+    email_service      = "email-${var.name}-${var.environment_name}-${local.resource_token}"
+    email_domain       = "AzureManagedDomain"
     foundry_account    = substr(replace("aif${var.name}${var.environment_name}", "/[^a-zA-Z0-9]/", ""), 0, 24)
     foundry_project    = "aif${var.name}${var.environment_name}proj"
   }

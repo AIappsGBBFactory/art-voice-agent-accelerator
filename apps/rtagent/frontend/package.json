@@ -18,6 +18,7 @@
     "@mui/material": "^7.3.4",
     "@vitejs/plugin-react": "^4.5.2",
     "dotenv": "^16.5.0",
+    "js-yaml": "^4.1.1",
     "lucide-react": "^0.501.0",
     "microsoft-cognitiveservices-speech-sdk": "^1.43.1",
     "prop-types": "^15.8.1",
@@ -26,7 +27,7 @@
     "reactflow": "^11.11.4",
     "serve": "^14.2.4",
     "styled-components": "^6.1.19",
-    "vite": "^6.3.5"
+    "vite": "^6.4.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",

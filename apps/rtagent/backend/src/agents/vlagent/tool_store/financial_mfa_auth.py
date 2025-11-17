@@ -131,9 +131,12 @@ class SendMfaCodeArgs(TypedDict):
     """Arguments for sending MFA code."""
     client_id: str
     delivery_method: Literal["email", "sms"]  # Client's preference or override
-    intent: Optional[Literal["fraud", "transfer_agency"]]  # Service intent for routing
+    intent: Optional[Literal["fraud", "transfer_agency", "card_block_confirmation"]]  # Service intent for routing
     transaction_amount: Optional[float]
     transaction_type: Optional[str]
+    card_last_4: Optional[str]
+    card_block_reason: Optional[str]
+    confirmation_number: Optional[str]
 
 class SendMfaCodeResult(TypedDict):
     """Result of MFA code sending."""
@@ -159,6 +162,8 @@ class VerifyMfaCodeResult(TypedDict):
     intent: Optional[str]  # ← Service intent for orchestration routing
     authorization_level: Optional[str]
     max_transaction_limit: Optional[int]
+    card_block_finalized: Optional[bool]
+    card_block_confirmation_number: Optional[str]
 
 class CheckAuthorizationArgs(TypedDict):
     """Arguments for transaction authorization check."""
@@ -354,6 +359,9 @@ async def send_mfa_code(args: SendMfaCodeArgs) -> SendMfaCodeResult:
         delivery_method = args.get("delivery_method", "email")
         transaction_amount = args.get("transaction_amount", 0)
         transaction_type = args.get("transaction_type", "general_inquiry")
+        card_last_4 = (args.get("card_last_4") or "").strip() or None
+        card_block_reason = (args.get("card_block_reason") or "").strip() or None
+        pending_confirmation_number = (args.get("confirmation_number") or "").strip() or None
         
         if not client_id:
             return {
@@ -447,6 +455,13 @@ async def send_mfa_code(args: SendMfaCodeArgs) -> SendMfaCodeResult:
             # Cosmos DB TTL: Auto-delete after 12 hours (43200 seconds)
             "ttl": 43200
         }
+
+        if card_last_4:
+            session_data["card_last_4"] = card_last_4
+        if card_block_reason:
+            session_data["card_block_reason"] = card_block_reason
+        if pending_confirmation_number:
+            session_data["pending_confirmation_number"] = pending_confirmation_number
         
         # Store session using simplified Cosmos-only approach
         mfa_cosmos = get_mfa_cosmos_manager()
@@ -542,25 +557,30 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
     try:
         session_id = args.get("session_id", "").strip()
         provided_code = args.get("otp_code", "").strip()
-        
+
         if not session_id or not provided_code:
             return {
                 "verified": False,
                 "message": "Session ID and verification code are required.",
                 "authenticated": False,
+                "client_id": None,
                 "client_name": None,
                 "institution_name": None,
+                "intent": None,
                 "authorization_level": None,
-                "max_transaction_limit": None
+                "max_transaction_limit": None,
+                "card_block_finalized": None,
+                "card_block_confirmation_number": None,
             }
-        
-        logger.info(f"🔐 Verifying MFA code for session: {session_id}", 
-                   extra={"mfa_session_id": session_id, "operation": "verify_mfa_code"})
-        
-        # Simplified Cosmos-only lookup
+
+        logger.info(
+            f"🔐 Verifying MFA code for session: {session_id}",
+            extra={"mfa_session_id": session_id, "operation": "verify_mfa_code"},
+        )
+
         mfa_cosmos = get_mfa_cosmos_manager()
         session_data = await MFASessionManager.get_session(mfa_cosmos, session_id)
-        
+
         if not session_data:
             return {
                 "verified": False,
@@ -569,37 +589,42 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
                 "client_id": None,
                 "client_name": None,
                 "institution_name": None,
+                "intent": None,
                 "authorization_level": None,
-                "max_transaction_limit": None
+                "max_transaction_limit": None,
+                "card_block_finalized": None,
+                "card_block_confirmation_number": None,
             }
-        
-        # Check if session has expired
-        expires_at = datetime.datetime.fromisoformat(session_data.get("expires_at", "").replace("Z", ""))
+
+        expires_raw = session_data.get("expires_at", "")
+        expires_at = datetime.datetime.fromisoformat(expires_raw.replace("Z", "")) if expires_raw else datetime.datetime.utcnow()
         current_time = datetime.datetime.utcnow()
         time_remaining = (expires_at - current_time).total_seconds()
-        
+
         if current_time > expires_at:
-            logger.info(f"❌ MFA session {session_id} expired at {expires_at}")
+            logger.info("❌ MFA session %s expired at %s", session_id, expires_at)
             return {
                 "verified": False,
                 "message": "Verification code has expired. I'll send you a new code to continue authentication.",
                 "authenticated": False,
+                "client_id": None,
                 "client_name": None,
                 "institution_name": None,
+                "intent": None,
                 "authorization_level": None,
-                "max_transaction_limit": None
+                "max_transaction_limit": None,
+                "card_block_finalized": None,
+                "card_block_confirmation_number": None,
             }
-        
-        # Warn if approaching expiration (less than 1 minute remaining)
+
         if time_remaining < 60:
-            logger.info(f"⚠️ MFA session {session_id} expiring soon ({int(time_remaining)}s remaining)")
-        
-        # Check attempt limits
+            logger.info("⚠️ MFA session %s expiring soon (%ss remaining)", session_id, int(time_remaining))
+
         attempts = session_data.get("verification_attempts", 0)
         max_attempts = session_data.get("max_attempts", 3)
-        
+
         if attempts >= max_attempts:
-            logger.warning(f"❌ Maximum MFA attempts exceeded for session {session_id}")
+            logger.warning("❌ Maximum MFA attempts exceeded for session %s", session_id)
             return {
                 "verified": False,
                 "message": "Maximum verification attempts exceeded. For your security, I'm connecting you to a specialist who can authenticate you.",
@@ -607,34 +632,42 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
                 "client_id": None,
                 "client_name": None,
                 "institution_name": None,
+                "intent": None,
                 "authorization_level": None,
-                "max_transaction_limit": None
+                "max_transaction_limit": None,
+                "card_block_finalized": None,
+                "card_block_confirmation_number": None,
             }
-        
-        # Verify the code
+
         stored_code = session_data.get("otp_code", "")
         code_valid = stored_code == provided_code
-        
-        # Update attempt count
+
         await asyncio.to_thread(
             mfa_cosmos.upsert_document,
             document={**session_data, "verification_attempts": attempts + 1},
-            query={"_id": session_id}
+            query={"_id": session_id},
         )
-        
+
         if not code_valid:
             remaining_attempts = max_attempts - (attempts + 1)
-            
-            # Provide helpful feedback based on remaining attempts
+
             if remaining_attempts > 1:
-                message = f"That code doesn't match. Please double-check the 6-digit code and try again. You have {remaining_attempts} attempts remaining."
+                message = (
+                    "That code doesn't match. Please double-check the 6-digit code and try again. "
+                    f"You have {remaining_attempts} attempts remaining."
+                )
             elif remaining_attempts == 1:
-                message = "That code doesn't match. Please carefully check your email or phone for the correct 6-digit code. This is your final attempt."
+                message = "That code doesn't match. Please carefully check your email for the correct 6-digit code. This is your final attempt."
             else:
                 message = "Maximum verification attempts exceeded. For your security, I'm connecting you to a specialist."
-            
-            logger.info(f"❌ Invalid MFA code for session {session_id}. Attempts: {attempts + 1}/{max_attempts}")
-            
+
+            logger.info(
+                "❌ Invalid MFA code for session %s. Attempts: %s/%s",
+                session_id,
+                attempts + 1,
+                max_attempts,
+            )
+
             return {
                 "verified": False,
                 "message": message,
@@ -642,15 +675,17 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
                 "client_id": None,
                 "client_name": None,
                 "institution_name": None,
+                "intent": None,
                 "authorization_level": None,
-                "max_transaction_limit": None
+                "max_transaction_limit": None,
+                "card_block_finalized": None,
+                "card_block_confirmation_number": None,
             }
-        
-        # Get client data for final response
+
         client_id = session_data.get("client_id")
-        cosmos = get_financial_cosmos_manager()  # Use financial clients manager
-        client_data = await asyncio.to_thread(cosmos.read_document, {"_id": client_id})
-        
+        cosmos = get_financial_cosmos_manager()
+        client_data = await asyncio.to_thread(cosmos.read_document, {"_id": client_id}) if client_id else None
+
         if not client_data:
             return {
                 "verified": False,
@@ -658,43 +693,108 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
                 "authenticated": False,
                 "client_id": None,
                 "client_name": None,
-                "intent": None,
                 "institution_name": None,
+                "intent": None,
                 "authorization_level": None,
-                "max_transaction_limit": None
+                "max_transaction_limit": None,
+                "card_block_finalized": None,
+                "card_block_confirmation_number": None,
             }
-        
-        # Mark session as verified
+
         await asyncio.to_thread(
             mfa_cosmos.upsert_document,
             document={**session_data, "verified": True, "session_status": "verified"},
-            query={"_id": session_id}
+            query={"_id": session_id},
         )
-        
+
         client_name = client_data.get("full_name", "Unknown")
         institution_name = client_data.get("institution_name", "Unknown")
-        
-        logger.info(f"✅ MFA verification successful for {client_name}", 
-                   extra={"mfa_session_id": session_id, "client_id": client_id, 
-                         "client_name": client_name, "institution": institution_name})
-        # Get intent from session for orchestration routing
+
+        logger.info(
+            "✅ MFA verification successful | session=%s client=%s",
+            session_id,
+            client_id,
+            extra={
+                "mfa_session_id": session_id,
+                "client_id": client_id,
+                "client_name": client_name,
+                "institution": institution_name,
+            },
+        )
+
         intent = session_data.get("intent", "fraud")
-        
+        card_block_finalized: Optional[bool] = None
+        card_block_confirmation_number: Optional[str] = None
+
+        if intent == "card_block_confirmation":
+            card_last_4 = session_data.get("card_last_4")
+            block_reason = session_data.get("card_block_reason", "fraud_suspected") or "fraud_suspected"
+            pending_confirmation = session_data.get("pending_confirmation_number")
+
+            try:
+                from .fraud_detection import block_card_in_database_async  # Local import to avoid circular dependency
+            except ImportError:
+                block_card_in_database_async = None  # type: ignore
+
+            if block_card_in_database_async and card_last_4:
+                if not pending_confirmation:
+                    pending_confirmation = (
+                        f"BLOCK-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M')}-{secrets.token_hex(3).upper()}"
+                    )
+                try:
+                    card_block_finalized = await block_card_in_database_async(
+                        client_id,
+                        card_last_4,
+                        block_reason,
+                        pending_confirmation,
+                    )
+                    if card_block_finalized:
+                        card_block_confirmation_number = pending_confirmation
+                        logger.info(
+                            "✅ Card block finalized after email confirmation | client=%s card=****%s",
+                            client_id,
+                            card_last_4,
+                            extra={
+                                "client_id": client_id,
+                                "card_last_4": card_last_4,
+                                "confirmation_number": card_block_confirmation_number,
+                            },
+                        )
+                    else:
+                        logger.warning(
+                            "⚠️ Card block still pending manual authorization | client=%s card=****%s",
+                            client_id,
+                            card_last_4,
+                            extra={"client_id": client_id, "card_last_4": card_last_4},
+                        )
+                except Exception as block_error:
+                    logger.error(
+                        "❌ Failed to finalize card block after confirmation | client=%s error=%s",
+                        client_id,
+                        block_error,
+                        exc_info=True,
+                    )
+
         return {
             "verified": True,
             "message": "Authentication complete. Welcome to Financial Services.",
             "authenticated": True,
-            "client_id": client_id,  # ← Now returning client_id for memory storage
+            "client_id": client_id,
             "client_name": client_name,
             "institution_name": institution_name,
-            "intent": intent,  # ← Return intent for orchestration routing
+            "intent": intent,
             "authorization_level": client_data.get("authorization_level"),
-            "max_transaction_limit": client_data.get("max_transaction_limit")
+            "max_transaction_limit": client_data.get("max_transaction_limit"),
+            "card_block_finalized": card_block_finalized,
+            "card_block_confirmation_number": card_block_confirmation_number,
         }
-        
+
     except Exception as e:
-        logger.error(f"❌ Error verifying MFA code: {e}", exc_info=True, 
-                    extra={"mfa_session_id": session_id, "error_type": "mfa_verification_error"})
+        logger.error(
+            f"❌ Error verifying MFA code: {e}",
+            exc_info=True,
+            extra={"mfa_session_id": args.get("session_id"), "error_type": "mfa_verification_error"},
+        )
         return {
             "verified": False,
             "message": "Verification service temporarily unavailable. Please try again.",
@@ -704,7 +804,9 @@ async def verify_mfa_code(args: VerifyMfaCodeArgs) -> VerifyMfaCodeResult:
             "institution_name": None,
             "intent": None,
             "authorization_level": None,
-            "max_transaction_limit": None
+            "max_transaction_limit": None,
+            "card_block_finalized": None,
+            "card_block_confirmation_number": None,
         }
 
 
@@ -712,7 +814,6 @@ async def resend_mfa_code(args: SendMfaCodeArgs) -> SendMfaCodeResult:
     """Resend MFA code - invalidates previous session and creates new one."""
     try:
         client_id = args.get("client_id", "").strip()
-        preferred_method = args.get("delivery_method", "email").lower()
         
         if not client_id:
             return {
@@ -724,39 +825,48 @@ async def resend_mfa_code(args: SendMfaCodeArgs) -> SendMfaCodeResult:
             }
         
         logger.info(f"🔄 Resending MFA code for client {client_id}")
-        
+
         # Invalidate any existing sessions for this client
         try:
-            cosmos = get_financial_cosmos_manager()
-            # Find existing sessions and mark them as expired
+            cosmos = get_mfa_cosmos_manager()
             existing_sessions = await asyncio.to_thread(
-                cosmos.query_documents, 
-                {"client_id": client_id, "session_status": "pending"}
+                cosmos.query_documents,
+                {"client_id": client_id, "session_status": "pending"},
             )
-            
+
             for session in existing_sessions:
                 await asyncio.to_thread(
                     cosmos.upsert_document,
                     document={**session, "session_status": "superseded"},
-                    query={"_id": session["_id"]}
+                    query={"_id": session["_id"]},
                 )
-            
-            logger.info(f"📝 Invalidated {len(existing_sessions)} existing MFA sessions")
-            
+
+            logger.info(
+                f"📝 Invalidated {len(existing_sessions)} existing MFA sessions",
+                extra={"client_id": client_id, "invalidated_sessions": len(existing_sessions)},
+            )
+
         except Exception as cleanup_error:
-            logger.warning(f"⚠️ Could not cleanup existing sessions: {cleanup_error}")
+            logger.warning(
+                f"⚠️ Could not cleanup existing sessions: {cleanup_error}",
+                extra={"client_id": client_id},
+            )
         
         # Send new MFA code (reuse existing function)
         return await send_mfa_code(args)
         
     except Exception as e:
-        logger.error(f"❌ Error resending MFA code: {e}", exc_info=True)
+        logger.error(
+            f"❌ Error resending MFA code: {e}",
+            exc_info=True,
+            extra={"client_id": args.get("client_id", "unknown"), "error_type": "mfa_resend_error"},
+        )
         return {
             "sent": False,
             "message": "Failed to resend verification code. Please try again.",
             "session_id": None,
             "delivery_address": None,
-            "expires_in_minutes": 0
+            "expires_in_minutes": 0,
         }
 
 
