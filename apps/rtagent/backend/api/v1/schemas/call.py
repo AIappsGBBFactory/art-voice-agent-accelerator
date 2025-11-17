@@ -252,6 +252,20 @@ class CallHangupResponse(BaseModel):
     )
 
 
+class CallTerminateRequest(BaseModel):
+    """Request model for terminating an ACS call."""
+
+    call_id: str = Field(..., description="Call connection ID to terminate")
+    session_id: Optional[str] = Field(
+        None,
+        description="Browser session ID associated with the ACS call (optional)",
+    )
+    reason: Optional[str] = Field(
+        "normal",
+        description="Termination reason label (defaults to 'normal')",
+    )
+
+
 class CallListResponse(BaseModel):
     """Response model for listing calls."""
 
