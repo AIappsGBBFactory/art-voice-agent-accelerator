@@ -176,6 +176,62 @@ class TestCallEventHandlers:
         caller_id = CallEventHandlers._extract_caller_id(caller_info)
         assert caller_id == "unknown"
 
+    @patch("apps.rtagent.backend.api.v1.events.acs_events.broadcast_session_envelope", new_callable=AsyncMock)
+    async def test_call_transfer_accepted_envelope(self, mock_broadcast, mock_context):
+        mock_context.event_type = ACSEventTypes.CALL_TRANSFER_ACCEPTED
+        mock_context.event.data = {
+            "callConnectionId": "test_123",
+            "operationContext": "route-42",
+            "targetParticipant": {"rawId": "sip:agent@example.com"},
+        }
+
+        with patch.object(
+            CallEventHandlers,
+            "_broadcast_session_event_envelope",
+            new_callable=AsyncMock,
+        ) as mock_event:
+            await CallEventHandlers.handle_call_transfer_accepted(mock_context)
+
+        assert mock_broadcast.await_count == 1
+        status_envelope = mock_broadcast.await_args.kwargs["envelope"]
+        assert status_envelope["payload"]["label"] == "Transfer Accepted"
+        assert "Call transfer accepted" in status_envelope["payload"]["message"]
+
+        mock_event.assert_awaited()
+        assert (
+            mock_event.await_args.kwargs["event_type"]
+            == "call_transfer_accepted"
+        )
+
+    @patch("apps.rtagent.backend.api.v1.events.acs_events.broadcast_session_envelope", new_callable=AsyncMock)
+    async def test_call_transfer_failed_envelope(self, mock_broadcast, mock_context):
+        mock_context.event_type = ACSEventTypes.CALL_TRANSFER_FAILED
+        mock_context.event.data = {
+            "callConnectionId": "test_123",
+            "operationContext": "route-42",
+            "targetParticipant": {"phoneNumber": {"value": "+1234567890"}},
+            "resultInformation": {"message": "Busy"},
+        }
+
+        with patch.object(
+            CallEventHandlers,
+            "_broadcast_session_event_envelope",
+            new_callable=AsyncMock,
+        ) as mock_event:
+            await CallEventHandlers.handle_call_transfer_failed(mock_context)
+
+        assert mock_broadcast.await_count == 1
+        status_envelope = mock_broadcast.await_args.kwargs["envelope"]
+        assert status_envelope["payload"]["label"] == "Transfer Failed"
+        assert "Call transfer failed" in status_envelope["payload"]["message"]
+        assert "Busy" in status_envelope["payload"]["message"]
+
+        mock_event.assert_awaited()
+        assert (
+            mock_event.await_args.kwargs["event_type"]
+            == "call_transfer_failed"
+        )
+
 
 class TestEventProcessingFlow:
     """Test event processing flow."""

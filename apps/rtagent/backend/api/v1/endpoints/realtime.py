@@ -82,6 +82,10 @@ from src.postcall.push import build_and_flush
 from src.stateful.state_managment import MemoManager
 from src.pools.session_manager import SessionContext
 from src.enums.stream_modes import StreamMode
+from apps.rtagent.backend.src.services.acs.session_terminator import (
+    terminate_session,
+    TerminationReason,
+)
 from utils.ml_logging import get_logger
 
 # V1 components
@@ -367,13 +371,19 @@ async def browser_conversation_endpoint(
 
     try:
         # Use provided session_id or generate collision-resistant session ID
+        header_call_id = websocket.headers.get("x-ms-call-connection-id")
         if not session_id:
-            if websocket.headers.get("x-ms-call-connection-id"):
+            if header_call_id:
                 # For ACS calls, use the full call-connection-id (already unique)
-                session_id = websocket.headers.get("x-ms-call-connection-id")
+                session_id = header_call_id
             else:
                 # For realtime calls, use full UUID4 to prevent collisions
                 session_id = str(uuid.uuid4())
+        if header_call_id:
+            websocket.state.call_connection_id = header_call_id
+            websocket.state.acs_bridged_call = True
+        else:
+            websocket.state.acs_bridged_call = False
 
         logger.info(
             "[%s] Conversation WebSocket connection established (mode=%s)",
@@ -1514,6 +1524,8 @@ async def _cleanup_conversation_session(
         attributes={"session_id": session_id, "conn_id": conn_id},
     ) as span:
         try:
+            await _terminate_voice_live_session_if_needed(websocket, session_id)
+
             # Cancel background orchestration tasks to prevent resource leaks
             orchestration_tasks = getattr(websocket.state, "orchestration_tasks", set())
             if orchestration_tasks:
@@ -1663,3 +1675,47 @@ async def _cleanup_conversation_session(
         except Exception as e:
             span.set_status(Status(StatusCode.ERROR, f"Cleanup error: {e}"))
             logger.error(f"Error during conversation cleanup: {e}")
+
+
+async def _terminate_voice_live_session_if_needed(
+    websocket: WebSocket, session_id: Optional[str]
+) -> None:
+    """Ensure ACS Voice Live calls are terminated when the browser disconnects."""
+    try:
+        stream_mode_value = getattr(websocket.state, "stream_mode", "")
+        is_voice_live = str(stream_mode_value).lower() == str(
+            StreamMode.VOICE_LIVE
+        ).lower()
+        if not is_voice_live:
+            return
+
+        has_acs_bridge = getattr(websocket.state, "acs_bridged_call", False)
+        if not has_acs_bridge:
+            return
+
+        if getattr(websocket.state, "acs_session_terminated", False):
+            return
+
+        call_connection_id = getattr(websocket.state, "call_connection_id", None)
+        if not call_connection_id:
+            logger.debug(
+                "[%s] Voice Live cleanup skipped – no call connection id available",
+                session_id,
+            )
+            return
+
+        await terminate_session(
+            websocket,
+            is_acs=True,
+            call_connection_id=call_connection_id,
+            reason=TerminationReason.NORMAL,
+        )
+        logger.info(
+            "[%s] Requested ACS termination due to frontend disconnect", session_id
+        )
+    except Exception as exc:
+        logger.warning(
+            "[%s] Failed to terminate ACS session during cleanup: %s",
+            session_id,
+            exc,
+        )
