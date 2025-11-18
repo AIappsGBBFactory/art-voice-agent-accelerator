@@ -205,15 +205,18 @@ async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
         )
 
     effective_greeting: Optional[str] = None
-    if caller_name and institution_name:
+    first_name = caller_name.split()[0] if caller_name else None
+    if first_name and institution_name:
         effective_greeting = (
-            f"Hi {caller_name}, thanks for waiting. I'm the fraud specialist for {institution_name}. Let's secure your account together."
+            f"Hi {first_name}, you're now speaking with the fraud prevention specialist for {institution_name}."
         )
-    elif caller_name:
-        effective_greeting = f"Hi {caller_name}, thanks for waiting. I'm your fraud specialist."
+    elif first_name:
+        effective_greeting = (
+            f"Hi {first_name}, you're now speaking with the fraud prevention specialist."
+        )
     elif institution_name:
         effective_greeting = (
-            f"Thanks for holding. I'm the fraud specialist for {institution_name}."
+            f"You're now speaking with the fraud prevention specialist for {institution_name}."
         )
 
     extra: Dict[str, Any] = {"should_interrupt_playback": True}
@@ -338,8 +341,26 @@ async def handoff_paypal_agent(args: HandoffPayPalArgs) -> Dict[str, Any]:
         if not context.get("details"):
             context["details"] = user_last_utterance
     extra: Dict[str, Any] = {"should_interrupt_playback": True}
+
+    greeting_override: Optional[str] = None
+    first_name = (caller_name.split()[0] if caller_name else "there").strip()
+    if first_name:
+        intent_summary = details or user_last_utterance or issue_summary
+        if intent_summary:
+            intent_summary = intent_summary.rstrip(". ")
+        base_intro = f"Hi {first_name}, you're speaking with the PayPal and Venmo specialist now."
+        if intent_summary:
+            greeting_override = f"{base_intro} I understand you're calling about {intent_summary}. How can I help further?"
+        else:
+            greeting_override = f"{base_intro} How can I help today?"
+
+    merged_overrides: Dict[str, Any] = {}
     if isinstance(session_overrides, dict) and session_overrides:
-        extra["session_overrides"] = session_overrides
+        merged_overrides.update(session_overrides)
+    if greeting_override and not merged_overrides.get("greeting"):
+        merged_overrides["greeting"] = greeting_override
+    if merged_overrides:
+        extra["session_overrides"] = merged_overrides
 
     payload = _build_handoff_payload(
         target_agent="PayPalAgent",

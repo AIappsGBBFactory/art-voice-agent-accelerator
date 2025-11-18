@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Any, Awaitable, Dict, Literal, Optional, Union
 
 import numpy as np
 from fastapi import WebSocket
@@ -78,6 +78,18 @@ def _safe_primitive(value: Any) -> Any:
 	if isinstance(value, dict):
 		return {k: _safe_primitive(v) for k, v in value.items()}
 	return str(value)
+
+
+def _background_task(coro: Awaitable[Any], *, label: str) -> None:
+	task = asyncio.create_task(coro)
+
+	def _log_outcome(t: asyncio.Task) -> None:
+		try:
+			t.result()
+		except Exception:
+			logger.debug("Background task '%s' failed", label, exc_info=True)
+
+	task.add_done_callback(_log_outcome)
 
 
 def _serialize_session_config(session_obj: Any) -> Optional[Dict[str, Any]]:
@@ -159,12 +171,15 @@ class _SessionMessenger:
 		if not text or not self._can_emit():
 			return
 
-		await send_user_transcript(
-			self._ws,
-			text,
-			session_id=self._session_id,
-			conn_id=None,
-			broadcast_only=True,
+		_background_task(
+			send_user_transcript(
+				self._ws,
+				text,
+				session_id=self._session_id,
+				conn_id=None,
+				broadcast_only=True,
+			),
+			label="send_user_transcript",
 		)
 
 	def _resolve_sender(self, sender: Optional[str]) -> str:
@@ -191,13 +206,16 @@ class _SessionMessenger:
 			call_id=self._call_id,
 		)
 
-		await send_session_envelope(
-			self._ws,
-			envelope,
-			session_id=self._session_id,
-			conn_id=None,
-			event_label="voicelive_assistant_transcript",
-			broadcast_only=True,
+		_background_task(
+			send_session_envelope(
+				self._ws,
+				envelope,
+				session_id=self._session_id,
+				conn_id=None,
+				event_label="voicelive_assistant_transcript",
+				broadcast_only=True,
+			),
+			label="assistant_transcript_envelope",
 		)
 
 	async def send_assistant_streaming(self, text: str, *, sender: Optional[str] = None) -> None:
@@ -212,13 +230,16 @@ class _SessionMessenger:
 			session_id=self._session_id,
 			call_id=self._call_id,
 		)
-		await send_session_envelope(
-			self._ws,
-			envelope,
-			session_id=self._session_id,
-			conn_id=None,
-			event_label="voicelive_assistant_streaming",
-			broadcast_only=True,
+		_background_task(
+			send_session_envelope(
+				self._ws,
+				envelope,
+				session_id=self._session_id,
+				conn_id=None,
+				event_label="voicelive_assistant_streaming",
+				broadcast_only=True,
+			),
+			label="assistant_streaming_envelope",
 		)
 
 	async def send_session_update(
@@ -278,13 +299,16 @@ class _SessionMessenger:
 			call_id=self._call_id,
 		)
 
-		await send_session_envelope(
-			self._ws,
-			envelope,
-			session_id=self._session_id,
-			conn_id=None,
-			event_label="voicelive_session_updated",
-			broadcast_only=True,
+		_background_task(
+			send_session_envelope(
+				self._ws,
+				envelope,
+				session_id=self._session_id,
+				conn_id=None,
+				event_label="voicelive_session_updated",
+				broadcast_only=True,
+			),
+			label="session_update_envelope",
 		)
 
 	async def send_status_update(
@@ -320,13 +344,16 @@ class _SessionMessenger:
 			call_id=self._call_id,
 		)
 
-		await send_session_envelope(
-			self._ws,
-			envelope,
-			session_id=self._session_id,
-			conn_id=None,
-			event_label=event_label,
-			broadcast_only=True,
+		_background_task(
+			send_session_envelope(
+				self._ws,
+				envelope,
+				session_id=self._session_id,
+				conn_id=None,
+				event_label=event_label,
+				broadcast_only=True,
+			),
+			label=event_label,
 		)
 
 	async def notify_tool_start(self, *, call_id: Optional[str], name: Optional[str], args: Dict[str, Any]) -> None:
@@ -334,13 +361,16 @@ class _SessionMessenger:
 		if not self._can_emit() or not call_id or not name:
 			return
 		try:
-			await push_tool_start(
-				self._ws,
-				call_id,
-				name,
-				args,
-				is_acs=True,
-				session_id=self._session_id,
+			_background_task(
+				push_tool_start(
+					self._ws,
+					call_id,
+					name,
+					args,
+					is_acs=True,
+					session_id=self._session_id,
+				),
+				label=f"tool_start_{name}",
 			)
 		except Exception:
 			logger.debug("Failed to emit tool_start frame for VoiceLive session", exc_info=True)
@@ -359,16 +389,19 @@ class _SessionMessenger:
 		if not self._can_emit() or not call_id or not name:
 			return
 		try:
-			await push_tool_end(
-				self._ws,
-				call_id,
-				name,
-				status,
-				elapsed_ms,
-				result=result,
-				error=error,
-				is_acs=True,
-				session_id=self._session_id,
+			_background_task(
+				push_tool_end(
+					self._ws,
+					call_id,
+					name,
+					status,
+					elapsed_ms,
+					result=result,
+					error=error,
+					is_acs=True,
+					session_id=self._session_id,
+				),
+				label=f"tool_end_{name}",
 			)
 		except Exception:
 			logger.debug("Failed to emit tool_end frame for VoiceLive session", exc_info=True)
@@ -726,13 +759,16 @@ class VoiceLiveSDKHandler:
 				session_id=session_id,
 				call_id=self.call_connection_id,
 			)
-			await send_session_envelope(
-				self.websocket,
-				envelope,
-				session_id=session_id,
-				conn_id=None,
-				event_label="voicelive_user_transcript_delta",
-				broadcast_only=True,
+			_background_task(
+				send_session_envelope(
+					self.websocket,
+					envelope,
+					session_id=session_id,
+					conn_id=None,
+					event_label="voicelive_user_transcript_delta",
+					broadcast_only=True,
+				),
+				label="voicelive_user_transcript_delta",
 			)
 
 

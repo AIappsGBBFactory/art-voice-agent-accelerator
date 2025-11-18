@@ -284,6 +284,10 @@ class LiveOrchestrator:
         """Return a contextual greeting the agent should deliver once the session is ready."""
 
         explicit = system_vars.get("greeting")
+        if not explicit:
+            overrides = system_vars.get("session_overrides")
+            if isinstance(overrides, dict):
+                explicit = overrides.get("greeting")
         if explicit:
             return explicit.strip() or None
 
