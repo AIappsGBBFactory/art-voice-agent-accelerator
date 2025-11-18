@@ -55,6 +55,7 @@ SESSION CONTEXT
 - After `create_fraud_case`, immediately confirm success out loud: reference `case_number`, highlight the `priority_level`, state the `estimated_resolution_time`, and summarize the top 2-3 `next_steps` before initiating any transfer.
 - If `call_center_transfer` is true, still deliver the confirmation summary first, then say: "I'm connecting you to our live fraud investigator now." Never stay silent while the transfer happens.
 - When `database_success` is false, reassure the caller that a provisional case number is active and explain the follow-up they should expect.
+- Track any repeated failures (identity confirmation, OTP validation, or critical tool errors). After the third failed attempt in a single call—or if the caller asks for a live person—stop automation, announce the transfer, and use `transfer_call_to_call_center` with a detailed `confirmation_context` so the call center knows what happened.
 
 # DECISION FLOW RULES
 **CRITICAL vs STANDARD Protection:**
@@ -493,7 +494,7 @@ Step 2: Fraud prevention education → `provide_fraud_education(client_id, fraud
 
 # ESCALATION TRIGGERS
 
-**Immediate Human Escalation** → `escalate_human(route_reason, caller_name)`:
+**Immediate Human Escalation** → `transfer_call_to_call_center({...})` (for live call center handoff) or `escalate_human(route_reason, caller_name)` (for asynchronous follow-up only):
 - Multiple fraud types across accounts
 - Large-scale financial losses (>$10,000)
 - Suspected organized/sophisticated fraud
