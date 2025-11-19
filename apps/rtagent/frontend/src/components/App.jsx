@@ -28,7 +28,7 @@ import logger from '../utils/logger.js';
 // Environment configuration
 const backendPlaceholder = '__BACKEND_URL__';
 const API_BASE_URL = backendPlaceholder.startsWith('__')
-  ? import.meta.env.VITE_BACKEND_BASE_URL || 'http://localhost:8000'
+  ? import.meta.env.VITE_BACKEND_BASE_URL
   : backendPlaceholder;
 
 const wsPlaceholder = '__WS_URL__';
@@ -4087,7 +4087,6 @@ function RealTimeVoiceApp() {
       closeRelaySocket("call terminated");
     }
   }, [
-    API_BASE_URL,
     appendLog,
     closeRelaySocket,
     callActive,

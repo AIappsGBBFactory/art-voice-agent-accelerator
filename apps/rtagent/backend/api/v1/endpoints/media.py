@@ -282,27 +282,10 @@ async def _resolve_browser_session_id_with_retry(
         f"call_session_mapping:{call_connection_id}",
     )
     redis_mgr = getattr(app_state, "redis", None)
-    redis_pool = getattr(app_state, "redis_pool", None)
     conn_manager = getattr(app_state, "conn_manager", None)
 
     for attempt in range(1, max(attempts, 1) + 1):
         for redis_key in redis_keys:
-            # Prefer redis_pool for lowest latency when available
-            if redis_pool:
-                try:
-                    value = await redis_pool.get(redis_key)
-                    if value:
-                        return value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else str(value)
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug(
-                        "Retryable redis_pool lookup failure",
-                        exc_info=False,
-                        extra={
-                            "key": redis_key,
-                            "attempt": attempt,
-                            "error": str(exc),
-                        },
-                    )
 
             if redis_mgr and hasattr(redis_mgr, "get_value_async"):
                 try:
