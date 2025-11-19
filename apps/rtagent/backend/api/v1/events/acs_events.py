@@ -596,25 +596,6 @@ class CallEventHandlers:
             f"call_session_mapping:{key_suffix}",
         ]
 
-        # Prefer direct Redis pool for minimal overhead
-        redis_pool = getattr(context.app_state, "redis_pool", None)
-        if redis_pool:
-            for redis_key in keys_to_try:
-                try:
-                    redis_value = await redis_pool.get(redis_key)
-                    if redis_value:
-                        return (
-                            redis_value.decode("utf-8")
-                            if isinstance(redis_value, (bytes, bytearray))
-                            else str(redis_value)
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to fetch session mapping %s via redis_pool: %s",
-                        redis_key,
-                        exc,
-                    )
-
         # Fallback to redis manager helper if available
         redis_mgr = getattr(context, "redis_mgr", None)
         if redis_mgr and hasattr(redis_mgr, "get_value_async"):
