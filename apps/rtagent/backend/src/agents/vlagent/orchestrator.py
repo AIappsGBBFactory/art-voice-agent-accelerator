@@ -173,8 +173,7 @@ class LiveOrchestrator:
                 say=None,
             )
             if self._pending_greeting and self._pending_greeting_agent == agent_name:
-                if not await self._emit_pending_greeting(agent_name):
-                    self._schedule_greeting_fallback(agent_name)
+                self._schedule_greeting_fallback(agent_name)
         except Exception:
             logger.exception("Failed to apply session for agent '%s'", agent_name)
             raise
@@ -227,30 +226,6 @@ class LiveOrchestrator:
         for task in list(self._greeting_tasks):
             task.cancel()
         self._greeting_tasks.clear()
-
-    async def _emit_pending_greeting(self, agent_name: str) -> bool:
-        """Attempt to deliver the current pending greeting immediately."""
-
-        if not self._pending_greeting or self._pending_greeting_agent != agent_name:
-            return False
-
-        try:
-            await self.agents[agent_name].trigger_response(
-                self.conn,
-                say=self._pending_greeting,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug(
-                "[Greeting] Immediate emission failed; will fallback",
-                exc_info=True,
-            )
-            return False
-
-        self._pending_greeting = None
-        self._pending_greeting_agent = None
-        return True
 
     def _schedule_greeting_fallback(self, agent_name: str) -> None:
         if not self._pending_greeting or not self._pending_greeting_agent:
@@ -349,42 +324,18 @@ class LiveOrchestrator:
             or intent
         )
 
-        intro = agent.greeting if is_first_visit else agent.return_greeting
-        intro = (intro or "").strip()
-        base_intro = intro or f"I'm {agent_name}."
-
-        first_name = caller.split()[0] if caller and caller.lower() != "there" else caller
-        institution = (
-            handoff_context.get("institution_name")
-            if isinstance(handoff_context, dict)
-            else None
-        ) or system_vars.get("institution_name")
-
-        if agent.name == "FraudAgent":
-            topic = intent or system_vars.get("handoff_message") or system_vars.get("details")
-            topic = (topic or "your fraud concern").strip().rstrip(".")
-            account_clause = (
-                f" for your {institution} account" if institution else ""
-            )
-            name_token = first_name if first_name and first_name != "there" else caller
-            name_token = name_token or "there"
-            return (
-                f"Hi {name_token}, this is PayPal fraud prevention{account_clause}. "
-                f"I understand you're calling about {topic}. Let's secure your account now."
-            )
+        intro = agent.return_greeting if not is_first_visit else agent.greeting
+        intro = (intro or f"Hi, I'm {agent_name}.").strip()
 
         if intent:
             intent = intent.strip().rstrip(".")
-            return f"Hi {caller}, {base_intro} I understand you're calling about {intent}. Let's get started."
-
-        if intro:
-            return f"Hi {caller}, {intro}"
+            return f"Hi {caller}, {intro} I understand you're calling about {intent}. Let's get started."
 
         handoff_message = (system_vars.get("handoff_message") or "").strip()
         if handoff_message:
-            return f"Hi {caller}, {base_intro} {handoff_message}"
+            return f"Hi {caller}, {intro} {handoff_message}"
 
-        return f"Hi {caller}, {base_intro}".strip()
+        return f"Hi {caller}, {intro}".strip()
 
     async def _execute_tool_call(self, call_id: Optional[str], name: Optional[str], args_json: Optional[str]) -> bool:
         """

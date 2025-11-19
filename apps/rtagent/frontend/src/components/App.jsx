@@ -6,6 +6,7 @@ import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import HourglassTopRoundedIcon from '@mui/icons-material/HourglassTopRounded';
 import InfoRoundedIcon from '@mui/icons-material/InfoRounded';
+import MicNoneRoundedIcon from '@mui/icons-material/MicNoneRounded';
 import MicOffRoundedIcon from '@mui/icons-material/MicOffRounded';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
 import PhoneDisabledRoundedIcon from '@mui/icons-material/PhoneDisabledRounded';
@@ -765,6 +766,64 @@ const styles = {
       color: isHovered ? (isActive ? "#f8fafc" : "#0f172a") : (isActive ? "#0284c7" : "#1f2937"),
     },
   }),
+
+  muteButton: (isMuted, isHovered, isDisabled = false) => {
+    const base = {
+      width: "56px",
+      height: "56px",
+      borderRadius: "50%",
+      border: "none",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      transition: "all 0.3s ease",
+      position: "relative",
+      padding: 0,
+      '& svg': {
+        color: "#1f2937",
+      },
+    };
+
+    if (isDisabled) {
+      return {
+        ...base,
+        cursor: "not-allowed",
+        background: "linear-gradient(135deg, #e2e8f0, #cbd5e1)",
+        opacity: 0.6,
+        boxShadow: "inset 0 0 0 1px rgba(148,163,184,0.35)",
+        '& svg': {
+          color: "#94a3b8",
+        },
+      };
+    }
+
+    const palette = isMuted
+      ? {
+          base: "linear-gradient(135deg, #f8fafc, #fee2e2)",
+          hover: "linear-gradient(135deg, #fee2e2, #fecaca)",
+          fg: "#dc2626",
+          hoverFg: "#b91c1c",
+          shadow: "0 6px 18px rgba(248,113,113,0.35), 0 0 0 3px rgba(248,113,113,0.15)",
+        }
+      : {
+          base: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
+          hover: "linear-gradient(135deg, #dcfce7, #bbf7d0)",
+          fg: "#0f172a",
+          hoverFg: "#047857",
+          shadow: "0 6px 18px rgba(16,185,129,0.28), 0 0 0 3px rgba(16,185,129,0.16)",
+        };
+
+    return {
+      ...base,
+      cursor: "pointer",
+      background: isHovered ? palette.hover : palette.base,
+      transform: isHovered ? "scale(1.08)" : "scale(1)",
+      boxShadow: isHovered ? palette.shadow : "0 2px 8px rgba(15,23,42,0.12)",
+      '& svg': {
+        color: isHovered ? palette.hoverFg : palette.fg,
+      },
+    };
+  },
 
   phoneButton: (isActive, isHovered, isDisabled = false) => {
     const base = {
@@ -2731,7 +2790,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
 });
 
 /* ------------------------------------------------------------------ *
- *  CONVERSATION CONTROLS (Reset, Mic, Call)
+ *  CONVERSATION CONTROLS (Reset, Mute, Mic, Call)
  * ------------------------------------------------------------------ */
 const ConversationControls = React.memo(({
   recording,
@@ -2742,17 +2801,22 @@ const ConversationControls = React.memo(({
   onPhoneButtonClick,
   phoneButtonRef,
   micButtonRef,
+  micMuted,
+  onMuteToggle,
 }) => {
   const [resetHovered, setResetHovered] = useState(false);
   const [micHovered, setMicHovered] = useState(false);
   const [phoneHovered, setPhoneHovered] = useState(false);
+  const [muteHovered, setMuteHovered] = useState(false);
   const [showResetTooltip, setShowResetTooltip] = useState(false);
   const [showMicTooltip, setShowMicTooltip] = useState(false);
   const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
+  const [showMuteTooltip, setShowMuteTooltip] = useState(false);
   const [phoneDisabledPos, setPhoneDisabledPos] = useState(null);
   const [resetTooltipPos, setResetTooltipPos] = useState(null);
   const [micTooltipPos, setMicTooltipPos] = useState(null);
   const [phoneTooltipPos, setPhoneTooltipPos] = useState(null);
+  const [muteTooltipPos, setMuteTooltipPos] = useState(null);
 
   const handlePhoneMouseEnter = useCallback((event) => {
     setShowPhoneTooltip(true);
@@ -2817,6 +2881,63 @@ const ConversationControls = React.memo(({
               }}
             >
               Reset conversation & start fresh
+            </div>
+          )}
+        </div>
+
+        {/* Mute */}
+        <div
+          style={{ position: 'relative' }}
+          onMouseEnter={(event) => {
+            const target = event.currentTarget.querySelector('button') ?? event.currentTarget;
+            const rect = target.getBoundingClientRect();
+            setMuteTooltipPos({
+              top: rect.bottom + 12,
+              left: rect.left + rect.width / 2,
+            });
+            setShowMuteTooltip(true);
+            if (recording) {
+              setMuteHovered(true);
+            }
+          }}
+          onMouseLeave={() => {
+            setShowMuteTooltip(false);
+            setMuteHovered(false);
+            setMuteTooltipPos(null);
+          }}
+        >
+          <IconButton
+            disableRipple
+            aria-label={micMuted ? "Unmute microphone" : "Mute microphone"}
+            sx={styles.muteButton(micMuted, muteHovered, !recording)}
+            disabled={!recording}
+            onClick={() => {
+              if (!recording) {
+                return;
+              }
+              onMuteToggle();
+            }}
+          >
+            {micMuted ? (
+              <MicOffRoundedIcon fontSize="medium" />
+            ) : (
+              <MicNoneRoundedIcon fontSize="medium" />
+            )}
+          </IconButton>
+          {showMuteTooltip && muteTooltipPos && (
+            <div
+              style={{
+                ...styles.buttonTooltip,
+                top: muteTooltipPos.top,
+                left: muteTooltipPos.left,
+                ...(showMuteTooltip ? styles.buttonTooltipVisible : {}),
+              }}
+            >
+              {recording
+                ? micMuted
+                  ? "Resume sending microphone audio"
+                  : "Temporarily mute your microphone"
+                : "Start the microphone to enable mute"}
             </div>
           )}
         </div>
@@ -3323,6 +3444,7 @@ function RealTimeVoiceApp() {
   const [messages, setMessages] = useState([]);
   const [log, setLog] = useState("");
   const [recording, setRecording] = useState(false);
+  const [micMuted, setMicMuted] = useState(false);
   const [targetPhoneNumber, setTargetPhoneNumber] = useState("");
   const [callActive, setCallActive] = useState(false);
   const [activeSpeaker, setActiveSpeaker] = useState(null);
@@ -3711,6 +3833,21 @@ function RealTimeVoiceApp() {
   const phoneButtonRef = useRef(null);
   const phonePanelRef = useRef(null);
   const micButtonRef = useRef(null);
+  const micMutedRef = useRef(false);
+  const relayHealthIntervalRef = useRef(null);
+  const relayReconnectTimeoutRef = useRef(null);
+  const handleSocketMessageRef = useRef(null);
+  const openRelaySocketRef = useRef(null);
+  const callLifecycleRef = useRef({
+    pending: false,
+    active: false,
+    callId: null,
+    lastEnvelopeAt: 0,
+    reconnectAttempts: 0,
+    reconnectScheduled: false,
+    stalledLoggedAt: null,
+    lastRelayOpenedAt: 0,
+  });
 
   // Audio processing refs
   const audioContextRef = useRef(null);
@@ -3934,9 +4071,33 @@ function RealTimeVoiceApp() {
 
   const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
 
-  const closeRelaySocket = useCallback((reason = "client stop") => {
+  const resetCallLifecycle = useCallback(() => {
+    const state = callLifecycleRef.current;
+    state.pending = false;
+    state.active = false;
+    state.callId = null;
+    state.lastEnvelopeAt = 0;
+    state.reconnectAttempts = 0;
+    state.reconnectScheduled = false;
+    state.stalledLoggedAt = null;
+    state.lastRelayOpenedAt = 0;
+    if (relayReconnectTimeoutRef.current && typeof window !== "undefined") {
+      window.clearTimeout(relayReconnectTimeoutRef.current);
+      relayReconnectTimeoutRef.current = null;
+    }
+  }, []);
+
+  const closeRelaySocket = useCallback((reason = "client stop", options = {}) => {
+    const { preserveLifecycle = false } = options;
     const relaySocket = relaySocketRef.current;
+    if (relayReconnectTimeoutRef.current && typeof window !== "undefined") {
+      window.clearTimeout(relayReconnectTimeoutRef.current);
+      relayReconnectTimeoutRef.current = null;
+    }
     if (!relaySocket) {
+      if (!preserveLifecycle) {
+        resetCallLifecycle();
+      }
       return;
     }
     try {
@@ -3944,9 +4105,14 @@ function RealTimeVoiceApp() {
     } catch (error) {
       logger.warn("Error closing relay socket:", error);
     } finally {
-      relaySocketRef.current = null;
+      if (relaySocketRef.current === relaySocket) {
+        relaySocketRef.current = null;
+      }
+      if (!preserveLifecycle) {
+        resetCallLifecycle();
+      }
     }
-  }, []);
+  }, [resetCallLifecycle]);
   // Formatting functions moved to ProfileButton component
   const activeSessionProfile = sessionProfiles[sessionId];
   const hasActiveProfile = Boolean(activeSessionProfile?.profile);
@@ -4009,6 +4175,13 @@ function RealTimeVoiceApp() {
     };
   }, [closeRelaySocket]);
 
+  useEffect(() => {
+    if (!recording) {
+      micMutedRef.current = false;
+      setMicMuted(false);
+    }
+  }, [recording]);
+
   const handleResetSession = useCallback(() => {
     const newSessionId = createNewSessionId();
     setSessionId(newSessionId);
@@ -4027,6 +4200,8 @@ function RealTimeVoiceApp() {
     setCallActive(false);
     setCurrentCallId(null);
     setShowPhoneInput(false);
+    micMutedRef.current = false;
+    setMicMuted(false);
     closeRelaySocket("session reset");
     appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
     setTimeout(() => {
@@ -4037,10 +4212,22 @@ function RealTimeVoiceApp() {
     }, 500);
   }, [appendLog, appendSystemMessage, closeRelaySocket, setSessionId, setSessionProfiles, setMessages, setActiveSpeaker, setCallActive, setShowPhoneInput]);
 
+  const handleMuteToggle = useCallback(() => {
+    if (!recording) {
+      return;
+    }
+    const next = !micMutedRef.current;
+    micMutedRef.current = next;
+    setMicMuted(next);
+    appendLog(next ? "🔇 Microphone muted" : "🔈 Microphone unmuted");
+  }, [appendLog, recording]);
+
   const handleMicToggle = useCallback(() => {
     if (recording) {
       stopRecognitionRef.current?.();
     } else {
+      micMutedRef.current = false;
+      setMicMuted(false);
       setPendingRealtimeStart(true);
       setShowRealtimeModePanel(true);
     }
@@ -4084,11 +4271,13 @@ function RealTimeVoiceApp() {
       setActiveSpeaker(null);
       setShowPhoneInput(false);
       setCurrentCallId(null);
+      resetCallLifecycle();
       closeRelaySocket("call terminated");
     }
   }, [
     appendLog,
     closeRelaySocket,
+    resetCallLifecycle,
     callActive,
     currentCallId,
     setCallActive,
@@ -4445,7 +4634,12 @@ function RealTimeVoiceApp() {
           logger.error("WebSocket error - backend might not be running:", err);
         };
 
-        ws.onmessage = handleSocketMessage;
+        ws.onmessage = (event) => {
+          const handler = handleSocketMessageRef.current;
+          if (handler) {
+            handler(event);
+          }
+        };
         socketRef.current = ws;
         return ws;
       };
@@ -4454,6 +4648,8 @@ function RealTimeVoiceApp() {
 
       // 2) setup Web Audio for raw PCM @16 kHz
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micMutedRef.current = false;
+      setMicMuted(false);
       micStreamRef.current = stream;
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
         sampleRate: 16000
@@ -4477,29 +4673,30 @@ function RealTimeVoiceApp() {
 
       processor.onaudioprocess = (evt) => {
         const float32 = evt.inputBuffer.getChannelData(0);
-        
-        // Calculate real-time audio level
-        let sum = 0;
-        for (let i = 0; i < float32.length; i++) {
-          sum += float32[i] * float32[i];
+        const isMuted = micMutedRef.current;
+        let target = 0;
+
+        const int16 = new Int16Array(float32.length);
+
+        if (isMuted) {
+          for (let i = 0; i < float32.length; i++) {
+            int16[i] = 0;
+          }
+        } else {
+          let sum = 0;
+          for (let i = 0; i < float32.length; i++) {
+            const sample = Math.max(-1, Math.min(1, float32[i]));
+            sum += sample * sample;
+            int16[i] = sample * 0x7fff;
+          }
+          const rms = Math.sqrt(sum / float32.length);
+          target = Math.min(1, rms * 10);
         }
-        const rms = Math.sqrt(sum / float32.length);
-        const target = Math.min(1, rms * 10);
+
         const previous = audioLevelRef.current;
         const smoothing = target > previous ? 0.32 : 0.18;
         const level = previous + (target - previous) * smoothing;
-        
         audioLevelRef.current = level;
-
-        // Debug: Log a sample of mic data
-
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7fff;
-        }
-
-        // Debug: Show size before send
-        // logger.debug("Sending int16 PCM buffer, length:", int16.length);
 
         const activeSocket = socketRef.current;
         if (activeSocket && activeSocket.readyState === WebSocket.OPEN) {
@@ -4569,6 +4766,8 @@ function RealTimeVoiceApp() {
       appendSystemMessage("🛑 Session stopped", { variant: "session_stop" });
       setActiveSpeaker("System");
       setRecording(false);
+      micMutedRef.current = false;
+      setMicMuted(false);
       audioLevelRef.current = 0;
       outputAudioLevelRef.current = 0;
       cancelOutputLevelDecay();
@@ -4700,6 +4899,10 @@ function RealTimeVoiceApp() {
         logger.debug("📨 Transformed envelope to legacy format:", payload);
       }
 
+      if (callLifecycleRef.current.pending) {
+        callLifecycleRef.current.lastEnvelopeAt = Date.now();
+      }
+
       const normalizedEventType =
         payload.event_type ||
         payload.eventType ||
@@ -4789,6 +4992,14 @@ function RealTimeVoiceApp() {
       if (payload.event_type === "call_connected") {
         setCallActive(true);
         appendLog("📞 Call connected");
+        const lifecycle = callLifecycleRef.current;
+        lifecycle.pending = true;
+        lifecycle.active = true;
+        lifecycle.callId = payload.call_connection_id || lifecycle.callId;
+        lifecycle.lastEnvelopeAt = Date.now();
+        lifecycle.reconnectAttempts = 0;
+        lifecycle.reconnectScheduled = false;
+        lifecycle.stalledLoggedAt = null;
         payload.summary = payload.summary ?? "Call connected";
         payload.type = payload.type ?? "event";
       }
@@ -4796,6 +5007,7 @@ function RealTimeVoiceApp() {
       if (payload.event_type === "call_disconnected") {
         setCallActive(false);
         setActiveSpeaker(null);
+        resetCallLifecycle();
         closeRelaySocket("call disconnected");
         appendLog("📞 Call ended");
         payload.summary = payload.summary ?? "Call disconnected";
@@ -4808,6 +5020,7 @@ function RealTimeVoiceApp() {
         if (reason === "HUMAN_HANDOFF") {
           shouldReconnectRef.current = false;
         }
+        resetCallLifecycle();
         setCallActive(false);
         setShowPhoneInput(false);
         const normalizedReason =
@@ -5272,10 +5485,201 @@ function RealTimeVoiceApp() {
         return;
       }
     };
+
+    handleSocketMessageRef.current = handleSocketMessage;
   
   /* ------------------------------------------------------------------ *
    *  OUTBOUND ACS CALL
    * ------------------------------------------------------------------ */
+  const openRelaySocket = useCallback((targetSessionId, options = {}) => {
+    const { reason = "manual", suppressLog = false } = options;
+    if (!targetSessionId) {
+      return null;
+    }
+
+    const lifecycle = callLifecycleRef.current;
+    if (relayReconnectTimeoutRef.current && typeof window !== "undefined") {
+      window.clearTimeout(relayReconnectTimeoutRef.current);
+      relayReconnectTimeoutRef.current = null;
+    }
+    lifecycle.reconnectScheduled = false;
+
+    try {
+      const encodedSession = encodeURIComponent(targetSessionId);
+      const relayUrl = `${WS_URL}/api/v1/realtime/dashboard/relay?session_id=${encodedSession}`;
+      closeRelaySocket(`${reason || "manual"} reopen`, { preserveLifecycle: true });
+      if (!suppressLog) {
+        appendLog(`Connecting relay WS (${reason})`);
+      }
+
+      const relay = new WebSocket(relayUrl);
+      relaySocketRef.current = relay;
+      lifecycle.lastRelayOpenedAt = Date.now();
+
+      relay.onopen = () => {
+        appendLog("Relay WS connected");
+        lifecycle.reconnectAttempts = 0;
+        lifecycle.reconnectScheduled = false;
+        lifecycle.stalledLoggedAt = null;
+        lifecycle.lastEnvelopeAt = Date.now();
+      };
+
+      relay.onerror = (error) => {
+        logger.error("Relay WS error:", error);
+        appendLog("Relay WS error");
+      };
+
+      relay.onmessage = ({ data }) => {
+        lifecycle.lastEnvelopeAt = Date.now();
+        try {
+          const obj = JSON.parse(data);
+          let processedObj = obj;
+
+          if (obj && obj.type && obj.sender && obj.payload && obj.ts) {
+            logger.debug("📨 Relay received envelope message:", {
+              type: obj.type,
+              sender: obj.sender,
+              topic: obj.topic,
+            });
+
+            processedObj = {
+              type: obj.type,
+              sender: obj.sender,
+              ...obj.payload,
+            };
+            logger.debug("📨 Transformed relay envelope:", processedObj);
+          }
+
+          const handler = handleSocketMessageRef.current;
+          if (handler) {
+            handler({ data: JSON.stringify(processedObj) });
+          }
+        } catch (error) {
+          logger.error("Relay parse error:", error);
+          appendLog("Relay parse error");
+        }
+      };
+
+      relay.onclose = (event) => {
+        if (relaySocketRef.current === relay) {
+          relaySocketRef.current = null;
+        }
+
+        const state = callLifecycleRef.current;
+        const pending = state.pending;
+        const code = event?.code;
+        const reasonText = event?.reason;
+
+        if (!pending) {
+          appendLog("Relay WS disconnected");
+          setCallActive(false);
+          setActiveSpeaker(null);
+          return;
+        }
+
+        const details = [code ?? "no code"];
+        if (reasonText) {
+          details.push(reasonText);
+        }
+        appendLog(`Relay WS closed (${details.join(": ")}) – scheduling retry`);
+
+        state.reconnectAttempts = Math.min(state.reconnectAttempts + 1, 6);
+        state.reconnectScheduled = true;
+
+        if (typeof window !== "undefined") {
+          const baseDelay = 800;
+          const delay = Math.min(10000, baseDelay * Math.pow(2, state.reconnectAttempts - 1));
+          if (relayReconnectTimeoutRef.current) {
+            window.clearTimeout(relayReconnectTimeoutRef.current);
+          }
+          relayReconnectTimeoutRef.current = window.setTimeout(() => {
+            relayReconnectTimeoutRef.current = null;
+            state.reconnectScheduled = false;
+            if (!callLifecycleRef.current.pending) {
+              return;
+            }
+            const opener = openRelaySocketRef.current;
+            if (opener) {
+              opener(targetSessionId, { reason: "auto-reconnect", suppressLog: true });
+            }
+          }, delay);
+        }
+      };
+
+      return relay;
+    } catch (error) {
+      logger.error("Failed to open relay websocket:", error);
+      appendLog("Relay WS open failed");
+      return null;
+    }
+  }, [appendLog, closeRelaySocket, setActiveSpeaker, setCallActive]);
+
+  openRelaySocketRef.current = openRelaySocket;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      const lifecycle = callLifecycleRef.current;
+      if (!lifecycle.pending) {
+        return;
+      }
+
+      const relay = relaySocketRef.current;
+      const sessionKey = sessionId || getOrCreateSessionId();
+      const now = Date.now();
+
+      if (!relay || relay.readyState !== WebSocket.OPEN) {
+        if (!lifecycle.reconnectScheduled) {
+          lifecycle.reconnectScheduled = true;
+          lifecycle.reconnectAttempts = Math.min(lifecycle.reconnectAttempts + 1, 6);
+          const baseDelay = 800;
+          const delay = Math.min(10000, baseDelay * Math.pow(2, lifecycle.reconnectAttempts - 1));
+          if (relayReconnectTimeoutRef.current) {
+            window.clearTimeout(relayReconnectTimeoutRef.current);
+          }
+          relayReconnectTimeoutRef.current = window.setTimeout(() => {
+            relayReconnectTimeoutRef.current = null;
+            lifecycle.reconnectScheduled = false;
+            if (!callLifecycleRef.current.pending) {
+              return;
+            }
+            const opener = openRelaySocketRef.current;
+            if (opener) {
+              opener(sessionKey, { reason: "monitor-reconnect", suppressLog: true });
+            }
+          }, delay);
+        }
+        return;
+      }
+
+      lifecycle.reconnectAttempts = 0;
+
+      if (lifecycle.lastEnvelopeAt && now - lifecycle.lastEnvelopeAt > 15000) {
+        if (!lifecycle.stalledLoggedAt || now - lifecycle.stalledLoggedAt > 15000) {
+          appendLog("⚠️ No ACS updates in 15s — refreshing relay subscription.");
+          lifecycle.stalledLoggedAt = now;
+        }
+        const opener = openRelaySocketRef.current;
+        if (opener) {
+          opener(sessionKey, { reason: "envelope-timeout", suppressLog: true });
+        }
+        lifecycle.lastEnvelopeAt = Date.now();
+      }
+    }, 6000);
+
+    relayHealthIntervalRef.current = interval;
+
+    return () => {
+      if (relayHealthIntervalRef.current && typeof window !== "undefined") {
+        window.clearInterval(relayHealthIntervalRef.current);
+        relayHealthIntervalRef.current = null;
+      }
+    };
+  }, [appendLog, sessionId]);
+
   const startACSCall = async () => {
     if (systemStatus.status === "degraded" && systemStatus.acsOnlyIssue) {
       appendLog("🚫 Outbound calling disabled until ACS configuration is provided.");
@@ -5310,6 +5714,7 @@ function RealTimeVoiceApp() {
       const json = await res.json();
       if (!res.ok) {
         appendLog(`Call error: ${json.detail||res.statusText}`);
+        resetCallLifecycle();
         return;
       }
       const newCallId = json.call_id ?? json.callId ?? null;
@@ -5326,50 +5731,21 @@ function RealTimeVoiceApp() {
       });
       appendLog(`📞 Call initiated (mode: ${readableMode})`);
       setShowPhoneInput(false);
+      const lifecycle = callLifecycleRef.current;
+      lifecycle.pending = true;
+      lifecycle.active = false;
+      lifecycle.callId = newCallId ?? null;
+      lifecycle.lastEnvelopeAt = Date.now();
+      lifecycle.reconnectAttempts = 0;
+      lifecycle.reconnectScheduled = false;
+      lifecycle.stalledLoggedAt = null;
+      lifecycle.lastRelayOpenedAt = 0;
 
-      // relay WS WITH session_id to monitor THIS session (including phone calls)
       logger.info('🔗 [FRONTEND] Starting dashboard relay WebSocket to monitor session:', currentSessionId);
-      closeRelaySocket("starting new call");
-      const relay = new WebSocket(`${WS_URL}/api/v1/realtime/dashboard/relay?session_id=${currentSessionId}`);
-      relaySocketRef.current = relay;
-      relay.onopen = () => appendLog("Relay WS connected");
-      relay.onmessage = ({data}) => {
-        try {
-          const obj = JSON.parse(data);
-          
-          // Handle envelope format for relay messages
-          let processedObj = obj;
-          if (obj.type && obj.sender && obj.payload && obj.ts) {
-            logger.debug("📨 Relay received envelope message:", {
-              type: obj.type,
-              sender: obj.sender,
-              topic: obj.topic
-            });
-            
-            processedObj = {
-              type: obj.type,
-              sender: obj.sender,
-              ...obj.payload,
-            };
-            logger.debug("📨 Transformed relay envelope:", processedObj);
-          }
-
-          handleSocketMessage({ data: JSON.stringify(processedObj) });
-        } catch (error) {
-          logger.error("Relay parse error:", error);
-          appendLog("Relay parse error");
-        }
-      };
-      relay.onclose = () => {
-        if (relaySocketRef.current === relay) {
-          relaySocketRef.current = null;
-        }
-        appendLog("Relay WS disconnected");
-        setCallActive(false);
-        setActiveSpeaker(null);
-      };
+      openRelaySocket(currentSessionId, { reason: "call-start" });
     } catch(e) {
       appendLog(`Network error starting call: ${e.message}`);
+      resetCallLifecycle();
     }
   };
 
@@ -5462,6 +5838,8 @@ function RealTimeVoiceApp() {
               isCallDisabled={isCallDisabled}
               onResetSession={handleResetSession}
               onMicToggle={handleMicToggle}
+              micMuted={micMuted}
+              onMuteToggle={handleMuteToggle}
               onPhoneButtonClick={handlePhoneButtonClick}
               phoneButtonRef={phoneButtonRef}
               micButtonRef={micButtonRef}
