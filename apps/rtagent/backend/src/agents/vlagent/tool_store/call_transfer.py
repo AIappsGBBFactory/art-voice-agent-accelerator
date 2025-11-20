@@ -6,8 +6,9 @@ import os
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field, ValidationError
-
+from utils.ml_logging import logging
 from apps.rtagent.backend.src.services.acs.call_transfer import transfer_call
+
 
 TRANSFER_CALL_SCHEMA: Dict[str, Any] = {
     "name": "transfer_call_to_destination",
@@ -176,6 +177,20 @@ def _resolve_call_center_target(override: Optional[str]) -> Optional[str]:
 
     return None
 
+def _resolve_call_center_source(override: Optional[str]) -> Optional[str]:
+    """Resolve the call center source with optional runtime override."""
+
+    if override:
+        stripped = override.strip()
+        if stripped:
+            return stripped
+
+    env_value = os.environ.get("ACS_SOURCE_PHONE_NUMBER", "").strip()
+    if env_value:
+        return env_value
+
+    return None
+
 
 async def transfer_call_to_destination(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Execute the ACS call transfer tool."""
@@ -262,12 +277,27 @@ async def transfer_call_to_call_center(arguments: Dict[str, Any]) -> Dict[str, A
         or f"call-center-{payload.call_connection_id}"
     )
 
-    result = await transfer_call(
-        call_connection_id=payload.call_connection_id,
-        target_address=target,
-        operation_context=operation_context,
-        auto_detect_transferee=True,
-    )
+    # detemrine if ACS call, if so, then transfer. if not, make a call
+    is_acs_call = payload.call_connection_id is not None   
+
+    if is_acs_call:
+        result = await transfer_call(
+            call_connection_id=payload.call_connection_id,
+            target_address=target,
+            operation_context=operation_context,
+            auto_detect_transferee=True,
+        )
+    else:
+        logging.info("No ACS call connection ID provided; Creating a new ACS call to the contact center.")
+        from apps.rtagent.backend.api.v1.handlers.acs_call_lifecycle import ACSLifecycleHandler
+
+        acs_source = _resolve_call_center_source()
+        acs_handler = ACSLifecycleHandler()
+        result = await acs_handler.start_outbound_call(
+            target_number=target,
+            acs_caller=acs_source,
+            
+        )
 
     if result.get("success"):
         result.setdefault(

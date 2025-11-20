@@ -11,12 +11,18 @@ session:
   input_audio_format: PCM16
   output_audio_format: PCM16
 
+  input_audio_transcription_settings:
+    model: azure-standard
+    language: en-US
+    phrase_list: []
+
   voice:
     type: azure-standard
     name: en-US-Ava:DragonHDLatestNeural
     rate: "-1%"
 
   turn_detection:
+    type: azure_semantic_vad
     threshold: 0.46
     prefix_padding_ms: 220
     silence_duration_ms: 650

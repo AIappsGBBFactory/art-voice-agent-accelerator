@@ -520,7 +520,7 @@ class VoiceLiveSDKHandler:
 			self._connection_cm = connect(
 				endpoint=self._settings.azure_voicelive_endpoint,
 				credential=self._credential,
-				model=self._settings.voicelive_model,
+				model=self._settings.azure_voicelive_model,
 				connection_options=connection_options,
 			)
 			self._connection = await self._connection_cm.__aenter__()
@@ -715,7 +715,7 @@ class VoiceLiveSDKHandler:
 		elif etype == ServerEventType.RESPONSE_AUDIO_DELTA:
 			response_id = getattr(event, "response_id", None)
 			delta_bytes = getattr(event, "delta", None)
-			logger.info(
+			logger.debug(
 				"[VoiceLive] Audio delta received | session=%s response=%s bytes=%s",
 				self.session_id,
 				response_id,
@@ -762,10 +762,9 @@ class VoiceLiveSDKHandler:
 			self._stop_audio_pending = False
 
 		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
-			logger.info("🎤 User paused speaking")
-			logger.info("🤖 Generating assistant reply")
+			logger.debug("🎤 User paused speaking")
+			logger.debug("🤖 Generating assistant reply")
 			self._mark_audio_playback(False)
-			await self._messenger.send_user_message("...")
 
 		elif etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_DELTA:
 			transcript_text = getattr(event, "transcript", "") or getattr(event, "delta", "")
@@ -1144,8 +1143,8 @@ class VoiceLiveSDKHandler:
 			type_str,
 		)
 
-		if type_str not in _TRACED_EVENTS:
-			return
+		# if type_str not in _TRACED_EVENTS:
+		# 	return
 
 		attributes = {
 			"voicelive.event.type": type_str,
