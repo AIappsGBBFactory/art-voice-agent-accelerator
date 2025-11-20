@@ -101,8 +101,9 @@ const DEFAULT_SCENARIOS = [
         label: 'Talk Track',
         items: [
           'Intro: “My name is <demo profile name>. I need details about a Venmo/PayPal transfer.” Agent should confirm your name and request verification.',
-          'Provide the requested details (SSN last four, company code). The auth agent should confirm identity and relay profile info.',
+          'The Auth Agent should confirm your name and transfer you to the paypal/venmo agent.',
           'Ask KB questions with explicit intent (“Please stay on the line and just explain this—what fees apply if I move $10,000 into Venmo?” / “Walk me through PayPal Purchase Protection from the KB.”) followed by account-level questions (“What’s my balance?” “List my two most recent transactions.”).',
+          'Asking account level questions should trigger the agent to ask more verification questions based on the demo profile (SSN, company code).',
           'Trigger fraud: “I received a suspicious activity alert—help me investigate.” Agent should request MFA, then surface suspicious transactions.',
         ],
       },
@@ -127,6 +128,55 @@ const DEFAULT_SCENARIOS = [
           'Trigger multiple intents back-to-back (“Explain Purchase Protection, then immediately flag fraud”) to ensure state carries through.',
           'Ask for comparisons (“Which policy would help me more—Venmo Purchase Protection or PayPal Chargeback?”) to encourage grounded, multi-source answers.',
           'Mix languages (e.g., ask the next question in Spanish or Korean) if your VoiceLive model supports it, then switch back to English.',
+        ],
+      },
+    ],
+  },
+  {
+    title: 'High-Value PayPal Transfer Orchestration',
+    tags: ['Voice Live'],
+    focus:
+      'Demonstrate the $50,000 PayPal → bank transfer flow end-to-end: business authentication with institution + company code, profile-aware limits, and chained RAG lookups that inform the PayPal agent handoff.',
+    sections: [
+      {
+        label: 'Preparation',
+        items: [
+          'Seed the demo profile with PayPal balance ($75k+), daily and monthly transfer limits, linked bank routing metadata, and recent payout history.',
+          'Ensure the profile includes a business institution name (e.g., “BlueStone Art Collective LLC”) and the PayPal company code last four digits; keep them handy for the auth flow.',
+          'Verify that the PayPal/Venmo KB has coverage for “large transfer fees,” “instant transfer timelines,” and “high-value withdrawals” so RAG can cite those policies.',
+          'Open the VoiceLive console plus the PayPal specialist prompt so you can watch the chained tool calls (identity → authorization → knowledge lookups).',
+        ],
+      },
+      {
+        label: 'Talk Track',
+        items: [
+          'Kick off with the auth agent: “Hi, I’m <demo profile name>. I need to move $50,000 from my PayPal to my bank today—it’s just my personal account.” The agent should acknowledge but immediately explain that high-value transfers require the business/institution record and will request the company code.',
+          'Follow up with the correct details: provide the institution name from the profile and the company code last four digits so the agent can re-run identity verification.',
+          'Complete identity verification (full name + institution + company code + SSN last four) and MFA via email. Listen for confirmation that the agent stored `client_id`, `session_id`, and whether additional authorization is required.',
+          'Prompt the agent to check transfer eligibility: “Before we move the funds, confirm my remaining transfer limit and whether I can send $50,000 right now.” This should trigger `check_transaction_authorization` or similar tooling using the profile’s limit metadata.',
+          'Once warm-transferred to the PayPal agent, ask: “What would happen if I transferred $50,000 from PayPal to my bank account?” The agent should launch a RAG query, cite policy guidance, and blend in your profile limits.',
+          'Follow up with: “Okay—chain another lookup to see if there are detailed steps or fees I should expect for high-value transfers.” Expect a second RAG query that builds on the first answer while staying grounded in the profile context.',
+          'Have the agent surface personalized insight: “Given my profile and limits, recommend whether I should initiate one $50,000 transfer or break it into two $25k transfers, and outline the steps.” This should blend vector search results with the stored transfer limit attributes.',
+        ],
+      },
+      {
+        label: 'Expected Behavior',
+        items: [
+          'Initial “personal account” claim is rejected for high-value transfer; the assistant requests institution name and company code before proceeding.',
+          'Authentication flow succeeds only after full name, institution, SSN last four, and company code are supplied.',
+          'MFA delivery happens via email, and the assistant restates delivery per policy (“Only email is available right now”).',
+          'Authorization logic references profile limits, echoes remaining transfer headroom, and notes if supervisor approval is needed.',
+          'PayPal specialist issues at least two chained RAG calls: the first explaining the immediate outcome of moving $50,000, the second detailing fees and execution steps, citing distinct knowledge sources.',
+          'Final recommendation cites both the KB entries and profile-specific data (limits, prior transfer history) before outlining the execution steps.',
+        ],
+      },
+      {
+        label: 'Experiment',
+        items: [
+          'Interrupt after the first RAG answer (“Hold on—before finishing, confirm whether instant transfer is available for $50k and what the fee would be.”) The agent should reuse prior findings and only fetch new knowledge if needed.',
+          'Ask for multi-lingual confirmation (“Repeat the compliance summary in Spanish, then switch back to English”) to ensure the chained context survives language pivots.',
+          'Request a scenario analysis: “If compliance delays me 24 hours, what’s my best alternative?” Expect the agent to cite another RAG snippet plus the profile’s past transfer cadence.',
+          'Deliberately ask for a bank reference number before the transfer (“Generate a reference ID now”). The agent should explain that the reference appears only after the transfer, reinforcing policy-grounded guidance.',
         ],
       },
     ],
@@ -351,7 +401,6 @@ const styles = {
     gap: '8px',
   },
   filterButton: (active) => ({
-    border: 'none',
     borderRadius: '999px',
     padding: '4px 10px',
     fontSize: '10px',

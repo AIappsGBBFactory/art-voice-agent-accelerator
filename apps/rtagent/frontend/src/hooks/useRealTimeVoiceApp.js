@@ -5,6 +5,17 @@
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 
+const SESSION_STORAGE_KEY = 'voice_agent_session_id';
+const getOrCreateSessionId = () => {
+  let sessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
+  if (!sessionId) {
+    const tabId = Math.random().toString(36).slice(2, 8);
+    sessionId = `session_${Date.now()}_${tabId}`;
+    sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+  }
+  return sessionId;
+};
+
 // AudioWorklet source code for PCM streaming playback
 const workletSource = `
   class PcmSink extends AudioWorkletProcessor {
@@ -140,13 +151,16 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     // Initialize audio playback system on user gesture
     await initializeAudioPlayback();
 
+    const sessionId = getOrCreateSessionId();
+    const conversationUrl = `${WS_URL}/api/v1/realtime/conversation?session_id=${encodeURIComponent(sessionId)}`;
+
     // 1) open WS
-    const socket = new WebSocket(`${WS_URL}/api/v1/realtime/conversation`);
+    const socket = new WebSocket(conversationUrl);
     socket.binaryType = "arraybuffer";
 
     socket.onopen = () => {
       appendLog("🔌 WS open - Connected to backend!");
-      console.log("WebSocket connection OPENED to backend at:", `${WS_URL}/api/v1/realtime/conversation`);
+      console.log("WebSocket connection OPENED to backend at:", conversationUrl);
     };
     socket.onclose = (event) => {
       appendLog(`🔌 WS closed - Code: ${event.code}, Reason: ${event.reason}`);
@@ -493,10 +507,14 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     }
     
     try {
+      const sessionId = getOrCreateSessionId();
       const res = await fetch(`${API_BASE_URL}/api/v1/calls/initiate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_number: targetPhoneNumber }),
+        body: JSON.stringify({
+          target_number: targetPhoneNumber,
+          context: { browser_session_id: sessionId },
+        }),
       });
       
       const json = await res.json();
@@ -507,9 +525,11 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
       
       setMessages(m => [...m, { speaker: "Assistant", text: `📞 Call started → ${targetPhoneNumber}` }]);
       appendLog("📞 Call initiated");
+      setCallActive(true);
 
       // Relay WebSocket
-      const relay = new WebSocket(`${WS_URL}/api/v1/realtime/dashboard/relay`);
+      const relayUrl = `${WS_URL}/api/v1/realtime/dashboard/relay?session_id=${encodeURIComponent(sessionId)}`;
+      const relay = new WebSocket(relayUrl);
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({ data }) => {
         try {

@@ -22,6 +22,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict, TypedDict
 
 from apps.rtagent.backend.src.agents.vlagent.tool_store.functions_helper import _json
+from apps.rtagent.backend.src.agents.vlagent.tool_store.call_transfer import (
+    transfer_call_to_call_center,
+)
 from utils.ml_logging import get_logger
 
 logger = get_logger("fnol_escalations")
@@ -80,6 +83,7 @@ class HandoffClaimArgs(TypedDict):
     claim_intent: str  # e.g. "new_claim", "update_claim"
 
 
+
 async def handoff_claim_agent(args: HandoffClaimArgs) -> Dict[str, Any]:
     """
     Transfer the caller to the **Claims Intake** AI agent.
@@ -133,47 +137,85 @@ class EscalateHumanArgs(TypedDict, total=False):
     """Input schema for :pyfunc:`escalate_human`."""
 
     route_reason: str  # Required
-    caller_name: str   # Required  
-    policy_id: str     # Optional for financial services
+    caller_name: str  # Required
+    policy_id: str  # Optional for financial services
+    call_connection_id: str
+    session_id: str
+    target_override: str
+    confirmation_context: str
+    operation_context: str
 
 
 async def escalate_human(args: EscalateHumanArgs) -> Dict[str, Any]:
-    """
-    Escalate *non-emergency* scenarios to a human insurance adjuster.
-    """
+    """Escalate non-emergency scenarios directly to the live call center."""
     # Input type validation to prevent 400 errors
     if not isinstance(args, dict):
         logger.error("Invalid args type: %s. Expected dict.", type(args))
         return _json(False, "Invalid request format. Please provide escalation details.")
-    
+
     try:
         route_reason = (args.get("route_reason") or "").strip()
         caller_name = (args.get("caller_name") or "").strip()
-        policy_id = (args.get("policy_id") or "").strip()
-        
-        # Check for required fields
+        policy_id = (args.get("policy_id") or "").strip() or "financial_services"
+        call_connection_id = (args.get("call_connection_id") or "").strip()
+        session_id = (args.get("session_id") or "").strip()
+        target_override = (args.get("target_override") or "").strip()
+        confirmation_context = (args.get("confirmation_context") or "").strip()
+        operation_context = (args.get("operation_context") or "").strip()
+
         if not route_reason:
             return _json(False, "'route_reason' is required for human escalation.")
         if not caller_name:
             return _json(False, "'caller_name' is required for human escalation.")
 
-        # Log with or without policy_id
-        if policy_id:
-            logger.info("🤝 Human hand-off – %s (%s) reason=%s", caller_name, policy_id, route_reason)
-        else:
-            logger.info("🤝 Human hand-off – %s (financial services) reason=%s", caller_name, route_reason)
-        
+        if not confirmation_context:
+            confirmation_context = (
+                f"Caller {caller_name} confirmed transfer to the live call center. "
+                f"Escalation reason: {route_reason}."
+            )
+        elif not any(
+            phrase in confirmation_context.lower()
+            for phrase in ("call center", "live representative", "live agent", "human agent")
+        ):
+            confirmation_context = (
+                f"{confirmation_context} Caller explicitly confirmed they want the live call center."
+            )
+
+        transfer_args: Dict[str, Any] = {
+            "confirmation_context": confirmation_context,
+        }
+        if call_connection_id:
+            transfer_args["call_connection_id"] = call_connection_id
+        if session_id:
+            transfer_args["session_id"] = session_id
+        if target_override:
+            transfer_args["target_override"] = target_override
+        if operation_context:
+            transfer_args["operation_context"] = operation_context
+        elif route_reason:
+            transfer_args["operation_context"] = route_reason
+
+        logger.info(
+            "🤝 Call center escalation – caller=%s policy=%s reason=%s",
+            caller_name,
+            policy_id,
+            route_reason,
+        )
+
+        transfer_result = await transfer_call_to_call_center(transfer_args)
+        success = bool(transfer_result.get("success"))
+        message = transfer_result.get("message") or "Attempted to connect with live call center."
+
         return _json(
-            True,
-            "Caller transferred to specialist.",
-            handoff="human_agent",
+            success,
+            message,
             route_reason=route_reason,
             caller_name=caller_name,
-            policy_id=policy_id or "financial_services",
+            policy_id=policy_id,
+            transfer_result=transfer_result,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
     except Exception as exc:
-        # Catch all exceptions to prevent 400 errors
         logger.error("Human escalation failed: %s", exc, exc_info=True)
         return _json(False, "Technical error during human escalation. Please try again.")
 
@@ -195,6 +237,16 @@ class HandoffTransferAgencyArgs(TypedDict):
     institution_name: str
     service_type: str  # "transfer_agency"
     
+
+class HandoffPayPalArgs(TypedDict):
+    """Input schema for PayPal agent handoff."""
+
+    caller_name: str
+    client_id: str
+    paypal_account: str
+    service_type: str  # "digital_payments"
+    institution_name: str
+
 
 async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
     """Transfer caller to Fraud Detection specialist after MFA authentication."""
@@ -273,4 +325,46 @@ async def handoff_transfer_agency_agent(args: HandoffTransferAgencyArgs) -> Dict
         )
     except Exception as exc:
         logger.error("Transfer Agency handoff failed: %s", exc, exc_info=True)
+        return _json(False, "Technical error during handoff. Please try again.")
+
+
+async def handoff_paypal_agent(args: HandoffPayPalArgs) -> Dict[str, Any]:
+    """Transfer caller to PayPal specialist after MFA authentication."""
+    if not isinstance(args, dict):
+        logger.error("Invalid args type: %s. Expected dict.", type(args))
+        return _json(False, "Invalid request format. Please provide handoff details.")
+
+    try:
+        caller_name = (args.get("caller_name") or "").strip()
+        client_id = (args.get("client_id") or "").strip()
+        paypal_account = (args.get("paypal_account") or "").strip()
+        institution_name = (args.get("institution_name") or "").strip()
+        service_type = (args.get("service_type") or "digital_payments").strip()
+
+        if not caller_name or not client_id:
+            return _json(False, "Both 'caller_name' and 'client_id' must be provided.")
+        if not paypal_account:
+            return _json(False, "Collect the PayPal account identifier before transferring.")
+
+        logger.info(
+            "💳 Hand-off to PayPal – client_id=%s caller=%s account=%s institution=%s",
+            client_id,
+            caller_name,
+            paypal_account,
+            institution_name or "n/a",
+        )
+
+        return _json(
+            True,
+            "Caller transferred to PayPal specialist.",
+            handoff="PayPal",
+            target_agent="PayPal Support",
+            caller_name=caller_name,
+            client_id=client_id,
+            paypal_account=paypal_account,
+            institution_name=institution_name or "PayPal Holdings",
+            service_type=service_type,
+        )
+    except Exception as exc:
+        logger.error("PayPal handoff failed: %s", exc, exc_info=True)
         return _json(False, "Technical error during handoff. Please try again.")

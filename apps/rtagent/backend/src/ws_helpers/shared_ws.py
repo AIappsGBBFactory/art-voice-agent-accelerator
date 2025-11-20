@@ -261,6 +261,20 @@ async def send_session_envelope(
         try:
             sent = await manager.send_to_connection(resolved_conn_id, envelope)
             if sent:
+                try:
+                    await manager.publish_session_envelope(
+                        resolved_session_id, envelope, event_label=event_label
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Distributed publish failed after direct send",
+                        extra={
+                            "session_id": resolved_session_id,
+                            "conn_id": resolved_conn_id,
+                            "event": event_label,
+                            "error": str(exc),
+                        },
+                    )
                 return True
             logger.debug(
                 "Direct send skipped; connection missing",
@@ -1165,7 +1179,23 @@ async def broadcast_session_envelope(
         envelope,
     )
 
-    logger.info(
+    try:
+        await app_state.conn_manager.publish_session_envelope(
+            target_session,
+            envelope,
+            event_label=event_label,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Distributed broadcast publish failed",
+            extra={
+                "session_id": target_session,
+                "event": event_label,
+                "error": str(exc),
+            },
+        )
+
+    logger.debug(
         "Session envelope broadcast",
         extra={
             "session_id": target_session,

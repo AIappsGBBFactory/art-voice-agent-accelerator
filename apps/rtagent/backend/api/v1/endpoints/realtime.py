@@ -234,6 +234,75 @@ async def get_realtime_status(request: Request) -> RealtimeStatusResponse:
     )
 
 
+async def _bind_call_session(
+    *,
+    app_state: Any,
+    call_connection_id: Optional[str],
+    session_id: Optional[str],
+    conn_id: Optional[str],
+) -> None:
+    """Persist the association between an ACS call and a browser session.
+
+    Args:
+        app_state: FastAPI application state containing Redis and connection manager.
+        call_connection_id: ACS call identifier to bind.
+        session_id: Browser session identifier that should receive envelopes.
+        conn_id: Optional connection manager identifier for direct routing.
+
+    Notes:
+        Writes are lightweight single-key updates. Failures are logged but do not
+        raise so they can never block the realtime loop.
+    """
+
+    if not app_state or not call_connection_id or not session_id:
+        return
+
+    ttl_seconds = 60 * 60 * 24  # 24 hours – allows post-call diagnostics.
+    redis_mgr = getattr(app_state, "redis", None)
+
+    if redis_mgr and hasattr(redis_mgr, "set_value_async"):
+        for redis_key in (
+            f"call_session_map:{call_connection_id}",
+            f"call_session_mapping:{call_connection_id}",
+        ):
+            try:
+                await redis_mgr.set_value_async(
+                    redis_key,
+                    session_id,
+                    ttl_seconds=ttl_seconds,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "Call→session binding redis write failed",
+                    extra={
+                        "call_connection_id": call_connection_id,
+                        "session_id": session_id,
+                        "redis_key": redis_key,
+                        "error": str(exc),
+                    },
+                )
+
+    conn_manager = getattr(app_state, "conn_manager", None)
+    if conn_manager:
+        try:
+            context = await conn_manager.get_call_context(call_connection_id) or {}
+            context["session_id"] = session_id
+            context["browser_session_id"] = session_id
+            if conn_id:
+                context["connection_id"] = conn_id
+            await conn_manager.set_call_context(call_connection_id, context)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "Call→session binding context update failed",
+                extra={
+                    "call_connection_id": call_connection_id,
+                    "session_id": session_id,
+                    "conn_id": conn_id,
+                    "error": str(exc),
+                },
+            )
+
+
 @router.websocket("/dashboard/relay")
 async def dashboard_relay_endpoint(
     websocket: WebSocket, session_id: Optional[str] = Query(None)
@@ -405,16 +474,26 @@ async def browser_conversation_endpoint(
             },
         ) as connect_span:
             # Clean single-call registration with optional auth
+            call_binding_id = header_call_id if header_call_id else None
             conn_id = await websocket.app.state.conn_manager.register(
                 websocket,
                 client_type="conversation",
                 session_id=session_id,
+                call_id=call_binding_id,
                 topics={"conversation"},
                 accept_already_done=False,  # Let manager handle accept cleanly
             )
 
             # Store conn_id on websocket state for consistent access
             websocket.state.conn_id = conn_id
+
+            if call_binding_id:
+                await _bind_call_session(
+                    app_state=websocket.app.state,
+                    call_connection_id=call_binding_id,
+                    session_id=session_id,
+                    conn_id=conn_id,
+                )
 
             if effective_stream_mode == StreamMode.VOICE_LIVE:
                 memory_manager, session_metadata = await _initialize_voice_live_session(
