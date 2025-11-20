@@ -456,7 +456,9 @@ handoff_paypal_agent_schema: Dict[str, Any] = {
     "name": "handoff_paypal_agent",
     "description": (
         "Transfer the caller to the PayPal/Venmo support specialist with a concise summary of the issue. "
-        "Include the caller's name, issue overview, and institution metadata when available."
+        "IMPORTANT: Summarize WHY this handoff is needed and what the customer's issue is. "
+        "Include the caller's name, a brief conversation summary, the reason for handoff, and any relevant context. "
+        "This information will be used to personalize the greeting from the PayPal specialist."
     ),
     "parameters": {
         "type": "object",
@@ -469,13 +471,46 @@ handoff_paypal_agent_schema: Dict[str, Any] = {
                 "type": "string",
                 "description": "Optional verified client identifier if authentication already captured it.",
             },
+            "handoff_reason": {
+                "type": "string",
+                "description": (
+                    "REQUIRED: A clear, concise explanation of WHY you are handing off to the PayPal specialist. "
+                    "Explain the customer's issue or question in one sentence. "
+                    "Example: 'customer has a stuck Venmo payment and needs specialist assistance' or "
+                    "'customer wants to increase their PayPal sending limit for business purchases'."
+                ),
+            },
+            "conversation_summary": {
+                "type": "string",
+                "description": (
+                    "A brief summary of the conversation so far. "
+                    "Include what the customer has already explained and any relevant context. "
+                    "Example: 'Customer John reported a $250 Venmo payment has been pending for 3 days' or "
+                    "'Customer inquired about PayPal Business account upgrade options'."
+                ),
+            },
+            "user_last_utterance": {
+                "type": "string",
+                "description": (
+                    "The exact last thing the customer said before the handoff. "
+                    "This helps the PayPal agent understand the immediate context. "
+                    "Example: 'I need help with my Venmo payment that's stuck'."
+                ),
+            },
+            "details": {
+                "type": "string",
+                "description": (
+                    "Additional details about the customer's issue, account information, or specific concerns. "
+                    "Include any relevant transaction IDs, amounts, dates, or other specifics."
+                ),
+            },
             "issue_summary": {
                 "type": "string",
                 "description": "Short summary of the PayPal/Venmo topic the specialist should pick up.",
             },
             "inquiry_type": {
                 "type": "string",
-                "description": "Categorised PayPal/Venmo inquiry type (e.g., payments, limits, disputes).",
+                "description": "Categorised PayPal/Venmo inquiry type (e.g., payments, limits, disputes, account_access).",
             },
             "institution_name": {
                 "type": "string",
@@ -486,7 +521,7 @@ handoff_paypal_agent_schema: Dict[str, Any] = {
                 "description": "Optional session overrides to apply when the PayPal agent becomes active.",
             },
         },
-        "required": ["caller_name"],
+        "required": ["caller_name", "handoff_reason"],
         "additionalProperties": False,
     },
 }

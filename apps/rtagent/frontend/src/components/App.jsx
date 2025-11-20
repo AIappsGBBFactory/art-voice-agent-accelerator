@@ -3620,8 +3620,9 @@ function RealTimeVoiceApp() {
       // Send as raw text message
       socketRef.current.send(textInput.trim());
       
-      // Optimistically add to chat
-      setMessages(prev => [...prev, { speaker: "User", text: textInput.trim() }]);
+      // Note: For Custom Cascade Speech, backend will echo the message back
+      // For Voice Live, we could optimistically add here, but backend also echoes
+      // So we rely on backend response to avoid duplicates
       setTextInput("");
     } else {
       appendLog("⚠️ Cannot send text: WebSocket not connected");
