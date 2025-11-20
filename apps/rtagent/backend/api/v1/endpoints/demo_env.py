@@ -587,10 +587,9 @@ async def lookup_demo_user(
             collection_name=container_name,
         )
         try:
-            # Order by TTL descending so newest entry is returned first
+            # Retrieve profile by email (no sort needed for banking profiles)
             return manager.collection.find_one(
-                {"contact_info.email": str(email)},
-                sort=[("ttl", -1)],
+                {"contact_info.email": str(email)}
             )
         finally:
             manager.close_connection()
@@ -613,7 +612,7 @@ async def lookup_demo_user(
     demo_metadata = document.get("demo_metadata") or {}
     profile_payload = document.copy()
     # Remove internal fields that aren't part of DemoUserProfile
-    for key in ("demo_metadata", "_id", "ttl", "expires_at"):
+    for key in ("demo_metadata", "_id", "ttl", "expires_at", "transactions"):
         profile_payload.pop(key, None)
 
     contact_info = profile_payload.get("contact_info") or {}
@@ -637,11 +636,20 @@ async def lookup_demo_user(
     )
 
     profile_model = DemoUserProfile.model_validate(profile_payload)
-    transactions_payload = demo_metadata.get("transactions") or []
-    interaction_payload = demo_metadata.get("interaction_plan") or {}
+    
+    # Support both demo_metadata.transactions and document.transactions (for banking profiles)
+    transactions_payload = demo_metadata.get("transactions") or document.get("transactions") or []
+    
+    # Create default interaction_plan if not present (for banking profiles)
+    interaction_payload = demo_metadata.get("interaction_plan") or {
+        "primary_channel": "voice",
+        "fallback_channel": "sms",
+        "mfa_required": False,
+        "notification_message": "Banking profile loaded successfully"
+    }
 
     response = DemoUserLookupResponse(
-        entry_id=demo_metadata.get("entry_id", document.get("_id", "")),
+        entry_id=demo_metadata.get("entry_id") or document.get("_id") or document.get("client_id") or "",
         expires_at=_parse_iso8601(
             demo_metadata.get("expires_at") or document.get("expires_at")
         ),
