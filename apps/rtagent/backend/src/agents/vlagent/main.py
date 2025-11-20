@@ -38,7 +38,7 @@ async def run():
     """Run the VoiceLive multi-agent system."""
     log.info("Starting VoiceLive Multi-Agent System")
     log.info(f"Endpoint: {settings.azure_voicelive_endpoint}")
-    log.info(f"Model: {settings.voicelive_model}")
+    log.info(f"Model: {settings.azure_voicelive_model}")
     log.info(f"Start Agent: {settings.start_agent}")
     
     # Configure credential
@@ -64,7 +64,7 @@ async def run():
     async with connect(
         endpoint=settings.azure_voicelive_endpoint,
         credential=credential,
-        model=settings.voicelive_model,
+        model=settings.azure_voicelive_model,
         connection_options=connection_options
     ) as conn:
         audio = AudioProcessor(conn) if HAS_AUDIO else None
