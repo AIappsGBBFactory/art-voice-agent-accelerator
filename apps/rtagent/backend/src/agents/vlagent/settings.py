@@ -22,8 +22,12 @@ class VoiceLiveSettings(BaseSettings):
     
     # Azure VoiceLive Configuration
     azure_voicelive_endpoint: str = Field(..., description="Azure VoiceLive endpoint URL")
-    voicelive_model: str = Field(default="gpt-4o-realtime-preview", description="Model deployment name")
+    azure_voicelive_model: str = Field(default="gpt-realtime", description="Model deployment name")
     azure_voicelive_api_key: Optional[str] = Field(default=None, description="API key for authentication")
+    use_default_credential: bool = Field(
+        default=False,
+        description="If true, prefer DefaultAzureCredential over API key",
+    )
     
     # Azure AD Authentication (alternative to API key)
     azure_client_id: Optional[str] = Field(default=None, description="Azure AD client ID")
@@ -76,11 +80,13 @@ class VoiceLiveSettings(BaseSettings):
     
     def validate_auth(self) -> None:
         """Validate that at least one authentication method is configured."""
-        if not (self.has_api_key_auth or self.has_azure_ad_auth):
-            raise ValueError(
-                "Authentication required: Set AZURE_VOICELIVE_API_KEY or "
-                "Azure AD credentials (AZURE_CLIENT_ID)"
-            )
+        if self.use_default_credential:
+            return
+        # if not (self.has_api_key_auth or self.has_azure_ad_auth):
+        #     raise ValueError(
+        #         "Authentication required: Set AZURE_VOICELIVE_API_KEY or "
+        #         "Azure AD credentials (AZURE_CLIENT_ID)"
+        #     )
 
 
 # Global settings instance
