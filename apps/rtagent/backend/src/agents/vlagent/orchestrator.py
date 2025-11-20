@@ -679,6 +679,13 @@ class LiveOrchestrator:
                 self._last_user_message = user_transcript.strip()
                 await self._maybe_trigger_call_center_transfer(user_transcript)
 
+        elif et == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_DELTA:
+            # Log user's spoken input (transcription)
+            user_transcript = getattr(event, "transcript", "")
+            if user_transcript:
+                logger.info("[USER] Says: %s", user_transcript)
+                self._last_user_message = user_transcript.strip()
+
         elif et == ServerEventType.RESPONSE_AUDIO_DELTA:
             if self.audio:
                 await self.audio.queue_audio(event.delta)
