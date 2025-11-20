@@ -9,6 +9,8 @@ import InfoRoundedIcon from '@mui/icons-material/InfoRounded';
 import MicNoneRoundedIcon from '@mui/icons-material/MicNoneRounded';
 import MicOffRoundedIcon from '@mui/icons-material/MicOffRounded';
 import MicRoundedIcon from '@mui/icons-material/MicRounded';
+import RecordVoiceOverRoundedIcon from '@mui/icons-material/RecordVoiceOverRounded';
+import StopCircleRoundedIcon from '@mui/icons-material/StopCircleRounded';
 import PhoneDisabledRoundedIcon from '@mui/icons-material/PhoneDisabledRounded';
 import PhoneRoundedIcon from '@mui/icons-material/PhoneRounded';
 import PhoneInTalkRoundedIcon from '@mui/icons-material/PhoneInTalkRounded';
@@ -751,21 +753,35 @@ const styles = {
     fontSize: "20px",
     transition: "all 0.3s ease",
     position: "relative",
-    background: isHovered ? 
-      (isActive ? "linear-gradient(135deg, #10b981, #059669)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
-      "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-    color: isHovered ? 
-      (isActive ? "white" : "#0f172a") :
-      (isActive ? "#0ea5e9" : "#1f2937"),
+    // RECORDING (active): Strong red/pink gradient with glow
+    // IDLE (not active): Soft blue gradient
+    background: isActive ? 
+      (isHovered ? "linear-gradient(135deg, #ef4444, #dc2626)" : "linear-gradient(135deg, #f87171, #ef4444)") :
+      (isHovered ? "linear-gradient(135deg, #0ea5e9, #0284c7)" : "linear-gradient(135deg, #f1f5f9, #e2e8f0)"),
+    color: isActive ? "white" : (isHovered ? "white" : "#475569"),
     transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
-    boxShadow: isHovered ? 
-      "0 8px 25px rgba(16,185,129,0.4), 0 0 0 4px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
-      (isActive ? 
-        "0 6px 20px rgba(14,165,233,0.3), 0 0 0 3px rgba(14,165,233,0.15)" : 
+    // RECORDING: Red pulsing glow
+    // IDLE: Subtle shadow
+    boxShadow: isActive ? 
+      (isHovered ? 
+        "0 8px 30px rgba(239,68,68,0.5), 0 0 0 4px rgba(239,68,68,0.2), inset 0 1px 2px rgba(255,255,255,0.3)" :
+        "0 6px 25px rgba(239,68,68,0.45), 0 0 0 3px rgba(239,68,68,0.18), 0 0 20px rgba(239,68,68,0.3)") :
+      (isHovered ? 
+        "0 8px 25px rgba(14,165,233,0.4), 0 0 0 4px rgba(14,165,233,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
         "0 2px 8px rgba(0,0,0,0.08)"),
     padding: 0,
+    // Add subtle pulse animation when recording
+    animation: isActive ? "micPulse 2s ease-in-out infinite" : "none",
+    '@keyframes micPulse': {
+      '0%, 100%': {
+        boxShadow: "0 6px 25px rgba(239,68,68,0.45), 0 0 0 3px rgba(239,68,68,0.18), 0 0 20px rgba(239,68,68,0.3)"
+      },
+      '50%': {
+        boxShadow: "0 8px 30px rgba(239,68,68,0.6), 0 0 0 5px rgba(239,68,68,0.25), 0 0 30px rgba(239,68,68,0.4)"
+      },
+    },
     '& svg': {
-      color: isHovered ? (isActive ? "#f8fafc" : "#0f172a") : (isActive ? "#0284c7" : "#1f2937"),
+      color: isActive ? "#ffffff" : (isHovered ? "#ffffff" : "#64748b"),
     },
   }),
 
@@ -799,20 +815,24 @@ const styles = {
       };
     }
 
+    // MUTED: Strong red/warning state with cross icon
+    // UNMUTED: Green/active state with microphone icon
     const palette = isMuted
       ? {
-          base: "linear-gradient(135deg, #f8fafc, #fee2e2)",
-          hover: "linear-gradient(135deg, #fee2e2, #fecaca)",
-          fg: "#dc2626",
-          hoverFg: "#b91c1c",
-          shadow: "0 6px 18px rgba(248,113,113,0.35), 0 0 0 3px rgba(248,113,113,0.15)",
+          base: "linear-gradient(135deg, #fecaca, #fca5a5)",
+          hover: "linear-gradient(135deg, #ef4444, #dc2626)",
+          fg: "#7f1d1d",
+          hoverFg: "#ffffff",
+          shadow: "0 6px 20px rgba(239,68,68,0.4), 0 0 0 3px rgba(239,68,68,0.2)",
+          hoverShadow: "0 8px 28px rgba(239,68,68,0.5), 0 0 0 4px rgba(239,68,68,0.25)",
         }
       : {
-          base: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-          hover: "linear-gradient(135deg, #dcfce7, #bbf7d0)",
-          fg: "#0f172a",
-          hoverFg: "#047857",
-          shadow: "0 6px 18px rgba(16,185,129,0.28), 0 0 0 3px rgba(16,185,129,0.16)",
+          base: "linear-gradient(135deg, #d1fae5, #a7f3d0)",
+          hover: "linear-gradient(135deg, #10b981, #059669)",
+          fg: "#065f46",
+          hoverFg: "#ffffff",
+          shadow: "0 6px 20px rgba(16,185,129,0.35), 0 0 0 3px rgba(16,185,129,0.18)",
+          hoverShadow: "0 8px 28px rgba(16,185,129,0.45), 0 0 0 4px rgba(16,185,129,0.22)",
         };
 
     return {
@@ -820,7 +840,7 @@ const styles = {
       cursor: "pointer",
       background: isHovered ? palette.hover : palette.base,
       transform: isHovered ? "scale(1.08)" : "scale(1)",
-      boxShadow: isHovered ? palette.shadow : "0 2px 8px rgba(15,23,42,0.12)",
+      boxShadow: isHovered ? palette.hoverShadow : palette.shadow,
       '& svg': {
         color: isHovered ? palette.hoverFg : palette.fg,
       },
@@ -862,24 +882,30 @@ const styles = {
       };
     }
 
+    // ACTIVE (in call): Strong red "hang up" state
+    // INACTIVE: Blue "start call" state
     return {
       ...base,
       cursor: "pointer",
-      background: isHovered ? 
-        (isActive ? "linear-gradient(135deg, #3f75a8ff, #2b5d8f)" : "linear-gradient(135deg, #dcfce7, #bbf7d0)") :
-        "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-      color: isHovered ? 
-        (isActive ? "white" : "#1f2937") :
-        (isActive ? "#2563eb" : "#1f2937"),
+      background: isActive ? 
+        (isHovered ? "linear-gradient(135deg, #dc2626, #b91c1c)" : "linear-gradient(135deg, #ef4444, #dc2626)") :
+        (isHovered ? "linear-gradient(135deg, #3b82f6, #2563eb)" : "linear-gradient(135deg, #dbeafe, #bfdbfe)"),
+      color: isActive ? 
+        "white" :
+        (isHovered ? "white" : "#1e40af"),
       transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
-      boxShadow: isHovered ? 
-        "0 8px 25px rgba(37,99,235,0.25), 0 0 0 4px rgba(37,99,235,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
-        (isActive ? 
-          "0 6px 20px rgba(37,99,235,0.35), 0 0 0 3px rgba(37,99,235,0.15)" : 
+      // ACTIVE: Red glow for "danger/end call"
+      // INACTIVE: Blue glow for "start call"
+      boxShadow: isActive ? 
+        (isHovered ? 
+          "0 8px 30px rgba(220,38,38,0.5), 0 0 0 4px rgba(220,38,38,0.25), inset 0 1px 2px rgba(255,255,255,0.2)" :
+          "0 6px 25px rgba(239,68,68,0.45), 0 0 0 3px rgba(239,68,68,0.2)") :
+        (isHovered ? 
+          "0 8px 25px rgba(59,130,246,0.4), 0 0 0 4px rgba(59,130,246,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
           "0 2px 8px rgba(0,0,0,0.08)"),
       padding: 0,
       '& svg': {
-        color: isHovered ? (isActive ? "#f8fafc" : "#0f172a") : (isActive ? "#2563eb" : "#1f2937"),
+        color: isActive ? "#ffffff" : (isHovered ? "#ffffff" : "#1e40af"),
       },
     };
   },
@@ -3004,7 +3030,7 @@ const ConversationControls = React.memo(({
         <div style={{ position: 'relative' }}>
           <IconButton
             disableRipple
-            aria-label={recording ? "Stop microphone" : "Start microphone"}
+            aria-label={recording ? "End conversation with agent" : "Start talking to agent"}
             sx={styles.micButton(recording, micHovered)}
             ref={micButtonRef}
             onMouseEnter={(event) => {
@@ -3024,9 +3050,9 @@ const ConversationControls = React.memo(({
             onClick={onMicToggle}
           >
             {recording ? (
-              <MicOffRoundedIcon fontSize="medium" />
+              <StopCircleRoundedIcon fontSize="medium" />
             ) : (
-              <MicRoundedIcon fontSize="medium" />
+              <RecordVoiceOverRoundedIcon fontSize="medium" />
             )}
           </IconButton>
           {showMicTooltip && micTooltipPos && (
@@ -3038,7 +3064,7 @@ const ConversationControls = React.memo(({
                 ...(showMicTooltip ? styles.buttonTooltipVisible : {}),
               }}
             >
-              {recording ? "Stop recording your voice" : "Start voice conversation"}
+              {recording ? "End the conversation" : "Start talking to the agent"}
             </div>
           )}
         </div>
@@ -3058,7 +3084,7 @@ const ConversationControls = React.memo(({
             onClick={onPhoneButtonClick}
           >
             {callActive ? (
-              <PhoneDisabledRoundedIcon fontSize="medium" />
+              <PhoneDisabledRoundedIcon fontSize="medium" sx={{ transform: 'rotate(135deg)', transition: 'transform 0.3s ease' }} />
             ) : (
               <PhoneRoundedIcon fontSize="medium" />
             )}
@@ -3072,7 +3098,7 @@ const ConversationControls = React.memo(({
                 ...(showPhoneTooltip ? styles.buttonTooltipVisible : {}),
               }}
             >
-              {callActive ? "Hang up the phone call" : "Make a phone call"}
+              {callActive ? "End the conversation" : "Start a conversation"}
             </div>
           )}
         </div>
@@ -3576,21 +3602,17 @@ function RealTimeVoiceApp() {
     if (!textInput.trim()) return;
     
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      // BARGE-IN: Stop audio playback before sending text
+      // BARGE-IN: Stop TTS audio playback before sending text
+      // NOTE: We do NOT suspend the recording context (microphone) because
+      // the user should still be able to speak after sending text
       
-      // 1. Stop recording audio context (microphone)
-      if (audioContextRef.current && !audioContextRef.current.state.match(/closed/)) {
-        audioContextRef.current.suspend();
-        appendLog("🛑 Recording interrupted by user text input");
-      }
-      
-      // 2. Stop TTS playback audio context (speaker output)
+      // 1. Stop TTS playback audio context (speaker output) to interrupt agent speech
       if (playbackAudioContextRef.current && playbackAudioContextRef.current.state === "running") {
         playbackAudioContextRef.current.suspend();
         appendLog("🛑 TTS playback interrupted by user text input");
       }
       
-      // 3. Clear the audio playback queue
+      // 2. Clear the audio playback queue to stop any buffered agent audio
       if (pcmSinkRef.current) {
         pcmSinkRef.current.port.postMessage({ type: 'clear' });
       }
