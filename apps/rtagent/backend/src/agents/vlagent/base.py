@@ -239,7 +239,7 @@ class AzureVoiceLiveAgent:
 
         phrase_options = None
         transcription_kwargs: Dict[str, Any] = {
-            "model": self.input_transcription_cfg.get("model") or "azure-speech",
+            "model": self.input_transcription_cfg.get("model") or "gpt-4o-transcribe",
         }
 
         language_override = self.input_transcription_cfg.get("language") or "en-US,en-ES,ko-KR"
@@ -271,6 +271,13 @@ class AzureVoiceLiveAgent:
                 deduped_phrases = list(dict.fromkeys(filter(None, combined_phrases)))
                 if deduped_phrases:
                     transcription_kwargs["phrase_list"] = deduped_phrases
+
+        try:
+            pretty_transcription_kwargs = yaml.safe_dump(transcription_kwargs, sort_keys=True).strip()
+            logger.info("[%s] input_audio_transcription_settings kwargs:\n%s", self.name, pretty_transcription_kwargs)
+        except Exception:
+            pretty_transcription_kwargs = repr(transcription_kwargs)
+        logger.debug("[%s] input_audio_transcription_settings kwargs:\n%s", self.name, pretty_transcription_kwargs)
 
         input_audio_transcription_settings = AudioInputTranscriptionOptions(**transcription_kwargs)
         
