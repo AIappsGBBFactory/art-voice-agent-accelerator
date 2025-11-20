@@ -11,7 +11,14 @@ import numpy as np
 from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
 from azure.ai.voicelive.aio import connect
-from azure.ai.voicelive.models import ServerEventType, ResponseStatus
+from azure.ai.voicelive.models import (
+	ServerEventType, 
+	ResponseStatus,
+	ClientEventConversationItemCreate,
+	ClientEventResponseCreate,
+	UserMessageItem,
+	InputTextContentPart,
+)
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.identity.aio import DefaultAzureCredential
 
@@ -459,8 +466,14 @@ class VoiceLiveSDKHandler:
 		if not _set_connection_metadata(self.websocket, key, value):
 			setattr(self.websocket.state, key, value)
 
+	def _get_metadata(self, key: str, default: Any = None) -> Any:
+		"""Read per-connection metadata from the websocket.state (or default)."""
+		return getattr(self.websocket.state, key, default)
+
 	def _mark_audio_playback(self, active: bool, *, reset_cancel: bool = True) -> None:
+		# single source of truth for "assistant is speaking"
 		self._set_metadata("audio_playing", active)
+		self._set_metadata("tts_active", active)
 		if reset_cancel:
 			self._set_metadata("tts_cancel_requested", False)
 
@@ -679,6 +692,15 @@ class VoiceLiveSDKHandler:
 			return
 
 		etype = event.type if hasattr(event, "type") else None
+		
+		# Log all events for debugging
+		if etype:
+			logger.debug(
+				"[VoiceLive] Event: %s | session=%s",
+				etype.value if hasattr(etype, 'value') else str(etype),
+				self.session_id,
+			)
+		
 		if etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
 			transcript = getattr(event, "transcript", "")
 			if transcript and transcript != self._last_user_transcript:
@@ -692,6 +714,13 @@ class VoiceLiveSDKHandler:
 			return
 		elif etype == ServerEventType.RESPONSE_AUDIO_DELTA:
 			response_id = getattr(event, "response_id", None)
+			delta_bytes = getattr(event, "delta", None)
+			logger.info(
+				"[VoiceLive] Audio delta received | session=%s response=%s bytes=%s",
+				self.session_id,
+				response_id,
+				len(delta_bytes) if delta_bytes else 0,
+			)
 			if response_id:
 				self._active_response_ids.add(response_id)
 			self._stop_audio_pending = False
@@ -981,6 +1010,62 @@ class VoiceLiveSDKHandler:
 					self.session_id,
 				)
 			self._dtmf_digits.clear()
+
+	async def send_text_message(self, text: str) -> None:
+		"""Send a text message from the user to the VoiceLive conversation.
+		
+		With Azure Semantic VAD enabled, text messages are sent via conversation.item.create
+		using UserMessageItem with InputTextContentPart, not through audio buffer.
+		
+		Implements barge-in: triggers interruption if agent is currently speaking.
+		"""
+		if not text or not self._connection:
+			return
+		
+		try:
+			# BARGE-IN: trigger interruption if TTS is currently active
+			is_playing = self._get_metadata("tts_active", False)
+			if is_playing:
+				self._trigger_barge_in(
+					trigger="user_text_input",
+					stage="text_message_send",
+					reset_audio_state=True,
+				)
+				# Actively send StopAudio to ACS so playback halts immediately
+				try:
+					await self._send_stop_audio()
+				except Exception:
+					logger.debug("Failed to send StopAudio during text barge-in", exc_info=True)
+				
+				logger.info(
+					"Text barge-in triggered (agent was speaking) | session=%s",
+					self.session_id,
+				)
+			
+			# Create a text content part
+			text_part = InputTextContentPart(text=text)
+			
+			# Wrap it as a user message item
+			user_message = UserMessageItem(content=[text_part])
+			
+			# Send conversation.item.create
+			await self._connection.send(
+				ClientEventConversationItemCreate(item=user_message)
+			)
+			
+			# Ask for a model response considering all history (audio + text)
+			await self._connection.send(ClientEventResponseCreate())
+			
+			logger.info(
+				"Forwarded user text message (%s chars) | session=%s",
+				len(text),
+				self.session_id,
+			)
+		except Exception:
+			logger.exception(
+				"Failed to forward user text to VoiceLive | session=%s",
+				self.session_id,
+			)
 
 	async def _send_dtmf_user_message(self, digits: str, *, reason: str) -> None:
 		if not digits or not self._connection:

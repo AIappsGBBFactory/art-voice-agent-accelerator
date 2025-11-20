@@ -1175,13 +1175,18 @@ async def _process_voice_live_messages(
 
                 text_payload = raw_message.get("text")
                 if text_payload:
+                    # Skip empty or whitespace-only payloads
+                    if not text_payload.strip():
+                        continue
+                    
                     try:
                         payload = json.loads(text_payload)
+                        kind = payload.get("kind") or payload.get("type")
+                        if kind == "StopAudio":
+                            await handler.commit_audio_buffer()
                     except json.JSONDecodeError:
-                        continue
-                    kind = payload.get("kind") or payload.get("type")
-                    if kind == "StopAudio":
-                        await handler.commit_audio_buffer()
+                        # Treat as raw user text input
+                        await handler.send_text_message(text_payload)
 
         except WebSocketDisconnect:
             raise
@@ -1285,6 +1290,15 @@ async def _process_conversation_messages(
             ):
                 msg = await websocket.receive()
                 message_count += 1
+
+                # Handle text messages (e.g. from frontend input)
+                if (
+                    msg.get("type") == "websocket.receive"
+                    and msg.get("text") is not None
+                ):
+                    text_data = msg["text"]
+                    # Treat as direct user text input
+                    set_metadata("user_buffer", get_metadata("user_buffer", "") + text_data + "\n")
 
                 # Handle audio bytes
                 if (
