@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING
 
@@ -45,11 +46,33 @@ async def maybe_terminate_if_escalated(cm: "MemoManager", ws: WebSocket, *, is_a
     except Exception:  # pragma: no cover
         pass
 
-    call_connection_id, _ = get_correlation_context(ws, cm)
-    await terminate_session(
-        ws,
-        is_acs=is_acs,
-        call_connection_id=call_connection_id,
-        reason=TerminationReason.HUMAN_HANDOFF,
-    )
+    call_connection_id, session_hint = get_correlation_context(ws, cm)
+
+    if not getattr(ws.state, "handoff_cleanup_pending", False):
+        setattr(ws.state, "handoff_cleanup_pending", True)
+
+        async def _deferred_termination() -> None:
+            """Delay termination to ensure handoff payloads reach the browser."""
+
+            wait_seconds = 1.2 if is_acs else 0.75
+            try:
+                await asyncio.sleep(wait_seconds)
+                await terminate_session(
+                    ws,
+                    is_acs=is_acs,
+                    call_connection_id=call_connection_id if is_acs else None,
+                    reason=TerminationReason.HUMAN_HANDOFF,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Deferred termination failed",
+                    extra={
+                        "session_id": session_hint,
+                        "call_connection_id": call_connection_id,
+                        "error": str(exc),
+                    },
+                )
+
+        asyncio.create_task(_deferred_termination())
+
     return True

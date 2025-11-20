@@ -341,8 +341,8 @@ find_information_schema: Dict[str, Any] = {
 escalate_human_schema: Dict[str, Any] = {
     "name": "escalate_human",
     "description": (
-        "Escalate the call to a live human specialist for non-emergency but complex scenarios. "
-        "Use this tool for backend errors, repeated validation failures, suspected fraud, or caller requests for human assistance."
+        "Escalate the call directly to the live call center for non-emergency but complex scenarios. "
+        "Use this tool when backend errors, repeated validation failures, suspected fraud, or caller insistence require a human representative."
     ),
     "parameters": {
         "type": "object",
@@ -358,6 +358,29 @@ escalate_human_schema: Dict[str, Any] = {
             "policy_id": {
                 "type": "string",
                 "description": "Policy identifier for insurance, optional for financial services.",
+            },
+            "call_connection_id": {
+                "type": "string",
+                "description": "Active ACS call connection identifier used for the transfer.",
+            },
+            "session_id": {
+                "type": "string",
+                "description": "VoiceLive session identifier to include in the transfer payload.",
+            },
+            "target_override": {
+                "type": "string",
+                "description": "Override the default call center destination (testing only).",
+            },
+            "confirmation_context": {
+                "type": "string",
+                "description": (
+                    "Transcript snippet proving the caller explicitly confirmed a live call center transfer. "
+                    "If omitted, the tool auto-generates a compliant summary."
+                ),
+            },
+            "operation_context": {
+                "type": "string",
+                "description": "Custom context label for ACS transfer events; defaults to route_reason when omitted.",
             },
         },
         "required": ["route_reason", "caller_name"],

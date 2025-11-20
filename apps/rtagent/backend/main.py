@@ -289,6 +289,10 @@ async def lifespan(app: FastAPI):
             queue_size=app_config.connections.queue_size,
             enable_connection_limits=app_config.connections.enable_limits,
         )
+        await app.state.conn_manager.enable_distributed_session_bus(
+            app.state.redis,
+            channel_prefix="session",
+        )
         app.state.session_manager = ThreadSafeSessionManager()
         app.state.session_metrics = ThreadSafeSessionMetrics()
         app.state.greeted_call_ids = set()

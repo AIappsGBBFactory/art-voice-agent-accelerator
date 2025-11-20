@@ -15,10 +15,10 @@ import datetime
 import os
 import secrets
 import string
-from typing import Any, Dict, List, Literal, Optional, TypedDict
+from typing import Any, Awaitable, Dict, List, Literal, Optional, TypedDict
 
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
-from src.acs import EmailService, SmsService, EmailTemplates, SmsTemplates
+from src.acs import EmailService, SmsService, EmailTemplates
 from src.acs.email_templates import _get_call_context
 from utils.ml_logging import get_logger
 
@@ -173,6 +173,191 @@ class CheckAuthorizationResult(TypedDict):
     requires_supervisor: bool
     message: str
     max_allowed: Optional[int]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Internal helpers for asynchronous MFA delivery
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _ChannelSelection(TypedDict, total=False):
+    method: Optional[str]
+    address: Optional[str]
+    service: Any
+
+
+def _log_background_error(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except Exception:
+        logger.error("Deferred MFA delivery task failed", exc_info=True)
+
+
+def _schedule_background_task(coro: Awaitable[Any], *, name: str) -> None:
+    task = asyncio.create_task(coro, name=name)
+    task.add_done_callback(_log_background_error)
+
+
+def _select_mfa_delivery_channel(
+    *,
+    preferred_method: str,
+    contact_info: Dict[str, Any],
+    client_id: str,
+) -> _ChannelSelection:
+    method = (preferred_method or "email").lower()
+    phone_number = (contact_info.get("phone") or "").strip()
+    email_address = (contact_info.get("email") or "").strip()
+
+    if method == "sms":
+        sms_service = SmsService()
+        if sms_service.is_configured() and phone_number:
+            return {"method": "sms", "address": phone_number, "service": sms_service}
+        logger.warning(
+            "SMS delivery unavailable, falling back to email",
+            extra={"client_id": client_id, "phone_present": bool(phone_number)},
+        )
+        method = "email"
+
+    email_service = EmailService()
+    email_configured = email_service.is_configured()
+    if method == "email" and email_configured and email_address:
+        return {"method": "email", "address": email_address, "service": email_service}
+
+    logger.error(
+        "No configured delivery channel for MFA code",
+        extra={
+            "client_id": client_id,
+            "preferred_method": preferred_method,
+            "email_configured": email_configured,
+            "phone_available": bool(phone_number),
+            "email_available": bool(email_address),
+        },
+    )
+    return {}
+
+
+async def _deliver_mfa_via_email(
+    *,
+    service: EmailService,
+    session_id: str,
+    client_id: str,
+    email_address: str,
+    otp_code: str,
+    client_name: str,
+    institution_name: str,
+    transaction_amount: Optional[float],
+    transaction_type: Optional[str],
+) -> None:
+    try:
+        subject, plain_text, html = EmailTemplates.create_mfa_code_email(
+            otp_code,
+            client_name,
+            institution_name,
+            transaction_amount or 0,
+            transaction_type or "general_inquiry",
+        )
+        await service.send_email(
+            email_address=email_address,
+            subject=subject,
+            plain_text_body=plain_text,
+            html_body=html,
+        )
+        logger.info(
+            "✅ MFA email dispatched",
+            extra={
+                "mfa_session_id": session_id,
+                "client_id": client_id,
+                "delivery_address": email_address,
+            },
+        )
+    except Exception as exc:  # pragma: no cover - background logging only
+        logger.error(
+            "Deferred MFA email delivery failed: %s",
+            exc,
+            extra={"mfa_session_id": session_id, "client_id": client_id},
+        )
+
+
+async def _deliver_mfa_via_sms(
+    *,
+    service: SmsService,
+    session_id: str,
+    client_id: str,
+    phone_number: str,
+    otp_code: str,
+    client_first_name: str,
+    transaction_type: Optional[str],
+) -> None:
+    try:
+        call_reason = _get_call_context(transaction_type)
+        message = (
+            f"Hello {client_first_name or 'there'},\n\n"
+            f"Your verification code for {call_reason} is: {otp_code}\n\n"
+            "This code expires in 5 minutes. Our specialist will ask for this code to securely assist you.\n\n"
+            "If you didn't call us, please contact us immediately.\n\n"
+            "- Financial Services"
+        )
+        await service.send_sms(
+            to_phone_numbers=phone_number,
+            message=message,
+        )
+        logger.info(
+            "✅ MFA SMS dispatched",
+            extra={
+                "mfa_session_id": session_id,
+                "client_id": client_id,
+                "delivery_address": phone_number,
+            },
+        )
+    except Exception as exc:  # pragma: no cover - background logging only
+        logger.error(
+            "Deferred MFA SMS delivery failed: %s",
+            exc,
+            extra={"mfa_session_id": session_id, "client_id": client_id},
+        )
+
+
+def _start_mfa_delivery_task(
+    *,
+    method: str,
+    service: Any,
+    session_id: str,
+    client_data: Dict[str, Any],
+    delivery_address: str,
+    otp_code: str,
+    transaction_amount: Optional[float],
+    transaction_type: Optional[str],
+) -> None:
+    client_id = client_data.get("_id") or client_data.get("client_id") or "unknown"
+    if method == "sms":
+        full_name = client_data.get("full_name") or ""
+        client_first_name = full_name.split()[0] if full_name else ""
+        _schedule_background_task(
+            _deliver_mfa_via_sms(
+                service=service,
+                session_id=session_id,
+                client_id=client_id,
+                phone_number=delivery_address,
+                otp_code=otp_code,
+                client_first_name=client_first_name,
+                transaction_type=transaction_type,
+            ),
+            name=f"mfa-sms-{session_id}",
+        )
+    else:
+        _schedule_background_task(
+            _deliver_mfa_via_email(
+                service=service,
+                session_id=session_id,
+                client_id=client_id,
+                email_address=delivery_address,
+                otp_code=otp_code,
+                client_name=client_data.get("full_name", ""),
+                institution_name=client_data.get("institution_name", ""),
+                transaction_amount=transaction_amount,
+                transaction_type=transaction_type,
+            ),
+            name=f"mfa-email-{session_id}",
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -399,27 +584,30 @@ async def send_mfa_code(args: SendMfaCodeArgs) -> SendMfaCodeResult:
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         session_id = f"mfa_{client_id}_{timestamp}"
         
-        # Get contact info
+        # Get contact info and delivery channel
         contact_info = client_data.get("contact_info", {})
         preferred_method = contact_info.get("preferred_mfa_method", "email")
-        
-        # Override with specified method if provided
+
         if delivery_method != "email":
             preferred_method = delivery_method
-        
-        # Get delivery address
-        if preferred_method == "sms":
-            delivery_address = contact_info.get("phone", "")
-        else:
-            delivery_address = contact_info.get("email", "")
-        
-        if not delivery_address:
+
+        channel = _select_mfa_delivery_channel(
+            preferred_method=preferred_method,
+            contact_info=contact_info,
+            client_id=client_id,
+        )
+
+        resolved_method = channel.get("method")
+        delivery_address = channel.get("address")
+        delivery_service = channel.get("service")
+
+        if not resolved_method or not delivery_address or delivery_service is None:
             return {
                 "sent": False,
-                "message": f"No {preferred_method} address found for client.",
+                "message": "Unable to reach the configured verification channel. Please escalate to a specialist.",
                 "session_id": None,
                 "delivery_address": None,
-                "expires_in_minutes": 0
+                "expires_in_minutes": 0,
             }
         
         # Create MFA session record with Cosmos DB TTL for automatic cleanup
@@ -434,7 +622,7 @@ async def send_mfa_code(args: SendMfaCodeArgs) -> SendMfaCodeResult:
             "institution_name": client_data.get("institution_name"),
             "intent": intent,  # ← Store intent for orchestration routing
             "otp_code": otp_code,
-            "delivery_method": preferred_method,
+            "delivery_method": resolved_method,
             "delivery_address": delivery_address,
             "created_at": current_time.isoformat() + "Z",
             "expires_at": (current_time + datetime.timedelta(minutes=5)).isoformat() + "Z",
@@ -463,64 +651,23 @@ async def send_mfa_code(args: SendMfaCodeArgs) -> SendMfaCodeResult:
                 "expires_in_minutes": 0
             }
         
-        try:
-            if preferred_method == "sms":
-                sms_service = SmsService()
-                if sms_service.is_configured():
-                    # Create context-aware SMS message
-                    call_reason = _get_call_context(transaction_type)
-                    client_name = client_data.get("full_name", "").split()[0]  # First name only for SMS
-                    
-                    message = f"""Hello {client_name}, 
-
-Your verification code for {call_reason} is: {otp_code}
-
-This code expires in 5 minutes. Our specialist will ask for this code to securely assist you.
-
-If you didn't call us, please contact us immediately.
-
-- Financial Services"""
-                    await sms_service.send_sms(
-                        to_phone_numbers=delivery_address,
-                        message=message
-                    )
-                else:
-                    logger.warning("SMS service not configured, falling back to email")
-                    preferred_method = "email"
-                    delivery_address = contact_info.get("email", "")
-            
-            if preferred_method == "email":
-                email_service = EmailService()
-                if email_service.is_configured():
-                    subject, plain_text, html = EmailTemplates.create_mfa_code_email(
-                        otp_code,
-                        client_data.get("full_name", ""),
-                        client_data.get("institution_name", ""),
-                        transaction_amount,
-                        transaction_type
-                    )
-                    await email_service.send_email(
-                        email_address=delivery_address,
-                        subject=subject,
-                        plain_text_body=plain_text,
-                        html_body=html
-                    )
-        except Exception as send_error:
-            logger.error(f"❌ Failed to send MFA code: {send_error}")
-            return {
-                "sent": False,
-                "message": "Unable to send verification code. Please escalate to human assistance.",
-                "session_id": session_id,
-                "delivery_address": None,
-                "expires_in_minutes": 0
-            }
+        _start_mfa_delivery_task(
+            method=resolved_method,
+            service=delivery_service,
+            session_id=session_id,
+            client_data=client_data,
+            delivery_address=delivery_address,
+            otp_code=otp_code,
+            transaction_amount=transaction_amount,
+            transaction_type=transaction_type,
+        )
         
-        logger.info(f"✅ MFA code sent via {preferred_method} to {delivery_address}", 
-                   extra={"mfa_session_id": session_id, "client_id": client_id, "delivery_method": preferred_method, 
+        logger.info(f"✅ MFA code queued via {resolved_method} to {delivery_address}", 
+                   extra={"mfa_session_id": session_id, "client_id": client_id, "delivery_method": resolved_method, 
                          "delivery_address": delivery_address})
         return {
             "sent": True,
-            "message": f"Verification code sent via {preferred_method}.",
+            "message": f"Verification code sent via {resolved_method}.",
             "session_id": session_id,
             "delivery_address": delivery_address,
             "expires_in_minutes": 5

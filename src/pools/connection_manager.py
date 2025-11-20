@@ -17,12 +17,15 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Optional, Set, Literal
+from typing import Any, Awaitable, Callable, Dict, Optional, Set, Literal, TYPE_CHECKING
 
 from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
 
 from utils.ml_logging import get_logger
+
+if TYPE_CHECKING:
+    from src.redis.manager import AzureRedisManager
 
 logger = get_logger(__name__)
 
@@ -228,6 +231,14 @@ class ThreadSafeConnectionManager:
         self._connection_queue: asyncio.Queue = asyncio.Queue(maxsize=queue_size)
         self._rejected_count = 0
 
+        # Distributed session delivery
+        self._node_id = str(uuid.uuid4())
+        self._redis_mgr: Optional["AzureRedisManager"] = None
+        self._distributed_channel_prefix = "session"
+        self._redis_listener_task: Optional[asyncio.Task] = None
+        self._redis_listener_stop: Optional[asyncio.Event] = None
+        self._redis_pubsub = None
+
         # Out-of-band per-call context (for pre-initialized resources before WS exists)
         # Example: { call_id: { "lva_agent": <agent>, "pool": <pool>, "session_id": str, ... } }
         self._call_context: Dict[str, Any] = {}
@@ -237,8 +248,51 @@ class ThreadSafeConnectionManager:
             f"queue_size={queue_size}, limits_enabled={enable_connection_limits}"
         )
 
+    @property
+    def distributed_enabled(self) -> bool:
+        """Return True when Redis-backed fan-out is configured."""
+        return self._redis_mgr is not None
+
+    async def enable_distributed_session_bus(
+        self,
+        redis_manager: Optional["AzureRedisManager"],
+        *,
+        channel_prefix: str = "session",
+    ) -> None:
+        """
+        Enable cross-replica session routing using Redis pub/sub.
+
+        Creates a process-unique node identifier, subscribes to the shared
+        channel pattern, and relays any envelopes destined for local sessions.
+        """
+        if not redis_manager:
+            logger.warning("Distributed session bus requested without Redis manager")
+            return
+
+        if self._redis_listener_task:
+            logger.debug("Distributed session bus already enabled; skipping")
+            return
+
+        self._redis_mgr = redis_manager
+        prefix = channel_prefix.strip() or "session"
+        self._distributed_channel_prefix = prefix.rstrip(":")
+        self._redis_listener_stop = asyncio.Event()
+        self._redis_listener_task = asyncio.create_task(self._redis_listener_loop())
+        logger.info(
+            "Distributed session bus enabled",
+            extra={
+                "node_id": self._node_id,
+                "channel_prefix": self._distributed_channel_prefix,
+            },
+        )
+
+    def _session_channel_name(self, session_id: str) -> str:
+        return f"{self._distributed_channel_prefix}:{session_id}"
+
     async def stop(self) -> None:
         """Stop manager and close all connections."""
+        await self._shutdown_distributed_bus()
+
         async with self._lock:
             close_tasks = [conn.close() for conn in self._conns.values()]
         await asyncio.gather(*close_tasks, return_exceptions=True)
@@ -248,6 +302,29 @@ class ThreadSafeConnectionManager:
             self._by_session.clear()
             self._by_call.clear()
             self._by_topic.clear()
+
+    async def _shutdown_distributed_bus(self) -> None:
+        """Stop the Redis listener task and release subscriptions."""
+        if self._redis_listener_task:
+            if self._redis_listener_stop:
+                self._redis_listener_stop.set()
+            try:
+                await self._redis_listener_task
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "Distributed bus listener shut down with error: %s", exc
+                )
+            self._redis_listener_task = None
+
+        if self._redis_pubsub:
+            try:
+                self._redis_pubsub.close()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Error closing Redis pubsub: %s", exc)
+            self._redis_pubsub = None
+
+        self._redis_mgr = None
+        self._redis_listener_stop = None
 
     async def register(
         self,
@@ -515,6 +592,54 @@ class ThreadSafeConnectionManager:
 
         return sent
 
+    async def publish_session_envelope(
+        self,
+        session_id: Optional[str],
+        payload: Dict[str, Any],
+        *,
+        event_label: str = "unspecified",
+    ) -> bool:
+        """Publish an envelope to the distributed session channel."""
+        if not session_id or not self._redis_mgr:
+            return False
+
+        try:
+            serialized = json.dumps(
+                {
+                    "session_id": session_id,
+                    "envelope": payload,
+                    "origin": self._node_id,
+                    "event": event_label,
+                    "published_at": time.time(),
+                }
+            )
+        except (TypeError, ValueError) as exc:
+            logger.error(
+                "Failed to serialize envelope for distributed publish: %s",
+                exc,
+                extra={"session_id": session_id, "event": event_label},
+            )
+            return False
+
+        channel = self._session_channel_name(session_id)
+        try:
+            await self._redis_mgr.publish_channel_async(channel, serialized)
+            logger.debug(
+                "Distributed envelope published",
+                extra={"session_id": session_id, "event": event_label},
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Distributed envelope publish failed",
+                extra={
+                    "session_id": session_id,
+                    "event": event_label,
+                    "error": str(exc),
+                },
+            )
+            return False
+
     async def _safe_send_to_connection(
         self, conn: "_Connection", payload: Dict[str, Any]
     ) -> None:
@@ -533,6 +658,128 @@ class ThreadSafeConnectionManager:
                 logger.info(f"Auto-removed failed connection: {conn_id}")
             except Exception as e:
                 logger.error(f"Error removing failed connection {conn_id}: {e}")
+
+    async def _redis_listener_loop(self) -> None:
+        """Listen for distributed session envelopes and deliver locally."""
+        if not self._redis_mgr:
+            return
+
+        pattern = f"{self._distributed_channel_prefix}:*"
+        try:
+            pubsub = self._redis_mgr.redis_client.pubsub(
+                ignore_subscribe_messages=True
+            )
+            pubsub.psubscribe(pattern)
+            self._redis_pubsub = pubsub
+            logger.info(
+                "Subscribed to distributed session pattern",
+                extra={"pattern": pattern, "node_id": self._node_id},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to start distributed session listener: %s",
+                exc,
+            )
+            self._redis_mgr = None
+            return
+
+        loop = asyncio.get_running_loop()
+        try:
+            while (
+                self._redis_listener_stop
+                and not self._redis_listener_stop.is_set()
+            ):
+                try:
+                    message = await loop.run_in_executor(
+                        None,
+                        lambda: pubsub.get_message(
+                            ignore_subscribe_messages=True, timeout=1.0
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # Avoid tight loop when pubsub has already been closed or shut down
+                    if "closed file" in str(exc).lower():
+                        logger.info(
+                            "Distributed listener detected closed pubsub; exiting",
+                            extra={"node_id": self._node_id},
+                        )
+                        break
+                    logger.error(
+                        "Distributed session listener error: %s",
+                        exc,
+                        extra={"node_id": self._node_id},
+                    )
+                    await asyncio.sleep(1.0)
+                    continue
+
+                if self._redis_listener_stop and self._redis_listener_stop.is_set():
+                    break
+                if not message:
+                    continue
+
+                msg_type = message.get("type")
+                if msg_type not in {"message", "pmessage"}:
+                    continue
+
+                raw_data = message.get("data")
+                if not raw_data:
+                    continue
+
+                try:
+                    payload = json.loads(raw_data)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Distributed session payload decode failed",
+                        extra={"data": raw_data},
+                    )
+                    continue
+
+                if payload.get("origin") == self._node_id:
+                    continue
+
+                session_id = payload.get("session_id")
+                envelope = payload.get("envelope")
+                if not session_id or not isinstance(envelope, dict):
+                    continue
+
+                await self._deliver_session_envelope_local(session_id, envelope)
+        finally:
+            try:
+                pubsub.close()
+            except Exception:
+                pass
+            logger.info(
+                "Distributed session listener stopped",
+                extra={"node_id": self._node_id},
+            )
+
+    async def _deliver_session_envelope_local(
+        self, session_id: str, payload: Dict[str, Any]
+    ) -> None:
+        """Deliver distributed envelope to local connections for a session."""
+        async with self._lock:
+            conn_ids = list(self._by_session.get(session_id, set()))
+            targets = [self._conns.get(conn_id) for conn_id in conn_ids]
+            targets = [conn for conn in targets if conn]
+
+        if not targets:
+            return
+
+        results = await asyncio.gather(
+            *(conn.send_json(payload) for conn in targets),
+            return_exceptions=True,
+        )
+
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Distributed local delivery failed",
+                    extra={
+                        "conn_id": targets[idx].meta.connection_id,
+                        "session_id": session_id,
+                        "error": str(result),
+                    },
+                )
 
     async def broadcast_call(self, call_id: str, payload: Dict[str, Any]) -> int:
         """Broadcast to all connections in a call."""
