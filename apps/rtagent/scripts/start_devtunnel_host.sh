@@ -34,7 +34,7 @@ This script helps you host an Azure Dev Tunnel for your local FastAPI server.
 
 set -e
 
-PORT=8010
+PORT=8080
 
 function check_devtunnel_installed() {
     if ! command -v devtunnel >/dev/null 2>&1; then
@@ -47,7 +47,7 @@ function check_devtunnel_installed() {
 
 function host_tunnel() {
     echo "Hosting Azure Dev Tunnel on port $PORT"
-    devtunnel host
+    devtunnel host -p $PORT
 }
 
 check_devtunnel_installed

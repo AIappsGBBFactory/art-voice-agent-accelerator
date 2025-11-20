@@ -12,6 +12,8 @@ import PhoneDisabledRoundedIcon from '@mui/icons-material/PhoneDisabledRounded';
 import PhoneRoundedIcon from '@mui/icons-material/PhoneRounded';
 import PhoneInTalkRoundedIcon from '@mui/icons-material/PhoneInTalkRounded';
 import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
+import KeyboardRoundedIcon from '@mui/icons-material/KeyboardRounded';
+import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import KeyboardArrowUpRoundedIcon from '@mui/icons-material/KeyboardArrowUpRounded';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
@@ -807,6 +809,36 @@ const styles = {
     };
   },
 
+  keyboardButton: (isActive, isHovered) => ({
+    width: "56px",
+    height: "56px",
+    borderRadius: "50%",
+    border: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    fontSize: "20px",
+    transition: "all 0.3s ease",
+    position: "relative",
+    background: isHovered ? 
+      (isActive ? "linear-gradient(135deg, #3b82f6, #2563eb)" : "linear-gradient(135deg, #dbeafe, #bfdbfe)") :
+      "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
+    color: isHovered ? 
+      (isActive ? "white" : "#0f172a") :
+      (isActive ? "#2563eb" : "#1f2937"),
+    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
+    boxShadow: isHovered ? 
+      "0 8px 25px rgba(59,130,246,0.4), 0 0 0 4px rgba(59,130,246,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
+      (isActive ? 
+        "0 6px 20px rgba(37,99,235,0.3), 0 0 0 3px rgba(37,99,235,0.15)" : 
+        "0 2px 8px rgba(0,0,0,0.08)"),
+    padding: 0,
+    '& svg': {
+      color: isHovered ? (isActive ? "#f8fafc" : "#0f172a") : (isActive ? "#2563eb" : "#1f2937"),
+    },
+  }),
+
   // Tooltip styles
   buttonTooltip: {
     position: 'fixed',
@@ -846,6 +878,32 @@ const styles = {
     width: '100%',
     maxWidth: '360px',
     zIndex: 120,
+  },
+
+  textInputContainer: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "14px 24px 16px",
+    backgroundColor: "rgba(255,255,255,0.98)",
+    borderTop: "1px solid rgba(226,232,240,0.5)",
+    width: "100%",
+    boxSizing: "border-box",
+    boxShadow: "0 -4px 12px rgba(15,23,42,0.04)",
+    transition: "all 0.3s ease",
+  },
+
+  textInput: {
+    flex: 1,
+    padding: "12px 16px",
+    borderRadius: "22px",
+    border: "1px solid #e2e8f0",
+    fontSize: "14px",
+    outline: "none",
+    transition: "all 0.2s ease",
+    backgroundColor: "#f8fafc",
+    color: "#1e293b",
+    fontFamily: "inherit",
   },
   
   // Input section for phone calls
@@ -1594,7 +1652,7 @@ const IndustryTag = () => {
 
     if (currentBranch.includes('finance') || currentBranch.includes('capitalmarkets')) {
       return {
-        label: 'Finance Edition',
+        label: 'Banking Edition',
         palette: {
           background: 'linear-gradient(135deg, #4338ca, #6366f1)',
           color: '#f8fafc',
@@ -1606,7 +1664,7 @@ const IndustryTag = () => {
     }
 
     return {
-      label: 'Finance Edition',
+      label: 'Banking Edition',
       palette: {
         background: 'linear-gradient(135deg, #4338ca, #6366f1)',
         color: '#f8fafc',
@@ -3356,6 +3414,44 @@ function RealTimeVoiceApp() {
   // Profile menu state moved to ProfileButton component
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   const [currentCallId, setCurrentCallId] = useState(null);
+  const [showTextInput, setShowTextInput] = useState(false);
+  const [textInput, setTextInput] = useState("");
+
+  const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
+
+  const handleSendText = useCallback(() => {
+    if (!textInput.trim()) return;
+    
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      // BARGE-IN: Stop audio playback before sending text
+      
+      // 1. Stop recording audio context (microphone)
+      if (audioContextRef.current && !audioContextRef.current.state.match(/closed/)) {
+        audioContextRef.current.suspend();
+        appendLog("🛑 Recording interrupted by user text input");
+      }
+      
+      // 2. Stop TTS playback audio context (speaker output)
+      if (playbackAudioContextRef.current && playbackAudioContextRef.current.state === "running") {
+        playbackAudioContextRef.current.suspend();
+        appendLog("🛑 TTS playback interrupted by user text input");
+      }
+      
+      // 3. Clear the audio playback queue
+      if (pcmSinkRef.current) {
+        pcmSinkRef.current.port.postMessage({ type: 'clear' });
+      }
+      
+      // Send as raw text message
+      socketRef.current.send(textInput.trim());
+      
+      // Optimistically add to chat
+      setMessages(prev => [...prev, { speaker: "User", text: textInput.trim() }]);
+      setTextInput("");
+    } else {
+      appendLog("⚠️ Cannot send text: WebSocket not connected");
+    }
+  }, [textInput, appendLog]);
 
   const appendSystemMessage = useCallback((text, options = {}) => {
     const timestamp = options.timestamp ?? new Date().toISOString();
@@ -3899,8 +3995,6 @@ function RealTimeVoiceApp() {
     }
   };
 
-
-  const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
   // Formatting functions moved to ProfileButton component
   const activeSessionProfile = sessionProfiles[sessionId];
   const hasActiveProfile = Boolean(activeSessionProfile?.profile);
@@ -4550,7 +4644,19 @@ function RealTimeVoiceApp() {
       }
 
       if (typeof event.data !== "string") {
-        const ctx = new AudioContext();
+        // Binary audio data (legacy path)
+        
+        // Resume audio context if suspended (after text barge-in)
+        if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+          await audioContextRef.current.resume();
+          appendLog("▶️ Audio context resumed");
+        }
+        
+        const ctx = audioContextRef.current || new AudioContext();
+        if (!audioContextRef.current) {
+          audioContextRef.current = ctx;
+        }
+        
         const buf = await event.data.arrayBuffer();
         const audioBuf = await ctx.decodeAudioData(buf);
         const src = ctx.createBufferSource();
@@ -4822,7 +4928,7 @@ function RealTimeVoiceApp() {
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data") {
         try {
-          logger.debug("🔊 Received audio_data message:", {
+          logger.info("🔊 Received audio_data message:", {
             frame_index: payload.frame_index,
             total_frames: payload.total_frames,
             sample_rate: payload.sample_rate,
@@ -4840,6 +4946,21 @@ function RealTimeVoiceApp() {
 
           const frameIndex = Number.isFinite(payload.frame_index) ? payload.frame_index : 0;
           registerAudioFrame(frameIndex, isFinalChunk);
+
+          // Resume playback context if suspended (after text barge-in)
+          if (playbackAudioContextRef.current) {
+            const ctx = playbackAudioContextRef.current;
+            logger.info(`[Audio] Playback context state: ${ctx.state}`);
+            if (ctx.state === "suspended") {
+              logger.info("[Audio] Resuming suspended playback context...");
+              await ctx.resume();
+              appendLog("▶️ TTS playback resumed");
+              logger.info(`[Audio] Playback context state after resume: ${ctx.state}`);
+            }
+          } else {
+            logger.warn("[Audio] No playback context found, initializing...");
+            await initializeAudioPlayback();
+          }
 
           if (!hasData) {
             playbackActiveRef.current = !isFinalChunk;
@@ -5328,6 +5449,59 @@ function RealTimeVoiceApp() {
                 ))}
               </div>
             </div>
+
+            {/* Text Input - Shows above controls when recording */}
+            {recording && (
+              <div style={styles.textInputContainer}>
+                <input
+                  type="text"
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && textInput.trim()) handleSendText();
+                  }}
+                  placeholder="Type your message here..."
+                  style={styles.textInput}
+                />
+                <IconButton 
+                  onClick={handleSendText} 
+                  disabled={!textInput.trim()}
+                  disableRipple
+                  sx={{
+                    width: "48px",
+                    height: "48px",
+                    minWidth: "48px",
+                    borderRadius: "50%",
+                    padding: 0,
+                    background: textInput.trim() 
+                      ? "linear-gradient(135deg, #10b981, #059669)" 
+                      : "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
+                    color: textInput.trim() ? "white" : "#cbd5e1",
+                    border: textInput.trim() ? "none" : "1px solid #e2e8f0",
+                    boxShadow: textInput.trim() 
+                      ? "0 4px 14px rgba(16,185,129,0.3), inset 0 1px 2px rgba(255,255,255,0.2)" 
+                      : "0 2px 6px rgba(0,0,0,0.06)",
+                    transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+                    cursor: textInput.trim() ? "pointer" : "not-allowed",
+                    '&:hover': textInput.trim() ? {
+                      background: "linear-gradient(135deg, #059669, #047857)",
+                      transform: "scale(1.08) translateY(-1px)",
+                      boxShadow: "0 8px 20px rgba(16,185,129,0.4), 0 0 0 3px rgba(16,185,129,0.15), inset 0 1px 2px rgba(255,255,255,0.2)",
+                    } : {},
+                    '&:active': textInput.trim() ? {
+                      transform: "scale(1.02) translateY(0px)",
+                      boxShadow: "0 2px 8px rgba(16,185,129,0.3)",
+                    } : {},
+                    '& svg': {
+                      fontSize: '20px',
+                      transform: 'translateX(1px)',
+                    },
+                  }}
+                >
+                  <SendRoundedIcon />
+                </IconButton>
+              </div>
+            )}
 
             {/* Control Buttons - Clean 3-button layout */}
             <ConversationControls
