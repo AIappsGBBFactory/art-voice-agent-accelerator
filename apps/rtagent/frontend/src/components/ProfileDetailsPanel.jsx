@@ -89,9 +89,9 @@ const maskSecretValue = (value) => {
 const TAB_META = {
   verification: { icon: '🛡️', accent: '#6366f1' },
   identity: { icon: '🪪', accent: '#0ea5e9' },
+  banking: { icon: '🏦', accent: '#8b5cf6' },
+  transactions: { icon: '💳', accent: '#ec4899' },
   contact: { icon: '☎️', accent: '#10b981' },
-  intelligence: { icon: '📈', accent: '#f59e0b' },
-  transactions: { icon: '💳', accent: '#6366f1' },
 };
 
 const SectionCard = ({ children, sx = {} }) => (
@@ -238,11 +238,13 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
   const companyCode = data?.company_code;
   const companyCodeLast4 = data?.company_code_last4 || companyCode?.slice?.(-4) || '----';
   const demoMeta = data?.demo_metadata ?? baseProfile.demo_metadata ?? {};
-  const transactions = (Array.isArray(baseProfile.transactions) && baseProfile.transactions.length
-      ? baseProfile.transactions
-      : Array.isArray(demoMeta.transactions)
-        ? demoMeta.transactions
-        : []) ?? [];
+  const transactions = (Array.isArray(data?.transactions) && data.transactions.length
+      ? data.transactions
+      : Array.isArray(baseProfile.transactions) && baseProfile.transactions.length
+        ? baseProfile.transactions
+        : Array.isArray(demoMeta.transactions)
+          ? demoMeta.transactions
+          : []) ?? [];
   const interactionPlan = baseProfile.interactionPlan
     ?? demoMeta.interaction_plan
     ?? data?.interaction_plan
@@ -252,6 +254,12 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
   const compliance = data?.compliance ?? {};
   const mfaSettings = data?.mfa_settings ?? {};
   const customerIntel = data?.customer_intelligence ?? {};
+  const coreIdentity = customerIntel.core_identity ?? {};
+  const bankProfile = customerIntel.bank_profile ?? {};
+  const employment = customerIntel.employment ?? {};
+  const payrollSetup = customerIntel.payroll_setup ?? {};
+  const retirementProfile = customerIntel.retirement_profile ?? {};
+  const preferences = customerIntel.preferences ?? {};
   const relationshipContext = customerIntel.relationship_context ?? {};
   const accountStatus = customerIntel.account_status ?? {};
   const spendingPatterns = customerIntel.spending_patterns ?? {};
@@ -261,6 +269,8 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
   const activeAlerts = customerIntel.active_alerts ?? [];
   const knownPreferences = conversationContext.known_preferences ?? [];
   const suggestedTalkingPoints = conversationContext.suggested_talking_points ?? [];
+  const financialGoals = conversationContext.financial_goals ?? [];
+  const lifeEvents = conversationContext.life_events ?? [];
 
   const typicalBehavior = fraudContext.typical_transaction_behavior ?? {};
   const sessionDisplayId = baseProfile.sessionId ?? sessionId;
@@ -347,6 +357,265 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
         ),
       },
       {
+        id: 'banking',
+        label: 'Banking',
+        content: (
+          <>
+            {/* Core Identity */}
+            {(coreIdentity.displayName || coreIdentity.segment) && (
+              <SectionCard>
+                <SectionTitle icon="👤">Core Identity</SectionTitle>
+                <ProfileDetailRow label="Display Name" value={coreIdentity.displayName} />
+                <ProfileDetailRow label="Segment" value={coreIdentity.segment} />
+                <ProfileDetailRow label="Channel" value={toTitleCase(coreIdentity.channel)} />
+                <ProfileDetailRow label="Language" value={coreIdentity.primaryLanguage} />
+                <ProfileDetailRow label="Country" value={coreIdentity.country} />
+              </SectionCard>
+            )}
+
+            {/* Bank Profile */}
+            {(bankProfile.current_balance !== undefined || bankProfile.accountTenureYears) && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="🏦">Bank Account</SectionTitle>
+                <ProfileDetailRow label="Account ID" value={bankProfile.primaryCheckingAccountId} />
+                <ProfileDetailRow label="Balance" value={formatCurrency(bankProfile.current_balance)} />
+                <ProfileDetailRow label="Routing Number" value={bankProfile.routing_number} />
+                <ProfileDetailRow label="Account Last 4" value={`****${bankProfile.account_number_last4}`} />
+                <ProfileDetailRow label="Account Tenure" value={bankProfile.accountTenureYears ? `${bankProfile.accountTenureYears} years` : '—'} />
+              </SectionCard>
+            )}
+
+            {/* Credit Cards */}
+            {bankProfile.cards && bankProfile.cards.length > 0 && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="💳">Credit Cards</SectionTitle>
+                {bankProfile.cards.map((card, idx) => (
+                  <Box key={card.cardAccountId || idx} sx={{ mb: idx < bankProfile.cards.length - 1 ? 2 : 0 }}>
+                    <ProfileDetailRow label="Card" value={card.productName} multiline />
+                    <ProfileDetailRow label="Last 4" value={`****${card.last4}`} />
+                    <ProfileDetailRow label="Opened" value={formatDate(card.openedDate)} />
+                    <ProfileDetailRow label="Rewards" value={toTitleCase(card.rewardsType)} />
+                    <ProfileDetailRow label="Annual Fee" value={card.hasAnnualFee ? 'Yes' : 'No'} />
+                    <ProfileDetailRow label="Foreign Tx Fee" value={card.foreignTxFeePct ? `${card.foreignTxFeePct}%` : 'None'} />
+                    {idx < bankProfile.cards.length - 1 && <Divider sx={{ mt: 1.5 }} />}
+                  </Box>
+                ))}
+              </SectionCard>
+            )}
+
+            {/* Employment & Payroll */}
+            {(employment.currentEmployerName || payrollSetup.hasDirectDeposit !== undefined) && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="💼">Employment & Payroll</SectionTitle>
+                <ProfileDetailRow label="Current Employer" value={employment.currentEmployerName} />
+                <ProfileDetailRow label="Start Date" value={formatDate(employment.currentEmployerStartDate)} />
+                <ProfileDetailRow label="Previous Employer" value={employment.previousEmployerName} />
+                <ProfileDetailRow label="Left On" value={formatDate(employment.previousEmployerEndDate)} />
+                <ProfileDetailRow label="Income Band" value={toTitleCase(employment.incomeBand)} />
+                <Divider sx={{ my: 1.5 }} />
+                <ProfileDetailRow 
+                  label="Direct Deposit" 
+                  value={payrollSetup.hasDirectDeposit ? '✅ Active' : '❌ Not Set Up'} 
+                />
+                {payrollSetup.pendingSetup && (
+                  <ProfileDetailRow label="Status" value="⚠️ Setup Pending" />
+                )}
+                {payrollSetup.lastPaycheckDate && (
+                  <ProfileDetailRow label="Last Paycheck" value={formatDate(payrollSetup.lastPaycheckDate)} />
+                )}
+              </SectionCard>
+            )}
+
+            {/* Retirement Profile */}
+            {retirementProfile.retirement_accounts && retirementProfile.retirement_accounts.length > 0 && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="💰">Retirement Accounts</SectionTitle>
+                {retirementProfile.retirement_accounts.map((account, idx) => (
+                  <Box key={account.accountId || idx} sx={{ mb: idx < retirementProfile.retirement_accounts.length - 1 ? 2 : 0 }}>
+                    <ProfileDetailRow label="Type" value={account.type.toUpperCase()} />
+                    <ProfileDetailRow label="Employer" value={account.employerName} />
+                    <ProfileDetailRow label="Provider" value={account.provider} />
+                    <ProfileDetailRow label="Status" value={toTitleCase(account.status)} />
+                    <ProfileDetailRow label="Balance" value={formatCurrency(account.estimatedBalance)} />
+                    <ProfileDetailRow label="Balance Band" value={account.balanceBand} />
+                    <ProfileDetailRow label="Vesting" value={account.vestingStatus} />
+                    {account.notes && (
+                      <ProfileDetailRow label="Notes" value={account.notes} multiline />
+                    )}
+                    {idx < retirementProfile.retirement_accounts.length - 1 && <Divider sx={{ mt: 1.5 }} />}
+                  </Box>
+                ))}
+                
+                {retirementProfile.plan_features && (
+                  <>
+                    <Divider sx={{ my: 1.5 }} />
+                    <SectionTitle icon="✨">Plan Features</SectionTitle>
+                    <ProfileDetailRow 
+                      label="401(k) Pay Available" 
+                      value={retirementProfile.plan_features.has401kPayOnCurrentPlan ? '✅ Yes' : '❌ No'} 
+                    />
+                    <ProfileDetailRow 
+                      label="Employer Match" 
+                      value={retirementProfile.plan_features.currentEmployerMatchPct ? `${retirementProfile.plan_features.currentEmployerMatchPct}%` : '—'} 
+                    />
+                    <ProfileDetailRow 
+                      label="Rollover Eligible" 
+                      value={retirementProfile.plan_features.rolloverEligible ? 'Yes' : 'No'} 
+                    />
+                  </>
+                )}
+
+                {retirementProfile.merrill_accounts && retirementProfile.merrill_accounts.length > 0 && (
+                  <>
+                    <Divider sx={{ my: 1.5 }} />
+                    <SectionTitle icon="📊">Merrill Accounts</SectionTitle>
+                    {retirementProfile.merrill_accounts.map((account, idx) => (
+                      <Box key={account.accountId || idx} sx={{ mb: idx < retirementProfile.merrill_accounts.length - 1 ? 1 : 0 }}>
+                        <ProfileDetailRow label="Account Type" value={`${account.brand} ${toTitleCase(account.accountType)}`} />
+                        <ProfileDetailRow label="Balance" value={formatCurrency(account.estimatedBalance)} />
+                        {account.notes && <ProfileDetailRow label="Notes" value={account.notes} multiline />}
+                        {idx < retirementProfile.merrill_accounts.length - 1 && <Divider sx={{ mt: 1 }} />}
+                      </Box>
+                    ))}
+                  </>
+                )}
+
+                {(retirementProfile.risk_profile || retirementProfile.investmentKnowledgeLevel) && (
+                  <>
+                    <Divider sx={{ my: 1.5 }} />
+                    <ProfileDetailRow label="Risk Profile" value={toTitleCase(retirementProfile.risk_profile)} />
+                    <ProfileDetailRow label="Investment Knowledge" value={toTitleCase(retirementProfile.investmentKnowledgeLevel)} />
+                  </>
+                )}
+              </SectionCard>
+            )}
+
+            {/* Preferences */}
+            {(preferences.preferredContactMethod || preferences.adviceStyle) && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="⚙️">Preferences</SectionTitle>
+                <ProfileDetailRow label="Contact Method" value={toTitleCase(preferences.preferredContactMethod)} />
+                <ProfileDetailRow label="Advice Style" value={toTitleCase(preferences.adviceStyle)} />
+                <ProfileDetailRow 
+                  label="Prefers Human for Investments" 
+                  value={preferences.prefersHumanForInvestments ? 'Yes' : 'No'} 
+                />
+                <ProfileDetailRow 
+                  label="Decision Threshold" 
+                  value={formatCurrency(preferences.prefersHumanForDecisionsOverThreshold)} 
+                />
+                {preferences.previousAdvisorInteractions && (
+                  <>
+                    <Divider sx={{ my: 1.5 }} />
+                    <ProfileDetailRow 
+                      label="Has Merrill Advisor" 
+                      value={preferences.previousAdvisorInteractions.hasMerrillAdvisor ? 'Yes' : 'No'} 
+                    />
+                    <ProfileDetailRow 
+                      label="Interested in Advisor" 
+                      value={preferences.previousAdvisorInteractions.interestedInAdvisor ? 'Yes' : 'No'} 
+                    />
+                  </>
+                )}
+              </SectionCard>
+            )}
+
+            {/* Active Alerts */}
+            {activeAlerts.length > 0 && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="🚨">Active Alerts</SectionTitle>
+                {activeAlerts.map((alert, idx) => (
+                  <Box key={idx} sx={{ 
+                    mb: idx < activeAlerts.length - 1 ? 1.5 : 0,
+                    p: 1.5,
+                    borderRadius: '12px',
+                    backgroundColor: alert.priority === 'high' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(251, 191, 36, 0.08)',
+                    border: `1px solid ${alert.priority === 'high' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(251, 191, 36, 0.2)'}`,
+                  }}>
+                    <Typography sx={{ fontSize: '11px', fontWeight: 700, color: '#0f172a', mb: 0.5 }}>
+                      {alert.priority === 'high' ? '🔴' : '🟡'} {toTitleCase(alert.type)}
+                    </Typography>
+                    <Typography sx={{ fontSize: '11px', color: '#475569', mb: 0.5 }}>
+                      {alert.message}
+                    </Typography>
+                    <Typography sx={{ fontSize: '10px', color: '#64748b', fontWeight: 600 }}>
+                      Action: {alert.action}
+                    </Typography>
+                  </Box>
+                ))}
+              </SectionCard>
+            )}
+
+            {/* Conversation Context */}
+            {(financialGoals.length > 0 || lifeEvents.length > 0 || suggestedTalkingPoints.length > 0) && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="💬">Conversation Context</SectionTitle>
+                
+                {lifeEvents.length > 0 && (
+                  <>
+                    <Typography sx={{ fontSize: '11px', fontWeight: 700, color: '#475569', mb: 1 }}>
+                      Recent Life Events
+                    </Typography>
+                    {lifeEvents.map((event, idx) => (
+                      <Box key={idx} sx={{ mb: 1 }}>
+                        <ProfileDetailRow label={toTitleCase(event.event)} value={formatDate(event.date)} />
+                        {event.details && (
+                          <Typography sx={{ fontSize: '10px', color: '#64748b', ml: 2, mt: 0.5 }}>
+                            {event.details}
+                          </Typography>
+                        )}
+                      </Box>
+                    ))}
+                  </>
+                )}
+
+                {suggestedTalkingPoints.length > 0 && (
+                  <>
+                    <Divider sx={{ my: 1.5 }} />
+                    <Typography sx={{ fontSize: '11px', fontWeight: 700, color: '#475569', mb: 1 }}>
+                      Suggested Talking Points
+                    </Typography>
+                    {suggestedTalkingPoints.slice(0, 5).map((point, idx) => (
+                      <Typography key={idx} sx={{ fontSize: '11px', color: '#1f2937', mb: 0.5, pl: 2 }}>
+                        • {point}
+                      </Typography>
+                    ))}
+                  </>
+                )}
+
+                {financialGoals.length > 0 && (
+                  <>
+                    <Divider sx={{ my: 1.5 }} />
+                    <Typography sx={{ fontSize: '11px', fontWeight: 700, color: '#475569', mb: 1 }}>
+                      Financial Goals
+                    </Typography>
+                    {financialGoals.map((goal, idx) => (
+                      <Typography key={idx} sx={{ fontSize: '11px', color: '#1f2937', mb: 0.5, pl: 2 }}>
+                        • {goal}
+                      </Typography>
+                    ))}
+                  </>
+                )}
+
+                {knownPreferences.length > 0 && (
+                  <>
+                    <Divider sx={{ my: 1.5 }} />
+                    <Typography sx={{ fontSize: '11px', fontWeight: 700, color: '#475569', mb: 1 }}>
+                      Known Preferences
+                    </Typography>
+                    {knownPreferences.map((pref, idx) => (
+                      <Typography key={idx} sx={{ fontSize: '11px', color: '#1f2937', mb: 0.5, pl: 2 }}>
+                        • {pref}
+                      </Typography>
+                    ))}
+                  </>
+                )}
+              </SectionCard>
+            )}
+          </>
+        ),
+      },
+      {
         id: 'contact',
         label: 'Contact',
         content: (
@@ -371,84 +640,6 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
         ),
       },
       {
-        id: 'intelligence',
-        label: 'Intelligence',
-        content: (
-          <>
-            <SectionCard>
-              <SectionTitle icon="💼">Relationship Context</SectionTitle>
-              <ProfileDetailRow label="Tier" value={toTitleCase(relationshipContext.relationship_tier)} />
-              <ProfileDetailRow label="Client Since" value={formatDate(relationshipContext.client_since)} />
-              <ProfileDetailRow label="Lifetime Value" value={formatCurrency(relationshipContext.lifetime_value)} />
-              <ProfileDetailRow label="Duration (yrs)" value={relationshipContext.relationship_duration_years} />
-              <ProfileDetailRow label="Satisfaction" value={relationshipContext.satisfaction_score} />
-              <ProfileDetailRow label="Previous Interactions" value={relationshipContext.previous_interactions} />
-            </SectionCard>
-
-            <SectionCard sx={{ mt: 2 }}>
-              <SectionTitle icon="📊">Account Status</SectionTitle>
-              <ProfileDetailRow label="Current Balance" value={formatCurrency(accountStatus.current_balance)} />
-              <ProfileDetailRow label="YTD Volume" value={formatCurrency(accountStatus.ytd_transaction_volume)} />
-              <ProfileDetailRow label="Account Health" value={accountStatus.account_health_score} />
-              <ProfileDetailRow label="Login Frequency" value={toTitleCase(accountStatus.login_frequency)} />
-              <ProfileDetailRow label="Last Login" value={formatDate(accountStatus.last_login)} />
-            </SectionCard>
-
-            <SectionCard sx={{ mt: 2 }}>
-              <SectionTitle icon="📈">Spending Patterns</SectionTitle>
-              <ProfileDetailRow label="Avg Monthly Spend" value={formatCurrency(spendingPatterns.avg_monthly_spend)} />
-              <ProfileDetailRow label="Preferred Times" value={(spendingPatterns.preferred_transaction_times || []).join(', ') || '—'} multiline />
-              <ProfileDetailRow label="Usual Range" value={spendingPatterns.usual_spending_range || '—'} />
-              <ProfileDetailRow label="Common Merchants" value={(spendingPatterns.common_merchants || []).join(', ') || '—'} multiline />
-              <ProfileDetailRow label="Risk Tolerance" value={toTitleCase(spendingPatterns.risk_tolerance)} />
-            </SectionCard>
-
-            <SectionCard sx={{ mt: 2 }}>
-              <SectionTitle icon="🧠">Memory Profile</SectionTitle>
-              <ProfileDetailRow label="Communication Style" value={memoryScore.communication_style} />
-              <ProfileDetailRow label="Preferred Resolution" value={memoryScore.preferred_resolution_style} />
-              <ProfileDetailRow label="Personality Traits" value={Object.entries(memoryScore.personality_traits || {}).map(([key, value]) => `${toTitleCase(key)}: ${value}`).join(' • ') || '—'} multiline />
-            </SectionCard>
-
-            <SectionCard sx={{ mt: 2 }}>
-              <SectionTitle icon="🛡️">Fraud Context</SectionTitle>
-              <ProfileDetailRow label="Risk Profile" value={fraudContext.risk_profile} />
-              <ProfileDetailRow label="Preferred Verification" value={fraudContext.security_preferences?.preferred_verification} />
-              <ProfileDetailRow label="Notification Urgency" value={fraudContext.security_preferences?.notification_urgency} />
-              <ProfileDetailRow label="Replacement Speed" value={fraudContext.security_preferences?.card_replacement_speed} />
-              <ProfileDetailRow label="Previous Cases" value={fraudContext.fraud_history?.previous_cases} />
-              <ProfileDetailRow label="False Positive Rate" value={fraudContext.fraud_history?.false_positive_rate} />
-
-              {(typicalBehavior.usual_spending_range
-                || (typicalBehavior.common_locations || []).length
-                || (typicalBehavior.typical_merchants || []).length) && (
-                <Box sx={{ mt: 1.5 }}>
-                  <SectionTitle icon="🗺️">Typical Behavior</SectionTitle>
-                  <ProfileDetailRow label="Usual Range" value={typicalBehavior.usual_spending_range} />
-                  <ProfileDetailRow label="Locations" value={(typicalBehavior.common_locations || []).join(', ') || '—'} multiline />
-                  <ProfileDetailRow label="Merchants" value={(typicalBehavior.typical_merchants || []).join(', ') || '—'} multiline />
-                </Box>
-              )}
-            </SectionCard>
-
-            <SectionCard sx={{ mt: 2 }}>
-              <SectionTitle icon="💬">Conversation Context</SectionTitle>
-              <ProfileDetailRow label="Known Preferences" value={knownPreferences.join(' • ') || '—'} multiline />
-              <ProfileDetailRow label="Talking Points" value={suggestedTalkingPoints.join(' • ') || '—'} multiline />
-
-              {!!activeAlerts.length && (
-                <Box sx={{ mt: 1.5 }}>
-                  <SectionTitle icon="🚨">Active Alerts</SectionTitle>
-                  {activeAlerts.map((alert) => (
-                    <ProfileDetailRow key={alert.message} label={toTitleCase(alert.type)} value={`${alert.message} (${alert.priority})`} multiline />
-                  ))}
-                </Box>
-              )}
-            </SectionCard>
-          </>
-        ),
-      },
-      {
         id: 'transactions',
         label: 'Transactions',
         content: (
@@ -457,33 +648,82 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
               <SectionTitle icon="💳">Recent Transactions</SectionTitle>
               {transactions.length ? (
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                  {transactions.map((txn) => (
-                    <Box
-                      key={txn.transaction_id}
-                      sx={{
-                        border: '1px solid rgba(226,232,240,0.9)',
-                        borderRadius: '14px',
-                        padding: '12px 14px',
-                        backgroundColor: '#fff',
-                        boxShadow: '0 6px 16px rgba(15,23,42,0.08)',
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-                        <Typography sx={{ fontWeight: 700, color: '#0f172a', fontSize: '13px' }}>
-                          {txn.merchant}
-                        </Typography>
-                        <Typography sx={{ fontWeight: 700, color: '#111827', fontSize: '12px' }}>
-                          {formatCurrencyWithCents(txn.amount)}
-                        </Typography>
+                  {transactions.map((txn) => {
+                    const location = txn.location || {};
+                    const isInternational = location.is_international || location.country_code !== 'US';
+                    const hasFee = txn.foreign_transaction_fee && txn.foreign_transaction_fee > 0;
+                    const locationStr = location.city 
+                      ? `${location.city}, ${location.country || location.state || ''}`
+                      : location.country || '—';
+                    
+                    return (
+                      <Box
+                        key={txn.transaction_id}
+                        sx={{
+                          border: '1px solid',
+                          borderColor: hasFee ? 'rgba(239, 68, 68, 0.3)' : 'rgba(226,232,240,0.9)',
+                          borderRadius: '14px',
+                          padding: '12px 14px',
+                          backgroundColor: hasFee ? 'rgba(254, 242, 242, 0.5)' : '#fff',
+                          boxShadow: '0 6px 16px rgba(15,23,42,0.08)',
+                        }}
+                      >
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 0.5 }}>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography sx={{ fontWeight: 700, color: '#0f172a', fontSize: '13px' }}>
+                              {isInternational && '🌍 '}{txn.merchant}
+                            </Typography>
+                            <Typography sx={{ color: '#64748b', fontSize: '10px', mt: 0.3 }}>
+                              📍 {locationStr}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ textAlign: 'right' }}>
+                            <Typography sx={{ fontWeight: 700, color: '#111827', fontSize: '12px' }}>
+                              {formatCurrencyWithCents(txn.amount)}
+                            </Typography>
+                            {txn.original_currency && txn.original_currency !== 'USD' && (
+                              <Typography sx={{ color: '#64748b', fontSize: '9px', fontStyle: 'italic' }}>
+                                {txn.original_amount} {txn.original_currency}
+                              </Typography>
+                            )}
+                          </Box>
+                        </Box>
+                        
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
+                          <Typography sx={{ color: '#64748b', fontSize: '10px' }}>
+                            {formatDateTime(txn.timestamp)} • {toTitleCase(txn.category)}
+                          </Typography>
+                          <Typography sx={{ color: '#64748b', fontSize: '9px', fontWeight: 600 }}>
+                            Card ****{txn.card_last4}
+                          </Typography>
+                        </Box>
+                        
+                        {hasFee && (
+                          <Box sx={{ 
+                            mt: 1, 
+                            pt: 1, 
+                            borderTop: '1px solid rgba(239, 68, 68, 0.2)',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}>
+                            <Typography sx={{ color: '#dc2626', fontSize: '10px', fontWeight: 700 }}>
+                              ⚠️ {txn.fee_reason || 'Foreign Transaction Fee'}
+                            </Typography>
+                            <Typography sx={{ color: '#dc2626', fontSize: '11px', fontWeight: 700 }}>
+                              +{formatCurrencyWithCents(txn.foreign_transaction_fee)}
+                            </Typography>
+                          </Box>
+                        )}
+                        
+                        {txn.notes && (
+                          <Typography sx={{ color: '#64748b', fontSize: '9px', mt: 0.5, fontStyle: 'italic' }}>
+                            Note: {txn.notes}
+                          </Typography>
+                        )}
                       </Box>
-                      <Typography sx={{ color: '#64748b', fontSize: '11px' }}>
-                        {formatDateTime(txn.timestamp)} • {toTitleCase(txn.category)}
-                      </Typography>
-                      <Typography sx={{ color: '#0ea5e9', fontSize: '10px', fontWeight: 700, mt: 0.5 }}>
-                        Risk Score: {txn.risk_score}
-                      </Typography>
-                    </Box>
-                  ))}
+                    );
+                  })}
                 </Box>
               ) : (
                 <Typography sx={{ fontSize: '11px', color: '#94a3b8' }}>
@@ -491,34 +731,65 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
                 </Typography>
               )}
             </SectionCard>
+            
+            {transactions.length > 0 && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="📊">Transaction Summary</SectionTitle>
+                <ProfileDetailRow 
+                  label="Total Transactions" 
+                  value={transactions.length.toString()} 
+                />
+                <ProfileDetailRow 
+                  label="International" 
+                  value={transactions.filter(t => t.location?.is_international).length.toString()} 
+                />
+                <ProfileDetailRow 
+                  label="Total Fees" 
+                  value={formatCurrencyWithCents(
+                    transactions.reduce((sum, t) => sum + (t.foreign_transaction_fee || 0), 0)
+                  )} 
+                />
+                <ProfileDetailRow 
+                  label="Total Spent" 
+                  value={formatCurrencyWithCents(
+                    transactions.reduce((sum, t) => sum + t.amount, 0)
+                  )} 
+                />
+              </SectionCard>
+            )}
           </>
         ),
       },
     ],
     [
-      accountStatus,
       activeAlerts,
+      bankProfile,
+      coreIdentity,
+      companyCodeLast4,
       compliance,
       conversationContext,
       createdAt,
       data,
+      employment,
       entryId,
       expiresAt,
-      fraudContext,
+      financialGoals,
+      institutionName,
       interactionPlan,
       knownPreferences,
+      lifeEvents,
       loginAttempts,
-      memoryScore,
       mfaSettings,
+      payrollSetup,
+      preferences,
       profileId,
       recordExpiresAt,
-      relationshipContext,
+      retirementProfile,
       sessionDisplayId,
-      spendingPatterns,
+      ssnLast4,
       suggestedTalkingPoints,
       topLevelLastLogin,
       transactions,
-      typicalBehavior,
       ttlValue,
       updatedAt,
       verificationCodes,

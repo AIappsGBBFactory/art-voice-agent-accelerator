@@ -24,11 +24,11 @@ session:
   tool_choice: auto
 
 tools:
-  - send_email
-  - search_cosmos
-  # used to send cardholder agreement
+  - escalate_human
+  - escalate_emergency
+  # Future tools to implement:
+  # - send_email (for cardholder agreements)
+  # - search_cosmos (for card recommendations)
   # - get_spending_profile
   # - get_travel_history
   # - retrieve_card_offers
-  # - escalate_human
-  # - escalate_emergency
