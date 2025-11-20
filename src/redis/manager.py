@@ -374,6 +374,25 @@ class AzureRedisManager:
 
         return self._execute_with_retry("GET", _get_operation)
 
+    def publish_channel(self, channel: str, message: str) -> int:
+        """Publish a message to a Redis channel."""
+
+        def _publish_operation():
+            with self._redis_span("Redis.PUBLISH"):
+                return self.redis_client.publish(channel, str(message))
+
+        return self._execute_with_retry("PUBLISH", _publish_operation)
+
+    async def publish_channel_async(self, channel: str, message: str) -> int:
+        """Async helper for publishing to a Redis channel."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self.publish_channel,
+            channel,
+            message,
+        )
+
     def store_session_data(self, session_id: str, data: Dict[str, Any]) -> bool:
         """Store session data using a Redis hash."""
         def _hset_operation():

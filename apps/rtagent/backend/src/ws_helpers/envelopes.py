@@ -15,6 +15,11 @@ EnvelopeType = Literal[
 TopicType = Literal["dashboard", "session", "call", "user", "system", "media"]
 SenderType = Literal["Assistant", "User", "System", "ACS", "STT", "TTS"]
 
+def _utc_now_iso() -> str:
+    """Return the current UTC timestamp in ISO-8601 format."""
+
+    return datetime.now(timezone.utc).isoformat()
+
 
 def make_envelope(
     *,
@@ -34,7 +39,7 @@ def make_envelope(
         "call_id": call_id,
         "user_id": user_id,
         "sender": sender,
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": _utc_now_iso(),
         "payload": payload,
         "speaker_id": sender
     }
@@ -54,6 +59,8 @@ def make_status_envelope(
     payload = {"message": message}
     if label:
         payload["label"] = label
+
+    payload.setdefault("timestamp", _utc_now_iso())
 
     return make_envelope(
         etype="status",
@@ -96,11 +103,13 @@ def make_event_envelope(
     call_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    payload_data = dict(event_data or {})
+    payload_data.setdefault("timestamp", _utc_now_iso())
     """Create system event envelope."""
     return make_envelope(
         etype="event",
         sender=sender,
-        payload={"event_type": event_type, "data": event_data},
+        payload={"event_type": event_type, "data": payload_data},
         topic=topic,
         session_id=session_id,
         call_id=call_id,

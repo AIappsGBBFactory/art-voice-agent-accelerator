@@ -43,6 +43,7 @@ class DummyConnManager:
         self.broadcasts: list[tuple[str, object]] = []
         self._stats: dict[str, object] = {"connections": 0, "by_topic": {}}
         self._conns: dict[str, SimpleNamespace] = {}
+        self.distributed_enabled = False
 
     def set_stats(self, stats: dict[str, object]) -> None:
         self._stats = stats
@@ -75,6 +76,9 @@ class DummyConnManager:
 
     async def broadcast_session(self, session_id: str, payload: object) -> None:
         self.broadcasts.append((session_id, payload))
+
+    async def publish_session_envelope(self, session_id: str, payload: object, *, event_label: str = "unspecified") -> bool:
+        return False
 
 
 class DummyMetrics:

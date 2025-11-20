@@ -55,7 +55,7 @@ from apps.rtagent.backend.api.v1.schemas.media import (
 )
 
 # Import from config system
-from config import ACS_STREAMING_MODE
+from config import ACS_STREAMING_MODE, GREETING
 from config.app_settings import ENABLE_AUTH_VALIDATION
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.enums.stream_modes import StreamMode
@@ -71,6 +71,9 @@ from ..handlers.acs_media_lifecycle import ACSMediaHandler
 from ..handlers.voice_live_sdk_handler import VoiceLiveSDKHandler
 
 from ..dependencies.orchestrator import get_orchestrator
+from apps.rtagent.backend.src.orchestration.artagent.greetings import (
+	create_personalized_greeting,
+)
 
 logger = get_logger("api.v1.endpoints.media")
 tracer = trace.get_tracer(__name__)
@@ -79,27 +82,93 @@ router = APIRouter()
 
 
 async def _resolve_call_stream_mode(redis_mgr, call_connection_id: Optional[str]) -> StreamMode:
-    """Resolve the effective streaming mode for a call, respecting overrides."""
+	"""Resolve the effective streaming mode for a call, respecting overrides."""
 
-    if not call_connection_id or redis_mgr is None:
-        return ACS_STREAMING_MODE
+	if not call_connection_id or redis_mgr is None:
+		return ACS_STREAMING_MODE
 
-    try:
-        stored_value = await redis_mgr.get_value_async(
-            f"call_stream_mode:{call_connection_id}"
-        )
-        if stored_value:
-            if isinstance(stored_value, bytes):
-                stored_value = stored_value.decode("utf-8")
-            return StreamMode.from_string(str(stored_value))
-    except Exception as exc:
-        logger.warning(
-            "Unable to resolve stream mode override for %s: %s",
-            call_connection_id,
-            exc,
-        )
+	try:
+		stored_value = await redis_mgr.get_value_async(
+			f"call_stream_mode:{call_connection_id}"
+		)
+		if stored_value:
+			if isinstance(stored_value, bytes):
+				stored_value = stored_value.decode("utf-8")
+			return StreamMode.from_string(str(stored_value))
+	except Exception as exc:
+		logger.warning(
+			"Unable to resolve stream mode override for %s: %s",
+			call_connection_id,
+			exc,
+		)
 
-    return ACS_STREAMING_MODE
+	return ACS_STREAMING_MODE
+
+
+def _derive_contextual_greeting(memory_manager: Optional[MemoManager]) -> str:
+	"""
+	Build the initial greeting for ACS playback using stored conversation context.
+
+	If customer intelligence exists we generate a hyper-personalized greeting;
+	otherwise we synthesize a lightweight acknowledgement using any persisted
+	caller/topic metadata. Falls back to GREETING if no context is available.
+	"""
+	greeting_text = GREETING
+	if not memory_manager:
+		return greeting_text
+
+	try:
+		caller_name = (memory_manager.get_value_from_corememory("caller_name", "") or "").strip()
+		active_agent = (memory_manager.get_value_from_corememory("active_agent", "") or "").strip() or "Support"
+		institution_name = (memory_manager.get_value_from_corememory("institution_name", "") or "").strip()
+		topic = (memory_manager.get_value_from_corememory("topic", "") or "").strip()
+		handoff_context = memory_manager.get_value_from_corememory("handoff_context", {}) or {}
+		if isinstance(handoff_context, dict):
+			topic = topic or (handoff_context.get("issue_summary") or handoff_context.get("details") or "")
+			if not institution_name:
+				institution_name = (handoff_context.get("institution_name") or "").strip()
+
+		customer_intelligence = memory_manager.get_value_from_corememory(
+			"customer_intelligence", None
+		)
+
+		if customer_intelligence:
+			greeting_text = create_personalized_greeting(
+				caller_name=caller_name or None,
+				agent_name=active_agent,
+				customer_intelligence=customer_intelligence,
+				institution_name=institution_name or "our team",
+				topic=topic or "your account",
+			)
+		else:
+			name_or_fallback = caller_name.split()[0] if caller_name else "there"
+			topic_clause = (
+				f"I understand you're calling about {topic}. "
+				if topic
+				else ""
+			)
+			institution_clause = (
+				f" with {institution_name}" if institution_name else ""
+			)
+			greeting_text = (
+				f"Hi {name_or_fallback}, you're speaking with our {active_agent} specialist{institution_clause}. "
+				f"{topic_clause}How can I help you today?"
+			)
+
+		if greeting_text:
+			try:
+				memory_manager.update_corememory("current_greeting", greeting_text)
+			except Exception:
+				logger.debug("Unable to persist contextual greeting to memory", exc_info=True)
+		else:
+			greeting_text = GREETING
+	except Exception:
+		logger.debug("Falling back to default ACS greeting text", exc_info=True)
+		greeting_text = GREETING
+
+	return greeting_text or GREETING
+
+
 
 
 @router.get("/status", response_model=dict, summary="Get Media Streaming Status")
@@ -197,6 +266,67 @@ async def get_media_session(session_id: str) -> dict:
     }
 
 
+async def _resolve_browser_session_id_with_retry(
+    app_state,
+    call_connection_id: Optional[str],
+    *,
+    attempts: int = 3,
+    delay_seconds: float = 0.2,
+) -> Optional[str]:
+    """Best-effort lookup of the browser session id with limited retries."""
+    if not app_state or not call_connection_id:
+        return None
+
+    redis_keys = (
+        f"call_session_map:{call_connection_id}",
+        f"call_session_mapping:{call_connection_id}",
+    )
+    redis_mgr = getattr(app_state, "redis", None)
+    conn_manager = getattr(app_state, "conn_manager", None)
+
+    for attempt in range(1, max(attempts, 1) + 1):
+        for redis_key in redis_keys:
+
+            if redis_mgr and hasattr(redis_mgr, "get_value_async"):
+                try:
+                    value = await redis_mgr.get_value_async(redis_key)
+                    if value:
+                        return value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else str(value)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "Retryable redis_manager lookup failure",
+                        exc_info=False,
+                        extra={
+                            "key": redis_key,
+                            "attempt": attempt,
+                            "error": str(exc),
+                        },
+                    )
+
+        if conn_manager and hasattr(conn_manager, "get_call_context"):
+            try:
+                context = await conn_manager.get_call_context(call_connection_id)
+                if context:
+                    session_value = context.get("browser_session_id") or context.get("session_id")
+                    if session_value:
+                        return session_value
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "Retryable conn_manager lookup failure",
+                    exc_info=False,
+                    extra={
+                        "call_connection_id": call_connection_id,
+                        "attempt": attempt,
+                        "error": str(exc),
+                    },
+                )
+
+        if attempt < attempts:
+            await asyncio.sleep(delay_seconds)
+
+    return None
+
+
 @router.websocket("/stream")
 async def acs_media_stream(websocket: WebSocket) -> None:
     """
@@ -247,22 +377,34 @@ async def acs_media_stream(websocket: WebSocket) -> None:
 
         # If no browser session ID provided via params/headers, check Redis mapping
         if not browser_session_id and call_connection_id:
-            try:
-                stored_session_id = await websocket.app.state.redis.get_value_async(
-                    f"call_session_map:{call_connection_id}"
+            browser_session_id = await _resolve_browser_session_id_with_retry(
+                websocket.app.state,
+                call_connection_id,
+            )
+            if browser_session_id:
+                logger.info(
+                    "🔍 Retrieved stored browser session ID after lookup",
+                    extra={
+                        "call_connection_id": call_connection_id,
+                        "session_id": browser_session_id,
+                    },
                 )
-                if stored_session_id:
-                    browser_session_id = stored_session_id
-                    logger.info(
-                        f"🔍 Retrieved stored browser session ID: {browser_session_id}"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to retrieve session mapping: {e}")
+            else:
+                logger.debug(
+                    "No browser session mapping found for call",
+                    extra={"call_connection_id": call_connection_id},
+                )
 
         if browser_session_id:
             # Use the browser's session ID for UI/ACS coordination
             session_id = browser_session_id
-            logger.info(f"🔗 Using browser session ID for ACS call: {session_id}")
+            logger.info(
+                "🔗 Using browser session ID for ACS call",
+                extra={
+                    "call_connection_id": call_connection_id,
+                    "session_id": session_id,
+                },
+            )
         else:
             # Fallback to media-specific session (for direct ACS calls)
             session_id = (
@@ -270,7 +412,13 @@ async def acs_media_stream(websocket: WebSocket) -> None:
                 if call_connection_id
                 else f"media_{str(uuid.uuid4())[:8]}"
             )
-            logger.info(f"📞 Created ACS-only session ID: {session_id}")
+            logger.info(
+                "📞 Created ACS-only session ID",
+                extra={
+                    "call_connection_id": call_connection_id,
+                    "session_id": session_id,
+                },
+            )
 
         stream_mode = await _resolve_call_stream_mode(redis_mgr, call_connection_id)
         websocket.state.stream_mode = stream_mode
@@ -547,6 +695,7 @@ async def _create_media_handler(
             recognizer=per_conn_recognizer,
             memory_manager=memory_manager,
             session_id=session_id,
+            greeting_text=_derive_contextual_greeting(memory_manager),
             stream_mode=stream_mode,
         )
 
