@@ -1,5 +1,6 @@
 # agents.py
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -138,7 +139,7 @@ def _vad(cfg: Dict[str, Any] | None) -> TurnDetection | None:
         if create_response is not None:
             common_kwargs["create_response"] = bool(create_response)
 
-        return ServerVad(**common_kwargs)
+        return AzureSemanticVad(**common_kwargs)
 
     raise ValueError(
         "Unsupported turn_detection.type '{0}'. Expected 'semantic' or 'server'.".format(vad_type)
@@ -174,6 +175,12 @@ class AzureVoiceLiveAgent:
         self.modalities = _mods(sess.get("modalities"))
         self.input_audio_format = _in_fmt(sess.get("input_audio_format"))
         self.output_audio_format = _out_fmt(sess.get("output_audio_format"))
+
+        transcription_cfg = sess.get("input_audio_transcription_settings") or {}
+        if not isinstance(transcription_cfg, dict):
+            raise ValueError("'session.input_audio_transcription_settings' must be an object when provided")
+        self.input_transcription_cfg: Dict[str, Any] = transcription_cfg
+
         
         # Per-agent VAD configuration (updated on each agent switch)
         self.turn_detection = _vad(sess.get("turn_detection"))
@@ -231,20 +238,49 @@ class AzureVoiceLiveAgent:
             logger.debug("[%s] Unable to load phrase bias snapshot", self.name, exc_info=True)
 
         phrase_options = None
-        if phrase_snapshot:
-            phrase_options = AudioInputTranscriptionOptions(phrase_list=phrase_snapshot)
-            logger.info(
-                "[%s] Applying %s phrase bias entries to transcription",
-                self.name,
-                len(phrase_snapshot),
-            )
+        transcription_kwargs: Dict[str, Any] = {
+            "model": self.input_transcription_cfg.get("model") or "azure-speech",
+        }
 
+        language_override = self.input_transcription_cfg.get("language") or "en-US,en-ES,ko-KR"
+        if language_override:
+            transcription_kwargs["language"] = language_override
+
+        custom_speech = self.input_transcription_cfg.get("custom_speech")
+        if custom_speech:
+            transcription_kwargs["custom_speech"] = custom_speech
+
+        # Only azure-speech and azure-fast-transcription support phrase lists currently
+        if transcription_kwargs.get("model", "").startswith("azure-"):
+            configured_phrases = self.input_transcription_cfg.get("phrase_list") or []
+            if configured_phrases and not isinstance(configured_phrases, list):
+                raise ValueError("'session.input_audio_transcription_settings.phrase_list' must be a list when provided")
+
+            combined_phrases: List[str] = []
+            if configured_phrases:
+                combined_phrases.extend(configured_phrases)
+            if phrase_snapshot:
+                logger.info(
+                    "[%s] Applying %s phrase bias entries to transcription",
+                    self.name,
+                    len(phrase_snapshot),
+                )
+                combined_phrases.extend(phrase_snapshot)
+
+            if combined_phrases:
+                deduped_phrases = list(dict.fromkeys(filter(None, combined_phrases)))
+                if deduped_phrases:
+                    transcription_kwargs["phrase_list"] = deduped_phrases
+
+        input_audio_transcription_settings = AudioInputTranscriptionOptions(**transcription_kwargs)
+        
         kwargs: Dict[str, Any] = dict(
             modalities=self.modalities,
             instructions=instructions,
             input_audio_format=self.input_audio_format,
             output_audio_format=self.output_audio_format,
             turn_detection=self.turn_detection,  # Per-agent VAD settings
+            input_audio_transcription=input_audio_transcription_settings
         )
 
         if phrase_options:
