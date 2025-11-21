@@ -27,7 +27,7 @@ import time
 import os
 
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Union, Set, Dict, Any
+from typing import Awaitable, Optional, Callable, Union, Set, Dict, Any
 from enum import Enum
 
 from fastapi import WebSocket
@@ -523,6 +523,16 @@ class SpeechSDKThread:
                 f"[{self.call_connection_id}] Error during speech SDK thread stop: {e}"
             )
 
+def _background_task(coro: Awaitable[Any], *, label: str) -> None:
+	task = asyncio.create_task(coro)
+
+	def _log_outcome(t: asyncio.Task) -> None:
+		try:
+			t.result()
+		except Exception:
+			logger.debug("Background task '%s' failed", label, exc_info=True)
+
+	task.add_done_callback(_log_outcome)
 
 class RouteTurnThread:
     """

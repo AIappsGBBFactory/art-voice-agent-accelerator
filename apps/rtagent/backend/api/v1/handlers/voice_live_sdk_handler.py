@@ -704,7 +704,10 @@ class VoiceLiveSDKHandler:
 		if etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
 			transcript = getattr(event, "transcript", "")
 			if transcript and transcript != self._last_user_transcript:
-				await self._messenger.send_user_message(transcript)
+				_background_task(
+					self._messenger.send_user_message(transcript),
+					label="voicelive_user_transcript",
+				)
 				logger.info(
 					"[VoiceLiveSDK] User transcript | session=%s text='%s'",
 					self.session_id,

@@ -134,6 +134,11 @@ variable "redis_port" {
   default     = 10000
 }
 
+variable "enable_voice_live" {
+  description = "Enable Azure Voice Live service for real-time speech capabilities"
+  type        = bool
+  default     = true
+}
 variable "model_deployments" {
   description = "Azure OpenAI model deployments optimized for high performance"
   type = list(object({
@@ -150,26 +155,14 @@ variable "model_deployments" {
       capacity = 150
     },
     {
-      name     = "gpt-4o-mini"
-      version  = "2024-07-18"
-      sku_name = "DataZoneStandard"
-      capacity = 150
+      name     = "text-embedding-3-large"
+      version  = "1"
+      sku_name = "GlobalStandard"
+      capacity = 500
     },
-    {
-      name     = "gpt-4.1-mini"
-      version  = "2025-04-14"
-      sku_name = "DataZoneStandard"
-      capacity = 150
-    },
-    {
-      name     = "gpt-4.1"
-      version  = "2025-04-14"
-      sku_name = "DataZoneStandard"
-      capacity = 150
-    }
   ]
 }
-
+  
 variable "mongo_database_name" {
   description = "Name of the MongoDB database"
   type        = string

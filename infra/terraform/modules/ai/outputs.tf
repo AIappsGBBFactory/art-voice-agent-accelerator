@@ -13,6 +13,11 @@ output "endpoint" {
   value       = try(azapi_resource.ai_foundry_account.output.properties.endpoint, null)
 }
 
+output "project_endpoint" {
+  description = "Endpoint for the AI Foundry project."
+  value       = try(azapi_resource.ai_foundry_project.output.properties.endpoint, null)
+}
+
 output "openai_endpoint" {
   description = "Endpoint for the AI Foundry account. Use this endpoint for OpenAI services."
   value       = try(azapi_resource.ai_foundry_account.output.properties.endpoints["OpenAI Language Model Instance API"], null)
