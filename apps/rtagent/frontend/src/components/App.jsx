@@ -3225,11 +3225,22 @@ const ChatBubble = ({ message }) => {
     );
   }
 
-  const { speaker, text, isTool, streaming } = message;
+  const {
+    speaker,
+    text = "",
+    isTool,
+    streaming,
+    cancelled,
+    cancelReason,
+  } = message;
   const isUser = speaker === "User";
   const isSpecialist = speaker?.includes("Specialist");
   const isAuthAgent = speaker === "Auth Agent";
   const isSystem = speaker === "System" && !isTool;
+  const effectiveText = typeof text === "string" ? text : "";
+  const cancellationLabel = cancelReason
+    ? cancelReason.replace(/[_-]+/g, " ")
+    : "Assistant interrupted";
   
   if (isTool) {
     const safeText = text ?? "";
@@ -4904,6 +4915,45 @@ function RealTimeVoiceApp() {
       return [...arr, normalizedMsg];
     };
 
+    const updateTurnMessage = (turnId, updater, options = {}) => {
+      const { createIfMissing = true, initial } = options;
+
+      setMessages((prev) => {
+        if (!turnId) {
+          if (!createIfMissing) {
+            return prev;
+          }
+          const base = typeof initial === "function" ? initial() : initial;
+          if (!base) {
+            return prev;
+          }
+          return [...prev, base];
+        }
+
+        const index = prev.findIndex((m) => m.turnId === turnId);
+        if (index === -1) {
+          if (!createIfMissing) {
+            return prev;
+          }
+          const base = typeof initial === "function" ? initial() : initial;
+          if (!base) {
+            return prev;
+          }
+          return [...prev, { ...base, turnId }];
+        }
+
+        const current = prev[index];
+        const patch = typeof updater === "function" ? updater(current) : null;
+        if (patch == null) {
+          return prev;
+        }
+
+        const next = [...prev];
+        next[index] = { ...current, ...patch, turnId };
+        return next;
+      });
+    };
+
     const handleSocketMessage = async (event) => {
       // Log all incoming messages for debugging
       if (typeof event.data === "string") {
@@ -4977,37 +5027,43 @@ function RealTimeVoiceApp() {
           !actualPayload.event_type &&
           !actualPayload.eventType
         ) {
-          // Status/chat message in envelope
+          const merged = { ...actualPayload };
+          merged.message = merged.message ?? actualPayload.message;
+          merged.content = merged.content ?? actualPayload.message;
+          merged.streaming = merged.streaming ?? false;
           flattenedPayload = {
-            type: "assistant",
+            ...merged,
+            type: merged.type || "assistant",
             sender: envelopeSender,
             speaker: envelopeSender,
-            message: actualPayload.message,
-            content: actualPayload.message,
           };
-        } else if (envelopeType === "assistant_streaming" && actualPayload.content) {
-          // Streaming response in envelope
+        } else if (envelopeType === "assistant_streaming") {
+          const merged = { ...actualPayload };
+          merged.content = merged.content ?? merged.message ?? "";
+          merged.streaming = true;
           flattenedPayload = {
+            ...merged,
             type: "assistant_streaming",
             sender: envelopeSender,
             speaker: envelopeSender,
-            content: actualPayload.content,
           };
         } else if (envelopeType === "status" && actualPayload.message) {
-          // Status message in envelope
+          const merged = { ...actualPayload };
+          merged.message = merged.message ?? actualPayload.message;
+          merged.content = merged.content ?? actualPayload.message;
+          merged.statusLabel =
+            merged.statusLabel ?? merged.label ?? merged.status_label;
           flattenedPayload = {
+            ...merged,
             type: "status",
             sender: envelopeSender,
             speaker: envelopeSender,
-            message: actualPayload.message,
-            content: actualPayload.message,
-            statusLabel: actualPayload.label || actualPayload.status_label,
           };
         } else {
           // For other envelope types, use the payload directly and retain the type
           flattenedPayload = {
             ...actualPayload,
-            type: envelopeType,
+            type: actualPayload.type || envelopeType,
             sender: envelopeSender,
             speaker: envelopeSender,
           };
@@ -5201,10 +5257,21 @@ function RealTimeVoiceApp() {
         }
 
         if (partialText) {
+          const turnId =
+            partialData.turn_id ||
+            partialData.turnId ||
+            partialData.response_id ||
+            partialData.responseId ||
+            null;
           let registeredTurn = false;
+
           setMessages((prev) => {
             const last = prev.at(-1);
-            if (last?.speaker === "User" && last?.streaming) {
+            if (
+              last?.speaker === "User" &&
+              last?.streaming &&
+              (!turnId || last.turnId === turnId)
+            ) {
               if (last.text === partialText) {
                 return prev;
               }
@@ -5215,9 +5282,11 @@ function RealTimeVoiceApp() {
                 streamingType: "stt_partial",
                 sequence: partialData.sequence,
                 language: partialData.language || last.language,
+                turnId: turnId ?? last.turnId,
               };
               return updated;
             }
+
             registeredTurn = true;
             return [
               ...prev,
@@ -5228,6 +5297,7 @@ function RealTimeVoiceApp() {
                 streamingType: "stt_partial",
                 sequence: partialData.sequence,
                 language: partialData.language,
+                turnId: turnId ?? undefined,
               },
             ];
           });
@@ -5429,16 +5499,78 @@ function RealTimeVoiceApp() {
 
       if (msgType === "user" || speaker === "User") {
         setActiveSpeaker("User");
-        setMessages((prev) => {
-          const last = prev.at(-1);
-          if (last?.speaker === "User" && last?.streaming) {
-            return prev.map((m, i) =>
-              i === prev.length - 1 ? { ...m, text: txt, streaming: false } : m,
-            );
-          }
-          return [...prev, { speaker: "User", text: txt }];
-        });
+        const turnId =
+          payload.turn_id ||
+          payload.turnId ||
+          payload.response_id ||
+          payload.responseId ||
+          null;
+        const isStreamingUser = payload.streaming === true;
+
+        if (turnId) {
+          updateTurnMessage(
+            turnId,
+            (current = {}) => ({
+              speaker: "User",
+              text: txt ?? current.text ?? "",
+              streaming: isStreamingUser,
+              streamingType: isStreamingUser ? "stt_final" : undefined,
+              cancelled: false,
+            }),
+            {
+              initial: () => ({
+                speaker: "User",
+                text: txt,
+                streaming: isStreamingUser,
+                streamingType: isStreamingUser ? "stt_final" : undefined,
+                turnId,
+              }),
+            },
+          );
+        } else {
+          setMessages((prev) => {
+            const last = prev.at(-1);
+            if (last?.speaker === "User" && last?.streaming) {
+              return prev.map((m, i) =>
+                i === prev.length - 1
+                  ? { ...m, text: txt, streaming: isStreamingUser }
+                  : m,
+              );
+            }
+            return [...prev, { speaker: "User", text: txt, streaming: isStreamingUser }];
+          });
+        }
         appendLog(`User: ${txt}`);
+        return;
+      }
+
+      if (type === "assistant_cancelled") {
+        const turnId =
+          payload.turn_id ||
+          payload.turnId ||
+          payload.response_id ||
+          payload.responseId ||
+          null;
+        if (turnId) {
+          updateTurnMessage(
+            turnId,
+            (current) =>
+              current
+                ? {
+                    streaming: false,
+                    cancelled: true,
+                    cancelReason:
+                      payload.cancel_reason ||
+                      payload.cancelReason ||
+                      payload.reason ||
+                      current.cancelReason,
+                  }
+                : null,
+            { createIfMissing: false },
+          );
+        }
+        setActiveSpeaker(null);
+        appendLog("🤖 Assistant response interrupted");
         return;
       }
 
@@ -5447,32 +5579,72 @@ function RealTimeVoiceApp() {
         const streamGeneration = assistantStreamGenerationRef.current;
         registerAssistantStreaming(streamingSpeaker);
         setActiveSpeaker(streamingSpeaker);
-        setMessages(prev => {
-          const latest = prev.at(-1);
-          if (
-            latest?.streaming &&
-            latest?.speaker === streamingSpeaker &&
-            latest?.streamGeneration === streamGeneration
-          ) {
-            return prev.map((m, i) =>
-              i === prev.length - 1
-                ? {
-                    ...m,
-                    text: m.text + txt,
-                  }
-                : m,
-            );
-          }
-          return [
-            ...prev,
-            {
-              speaker: streamingSpeaker,
-              text: txt,
-              streaming: true,
-              streamGeneration,
+        const turnId =
+          payload.turn_id ||
+          payload.turnId ||
+          payload.response_id ||
+          payload.responseId ||
+          null;
+
+        if (turnId) {
+          updateTurnMessage(
+            turnId,
+            (current) => {
+              const previousText =
+                current?.streamGeneration === streamGeneration
+                  ? current?.text ?? ""
+                  : "";
+              return {
+                speaker: streamingSpeaker,
+                text: `${previousText}${txt}`,
+                streaming: true,
+                streamGeneration,
+                cancelled: false,
+                cancelReason: undefined,
+              };
             },
-          ];
-        });
+            {
+              initial: () => ({
+                speaker: streamingSpeaker,
+                text: txt,
+                streaming: true,
+                streamGeneration,
+                turnId,
+                cancelled: false,
+              }),
+            },
+          );
+        } else {
+          setMessages((prev) => {
+            const latest = prev.at(-1);
+            if (
+              latest?.streaming &&
+              latest?.speaker === streamingSpeaker &&
+              latest?.streamGeneration === streamGeneration
+            ) {
+              return prev.map((m, i) =>
+                i === prev.length - 1
+                  ? {
+                      ...m,
+                      text: m.text + txt,
+                      cancelled: false,
+                      cancelReason: undefined,
+                    }
+                  : m,
+              );
+            }
+            return [
+              ...prev,
+              {
+                speaker: streamingSpeaker,
+                text: txt,
+                streaming: true,
+                streamGeneration,
+                cancelled: false,
+              },
+            ];
+          });
+        }
         const pending = metricsRef.current?.pendingBargeIn;
         if (pending) {
           finalizeBargeInClear(pending);
@@ -5509,25 +5681,57 @@ function RealTimeVoiceApp() {
         if (payload.ts || payload.timestamp) {
           messageOptions.timestamp = payload.ts || payload.timestamp;
         }
-        setMessages(prev => {
-          for (let idx = prev.length - 1; idx >= 0; idx -= 1) {
-            const candidate = prev[idx];
-            if (candidate?.streaming) {
-              return prev.map((m, i) =>
-                i === idx
-                  ? {
-                      ...m,
-                      ...messageOptions,
-                      streaming: false,
-                    }
-                  : m,
-              );
+        const turnId =
+          payload.turn_id ||
+          payload.turnId ||
+          payload.response_id ||
+          payload.responseId ||
+          null;
+
+        if (turnId) {
+          updateTurnMessage(
+            turnId,
+            (current) => ({
+              ...messageOptions,
+              text: txt ?? current?.text ?? "",
+              streaming: false,
+              cancelled: false,
+              cancelReason: undefined,
+            }),
+            {
+              initial: () => ({
+                ...messageOptions,
+                streaming: false,
+                cancelled: false,
+                turnId,
+              }),
+            },
+          );
+        } else {
+          setMessages((prev) => {
+            for (let idx = prev.length - 1; idx >= 0; idx -= 1) {
+              const candidate = prev[idx];
+              if (candidate?.streaming) {
+                return prev.map((m, i) =>
+                  i === idx
+                    ? {
+                        ...m,
+                        ...messageOptions,
+                        streaming: false,
+                        cancelled: false,
+                        cancelReason: undefined,
+                      }
+                    : m,
+                );
+              }
             }
-          }
-          return pushIfChanged(prev, {
-            ...messageOptions,
+            return pushIfChanged(prev, {
+              ...messageOptions,
+              cancelled: false,
+              cancelReason: undefined,
+            });
           });
-        });
+        }
 
         appendLog("🤖 Assistant responded");
         return;
