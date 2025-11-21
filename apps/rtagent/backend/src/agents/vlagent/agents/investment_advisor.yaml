@@ -1,10 +1,10 @@
 agent:
-  name: CardRecommendation
+  name: InvestmentAdvisor
   greeting: ""
-  return_greeting: "What else would you like to know about cards?"
+  return_greeting: "What else about your retirement or investments?"
 
 prompts:
-  path: voice_agent_card_recommendation.jinja
+  path: investment_advisor.jinja
 
 session:
   modalities: [TEXT, AUDIO]
@@ -28,9 +28,9 @@ session:
   tool_choice: auto
 
 tools:
-  - send_mfa_code
-  - verify_mfa_code
-  - search_card_products
-  - get_card_details
+  - get_retirement_accounts
+  - search_rollover_guidance
+  - handoff_merrill_advisor
+  - handoff_erica_concierge
   - escalate_human
   - escalate_emergency
