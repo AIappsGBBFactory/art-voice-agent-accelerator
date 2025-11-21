@@ -38,16 +38,23 @@ class EmailService:
         self.sender_address = os.getenv("AZURE_EMAIL_SENDER_ADDRESS")
         self.client: Optional[EmailClient] = None
 
+        logger.info("📧 Initializing EmailService...")
+        logger.info(f"📧 Connection string configured: {bool(self.connection_string)}")
+        logger.info(f"📧 Sender address: {self.sender_address or 'NOT SET'}")
+
         # Fall back to credential-based auth if no connection string
         if not self.connection_string:
+            logger.info("📧 No connection string, trying credential-based auth...")
             try:
                 self.credential = get_credential()
                 # Need endpoint for credential-based auth
                 self.endpoint = os.getenv("ACS_ENDPOINT")
                 if self.endpoint and self.credential:
                     self.client = EmailClient(self.endpoint, self.credential)
+                    logger.info(f"📧 EmailClient created with credential auth: {self.endpoint}")
                 else:
                     self.client = None
+                    logger.warning("📧 Credential auth failed: missing endpoint or credential")
             except ImportError:
                 logger.warning("utils.azure_auth not available for credential-based authentication")
                 self.credential = None
@@ -57,6 +64,9 @@ class EmailService:
             self.credential = None
             self.endpoint = None
             self.client = EmailClient.from_connection_string(self.connection_string)
+            logger.info("📧 EmailClient created with connection string")
+        
+        logger.info(f"📧 EmailService initialized: is_configured={self.is_configured()}")
         
     def is_configured(self) -> bool:
         """Check if email service is properly configured."""
@@ -86,11 +96,18 @@ class EmailService:
             Dict containing success status, message ID, and error details if any
         """
         try:
+            logger.info(f"📧 send_email called | to={email_address} subject={subject}")
+            
             if not self.is_configured():
+                error_msg = "Azure Email service not configured or not available"
+                logger.error(f"❌ {error_msg}")
+                logger.error(f"❌ AZURE_EMAIL_AVAILABLE={AZURE_EMAIL_AVAILABLE}, client={self.client is not None}, sender={bool(self.sender_address)}")
                 return {
                     "success": False,
-                    "error": "Azure Email service not configured or not available"
+                    "error": error_msg
                 }
+            
+            logger.info(f"📧 Email service configured, preparing message from {self.sender_address}")
             
             # Prepare email message
             message_content = {
@@ -101,6 +118,7 @@ class EmailService:
             # Add HTML if provided
             if html_body:
                 message_content["html"] = html_body
+                logger.info("📧 HTML body included in email")
             
             message = {
                 "senderAddress": self.sender_address,
@@ -110,14 +128,17 @@ class EmailService:
                 "content": message_content
             }
             
+            logger.info(f"📧 Calling client.begin_send()...")
             # Send email
             poller = self.client.begin_send(message)
+            logger.info(f"📧 Waiting for send result...")
             result = poller.result()
+            logger.info(f"📧 Send completed, result type: {type(result)}")
             
             # Extract message ID
             message_id = getattr(result, 'id', None) or getattr(result, 'message_id', 'unknown')
             
-            logger.info("📧 Email sent successfully to %s, message ID: %s", email_address, message_id)
+            logger.info("📧 ✅ Email sent successfully to %s, message ID: %s", email_address, message_id)
             return {
                 "success": True,
                 "message_id": message_id,

@@ -35,6 +35,7 @@ tools:
   - get_user_profile
   - get_account_summary
   - get_recent_transactions
+  - refund_fee
   - handoff_card_recommendation
   - handoff_investment_advisor
   - escalate_human

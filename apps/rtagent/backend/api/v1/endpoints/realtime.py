@@ -1187,9 +1187,14 @@ async def _process_voice_live_messages(
                     
                     try:
                         payload = json.loads(text_payload)
-                        kind = payload.get("kind") or payload.get("type")
-                        if kind == "StopAudio":
-                            await handler.commit_audio_buffer()
+                        # Only process dict payloads (not int, str, list, etc.)
+                        if isinstance(payload, dict):
+                            kind = payload.get("kind") or payload.get("type")
+                            if kind == "StopAudio":
+                                await handler.commit_audio_buffer()
+                        else:
+                            # Non-dict JSON (int, str, list) - treat as user text
+                            await handler.send_text_message(str(payload))
                     except json.JSONDecodeError:
                         # Treat as raw user text input
                         await handler.send_text_message(text_payload)

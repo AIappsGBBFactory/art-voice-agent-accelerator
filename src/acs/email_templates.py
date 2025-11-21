@@ -673,3 +673,4 @@ Fraud Protection Team
 </html>"""
 
         return subject, plain_text_body, html_body
+

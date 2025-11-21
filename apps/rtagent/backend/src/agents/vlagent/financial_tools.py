@@ -61,6 +61,12 @@ from .tool_store.banking_tools import (
     search_rollover_guidance,
     handoff_merrill_advisor,
 )
+from .tool_store.investment_tools import (
+    get_account_routing_info,
+    get_401k_details,
+    get_rollover_options,
+    calculate_tax_impact,
+)
 from .tool_store.banking_handoffs import (
     handoff_card_recommendation,
     handoff_investment_advisor,
@@ -127,6 +133,17 @@ STANDARD_TOOL_NAMES: Tuple[str, ...] = (
     "detect_voicemail_and_end_call",
     "confirm_voicemail_and_end_call",
     "transfer_call_to_call_center",
+    # E-signature tools
+    "send_card_agreement",
+    "verify_esignature",
+    "finalize_card_application",
+    # Fee refund tool
+    "refund_fee",
+    # Investment tools
+    "get_account_routing_info",
+    "get_401k_details",
+    "get_rollover_options",
+    "calculate_tax_impact",
 )
 
 
@@ -482,10 +499,15 @@ register_tool("search_card_products", executor=search_card_products)
 register_tool("get_card_details", executor=get_card_details)
 register_tool("get_retirement_accounts", executor=get_retirement_accounts)
 register_tool("search_rollover_guidance", executor=search_rollover_guidance)
-register_tool("handoff_merrill_advisor", executor=handoff_merrill_advisor)
 register_tool("handoff_card_recommendation", executor=handoff_card_recommendation, is_handoff=True)
 register_tool("handoff_investment_advisor", executor=handoff_investment_advisor, is_handoff=True)
 register_tool("handoff_erica_concierge", executor=handoff_erica_concierge, is_handoff=True)
+# Investment tools
+register_tool("get_account_routing_info", executor=get_account_routing_info)
+register_tool("get_401k_details", executor=get_401k_details)
+register_tool("get_rollover_options", executor=get_rollover_options)
+register_tool("calculate_tax_impact", executor=calculate_tax_impact)
+register_tool("handoff_merrill_advisor", executor=handoff_merrill_advisor, is_handoff=True)
 # register_tool(
 #     "transfer_call_to_call_center",
 #     schema=TRANSFER_CALL_CENTER_SCHEMA,

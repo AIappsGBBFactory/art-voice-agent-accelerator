@@ -1237,8 +1237,12 @@ get_account_summary_schema: Dict[str, Any] = {
 get_recent_transactions_schema: Dict[str, Any] = {
     "name": "get_recent_transactions",
     "description": (
-        "Retrieve recent transaction history for customer's accounts. "
-        "Use when customer asks about recent charges, deposits, or spending activity."
+        "Retrieve detailed transaction history including ATM withdrawals, purchases, deposits, and fees. "
+        "Returns comprehensive transaction data with: merchant names, amounts, categories, locations (including international), "
+        "fee breakdowns (ATM fees with bank fee vs ATM owner surcharge), foreign transaction fees (with base amount and %), "
+        "network status (network vs non-network ATM), and transaction types (debit, credit, fee). "
+        "CRITICAL: Use this when customer asks about charges, fees, ATM withdrawals, or 'I saw a charge'. "
+        "The tool provides fee_breakdown objects that explain why fees were charged and who charged them."
     ),
     "parameters": {
         "type": "object",
@@ -1249,7 +1253,7 @@ get_recent_transactions_schema: Dict[str, Any] = {
             },
             "limit": {
                 "type": "integer",
-                "description": "Number of transactions to return (default 10, max 50).",
+                "description": "Number of transactions to return (default 10, max 50). Use 20+ when investigating fees or disputes.",
                 "minimum": 1,
                 "maximum": 50
             },
@@ -1271,10 +1275,14 @@ get_recent_transactions_schema: Dict[str, Any] = {
 search_card_products_schema: Dict[str, Any] = {
     "name": "search_card_products",
     "description": (
-        "Search and rank credit card products based on customer preferences and spending patterns. "
-        "Returns top 3 best-matching cards with complete details: annual fees, rewards rates, "
-        "intro APR offers, sign-up bonuses, foreign transaction fees, and key highlights. "
-        "Uses intelligent matching algorithm to rank cards by customer needs. "
+        "Search and rank credit card products using tier-aware, data-driven matching algorithm. "
+        "Returns top 3 best-matching cards with comprehensive details: annual fees (with first-year waivers), "
+        "rewards rates (with tier bonuses for Preferred Rewards members), regular APR (not just intro), "
+        "intro APR offers, sign-up bonuses, foreign transaction fees, ATM benefits, travel insurance, "
+        "airline/TSA credits, tier eligibility requirements, and ROI examples for high spenders. "
+        "The matching algorithm scores cards based on: customer tier (Platinum/Gold/Standard), monthly spending level, "
+        "preferences (foreign fee avoidance, travel rewards, balance transfer), and spending categories. "
+        "Platinum customers get premium cards ranked higher; Standard tier customers see no-fee cards prioritized. "
         "ALWAYS use this tool to find card recommendations - do not present hardcoded options."
     ),
     "parameters": {
@@ -1282,16 +1290,16 @@ search_card_products_schema: Dict[str, Any] = {
         "properties": {
             "customer_profile": {
                 "type": "string",
-                "description": "Brief customer description including tier (e.g., 'Platinum customer'), monthly spending level, account tenure if known. Example: 'Platinum customer, $3,500 monthly spend, 5 years tenure'"
+                "description": "Detailed customer description for tier-based matching. Include: relationship tier (Platinum, Gold, Preferred Rewards, or Standard), monthly spending amount, account tenure, and income bracket if known. Examples: 'Platinum customer, $4,500 monthly spend, 8 years tenure, high income' or 'Gold customer, $2,000 monthly spend, 3 years tenure'"
             },
             "preferences": {
                 "type": "string",
-                "description": "What customer wants to optimize for. Examples: 'avoid foreign transaction fees', 'maximize travel rewards', 'balance transfer with long 0% APR', 'no annual fee', 'cash back on groceries'"
+                "description": "What customer wants to optimize for - this heavily influences card ranking. Examples: 'avoid foreign transaction fees' (prioritizes $0 foreign fee cards), 'maximize travel rewards' (prioritizes 2x+ travel points), 'balance transfer with long 0% APR' (prioritizes 18-month intro periods), 'no annual fee' (eliminates premium cards), 'eliminate ATM fees for international travel'"
             },
             "spending_categories": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "List of primary spending categories from customer profile or conversation. Options: 'travel', 'dining', 'groceries', 'gas', 'online_shopping', 'international', 'everyday'. Example: ['travel', 'dining', 'international']"
+                "description": "List of primary spending categories from customer's transaction history or stated preferences. Use this to match cards with category bonuses. Options: 'travel' (flights, hotels), 'dining' (restaurants, food delivery), 'groceries', 'gas', 'online_shopping', 'international' (foreign purchases), 'everyday' (general spend). Example for frequent traveler: ['travel', 'dining', 'international']"
             }
         },
         "required": [],
@@ -1321,6 +1329,94 @@ get_card_details_schema: Dict[str, Any] = {
             }
         },
         "required": ["product_id", "query"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# BANKING TOOLS - E-Signature & Card Application
+# ═══════════════════════════════════════════════════════════════════
+
+send_card_agreement_schema: Dict[str, Any] = {
+    "name": "send_card_agreement",
+    "description": (
+        "Send the cardholder agreement email to customer for e-signature after card selection. "
+        "Automatically generates 6-digit verification code and sends personalized agreement email with card details "
+        "(annual fee, APR, rewards, benefits) to customer's email address from their profile. "
+        "The verification code is included in the email. Customer should check their email inbox. "
+        "Use this after customer selects a card and confirms they want to proceed with application. "
+        "Returns: {success: true, verification_code: '123456', email: 'customer@email.com', card_name: '...', expires_in_hours: 24}"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier."
+            },
+            "card_product_id": {
+                "type": "string",
+                "description": "Selected card product ID from search_card_products (e.g., 'travel-rewards-001')"
+            }
+        },
+        "required": ["client_id", "card_product_id"],
+        "additionalProperties": False,
+    },
+}
+
+verify_esignature_schema: Dict[str, Any] = {
+    "name": "verify_esignature",
+    "description": (
+        "Verify the 6-digit verification code to confirm e-signature completion. "
+        "Validates the code customer found in the agreement email they received. "
+        "Ask customer to check their email and read the 6-digit code from the agreement email. "
+        "Use this after customer provides the verification code. "
+        "Returns: {success: true, verified_at: '2025-01-21T...', next_step: 'finalize_card_application'}"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier."
+            },
+            "verification_code": {
+                "type": "string",
+                "description": "6-digit verification code provided by customer (e.g., '123456')"
+            }
+        },
+        "required": ["client_id", "verification_code"],
+        "additionalProperties": False,
+    },
+}
+
+finalize_card_application_schema: Dict[str, Any] = {
+    "name": "finalize_card_application",
+    "description": (
+        "Complete card application and approve credit card after e-signature verification. "
+        "Processes instant approval, generates card number and credit limit based on customer profile, "
+        "and sends approval confirmation email with card details and delivery timeline to customer's email. "
+        "Use this immediately after verify_esignature succeeds. "
+        "Returns: {success: true, card_number_last4: '1234', credit_limit: 15000, physical_delivery: '3-5 business days', "
+        "digital_wallet_ready: true, confirmation_email_sent: true}"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier."
+            },
+            "card_product_id": {
+                "type": "string",
+                "description": "Card product ID from search_card_products (e.g., 'travel-rewards-001')"
+            },
+            "card_name": {
+                "type": "string",
+                "description": "Full name of approved card (e.g., 'Travel Rewards Credit Card')"
+            }
+        },
+        "required": ["client_id", "card_product_id", "card_name"],
         "additionalProperties": False,
     },
 }
@@ -1404,6 +1500,40 @@ handoff_merrill_advisor_schema: Dict[str, Any] = {
     },
 }
 
+refund_fee_schema: Dict[str, Any] = {
+    "name": "refund_fee",
+    "description": (
+        "Process a fee refund for the customer. "
+        "Use ONLY after customer explicitly confirms they want the refund processed. "
+        "Typically used for ATM fees, foreign transaction fees, overdraft fees as courtesy refunds. "
+        "Requires customer confirmation before calling."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier."
+            },
+            "amount": {
+                "type": "number",
+                "description": "Refund amount in dollars (e.g., 10.00, 18.50)."
+            },
+            "fee_type": {
+                "type": "string",
+                "description": "Type of fee being refunded.",
+                "enum": ["atm_fee", "foreign_transaction_fee", "overdraft_fee", "monthly_maintenance_fee", "other"]
+            },
+            "reason": {
+                "type": "string",
+                "description": "Reason for refund (e.g., 'courtesy refund - Platinum member', 'goodwill gesture')."
+            }
+        },
+        "required": ["client_id", "amount"],
+        "additionalProperties": False,
+    },
+}
+
 # ═══════════════════════════════════════════════════════════════════
 # BANKING HANDOFFS - Multi-Agent Routing
 # ═══════════════════════════════════════════════════════════════════
@@ -1411,9 +1541,13 @@ handoff_merrill_advisor_schema: Dict[str, Any] = {
 handoff_card_recommendation_schema: Dict[str, Any] = {
     "name": "handoff_card_recommendation",
     "description": (
-        "Hand off customer to the Card Recommendation Agent specialist. "
-        "Use when customer asks about credit cards, rewards comparisons, balance transfers, "
-        "fee disputes, or card upgrades. The specialist will search products and provide recommendations."
+        "Hand off customer to the Card Recommendation Agent specialist for hyper-personalized card matching. "
+        "Use when customer: asks about credit cards, wants to avoid fees (especially foreign transaction/ATM fees), "
+        "discusses rewards comparisons, needs balance transfer options, mentions card upgrades, or when you've identified "
+        "patterns in their transactions that suggest a better card match (e.g., frequent international transactions but card has 3% foreign fee). "
+        "The specialist uses tier-aware algorithms, considers customer's relationship tier (Platinum/Gold/Standard), monthly spending, "
+        "transaction patterns, and calculates ROI to recommend the optimal card. "
+        "SEAMLESS HANDOFF: Say 'Let me find the best card options for you...' - do NOT say 'Let me transfer you'."
     ),
     "parameters": {
         "type": "object",
@@ -1424,15 +1558,15 @@ handoff_card_recommendation_schema: Dict[str, Any] = {
             },
             "customer_goal": {
                 "type": "string",
-                "description": "What customer wants (e.g., 'reduce fees', 'better travel rewards', 'balance transfer')."
+                "description": "Specific customer objective extracted from conversation. Examples: 'avoid foreign transaction fees' (if discussing international charges), 'eliminate ATM fees for travel', 'maximize travel rewards on $1,200/month travel spend', 'balance transfer to consolidate debt', 'get better rewards than current 1% cash back card'"
             },
             "spending_preferences": {
                 "type": "string",
-                "description": "Where customer spends most (e.g., 'travel and dining', 'groceries and gas', 'online shopping')."
+                "description": "Detailed spending patterns from transaction history or conversation. Examples: 'international travel and dining - 5+ foreign transactions monthly', 'groceries and gas for family', 'online shopping and streaming services', 'business travel and entertainment'"
             },
             "current_cards": {
                 "type": "string",
-                "description": "Brief description of cards customer currently has."
+                "description": "Customer's current card(s) with pain points identified. Examples: 'Cash Rewards card - paying 3% foreign transaction fees', 'Basic card - no rewards on $3K monthly spend', 'Premium card - not using benefits to justify $95 fee'"
             }
         },
         "required": ["client_id"],
@@ -1581,6 +1715,112 @@ get_paypal_transactions_schema: Dict[str, Any] = {
             },
         },
         "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# INVESTMENT & RETIREMENT TOOL SCHEMAS
+# ═══════════════════════════════════════════════════════════════════
+
+get_account_routing_info_schema: Dict[str, Any] = {
+    "name": "get_account_routing_info",
+    "description": "Retrieve account and routing numbers for direct deposit setup with new employer. Returns primary checking account details needed for payroll forms.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier.",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+get_401k_details_schema: Dict[str, Any] = {
+    "name": "get_401k_details",
+    "description": "Retrieve customer's current 401(k) and retirement account details. Returns information about current employer 401(k), previous employer 401(k)s, IRAs, contribution rates, employer match percentage, vesting status, and rollover eligibility.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier.",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+get_rollover_options_schema: Dict[str, Any] = {
+    "name": "get_rollover_options",
+    "description": "Present comprehensive 401(k) rollover options with pros/cons for each choice. Explains: (1) leaving in old plan, (2) rolling to new employer 401(k), (3) rolling to IRA, (4) cashing out. Tailored to customer's situation including 401(k) Pay benefits if applicable.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier.",
+            },
+            "previous_employer": {
+                "type": "string",
+                "description": "Name of previous employer (optional, for personalization).",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+calculate_tax_impact_schema: Dict[str, Any] = {
+    "name": "calculate_tax_impact",
+    "description": "Calculate detailed tax implications of different 401(k) rollover strategies. Explains withholding, penalties, timelines, and net amounts for: direct rollover (no taxes), indirect rollover (20% withholding + 60-day rule), Roth conversion (taxable as income), and cash out (taxes + 10% penalty).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier.",
+            },
+            "rollover_type": {
+                "type": "string",
+                "enum": ["direct_rollover", "indirect_rollover", "roth_conversion", "cash_out"],
+                "description": "Type of rollover to analyze: direct_rollover (recommended), indirect_rollover (risky), roth_conversion (taxable but tax-free growth), or cash_out (not recommended).",
+            },
+            "amount": {
+                "type": "number",
+                "minimum": 0,
+                "description": "401(k) balance amount for precise calculations (optional, will use customer's actual balance if not provided).",
+            },
+        },
+        "required": ["client_id", "rollover_type"],
+        "additionalProperties": False,
+    },
+}
+
+handoff_merrill_advisor_schema: Dict[str, Any] = {
+    "name": "handoff_merrill_advisor",
+    "description": "Transfer conversation to a Merrill financial advisor for personalized investment and retirement guidance. Use when customer expresses uncertainty, wants human advice, or asks complex questions about investments, retirement planning, or financial decisions. Preserves conversation context for warm handoff.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier.",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Why customer wants to speak with advisor (e.g., '401k rollover decision', 'investment portfolio review', 'retirement planning').",
+            },
+            "conversation_context": {
+                "type": "string",
+                "description": "Brief summary of conversation so far to provide context to human advisor.",
+            },
+        },
+        "required": ["client_id", "reason"],
         "additionalProperties": False,
     },
 }
