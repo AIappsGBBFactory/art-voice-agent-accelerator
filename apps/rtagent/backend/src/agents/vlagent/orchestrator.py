@@ -175,11 +175,19 @@ class LiveOrchestrator:
             has_handoff = bool(system_vars.get("handoff_context"))
             handoff_message = system_vars.get("handoff_message") if has_handoff else None
             
-            # Apply session configuration, speaking handoff message if present
+            # For handoffs with messages, use pending greeting mechanism (same as initial greeting)
+            # This ensures the message is spoken AFTER session.update completes
+            if handoff_message:
+                self._pending_greeting = handoff_message
+                self._pending_greeting_agent = agent_name
+                logger.info("[Handoff] Pending transition message: %s", handoff_message[:50] + "..." if len(handoff_message) > 50 else handoff_message)
+            
+            # Apply session configuration without immediate say
+            # The SESSION_UPDATED handler will trigger the pending greeting
             await agent.apply_session(
                 self.conn,
                 system_vars=system_vars,
-                say=handoff_message,  # Speak the transition message just like greeting
+                say=None,  # Don't speak immediately, let SESSION_UPDATED handler do it
             )
             
             # Schedule greeting fallback for non-handoff cases with pending greeting
@@ -557,16 +565,9 @@ class LiveOrchestrator:
                 name, self.active, target
             )
 
-            # Cancel the current response to prevent the previous agent from continuing to speak
-            try:
-                if result.get("should_interrupt_playback", True):
-                    await self.conn.response.cancel()
-                    # Small delay to ensure cancel completes before new agent speaks
-                    await asyncio.sleep(0.1)
-            except Exception:
-                logger.debug("response.cancel() failed during handoff", exc_info=True)
-
-            # Switch to new agent - this will trigger the handoff message via apply_session(say=...)
+            # Switch to new agent - SESSION_UPDATED handler will:
+            # 1. Cancel current response
+            # 2. Trigger handoff message from _pending_greeting
             await self._switch_to(target, ctx)
             # Clear the cached user message once the handoff has completed.
             self._last_user_message = None
