@@ -683,7 +683,7 @@ class LiveOrchestrator:
             # Log user's spoken input (transcription)
             user_transcript = getattr(event, "transcript", "")
             if user_transcript:
-                logger.info("[USER] Says: %s", user_transcript)
+                logger.info("[USER delta] Says: %s", user_transcript)
                 self._last_user_message = user_transcript.strip()
 
         elif et == ServerEventType.RESPONSE_AUDIO_DELTA:
