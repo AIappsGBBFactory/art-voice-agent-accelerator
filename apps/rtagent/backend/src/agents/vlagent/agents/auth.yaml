@@ -12,7 +12,7 @@ session:
   output_audio_format: PCM16
 
   input_audio_transcription_settings:
-    model: gpt-4o-transcribe
+    model: azure-speech
     language: en-US
 
   voice:

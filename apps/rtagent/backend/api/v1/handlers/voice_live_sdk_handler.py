@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import uuid
 from typing import Any, Awaitable, Dict, Literal, Optional, Union
 
 import numpy as np
@@ -143,6 +144,80 @@ class _SessionMessenger:
 		self._ws = websocket
 		self._default_sender: Optional[str] = None
 		self._missing_session_warned = False
+		self._active_turn_id: Optional[str] = None
+		self._pending_user_turn_id: Optional[str] = None
+
+	def _ensure_turn_id(self, candidate: Optional[str], *, allow_generate: bool = True) -> Optional[str]:
+		if candidate:
+			self._active_turn_id = candidate
+			return candidate
+		if self._active_turn_id:
+			return self._active_turn_id
+		if not allow_generate:
+			return None
+		generated = uuid.uuid4().hex
+		self._active_turn_id = generated
+		return generated
+
+	def _release_turn(self, turn_id: Optional[str]) -> None:
+		if turn_id and self._active_turn_id == turn_id:
+			self._active_turn_id = None
+		elif turn_id is None:
+			self._active_turn_id = None
+
+	def begin_user_turn(self, turn_id: Optional[str]) -> Optional[str]:
+		"""Initialise a user turn and emit a placeholder streaming message."""
+		if not turn_id:
+			self._pending_user_turn_id = None
+			return None
+		if self._pending_user_turn_id == turn_id:
+			return turn_id
+		self._pending_user_turn_id = turn_id
+		if not self._can_emit():
+			return turn_id
+
+		payload: Dict[str, Any] = {
+			"type": "user",
+			"message": "",
+			"content": "",
+			"streaming": True,
+			"turn_id": turn_id,
+			"response_id": turn_id,
+			"status": "streaming",
+		}
+		envelope = make_envelope(
+			etype="event",
+			sender="User",
+			payload=payload,
+			topic="session",
+			session_id=self._session_id,
+			call_id=self._call_id,
+		)
+
+		_background_task(
+			send_session_envelope(
+				self._ws,
+				envelope,
+				session_id=self._session_id,
+				conn_id=None,
+				event_label="voicelive_user_turn_started",
+				broadcast_only=True,
+			),
+			label="user_turn_started",
+		)
+		return turn_id
+
+	def resolve_user_turn_id(self, candidate: Optional[str]) -> Optional[str]:
+		"""Ensure user turn IDs remain consistent across delta and final events."""
+		if candidate:
+			self._pending_user_turn_id = candidate
+			return candidate
+		return self._pending_user_turn_id
+
+	def finish_user_turn(self, turn_id: Optional[str]) -> None:
+		resolved = turn_id or self._pending_user_turn_id
+		if resolved and self._pending_user_turn_id == resolved:
+			self._pending_user_turn_id = None
 
 	def set_active_agent(self, agent_name: Optional[str]) -> None:
 		"""Update the default sender name used for assistant/system envelopes."""
@@ -177,7 +252,7 @@ class _SessionMessenger:
 			self._missing_session_warned = True
 		return False
 
-	async def send_user_message(self, text: str) -> None:
+	async def send_user_message(self, text: str, *, turn_id: Optional[str] = None) -> None:
 		"""Forward a user transcript to all session listeners."""
 		if not text or not self._can_emit():
 			return
@@ -189,6 +264,7 @@ class _SessionMessenger:
 				session_id=self._session_id,
 				conn_id=None,
 				broadcast_only=True,
+				turn_id=turn_id,
 			),
 			label="send_user_transcript",
 		)
@@ -196,17 +272,32 @@ class _SessionMessenger:
 	def _resolve_sender(self, sender: Optional[str]) -> str:
 		return _resolve_agent_label(sender) or self._default_sender or "Assistant"
 
-	async def send_assistant_message(self, text: str, *, sender: Optional[str] = None) -> None:
+	async def send_assistant_message(
+		self,
+		text: str,
+		*,
+		sender: Optional[str] = None,
+		response_id: Optional[str] = None,
+		status: Optional[str] = None,
+	) -> None:
 		"""Emit assistant transcript chunks to the frontend chat UI."""
-		if not text or not self._can_emit():
+		if not self._can_emit():
 			return
 
+		turn_id = self._ensure_turn_id(response_id)
+		if not turn_id:
+			return
+
+		message_text = text or ""
 		sender_name = self._resolve_sender(sender)
 		payload = {
 			"type": "assistant",
-			"message": text,
-			"content": text,
+			"message": message_text,
+			"content": message_text,
 			"streaming": False,
+			"turn_id": turn_id,
+			"response_id": response_id or turn_id,
+			"status": status or "completed",
 		}
 		envelope = make_envelope(
 			etype="event",
@@ -228,10 +319,21 @@ class _SessionMessenger:
 			),
 			label="assistant_transcript_envelope",
 		)
+		self._release_turn(turn_id)
 
-	async def send_assistant_streaming(self, text: str, *, sender: Optional[str] = None) -> None:
+	async def send_assistant_streaming(
+		self,
+		text: str,
+		*,
+		sender: Optional[str] = None,
+		response_id: Optional[str] = None,
+	) -> None:
 		"""Emit assistant streaming deltas for progressive rendering."""
 		if not text or not self._can_emit():
+			return
+
+		turn_id = self._ensure_turn_id(response_id)
+		if not turn_id:
 			return
 
 		sender_name = self._resolve_sender(sender)
@@ -241,6 +343,11 @@ class _SessionMessenger:
 			session_id=self._session_id,
 			call_id=self._call_id,
 		)
+		payload = envelope.setdefault("payload", {})
+		payload.setdefault("message", text)
+		payload["turn_id"] = turn_id
+		payload["response_id"] = response_id or turn_id
+		payload["status"] = "streaming"
 		_background_task(
 			send_session_envelope(
 				self._ws,
@@ -252,6 +359,56 @@ class _SessionMessenger:
 			),
 			label="assistant_streaming_envelope",
 		)
+
+	async def send_assistant_cancelled(
+		self,
+		*,
+		response_id: Optional[str],
+		sender: Optional[str] = None,
+		reason: Optional[str] = None,
+	) -> None:
+		"""Emit a cancellation update for interrupted assistant turns."""
+		if not self._can_emit():
+			return
+
+		turn_id = self._ensure_turn_id(response_id, allow_generate=False)
+		if not turn_id:
+			return
+
+		sender_name = self._resolve_sender(sender)
+		payload: Dict[str, Any] = {
+			"type": "assistant_cancelled",
+			"message": "",
+			"content": "",
+			"streaming": False,
+			"turn_id": turn_id,
+			"response_id": response_id or turn_id,
+			"status": "cancelled",
+		}
+		if reason:
+			payload["cancel_reason"] = reason
+
+		envelope = make_envelope(
+			etype="event",
+			sender=sender_name,
+			payload=payload,
+			topic="session",
+			session_id=self._session_id,
+			call_id=self._call_id,
+		)
+
+		_background_task(
+			send_session_envelope(
+				self._ws,
+				envelope,
+				session_id=self._session_id,
+				conn_id=None,
+				event_label="voicelive_assistant_cancelled",
+				broadcast_only=True,
+			),
+			label="assistant_cancelled_envelope",
+		)
+		self._release_turn(turn_id)
 
 	async def send_session_update(
 		self,
@@ -467,6 +624,7 @@ class VoiceLiveSDKHandler:
 		self._dtmf_flush_delay = _DTMF_FLUSH_DELAY_SECONDS
 		self._dtmf_lock = asyncio.Lock()
 		self._last_user_transcript: Optional[str] = None
+		self._last_user_turn_id: Optional[str] = None
 
 	def _set_metadata(self, key: str, value: Any) -> None:
 		if not _set_connection_metadata(self.websocket, key, value):
@@ -726,14 +884,19 @@ class VoiceLiveSDKHandler:
 		
 		if etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
 			transcript = getattr(event, "transcript", "")
-			if transcript and transcript != self._last_user_transcript:
-				await self._messenger.send_user_message(transcript)
+			turn_id = self._messenger.resolve_user_turn_id(self._extract_item_id(event))
+			if transcript and (
+				transcript != self._last_user_transcript or turn_id != self._last_user_turn_id
+			):
+				await self._messenger.send_user_message(transcript, turn_id=turn_id)
 				logger.info(
 					"[VoiceLiveSDK] User transcript | session=%s text='%s'",
 					self.session_id,
 					transcript,
 				)
 				self._last_user_transcript = transcript
+				self._last_user_turn_id = turn_id
+				self._messenger.finish_user_turn(turn_id)
 			return
 		elif etype == ServerEventType.RESPONSE_AUDIO_DELTA:
 			response_id = getattr(event, "response_id", None)
@@ -776,6 +939,11 @@ class VoiceLiveSDKHandler:
 			)
 			self._active_response_ids.clear()
 			energy = getattr(event, "speech_energy", None)
+			turn_id = self._extract_item_id(event)
+			resolved_turn = self._messenger.begin_user_turn(turn_id)
+			if resolved_turn:
+				self._last_user_turn_id = resolved_turn
+				self._last_user_transcript = ""
 			self._trigger_barge_in(
 				"voicelive_vad",
 				"speech_started",
@@ -796,12 +964,16 @@ class VoiceLiveSDKHandler:
 			session_id = self._messenger._session_id
 			if not session_id:
 				return
+			turn_id = self._messenger.resolve_user_turn_id(self._extract_item_id(event))
 			payload = {
 				"type": "user",
 				"message": "...",
 				"content": transcript_text,
 				"streaming": True,
 			}
+			if turn_id:
+				payload["turn_id"] = turn_id
+				payload["response_id"] = turn_id
 			envelope = make_envelope(
 				etype="event",
 				sender="User",
@@ -1230,6 +1402,22 @@ class VoiceLiveSDKHandler:
 			and self.websocket.application_state == WebSocketState.CONNECTED
 			and self.websocket.client_state == WebSocketState.CONNECTED
 		)
+
+	@staticmethod
+	def _extract_item_id(event: Any) -> Optional[str]:
+		for attr in (
+			"item_id",
+			"conversation_item_id",
+			"input_audio_item_id",
+			"id",
+		):
+			value = getattr(event, attr, None)
+			if value:
+				return value
+		item = getattr(event, "item", None)
+		if item and hasattr(item, "id"):
+			return getattr(item, "id")
+		return None
 
 	@staticmethod
 	def _extract_response_id(event: Any) -> Optional[str]:

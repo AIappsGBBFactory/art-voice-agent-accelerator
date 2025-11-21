@@ -167,41 +167,13 @@ resource "azurerm_container_app" "backend" {
       cpu    = var.container_cpu_cores
       memory = var.container_memory_gb
 
-      # Pool Configuration for Maximum Performance
       env {
-        name  = "AOAI_POOL_ENABLED"
-        value = "true"
+        name = "AZURE_VOICELIVE_ENDPOINT"
+        value = local.should_create_voice_live_account ? module.ai_foundry_voice_live[0].endpoint : module.ai_foundry.endpoint
       }
-
       env {
-        name  = "AOAI_POOL_SIZE"
-        value = tostring(var.aoai_pool_size)
-      }
-
-      env {
-        name  = "POOL_SIZE_TTS"
-        value = tostring(var.tts_pool_size)
-      }
-
-      env {
-        name  = "POOL_SIZE_STT"
-        value = tostring(var.stt_pool_size)
-      }
-
-      env {
-        name  = "TTS_POOL_PREWARMING_ENABLED"
-        value = "true"
-      }
-
-      env {
-        name  = "STT_POOL_PREWARMING_ENABLED"
-        value = "true"
-      }
-
-      # Performance Optimization Settings
-      env {
-        name  = "POOL_PREWARMING_BATCH_SIZE"
-        value = "10"
+        name = "AZURE_VOICELIVE_MODEL"
+        value = local.voice_live_model_name
       }
 
       env {

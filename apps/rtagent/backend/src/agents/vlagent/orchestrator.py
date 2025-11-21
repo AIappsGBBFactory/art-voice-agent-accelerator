@@ -89,6 +89,7 @@ class LiveOrchestrator:
         self._transport = transport
         self._greeting_tasks: set[asyncio.Task] = set()
         self._search_preface_index = 0
+        self._active_response_id: Optional[str] = None
         self._system_vars: Dict[str, Any] = {}  # Preserve session_profile across handoffs
 
         if self.messenger:
@@ -201,6 +202,13 @@ class LiveOrchestrator:
 
     def _transport_supports_acs(self) -> bool:
         return self._transport == "acs"
+
+    @staticmethod
+    def _response_id_from_event(event: Any) -> Optional[str]:
+        response = getattr(event, "response", None)
+        if response and hasattr(response, "id"):
+            return getattr(response, "id")
+        return getattr(event, "response_id", None)
 
     def _should_emit_paypal_search_preface(self, tool_name: Optional[str]) -> bool:
         return (
@@ -695,6 +703,16 @@ class LiveOrchestrator:
                 await self.conn.response.cancel()
             except Exception:
                 logger.debug("response.cancel() failed during barge-in", exc_info=True)
+            if self.messenger and self._active_response_id:
+                try:
+                    await self.messenger.send_assistant_cancelled(
+                        response_id=self._active_response_id,
+                        sender=self.active,
+                        reason="user_barge_in",
+                    )
+                except Exception:
+                    logger.debug("Failed to notify assistant cancellation on barge-in", exc_info=True)
+            self._active_response_id = None
 
         elif et == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
             logger.debug("User speech stopped → start playback for assistant")
@@ -723,10 +741,16 @@ class LiveOrchestrator:
         elif et == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA:
             transcript_delta = getattr(event, "delta", "") or getattr(event, "transcript", "")
             if transcript_delta and self.messenger:
+                response_id = self._response_id_from_event(event)
+                if response_id:
+                    self._active_response_id = response_id
+                else:
+                    response_id = self._active_response_id
                 try:
                     await self.messenger.send_assistant_streaming(
                         transcript_delta,
                         sender=self.active,
+                        response_id=response_id,
                     )
                 except Exception:
                     logger.debug("Failed to relay assistant streaming delta", exc_info=True)
@@ -737,10 +761,19 @@ class LiveOrchestrator:
             if full_transcript:
                 logger.info("[%s] Agent: %s", self.active, full_transcript)
                 if self.messenger:
+                    response_id = self._response_id_from_event(event)
+                    if not response_id:
+                        response_id = self._active_response_id
                     try:
-                        await self.messenger.send_assistant_message(full_transcript, sender=self.active)
+                        await self.messenger.send_assistant_message(
+                            full_transcript,
+                            sender=self.active,
+                            response_id=response_id,
+                        )
                     except Exception:
                         logger.debug("Failed to relay assistant transcript to session UI", exc_info=True)
+                    if response_id and response_id == self._active_response_id:
+                        self._active_response_id = None
 
         elif et == ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE:
             await self._execute_tool_call(
@@ -751,6 +784,9 @@ class LiveOrchestrator:
 
         elif et == ServerEventType.RESPONSE_DONE:
             logger.debug("Response complete")
+            response_id = self._response_id_from_event(event)
+            if response_id and response_id == self._active_response_id:
+                self._active_response_id = None
 
         elif et == ServerEventType.ERROR:
             logger.error("VoiceLive error: %s", getattr(event.error, "message", "unknown"))

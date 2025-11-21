@@ -126,6 +126,7 @@ async def send_user_transcript(
     session_id: Optional[str] = None,
     conn_id: Optional[str] = None,
     broadcast_only: bool = False,
+    turn_id: Optional[str] = None,
 ) -> None:
     """Emit a user transcript using the standard session envelope.
 
@@ -143,6 +144,10 @@ async def send_user_transcript(
             "sender": "User",
             "message": text,
             "content": text,
+            "streaming": False,
+            "status": "completed",
+            "turn_id": turn_id,
+            "response_id": turn_id,
         },
         topic="session",
         session_id=payload_session_id,
