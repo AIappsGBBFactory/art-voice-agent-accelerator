@@ -3629,10 +3629,18 @@ function RealTimeVoiceApp() {
       }
       
       // Send as raw text message
-      socketRef.current.send(textInput.trim());
+      const userText = textInput.trim();
+      socketRef.current.send(userText);
       
-      // Optimistically add to chat
-      setMessages(prev => [...prev, { speaker: "User", text: textInput.trim() }]);
+      // Add user message immediately to UI (optimistic update)
+      // Backend should also echo, but we show it immediately for better UX
+      setMessages((prev) => [
+        ...prev,
+        { speaker: "User", text: userText }
+      ]);
+      setActiveSpeaker("User");
+      appendLog(`User (text): ${userText}`);
+      
       setTextInput("");
     } else {
       appendLog("⚠️ Cannot send text: WebSocket not connected");
@@ -4683,9 +4691,15 @@ function RealTimeVoiceApp() {
       const activeRealtimeConfig = modeOverride
         ? (realtimeStreamingModeOptions.find((option) => option.value === realtimeMode)?.config ?? null)
         : selectedRealtimeModeConfig;
+      
+      // Get user email from active session profile for pre-loading
+      const userEmail = activeSessionProfile?.profile?.email || 
+                       activeSessionProfile?.profile?.contact_info?.email || null;
+      const emailParam = userEmail ? `&user_email=${encodeURIComponent(userEmail)}` : '';
+      
       const baseConversationUrl = `${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&streaming_mode=${encodeURIComponent(
         realtimeMode,
-      )}`;
+      )}${emailParam}`;
       resetMetrics(sessionId);
       assistantStreamGenerationRef.current = 0;
       terminationReasonRef.current = null;

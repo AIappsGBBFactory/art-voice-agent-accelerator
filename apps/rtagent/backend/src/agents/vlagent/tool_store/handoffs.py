@@ -19,7 +19,7 @@ robust error handling, and JSON responses via ``_json``).
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, TypedDict
+from typing import Any, Dict, Optional, TypedDict
 
 from apps.rtagent.backend.src.agents.vlagent.tool_store.functions_helper import _json
 from apps.rtagent.backend.src.agents.vlagent.tool_store.call_transfer import (
@@ -246,6 +246,10 @@ class HandoffPayPalArgs(TypedDict):
     paypal_account: str
     service_type: str  # "digital_payments"
     institution_name: str
+    handoff_reason: str  # 🆕 WHY the handoff is needed
+    conversation_summary: str  # 🆕 Brief context from previous conversation
+    user_last_utterance: str  # 🆕 Last thing customer said
+    details: str  # Additional context
 
 
 async def handoff_fraud_agent(args: HandoffFraudArgs) -> Dict[str, Any]:
@@ -340,6 +344,12 @@ async def handoff_paypal_agent(args: HandoffPayPalArgs) -> Dict[str, Any]:
         paypal_account = (args.get("paypal_account") or "").strip()
         institution_name = (args.get("institution_name") or "").strip()
         service_type = (args.get("service_type") or "digital_payments").strip()
+        
+        # 🆕 Extract new context fields
+        handoff_reason = (args.get("handoff_reason") or "").strip()
+        conversation_summary = (args.get("conversation_summary") or "").strip()
+        user_last_utterance = (args.get("user_last_utterance") or "").strip()
+        details = (args.get("details") or "").strip()
 
         if not caller_name or not client_id:
             return _json(False, "Both 'caller_name' and 'client_id' must be provided.")
@@ -347,23 +357,63 @@ async def handoff_paypal_agent(args: HandoffPayPalArgs) -> Dict[str, Any]:
             return _json(False, "Collect the PayPal account identifier before transferring.")
 
         logger.info(
-            "💳 Hand-off to PayPal – client_id=%s caller=%s account=%s institution=%s",
+            "💳 Hand-off to PayPal – client_id=%s caller=%s account=%s institution=%s reason=%s",
             client_id,
             caller_name,
             paypal_account,
             institution_name or "n/a",
+            handoff_reason or "not specified",
         )
+
+        # 🆕 Build personalized greeting using handoff context
+        first_name = caller_name.split()[0] if caller_name else "there"
+        
+        # Priority order for context: handoff_reason > conversation_summary > details > user_last_utterance
+        personalized_context = handoff_reason or conversation_summary or details or user_last_utterance
+        
+        greeting_override: Optional[str] = None
+        if personalized_context:
+            greeting_override = (
+                f"Hi {first_name}, you're now speaking with the PayPal and Venmo specialist. "
+                f"I understand you're calling about {personalized_context}. How can I help further?"
+            )
+        else:
+            greeting_override = (
+                f"Hi {first_name}, you're now speaking with the PayPal and Venmo specialist. "
+                f"How can I help you today?"
+            )
+
+        # 🆕 Build context dictionary with all relevant fields
+        context = {
+            "caller_name": caller_name,
+            "client_id": client_id,
+            "paypal_account": paypal_account,
+            "institution_name": institution_name or "PayPal Holdings",
+            "service_type": service_type,
+        }
+        
+        # Add optional context fields if provided
+        if handoff_reason:
+            context["handoff_reason"] = handoff_reason
+        if conversation_summary:
+            context["conversation_summary"] = conversation_summary
+        if user_last_utterance:
+            context["user_last_utterance"] = user_last_utterance
+        if details:
+            context["details"] = details
+
+        # 🆕 Build session_overrides to pass personalized greeting to orchestrator
+        session_overrides_dict: Dict[str, Any] = {}
+        if greeting_override:
+            session_overrides_dict["greeting"] = greeting_override
 
         return _json(
             True,
             "Caller transferred to PayPal specialist.",
             handoff="PayPal",
             target_agent="PayPal Support",
-            caller_name=caller_name,
-            client_id=client_id,
-            paypal_account=paypal_account,
-            institution_name=institution_name or "PayPal Holdings",
-            service_type=service_type,
+            session_overrides=session_overrides_dict,  # ✅ Pass greeting via session_overrides!
+            **context,
         )
     except Exception as exc:
         logger.error("PayPal handoff failed: %s", exc, exc_info=True)
