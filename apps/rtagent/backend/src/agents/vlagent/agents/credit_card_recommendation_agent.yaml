@@ -38,3 +38,4 @@ tools:
   - finalize_card_application
   - escalate_human
   - escalate_emergency
+  - handoff_investment_advisor
