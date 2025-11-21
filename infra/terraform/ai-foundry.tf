@@ -13,7 +13,7 @@ module "ai_foundry" {
   project_display_name = local.foundry_project_display
   project_description  = local.foundry_project_desc
 
-  model_deployments = var.model_deployments
+  model_deployments = local.combined_model_deployments
 
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 }
