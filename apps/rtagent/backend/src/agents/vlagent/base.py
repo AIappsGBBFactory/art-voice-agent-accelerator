@@ -242,7 +242,7 @@ class AzureVoiceLiveAgent:
             "model": self.input_transcription_cfg.get("model") or "gpt-4o-transcribe",
         }
 
-        language_override = self.input_transcription_cfg.get("language") or "en-US,en-ES,ko-KR"
+        language_override = self.input_transcription_cfg.get("language") or "en-US"
         if language_override:
             transcription_kwargs["language"] = language_override
 
