@@ -67,7 +67,7 @@ class LiveOrchestrator:
         conn,
         agents: Dict[str, "AzureVoiceLiveAgent"],
         handoff_map: Dict[str, str],
-        start_agent: str = "AutoAuth",
+        start_agent: str = "EricaConcierge",
         audio_processor=None,
         messenger=None,
         call_connection_id: Optional[str] = None,
@@ -89,6 +89,7 @@ class LiveOrchestrator:
         self._transport = transport
         self._greeting_tasks: set[asyncio.Task] = set()
         self._search_preface_index = 0
+        self._system_vars: Dict[str, Any] = {}  # Preserve session_profile across handoffs
 
         if self.messenger:
             try:
@@ -102,7 +103,9 @@ class LiveOrchestrator:
     async def start(self, system_vars: Optional[dict] = None):
         """Apply initial agent session and trigger an intro response."""
         logger.info("[Orchestrator] Starting with agent: %s", self.active)
-        await self._switch_to(self.active, system_vars or {})
+        # Store initial system_vars (especially session_profile) for handoffs
+        self._system_vars = dict(system_vars or {})
+        await self._switch_to(self.active, self._system_vars)
         # Note: _switch_to now triggers greeting automatically, no need for separate response.create()
 
     async def _switch_to(self, agent_name: str, system_vars: dict):
@@ -167,12 +170,20 @@ class LiveOrchestrator:
                     self.messenger.set_active_agent(agent_name)
                 except AttributeError:
                     logger.debug("Messenger does not support set_active_agent", exc_info=True)
+            
+            # For handoffs, extract transition message to speak after session update
+            has_handoff = bool(system_vars.get("handoff_context"))
+            handoff_message = system_vars.get("handoff_message") if has_handoff else None
+            
+            # Apply session configuration, speaking handoff message if present
             await agent.apply_session(
                 self.conn,
                 system_vars=system_vars,
-                say=None,
+                say=handoff_message,  # Speak the transition message just like greeting
             )
-            if self._pending_greeting and self._pending_greeting_agent == agent_name:
+            
+            # Schedule greeting fallback for non-handoff cases with pending greeting
+            if not has_handoff and self._pending_greeting and self._pending_greeting_agent == agent_name:
                 self._schedule_greeting_fallback(agent_name)
         except Exception:
             logger.exception("Failed to apply session for agent '%s'", agent_name)
@@ -325,17 +336,28 @@ class LiveOrchestrator:
         )
 
         intro = agent.return_greeting if not is_first_visit else agent.greeting
-        intro = (intro or f"Hi, I'm {agent_name}.").strip()
+        intro = (intro or "").strip()
+        
+        # For handoffs (seamless continuation), skip automatic greeting
+        # Let the agent's prompt handle the natural conversation flow
+        if has_handoff:
+            return None
 
         if intent:
             intent = intent.strip().rstrip(".")
-            return f"Hi {caller}, {intro} I understand you're calling about {intent}. Let's get started."
+            if intro:
+                return f"Hi {caller}, {intro} I understand you're calling about {intent}. Let's get started."
+            return None  # Skip greeting for seamless handoff
 
         handoff_message = (system_vars.get("handoff_message") or "").strip()
         if handoff_message:
-            return f"Hi {caller}, {intro} {handoff_message}"
+            if intro:
+                return f"Hi {caller}, {intro} {handoff_message}"
+            return None  # Skip greeting for seamless handoff
 
-        return f"Hi {caller}, {intro}".strip()
+        if intro:
+            return f"Hi {caller}, {intro}".strip()
+        return None  # Skip greeting for seamless handoff
 
     async def _execute_tool_call(self, call_id: Optional[str], name: Optional[str], args_json: Optional[str]) -> bool:
         """
@@ -521,6 +543,10 @@ class LiveOrchestrator:
                 "handoff_context": handoff_context,
                 "handoff_message": result.get("message"),
             }
+            # Preserve session_profile and other persistent context across handoffs
+            for key in ("session_profile", "client_id", "customer_intelligence", "institution_name"):
+                if key in self._system_vars:
+                    ctx[key] = self._system_vars[key]
             if last_user_message:
                 ctx.setdefault("user_last_utterance", last_user_message)
             if session_overrides:
@@ -535,9 +561,12 @@ class LiveOrchestrator:
             try:
                 if result.get("should_interrupt_playback", True):
                     await self.conn.response.cancel()
+                    # Small delay to ensure cancel completes before new agent speaks
+                    await asyncio.sleep(0.1)
             except Exception:
                 logger.debug("response.cancel() failed during handoff", exc_info=True)
 
+            # Switch to new agent - this will trigger the handoff message via apply_session(say=...)
             await self._switch_to(target, ctx)
             # Clear the cached user message once the handoff has completed.
             self._last_user_message = None

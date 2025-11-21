@@ -398,6 +398,7 @@ async def browser_conversation_endpoint(
     websocket: WebSocket,
     session_id: Optional[str] = Query(None),
     streaming_mode: Optional[str] = Query(None),
+    user_email: Optional[str] = Query(None),
     orchestrator: Optional[callable] = Depends(get_orchestrator),
 ) -> None:
     """
@@ -413,6 +414,7 @@ async def browser_conversation_endpoint(
         session_id: Optional session ID for conversation persistence and state
                    management across reconnections.
         streaming_mode: Optional streaming mode override for realtime sessions.
+        user_email: Optional user email for loading customer profile from Cosmos DB.
         orchestrator: Injected conversation orchestrator for processing user
                      interactions and generating responses.
 
@@ -497,7 +499,7 @@ async def browser_conversation_endpoint(
 
             if effective_stream_mode == StreamMode.VOICE_LIVE:
                 memory_manager, session_metadata = await _initialize_voice_live_session(
-                    websocket, session_id, conn_id
+                    websocket, session_id, conn_id, user_email=user_email
                 )
             else:
                 memory_manager, session_metadata = (
@@ -539,6 +541,7 @@ async def browser_conversation_endpoint(
                 websocket,
                 session_id,
                 conn_id,
+                user_email=user_email,
             )
         else:
             await _process_conversation_messages(
@@ -565,6 +568,7 @@ async def _initialize_voice_live_session(
     websocket: WebSocket,
     session_id: str,
     conn_id: str,
+    user_email: Optional[str] = None,
 ) -> tuple[MemoManager, Dict[str, Any]]:
     """Initialize realtime session metadata for Voice Live streaming mode."""
 
@@ -1095,6 +1099,7 @@ async def _process_voice_live_messages(
     websocket: WebSocket,
     session_id: str,
     conn_id: str,
+    user_email: Optional[str] = None,
 ) -> None:
     """Process realtime PCM frames when Voice Live streaming mode is active."""
 
@@ -1103,6 +1108,7 @@ async def _process_voice_live_messages(
         session_id=session_id,
         call_connection_id=session_id,
         transport="realtime",
+        user_email=user_email,
     )
     speech_active = False
     silence_started_at: Optional[float] = None

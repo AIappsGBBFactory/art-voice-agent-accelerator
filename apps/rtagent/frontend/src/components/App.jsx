@@ -4680,9 +4680,15 @@ function RealTimeVoiceApp() {
       const activeRealtimeConfig = modeOverride
         ? (realtimeStreamingModeOptions.find((option) => option.value === realtimeMode)?.config ?? null)
         : selectedRealtimeModeConfig;
+      
+      // Get user email from active session profile for pre-loading
+      const userEmail = activeSessionProfile?.profile?.email || 
+                       activeSessionProfile?.profile?.contact_info?.email || null;
+      const emailParam = userEmail ? `&user_email=${encodeURIComponent(userEmail)}` : '';
+      
       const baseConversationUrl = `${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&streaming_mode=${encodeURIComponent(
         realtimeMode,
-      )}`;
+      )}${emailParam}`;
       resetMetrics(sessionId);
       assistantStreamGenerationRef.current = 0;
       terminationReasonRef.current = null;

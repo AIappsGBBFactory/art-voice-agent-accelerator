@@ -156,6 +156,97 @@ for tool_name in STANDARD_TOOL_NAMES:
     register_tool(tool_name)
 
 
+SEARCH_KB_SCHEMA: Dict[str, Any] = {
+    "name": "search_knowledge_base",
+    "description": (
+        "Retrieve institutional knowledge-base snippets from the Cosmos vector index. "
+        "Use this after authentication to ground policy summaries, rate tables, or escalation guidance."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Natural-language question or keyword to search in the financial KB.",
+            },
+            "top_k": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Maximum number of passages to return (defaults to service configuration).",
+            },
+            "num_candidates": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Candidate pool size for semantic search reranking (defaults to service configuration).",
+            },
+            "database": {
+                "type": "string",
+                "description": "Override Cosmos DB database name if a custom corpus is required.",
+            },
+            "collection": {
+                "type": "string",
+                "description": "Override Cosmos DB collection name (defaults to paypal; use venmo for Venmo queries).",
+            },
+            "doc_type": {
+                "type": "string",
+                "description": "Optional metadata filter (e.g., 'mfa_playbook', 'fraud_policy').",
+            },
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+}
+
+
+PAYPAL_ACCOUNT_SCHEMA: Dict[str, Any] = {
+    "name": "get_paypal_account_summary",
+    "description": "Retrieve the caller's PayPal account summary, including current balance, after identity verification is complete.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Internal client identifier returned from authentication tools (preferred).",
+            },
+            "full_name": {
+                "type": "string",
+                "description": "Optional caller name for logging context after authentication.",
+            },
+            "institution_name": {
+                "type": "string",
+                "description": "Optional institution or employer metadata for logging context.",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+
+PAYPAL_TRANSACTIONS_SCHEMA: Dict[str, Any] = {
+    "name": "get_paypal_transactions",
+    "description": "Retrieve the caller's recent PayPal transactions after authentication for activity review.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Verified client identifier returned from authentication tools.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "description": "Maximum number of transactions to return (default 5).",
+            },
+        },
+        "required": ["client_id"],
+        "additionalProperties": False,
+    },
+}
+
+ToolExecutor = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
+
 _USERS_MANAGER: Optional[CosmosDBMongoCoreManager] = None
 
 
@@ -463,26 +554,36 @@ async def _execute_search_knowledge_base(arguments: Dict[str, Any]) -> Dict[str,
 
 register_tool("send_mfa_code", executor=_execute_send_mfa_code)
 register_tool("resend_mfa_code", executor=_execute_resend_mfa_code)
+# Standard passthrough tools (auto-registered from VL_FUNCTIONS)
 for tool_name in STANDARD_TOOL_NAMES:
     register_tool(tool_name)
+# Handoffs and custom tools
 register_tool("create_fraud_case", executor=create_fraud_case, is_handoff=True)
 register_tool("handoff_fraud_agent", executor=vl_handoff_fraud_agent, is_handoff=True)
 register_tool("handoff_transfer_agency_agent", executor=vl_handoff_transfer_agency_agent, is_handoff=True)
 register_tool("handoff_paypal_agent", executor=vl_handoff_paypal_agent, is_handoff=True)
 register_tool("handoff_to_auth", executor=vl_handoff_to_auth, is_handoff=True)
 register_tool("escalate_human", executor=vl_escalate_human)
-register_tool("search_knowledge_base", executor=execute_search_knowledge_base)
-register_tool("get_paypal_account_summary", executor=_execute_get_paypal_account_summary)
-register_tool("get_paypal_transactions", executor=_execute_get_paypal_transactions)
-register_tool("transfer_call_to_destination", executor=transfer_call_to_destination)
+register_tool("search_knowledge_base", schema=SEARCH_KB_SCHEMA, executor=execute_search_knowledge_base)
+register_tool("get_paypal_account_summary", schema=PAYPAL_ACCOUNT_SCHEMA, executor=_execute_get_paypal_account_summary)
+register_tool("get_paypal_transactions", schema=PAYPAL_TRANSACTIONS_SCHEMA, executor=_execute_get_paypal_transactions)
+register_tool(
+    "transfer_call_to_destination",
+    schema=TRANSFER_CALL_SCHEMA,
+    executor=transfer_call_to_destination,
+)
+# Banking Tools - Account & Profile
 register_tool("get_user_profile", executor=get_user_profile)
 register_tool("get_account_summary", executor=get_account_summary)
 register_tool("get_recent_transactions", executor=get_recent_transactions)
+# Banking Tools - Card Recommendation
 register_tool("search_card_products", executor=search_card_products)
 register_tool("get_card_details", executor=get_card_details)
+# Banking Tools - Investment & Retirement
 register_tool("get_retirement_accounts", executor=get_retirement_accounts)
 register_tool("search_rollover_guidance", executor=search_rollover_guidance)
 register_tool("handoff_merrill_advisor", executor=handoff_merrill_advisor)
+# Banking Handoffs - Multi-Agent Routing
 register_tool("handoff_card_recommendation", executor=handoff_card_recommendation, is_handoff=True)
 register_tool("handoff_investment_advisor", executor=handoff_investment_advisor, is_handoff=True)
 register_tool("handoff_erica_concierge", executor=handoff_erica_concierge, is_handoff=True)

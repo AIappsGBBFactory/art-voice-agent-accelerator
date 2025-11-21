@@ -29,6 +29,7 @@ from utils.ml_logging import get_logger
 from apps.rtagent.backend.src.agents.vlagent.settings import get_settings
 from apps.rtagent.backend.src.agents.vlagent.registry import load_registry, HANDOFF_MAP
 from apps.rtagent.backend.src.agents.vlagent.orchestrator import LiveOrchestrator
+from apps.rtagent.backend.src.agents.vlagent.session_loader import load_user_profile_by_email
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
 	send_session_envelope,
 	send_user_transcript,
@@ -68,6 +69,9 @@ _AGENT_LABELS = {
 	"AuthAgent": "Auth Agent",
 	"TransferAgency": "Transfer Agency Specialist",
 	"TradingDesk": "Trading Specialist",
+	"EricaConcierge": "Erica",
+	"CardRecommendation": "Card Specialist",
+	"InvestmentAdvisor": "Investment Advisor",
 }
 
 
@@ -435,6 +439,7 @@ class VoiceLiveSDKHandler:
 		session_id: str,
 		call_connection_id: Optional[str] = None,
 		transport: VoiceLiveTransport = "acs",
+		user_email: Optional[str] = None,
 	) -> None:
 		self.websocket = websocket
 		self.session_id = session_id
@@ -442,6 +447,7 @@ class VoiceLiveSDKHandler:
 		self._messenger = _SessionMessenger(websocket)
 		self._transport: VoiceLiveTransport = transport
 		self._manual_commit_enabled = transport == "acs"
+		self._user_email = user_email
 
 		self._settings = None
 		self._credential: Optional[Union[AzureKeyCredential, TokenCredential]] = None
@@ -526,6 +532,12 @@ class VoiceLiveSDKHandler:
 			self._connection = await self._connection_cm.__aenter__()
 
 			agents = load_registry(str(self._settings.agents_path))
+			
+			user_profile = None
+			if hasattr(self, '_user_email') and self._user_email:
+				logger.info("Loading user profile for session | email=%s", self._user_email)
+				user_profile = await load_user_profile_by_email(self._user_email)
+			
 			self._orchestrator = LiveOrchestrator(
 				conn=self._connection,
 				agents=agents,
@@ -537,7 +549,18 @@ class VoiceLiveSDKHandler:
 				transport=self._transport,
 			)
 
-			await self._orchestrator.start()
+			system_vars = {}
+			if user_profile:
+				system_vars["session_profile"] = user_profile
+				system_vars["client_id"] = user_profile.get("client_id")
+				system_vars["customer_intelligence"] = user_profile.get("customer_intelligence", {})
+				logger.info(
+					"✅ Session initialized with user profile | client_id=%s name=%s",
+					user_profile.get("client_id"),
+					user_profile.get("full_name")
+				)
+			
+			await self._orchestrator.start(system_vars=system_vars)
 
 			self._running = True
 			self._shutdown.clear()

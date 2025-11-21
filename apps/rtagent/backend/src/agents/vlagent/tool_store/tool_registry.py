@@ -47,6 +47,21 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.voicemail import (
     detect_voicemail_and_end_call,
     confirm_voicemail_and_end_call,
 )
+from apps.rtagent.backend.src.agents.vlagent.tool_store.banking_tools import (
+    get_user_profile,
+    get_account_summary,
+    get_recent_transactions,
+    search_card_products,
+    get_card_details,
+    get_retirement_accounts,
+    search_rollover_guidance,
+    handoff_merrill_advisor,
+)
+from apps.rtagent.backend.src.agents.vlagent.tool_store.banking_handoffs import (
+    handoff_card_recommendation,
+    handoff_investment_advisor,
+    handoff_erica_concierge,
+)
 from utils.ml_logging import get_logger
 
 log = get_logger("tools_helper")
@@ -85,6 +100,21 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.schemas import (
     record_fnol_schema,
     detect_voicemail_schema,
     confirm_voicemail_schema,
+    # Banking Tools
+    get_user_profile_schema,
+    get_account_summary_schema,
+    get_recent_transactions_schema,
+    search_card_products_schema,
+    get_card_details_schema,
+    get_retirement_accounts_schema,
+    search_rollover_guidance_schema,
+    handoff_merrill_advisor_schema,
+    handoff_card_recommendation_schema,
+    handoff_investment_advisor_schema,
+    handoff_erica_concierge_schema,
+    search_knowledge_base_schema,
+    get_paypal_account_summary_schema,
+    get_paypal_transactions_schema,
 )
 
 function_mapping: Dict[str, Callable[..., Any]] = {
@@ -122,6 +152,18 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "confirm_voicemail_and_end_call": confirm_voicemail_and_end_call,
     "transfer_call_to_destination": transfer_call_to_destination,
     "transfer_call_to_call_center": transfer_call_to_call_center,
+    # Banking Tools
+    "get_user_profile": get_user_profile,
+    "get_account_summary": get_account_summary,
+    "get_recent_transactions": get_recent_transactions,
+    "search_card_products": search_card_products,
+    "get_card_details": get_card_details,
+    "get_retirement_accounts": get_retirement_accounts,
+    "search_rollover_guidance": search_rollover_guidance,
+    "handoff_merrill_advisor": handoff_merrill_advisor,
+    "handoff_card_recommendation": handoff_card_recommendation,
+    "handoff_investment_advisor": handoff_investment_advisor,
+    "handoff_erica_concierge": handoff_erica_concierge,
 }
 
 
@@ -160,6 +202,22 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": confirm_voicemail_schema},
     {"type": "function", "function": TRANSFER_CALL_SCHEMA},
     {"type": "function", "function": TRANSFER_CALL_CENTER_SCHEMA},
+    # Banking Tools
+    {"type": "function", "function": get_user_profile_schema},
+    {"type": "function", "function": get_account_summary_schema},
+    {"type": "function", "function": get_recent_transactions_schema},
+    {"type": "function", "function": search_card_products_schema},
+    {"type": "function", "function": get_card_details_schema},
+    {"type": "function", "function": get_retirement_accounts_schema},
+    {"type": "function", "function": search_rollover_guidance_schema},
+    {"type": "function", "function": handoff_merrill_advisor_schema},
+    {"type": "function", "function": handoff_card_recommendation_schema},
+    {"type": "function", "function": handoff_investment_advisor_schema},
+    {"type": "function", "function": handoff_erica_concierge_schema},
+    # Knowledge Base & PayPal
+    {"type": "function", "function": search_knowledge_base_schema},
+    {"type": "function", "function": get_paypal_account_summary_schema},
+    {"type": "function", "function": get_paypal_transactions_schema},
 ]
 
 TOOL_REGISTRY: dict[str, dict] = {t["function"]["name"]: t for t in available_tools}
