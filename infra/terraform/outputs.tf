@@ -229,12 +229,12 @@ output "ai_foundry_project_identity_principal_id" {
 
 output "AZURE_VOICELIVE_ENDPOINT" {
   description = "Azure Voice Live endpoint"
-  value       = var.enable_voice_live ? module.voice_live_ai_foundry.endpoint : ""
+  value       = var.enable_voice_live ? module.ai_foundry_voice_live.endpoint : ""
 }
 
 output "AZURE_VOICELIVE_RESOURCE_ID" {
   description = "Azure Voice Live resource ID"
-  value       = var.enable_voice_live ? module.voice_live_ai_foundry.account_id : ""
+  value       = var.enable_voice_live ? module.ai_foundry_voice_live.account_id : ""
 }
 
 output "AZURE_VOICELIVE_MODEL" {
