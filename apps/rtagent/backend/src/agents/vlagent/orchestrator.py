@@ -67,7 +67,7 @@ class LiveOrchestrator:
         conn,
         agents: Dict[str, "AzureVoiceLiveAgent"],
         handoff_map: Dict[str, str],
-        start_agent: str = "AutoAuth",
+        start_agent: str = "EricaConcierge",
         audio_processor=None,
         messenger=None,
         call_connection_id: Optional[str] = None,
@@ -90,6 +90,7 @@ class LiveOrchestrator:
         self._greeting_tasks: set[asyncio.Task] = set()
         self._search_preface_index = 0
         self._active_response_id: Optional[str] = None
+        self._system_vars: Dict[str, Any] = {}  # Preserve session_profile across handoffs
 
         if self.messenger:
             try:
@@ -103,7 +104,9 @@ class LiveOrchestrator:
     async def start(self, system_vars: Optional[dict] = None):
         """Apply initial agent session and trigger an intro response."""
         logger.info("[Orchestrator] Starting with agent: %s", self.active)
-        await self._switch_to(self.active, system_vars or {})
+        # Store initial system_vars (especially session_profile) for handoffs
+        self._system_vars = dict(system_vars or {})
+        await self._switch_to(self.active, self._system_vars)
         # Note: _switch_to now triggers greeting automatically, no need for separate response.create()
 
     async def _switch_to(self, agent_name: str, system_vars: dict):
@@ -168,12 +171,28 @@ class LiveOrchestrator:
                     self.messenger.set_active_agent(agent_name)
                 except AttributeError:
                     logger.debug("Messenger does not support set_active_agent", exc_info=True)
+            
+            # For handoffs, extract transition message to speak after session update
+            has_handoff = bool(system_vars.get("handoff_context"))
+            handoff_message = system_vars.get("handoff_message") if has_handoff else None
+            
+            # For handoffs with messages, use pending greeting mechanism (same as initial greeting)
+            # This ensures the message is spoken AFTER session.update completes
+            if handoff_message:
+                self._pending_greeting = handoff_message
+                self._pending_greeting_agent = agent_name
+                logger.info("[Handoff] Pending transition message: %s", handoff_message[:50] + "..." if len(handoff_message) > 50 else handoff_message)
+            
+            # Apply session configuration without immediate say
+            # The SESSION_UPDATED handler will trigger the pending greeting
             await agent.apply_session(
                 self.conn,
                 system_vars=system_vars,
-                say=None,
+                say=None,  # Don't speak immediately, let SESSION_UPDATED handler do it
             )
-            if self._pending_greeting and self._pending_greeting_agent == agent_name:
+            
+            # Schedule greeting fallback for non-handoff cases with pending greeting
+            if not has_handoff and self._pending_greeting and self._pending_greeting_agent == agent_name:
                 self._schedule_greeting_fallback(agent_name)
         except Exception:
             logger.exception("Failed to apply session for agent '%s'", agent_name)
@@ -333,17 +352,28 @@ class LiveOrchestrator:
         )
 
         intro = agent.return_greeting if not is_first_visit else agent.greeting
-        intro = (intro or f"Hi, I'm {agent_name}.").strip()
+        intro = (intro or "").strip()
+        
+        # For handoffs (seamless continuation), skip automatic greeting
+        # Let the agent's prompt handle the natural conversation flow
+        if has_handoff:
+            return None
 
         if intent:
             intent = intent.strip().rstrip(".")
-            return f"Hi {caller}, {intro} I understand you're calling about {intent}. Let's get started."
+            if intro:
+                return f"Hi {caller}, {intro} I understand you're calling about {intent}. Let's get started."
+            return None  # Skip greeting for seamless handoff
 
         handoff_message = (system_vars.get("handoff_message") or "").strip()
         if handoff_message:
-            return f"Hi {caller}, {intro} {handoff_message}"
+            if intro:
+                return f"Hi {caller}, {intro} {handoff_message}"
+            return None  # Skip greeting for seamless handoff
 
-        return f"Hi {caller}, {intro}".strip()
+        if intro:
+            return f"Hi {caller}, {intro}".strip()
+        return None  # Skip greeting for seamless handoff
 
     async def _execute_tool_call(self, call_id: Optional[str], name: Optional[str], args_json: Optional[str]) -> bool:
         """
@@ -529,6 +559,10 @@ class LiveOrchestrator:
                 "handoff_context": handoff_context,
                 "handoff_message": result.get("message"),
             }
+            # Preserve session_profile and other persistent context across handoffs
+            for key in ("session_profile", "client_id", "customer_intelligence", "institution_name"):
+                if key in self._system_vars:
+                    ctx[key] = self._system_vars[key]
             if last_user_message:
                 ctx.setdefault("user_last_utterance", last_user_message)
             if session_overrides:
@@ -539,13 +573,9 @@ class LiveOrchestrator:
                 name, self.active, target
             )
 
-            # Cancel the current response to prevent the previous agent from continuing to speak
-            try:
-                if result.get("should_interrupt_playback", True):
-                    await self.conn.response.cancel()
-            except Exception:
-                logger.debug("response.cancel() failed during handoff", exc_info=True)
-
+            # Switch to new agent - SESSION_UPDATED handler will:
+            # 1. Cancel current response
+            # 2. Trigger handoff message from _pending_greeting
             await self._switch_to(target, ctx)
             # Clear the cached user message once the handoff has completed.
             self._last_user_message = None
