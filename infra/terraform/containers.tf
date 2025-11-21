@@ -173,7 +173,7 @@ resource "azurerm_container_app" "backend" {
       }
       env {
         name = "AZURE_VOICELIVE_MODEL"
-        value = "gpt-realtime"
+        value = local.voice_live_model_name
       }
 
       env {

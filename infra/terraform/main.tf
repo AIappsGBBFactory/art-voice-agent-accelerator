@@ -128,6 +128,7 @@ locals {
     deployment.name => deployment
     if !(local.should_create_voice_live_account && contains(local.voice_live_model_names, deployment.name))
   }
+  voice_live_model_name = "gpt-realtime"
   voice_live_model_deployments_map = {
     for name, details in {
       "gpt-realtime" = {
