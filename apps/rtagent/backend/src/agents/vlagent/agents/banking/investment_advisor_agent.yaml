@@ -34,7 +34,6 @@ tools:
   - calculate_tax_impact
   - get_retirement_accounts
   - search_rollover_guidance
-  - handoff_merrill_advisor
   - handoff_card_recommendation
   - escalate_human
   - escalate_emergency

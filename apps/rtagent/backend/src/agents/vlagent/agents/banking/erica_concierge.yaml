@@ -29,6 +29,7 @@ session:
 
 tools:
   - verify_client_identity
+  - verify_fraud_client_identity
   - send_mfa_code
   - verify_mfa_code
   - resend_mfa_code

@@ -507,7 +507,7 @@ register_tool("get_account_routing_info", executor=get_account_routing_info)
 register_tool("get_401k_details", executor=get_401k_details)
 register_tool("get_rollover_options", executor=get_rollover_options)
 register_tool("calculate_tax_impact", executor=calculate_tax_impact)
-register_tool("handoff_merrill_advisor", executor=handoff_merrill_advisor, is_handoff=True)
+register_tool("handoff_merrill_advisor", executor=handoff_merrill_advisor, is_handoff=False)
 # register_tool(
 #     "transfer_call_to_call_center",
 #     schema=TRANSFER_CALL_CENTER_SCHEMA,
