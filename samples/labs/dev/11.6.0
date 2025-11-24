@@ -1,0 +1,15 @@
+Collecting azure-search-documents
+  Downloading azure_search_documents-11.6.0-py3-none-any.whl.metadata (23 kB)
+Requirement already satisfied: azure-core>=1.28.0 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from azure-search-documents) (1.36.0)
+Requirement already satisfied: azure-common>=1.1 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from azure-search-documents) (1.1.28)
+Requirement already satisfied: isodate>=0.6.0 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from azure-search-documents) (0.7.2)
+Requirement already satisfied: typing-extensions>=4.6.0 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from azure-search-documents) (4.15.0)
+Requirement already satisfied: requests>=2.21.0 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from azure-core>=1.28.0->azure-search-documents) (2.32.4)
+Requirement already satisfied: charset_normalizer<4,>=2 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from requests>=2.21.0->azure-core>=1.28.0->azure-search-documents) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from requests>=2.21.0->azure-core>=1.28.0->azure-search-documents) (3.11)
+Requirement already satisfied: urllib3<3,>=1.21.1 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from requests>=2.21.0->azure-core>=1.28.0->azure-search-documents) (2.5.0)
+Requirement already satisfied: certifi>=2017.4.17 in c:\users\annaquincy\desktop\code\bofa-demo\art-voice-agent-accelerator\.venv\lib\site-packages (from requests>=2.21.0->azure-core>=1.28.0->azure-search-documents) (2025.11.12)
+Downloading azure_search_documents-11.6.0-py3-none-any.whl (307 kB)
+   ---------------------------------------- 0.0/307.9 kB ? eta -:--:--   - -------------------------------------- 10.2/307.9 kB ? eta -:--:--   -------------- ------------------------- 112.6/307.9 kB 1.7 MB/s eta 0:00:01   ---------------------------------------  307.2/307.9 kB 3.2 MB/s eta 0:00:01   ---------------------------------------- 307.9/307.9 kB 2.7 MB/s eta 0:00:00
+Installing collected packages: azure-search-documents
+Successfully installed azure-search-documents-11.6.0
