@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Box, Button, Card, CardContent, CardHeader, Chip, Divider, IconButton, LinearProgress, Paper, Typography } from '@mui/material';
+import { theme } from '../theme.js';
 import BuildCircleRoundedIcon from '@mui/icons-material/BuildCircleRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
@@ -624,7 +625,7 @@ const styles = {
     top: "0",
     bottom: "0",
     width: "0px",
-    backgroundColor: "#3b82f6",
+    backgroundColor: theme.primaryColor,
   },
   
   messageContainer: {
@@ -668,13 +669,13 @@ const styles = {
   },
   
   assistantBubble: {
-    background: "#67d8ef",
+    background: theme.assistantBubbleColor,
     color: "white",
     padding: "12px 16px",
     borderRadius: "20px",
     fontSize: "14px",
     lineHeight: "1.5",
-    boxShadow: "0 2px 8px rgba(103,216,239,0.3)",
+    boxShadow: `0 2px 8px ${theme.hexToRgba(theme.assistantBubbleColor, 0.3)}`,
     wordWrap: "break-word",
     overflowWrap: "break-word",
     hyphens: "auto",
@@ -1181,7 +1182,7 @@ const styles = {
   callMeButton: (isActive, isDisabled = false) => ({
     padding: "12px 24px",
     marginTop: "4px",
-    background: isDisabled ? "linear-gradient(135deg, #e2e8f0, #cbd5e1)" : (isActive ? "#ef4444" : "#67d8ef"),
+    background: isDisabled ? "linear-gradient(135deg, #e2e8f0, #cbd5e1)" : (isActive ? "#ef4444" : theme.primaryColor),
     color: isDisabled ? "#94a3b8" : "white",
     border: "none",
     borderRadius: "16px", // More box-like - less rounded
@@ -1302,13 +1303,13 @@ const styles = {
     fontSize: "11px",
     padding: "10px 20px",
     borderRadius: "18px",
-    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-    boxShadow: "0 10px 22px rgba(99,102,241,0.28)",
+    background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.adjustColor(theme.primaryColor, -15)})`,
+    boxShadow: `0 10px 22px ${theme.hexToRgba(theme.primaryColor, 0.28)}`,
     color: "#f8fafc",
     border: "1px solid rgba(255,255,255,0.25)",
   },
   createProfileButtonHover: {
-    boxShadow: "0 14px 26px rgba(99,102,241,0.33)",
+    boxShadow: `0 14px 26px ${theme.hexToRgba(theme.primaryColor, 0.33)}`,
   },
 
   helpTooltip: {
@@ -1355,7 +1356,7 @@ const styles = {
 
   helpTooltipContact: {
     fontSize: "11px",
-    color: "#67d8ef",
+    color: theme.primaryColor,
     fontFamily: "monospace",
     background: "#f8fafc",
     padding: "4px 8px",
@@ -1753,7 +1754,7 @@ const IndustryTag = () => {
 
     if (currentBranch.includes('finance') || currentBranch.includes('capitalmarkets')) {
       return {
-        label: 'Banking Edition',
+        label: theme.institutionName,
         palette: {
           background: 'linear-gradient(135deg, #4338ca, #6366f1)',
           color: '#f8fafc',
@@ -1765,7 +1766,7 @@ const IndustryTag = () => {
     }
 
     return {
-      label: 'Banking Edition',
+      label: theme.institutionName,
       palette: {
         background: 'linear-gradient(135deg, #4338ca, #6366f1)',
         color: '#f8fafc',
@@ -2788,9 +2789,9 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
     } else if (userDisplayActive) {
       baseColor = "#ef4444";
     } else if (assistantDisplayActive) {
-      baseColor = "#67d8ef";
+      baseColor = theme.assistantBubbleColor;
     } else {
-      baseColor = "#3b82f6";
+      baseColor = theme.secondaryColor;
       opacity = 0.45;
     }
 
@@ -2849,7 +2850,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
           <linearGradient id="waveGradientBarge" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stopColor="#ef4444" />
             <stop offset="50%" stopColor="#8b5cf6" />
-            <stop offset="100%" stopColor="#67d8ef" />
+            <stop offset="100%" stopColor={theme.assistantBubbleColor} />
           </linearGradient>
         </defs>
         {generateMultipleWaves()}
@@ -6130,8 +6131,28 @@ function RealTimeVoiceApp() {
           <div style={styles.appHeader}>
             <div style={styles.appHeaderIdentity}>
               <div style={styles.appTitleBlock}>
-                <h1 style={styles.appTitle}>🎙️ ARTAgent</h1>
-                <p style={styles.appSubtitle}>Transforming customer interactions with real-time, intelligent voice experiences.</p>
+                {theme.logoUrl && (
+                  <img 
+                    src={theme.logoUrl} 
+                    alt={theme.institutionName} 
+                    style={{ height: '32px', maxWidth: '200px', objectFit: 'contain', marginBottom: '8px' }} 
+                  />
+                )}
+                {!theme.logoUrl && theme.institutionName && (
+                  <p style={{...styles.appSubtitle, fontSize: '11px', color: '#94a3b8', marginBottom: '4px', fontWeight: '500'}}>
+                    {theme.institutionName}
+                  </p>
+                )}
+                <h1 style={styles.appTitle}>
+                  {theme.appIcon && `${theme.appIcon} `}
+                  {theme.appTitle || 'AI Voice Assistant'}
+                </h1>
+                {!theme.logoUrl && theme.appSubtitle && (
+                  <p style={{...styles.appSubtitle, marginBottom: '2px', fontSize: '11px', color: '#64748b'}}>
+                    {theme.appSubtitle}
+                  </p>
+                )}
+                <p style={styles.appSubtitle}>Powered by ARTAgent Framework (Azure AI)</p>
               </div>
             </div>
 

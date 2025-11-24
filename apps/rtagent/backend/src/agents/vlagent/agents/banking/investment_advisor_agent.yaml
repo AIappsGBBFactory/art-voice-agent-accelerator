@@ -1,6 +1,6 @@
 agent:
   name: InvestmentAdvisor
-  greeting: ""
+  greeting: "Hello, I'm {{ agent_name | default('your investment advisor') }} with {{ institution_name | default('your financial institution') }}. I can help you with investment strategies, retirement planning, and portfolio management. How can I assist you today?"
   return_greeting: "Is there anything else I can help you with regarding your investments or retirement planning?"
 
 prompts:
@@ -17,7 +17,7 @@ session:
 
   voice:
     type: azure-standard
-    name: en-US-EchoTurboMultilingualNeural
+    name: en-US-AlloyTurboMultilingualNeural
     rate: "-4%"
 
   turn_detection:
@@ -35,6 +35,6 @@ tools:
   - get_retirement_accounts
   - search_rollover_guidance
   - handoff_merrill_advisor
+  - handoff_card_recommendation
   - escalate_human
   - escalate_emergency
-  - handoff_investment_advisor

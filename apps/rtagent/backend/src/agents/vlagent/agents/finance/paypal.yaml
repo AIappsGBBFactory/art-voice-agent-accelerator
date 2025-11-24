@@ -1,7 +1,7 @@
 agent:
   name: PayPalAgent
-  greeting: "Hello! You're speaking with PayPal Support. I can help with payments, account limits, disputes, or balance questions. How can I help today?"
-  return_greeting: "Welcome back to PayPal Support. What would you like to cover next?"
+  greeting: "Hello! I'm {{ agent_name | default('your assistant') }} with {{ institution_name | default('Customer') }} Support. I can help with payments, account limits, disputes, or balance questions. How can I help today?"
+  return_greeting: "Welcome back to {{ institution_name | default('Customer') }} Support. What would you like to cover next?"
 
 prompts:
   path: paypal_agent.jinja

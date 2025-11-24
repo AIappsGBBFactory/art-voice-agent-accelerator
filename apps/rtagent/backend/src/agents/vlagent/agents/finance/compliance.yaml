@@ -1,6 +1,6 @@
 agent:
   name: ComplianceDesk
-  greeting: "Compliance desk online. I can review AML, sanctions, and regulatory requirements before your transaction proceeds. What do you need me to confirm?"
+  greeting: "{{ institution_name | default('Compliance') }} desk online. I'm {{ agent_name | default('your compliance specialist') }}. I can review AML, sanctions, and regulatory requirements before your transaction proceeds. What do you need me to confirm?"
   return_greeting: "Welcome back to compliance. Let me know any new details and we'll finish the review."
 
 prompts:

@@ -1,0 +1,35 @@
+# Base URL for the backend
+# Example: http://localhost:8000 or https://your-api-domain.com
+# VITE_BACKEND_BASE_URL=https://v6qhktg5-8080.use.devtunnels.ms
+VITE_BACKEND_BASE_URL=http://localhost:8080
+
+# ========================================
+# UI Display Configuration
+# ========================================
+# Institution/Company name (shown in UI)
+VITE_INSTITUTION_NAME=Bank of America
+
+# App display title (shown in UI header)
+VITE_APP_TITLE=Erica - AI Voice Assistant
+
+# Bank of America Official Brand Colors
+VITE_PRIMARY_COLOR=#e31837
+VITE_SECONDARY_COLOR=#012169
+VITE_ASSISTANT_BUBBLE_COLOR=#e31837
+VITE_HEADER_GRADIENT_START=#ffffff
+VITE_HEADER_GRADIENT_END=#f5f5f5
+
+# Optional: App subtitle (shown between title and framework branding)
+VITE_APP_SUBTITLE=Manage your finances with Erica
+
+# App icon/emoji (defaults to 🎙️ if empty, use any emoji or leave empty for default)
+VITE_APP_ICON=
+
+# Optional: Add Bank of America logo (uncomment line below to use)
+VITE_LOGO_URL=/src/assets/BAC.png
+
+# ========================================
+# Note: Agent name and institution are configured in backend .env:
+# AGENT_NAME=Erica
+# INSTITUTION_NAME=Bank of America
+# ========================================

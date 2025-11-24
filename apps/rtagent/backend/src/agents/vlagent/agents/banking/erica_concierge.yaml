@@ -17,7 +17,7 @@ session:
 
   voice:
     type: azure-standard
-    name: en-US-EchoTurboMultilingualNeural
+    name: en-US-AlloyTurboMultilingualNeural
     rate: "-4%"
 
   turn_detection:

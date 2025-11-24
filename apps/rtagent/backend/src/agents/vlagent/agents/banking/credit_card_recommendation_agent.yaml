@@ -1,6 +1,6 @@
 agent:
   name: CardRecommendation
-  greeting: ""
+  greeting: "Hi, I'm {{ agent_name | default('your card specialist') }} from {{ institution_name | default('your bank') }}. I'm here to help you find the perfect credit card for your needs. What type of card are you interested in?"
   return_greeting: "What else would you like to know about cards?"
 
 prompts:
@@ -17,7 +17,7 @@ session:
 
   voice:
     type: azure-standard
-    name: en-US-EchoTurboMultilingualNeural
+    name: en-US-AlloyTurboMultilingualNeural
     rate: "-4%"
 
   turn_detection:

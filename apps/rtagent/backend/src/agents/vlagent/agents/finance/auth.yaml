@@ -1,7 +1,7 @@
 agent:
   name: AuthAgent
-  greeting: "Hello! You've reached PayPal Support. I can help with PayPal or Venmo questions as well as assisting with investigations such as Fraud. To get started, may I have your full name please?"
-  return_greeting: "Welcome back to PayPal Support. For security, I'll confirm your name again and we'll continue."
+  greeting: "Hello! You've reached {{ institution_name | default('Customer') }} Support. I'm {{ agent_name | default('your assistant') }}. I can help with account questions and assist with investigations. To get started, may I have your full name please?"
+  return_greeting: "Welcome back to {{ institution_name | default('Customer') }} Support. For security, I'll confirm your name again and we'll continue."
 
 prompts:
   path: voice_agent_authentication.jinja

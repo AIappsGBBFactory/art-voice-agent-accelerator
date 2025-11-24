@@ -1,6 +1,6 @@
 agent:
   name: FraudAgent
-  greeting: "You are now speaking with the Fraud Prevention desk. I can help secure your account, investigate suspicious activity, or open a fraud case. What happened?"
+  greeting: "You are now speaking with {{ agent_name | default('the Fraud Prevention specialist') }} at {{ institution_name | default('your financial institution') }}. I can help secure your account, investigate suspicious activity, or open a fraud case. What happened?"
   return_greeting: "Welcome back to the Fraud Prevention desk. Tell me what's changed and we'll continue."
 
 prompts:

@@ -1,6 +1,6 @@
 agent:
   name: TransferAgency
-  greeting: "Thank you for holding the line. This is the Transfer Agency desk. I can help with DRIP liquidations, dividend reinvestment updates, or institutional servicing. How can I assist you today?"
+  greeting: "Thank you for holding the line. This is {{ agent_name | default('the Transfer Agency specialist') }} at {{ institution_name | default('your institution') }}. I can help with DRIP liquidations, dividend reinvestment updates, or institutional servicing. How can I assist you today?"
   return_greeting: "Welcome back to the Transfer Agency desk. Let's pick up where we left off."
 
 prompts:
