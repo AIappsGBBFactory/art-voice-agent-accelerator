@@ -181,9 +181,6 @@ def _build_users(anchor: datetime) -> Sequence[dict]:
             "max_transaction_limit": 10_000_000,
             "mfa_required_threshold": 5_000,
             "contact_info": {
-                "email": "jinle@microsoft.com",
-                "phone": "+12246234441",
-                "preferred_mfa_method": "email",
             },
             "verification_codes": {"ssn4": "5432", "employee_id4": "9876", "phone4": "4441"},
             "mfa_settings": {
@@ -568,78 +565,7 @@ def _build_transfer_agency_clients(anchor: datetime) -> Sequence[dict]:
     """Create institutional transfer-agency client fixtures."""
     timestamp = _iso(anchor)
     return (
-        {
-            "_id": "pablo_salvador_cfs_ta",
-            "client_id": "pablo_salvador_cfs",
-            "client_code": "CFS-12345",
-            "institution_name": "Contoso Financial Services",
-            "contact_name": "Pablo Salvador",
-            "account_currency": "USD",
-            "custodial_account": "****2345",
-            "aml_expiry": "2025-12-31",
-            "fatca_status": "compliant",
-            "w8ben_expiry": "2026-06-15",
-            "risk_profile": "institutional",
-            "dual_auth_approver": "Maria González",
-            "email": "pablosal@microsoft.com",
-            "service_tier": "platinum_institutional",
-            "trading_permissions": ["equities", "options", "international"],
-            "settlement_instructions": {
-                "default_currency": "USD",
-                "wire_instructions": "JPM Chase Bank, ABA: 021000021",
-                "preferred_settlement": "standard",
-            },
-            "created_at": timestamp,
-            "updated_at": timestamp,
-        },
-        {
-            "_id": "alice_brown_cfs_ta",
-            "client_id": "alice_brown_cfs",
-            "client_code": "CFS-12345",
-            "institution_name": "Contoso Financial Services",
-            "contact_name": "Alice Brown",
-            "account_currency": "USD",
-            "custodial_account": "****1234",
-            "aml_expiry": "2025-08-31",
-            "fatca_status": "compliant",
-            "w8ben_expiry": "2026-02-15",
-            "risk_profile": "institutional",
-            "dual_auth_approver": "David Kim",
-            "email": "jinle@microsoft.com",
-            "service_tier": "silver_institutional",
-            "trading_permissions": ["equities", "bonds"],
-            "settlement_instructions": {
-                "default_currency": "USD",
-                "wire_instructions": "JPM Chase Bank, ABA: 021000021",
-                "preferred_settlement": "standard",
-            },
-            "created_at": timestamp,
-            "updated_at": timestamp,
-        },
-        {
-            "_id": "emily_rivera_gca_ta",
-            "client_id": "emily_rivera_gca",
-            "client_code": "GCA-48273",
-            "institution_name": "Global Capital Advisors",
-            "contact_name": "Emily Rivera",
-            "account_currency": "EUR",
-            "custodial_account": "****4821",
-            "aml_expiry": "2025-10-31",
-            "fatca_status": "compliant",
-            "w8ben_expiry": "2026-03-15",
-            "risk_profile": "institutional",
-            "dual_auth_approver": "James Carter",
-            "email": "emily.rivera@globalcapital.com",
-            "service_tier": "gold_institutional",
-            "trading_permissions": ["equities", "bonds", "fx"],
-            "settlement_instructions": {
-                "default_currency": "EUR",
-                "wire_instructions": "Deutsche Bank AG, SWIFT: DEUTDEFF",
-                "preferred_settlement": "expedited",
-            },
-            "created_at": timestamp,
-            "updated_at": timestamp,
-        },
+      
     )
 
 
@@ -833,7 +759,6 @@ def get_seed_tasks(options: Mapping[str, object]) -> Sequence[SeedTask]:
     fraud_cases = _build_fraud_cases(anchor)
     card_orders = _build_card_orders(anchor)
     mfa_sessions = _build_mfa_sessions(anchor)
-    transfer_clients = _build_transfer_agency_clients(anchor)
     drip_positions = _build_drip_positions(anchor)
     compliance_records = _build_compliance_records(anchor)
     return (
@@ -870,13 +795,6 @@ def get_seed_tasks(options: Mapping[str, object]) -> Sequence[SeedTask]:
             database=DATABASE_NAME,
             collection="mfa_sessions",
             documents=mfa_sessions,
-            id_field="_id",
-        ),
-        SeedTask(
-            dataset=DATASET_NAME,
-            database=DATABASE_NAME,
-            collection="transfer_agency_clients",
-            documents=transfer_clients,
             id_field="_id",
         ),
         SeedTask(

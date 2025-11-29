@@ -807,7 +807,7 @@ def get_participant_phone(event: CloudEvent, cm: MemoManager) -> Optional[str]:
         ident = p.get("identifier", {}) or {}
         # prefer explicit phone number
         phone = (ident.get("phoneNumber") or {}).get("value")
-        # fallback: rawId like "4:+12246234441"
+        # fallback: rawId like "4:+1234567890"
         if not phone:
             raw = ident.get("rawId")
             if isinstance(raw, str) and raw.startswith("4:"):
