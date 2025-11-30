@@ -659,6 +659,19 @@ class ThreadSafeConnectionManager:
             except Exception as e:
                 logger.error(f"Error removing failed connection {conn_id}: {e}")
 
+    def _create_pubsub(self, pattern: str) -> Any:
+        """Create a new pubsub subscription with current credentials.
+
+        Args:
+            pattern: The channel pattern to subscribe to.
+
+        Returns:
+            A new pubsub object subscribed to the pattern.
+        """
+        pubsub = self._redis_mgr.redis_client.pubsub(ignore_subscribe_messages=True)
+        pubsub.psubscribe(pattern)
+        return pubsub
+
     async def _redis_listener_loop(self) -> None:
         """Listen for distributed session envelopes and deliver locally."""
         if not self._redis_mgr:
@@ -666,10 +679,7 @@ class ThreadSafeConnectionManager:
 
         pattern = f"{self._distributed_channel_prefix}:*"
         try:
-            pubsub = self._redis_mgr.redis_client.pubsub(
-                ignore_subscribe_messages=True
-            )
-            pubsub.psubscribe(pattern)
+            pubsub = self._create_pubsub(pattern)
             self._redis_pubsub = pubsub
             logger.info(
                 "Subscribed to distributed session pattern",
@@ -697,13 +707,45 @@ class ThreadSafeConnectionManager:
                         ),
                     )
                 except Exception as exc:  # noqa: BLE001
+                    exc_str = str(exc).lower()
                     # Avoid tight loop when pubsub has already been closed or shut down
-                    if "closed file" in str(exc).lower():
+                    if "closed file" in exc_str:
                         logger.info(
                             "Distributed listener detected closed pubsub; exiting",
                             extra={"node_id": self._node_id},
                         )
                         break
+
+                    # Detect credential expiration and reconnect with fresh credentials
+                    if "invalid username-password" in exc_str or "auth" in exc_str:
+                        logger.warning(
+                            "Redis pubsub auth error detected, refreshing credentials",
+                            extra={"node_id": self._node_id, "error": str(exc)},
+                        )
+                        try:
+                            # Close old pubsub
+                            try:
+                                pubsub.close()
+                            except Exception:
+                                pass
+                            # Force credential refresh in Redis manager
+                            self._redis_mgr._create_client()
+                            # Re-establish pubsub with fresh credentials
+                            pubsub = self._create_pubsub(pattern)
+                            self._redis_pubsub = pubsub
+                            logger.info(
+                                "Redis pubsub reconnected with refreshed credentials",
+                                extra={"pattern": pattern, "node_id": self._node_id},
+                            )
+                        except Exception as reconnect_exc:
+                            logger.error(
+                                "Failed to reconnect Redis pubsub: %s",
+                                reconnect_exc,
+                                extra={"node_id": self._node_id},
+                            )
+                            await asyncio.sleep(5.0)
+                        continue
+
                     logger.error(
                         "Distributed session listener error: %s",
                         exc,

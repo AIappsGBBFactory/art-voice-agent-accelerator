@@ -4697,7 +4697,7 @@ function RealTimeVoiceApp() {
                        activeSessionProfile?.profile?.contact_info?.email || null;
       const emailParam = userEmail ? `&user_email=${encodeURIComponent(userEmail)}` : '';
       
-      const baseConversationUrl = `${WS_URL}/api/v1/realtime/conversation?session_id=${sessionId}&streaming_mode=${encodeURIComponent(
+      const baseConversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${sessionId}&streaming_mode=${encodeURIComponent(
         realtimeMode,
       )}${emailParam}`;
       resetMetrics(sessionId);
@@ -5867,7 +5867,7 @@ function RealTimeVoiceApp() {
 
     try {
       const encodedSession = encodeURIComponent(targetSessionId);
-      const relayUrl = `${WS_URL}/api/v1/realtime/dashboard/relay?session_id=${encodedSession}`;
+      const relayUrl = `${WS_URL}/api/v1/browser/dashboard/relay?session_id=${encodedSession}`;
       closeRelaySocket(`${reason || "manual"} reopen`, { preserveLifecycle: true });
       if (!suppressLog) {
         appendLog(`Connecting relay WS (${reason})`);

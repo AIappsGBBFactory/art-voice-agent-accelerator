@@ -8,11 +8,11 @@ from fastapi import FastAPI, WebSocketDisconnect
 from fastapi.testclient import TestClient
 from fastapi.websockets import WebSocketState
 
-from apps.rtagent.backend.api.v1.endpoints import realtime
+from apps.rtagent.backend.api.v1.endpoints import browser
 from src.pools.on_demand_pool import OnDemandResourcePool
 from src.pools.async_pool import AllocationTier
 
-GREETING = realtime.GREETING
+GREETING = browser.GREETING
 
 
 class DummySessionManager:
@@ -227,7 +227,7 @@ def realtime_app():
     app.state.redis = MagicMock()
     app.state.auth_agent = SimpleNamespace(name="assistant")
     
-    app.include_router(realtime.router, prefix="/api/v1/realtime")
+    app.include_router(browser.router, prefix="/api/v1/realtime")
     return app, conn_manager, session_manager, metrics, tts_pool, stt_pool
 
 
@@ -340,7 +340,7 @@ async def test_cleanup_conversation_session_releases_resources(realtime_app):
         close=AsyncMock(),
     )
 
-    await realtime._cleanup_conversation_session(
+    await browser._cleanup_conversation_session(
         websocket, session_id="session-123", memory_manager=MagicMock(), conn_id=conn_id
     )
 
@@ -456,7 +456,7 @@ async def test_initialize_conversation_session_sets_metadata(monkeypatch):
     websocket = StubWebSocket()
 
     monkeypatch.setattr(
-        realtime.MemoManager,
+        browser.MemoManager,
         "from_redis",
         classmethod(lambda cls, session_id, redis_mgr: memo),
     )
@@ -464,7 +464,7 @@ async def test_initialize_conversation_session_sets_metadata(monkeypatch):
     send_tts = AsyncMock()
     monkeypatch.setattr(realtime, "send_tts_audio", send_tts)
 
-    result = await realtime._initialize_conversation_session(
+    result = await browser._initialize_conversation_session(
         websocket, "session-123", conn_id, orchestrator=None
     )
 
@@ -539,7 +539,7 @@ async def test_process_conversation_messages_handles_stopwords(monkeypatch):
     send_tts = AsyncMock()
     monkeypatch.setattr(realtime, "send_tts_audio", send_tts)
 
-    await realtime._process_conversation_messages(
+    await browser._process_conversation_messages(
         websocket,
         session_id="session-xyz",
         memory_manager=memo_manager,
@@ -572,7 +572,7 @@ async def test_process_dashboard_messages_reads_until_disconnect():
 
     websocket = StubWebSocket()
     with pytest.raises(WebSocketDisconnect):
-        await realtime._process_dashboard_messages(websocket, client_id="dash-1")
+        await browser._process_dashboard_messages(websocket, client_id="dash-1")
 
 
 @pytest.mark.asyncio
@@ -598,7 +598,7 @@ async def test_cleanup_dashboard_connection_handles_connected_socket(monkeypatch
         close=close,
     )
 
-    await realtime._cleanup_dashboard_connection(websocket, client_id="dash", conn_id=conn_id)
+    await browser._cleanup_dashboard_connection(websocket, client_id="dash", conn_id=conn_id)
 
     assert conn_manager.unregistered == [conn_id]
     assert metrics.disconnected == 1
@@ -653,7 +653,7 @@ async def test_cleanup_conversation_session_releases_resources_with_aoai(monkeyp
         close=AsyncMock(),
     )
 
-    await realtime._cleanup_conversation_session(
+    await browser._cleanup_conversation_session(
         websocket, session_id="session-123", memory_manager=MagicMock(), conn_id=conn_id
     )
     await asyncio.sleep(0)

@@ -913,6 +913,17 @@ async def send_response_to_acs(
                     _record_status(playback_status)
                     sequence_id = 0
                     for frame in frames:
+                        # Check for barge-in cancellation request
+                        if _get_connection_metadata(ws, "tts_cancel_requested", False):
+                            logger.info(
+                                "ACS MEDIA: Barge-in detected; stopping frame send (run=%s, seq=%s)",
+                                run_id,
+                                sequence_id,
+                            )
+                            playback_status = "barge_in"
+                            _record_status(playback_status)
+                            break
+
                         if not _ws_is_connected(ws):
                             logger.info(
                                 "ACS MEDIA: WebSocket closing; stopping frame send (run=%s)",

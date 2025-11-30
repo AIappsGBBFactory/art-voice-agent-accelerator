@@ -210,10 +210,12 @@ async def send_agent_greeting(
         await broadcast_message(None, greeting, agent_sender, app_state=ws.app.state, session_id=session_id)
         try:
             stream_mode = getattr(ws.state, "stream_mode", ACS_STREAMING_MODE)
+            # Use blocking=True to ensure greeting completes before any
+            # subsequent audio, preventing TTS overlap.
             await send_response_to_acs(
                 ws=ws,
                 text=greeting,
-                blocking=False,
+                blocking=True,
                 latency_tool=ws.state.lt,
                 voice_name=voice_name,
                 voice_style=voice_style,

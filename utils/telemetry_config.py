@@ -110,7 +110,7 @@ def setup_azure_monitor(logger_name: str = None):
         enable_live_metrics = (
             not disable_live_metrics_env
             and not _live_metrics_permanently_disabled
-            and _should_enable_live_metrics()
+            # and _should_enable_live_metrics()
         )
 
         logger.info(

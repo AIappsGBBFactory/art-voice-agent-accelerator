@@ -152,7 +152,7 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     await initializeAudioPlayback();
 
     const sessionId = getOrCreateSessionId();
-    const conversationUrl = `${WS_URL}/api/v1/realtime/conversation?session_id=${encodeURIComponent(sessionId)}`;
+    const conversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${encodeURIComponent(sessionId)}`;
 
     // 1) open WS
     const socket = new WebSocket(conversationUrl);
@@ -528,7 +528,7 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
       setCallActive(true);
 
       // Relay WebSocket
-      const relayUrl = `${WS_URL}/api/v1/realtime/dashboard/relay?session_id=${encodeURIComponent(sessionId)}`;
+      const relayUrl = `${WS_URL}/api/v1/browser/dashboard/relay?session_id=${encodeURIComponent(sessionId)}`;
       const relay = new WebSocket(relayUrl);
       relay.onopen = () => appendLog("Relay WS connected");
       relay.onmessage = ({ data }) => {

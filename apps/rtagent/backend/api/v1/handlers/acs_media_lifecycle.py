@@ -801,11 +801,13 @@ class RouteTurnThread:
                     f"[{self.call_connection_id}] Dispatching {playback_type} playback (len={len(event.text)})"
                 )
 
+                # Use blocking=True to ensure we wait for frame streaming to complete
+                # before the next chunk can start. This prevents TTS overlap.
                 self.current_response_task = asyncio.create_task(
                     send_response_to_acs(
                         ws=self.websocket,
                         text=event.text,
-                        blocking=False,
+                        blocking=True,
                         latency_tool=getattr(self.websocket.state, "lt", None),
                         stream_mode=self.stream_mode,
                     )
