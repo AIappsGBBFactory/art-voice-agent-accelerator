@@ -451,10 +451,12 @@ async def _emit_streaming_text(
                 except Exception as prior_exc:  # noqa: BLE001
                     logger.warning("Previous ACS playback task failed: %s", prior_exc)
             try:
-
+                # Use blocking=True to ensure we wait for frame streaming to complete
+                # before the next chunk can start
                 await send_response_to_acs(
                     ws,
                     text,
+                    blocking=True,
                     latency_tool=_lt(ws),
                     voice_name=voice_name,
                     voice_style=voice_style,

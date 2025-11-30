@@ -537,23 +537,21 @@ class RouteTurnThread:
                     if speech_event.event_type == SpeechEventType.FINAL:
                         await self._process_final_speech(speech_event)
                     elif speech_event.event_type == SpeechEventType.GREETING:
-                        # Emit TTS request to transport layer
-                        if self.on_tts_request:
-                            await self.on_tts_request(speech_event.text, speech_event.event_type)
-                        # Legacy callback for backward compatibility
+                        # Use on_greeting if available, otherwise fall back to on_tts_request
                         if self.on_greeting:
                             await self.on_greeting(speech_event)
+                        elif self.on_tts_request:
+                            await self.on_tts_request(speech_event.text, speech_event.event_type)
                     elif speech_event.event_type in {
                         SpeechEventType.ANNOUNCEMENT,
                         SpeechEventType.STATUS_UPDATE,
                         SpeechEventType.ERROR_MESSAGE,
                     }:
-                        # Emit TTS request to transport layer
-                        if self.on_tts_request:
-                            await self.on_tts_request(speech_event.text, speech_event.event_type)
-                        # Legacy callback for backward compatibility
+                        # Use on_announcement if available, otherwise fall back to on_tts_request
                         if self.on_announcement:
                             await self.on_announcement(speech_event)
+                        elif self.on_tts_request:
+                            await self.on_tts_request(speech_event.text, speech_event.event_type)
                     elif speech_event.event_type == SpeechEventType.ERROR:
                         logger.error(
                             f"[{self._conn_short}] Speech error: {speech_event.text}"
@@ -939,6 +937,28 @@ class SpeechCascadeHandler:
                 event_type=SpeechEventType.ANNOUNCEMENT,
                 text=text,
                 language=language,
+            )
+        )
+
+    def queue_user_text(self, text: str, language: str = "en-US") -> bool:
+        """
+        Queue user text input for orchestration.
+
+        Used for text input (e.g., browser chat) that bypasses STT.
+
+        Args:
+            text: User text input.
+            language: Language code.
+
+        Returns:
+            True if successfully queued, False otherwise.
+        """
+        return self.queue_event(
+            SpeechEvent(
+                event_type=SpeechEventType.FINAL,
+                text=text,
+                language=language,
+                speaker_id=self.connection_id,
             )
         )
 

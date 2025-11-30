@@ -41,8 +41,8 @@ from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
 # V1 API specific imports
-# Note: ACSMediaHandler now uses the refactored composition pattern
-from .acs_media_handler import ACSMediaHandler
+# Note: MediaHandler now supports both ACS and Browser via TransportType
+from .media_handler import MediaHandler, MediaHandlerConfig, TransportType, ACSMediaHandler
 from ..events import get_call_event_processor
 from ..dependencies.orchestrator import get_orchestrator
 from apps.rtagent.backend.src.services.acs.call_transfer import transfer_call as transfer_call_service

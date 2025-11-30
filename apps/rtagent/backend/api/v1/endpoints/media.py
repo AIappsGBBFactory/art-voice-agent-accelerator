@@ -25,7 +25,7 @@ from config import ACS_STREAMING_MODE
 from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
 
-from ..handlers.acs_media_handler import ACSMediaHandler
+from ..handlers.media_handler import MediaHandler, MediaHandlerConfig, TransportType
 from ..handlers.voice_live_sdk_handler import VoiceLiveSDKHandler
 from ..dependencies.orchestrator import get_orchestrator
 
@@ -230,13 +230,15 @@ async def _create_media_handler(
 ):
     """Create appropriate media handler based on streaming mode."""
     if stream_mode == StreamMode.MEDIA:
-        return await ACSMediaHandler.create(
+        config = MediaHandlerConfig(
             websocket=websocket,
-            orchestrator_func=orchestrator,
-            call_connection_id=call_connection_id,
             session_id=session_id,
+            transport=TransportType.ACS,
+            call_connection_id=call_connection_id,
+            orchestrator_func=orchestrator,
             stream_mode=stream_mode,
         )
+        return await MediaHandler.create(config, websocket.app.state)
     elif stream_mode == StreamMode.VOICE_LIVE:
         return VoiceLiveSDKHandler(
             websocket=websocket,

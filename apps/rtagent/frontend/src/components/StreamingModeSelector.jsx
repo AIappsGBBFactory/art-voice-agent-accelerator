@@ -136,7 +136,7 @@ const VOICE_LIVE_BASE_CONFIG = Object.freeze({
   contextKey: 'streaming_mode',
   endpoints: {
     acs: '/api/v1/calls/initiate',
-    realtime: '/api/v1/realtime/conversation',
+    browser: '/api/v1/browser/conversation',
   },
 });
 
@@ -191,7 +191,7 @@ const REALTIME_STREAMING_MODE_OPTIONS = [
     config: {
       orchestrator: 'browser_sdk_relay',
       endpoints: {
-        realtime: '/api/v1/realtime/conversation',
+        browser: '/api/v1/browser/conversation',
       },
     },
   },
