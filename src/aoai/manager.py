@@ -4,7 +4,7 @@
 """
 
 from opentelemetry import trace
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import SpanKind, Status, StatusCode
 import base64
 import json
 import mimetypes
@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from openai import AzureOpenAI
 from opentelemetry import trace
 
-from src.enums.monitoring import SpanAttr
+from src.enums.monitoring import GenAIOperation, GenAIProvider, PeerService, SpanAttr
 from utils.ml_logging import get_logger
 from utils.trace_context import TraceContext
 
@@ -201,6 +201,117 @@ class AzureOpenAIManager:
         else:
             return NoOpTraceContext()
 
+    def _get_endpoint_host(self) -> str:
+        """Extract hostname from Azure OpenAI endpoint."""
+        return (
+            (self.azure_endpoint or "")
+            .replace("https://", "")
+            .replace("http://", "")
+            .rstrip("/")
+        )
+
+    def _set_genai_span_attributes(
+        self,
+        span: trace.Span,
+        operation: str,
+        model: str,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        seed: Optional[int] = None,
+    ) -> None:
+        """
+        Set standardized GenAI semantic convention attributes on a span.
+        
+        Args:
+            span: The OpenTelemetry span to add attributes to.
+            operation: GenAI operation name (e.g., "chat", "embeddings").
+            model: Model deployment name.
+            max_tokens: Max tokens for the request.
+            temperature: Temperature setting.
+            top_p: Top-p sampling parameter.
+            seed: Random seed.
+        """
+        endpoint_host = self._get_endpoint_host()
+        
+        # Application Map attributes (creates edge to azure.ai.openai node)
+        span.set_attribute(SpanAttr.PEER_SERVICE.value, PeerService.AZURE_OPENAI)
+        span.set_attribute(SpanAttr.SERVER_ADDRESS.value, endpoint_host)
+        span.set_attribute(SpanAttr.SERVER_PORT.value, 443)
+        
+        # GenAI semantic convention attributes
+        span.set_attribute(SpanAttr.GENAI_PROVIDER_NAME.value, GenAIProvider.AZURE_OPENAI)
+        span.set_attribute(SpanAttr.GENAI_OPERATION_NAME.value, operation)
+        span.set_attribute(SpanAttr.GENAI_REQUEST_MODEL.value, model)
+        
+        # Request parameters
+        if max_tokens is not None:
+            span.set_attribute(SpanAttr.GENAI_REQUEST_MAX_TOKENS.value, max_tokens)
+        if temperature is not None:
+            span.set_attribute(SpanAttr.GENAI_REQUEST_TEMPERATURE.value, temperature)
+        if top_p is not None:
+            span.set_attribute(SpanAttr.GENAI_REQUEST_TOP_P.value, top_p)
+        if seed is not None:
+            span.set_attribute(SpanAttr.GENAI_REQUEST_SEED.value, seed)
+        
+        # Correlation attributes
+        if self.call_connection_id:
+            span.set_attribute(SpanAttr.CALL_CONNECTION_ID.value, self.call_connection_id)
+        if self.session_id:
+            span.set_attribute(SpanAttr.SESSION_ID.value, self.session_id)
+
+    def _set_genai_response_attributes(
+        self,
+        span: trace.Span,
+        response: Any,
+        start_time: float,
+    ) -> None:
+        """
+        Set GenAI response attributes on a span after receiving API response.
+        
+        Args:
+            span: The OpenTelemetry span to add attributes to.
+            response: The API response object with usage information.
+            start_time: The start time (from time.perf_counter()) for duration calculation.
+        """
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        span.set_attribute(SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, duration_ms)
+        
+        # Response model
+        if hasattr(response, 'model'):
+            span.set_attribute(SpanAttr.GENAI_RESPONSE_MODEL.value, response.model)
+        
+        # Response ID
+        if hasattr(response, 'id'):
+            span.set_attribute(SpanAttr.GENAI_RESPONSE_ID.value, response.id)
+        
+        # Token usage
+        if hasattr(response, 'usage') and response.usage:
+            if hasattr(response.usage, 'prompt_tokens'):
+                span.set_attribute(
+                    SpanAttr.GENAI_USAGE_INPUT_TOKENS.value,
+                    response.usage.prompt_tokens
+                )
+            if hasattr(response.usage, 'completion_tokens'):
+                span.set_attribute(
+                    SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value,
+                    response.usage.completion_tokens
+                )
+        
+        # Finish reasons
+        if hasattr(response, 'choices') and response.choices:
+            finish_reasons = [
+                c.finish_reason for c in response.choices 
+                if hasattr(c, 'finish_reason') and c.finish_reason
+            ]
+            if finish_reasons:
+                span.set_attribute(
+                    SpanAttr.GENAI_RESPONSE_FINISH_REASONS.value,
+                    finish_reasons
+                )
+        
+        span.set_status(Status(StatusCode.OK))
+
     def get_azure_openai_client(self):
         """
         Returns the OpenAI client.
@@ -265,29 +376,27 @@ class AzureOpenAIManager:
             {"role": "user", "content": query},
         ]
 
+        model_name = deployment_name or self.chat_model_name
         response = None
         try:
-            # Trace AOAI dependency as a CLIENT span so App Map shows an external node
-            endpoint_host = (
-                (self.azure_endpoint or "")
-                .replace("https://", "")
-                .replace("http://", "")
-            )
+            # Trace AOAI dependency as a CLIENT span with GenAI semantic conventions
             with tracer.start_as_current_span(
-                "Azure.OpenAI.ChatCompletion",
+                f"{PeerService.AZURE_OPENAI}.{GenAIOperation.CHAT}",
                 kind=SpanKind.CLIENT,
-                attributes={
-                    "peer.service": "azure-openai",
-                    "net.peer.name": endpoint_host,
-                    "server.address": endpoint_host,
-                    "server.port": 443,
-                    "http.method": "POST",
-                    "http.url": f"https://{endpoint_host}/openai/deployments/{deployment_name}/chat/completions",
-                    "rt.call.connection_id": self.call_connection_id or "unknown",
-                },
-            ):
+            ) as span:
+                start_time = time.perf_counter()
+                self._set_genai_span_attributes(
+                    span,
+                    operation=GenAIOperation.CHAT,
+                    model=model_name,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    seed=seed,
+                )
+                
                 response = self.openai_client.chat.completions.create(
-                    model=deployment_name or self.chat_model_name,
+                    model=model_name,
                     messages=messages_for_api,
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -295,6 +404,9 @@ class AzureOpenAIManager:
                     top_p=top_p,
                     **kwargs,
                 )
+                
+                self._set_genai_response_attributes(span, response, start_time)
+                
                 # Process and output the completion text
                 for event in response:
                     if event.choices:
@@ -597,20 +709,39 @@ class AzureOpenAIManager:
                         "Invalid response_format. Must be a string or a dictionary."
                     )
 
-                # Call the Azure OpenAI client.
-                response = self.openai_client.chat.completions.create(
-                    model=self.chat_model_name,
-                    messages=messages_for_api,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    seed=seed,
-                    top_p=top_p,
-                    stream=stream,
-                    tools=tools,
-                    response_format=response_format_param,
-                    tool_choice=tool_choice,
-                    **kwargs,
-                )
+                # Call the Azure OpenAI client with CLIENT span for Application Map
+                with tracer.start_as_current_span(
+                    f"{PeerService.AZURE_OPENAI}.{GenAIOperation.CHAT}",
+                    kind=SpanKind.CLIENT,
+                ) as llm_span:
+                    api_start_time = time.perf_counter()
+                    self._set_genai_span_attributes(
+                        llm_span,
+                        operation=GenAIOperation.CHAT,
+                        model=self.chat_model_name,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        seed=seed,
+                    )
+                    
+                    response = self.openai_client.chat.completions.create(
+                        model=self.chat_model_name,
+                        messages=messages_for_api,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        seed=seed,
+                        top_p=top_p,
+                        stream=stream,
+                        tools=tools,
+                        response_format=response_format_param,
+                        tool_choice=tool_choice,
+                        **kwargs,
+                    )
+                    
+                    # Set response attributes on the CLIENT span
+                    if not stream and response:
+                        self._set_genai_response_attributes(llm_span, response, api_start_time)
 
                 # Process the response.
                 if stream:
@@ -828,19 +959,39 @@ class AzureOpenAIManager:
                         "Invalid response_format. Must be a string or a dictionary."
                     )
 
-                response = self.openai_client.chat.completions.create(
-                    model=self.chat_model_name,
-                    messages=messages_for_api,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    seed=seed,
-                    top_p=top_p,
-                    stream=stream,
-                    tools=tools,
-                    response_format=response_format_param,
-                    tool_choice=tool_choice,
-                    **kwargs,
-                )
+                # Call the Azure OpenAI client with CLIENT span for Application Map
+                with tracer.start_as_current_span(
+                    f"{PeerService.AZURE_OPENAI}.{GenAIOperation.CHAT}",
+                    kind=SpanKind.CLIENT,
+                ) as llm_span:
+                    api_start_time = time.perf_counter()
+                    self._set_genai_span_attributes(
+                        llm_span,
+                        operation=GenAIOperation.CHAT,
+                        model=self.chat_model_name,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        seed=seed,
+                    )
+                    
+                    response = self.openai_client.chat.completions.create(
+                        model=self.chat_model_name,
+                        messages=messages_for_api,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        seed=seed,
+                        top_p=top_p,
+                        stream=stream,
+                        tools=tools,
+                        response_format=response_format_param,
+                        tool_choice=tool_choice,
+                        **kwargs,
+                    )
+                    
+                    # Set response attributes on the CLIENT span (for non-streaming)
+                    if not stream and response:
+                        self._set_genai_response_attributes(llm_span, response, api_start_time)
 
                 if stream:
                     response_content = ""
@@ -925,57 +1076,85 @@ class AzureOpenAIManager:
         :return: The embedding as a JSON string, or None if an error occurred.
         :raises Exception: If an error occurs while making the API request.
         """
+        embedding_model = model_name or self.embedding_model_name
+        
         with self._create_trace_context(
             name="aoai.generate_embedding",
             metadata={
                 "operation_type": "embedding_generation",
                 "input_length": len(input_text),
-                "model": model_name or self.embedding_model_name,
+                "model": embedding_model,
             },
-        ) as trace:
+        ) as ctx:
             try:
-                if hasattr(trace, "set_attribute"):
-                    trace.set_attribute(
+                if hasattr(ctx, "set_attribute"):
+                    ctx.set_attribute(
                         SpanAttr.OPERATION_NAME.value, "aoai.generate_embedding"
                     )
-                    trace.set_attribute(
-                        "aoai.model", model_name or self.embedding_model_name
-                    )
-                    trace.set_attribute("aoai.input_length", len(input_text))
+                    ctx.set_attribute("aoai.model", embedding_model)
+                    ctx.set_attribute("aoai.input_length", len(input_text))
 
-                response = self.openai_client.embeddings.create(
-                    input=input_text,
-                    model=model_name or self.embedding_model_name,
-                    **kwargs,
-                )
+                # Call the Azure OpenAI client with CLIENT span for Application Map
+                with tracer.start_as_current_span(
+                    f"{PeerService.AZURE_OPENAI}.{GenAIOperation.EMBEDDINGS}",
+                    kind=SpanKind.CLIENT,
+                ) as llm_span:
+                    api_start_time = time.perf_counter()
+                    self._set_genai_span_attributes(
+                        llm_span,
+                        operation=GenAIOperation.EMBEDDINGS,
+                        model=embedding_model,
+                    )
+                    
+                    response = self.openai_client.embeddings.create(
+                        input=input_text,
+                        model=embedding_model,
+                        **kwargs,
+                    )
+                    
+                    # Set response attributes
+                    duration_ms = (time.perf_counter() - api_start_time) * 1000
+                    llm_span.set_attribute(
+                        SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, duration_ms
+                    )
+                    
+                    if hasattr(response, "usage") and response.usage:
+                        llm_span.set_attribute(
+                            SpanAttr.GENAI_USAGE_INPUT_TOKENS.value,
+                            response.usage.prompt_tokens
+                        )
+                        # Embeddings don't have output tokens, just set total
+                        llm_span.set_attribute("gen_ai.usage.total_tokens", response.usage.total_tokens)
+                    
+                    llm_span.set_status(Status(StatusCode.OK))
 
                 if (
-                    hasattr(trace, "set_attribute")
+                    hasattr(ctx, "set_attribute")
                     and hasattr(response, "usage")
                     and response.usage
                 ):
-                    trace.set_attribute(
+                    ctx.set_attribute(
                         "aoai.prompt_tokens", response.usage.prompt_tokens
                     )
-                    trace.set_attribute(
+                    ctx.set_attribute(
                         "aoai.total_tokens", response.usage.total_tokens
                     )
 
                 return response
             except openai.APIConnectionError as e:
-                if hasattr(trace, "set_attribute"):
-                    trace.set_attribute(
+                if hasattr(ctx, "set_attribute"):
+                    ctx.set_attribute(
                         SpanAttr.ERROR_TYPE.value, "api_connection_error"
                     )
-                    trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
+                    ctx.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
                 logger.error("API Connection Error: The server could not be reached.")
                 logger.error(f"Error details: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 return None, None
             except Exception as e:
-                if hasattr(trace, "set_attribute"):
-                    trace.set_attribute(SpanAttr.ERROR_TYPE.value, "unexpected_error")
-                    trace.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
+                if hasattr(ctx, "set_attribute"):
+                    ctx.set_attribute(SpanAttr.ERROR_TYPE.value, "unexpected_error")
+                    ctx.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(e))
                 logger.error(
                     "Unexpected Error: An unexpected error occurred during contextual response generation."
                 )

@@ -72,33 +72,27 @@ class MFASessionManager:
 # Initialize Cosmos DB managers for financial services
 _cosmos_manager = None
 _mfa_cosmos_manager = None
+database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+collection_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
 
 def get_financial_cosmos_manager() -> CosmosDBMongoCoreManager:
     """Get or create the financial services Cosmos DB manager for client data."""
     global _cosmos_manager
     if _cosmos_manager is None:
-        # Use usecase-scoped database from environment variable
-        # e.g., COSMOS_FINANCIAL_DATABASE=bofa_db for Bank of America
-        #       COSMOS_FINANCIAL_DATABASE=bony_db for Bank of New York Mellon
-        database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
         _cosmos_manager = CosmosDBMongoCoreManager(
             database_name=database_name,
-            collection_name="users"
+            collection_name=collection_name
         )
-        logger.info(f"📊 Financial Cosmos DB initialized: {database_name}.users")
     return _cosmos_manager
 
 def get_mfa_cosmos_manager() -> CosmosDBMongoCoreManager:
     """Get or create the MFA sessions Cosmos DB manager."""
     global _mfa_cosmos_manager
     if _mfa_cosmos_manager is None:
-        # Use same usecase-scoped database for MFA sessions
-        database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
         _mfa_cosmos_manager = CosmosDBMongoCoreManager(
             database_name=database_name,
             collection_name="mfa_sessions"
         )
-        logger.info(f"📊 MFA Cosmos DB initialized: {database_name}.mfa_sessions")
     return _mfa_cosmos_manager
 
 
@@ -126,7 +120,7 @@ class VerifyClientResult(TypedDict):
 class VerifyFraudClientArgs(TypedDict):
     """Arguments for fraud client identity verification (simplified)."""
     full_name: str
-    ssn_last4: str  # Last 4 digits of SSN
+    ssn_last_4: str  # Last 4 digits of SSN
 
 class VerifyFraudClientResult(TypedDict):
     """Result of fraud client identity verification."""
@@ -218,11 +212,7 @@ async def verify_client_identity(args: VerifyClientArgs) -> VerifyClientResult:
         
         try:
             cosmos = get_financial_cosmos_manager()
-            database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
-            logger.info(f"📊 Querying database: {database_name}.users for {full_name} at {institution_name}",
-                       extra={"database": database_name, "client_name": full_name, "institution": institution_name})
             query = {"full_name": full_name, "institution_name": institution_name}
-            logger.info(f"🔎 Query: {query}", extra={"query": query})
             client_data = await asyncio.to_thread(cosmos.read_document, query)
         except Exception as db_error:
             logger.error(f"❌ Database error during client lookup: {db_error}", 
@@ -239,8 +229,7 @@ async def verify_client_identity(args: VerifyClientArgs) -> VerifyClientResult:
             }
         
         if not client_data:
-            logger.warning(f"❌ Client not found: {full_name} at {institution_name} in database {database_name}",
-                          extra={"database": database_name, "client_name": full_name, "institution": institution_name})
+            logger.warning(f"❌ Client not found: {full_name} at {institution_name}")
             return {
                 "verified": False,
                 "message": f"Client '{full_name}' not found at '{institution_name}'.",
@@ -303,9 +292,9 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
     try:
         # Input validation
         full_name = args.get("full_name", "").strip().title()
-        ssn_last4 = args.get("ssn_last4", "").strip()
+        ssn_last_4 = args.get("ssn_last_4", "").strip()
         
-        if not full_name or not ssn_last4:
+        if not full_name or not ssn_last_4:
             return {
                 "verified": False,
                 "message": "Full name and last 4 digits of SSN are required.",
@@ -313,24 +302,17 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
                 "requires_mfa": False
             }
         
-        database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
-        logger.info(f"🔍 Verifying fraud client: {full_name} (SSN: ***{ssn_last4}) | Database: {database_name}", 
-                   extra={"client_name": full_name, "operation": "verify_fraud_client_identity", "database": database_name})
+        logger.info(f"🔍 Verifying fraud client: {full_name} (SSN: ***{ssn_last_4})", 
+                   extra={"client_name": full_name, "operation": "verify_fraud_client_identity"})
         
         try:
-            logger.info(f"📊 Getting Cosmos manager for database: {database_name}")
             cosmos = get_financial_cosmos_manager()
-            logger.info(f"✅ Cosmos manager initialized for {database_name}.users")
-            logger.info(f"📊 Querying database: {database_name}.users for {full_name}",
-                       extra={"database": database_name, "client_name": full_name})
             # Query by name and SSN last 4 from verification_codes
             query = {
                 "full_name": full_name,
-                "verification_codes.ssn4": ssn_last4
+                "verification_codes.ssn4": ssn_last_4
             }
-            logger.info(f"🔎 Executing query: {query}", extra={"query": query})
             client_data = await asyncio.to_thread(cosmos.read_document, query)
-            logger.info(f"🔎 Query completed. Result: {'Found' if client_data else 'Not found'}")
         except Exception as db_error:
             logger.error(f"❌ Database error during fraud client lookup: {db_error}", 
                         extra={"client_name": full_name, "error_type": "database_error"})
@@ -342,8 +324,7 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
             }
         
         if not client_data:
-            logger.warning(f"❌ Fraud client not found: {full_name} with SSN ending {ssn_last4} in database {database_name}",
-                          extra={"database": database_name, "client_name": full_name, "ssn_last4": ssn_last4})
+            logger.warning(f"❌ Fraud client not found: {full_name} with SSN ending {ssn_last_4}")
             return {
                 "verified": False,
                 "message": f"Client '{full_name}' not found with provided SSN information.",

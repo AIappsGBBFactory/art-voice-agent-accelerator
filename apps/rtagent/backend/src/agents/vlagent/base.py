@@ -23,12 +23,17 @@ from azure.ai.voicelive.models import (
     RequestSession,
     AudioInputTranscriptionOptions,
 )
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
+
 from .prompts import PromptManager
 from .financial_tools import build_function_tools
 from src.speech.phrase_list_manager import get_global_phrase_snapshot
+from src.enums.monitoring import SpanAttr, GenAIProvider, GenAIOperation
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.agents")
+tracer = trace.get_tracer(__name__)
 
 _REQUEST_SESSION_FIELDS = set(getattr(RequestSession, "_attribute_map", {}).keys())
 _SUPPORTS_AUDIO_TRANSCRIPTION_OPTIONS = "audio_input_transcription_options" in _REQUEST_SESSION_FIELDS
@@ -158,6 +163,11 @@ class AzureVoiceLiveAgent:
     - System prompts
     
     These settings are applied when the agent becomes active via session.update().
+    
+    Agent Observability:
+    - GenAI semantic conventions for App Insights Agents blade
+    - invoke_agent spans track each agent activation
+    - Tool execution spans for agent capabilities
     """
     def __init__(self, *, config_path: str | Path) -> None:
         path = Path(config_path).expanduser().resolve()
@@ -206,7 +216,7 @@ class AzureVoiceLiveAgent:
                 self.return_greeting = return_greeting_raw
         else:
             self.return_greeting = None
-
+        
         prompts = self._cfg.get("prompts", {}) or {}
         self.prompt_path: str = prompts.get("path") or prompts.get("system_template_path") or ""
 
@@ -238,6 +248,9 @@ class AzureVoiceLiveAgent:
 
         # PromptManager will auto-load templates_path from settings
         self.pm = PromptManager()
+        
+        # Extract description for GenAI semantic conventions
+        self.description: str = self._cfg["agent"].get("description", f"VoiceLive agent: {self.name}")
 
     async def apply_session(
         self,
@@ -245,6 +258,8 @@ class AzureVoiceLiveAgent:
         *,
         system_vars: Dict[str, Any] | None = None,
         say: Optional[str] = None,
+        session_id: Optional[str] = None,
+        call_connection_id: Optional[str] = None,
     ) -> None:
         """
         Apply this agent's configuration to the VoiceLive session.
@@ -259,7 +274,65 @@ class AzureVoiceLiveAgent:
         Optionally triggers an initial greeting if 'say' is provided.
         
         Called automatically when switching between agents.
+        
+        GenAI Tracing:
+        - Creates invoke_agent span for App Insights Agents blade
+        - Records agent metadata per OpenTelemetry GenAI semantic conventions
         """
+        # Create invoke_agent span with GenAI semantic conventions
+        # This is required for App Insights Agents blade to show Agent Runs
+        # Format matches the expected App Insights Agents trace format
+        with tracer.start_as_current_span(
+            f"invoke_agent {self.name}",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                # Component identifier
+                "component": "voicelive",
+                
+                # Session correlation (ai.* prefix for App Insights)
+                "ai.session.id": session_id or "",
+                SpanAttr.SESSION_ID.value: session_id or "",
+                SpanAttr.CALL_CONNECTION_ID.value: call_connection_id or "",
+                
+                # Required GenAI semantic conventions for Agent Runs
+                SpanAttr.GENAI_OPERATION_NAME.value: GenAIOperation.INVOKE_AGENT,
+                SpanAttr.GENAI_PROVIDER_NAME.value: GenAIProvider.AZURE_OPENAI,
+                "gen_ai.agent.name": self.name,
+                "gen_ai.agent.description": self.description,
+                
+                # VoiceLive-specific agent context
+                "voicelive.agent_name": self.name,
+                
+                # Agent configuration
+                "agent.tools_count": len(self.tools),
+                "agent.voice_name": self.voice_name or "default",
+                "agent.voice_type": self.voice_type,
+                "agent.has_greeting": say is not None,
+            },
+        ) as agent_span:
+            try:
+                await self._apply_session_internal(
+                    conn,
+                    system_vars=system_vars,
+                    say=say,
+                    agent_span=agent_span,
+                )
+                agent_span.set_status(Status(StatusCode.OK))
+            except Exception as e:
+                agent_span.set_status(Status(StatusCode.ERROR, str(e)))
+                agent_span.set_attribute(SpanAttr.ERROR_TYPE.value, type(e).__name__)
+                agent_span.record_exception(e)
+                raise
+
+    async def _apply_session_internal(
+        self,
+        conn,
+        *,
+        system_vars: Dict[str, Any] | None = None,
+        say: Optional[str] = None,
+        agent_span: Optional[trace.Span] = None,
+    ) -> None:
+        """Internal session application logic (extracted for tracing wrapper)."""
         template_vars = dict(system_vars or {})
         template_vars.setdefault("active_agent", self.name)
         if not isinstance(template_vars.get("customer_intelligence"), dict):

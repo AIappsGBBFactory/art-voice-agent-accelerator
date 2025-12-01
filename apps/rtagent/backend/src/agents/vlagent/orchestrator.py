@@ -8,14 +8,21 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
+from opentelemetry import trace
 from azure.ai.voicelive.models import ServerEventType, FunctionCallOutputItem
 from .financial_tools import execute_tool, is_handoff_tool
 
 if TYPE_CHECKING:
     from .base import AzureVoiceLiveAgent
 from utils.ml_logging import get_logger
+from apps.rtagent.backend.src.utils.tracing import (
+    create_service_handler_attrs,
+    create_service_dependency_attrs,
+)
+from src.enums.monitoring import SpanAttr, GenAIOperation, GenAIProvider
 
 logger = get_logger("voicelive.orchestrator")
+tracer = trace.get_tracer(__name__)
 
 TRANSFER_TOOL_NAMES = {"transfer_call_to_destination", "transfer_call_to_call_center"}
 
@@ -73,6 +80,7 @@ class LiveOrchestrator:
         call_connection_id: Optional[str] = None,
         *,
         transport: str = "acs",
+        model_name: Optional[str] = None,
     ):
         self.conn = conn
         self.agents = agents
@@ -80,6 +88,7 @@ class LiveOrchestrator:
         self.active = start_agent
         self.audio = audio_processor
         self.messenger = messenger
+        self._model_name = model_name or "gpt-4o-realtime"  # Definitive model from VoiceLive connection
         self.visited_agents: set = set()  # Track which agents have been visited
         self._pending_greeting: Optional[str] = None
         self._pending_greeting_agent: Optional[str] = None
@@ -91,6 +100,11 @@ class LiveOrchestrator:
         self._search_preface_index = 0
         self._active_response_id: Optional[str] = None
         self._system_vars: Dict[str, Any] = {}  # Preserve session_profile across handoffs
+        
+        # LLM TTFT (Time To First Token) tracking
+        self._llm_turn_start_time: Optional[float] = None
+        self._llm_first_token_time: Optional[float] = None
+        self._llm_turn_number: int = 0
 
         if self.messenger:
             try:
@@ -103,102 +117,146 @@ class LiveOrchestrator:
 
     async def start(self, system_vars: Optional[dict] = None):
         """Apply initial agent session and trigger an intro response."""
-        logger.info("[Orchestrator] Starting with agent: %s", self.active)
-        # Store initial system_vars (especially session_profile) for handoffs
-        self._system_vars = dict(system_vars or {})
-        await self._switch_to(self.active, self._system_vars)
+        with tracer.start_as_current_span(
+            "voicelive_orchestrator.start",
+            kind=trace.SpanKind.INTERNAL,
+            attributes=create_service_handler_attrs(
+                service_name="LiveOrchestrator.start",
+                call_connection_id=self.call_connection_id,
+                session_id=getattr(self.messenger, "session_id", None) if self.messenger else None,
+            ),
+        ) as start_span:
+            start_span.set_attribute("voicelive.start_agent", self.active)
+            start_span.set_attribute("voicelive.agent_count", len(self.agents))
+            logger.info("[Orchestrator] Starting with agent: %s", self.active)
+            # Store initial system_vars (especially session_profile) for handoffs
+            self._system_vars = dict(system_vars or {})
+            await self._switch_to(self.active, self._system_vars)
+            start_span.set_status(trace.StatusCode.OK)
         # Note: _switch_to now triggers greeting automatically, no need for separate response.create()
 
     async def _switch_to(self, agent_name: str, system_vars: dict):
         """Switch to a different agent and apply its session configuration."""
         previous_agent = self.active
         agent = self.agents[agent_name]
-        
-        self._cancel_pending_greeting_tasks()
 
-        # Always work with a copy so we do not mutate upstream state.
-        system_vars = dict(system_vars or {})
-        system_vars.setdefault("previous_agent", previous_agent)
-        system_vars.setdefault("active_agent", agent.name)
-
-        # Check if this is first visit or returning
-        is_first_visit = agent_name not in self.visited_agents
-        self.visited_agents.add(agent_name)
-        
-        logger.info(
-            "[Agent Switch] %s → %s | Context: %s | First visit: %s",
-            previous_agent,
-            agent_name,
-            system_vars,
-            is_first_visit
-        )
-        
-        greeting = self._select_pending_greeting(
-            agent=agent,
-            agent_name=agent_name,
-            system_vars=system_vars,
-            is_first_visit=is_first_visit,
-        )
-        if greeting:
-            self._pending_greeting = greeting
-            self._pending_greeting_agent = agent_name
-        else:
-            self._pending_greeting = None
-            self._pending_greeting_agent = None
-
-        handoff_context = _sanitize_handoff_context(system_vars.get("handoff_context"))
-        if handoff_context:
-            system_vars["handoff_context"] = handoff_context
-            for key in (
-                "caller_name",
-                "client_id",
-                "institution_name",
-                "service_type",
-                "case_id",
-                "issue_summary",
-                "details",
-                "handoff_reason",
-                "user_last_utterance",
-            ):
-                if key not in system_vars and handoff_context.get(key) is not None:
-                    system_vars[key] = handoff_context.get(key)
-
-        self.active = agent_name
-
-        try:
-            if self.messenger:
-                try:
-                    self.messenger.set_active_agent(agent_name)
-                except AttributeError:
-                    logger.debug("Messenger does not support set_active_agent", exc_info=True)
+        with tracer.start_as_current_span(
+            "voicelive_orchestrator.switch_agent",
+            kind=trace.SpanKind.INTERNAL,
+            attributes=create_service_handler_attrs(
+                service_name="LiveOrchestrator._switch_to",
+                call_connection_id=self.call_connection_id,
+                session_id=getattr(self.messenger, "session_id", None) if self.messenger else None,
+            ),
+        ) as switch_span:
+            switch_span.set_attribute("voicelive.previous_agent", previous_agent)
+            switch_span.set_attribute("voicelive.target_agent", agent_name)
             
-            # For handoffs, extract transition message to speak after session update
-            has_handoff = bool(system_vars.get("handoff_context"))
-            handoff_message = system_vars.get("handoff_message") if has_handoff else None
+            self._cancel_pending_greeting_tasks()
+
+            # Always work with a copy so we do not mutate upstream state.
+            system_vars = dict(system_vars or {})
+            system_vars.setdefault("previous_agent", previous_agent)
+            system_vars.setdefault("active_agent", agent.name)
+
+            # Check if this is first visit or returning
+            is_first_visit = agent_name not in self.visited_agents
+            self.visited_agents.add(agent_name)
+            switch_span.set_attribute("voicelive.is_first_visit", is_first_visit)
             
-            # For handoffs with messages, use pending greeting mechanism (same as initial greeting)
-            # This ensures the message is spoken AFTER session.update completes
-            if handoff_message:
-                self._pending_greeting = handoff_message
-                self._pending_greeting_agent = agent_name
-                logger.info("[Handoff] Pending transition message: %s", handoff_message[:50] + "..." if len(handoff_message) > 50 else handoff_message)
-            
-            # Apply session configuration without immediate say
-            # The SESSION_UPDATED handler will trigger the pending greeting
-            await agent.apply_session(
-                self.conn,
-                system_vars=system_vars,
-                say=None,  # Don't speak immediately, let SESSION_UPDATED handler do it
+            logger.info(
+                "[Agent Switch] %s → %s | Context: %s | First visit: %s",
+                previous_agent,
+                agent_name,
+                system_vars,
+                is_first_visit
             )
             
-            # Schedule greeting fallback for non-handoff cases with pending greeting
-            if not has_handoff and self._pending_greeting and self._pending_greeting_agent == agent_name:
-                self._schedule_greeting_fallback(agent_name)
-        except Exception:
-            logger.exception("Failed to apply session for agent '%s'", agent_name)
-            raise
-        
-        logger.info("[Active Agent] %s is now active", self.active)
+            greeting = self._select_pending_greeting(
+                agent=agent,
+                agent_name=agent_name,
+                system_vars=system_vars,
+                is_first_visit=is_first_visit,
+            )
+            if greeting:
+                self._pending_greeting = greeting
+                self._pending_greeting_agent = agent_name
+            else:
+                self._pending_greeting = None
+                self._pending_greeting_agent = None
+
+            handoff_context = _sanitize_handoff_context(system_vars.get("handoff_context"))
+            if handoff_context:
+                system_vars["handoff_context"] = handoff_context
+                for key in (
+                    "caller_name",
+                    "client_id",
+                    "institution_name",
+                    "service_type",
+                    "case_id",
+                    "issue_summary",
+                    "details",
+                    "handoff_reason",
+                    "user_last_utterance",
+                ):
+                    if key not in system_vars and handoff_context.get(key) is not None:
+                        system_vars[key] = handoff_context.get(key)
+
+            self.active = agent_name
+
+            try:
+                if self.messenger:
+                    try:
+                        self.messenger.set_active_agent(agent_name)
+                    except AttributeError:
+                        logger.debug("Messenger does not support set_active_agent", exc_info=True)
+                
+                # For handoffs, extract transition message to speak after session update
+                has_handoff = bool(system_vars.get("handoff_context"))
+                handoff_message = system_vars.get("handoff_message") if has_handoff else None
+                switch_span.set_attribute("voicelive.is_handoff", has_handoff)
+                
+                # For handoffs with messages, use pending greeting mechanism (same as initial greeting)
+                # This ensures the message is spoken AFTER session.update completes
+                if handoff_message:
+                    self._pending_greeting = handoff_message
+                    self._pending_greeting_agent = agent_name
+                    logger.info("[Handoff] Pending transition message: %s", handoff_message[:50] + "..." if len(handoff_message) > 50 else handoff_message)
+                
+                # Apply session configuration without immediate say
+                # The SESSION_UPDATED handler will trigger the pending greeting
+                with tracer.start_as_current_span(
+                    "voicelive.agent.apply_session",
+                    kind=trace.SpanKind.SERVER,
+                    attributes=create_service_dependency_attrs(
+                        source_service="voicelive_orchestrator",
+                        target_service="azure_voicelive",
+                        call_connection_id=self.call_connection_id,
+                        session_id=getattr(self.messenger, "session_id", None) if self.messenger else None,
+                    ),
+                ) as session_span:
+                    session_span.set_attribute("voicelive.agent_name", agent_name)
+                    session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
+                    await agent.apply_session(
+                        self.conn,
+                        system_vars=system_vars,
+                        say=None,  # Don't speak immediately, let SESSION_UPDATED handler do it
+                        session_id=session_id,
+                        call_connection_id=self.call_connection_id,
+                    )
+                
+                # Schedule greeting fallback for non-handoff cases with pending greeting
+                if not has_handoff and self._pending_greeting and self._pending_greeting_agent == agent_name:
+                    self._schedule_greeting_fallback(agent_name)
+                
+                switch_span.set_status(trace.StatusCode.OK)
+            except Exception as ex:
+                switch_span.set_status(trace.StatusCode.ERROR, str(ex))
+                switch_span.add_event("agent_switch.error", {"error.type": type(ex).__name__, "error.message": str(ex)})
+                logger.exception("Failed to apply session for agent '%s'", agent_name)
+                raise
+            
+            logger.info("[Active Agent] %s is now active", self.active)
 
     def _transport_supports_acs(self) -> bool:
         return self._transport == "acs"
@@ -394,133 +452,272 @@ class LiveOrchestrator:
             logger.warning("Missing call_id or name for function call")
             return False
         
-        # Parse arguments
+        # Parse arguments first so we can include parameter count in span
         try:
             args = json.loads(args_json) if args_json else {}
         except Exception:
             logger.warning("Could not parse tool arguments for '%s'; using empty dict", name)
             args = {}
         
-        if name in TRANSFER_TOOL_NAMES:
-            if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.call_connection_id:
-                args.setdefault("call_connection_id", self.call_connection_id)
-            if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.messenger:
-                fallback_call_id = getattr(self.messenger, "call_id", None)
-                if fallback_call_id:
-                    args.setdefault("call_connection_id", fallback_call_id)
+        # Create execute_tool span with GenAI semantic conventions for App Insights Agents blade
+        # Format matches the expected App Insights Agents trace format (see screenshot reference)
+        session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
+        with tracer.start_as_current_span(
+            f"execute_tool {name}",
+            kind=trace.SpanKind.INTERNAL,
+            attributes={
+                # Component identifier
+                "component": "voicelive",
+                
+                # Session correlation (ai.* prefix for App Insights)
+                "ai.session.id": session_id or "",
+                SpanAttr.SESSION_ID.value: session_id or "",
+                SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id or "",
+                
+                # Transport type
+                "transport.type": self._transport.upper() if self._transport else "ACS",
+                
+                # GenAI semantic conventions (required for Agents blade Tool Calls)
+                SpanAttr.GENAI_OPERATION_NAME.value: GenAIOperation.EXECUTE_TOOL,
+                SpanAttr.GENAI_TOOL_NAME.value: name,
+                SpanAttr.GENAI_TOOL_CALL_ID.value: call_id,
+                SpanAttr.GENAI_TOOL_TYPE.value: "function",
+                SpanAttr.GENAI_PROVIDER_NAME.value: GenAIProvider.AZURE_OPENAI,
+                
+                # Duplicate tool attributes for different query patterns
+                "tool.call_id": call_id,
+                "tool.parameters_count": len(args),
+                
+                # VoiceLive-specific context (matches gpt_flow pattern from screenshot)
+                "voicelive.tool_name": name,
+                "voicelive.tool_id": call_id,
+                "voicelive.agent_name": self.active,
+                "voicelive.is_acs": self._transport == "acs",
+                "voicelive.args_length": len(args_json) if args_json else 0,
+                
+                # Tool metadata
+                "voicelive.tool.is_handoff": is_handoff_tool(name),
+                "voicelive.tool.is_transfer": name in TRANSFER_TOOL_NAMES,
+            },
+        ) as tool_span:
+            
+            if name in TRANSFER_TOOL_NAMES:
+                if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.call_connection_id:
+                    args.setdefault("call_connection_id", self.call_connection_id)
+                if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.messenger:
+                    fallback_call_id = getattr(self.messenger, "call_id", None)
+                    if fallback_call_id:
+                        args.setdefault("call_connection_id", fallback_call_id)
+                if self.messenger:
+                    session_id = getattr(self.messenger, "session_id", None)
+                    if session_id:
+                        args.setdefault("session_id", session_id)
+
+            # Execute tool via centralized tools.py
+            logger.info("Executing tool: %s with args: %s", name, args)
+
+            notify_status = "success"
+            notify_error: Optional[str] = None
+
+            await self._maybe_emit_paypal_search_preface(name)
+
+            last_user_message = (self._last_user_message or "").strip()
+            if is_handoff_tool(name) and last_user_message:
+                # Pre-populate commonly used handoff fields so the caller is not asked to repeat themselves.
+                for field in ("details", "issue_summary", "summary", "topic", "handoff_reason"):
+                    if not args.get(field):
+                        args[field] = last_user_message
+                # Preserve the raw utterance for downstream agents even if they use custom field names.
+                args.setdefault("user_last_utterance", last_user_message)
+
+            MFA_TOOL_NAMES = {"send_mfa_code", "resend_mfa_code"}
+
             if self.messenger:
-                session_id = getattr(self.messenger, "session_id", None)
-                if session_id:
-                    args.setdefault("session_id", session_id)
+                try:
+                    await self.messenger.notify_tool_start(call_id=call_id, name=name, args=args)
+                except Exception:
+                    logger.debug("Tool start messenger notification failed", exc_info=True)
+                if name in MFA_TOOL_NAMES:
+                    try:
+                        await self.messenger.send_status_update(
+                            text="Sending a verification code to your email…",
+                            sender=self.active,
+                            event_label="mfa_status_update",
+                        )
+                    except Exception:
+                        logger.debug("Failed to emit MFA status update", exc_info=True)
 
-        # Execute tool via centralized tools.py
-        logger.info("Executing tool: %s with args: %s", name, args)
+            start_ts = time.perf_counter()
+            result: Dict[str, Any] = {}
 
-        notify_status = "success"
-        notify_error: Optional[str] = None
-
-        await self._maybe_emit_paypal_search_preface(name)
-
-        last_user_message = (self._last_user_message or "").strip()
-        if is_handoff_tool(name) and last_user_message:
-            # Pre-populate commonly used handoff fields so the caller is not asked to repeat themselves.
-            for field in ("details", "issue_summary", "summary", "topic", "handoff_reason"):
-                if not args.get(field):
-                    args[field] = last_user_message
-            # Preserve the raw utterance for downstream agents even if they use custom field names.
-            args.setdefault("user_last_utterance", last_user_message)
-
-        MFA_TOOL_NAMES = {"send_mfa_code", "resend_mfa_code"}
-
-        if self.messenger:
             try:
-                await self.messenger.notify_tool_start(call_id=call_id, name=name, args=args)
-            except Exception:
-                logger.debug("Tool start messenger notification failed", exc_info=True)
-            if name in MFA_TOOL_NAMES:
-                try:
-                    await self.messenger.send_status_update(
-                        text="Sending a verification code to your email…",
-                        sender=self.active,
-                        event_label="mfa_status_update",
-                    )
-                except Exception:
-                    logger.debug("Failed to emit MFA status update", exc_info=True)
-
-        start_ts = time.perf_counter()
-        result: Dict[str, Any] = {}
-
-        try:
-            result = await execute_tool(name, args)
-        except Exception as exc:
-            notify_status = "error"
-            notify_error = str(exc)
-            if self.messenger:
-                try:
-                    await self.messenger.notify_tool_end(
-                        call_id=call_id,
-                        name=name,
-                        status="error",
-                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                        error=notify_error,
-                    )
-                except Exception:
-                    logger.debug("Tool end messenger notification failed", exc_info=True)
-            raise
-
-        error_payload: Optional[str] = None
-        if isinstance(result, dict):
-            for key in ("success", "ok", "authenticated"):
-                if key in result and not result[key]:
-                    notify_status = "error"
-                    break
-            if notify_status == "error":
-                err_val = result.get("message") or result.get("error")
-                if err_val:
-                    error_payload = str(err_val)
-
-        if name in TRANSFER_TOOL_NAMES and notify_status != "error" and isinstance(result, dict):
-            takeover_message = result.get("message") or "Transferring call to destination."
-            if self.messenger:
-                try:
-                    await self.messenger.send_status_update(
-                        text=takeover_message,
-                        sender=self.active,
-                        event_label="acs_call_transfer_status",
-                    )
-                except Exception:
-                    logger.debug("Failed to emit transfer status update", exc_info=True)
-            try:
-                if result.get("should_interrupt_playback", True):
-                    await self.conn.response.cancel()
-            except Exception:
-                logger.debug("response.cancel() failed during transfer", exc_info=True)
-            if self.audio:
-                try:
-                    await self.audio.stop_playback()
-                except Exception:
-                    logger.debug("Audio stop playback failed during transfer", exc_info=True)
-            if self.messenger:
-                try:
-                    await self.messenger.notify_tool_end(
-                        call_id=call_id,
-                        name=name,
-                        status=notify_status,
-                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                        result=result,
-                        error=error_payload,
-                    )
-                except Exception:
-                    logger.debug("Tool end messenger notification failed", exc_info=True)
-            return False
-
-        # Check if this is a handoff tool
-        if is_handoff_tool(name):
-            # Extract target agent from handoff_map
-            target = self.handoff_map.get(name)
-            if not target:
-                logger.warning("Handoff tool '%s' not in handoff_map", name)
+                with tracer.start_as_current_span(
+                    "voicelive.tool.execute",
+                    kind=trace.SpanKind.INTERNAL,
+                    attributes={"tool.name": name},
+                ):
+                    result = await execute_tool(name, args)
+            except Exception as exc:
                 notify_status = "error"
+                notify_error = str(exc)
+                tool_span.set_status(trace.StatusCode.ERROR, str(exc))
+                tool_span.add_event("tool.execution_error", {"error.type": type(exc).__name__, "error.message": str(exc)})
+                if self.messenger:
+                    try:
+                        await self.messenger.notify_tool_end(
+                            call_id=call_id,
+                            name=name,
+                            status="error",
+                            elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                            error=notify_error,
+                        )
+                    except Exception:
+                        logger.debug("Tool end messenger notification failed", exc_info=True)
+                raise
+
+            elapsed_ms = (time.perf_counter() - start_ts) * 1000
+            
+            # Set execution metrics (matching App Insights Agents format)
+            tool_span.set_attribute("execution.duration_ms", elapsed_ms)
+            tool_span.set_attribute("voicelive.tool.elapsed_ms", elapsed_ms)
+
+            error_payload: Optional[str] = None
+            execution_success = True
+            if isinstance(result, dict):
+                for key in ("success", "ok", "authenticated"):
+                    if key in result and not result[key]:
+                        notify_status = "error"
+                        execution_success = False
+                        break
+                if notify_status == "error":
+                    err_val = result.get("message") or result.get("error")
+                    if err_val:
+                        error_payload = str(err_val)
+            
+            # Set execution result attributes (matching App Insights Agents format)
+            tool_span.set_attribute("execution.success", execution_success)
+            tool_span.set_attribute("result.type", type(result).__name__ if result else "None")
+            tool_span.set_attribute("voicelive.tool.status", notify_status)
+
+            if name in TRANSFER_TOOL_NAMES and notify_status != "error" and isinstance(result, dict):
+                takeover_message = result.get("message") or "Transferring call to destination."
+                tool_span.add_event("tool.transfer_initiated", {"transfer.message": takeover_message[:100] if takeover_message else ""})
+                if self.messenger:
+                    try:
+                        await self.messenger.send_status_update(
+                            text=takeover_message,
+                            sender=self.active,
+                            event_label="acs_call_transfer_status",
+                        )
+                    except Exception:
+                        logger.debug("Failed to emit transfer status update", exc_info=True)
+                try:
+                    if result.get("should_interrupt_playback", True):
+                        await self.conn.response.cancel()
+                except Exception:
+                    logger.debug("response.cancel() failed during transfer", exc_info=True)
+                if self.audio:
+                    try:
+                        await self.audio.stop_playback()
+                    except Exception:
+                        logger.debug("Audio stop playback failed during transfer", exc_info=True)
+                if self.messenger:
+                    try:
+                        await self.messenger.notify_tool_end(
+                            call_id=call_id,
+                            name=name,
+                            status=notify_status,
+                            elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                            result=result,
+                            error=error_payload,
+                        )
+                    except Exception:
+                        logger.debug("Tool end messenger notification failed", exc_info=True)
+                tool_span.set_status(trace.StatusCode.OK)
+                return False
+
+            # Check if this is a handoff tool
+            if is_handoff_tool(name):
+                # Extract target agent from handoff_map
+                target = self.handoff_map.get(name)
+                if not target:
+                    logger.warning("Handoff tool '%s' not in handoff_map", name)
+                    notify_status = "error"
+                    tool_span.set_status(trace.StatusCode.ERROR, "handoff_target_missing")
+                    if self.messenger:
+                        try:
+                            await self.messenger.notify_tool_end(
+                                call_id=call_id,
+                                name=name,
+                                status=notify_status,
+                                elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                                result=result if isinstance(result, dict) else None,
+                                error="handoff_target_missing",
+                            )
+                        except Exception:
+                            logger.debug("Tool end messenger notification failed", exc_info=True)
+                    return False
+                
+                tool_span.set_attribute("voicelive.handoff.target_agent", target)
+                tool_span.add_event("tool.handoff_triggered", {"target_agent": target})
+
+                # Build context from tool result
+                raw_handoff_context = result.get("handoff_context") if isinstance(result, dict) else {}
+                handoff_context: Dict[str, Any] = {}
+                if isinstance(raw_handoff_context, dict):
+                    handoff_context = dict(raw_handoff_context)
+                if last_user_message:
+                    handoff_context.setdefault("user_last_utterance", last_user_message)
+                    handoff_context.setdefault("details", last_user_message)
+                handoff_context = _sanitize_handoff_context(handoff_context)
+                session_overrides = result.get("session_overrides")
+                if not isinstance(session_overrides, dict) or not session_overrides:
+                    session_overrides = None
+                ctx = {
+                    "handoff_reason": result.get("handoff_summary")
+                    or handoff_context.get("reason")
+                    or args.get("reason", "unspecified"),
+                    "details": handoff_context.get("details")
+                    or result.get("details")
+                    or args.get("details")
+                    or last_user_message,
+                    "previous_agent": self.active,
+                    "handoff_context": handoff_context,
+                    "handoff_message": result.get("message"),
+                }
+                # Preserve session_profile and other persistent context across handoffs
+                for key in ("session_profile", "client_id", "customer_intelligence", "institution_name"):
+                    if key in self._system_vars:
+                        ctx[key] = self._system_vars[key]
+                if last_user_message:
+                    ctx.setdefault("user_last_utterance", last_user_message)
+                if session_overrides:
+                    ctx["session_overrides"] = session_overrides
+                
+                logger.info(
+                    "[Handoff Tool] '%s' triggered | %s → %s",
+                    name, self.active, target
+                )
+
+                # Switch to new agent - SESSION_UPDATED handler will:
+                # 1. Cancel current response
+                # 2. Trigger handoff message from _pending_greeting
+                await self._switch_to(target, ctx)
+                # Clear the cached user message once the handoff has completed.
+                self._last_user_message = None
+
+                if result.get("call_center_transfer"):
+                    transfer_args: Dict[str, Any] = {}
+                    if self._transport_supports_acs() and self.call_connection_id:
+                        transfer_args["call_connection_id"] = self.call_connection_id
+                    if self.messenger:
+                        session_id = getattr(self.messenger, "session_id", None)
+                        if session_id:
+                            transfer_args["session_id"] = session_id
+                    if transfer_args:
+                        self._call_center_triggered = True
+                        await self._trigger_call_center_transfer(transfer_args)
+                # Note: _switch_to triggers greeting automatically via apply_session(say=...)
                 if self.messenger:
                     try:
                         await self.messenger.notify_tool_end(
@@ -529,123 +726,74 @@ class LiveOrchestrator:
                             status=notify_status,
                             elapsed_ms=(time.perf_counter() - start_ts) * 1000,
                             result=result if isinstance(result, dict) else None,
-                            error="handoff_target_missing",
+                            error=error_payload,
                         )
                     except Exception:
                         logger.debug("Tool end messenger notification failed", exc_info=True)
-                return False
+                tool_span.set_status(trace.StatusCode.OK)
+                return True
             
-            # Build context from tool result
-            raw_handoff_context = result.get("handoff_context") if isinstance(result, dict) else {}
-            handoff_context: Dict[str, Any] = {}
-            if isinstance(raw_handoff_context, dict):
-                handoff_context = dict(raw_handoff_context)
-            if last_user_message:
-                handoff_context.setdefault("user_last_utterance", last_user_message)
-                handoff_context.setdefault("details", last_user_message)
-            handoff_context = _sanitize_handoff_context(handoff_context)
-            session_overrides = result.get("session_overrides")
-            if not isinstance(session_overrides, dict) or not session_overrides:
-                session_overrides = None
-            ctx = {
-                "handoff_reason": result.get("handoff_summary")
-                or handoff_context.get("reason")
-                or args.get("reason", "unspecified"),
-                "details": handoff_context.get("details")
-                or result.get("details")
-                or args.get("details")
-                or last_user_message,
-                "previous_agent": self.active,
-                "handoff_context": handoff_context,
-                "handoff_message": result.get("message"),
-            }
-            # Preserve session_profile and other persistent context across handoffs
-            for key in ("session_profile", "client_id", "customer_intelligence", "institution_name"):
-                if key in self._system_vars:
-                    ctx[key] = self._system_vars[key]
-            if last_user_message:
-                ctx.setdefault("user_last_utterance", last_user_message)
-            if session_overrides:
-                ctx["session_overrides"] = session_overrides
-            
-            logger.info(
-                "[Handoff Tool] '%s' triggered | %s → %s",
-                name, self.active, target
-            )
+            else:
+                # Business tool - log result and send back via conversation.item.create
+                success_indicator = "✓" if result.get("authenticated") or result.get("success") else "✗"
+                safe_result = {}
+                for key, value in result.items():
+                    if key == "message":
+                        continue
+                    text = str(value)
+                    safe_result[key] = text if len(text) <= 50 else f"{text[:47]}..."
+                pretty_result = json.dumps(safe_result, indent=2, ensure_ascii=False)
+                # logger.info(
+                #     "[%s] Tool '%s' %s | Result:\n%s",
+                #     self.active,
+                #     name,
+                #     success_indicator,
+                #     pretty_result,
+                # )
 
-            # Switch to new agent - SESSION_UPDATED handler will:
-            # 1. Cancel current response
-            # 2. Trigger handoff message from _pending_greeting
-            await self._switch_to(target, ctx)
-            # Clear the cached user message once the handoff has completed.
-            self._last_user_message = None
+                output_item = FunctionCallOutputItem(
+                    call_id=call_id,
+                    output=json.dumps(result),  # SDK expects JSON string
+                )
 
-            if result.get("call_center_transfer"):
-                transfer_args: Dict[str, Any] = {}
-                if self._transport_supports_acs() and self.call_connection_id:
-                    transfer_args["call_connection_id"] = self.call_connection_id
+                with tracer.start_as_current_span(
+                    "voicelive.conversation.item_create",
+                    kind=trace.SpanKind.CLIENT,
+                    attributes=create_service_dependency_attrs(
+                        source_service="voicelive_orchestrator",
+                        target_service="azure_voicelive",
+                        call_connection_id=self.call_connection_id,
+                        session_id=getattr(self.messenger, "session_id", None) if self.messenger else None,
+                    ),
+                ):
+                    await self.conn.conversation.item.create(item=output_item)
+                logger.debug("Created function_call_output item for call_id=%s", call_id)
+
+                with tracer.start_as_current_span(
+                    "voicelive.response.create",
+                    kind=trace.SpanKind.CLIENT,
+                    attributes=create_service_dependency_attrs(
+                        source_service="voicelive_orchestrator",
+                        target_service="azure_voicelive",
+                        call_connection_id=self.call_connection_id,
+                        session_id=getattr(self.messenger, "session_id", None) if self.messenger else None,
+                    ),
+                ):
+                    await self.conn.response.create()
                 if self.messenger:
-                    session_id = getattr(self.messenger, "session_id", None)
-                    if session_id:
-                        transfer_args["session_id"] = session_id
-                if transfer_args:
-                    self._call_center_triggered = True
-                    await self._trigger_call_center_transfer(transfer_args)
-            # Note: _switch_to triggers greeting automatically via apply_session(say=...)
-            if self.messenger:
-                try:
-                    await self.messenger.notify_tool_end(
-                        call_id=call_id,
-                        name=name,
-                        status=notify_status,
-                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                        result=result if isinstance(result, dict) else None,
-                        error=error_payload,
-                    )
-                except Exception:
-                    logger.debug("Tool end messenger notification failed", exc_info=True)
-            return True
-        
-        else:
-            # Business tool - log result and send back via conversation.item.create
-            success_indicator = "✓" if result.get("authenticated") or result.get("success") else "✗"
-            safe_result = {}
-            for key, value in result.items():
-                if key == "message":
-                    continue
-                text = str(value)
-                safe_result[key] = text if len(text) <= 50 else f"{text[:47]}..."
-            pretty_result = json.dumps(safe_result, indent=2, ensure_ascii=False)
-            # logger.info(
-            #     "[%s] Tool '%s' %s | Result:\n%s",
-            #     self.active,
-            #     name,
-            #     success_indicator,
-            #     pretty_result,
-            # )
-
-            output_item = FunctionCallOutputItem(
-                call_id=call_id,
-                output=json.dumps(result),  # SDK expects JSON string
-            )
-
-            await self.conn.conversation.item.create(item=output_item)
-            logger.debug("Created function_call_output item for call_id=%s", call_id)
-
-            await self.conn.response.create()
-            if self.messenger:
-                try:
-                    await self.messenger.notify_tool_end(
-                        call_id=call_id,
-                        name=name,
-                        status=notify_status,
-                        elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                        result=result if isinstance(result, dict) else None,
-                        error=error_payload,
-                    )
-                except Exception:
-                    logger.debug("Tool end messenger notification failed", exc_info=True)
-            return False
+                    try:
+                        await self.messenger.notify_tool_end(
+                            call_id=call_id,
+                            name=name,
+                            status=notify_status,
+                            elapsed_ms=(time.perf_counter() - start_ts) * 1000,
+                            result=result if isinstance(result, dict) else None,
+                            error=error_payload,
+                        )
+                    except Exception:
+                        logger.debug("Tool end messenger notification failed", exc_info=True)
+                tool_span.set_status(trace.StatusCode.OK)
+                return False
 
     async def handle_event(self, event):
         """Route VoiceLive events to audio + handoff logic."""
@@ -718,6 +866,11 @@ class LiveOrchestrator:
             logger.debug("User speech stopped → start playback for assistant")
             if self.audio:
                 await self.audio.start_playback()
+            
+            # Start LLM turn timing - user finished speaking, LLM generation starts
+            self._llm_turn_number += 1
+            self._llm_turn_start_time = time.perf_counter()
+            self._llm_first_token_time = None
 
         elif et == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
             # Log user's spoken input (transcription)
@@ -740,6 +893,33 @@ class LiveOrchestrator:
 
         elif et == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA:
             transcript_delta = getattr(event, "delta", "") or getattr(event, "transcript", "")
+            
+            # Track LLM TTFT (Time To First Token) - first transcript delta for this turn
+            if self._llm_turn_start_time and self._llm_first_token_time is None and transcript_delta:
+                self._llm_first_token_time = time.perf_counter()
+                ttft_ms = (self._llm_first_token_time - self._llm_turn_start_time) * 1000
+                
+                # Emit TTFT metric as a span for App Insights Performance tab
+                session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
+                with tracer.start_as_current_span(
+                    "voicelive.llm.ttft",
+                    kind=trace.SpanKind.INTERNAL,
+                    attributes={
+                        SpanAttr.TURN_NUMBER.value: self._llm_turn_number,
+                        SpanAttr.TURN_LLM_TTFB_MS.value: ttft_ms,  # LLM TTFB = Time to first token
+                        SpanAttr.SESSION_ID.value: session_id or "",
+                        SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id or "",
+                        "voicelive.active_agent": self.active,
+                    },
+                ) as ttft_span:
+                    ttft_span.add_event("llm.first_token", {"ttft_ms": ttft_ms})
+                    logger.info(
+                        "[Orchestrator] LLM TTFT | turn=%d ttft_ms=%.2f agent=%s",
+                        self._llm_turn_number,
+                        ttft_ms,
+                        self.active,
+                    )
+            
             if transcript_delta and self.messenger:
                 response_id = self._response_id_from_event(event)
                 if response_id:
@@ -787,6 +967,10 @@ class LiveOrchestrator:
             response_id = self._response_id_from_event(event)
             if response_id and response_id == self._active_response_id:
                 self._active_response_id = None
+            
+            # Emit GenAI model metrics span for App Insights Agents blade
+            # VoiceLive SDK may expose usage info in the response object
+            self._emit_model_metrics(event)
 
         elif et == ServerEventType.ERROR:
             logger.error("VoiceLive error: %s", getattr(event.error, "message", "unknown"))
@@ -894,3 +1078,117 @@ class LiveOrchestrator:
                 await self.audio.stop_playback()
             except Exception:
                 logger.debug("Audio stop playback failed during automatic call center transfer", exc_info=True)
+
+    def _emit_model_metrics(self, event: Any) -> None:
+        """
+        Emit GenAI model-level metrics for App Insights Agents blade.
+        
+        The VoiceLive SDK's RESPONSE_DONE event may include usage statistics.
+        This method extracts available metrics and emits them as GenAI spans.
+        
+        Format matches the expected App Insights LLM trace format with:
+        - gen_ai.system: openai
+        - gen_ai.operation.name: chat
+        - gen_ai.request.model / gen_ai.response.model
+        - gen_ai.usage.input_tokens / gen_ai.usage.output_tokens
+        - gen_ai.response.id
+        """
+        response = getattr(event, "response", None)
+        if not response:
+            return
+        
+        response_id = getattr(response, "id", None)
+        
+        # Extract usage metrics if available
+        usage = getattr(response, "usage", None)
+        input_tokens = None
+        output_tokens = None
+        
+        if usage:
+            input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", None)
+            output_tokens = getattr(usage, "output_tokens", None) or getattr(usage, "completion_tokens", None)
+        
+        # Use definitive model name from VoiceLive connection (set at initialization)
+        # Response object doesn't include model name, so we rely on the configured model
+        model = self._model_name
+        status = getattr(response, "status", None)
+        
+        # Calculate turn duration if we have timing info
+        turn_duration_ms = None
+        if self._llm_turn_start_time:
+            turn_duration_ms = (time.perf_counter() - self._llm_turn_start_time) * 1000
+        
+        # Session correlation
+        session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
+        
+        # Emit GenAI LLM span with model metrics matching App Insights format
+        # Span name should match the model name for proper LLM badge display
+        span_name = model if model else "gpt-4o-realtime"
+        
+        with tracer.start_as_current_span(
+            span_name,
+            kind=trace.SpanKind.CLIENT,
+            attributes={
+                # Component identifier
+                "component": "voicelive",
+                
+                # Session correlation (multiple formats for App Insights compatibility)
+                "call.connection.id": self.call_connection_id or "",
+                "ai.session.id": session_id or "",
+                SpanAttr.SESSION_ID.value: session_id or "",
+                "ai.user.id": session_id or "",
+                
+                # Transport type
+                "transport.type": self._transport.upper() if self._transport else "ACS",
+                
+                # GenAI semantic conventions (required for LLM badge in App Insights)
+                SpanAttr.GENAI_OPERATION_NAME.value: GenAIOperation.CHAT,
+                SpanAttr.GENAI_SYSTEM.value: "openai",  # Required for LLM badge
+                SpanAttr.GENAI_REQUEST_MODEL.value: model,
+                
+                # VoiceLive-specific context
+                "voicelive.agent_name": self.active,
+            },
+        ) as model_span:
+            # Add response model (may differ from request model)
+            model_span.set_attribute(SpanAttr.GENAI_RESPONSE_MODEL.value, model)
+            
+            # Add response ID
+            if response_id:
+                model_span.set_attribute(SpanAttr.GENAI_RESPONSE_ID.value, response_id)
+            
+            # Add token usage metrics (critical for App Insights Models blade)
+            if input_tokens is not None:
+                model_span.set_attribute(SpanAttr.GENAI_USAGE_INPUT_TOKENS.value, input_tokens)
+            if output_tokens is not None:
+                model_span.set_attribute(SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value, output_tokens)
+            
+            # Add timing metrics
+            if turn_duration_ms is not None:
+                model_span.set_attribute(SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, turn_duration_ms)
+            
+            if self._llm_turn_start_time and self._llm_first_token_time:
+                ttft_ms = (self._llm_first_token_time - self._llm_turn_start_time) * 1000
+                model_span.set_attribute(SpanAttr.GENAI_SERVER_TIME_TO_FIRST_TOKEN.value, ttft_ms)
+            
+            # Add event with detailed metrics for debugging
+            model_span.add_event(
+                "gen_ai.response.complete",
+                {
+                    "response_id": response_id or "",
+                    "status": str(status) if status else "",
+                    "input_tokens": input_tokens or 0,
+                    "output_tokens": output_tokens or 0,
+                    "agent": self.active,
+                    "turn_number": self._llm_turn_number,
+                },
+            )
+            
+            logger.debug(
+                "[Model Metrics] Response complete | agent=%s model=%s response_id=%s tokens=%s/%s",
+                self.active,
+                model,
+                response_id or "N/A",
+                input_tokens or "N/A",
+                output_tokens or "N/A",
+            )

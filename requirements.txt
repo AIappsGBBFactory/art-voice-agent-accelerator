@@ -37,7 +37,7 @@ opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-requests
 opentelemetry-instrumentation-urllib
 opentelemetry-instrumentation-urllib3
-opentelemetry-instrumentation-openai-v2
+opentelemetry-instrumentation-openai-v2>=2.2b0  # Fixes LogRecord deprecation warning
 
 # Azure + misc
 azure-core>=1.29.0
