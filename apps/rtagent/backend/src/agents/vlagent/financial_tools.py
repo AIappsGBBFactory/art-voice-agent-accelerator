@@ -71,6 +71,13 @@ from .tool_store.banking_handoffs import (
     handoff_card_recommendation,
     handoff_investment_advisor,
     handoff_erica_concierge,
+    handoff_transfer_agency_agent,
+)
+from .tool_store.transfer_agency_tools import (
+    get_client_data,
+    get_drip_positions,
+    check_compliance_status,
+    calculate_liquidation_proceeds,
 )
 
 logger = get_logger("voicelive.tools.financial")
@@ -502,6 +509,12 @@ register_tool("search_rollover_guidance", executor=search_rollover_guidance)
 register_tool("handoff_card_recommendation", executor=handoff_card_recommendation, is_handoff=True)
 register_tool("handoff_investment_advisor", executor=handoff_investment_advisor, is_handoff=True)
 register_tool("handoff_erica_concierge", executor=handoff_erica_concierge, is_handoff=True)
+register_tool("handoff_transfer_agency_agent", executor=handoff_transfer_agency_agent, is_handoff=True)
+# Transfer Agency tools
+register_tool("get_client_data", executor=get_client_data)
+register_tool("get_drip_positions", executor=get_drip_positions)
+register_tool("check_compliance_status", executor=check_compliance_status)
+register_tool("calculate_liquidation_proceeds", executor=calculate_liquidation_proceeds)
 # Investment tools
 register_tool("get_account_routing_info", executor=get_account_routing_info)
 register_tool("get_401k_details", executor=get_401k_details)

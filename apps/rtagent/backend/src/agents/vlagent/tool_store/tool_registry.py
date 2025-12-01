@@ -73,6 +73,7 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.banking_handoffs import 
     handoff_card_recommendation,
     handoff_investment_advisor,
     handoff_erica_concierge,
+    handoff_transfer_agency_agent,
 )
 from utils.ml_logging import get_logger
 
@@ -133,6 +134,7 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.schemas import (
     handoff_merrill_advisor_schema,
     handoff_investment_advisor_schema,
     handoff_erica_concierge_schema,
+    handoff_transfer_agency_agent_schema,
     search_knowledge_base_schema,
     get_paypal_account_summary_schema,
     get_paypal_transactions_schema,
@@ -188,6 +190,7 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "handoff_card_recommendation": handoff_card_recommendation,
     "handoff_investment_advisor": handoff_investment_advisor,
     "handoff_erica_concierge": handoff_erica_concierge,
+    "handoff_transfer_agency_agent": handoff_transfer_agency_agent,
     # Investment Tools
     "get_account_routing_info": get_account_routing_info,
     "get_401k_details": get_401k_details,
@@ -247,6 +250,7 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": handoff_card_recommendation_schema},
     {"type": "function", "function": handoff_investment_advisor_schema},
     {"type": "function", "function": handoff_erica_concierge_schema},
+    {"type": "function", "function": handoff_transfer_agency_agent_schema},
     # Investment Tools
     {"type": "function", "function": get_account_routing_info_schema},
     {"type": "function", "function": get_401k_details_schema},

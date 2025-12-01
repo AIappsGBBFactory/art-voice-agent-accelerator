@@ -1635,6 +1635,41 @@ handoff_erica_concierge_schema: Dict[str, Any] = {
     },
 }
 
+handoff_transfer_agency_agent_schema: Dict[str, Any] = {
+    "name": "handoff_transfer_agency_agent",
+    "description": (
+        "Hand off customer to the Transfer Agency Agent specialist. "
+        "Use when customer asks about DRIP (Dividend Reinvestment Plan) liquidations, "
+        "institutional transfer agency services, compliance verification for institutional accounts, "
+        "or mentions client codes like 'GCA-48273' or 'MLN-90214'. "
+        "The specialist handles institutional servicing and DRIP transactions. "
+        "Client identity can be verified by the specialist if not already known."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier (optional - can be collected by specialist)."
+            },
+            "request_type": {
+                "type": "string",
+                "description": "Type of request: 'drip_liquidation', 'compliance_inquiry', or 'position_inquiry'."
+            },
+            "client_code": {
+                "type": "string",
+                "description": "Institutional client code (e.g., 'GCA-48273', 'MLN-90214') if mentioned."
+            },
+            "drip_symbols": {
+                "type": "string",
+                "description": "Stock symbols for DRIP positions (e.g., 'PLTR', 'AAPL, MSFT') if mentioned."
+            }
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
+}
+
 search_knowledge_base_schema: Dict[str, Any] = {
     "name": "search_knowledge_base",
     "description": "Retrieve institutional knowledge-base snippets from the Cosmos vector index.",

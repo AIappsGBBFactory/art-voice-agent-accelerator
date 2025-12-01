@@ -6,6 +6,188 @@ Contains FX rates, fee structures, and other constants that don't require databa
 from typing import Dict, Any
 from datetime import datetime, date
 
+# ========================================
+# MOCK DATA FOR DEMO (Database Fallback)
+# ========================================
+
+MOCK_TRANSFER_AGENCY_CLIENTS = {
+    "pablo_salvador_cfs": {
+        "client_code": "pablo_salvador_cfs",
+        "institution_name": "Contoso Financial Services",
+        "contact_name": "Pablo Salvador",
+        "account_currency": "USD",
+        "custodial_account": "CFS-12345-DRIP",
+        "aml_expiry": "2025-12-15",
+        "fatca_status": "compliant",
+        "w8ben_expiry": "2026-06-30",
+        "risk_profile": "institutional",
+        "dual_auth_approver": "James Carter",
+        "email": "pablo.salvador@contoso-fs.com",
+        "account_status": "active",
+        "years_as_client": 5,
+        "client_tier": "platinum"
+    },
+    "emily_chen_gca": {
+        "client_code": "emily_chen_gca",
+        "institution_name": "Global Capital Advisors",
+        "contact_name": "Emily Chen",
+        "account_currency": "EUR",
+        "custodial_account": "GCA-48273-DRIP",
+        "aml_expiry": "2025-11-29",
+        "fatca_status": "expiring_soon",
+        "w8ben_expiry": "2026-03-15",
+        "risk_profile": "high_net_worth",
+        "dual_auth_approver": "Michael Zhang",
+        "email": "emily.chen@globalcapital-adv.com",
+        "account_status": "active",
+        "years_as_client": 3,
+        "client_tier": "gold"
+    }
+}
+
+MOCK_DRIP_POSITIONS = {
+    "pablo_salvador_cfs": [
+        {
+            "client_code": "pablo_salvador_cfs",
+            "symbol": "MSFT",
+            "company_name": "Microsoft Corporation",
+            "shares": 450.75,
+            "cost_basis_per_share": 280.50,
+            "last_dividend": 3.00,
+            "dividend_date": "2025-11-15",
+            "current_price": 425.80,
+            "market_value": 191963.85,
+            "unrealized_gain": 65475.60,
+            "dividend_frequency": "quarterly"
+        },
+        {
+            "client_code": "pablo_salvador_cfs",
+            "symbol": "AAPL",
+            "company_name": "Apple Inc.",
+            "shares": 328.50,
+            "cost_basis_per_share": 165.25,
+            "last_dividend": 0.96,
+            "dividend_date": "2025-11-08",
+            "current_price": 195.75,
+            "market_value": 64303.13,
+            "unrealized_gain": 10018.88,
+            "dividend_frequency": "quarterly"
+        },
+        {
+            "client_code": "pablo_salvador_cfs",
+            "symbol": "JNJ",
+            "company_name": "Johnson & Johnson",
+            "shares": 525.00,
+            "cost_basis_per_share": 152.80,
+            "last_dividend": 1.24,
+            "dividend_date": "2025-11-20",
+            "current_price": 168.90,
+            "market_value": 88672.50,
+            "unrealized_gain": 8452.50,
+            "dividend_frequency": "quarterly"
+        },
+        {
+            "client_code": "pablo_salvador_cfs",
+            "symbol": "PLTR",
+            "company_name": "Palantir Technologies",
+            "shares": 1078.00,
+            "cost_basis_per_share": 8.50,
+            "last_dividend": 0.00,
+            "dividend_date": None,
+            "current_price": 12.85,
+            "market_value": 13852.30,
+            "unrealized_gain": 4689.30,
+            "dividend_frequency": "irregular"
+        }
+    ],
+    "emily_chen_gca": [
+        {
+            "client_code": "emily_chen_gca",
+            "symbol": "VZ",
+            "company_name": "Verizon Communications",
+            "shares": 892.00,
+            "cost_basis_per_share": 38.50,
+            "last_dividend": 0.67,
+            "dividend_date": "2025-11-10",
+            "current_price": 42.15,
+            "market_value": 37597.80,
+            "unrealized_gain": 3255.80,
+            "dividend_frequency": "quarterly"
+        },
+        {
+            "client_code": "emily_chen_gca",
+            "symbol": "KO",
+            "company_name": "Coca-Cola Company",
+            "shares": 1250.00,
+            "cost_basis_per_share": 55.20,
+            "last_dividend": 0.48,
+            "dividend_date": "2025-11-18",
+            "current_price": 62.75,
+            "market_value": 78437.50,
+            "unrealized_gain": 9437.50,
+            "dividend_frequency": "quarterly"
+        }
+    ]
+}
+
+MOCK_COMPLIANCE_RECORDS = {
+    "pablo_salvador_cfs": {
+        "client_code": "pablo_salvador_cfs",
+        "compliance_year": 2025,
+        "aml_status": "compliant",
+        "aml_expiry": "2025-12-15",
+        "aml_last_review": "2024-12-15",
+        "fatca_status": "compliant",
+        "fatca_last_review": "2024-06-01",
+        "w8ben_status": "valid",
+        "w8ben_expiry": "2026-06-30",
+        "kyc_status": "current",
+        "kyc_last_review": "2024-03-10",
+        "risk_assessment": "low_risk",
+        "enhanced_due_diligence": False,
+        "requires_review": False,
+        "last_transaction_review": "2025-11-15",
+        "politically_exposed": False,
+        "sanctions_screening": "clear"
+    },
+    "emily_chen_gca": {
+        "client_code": "emily_chen_gca",
+        "compliance_year": 2025,
+        "aml_status": "expiring_soon",
+        "aml_expiry": "2025-11-29",
+        "aml_last_review": "2024-11-29",
+        "fatca_status": "requires_review",
+        "fatca_last_review": "2024-08-15",
+        "w8ben_status": "valid",
+        "w8ben_expiry": "2026-03-15",
+        "kyc_status": "current",
+        "kyc_last_review": "2024-05-20",
+        "risk_assessment": "medium_risk",
+        "enhanced_due_diligence": True,
+        "requires_review": True,
+        "last_transaction_review": "2025-10-30",
+        "politically_exposed": False,
+        "sanctions_screening": "clear"
+    }
+}
+
+# Helper function to get mock data
+def get_mock_client_data(client_code: str) -> Dict[str, Any]:
+    """Get mock client data for demo purposes"""
+    return MOCK_TRANSFER_AGENCY_CLIENTS.get(client_code)
+
+def get_mock_drip_positions(client_code: str) -> list:
+    """Get mock DRIP positions for demo purposes"""
+    return MOCK_DRIP_POSITIONS.get(client_code, [])
+
+def get_mock_compliance_record(client_code: str) -> Dict[str, Any]:
+    """Get mock compliance record for demo purposes"""
+    return MOCK_COMPLIANCE_RECORDS.get(client_code)
+
+# ========================================
+# PRODUCTION CONSTANTS
+# ========================================
+
 # Current FX Rates (Updated daily in production)
 CURRENT_FX_RATES = {
     "USD_EUR": 1.0725,

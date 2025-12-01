@@ -39,6 +39,7 @@ tools:
   - refund_fee
   - handoff_card_recommendation
   - handoff_investment_advisor
+  - handoff_transfer_agency_agent
   - escalate_human
   - escalate_emergency
   - transfer_call_to_call_center

@@ -80,7 +80,8 @@ def get_financial_cosmos_manager() -> CosmosDBMongoCoreManager:
         # Use usecase-scoped database from environment variable
         # e.g., COSMOS_FINANCIAL_DATABASE=bofa_db for Bank of America
         #       COSMOS_FINANCIAL_DATABASE=bony_db for Bank of New York Mellon
-        database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+        #database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+        database_name = "financial_services_db"
         _cosmos_manager = CosmosDBMongoCoreManager(
             database_name=database_name,
             collection_name="users"
@@ -398,7 +399,8 @@ async def verify_client_identity(args: VerifyClientArgs) -> VerifyClientResult:
         
         try:
             cosmos = get_financial_cosmos_manager()
-            database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+            #database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+            database_name = "financial_services_db"
             logger.info(f"📊 Querying database: {database_name}.users for {full_name} at {institution_name}",
                        extra={"database": database_name, "client_name": full_name, "institution": institution_name})
             query = {"full_name": full_name, "institution_name": institution_name}
@@ -498,7 +500,8 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
         
         try:
             cosmos = get_financial_cosmos_manager()
-            database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+            #database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+            database_name = "financial_services_db"
             logger.info(f"📊 Querying database: {database_name}.users for {full_name}",
                        extra={"database": database_name, "client_name": full_name})
             # Query by name and SSN last 4 from verification_codes

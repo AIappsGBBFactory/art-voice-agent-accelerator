@@ -1105,9 +1105,39 @@ async def _consume_openai_stream(
         # Tool-call aggregation
         if getattr(delta, "tool_calls", None):
             tc = delta.tool_calls[0]
-            tool.call_id = tc.id or tool.call_id
-            tool.name = getattr(tc.function, "name", None) or tool.name
-            tool.args_json += getattr(tc.function, "arguments", None) or ""
+            
+            # Capture tool call metadata
+            new_call_id = tc.id
+            new_name = getattr(tc.function, "name", None)
+            new_args = getattr(tc.function, "arguments", None) or ""
+            
+            # If this is a new tool call (different ID), reset state
+            if new_call_id and tool.call_id and new_call_id != tool.call_id:
+                logger.warning(
+                    "New tool call started before previous completed: old_id=%s new_id=%s old_tool=%s new_tool=%s",
+                    tool.call_id, new_call_id, tool.name, new_name
+                )
+                # Reset to start fresh
+                tool = _ToolCallState()
+            
+            tool.call_id = new_call_id or tool.call_id
+            tool.name = new_name or tool.name
+            
+            # Accumulate arguments - OpenAI streams them in chunks
+            # Only skip if we detect a complete duplicate JSON object pattern
+            if new_args:
+                # Check for obvious complete duplicates (full JSON objects repeated)
+                # Don't check for short strings as they can legitimately appear multiple times
+                if len(new_args) > 20 and tool.args_json and new_args == tool.args_json:
+                    logger.warning(
+                        "Complete duplicate tool args detected for tool=%s call_id=%s, skipping: %s",
+                        tool.name,
+                        tool.call_id,
+                        new_args[:100]
+                    )
+                else:
+                    tool.args_json += new_args
+            
             if not tool.started:
                 tool.started = True
             continue
@@ -1526,6 +1556,28 @@ async def process_gpt_response(  # noqa: PLR0913
                 {"tool_name": tool_state.name, "tool_id": tool_state.call_id},
             )
 
+            # Validate the tool args JSON before adding to history
+            try:
+                json.loads(tool_state.args_json)  # Validation check
+            except json.JSONDecodeError as validation_exc:
+                logger.error(
+                    "Tool call args failed JSON validation before adding to history: tool=%s error=%s args=%s",
+                    tool_state.name,
+                    str(validation_exc),
+                    tool_state.args_json[:300] if tool_state.args_json else "None",
+                    extra={
+                        "tool_name": tool_state.name,
+                        "tool_id": tool_state.call_id,
+                        "args_full": tool_state.args_json,
+                        "validation_error": str(validation_exc),
+                        "event_type": "tool_args_validation_failed"
+                    }
+                )
+                # Don't try to recover - let the error propagate with better context
+                # The tool execution handler will catch it and provide proper user feedback
+                span.set_attribute("tool.args_invalid", True)
+                span.set_attribute("tool.validation_error", str(validation_exc))
+
             agent_history.append(
                 {
                     "role": "assistant",
@@ -1649,18 +1701,37 @@ async def _handle_tool_call(  # noqa: PLR0913
         except json.JSONDecodeError as json_exc:
             # JSON parsing failure - maintain conversation integrity
             trace_ctx.set_attribute("error", f"Invalid JSON args: {json_exc}")
+            
+            # Enhanced logging with full args for debugging
             logger.error(
-                "Invalid JSON in tool args: tool=%s, args=%s, error=%s",
+                "Invalid JSON in tool args: tool=%s, error=%s at position %d",
                 tool_name,
-                args[:200] if args else "None",
-                json_exc,
+                str(json_exc),
+                json_exc.pos if hasattr(json_exc, 'pos') else -1,
                 extra={
                     "tool_name": tool_name,
-                    "args_preview": args[:200] if args else "None",
+                    "tool_id": tool_id,
+                    "args_full": args if args and len(args) < 500 else (args[:500] + "..." if args else "None"),
+                    "args_length": len(args) if args else 0,
                     "error_type": "json_decode_error",
+                    "error_position": json_exc.pos if hasattr(json_exc, 'pos') else -1,
                     "event_type": "tool_execution_error"
                 }
             )
+            
+            # Log the problematic section around the error position
+            if hasattr(json_exc, 'pos') and args:
+                pos = json_exc.pos
+                start = max(0, pos - 50)
+                end = min(len(args), pos + 50)
+                context = args[start:end]
+                logger.error(
+                    "JSON error context around position %d: ...%s...",
+                    pos,
+                    context,
+                    extra={"error_context": context, "error_position": pos}
+                )
+            
             # Add error tool response to prevent OpenAI "orphaned tool call" errors
             agent_history.append(
                 {
@@ -1719,7 +1790,14 @@ async def _handle_tool_call(  # noqa: PLR0913
             elapsed_ms = 0
             
             try:
-                result_raw = await fn(params)
+                # Handle both async and sync tool functions
+                import inspect
+                if inspect.iscoroutinefunction(fn):
+                    result_raw = await fn(params)
+                else:
+                    # Sync function - run in thread pool to avoid blocking
+                    result_raw = await asyncio.to_thread(fn, params)
+                
                 elapsed_ms = (time.perf_counter() - t0) * 1000
 
                 exec_ctx.set_attribute("execution.duration_ms", elapsed_ms)
@@ -1728,6 +1806,13 @@ async def _handle_tool_call(  # noqa: PLR0913
                 result: JSONDict = (
                     json.loads(result_raw) if isinstance(result_raw, str) else result_raw
                 )
+                
+                # Handle Pydantic model results
+                if hasattr(result_raw, 'model_dump'):
+                    result = result_raw.model_dump()
+                elif hasattr(result_raw, 'dict'):
+                    result = result_raw.dict()
+                
                 exec_ctx.set_attribute("result.type", type(result).__name__)
 
                 logger.info(

@@ -3610,43 +3610,15 @@ function RealTimeVoiceApp() {
 
   const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
 
+  // NOTE: handleSendText is defined as a ref-based function to avoid dependency issues
+  // with useBargeIn hooks that are defined later. The actual implementation is set
+  // after useBargeIn is called via handleSendTextRef.
+  const handleSendTextRef = useRef(null);
   const handleSendText = useCallback(() => {
-    if (!textInput.trim()) return;
-    
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      // BARGE-IN: Stop TTS audio playback before sending text
-      // NOTE: We do NOT suspend the recording context (microphone) because
-      // the user should still be able to speak after sending text
-      
-      // 1. Stop TTS playback audio context (speaker output) to interrupt agent speech
-      if (playbackAudioContextRef.current && playbackAudioContextRef.current.state === "running") {
-        playbackAudioContextRef.current.suspend();
-        appendLog("🛑 TTS playback interrupted by user text input");
-      }
-      
-      // 2. Clear the audio playback queue to stop any buffered agent audio
-      if (pcmSinkRef.current) {
-        pcmSinkRef.current.port.postMessage({ type: 'clear' });
-      }
-      
-      // Send as raw text message
-      const userText = textInput.trim();
-      socketRef.current.send(userText);
-      
-      // Add user message immediately to UI (optimistic update)
-      // Backend should also echo, but we show it immediately for better UX
-      setMessages((prev) => [
-        ...prev,
-        { speaker: "User", text: userText }
-      ]);
-      setActiveSpeaker("User");
-      appendLog(`User (text): ${userText}`);
-      
-      setTextInput("");
-    } else {
-      appendLog("⚠️ Cannot send text: WebSocket not connected");
+    if (handleSendTextRef.current) {
+      handleSendTextRef.current();
     }
-  }, [textInput, appendLog]);
+  }, []);
 
   const appendSystemMessage = useCallback((text, options = {}) => {
     const timestamp = options.timestamp ?? new Date().toISOString();
@@ -4469,6 +4441,62 @@ function RealTimeVoiceApp() {
     metricsRef,
     publishMetricsSummary,
   });
+
+  // Set up the handleSendText implementation now that useBargeIn is available
+  useEffect(() => {
+    handleSendTextRef.current = () => {
+      if (!textInput.trim()) return;
+      
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        // BARGE-IN: Properly interrupt assistant output using the barge-in system
+        const bargeInMeta = {
+          reason: "user_text_input",
+          trigger: "text_submit",
+          at: "text_barge_in",
+          action: "text_input",
+        };
+        
+        // 1. Record barge-in event for metrics
+        const bargeInEvent = recordBargeInEvent("text_input", bargeInMeta);
+        
+        // 2. Interrupt assistant output (clears audio queue, stops playback, updates state)
+        interruptAssistantOutput(bargeInMeta, {
+          logMessage: "🔇 Audio interrupted by user text input",
+        });
+        
+        // 3. Send control message to backend to stop TTS generation
+        const controlMessage = JSON.stringify({
+          type: "control",
+          action: "tts_cancelled",
+          reason: "user_text_input",
+          trigger: "text_submit",
+          ts: new Date().toISOString(),
+        });
+        socketRef.current.send(controlMessage);
+        
+        // 4. Finalize barge-in clear
+        if (bargeInEvent) {
+          finalizeBargeInClear(bargeInEvent);
+        }
+        
+        // 5. Send user text message
+        const userText = textInput.trim();
+        socketRef.current.send(userText);
+        
+        // 6. Add user message immediately to UI (optimistic update)
+        setMessages((prev) => [
+          ...prev,
+          { speaker: "User", text: userText }
+        ]);
+        setActiveSpeaker("User");
+        appendLog(`User (text): ${userText}`);
+        
+        setTextInput("");
+      } else {
+        appendLog("⚠️ Cannot send text: WebSocket not connected");
+      }
+    };
+  }, [textInput, appendLog, recordBargeInEvent, interruptAssistantOutput, finalizeBargeInClear, setActiveSpeaker]);
 
   const resetMetrics = useCallback(
     (sessionId) => {

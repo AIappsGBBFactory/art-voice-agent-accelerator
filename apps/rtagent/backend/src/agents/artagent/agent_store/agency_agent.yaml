@@ -17,7 +17,7 @@ model:
   max_completion_tokens: 2040
 
 voice:
-  name: en-US-Emma:DragonHDLatestNeural # Distinctive voice for Agency Agent
+  name: en-US-AlloyTurboMultilingualNeural # Distinctive voice for Agency Agent
   style: professional # Professional tone for institutional clients
   rate: "-3%" # Slightly measured pace for complex financial transactions
 

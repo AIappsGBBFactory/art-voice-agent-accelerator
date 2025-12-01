@@ -198,16 +198,14 @@ def _should_enable_live_metrics():
     """
     Determine if live metrics should be enabled based on environment.
     """
-    # Disable in development environments by default
-    if os.getenv("ENVIRONMENT", "").lower() in ["dev", "development", "local"]:
-        return False
+    return True
 
-    # Enable in production environments
-    if os.getenv("ENVIRONMENT", "").lower() in ["prod", "production"]:
-        return True
+    # # Enable in production environments
+    # if os.getenv("ENVIRONMENT", "").lower() in ["prod", "production"]:
+    #     return True
 
-    # For other environments, check if we're in Azure
-    return bool(os.getenv("WEBSITE_SITE_NAME") or os.getenv("CONTAINER_APP_NAME"))
+    # # For other environments, check if we're in Azure
+    # return bool(os.getenv("WEBSITE_SITE_NAME") or os.getenv("CONTAINER_APP_NAME"))
 
 
 def _retry_without_live_metrics(logger_name: str, connection_string: str):
