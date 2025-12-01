@@ -127,6 +127,8 @@ async def send_user_transcript(
     conn_id: Optional[str] = None,
     broadcast_only: bool = False,
     turn_id: Optional[str] = None,
+    active_agent: Optional[str] = None,
+    active_agent_label: Optional[str] = None,
 ) -> None:
     """Emit a user transcript using the standard session envelope.
 
@@ -136,19 +138,24 @@ async def send_user_transcript(
     payload_session_id = session_id or getattr(ws.state, "session_id", None)
     resolved_conn = conn_id or getattr(ws.state, "conn_id", None)
 
+    payload_data = {
+        "type": "user",
+        "sender": "User",
+        "message": text,
+        "content": text,
+        "streaming": False,
+        "status": "completed",
+        "turn_id": turn_id,
+        "response_id": turn_id,
+    }
+    if active_agent:
+        payload_data["active_agent"] = active_agent
+        payload_data["active_agent_label"] = active_agent_label
+
     envelope_payload = make_envelope(
         etype="event",
         sender="User",
-        payload={
-            "type": "user",
-            "sender": "User",
-            "message": text,
-            "content": text,
-            "streaming": False,
-            "status": "completed",
-            "turn_id": turn_id,
-            "response_id": turn_id,
-        },
+        payload=payload_data,
         topic="session",
         session_id=payload_session_id,
     )
@@ -951,7 +958,10 @@ async def send_response_to_acs(
                                 }
                             )
                             sequence_id += 1
-                            await asyncio.sleep(0.02)
+                            # Reduced pacing: send frames faster than real-time.
+                            # ACS buffers frames and plays at 20ms rate internally.
+                            # 5ms gives ~4x speedup while maintaining order.
+                            await asyncio.sleep(0.005)
                         except asyncio.CancelledError:
                             logger.info(
                                 "ACS MEDIA: Frame loop cancelled (run=%s, seq=%s)",
@@ -978,30 +988,12 @@ async def send_response_to_acs(
                             _record_status(playback_status)
                             break
                     else:
-                        if _ws_is_connected(ws):
-                            try:
-                                await ws.send_json(
-                                    {"kind": "StopAudio", "AudioData": None, "StopAudio": {}}
-                                )
-                                logger.debug(
-                                    "ACS MEDIA: Sent StopAudio after playback (run=%s)", run_id
-                                )
-                                playback_status = "completed"
-                                _record_status(playback_status)
-                            except Exception as stop_exc:
-                                if not _ws_is_connected(ws):
-                                    logger.debug(
-                                        "ACS MEDIA: WebSocket closed before StopAudio send (run=%s)",
-                                        run_id,
-                                    )
-                                else:
-                                    logger.warning(
-                                        "ACS MEDIA: Failed to send StopAudio (run=%s): %s",
-                                        run_id,
-                                        stop_exc,
-                                    )
-                                playback_status = "interrupted"
-                                _record_status(playback_status)
+                        # All frames sent successfully
+                        # NOTE: Do NOT send StopAudio here - it clears the ACS buffer
+                        # and would cut off audio from subsequent chunks in a streaming response.
+                        # StopAudio should only be sent on barge-in or at the very end of a response.
+                        playback_status = "completed"
+                        _record_status(playback_status)
                 finally:
                     if (
                         main_event_loop
@@ -1224,10 +1216,133 @@ async def broadcast_session_envelope(
     return sent_count
 
 
+# =============================================================================
+# Unified ACS TTS Queue
+# =============================================================================
+
+def queue_acs_tts(
+    ws: WebSocket,
+    text: str,
+    *,
+    voice_name: Optional[str] = None,
+    voice_style: Optional[str] = None,
+    rate: Optional[str] = None,
+    latency_tool: Optional[LatencyTool] = None,
+    stream_mode: Optional[StreamMode] = None,
+    is_greeting: bool = False,
+) -> asyncio.Task:
+    """
+    Queue TTS playback for ACS with proper serialization.
+    
+    ALL ACS TTS should go through this function to ensure sequential playback.
+    Uses the acs_playback_tail task chain to prevent overlapping audio.
+    
+    Args:
+        ws: WebSocket connection
+        text: Text to synthesize and play
+        voice_name: Optional voice override
+        voice_style: Optional style override  
+        rate: Optional rate override
+        latency_tool: Optional latency tracking
+        stream_mode: Optional stream mode override
+        is_greeting: Whether this is a greeting (for logging)
+        
+    Returns:
+        The queued task (for optional awaiting)
+    """
+    previous_task: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
+    effective_stream_mode = stream_mode or getattr(ws.state, "stream_mode", ACS_STREAMING_MODE)
+    label = "greeting" if is_greeting else "response"
+
+    async def _runner(prior: Optional[asyncio.Task]) -> None:
+        current_task = asyncio.current_task()
+        
+        # Wait for previous chunk to fully complete (synthesis + streaming)
+        if prior:
+            try:
+                await prior
+            except asyncio.CancelledError:
+                # Barge-in cancelled previous - stop the chain
+                logger.debug("ACS TTS queue: prior task cancelled, stopping chain")
+                return
+            except Exception as prior_exc:
+                logger.warning("ACS TTS queue: prior task failed: %s", prior_exc)
+        
+        # Check if cancelled before starting
+        cancel_requested = getattr(ws.state, "tts_cancel_requested", False)
+        if cancel_requested:
+            logger.debug("ACS TTS queue: skipping %s (cancel requested)", label)
+            return
+            
+        try:
+            logger.debug("ACS TTS queue: playing %s (len=%d)", label, len(text))
+            # Use blocking=True: waits for synthesis AND all frames to stream.
+            # This ensures no overlap between chunks.
+            await send_response_to_acs(
+                ws,
+                text,
+                blocking=True,
+                latency_tool=latency_tool,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                rate=rate,
+                stream_mode=effective_stream_mode,
+            )
+        except asyncio.CancelledError:
+            logger.debug("ACS TTS queue: %s cancelled (barge-in)", label)
+        except Exception as playback_exc:
+            logger.exception("ACS TTS queue: %s failed", label, exc_info=playback_exc)
+        finally:
+            tail_now: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
+            if tail_now is current_task:
+                setattr(ws.state, "acs_playback_tail", None)
+
+    next_task = asyncio.create_task(_runner(previous_task), name=f"acs_tts_{label}")
+    setattr(ws.state, "acs_playback_tail", next_task)
+    return next_task
+
+
+async def queue_acs_tts_blocking(
+    ws: WebSocket,
+    text: str,
+    *,
+    voice_name: Optional[str] = None,
+    voice_style: Optional[str] = None,
+    rate: Optional[str] = None,
+    latency_tool: Optional[LatencyTool] = None,
+    stream_mode: Optional[StreamMode] = None,
+    is_greeting: bool = False,
+) -> None:
+    """
+    Queue TTS playback for ACS and wait for it to complete.
+    
+    Same as queue_acs_tts but awaits the task.
+    Use this for greetings where you need to wait for completion.
+    """
+    task = queue_acs_tts(
+        ws,
+        text,
+        voice_name=voice_name,
+        voice_style=voice_style,
+        rate=rate,
+        latency_tool=latency_tool,
+        stream_mode=stream_mode,
+        is_greeting=is_greeting,
+    )
+    try:
+        await task
+    except asyncio.CancelledError:
+        logger.debug("ACS TTS blocking: task cancelled")
+    except Exception as e:
+        logger.warning("ACS TTS blocking: task failed: %s", e)
+
+
 # Re-export for convenience
 __all__ = [
     "send_tts_audio",
     "send_response_to_acs",
+    "queue_acs_tts",
+    "queue_acs_tts_blocking",
     "push_final",
     "broadcast_message",
     "broadcast_session_envelope",

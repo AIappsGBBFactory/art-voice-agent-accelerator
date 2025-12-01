@@ -6,7 +6,7 @@ Main router for API v1 endpoints.
 """
 
 from fastapi import APIRouter
-from .endpoints import calls, health, media, browser
+from .endpoints import calls, health, media, browser, metrics
 
 # Create v1 router
 v1_router = APIRouter(prefix="/api/v1")
@@ -20,4 +20,7 @@ v1_router.include_router(
 )
 v1_router.include_router(
     browser.router, prefix="/browser", tags=["Browser Communication", "WebSocket"]
+)
+v1_router.include_router(
+    metrics.router, prefix="/metrics", tags=["Session Metrics", "Telemetry"]
 )

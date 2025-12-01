@@ -49,6 +49,7 @@ from apps.rtagent.backend.src.services.acs.session_terminator import (
 )
 from apps.rtagent.backend.src.utils.tracing import log_with_context
 from apps.rtagent.backend.src.ws_helpers.barge_in import BargeInController
+from utils.session_context import session_context
 from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     _get_connection_metadata,
@@ -207,88 +208,96 @@ async def browser_conversation_endpoint(
     stream_mode = _parse_stream_mode(streaming_mode)
     websocket.state.stream_mode = str(stream_mode)
 
-    try:
-        # Resolve session ID
-        session_id = _resolve_session_id(websocket, session_id)
+    # Resolve session ID early for context
+    session_id = _resolve_session_id(websocket, session_id)
 
-        with tracer.start_as_current_span(
-            "api.v1.browser.conversation_connect",
-            kind=SpanKind.SERVER,
-            attributes={
-                "api.version": "v1",
-                "browser.session_id": session_id,
-                "stream.mode": str(stream_mode),
-                "network.protocol.name": "websocket",
-            },
-        ) as span:
-            # Register connection
-            conn_id = await _register_connection(websocket, session_id)
-            websocket.state.conn_id = conn_id
+    # Wrap entire session in session_context for automatic correlation
+    # All logs and spans within this block inherit session_id and call_connection_id
+    async with session_context(
+        call_connection_id=session_id,  # For browser, session_id is the correlation key
+        session_id=session_id,
+        transport_type="BROWSER",
+        component="browser.conversation",
+    ):
+        try:
+            with tracer.start_as_current_span(
+                "api.v1.browser.conversation_connect",
+                kind=SpanKind.SERVER,
+                attributes={
+                    "api.version": "v1",
+                    "browser.session_id": session_id,
+                    "stream.mode": str(stream_mode),
+                    "network.protocol.name": "websocket",
+                },
+            ) as span:
+                # Register connection
+                conn_id = await _register_connection(websocket, session_id)
+                websocket.state.conn_id = conn_id
 
-            # Create handler based on mode
-            if stream_mode == StreamMode.VOICE_LIVE:
-                handler, memory_manager = await _create_voice_live_handler(
-                    websocket, session_id, conn_id, user_email
+                # Create handler based on mode
+                if stream_mode == StreamMode.VOICE_LIVE:
+                    handler, memory_manager = await _create_voice_live_handler(
+                        websocket, session_id, conn_id, user_email
+                    )
+                    metadata = {
+                        "cm": memory_manager,
+                        "session_id": session_id,
+                        "stream_mode": str(stream_mode),
+                    }
+                else:
+                    # Speech Cascade - use MediaHandler factory
+                    config = MediaHandlerConfig(
+                        session_id=session_id,
+                        websocket=websocket,
+                        transport=TransportType.BROWSER,
+                        conn_id=conn_id,
+                        user_email=user_email,
+                        orchestrator_func=orchestrator,
+                    )
+                    handler = await MediaHandler.create(config, websocket.app.state)
+                    memory_manager = handler.memory_manager
+                    metadata = handler.metadata
+
+                # Register with session manager
+                await websocket.app.state.session_manager.add_session(
+                    session_id,
+                    memory_manager,
+                    websocket,
+                    metadata=metadata,
                 )
-                metadata = {
-                    "cm": memory_manager,
-                    "session_id": session_id,
-                    "stream_mode": str(stream_mode),
-                }
-            else:
-                # Speech Cascade - use MediaHandler factory
-                config = MediaHandlerConfig(
+
+                if hasattr(websocket.app.state, "session_metrics"):
+                    await websocket.app.state.session_metrics.increment_connected()
+
+                span.set_status(Status(StatusCode.OK))
+                log_with_context(
+                    logger,
+                    "info",
+                    "Conversation session initialized",
+                    operation="conversation_connect",
                     session_id=session_id,
-                    websocket=websocket,
-                    transport=TransportType.BROWSER,
-                    conn_id=conn_id,
-                    user_email=user_email,
-                    orchestrator_func=orchestrator,
+                    stream_mode=str(stream_mode),
                 )
-                handler = await MediaHandler.create(config, websocket.app.state)
-                memory_manager = handler.memory_manager
-                metadata = handler.metadata
 
-            # Register with session manager
-            await websocket.app.state.session_manager.add_session(
-                session_id,
-                memory_manager,
-                websocket,
-                metadata=metadata,
+            # Process messages based on mode
+            if stream_mode == StreamMode.VOICE_LIVE:
+                await _process_voice_live_messages(
+                    websocket, handler, session_id, conn_id
+                )
+            else:
+                # Start speech cascade and run message loop
+                await handler.start()
+                await handler.run()
+
+        except WebSocketDisconnect as e:
+            _log_disconnect("conversation", session_id, e)
+        except Exception as e:
+            _log_error("conversation", session_id, e)
+            raise
+        finally:
+            await _cleanup_conversation(
+                websocket, session_id, handler, memory_manager, conn_id, stream_mode
             )
-
-            if hasattr(websocket.app.state, "session_metrics"):
-                await websocket.app.state.session_metrics.increment_connected()
-
-            span.set_status(Status(StatusCode.OK))
-            log_with_context(
-                logger,
-                "info",
-                "Conversation session initialized",
-                operation="conversation_connect",
-                session_id=session_id,
-                stream_mode=str(stream_mode),
-            )
-
-        # Process messages based on mode
-        if stream_mode == StreamMode.VOICE_LIVE:
-            await _process_voice_live_messages(
-                websocket, handler, session_id, conn_id
-            )
-        else:
-            # Start speech cascade and run message loop
-            await handler.start()
-            await handler.run()
-
-    except WebSocketDisconnect as e:
-        _log_disconnect("conversation", session_id, e)
-    except Exception as e:
-        _log_error("conversation", session_id, e)
-        raise
-    finally:
-        await _cleanup_conversation(
-            websocket, session_id, handler, memory_manager, conn_id, stream_mode
-        )
 
 
 # =============================================================================

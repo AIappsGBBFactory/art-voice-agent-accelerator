@@ -107,7 +107,7 @@ class StreamingConversationTranscriberFromBytes:
     def start(self) -> None:
         if self.enable_tracing and self.tracer:
             self._session_span = self.tracer.start_span(
-                "conversation_transcription_session", kind=SpanKind.CLIENT
+                "conversation_transcription_session", kind=SpanKind.INTERNAL
             )
             self._session_span.set_attribute("ai.operation.id", self.call_connection_id)
             self._session_span.set_attribute("speech.region", self.region)
@@ -170,14 +170,9 @@ class StreamingConversationTranscriberFromBytes:
         self.transcriber.start_transcribing_async().get()
 
     def write_bytes(self, audio_chunk: bytes) -> None:
+        """Write audio chunk to push stream. No per-chunk spans per project guidelines."""
         if self.push_stream:
-            if self.enable_tracing and self.tracer:
-                with self.tracer.start_as_current_span(
-                    "audio_write", kind=SpanKind.CLIENT
-                ):
-                    self.push_stream.write(audio_chunk)
-            else:
-                self.push_stream.write(audio_chunk)
+            self.push_stream.write(audio_chunk)
 
     def stop(self) -> None:
         if self.transcriber:

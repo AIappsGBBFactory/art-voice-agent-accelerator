@@ -17,7 +17,7 @@ from apps.rtagent.backend.src.agents.shared.rag_retrieval import (
     one_shot_query,
     _get_cached_retriever,
 )
-from src.aoai import client as aoai_client_module
+from src.aoai.client import get_client as get_aoai_client
 
 kb_logger = get_logger("voicelive.tools.financial.kb")
 handoff_logger = get_logger("voicelive.tools.financial.handoff")
@@ -228,7 +228,8 @@ def _is_embedding_auth_error(exc: Exception) -> bool:
 
 def _refresh_embedding_stack() -> None:
     try:
-        aoai_client_module.client = aoai_client_module.create_azure_openai_client()
+        from src.aoai.client import _init_client
+        _init_client()  # Re-initialize the shared client
         _get_cached_retriever.cache_clear()
         kb_logger.info("Azure OpenAI client and retriever cache refreshed after auth failure.")
     except Exception as refresh_exc:  # noqa: BLE001

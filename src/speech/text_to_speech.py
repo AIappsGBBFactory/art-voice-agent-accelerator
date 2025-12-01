@@ -21,8 +21,8 @@ from langdetect import LangDetectException, detect
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-# Import centralized span attributes enum
-from src.enums.monitoring import SpanAttr
+# Import centralized span attributes enum and peer service constants
+from src.enums.monitoring import PeerService, SpanAttr
 from src.speech.auth_manager import SpeechTokenManager, get_speech_token_manager
 from utils.ml_logging import get_logger
 
@@ -1125,43 +1125,37 @@ class SpeechSynthesizer:
 
             # Correlation keys
             self._session_span.set_attribute(
-                "rt.call.connection_id", self.call_connection_id
+                SpanAttr.CALL_CONNECTION_ID.value, self.call_connection_id
             )
-            self._session_span.set_attribute("rt.session.id", self.call_connection_id)
+            self._session_span.set_attribute(SpanAttr.SESSION_ID.value, self.call_connection_id)
 
-            # Service specific attributes
-            self._session_span.set_attribute("tts.region", self.region)
-            self._session_span.set_attribute("tts.voice", voice or self.voice)
-            self._session_span.set_attribute("tts.language", self.language)
-            self._session_span.set_attribute("tts.text_length", len(text))
-            self._session_span.set_attribute("tts.operation_type", "speaker_synthesis")
+            # Application Map attributes (creates edge to azure.speech node)
+            self._session_span.set_attribute(SpanAttr.PEER_SERVICE.value, PeerService.AZURE_SPEECH)
             self._session_span.set_attribute(
-                "server.address", f"{self.region}.tts.speech.microsoft.com"
+                SpanAttr.SERVER_ADDRESS.value, f"{self.region}.tts.speech.microsoft.com"
             )
-            self._session_span.set_attribute("server.port", 443)
+            self._session_span.set_attribute(SpanAttr.SERVER_PORT.value, 443)
+            
+            # Speech-specific attributes using new SpanAttr constants
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_VOICE.value, voice or self.voice)
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_LANGUAGE.value, self.language)
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_TEXT_LENGTH.value, len(text))
+            self._session_span.set_attribute(SpanAttr.OPERATION_NAME.value, "speaker_synthesis")
+
+            # Legacy attributes for backwards compatibility
+            self._session_span.set_attribute("tts.region", self.region)
             self._session_span.set_attribute("http.method", "POST")
             # Use endpoint if set, otherwise default to region-based URL
             endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
             if endpoint:
                 self._session_span.set_attribute(
-                    "http.url", f"{endpoint}/cognitiveservices/v1"
+                    SpanAttr.HTTP_URL.value, f"{endpoint}/cognitiveservices/v1"
                 )
             else:
                 self._session_span.set_attribute(
-                    "http.url",
+                    SpanAttr.HTTP_URL.value,
                     f"https://{self.region}.tts.speech.microsoft.com/cognitiveservices/v1",
                 )
-            # External dependency identification for App Map
-            self._session_span.set_attribute("peer.service", "azure-cognitive-speech")
-            self._session_span.set_attribute(
-                "net.peer.name", f"{self.region}.tts.speech.microsoft.com"
-            )
-
-            # Set standard attributes if available
-            self._session_span.set_attribute(
-                SpanAttr.SERVICE_NAME, "azure-speech-synthesis"
-            )
-            self._session_span.set_attribute(SpanAttr.SERVICE_VERSION, "1.0.0")
 
             # Make this span current for the duration
             with trace.use_span(self._session_span):
@@ -1302,19 +1296,25 @@ class SpeechSynthesizer:
                 "tts_synthesis_session", kind=SpanKind.CLIENT
             )
 
-            # Set session attributes for correlation (matching speech_recognizer pattern)
-            self._session_span.set_attribute("ai.operation.id", self.call_connection_id)
-            self._session_span.set_attribute("tts.session.id", self.call_connection_id)
-            self._session_span.set_attribute("tts.region", self.region)
-            self._session_span.set_attribute("tts.voice", self.voice)
-            self._session_span.set_attribute("tts.language", self.language)
-            self._session_span.set_attribute("tts.text_length", len(text))
-
-            # Set standard attributes if available
+            # Application Map attributes (creates edge to azure.speech node)
+            self._session_span.set_attribute(SpanAttr.PEER_SERVICE.value, PeerService.AZURE_SPEECH)
             self._session_span.set_attribute(
-                SpanAttr.SERVICE_NAME, "azure-speech-synthesis"
+                SpanAttr.SERVER_ADDRESS.value, f"{self.region}.tts.speech.microsoft.com"
             )
-            self._session_span.set_attribute(SpanAttr.SERVICE_VERSION, "1.0.0")
+            self._session_span.set_attribute(SpanAttr.SERVER_PORT.value, 443)
+            
+            # Correlation attributes
+            self._session_span.set_attribute(SpanAttr.CALL_CONNECTION_ID.value, self.call_connection_id)
+            self._session_span.set_attribute(SpanAttr.SESSION_ID.value, self.call_connection_id)
+            
+            # Speech-specific attributes
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_VOICE.value, voice)
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_LANGUAGE.value, self.language)
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_TEXT_LENGTH.value, len(text))
+            self._session_span.set_attribute(SpanAttr.OPERATION_NAME.value, "synthesis")
+            
+            # Legacy attributes for backwards compatibility
+            self._session_span.set_attribute("tts.region", self.region)
 
             # Make this span current for the duration
             with trace.use_span(self._session_span):
@@ -1486,20 +1486,26 @@ class SpeechSynthesizer:
                 "tts_frame_synthesis_session", kind=SpanKind.CLIENT
             )
 
-            # Set session attributes for correlation (matching speech_recognizer pattern)
-            self._session_span.set_attribute("ai.operation.id", self.call_connection_id)
-            self._session_span.set_attribute("tts.session.id", self.call_connection_id)
-            self._session_span.set_attribute("tts.region", self.region)
-            self._session_span.set_attribute("tts.voice", self.voice)
-            self._session_span.set_attribute("tts.language", self.language)
-            self._session_span.set_attribute("tts.text_length", len(text))
-            self._session_span.set_attribute("tts.sample_rate", sample_rate)
-
-            # Set standard attributes if available
+            # Application Map attributes (creates edge to azure.speech node)
+            self._session_span.set_attribute(SpanAttr.PEER_SERVICE.value, PeerService.AZURE_SPEECH)
             self._session_span.set_attribute(
-                SpanAttr.SERVICE_NAME, "azure-speech-synthesis"
+                SpanAttr.SERVER_ADDRESS.value, f"{self.region}.tts.speech.microsoft.com"
             )
-            self._session_span.set_attribute(SpanAttr.SERVICE_VERSION, "1.0.0")
+            self._session_span.set_attribute(SpanAttr.SERVER_PORT.value, 443)
+            
+            # Correlation attributes
+            self._session_span.set_attribute(SpanAttr.CALL_CONNECTION_ID.value, self.call_connection_id)
+            self._session_span.set_attribute(SpanAttr.SESSION_ID.value, self.call_connection_id)
+            
+            # Speech-specific attributes
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_VOICE.value, voice)
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_LANGUAGE.value, self.language)
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_TEXT_LENGTH.value, len(text))
+            self._session_span.set_attribute(SpanAttr.SPEECH_TTS_SAMPLE_RATE.value, sample_rate)
+            self._session_span.set_attribute(SpanAttr.OPERATION_NAME.value, "frame_synthesis")
+            
+            # Legacy attributes for backwards compatibility
+            self._session_span.set_attribute("tts.region", self.region)
 
             # Make this span current for the duration
             with trace.use_span(self._session_span):

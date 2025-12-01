@@ -37,12 +37,12 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.tools_helper import (
     push_tool_start,
 )
 from apps.rtagent.backend.src.helpers import add_space
-from src.aoai.client import client as default_aoai_client, create_azure_openai_client
+from src.aoai.client import get_client as get_aoai_client, create_azure_openai_client
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     get_connection_metadata,
     push_final,
-    send_response_to_acs,
+    queue_acs_tts,
     send_session_envelope,
     send_tts_audio,
 )
@@ -51,9 +51,8 @@ from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
 from apps.rtagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
-    create_service_dependency_attrs)
-from utils.ml_logging import get_logger
-from utils.trace_context import create_trace_context
+    create_service_dependency_attrs,
+)
 
 if TYPE_CHECKING:  # pragma: no cover – typing-only import
     from src.stateful.state_managment import MemoManager  # noqa: F401
@@ -437,41 +436,68 @@ async def _emit_streaming_text(
     envelope["message"] = text  # Legacy compatibility for dashboards
     conn_id = None if session_is_acs else getattr(ws.state, "conn_id", None)
 
-    def _queue_acs_playback() -> None:
-        """Schedule ACS playback without blocking GPT stream."""
+    def _get_speech_cascade():
+        """Get SpeechCascadeHandler from ACS media handler if available."""
+        acs_handler = getattr(ws, "_acs_media_handler", None)
+        if acs_handler:
+            return getattr(acs_handler, "speech_cascade", None)
+        return None
 
-        previous_task: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
-        stream_mode = getattr(ws.state, "stream_mode", ACS_STREAMING_MODE)
+    def _do_queue_tts_via_cascade() -> bool:
+        """Queue TTS via unified speech cascade queue.
+        
+        Works for both ACS and browser connections when MediaHandler is used.
+        Returns True if successfully queued, False if cascade not available.
+        """
+        speech_cascade = _get_speech_cascade()
+        if speech_cascade and hasattr(speech_cascade, "queue_tts"):
+            queued = speech_cascade.queue_tts(
+                text,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                voice_rate=voice_rate,
+            )
+            if queued:
+                return True
+            logger.debug("Speech cascade queue_tts returned False")
+        return False
 
-        async def _runner(prior: Optional[asyncio.Task]) -> None:
-            current_task = asyncio.current_task()
-            if prior:
-                try:
-                    await prior
-                except Exception as prior_exc:  # noqa: BLE001
-                    logger.warning("Previous ACS playback task failed: %s", prior_exc)
-            try:
-                # Use blocking=True to ensure we wait for frame streaming to complete
-                # before the next chunk can start
-                await send_response_to_acs(
-                    ws,
-                    text,
-                    blocking=True,
-                    latency_tool=_lt(ws),
-                    voice_name=voice_name,
-                    voice_style=voice_style,
-                    rate=voice_rate,
-                    stream_mode=stream_mode,
-                )
-            except Exception as playback_exc:  # noqa: BLE001
-                logger.exception("ACS playback task failed", exc_info=playback_exc)
-            finally:
-                tail_now: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
-                if tail_now is current_task:
-                    setattr(ws.state, "acs_playback_tail", None)
+    def _do_queue_acs_playback() -> None:
+        """Queue ACS playback using unified speech cascade queue."""
+        # Try unified speech cascade queue first (avoids acs_playback_tail race condition)
+        if _do_queue_tts_via_cascade():
+            return  # Successfully queued via unified queue
+        
+        # Fallback to shared_ws queue (original behavior)
+        queue_acs_tts(
+            ws,
+            text,
+            voice_name=voice_name,
+            voice_style=voice_style,
+            rate=voice_rate,
+            latency_tool=_lt(ws),
+            is_greeting=False,
+        )
 
-        next_task = asyncio.create_task(_runner(previous_task), name="acs_playback_step")
-        setattr(ws.state, "acs_playback_tail", next_task)
+    async def _do_browser_tts() -> None:
+        """Send TTS for browser connections.
+        
+        Tries speech cascade queue first (when MediaHandler is used),
+        falls back to direct send_tts_audio for legacy endpoints.
+        """
+        # Try speech cascade queue first (unified MediaHandler flow)
+        if _do_queue_tts_via_cascade():
+            return  # Successfully queued - MediaHandler._on_tts_request will handle playback
+        
+        # Fallback to direct TTS (legacy realtime endpoint)
+        await send_tts_audio(
+            text,
+            ws,
+            latency_tool=_lt(ws),
+            voice_name=voice_name,
+            voice_style=voice_style,
+            rate=voice_rate,
+        )
 
     if _STREAM_TRACING:
         span_attrs = create_service_handler_attrs(
@@ -489,18 +515,10 @@ async def _emit_streaming_text(
             try:
                 if is_acs:
                     span.set_attribute("output_channel", "acs")
-
-                    _queue_acs_playback()
+                    _do_queue_acs_playback()
                 else:
                     span.set_attribute("output_channel", "websocket_tts")
-                    await send_tts_audio(
-                        text,
-                        ws,
-                        latency_tool=_lt(ws),
-                        voice_name=voice_name,
-                        voice_style=voice_style,
-                        rate=voice_rate,
-                    )
+                    await _do_browser_tts()
 
                 span.add_event(
                     "text_emitted",
@@ -515,16 +533,9 @@ async def _emit_streaming_text(
                 raise
     else:
         if is_acs:
-            _queue_acs_playback()
+            _do_queue_acs_playback()
         else:
-            await send_tts_audio(
-                text,
-                ws,
-                latency_tool=_lt(ws),
-                voice_name=voice_name,
-                voice_style=voice_style,
-                rate=voice_rate,
-            )
+            await _do_browser_tts()
         await send_session_envelope(
             ws,
             envelope,
@@ -782,6 +793,10 @@ def _build_completion_kwargs(
     """
     return {
         "stream": True,
+        # Include usage stats in streaming response - required for token tracking
+        # This enables gen_ai.usage.input_tokens and gen_ai.usage.output_tokens
+        # in OpenTelemetry spans created by opentelemetry-instrumentation-openai-v2
+        "stream_options": {"include_usage": True},
         "messages": history,
         "model": model_id,
         "max_completion_tokens": max_tokens,
@@ -823,7 +838,7 @@ async def _openai_stream_with_retry(
     the callback is invoked to rebuild the client and the request is retried
     immediately without consuming a normal retry attempt.
     """
-    aoai_client = client or default_aoai_client
+    aoai_client = client or get_aoai_client()
     _inspect_client_retry_settings(aoai_client)
 
     attempts = 0
@@ -1056,6 +1071,14 @@ def _compute_delay(info: RateLimitInfo, attempts: int) -> float:
     return base + jitter
 
 
+@dataclass
+class StreamUsage:
+    """Token usage from streaming response (when stream_options.include_usage=True)."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
 async def _consume_openai_stream(
     response_stream: Any,
     ws: WebSocket,
@@ -1064,7 +1087,7 @@ async def _consume_openai_stream(
     call_connection_id: Optional[str],
     session_id: Optional[str],
     agent_name: str,
-) -> Tuple[str, _ToolCallState]:
+) -> Tuple[str, _ToolCallState, Optional[StreamUsage]]:
     """
     Consume the AOAI stream, emitting TTS chunks as punctuation arrives.
 
@@ -1075,11 +1098,12 @@ async def _consume_openai_stream(
     :param call_connection_id: Optional correlation ID for tracing.
     :param session_id: Optional session ID for tracing correlation.
     :param agent_name: Name of the agent for coordination purposes.
-    :return: (full_assistant_text, tool_call_state)
+    :return: (full_assistant_text, tool_call_state, stream_usage)
     """
     collected: List[str] = []
     final_chunks: List[str] = []
     tool = _ToolCallState()
+    usage: Optional[StreamUsage] = None
 
     # TTFB ends on first delta; then we time the stream consume
     lt = _lt(ws)
@@ -1099,6 +1123,26 @@ async def _consume_openai_stream(
                 consume_started = True
             except Exception:
                 consume_started = False
+
+        # Capture usage from final chunk (when stream_options.include_usage=True)
+        chunk_usage = getattr(chunk, "usage", None)
+        if chunk_usage:
+            usage = StreamUsage(
+                prompt_tokens=getattr(chunk_usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(chunk_usage, "completion_tokens", 0) or 0,
+                total_tokens=getattr(chunk_usage, "total_tokens", 0) or 0,
+            )
+            logger.info(
+                "AOAI stream usage captured: prompt=%d completion=%d total=%d",
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
+                extra={
+                    "gen_ai.usage.input_tokens": usage.prompt_tokens,
+                    "gen_ai.usage.output_tokens": usage.completion_tokens,
+                    "event_type": "aoai_stream_usage"
+                }
+            )
 
         if not getattr(chunk, "choices", None):
             continue
@@ -1142,7 +1186,7 @@ async def _consume_openai_stream(
         except Exception:
             pass
 
-    return "".join(final_chunks).strip(), tool
+    return "".join(final_chunks).strip(), tool, usage
 
 
 # ---------------------------------------------------------------------------
@@ -1442,7 +1486,7 @@ async def process_gpt_response(  # noqa: PLR0913
                         return refreshed
 
                 else:
-                    aoai_client = getattr(ws.app.state, "aoai_client", default_aoai_client)
+                    aoai_client = getattr(ws.app.state, "aoai_client", None) or get_aoai_client()
 
                     async def refresh_client_cb() -> Any:
                         new_client = await asyncio.to_thread(create_azure_openai_client)
@@ -1459,13 +1503,23 @@ async def process_gpt_response(  # noqa: PLR0913
                 )
 
                 # Consume the stream and emit chunks
-                full_text, tool_state = await _consume_openai_stream(
+                full_text, tool_state, stream_usage = await _consume_openai_stream(
                     response_stream, ws, is_acs, cm, call_connection_id, session_id, agent_name
                 )
 
                 dep_span.set_attribute("tool_call_detected", tool_state.started)
                 if tool_state.started:
                     dep_span.set_attribute("tool_name", tool_state.name)
+                
+                # Set GenAI semantic convention attributes for token usage
+                # This is required for App Insights Agents blade Token Consumption panel
+                if stream_usage:
+                    dep_span.set_attribute("gen_ai.usage.input_tokens", stream_usage.prompt_tokens)
+                    dep_span.set_attribute("gen_ai.usage.output_tokens", stream_usage.completion_tokens)
+                    dep_span.set_attribute("gen_ai.usage.total_tokens", stream_usage.total_tokens)
+                    # Also set on parent span for easier querying
+                    span.set_attribute("gen_ai.usage.input_tokens", stream_usage.prompt_tokens)
+                    span.set_attribute("gen_ai.usage.output_tokens", stream_usage.completion_tokens)
 
         except Exception as exc:  # noqa: BLE001
             # Ensure timers stop on all error paths
@@ -1706,123 +1760,124 @@ async def _handle_tool_call(  # noqa: PLR0913
         trace_ctx.set_attribute("tool.parameters_count", len(params))
         call_short_id = uuid.uuid4().hex[:8]
         trace_ctx.set_attribute("tool.call_id", call_short_id)
+        
+        # Add GenAI semantic convention attributes for App Insights Agents blade
+        trace_ctx.set_attribute("gen_ai.operation.name", "execute_tool")
+        trace_ctx.set_attribute("gen_ai.tool.name", tool_name)
+        trace_ctx.set_attribute("gen_ai.tool.call.id", tool_id)
+        trace_ctx.set_attribute("gen_ai.tool.type", "function")
 
         await push_tool_start(ws, call_short_id, tool_name, params, is_acs=is_acs, session_id=session_id)
         trace_ctx.add_event("tool_start_pushed", {"call_id": call_short_id})
 
-        with create_trace_context(
-            name=f"gpt_flow.execute_tool.{tool_name}",
-            call_connection_id=call_connection_id,
-            session_id=session_id,
-            metadata={"tool_name": tool_name, "call_id": call_short_id, "parameters": params},
-        ) as exec_ctx:
-            t0 = time.perf_counter()
-            result = None
-            elapsed_ms = 0
-            
-            try:
-                result_raw = await fn(params)
-                elapsed_ms = (time.perf_counter() - t0) * 1000
+        # Execute the tool (consolidated - no nested span needed)
+        t0 = time.perf_counter()
+        result = None
+        elapsed_ms = 0
+        
+        try:
+            result_raw = await fn(params)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
 
-                exec_ctx.set_attribute("execution.duration_ms", elapsed_ms)
-                exec_ctx.set_attribute("execution.success", True)
+            trace_ctx.set_attribute("execution.duration_ms", elapsed_ms)
+            trace_ctx.set_attribute("execution.success", True)
 
-                result: JSONDict = (
-                    json.loads(result_raw) if isinstance(result_raw, str) else result_raw
-                )
-                exec_ctx.set_attribute("result.type", type(result).__name__)
+            result: JSONDict = (
+                json.loads(result_raw) if isinstance(result_raw, str) else result_raw
+            )
+            trace_ctx.set_attribute("result.type", type(result).__name__)
 
-                logger.info(
-                    "Tool execution successful: tool=%s duration=%.2fms result_type=%s",
-                    tool_name,
-                    elapsed_ms,
-                    type(result).__name__,
-                    extra={
-                        "tool_name": tool_name,
-                        "execution_duration_ms": elapsed_ms,
-                        "result_type": type(result).__name__,
-                        "success": True,
-                        "event_type": "tool_execution_success"
-                    }
-                )
-                
-                # Add successful tool response to prevent conversation corruption
-                agent_history.append(
-                    {
-                        "tool_call_id": tool_id,
-                        "role": "tool",
-                        "name": tool_name,
-                        "content": json.dumps(result),
-                    }
-                )
-                
-            except Exception as tool_exc:
-                elapsed_ms = (time.perf_counter() - t0) * 1000
-                exec_ctx.set_attribute("execution.duration_ms", elapsed_ms)
-                exec_ctx.set_attribute("execution.success", False)
-                exec_ctx.record_exception(tool_exc)
-
-                logger.error(
-                    "Tool execution failed: tool=%s duration=%.2fms error=%s",
-                    tool_name,
-                    elapsed_ms,
-                    str(tool_exc),
-                    extra={
-                        "tool_name": tool_name,
-                        "execution_duration_ms": elapsed_ms,
-                        "error_type": type(tool_exc).__name__,
-                        "error_message": str(tool_exc),
-                        "success": False,
-                        "event_type": "tool_execution_error"
-                    }
-                )
-                
-                # Add error tool response to prevent OpenAI "orphaned tool call" errors
-                # This is the #1 cause of conversation corruption and 400 API errors
-                error_result = {
-                    "error": type(tool_exc).__name__,
-                    "message": "Tool execution failed. Please try again or contact support.",
-                    "details": str(tool_exc)[:500]  # Truncate long error messages
+            logger.info(
+                "Tool execution successful: tool=%s duration=%.2fms result_type=%s",
+                tool_name,
+                elapsed_ms,
+                type(result).__name__,
+                extra={
+                    "tool_name": tool_name,
+                    "execution_duration_ms": elapsed_ms,
+                    "result_type": type(result).__name__,
+                    "success": True,
+                    "event_type": "tool_execution_success"
                 }
-                
-                agent_history.append(
-                    {
-                        "tool_call_id": tool_id,
-                        "role": "tool",
-                        "name": tool_name,
-                        "content": json.dumps(error_result),
-                    }
-                )
-                
-                # Use error result for push_tool_end
-                result = error_result
-                
-                # Still push tool_end with error status
-                await push_tool_end(
-                    ws,
-                    call_short_id,
-                    tool_name,
-                    "error",
-                    elapsed_ms,
-                    error=str(tool_exc),
-                    is_acs=is_acs,
-                    session_id=session_id,
-                )
-                trace_ctx.add_event("tool_end_pushed", {"elapsed_ms": elapsed_ms, "status": "error"})
+            )
+            
+            # Add successful tool response to prevent conversation corruption
+            agent_history.append(
+                {
+                    "tool_call_id": tool_id,
+                    "role": "tool",
+                    "name": tool_name,
+                    "content": json.dumps(result),
+                }
+            )
+            
+        except Exception as tool_exc:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            trace_ctx.set_attribute("execution.duration_ms", elapsed_ms)
+            trace_ctx.set_attribute("execution.success", False)
+            trace_ctx.record_exception(tool_exc)
 
-                if is_acs:
-                    await _broadcast_dashboard(ws, cm, f"🛠️ {tool_name} ❌", include_autoauth=False)
+            logger.error(
+                "Tool execution failed: tool=%s duration=%.2fms error=%s",
+                tool_name,
+                elapsed_ms,
+                str(tool_exc),
+                extra={
+                    "tool_name": tool_name,
+                    "execution_duration_ms": elapsed_ms,
+                    "error_type": type(tool_exc).__name__,
+                    "error_message": str(tool_exc),
+                    "success": False,
+                    "event_type": "tool_execution_error"
+                }
+            )
+            
+            # Add error tool response to prevent OpenAI "orphaned tool call" errors
+            # This is the #1 cause of conversation corruption and 400 API errors
+            error_result = {
+                "error": type(tool_exc).__name__,
+                "message": "Tool execution failed. Please try again or contact support.",
+                "details": str(tool_exc)[:500]  # Truncate long error messages
+            }
+            
+            agent_history.append(
+                {
+                    "tool_call_id": tool_id,
+                    "role": "tool",
+                    "name": tool_name,
+                    "content": json.dumps(error_result),
+                }
+            )
+            
+            # Use error result for push_tool_end
+            result = error_result
+            
+            # Still push tool_end with error status
+            await push_tool_end(
+                ws,
+                call_short_id,
+                tool_name,
+                "error",
+                elapsed_ms,
+                error=str(tool_exc),
+                is_acs=is_acs,
+                session_id=session_id,
+            )
+            trace_ctx.add_event("tool_end_pushed", {"elapsed_ms": elapsed_ms, "status": "error"})
 
-                # CRITICAL: Don't re-raise the exception to prevent conversation corruption
-                # Instead, proceed with the error result and let GPT handle the error response
-                logger.warning(
-                    "Tool execution completed with error, continuing with error result to maintain conversation integrity",
-                    extra={
-                        "tool_name": tool_name,
-                        "error_handled": True,
-                        "event_type": "tool_error_recovery"
-                    }
-                )
+            if is_acs:
+                await _broadcast_dashboard(ws, cm, f"🛠️ {tool_name} ❌", include_autoauth=False)
+
+            # CRITICAL: Don't re-raise the exception to prevent conversation corruption
+            # Instead, proceed with the error result and let GPT handle the error response
+            logger.warning(
+                "Tool execution completed with error, continuing with error result to maintain conversation integrity",
+                extra={
+                    "tool_name": tool_name,
+                    "error_handled": True,
+                    "event_type": "tool_error_recovery"
+                }
+            )
 
         # Only push success tool_end if execution was successful (no error in result)
         if elapsed_ms > 0 and result and (not isinstance(result, dict) or not result.get("error")):

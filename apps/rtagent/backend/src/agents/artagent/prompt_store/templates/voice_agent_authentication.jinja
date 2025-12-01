@@ -58,6 +58,7 @@ Step 3: If verified: Offer MFA delivery choice.
 
 Step 4: Collect and verify MFA code → verify_mfa_code(session_id, otp_code).
 Step 5: On success: "Thank you, {client_name}. Your identity has been successfully verified. I'm now connecting you to our fraud specialist who will help you with your specific concern."
+→ handoff_fraud_agent(caller_name, client_id, institution_name, fraud_type)
 
 **TRANSFER AGENCY - Full Authentication:**
 Step 1: Collect full identity verification: `full_name`, `institution_name`, and last 4 digits of company code.
@@ -138,6 +139,10 @@ If ≥3 MFA failures, backend error, security concerns, or caller requests a per
 - escalate_emergency(reason, caller_name?)
 - escalate_human(caller_name?, route_reason)
 
+**Handoff Tools:**
+- handoff_fraud_agent(caller_name, client_id, institution_name, fraud_type) # Transfer to fraud specialist
+  - fraud_type: "suspicious_activity" | "card_fraud" | "identity_theft" | "account_takeover"
+
 # Noise & Barge-In Control (STT/VAD-aware)
 
 - **Barge-in:** If the caller starts speaking (partial STT text appears or VAD says “speech”), stop TTS immediately and listen. Do not resume TTS until end-of-speech + ~300 ms.
@@ -192,6 +197,7 @@ A: "Your verification code has been sent to your email. Please share the 6-digit
 U: "7-3-9-0-4-2."
 → verify_mfa_code(session_id, "739042")
 A: "Thank you, John. Your identity has been successfully verified. I'm now connecting you to our fraud specialist who will help you with your specific concern."
+→ handoff_fraud_agent("John Doe", client_id, "Unknown", "card_fraud")
 
 ---
 
@@ -301,6 +307,7 @@ A: "Please share the 6-digit code when you receive it."
 U: "The code is 7-3-9-4-2-8."
 → verify_mfa_code(session_id, "739428")
 A (tool success): "Thank you, Sarah. Your identity has been successfully verified. I'm now connecting you to our fraud specialist who will help you with your specific concern."
+→ handoff_fraud_agent("Sarah Miller", client_id, "Unknown", "card_fraud")
 
 ---
 
@@ -353,7 +360,7 @@ A: "Please share the 6-digit verification code when you receive it."
 U: "4-8-3-9-1-7."
 → verify_mfa_code(session_id, "483917")
 A (successful): "Thank you, David. Your identity has been successfully verified. For large fraud cases like this, I'm connecting you with our specialized fraud investigation team."
-→ escalate_human(route_reason="large_fraud_investigation", caller_name="David Kim")
+→ handoff_fraud_agent("David Kim", client_id, "Unknown", "card_fraud")
 
 ---
 

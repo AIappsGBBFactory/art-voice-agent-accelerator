@@ -59,6 +59,7 @@ from src.tools.latency_tool import LatencyTool
 from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
 from apps.rtagent.backend.src.orchestration.artagent.greetings import (
     create_personalized_greeting,
+    request_contextual_agent_greeting,
 )
 from apps.rtagent.backend.src.ws_helpers.envelopes import make_envelope, make_status_envelope
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
@@ -297,7 +298,7 @@ class MediaHandler:
         handler._setup_websocket_state(memory_manager, tts_client, stt_client)
 
         # Derive greeting
-        handler._greeting_text = cls._derive_greeting(memory_manager, app_state)
+        handler._greeting_text = await handler._derive_greeting()
 
         # Create speech cascade
         handler.speech_cascade = SpeechCascadeHandler(
@@ -332,8 +333,23 @@ class MediaHandler:
             logger.error("Failed to load memory: %s", e)
             return MemoManager(session_id=session_id)
 
+    async def _derive_greeting(self) -> str:
+        """Generate contextual greeting with agent assistance when possible."""
+        if self.memory_manager and self._websocket:
+            try:
+                contextual = await request_contextual_agent_greeting(
+                    self.memory_manager,
+                    self._websocket,
+                )
+                if contextual:
+                    return contextual
+            except Exception as exc:
+                logger.debug("[%s] Contextual greeting fallback: %s", self._session_short, exc)
+
+        return self._derive_default_greeting(self.memory_manager, self._app_state)
+
     @staticmethod
-    def _derive_greeting(memory_manager: Optional[MemoManager], app_state: Any) -> str:
+    def _derive_default_greeting(memory_manager: Optional[MemoManager], app_state: Any) -> str:
         """Derive greeting from agent config or memory context."""
         auth_agent = getattr(app_state, "auth_agent", None)
 
@@ -537,6 +553,17 @@ class MediaHandler:
                 setattr(ws.state, "acs_playback_tail", None)
                 logger.debug("[%s] ACS playback tail cancelled", self._session_short)
 
+            # Also cancel the current streaming task (frame streaming)
+            streaming_task = getattr(ws.state, "current_streaming_task", None)
+            if streaming_task and not streaming_task.done():
+                streaming_task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(streaming_task), timeout=0.2)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+                setattr(ws.state, "current_streaming_task", None)
+                logger.debug("[%s] ACS streaming task cancelled", self._session_short)
+
         # Cancel handler's TTS task
         if self._current_tts_task and not self._current_tts_task.done():
             self._current_tts_task.cancel()
@@ -663,15 +690,37 @@ class MediaHandler:
         except Exception as e:
             logger.warning("[%s] Transcript emit failed: %s", self._session_short, e)
 
-    async def _on_tts_request(self, text: str, event_type: SpeechEventType) -> None:
-        """Handle TTS request."""
-        await self._send_tts(text, is_greeting=(event_type == SpeechEventType.GREETING))
+    async def _on_tts_request(
+        self,
+        text: str,
+        event_type: SpeechEventType,
+        *,
+        voice_name: Optional[str] = None,
+        voice_style: Optional[str] = None,
+        voice_rate: Optional[str] = None,
+    ) -> None:
+        """Handle TTS request with optional voice configuration."""
+        await self._send_tts(
+            text,
+            is_greeting=(event_type == SpeechEventType.GREETING),
+            voice_name=voice_name,
+            voice_style=voice_style,
+            voice_rate=voice_rate,
+        )
 
     # =========================================================================
     # TTS Playback
     # =========================================================================
 
-    async def _send_tts(self, text: str, *, is_greeting: bool = False) -> None:
+    async def _send_tts(
+        self,
+        text: str,
+        *,
+        is_greeting: bool = False,
+        voice_name: Optional[str] = None,
+        voice_style: Optional[str] = None,
+        voice_rate: Optional[str] = None,
+    ) -> None:
         """Send TTS via appropriate transport."""
         if not text or not text.strip() or not self._is_connected():
             return
@@ -682,13 +731,41 @@ class MediaHandler:
             return
 
         if self._transport == TransportType.ACS:
-            await self._send_tts_acs(text, is_greeting=is_greeting)
+            await self._send_tts_acs(
+                text,
+                is_greeting=is_greeting,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                voice_rate=voice_rate,
+            )
         else:
-            await self._send_tts_browser(text, is_greeting=is_greeting)
+            await self._send_tts_browser(
+                text,
+                is_greeting=is_greeting,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                voice_rate=voice_rate,
+            )
 
-    async def _send_tts_acs(self, text: str, *, is_greeting: bool) -> None:
-        """Send TTS to ACS with serialization."""
+    async def _send_tts_acs(
+        self,
+        text: str,
+        *,
+        is_greeting: bool,
+        voice_name: Optional[str] = None,
+        voice_style: Optional[str] = None,
+        voice_rate: Optional[str] = None,
+    ) -> None:
+        """Send TTS to ACS with proper sequential playback.
+        
+        Uses blocking=True to ensure each chunk completes before the next starts.
+        The _tts_lock serializes TTS calls from this handler.
+        """
         label = "greeting" if is_greeting else "response"
+
+        # Quick check before acquiring lock
+        if not self._is_connected() or self._tts_cancel_event.is_set():
+            return
 
         async with self._tts_lock:
             if not self._is_connected() or self._tts_cancel_event.is_set():
@@ -705,24 +782,19 @@ class MediaHandler:
                 # Emit to UI
                 await self._emit_to_ui(text)
 
-                # Play via ACS - use blocking=True to ensure we wait for
-                # frame streaming to complete before releasing the lock.
-                # This prevents TTS overlap when multiple chunks arrive.
-                timeout = max(8.0, len(text) / 15.0 + 5.0) if is_greeting else 8.0
-                self._current_tts_task = asyncio.create_task(
-                    send_response_to_acs(
-                        ws=self._websocket,
-                        text=text,
-                        blocking=True,
-                        latency_tool=self._latency_tool,
-                        stream_mode=self._stream_mode,
-                    )
+                # Play via ACS - use blocking=True to ensure sequential playback.
+                # This waits for synthesis AND all frames to stream before returning.
+                await send_response_to_acs(
+                    ws=self._websocket,
+                    text=text,
+                    blocking=True,  # Blocking: waits for full playback
+                    latency_tool=self._latency_tool,
+                    stream_mode=self._stream_mode,
+                    voice_name=voice_name,
+                    voice_style=voice_style,
+                    rate=voice_rate,
                 )
-                await asyncio.wait_for(self._current_tts_task, timeout=timeout)
-                if is_greeting:
-                    logger.info("[%s] Greeting completed", self._session_short)
-            except asyncio.TimeoutError:
-                logger.error("[%s] TTS timeout", self._session_short)
+                    
             except asyncio.CancelledError:
                 logger.debug("[%s] TTS cancelled (barge-in)", self._session_short)
                 # Don't re-raise - let barge-in complete gracefully
@@ -730,9 +802,16 @@ class MediaHandler:
                 logger.error("[%s] TTS failed: %s", self._session_short, e)
             finally:
                 self._tts_playing = False
-                self._current_tts_task = None
 
-    async def _send_tts_browser(self, text: str, *, is_greeting: bool) -> None:
+    async def _send_tts_browser(
+        self,
+        text: str,
+        *,
+        is_greeting: bool,
+        voice_name: Optional[str] = None,
+        voice_style: Optional[str] = None,
+        voice_rate: Optional[str] = None,
+    ) -> None:
         """Send TTS to browser with serialization."""
         label = "greeting" if is_greeting else "response"
 
@@ -751,11 +830,27 @@ class MediaHandler:
                 if is_greeting:
                     self._record_greeting(text)
 
+                # Record TTS first audio timing for turn telemetry
+                # (This marks when TTS starts - actual first audio comes from synthesis)
+                if self.speech_cascade and not is_greeting:
+                    self.speech_cascade.record_tts_first_audio()
+
                 # Send audio - track task for cancellation
                 self._current_tts_task = asyncio.create_task(
-                    send_tts_audio(text, self._websocket, latency_tool=self._latency_tool)
+                    send_tts_audio(
+                        text,
+                        self._websocket,
+                        latency_tool=self._latency_tool,
+                        voice_name=voice_name,
+                        voice_style=voice_style,
+                        rate=voice_rate,
+                    )
                 )
                 await self._current_tts_task
+
+                # Record TTS completion for turn telemetry
+                if self.speech_cascade and not is_greeting:
+                    self.speech_cascade.record_tts_complete()
 
                 if is_greeting:
                     logger.info("[%s] Greeting completed", self._session_short)

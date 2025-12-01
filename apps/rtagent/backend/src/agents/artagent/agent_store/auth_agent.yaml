@@ -31,6 +31,12 @@ tools:
   - send_mfa_code             # ← Send OTP via email/SMS  
   - verify_mfa_code           # ← Verify OTP code
   - check_transaction_authorization # ← Check operation permissions
+
+  # Specialist Handoffs (when complexity requires expertise)
+  - handoff_to_compliance        # ← AML/FATCA specialist review
+  - handoff_to_trading          # ← Complex trade execution
+  - handoff_fraud_agent
+  
   # Escalation Tools (if authentication fails or emergency)
   # - authenticate_caller
   - detect_voicemail_and_end_call  # ← gracefully end voicemail calls

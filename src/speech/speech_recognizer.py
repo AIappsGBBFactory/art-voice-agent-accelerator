@@ -1433,11 +1433,11 @@ class StreamingSpeechRecognizerFromBytes:
         )
 
         if txt and self.partial_callback:
-            # Create a span for partial recognition
+            # Create a span for partial recognition (INTERNAL - event within session)
             if self.enable_tracing and self.tracer:
                 with self.tracer.start_as_current_span(
                     "speech_partial_recognition",
-                    kind=SpanKind.CLIENT,
+                    kind=SpanKind.INTERNAL,
                     attributes={
                         "speech.result.type": "partial",
                         "speech.result.text_length": len(txt),
@@ -1536,7 +1536,7 @@ class StreamingSpeechRecognizerFromBytes:
             if self.enable_tracing and self.tracer and evt.result.text:
                 with self.tracer.start_as_current_span(
                     "speech_final_recognition",
-                    kind=SpanKind.CLIENT,
+                    kind=SpanKind.INTERNAL,  # Internal event within session, not external call
                     attributes={
                         "speech.result.type": "final",
                         "speech.result.text_length": len(evt.result.text),
