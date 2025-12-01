@@ -31,7 +31,7 @@ from apps.rtagent.backend.src.agents.artagent.tool_store.tools_helper import (
     push_tool_start,
 )
 from apps.rtagent.backend.src.helpers import add_space
-from src.aoai.client import client as az_openai_client
+from src.aoai.client import get_client as get_aoai_client
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     push_final,
@@ -487,7 +487,7 @@ async def process_gpt_response(  # noqa: D401
                 },
             ) as stream_span:
                 # --- Call AOAI (stream) ---
-                response = az_openai_client.chat.completions.create(**chat_kwargs)
+                response = get_aoai_client().chat.completions.create(**chat_kwargs)
                 stream_span.add_event("openai_stream_started")
 
                 # Consume the stream and emit chunks as before

@@ -30,7 +30,7 @@ project_root = Path(__file__).resolve().parents[3]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.aoai.client import client as shared_aoai_client
+from src.aoai.client import get_client as get_aoai_client
 
 load_dotenv()
 
@@ -62,7 +62,7 @@ class EmbeddingClient:
     def __init__(self, deployment: str, client: Optional[Any] = None) -> None:
         if not deployment:
             raise ValueError("Embedding deployment name must be provided")
-        self._client = client or shared_aoai_client
+        self._client = client or get_aoai_client()
         if self._client is None:
             raise RuntimeError("Azure OpenAI client is not initialized; ensure src/aoai/client.py configured correctly")
         self._deployment = deployment

@@ -629,7 +629,7 @@ class RouteTurnThread:
         """Process final speech through orchestrator."""
         with tracer.start_as_current_span(
             "route_turn_thread.process_speech",
-            kind=SpanKind.CLIENT,
+            kind=SpanKind.INTERNAL,  # INTERNAL for in-process orchestration (not external call)
             attributes={"speech.text": event.text, "speech.language": event.language},
         ):
             coro = None

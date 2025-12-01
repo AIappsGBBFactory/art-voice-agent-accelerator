@@ -158,6 +158,33 @@ def main() -> None:
         )
         raise
 
-client = create_azure_openai_client()
+# Lazy client initialization to allow OpenTelemetry instrumentation to be set up first.
+# The instrumentor must monkey-patch the openai module BEFORE any clients are created.
+_client_instance = None
 
-__all__ = ["client", "create_azure_openai_client"]
+def get_client():
+    """
+    Get the shared Azure OpenAI client (lazy initialization).
+    
+    This function creates the client on first access, allowing telemetry
+    instrumentation to be configured before the openai module is patched.
+    
+    Returns:
+        AzureOpenAI: Configured Azure OpenAI client instance.
+    """
+    global _client_instance
+    if _client_instance is None:
+        _client_instance = create_azure_openai_client()
+    return _client_instance
+
+# For backwards compatibility, provide 'client' as a property-like access
+# Note: Direct access to 'client' will create the client immediately.
+# Prefer using get_client() in new code.
+client = None  # Will be set on first import of this module in app startup
+
+def _init_client():
+    """Initialize the client. Called after telemetry setup."""
+    global client
+    client = get_client()
+
+__all__ = ["client", "get_client", "create_azure_openai_client", "_init_client"]

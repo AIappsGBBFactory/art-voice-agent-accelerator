@@ -6,13 +6,13 @@ This package contains the core voice processing handlers. Understanding the laye
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        ENDPOINTS                                 │
+│                        ENDPOINTS                                │
 │  media.py (ACS/phone)     browser.py (web browser)              │
 └──────────────┬─────────────────────────┬────────────────────────┘
                │                         │
                ▼                         ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      MediaHandler                                │
+│                      MediaHandler                               │
 │  Unified handler for both transports                            │
 │  - Owns TTS/STT pool resources                                  │
 │  - Manages WebSocket state                                      │

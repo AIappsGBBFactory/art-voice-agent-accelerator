@@ -24,6 +24,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from config import ACS_STREAMING_MODE
 from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
+from utils.session_context import session_context
 
 from ..handlers.media_handler import MediaHandler, MediaHandlerConfig, TransportType
 from ..handlers.voice_live_sdk_handler import VoiceLiveSDKHandler
@@ -132,88 +133,98 @@ async def acs_media_stream(websocket: WebSocket) -> None:
     orchestrator = get_orchestrator()
     redis_mgr = getattr(websocket.app.state, "redis", None)
     stream_mode = ACS_STREAMING_MODE
-    try:
-        # Extract call_connection_id from query params or headers
-        query_params = dict(websocket.query_params)
-        headers_dict = dict(websocket.headers)
-        call_connection_id = query_params.get("call_connection_id") or headers_dict.get("x-ms-call-connection-id")
 
-        # Resolve session ID (browser session > Redis > generate new)
-        session_id = await _resolve_session_id(
-            websocket.app.state, call_connection_id, query_params, headers_dict
-        )
-        logger.info(
-            "Session resolved for call",
-            extra={"call_connection_id": call_connection_id, "session_id": session_id},
-        )
+    # Extract call_connection_id from query params or headers early
+    query_params = dict(websocket.query_params)
+    headers_dict = dict(websocket.headers)
+    call_connection_id = query_params.get("call_connection_id") or headers_dict.get("x-ms-call-connection-id")
 
-        stream_mode = await _resolve_stream_mode(redis_mgr, call_connection_id)
-        websocket.state.stream_mode = stream_mode
+    # Resolve session ID early for context
+    session_id = await _resolve_session_id(
+        websocket.app.state, call_connection_id, query_params, headers_dict
+    )
 
-        # Accept WebSocket and register connection
-        with tracer.start_as_current_span(
-            "api.v1.media.websocket_accept",
-            kind=SpanKind.SERVER,
-            attributes={
-                "media.session_id": session_id,
-                "call.connection.id": call_connection_id,
-                "streaming.mode": str(stream_mode),
-            },
-        ):
-            conn_id = await websocket.app.state.conn_manager.register(
-                websocket,
-                client_type="media",
-                call_id=call_connection_id,
-                session_id=session_id,
-                topics={"media"},
-                accept_already_done=False,
-            )
-            websocket.state.conn_id = conn_id
-            websocket.state.session_id = session_id
-            websocket.state.call_connection_id = call_connection_id
-            logger.info("WebSocket connected for call %s", call_connection_id)
-
-        # Initialize media handler
-        with tracer.start_as_current_span(
-            "api.v1.media.initialize_handler",
-            kind=SpanKind.CLIENT,
-            attributes={
-                "call.connection.id": call_connection_id,
-                "stream.mode": str(stream_mode),
-            },
-        ):
-            handler = await _create_media_handler(
-                websocket=websocket,
-                call_connection_id=call_connection_id,
-                session_id=session_id,
-                orchestrator=orchestrator,
-                stream_mode=stream_mode,
+    # Wrap entire session in session_context for automatic correlation
+    # All logs and spans within this block inherit call_connection_id and session_id
+    async with session_context(
+        call_connection_id=call_connection_id,
+        session_id=session_id,
+        transport_type="ACS",
+        component="media.stream",
+    ):
+        try:
+            logger.info(
+                "Session resolved for call",
+                extra={"call_connection_id": call_connection_id, "session_id": session_id},
             )
 
-            # Store handler in connection metadata
-            conn_meta = await websocket.app.state.conn_manager.get_connection_meta(conn_id)
-            if conn_meta:
-                conn_meta.handler = conn_meta.handler or {}
-                conn_meta.handler["media_handler"] = handler
+            stream_mode = await _resolve_stream_mode(redis_mgr, call_connection_id)
+            websocket.state.stream_mode = stream_mode
 
-            await handler.start()
-            await websocket.app.state.session_metrics.increment_connected()
+            # Accept WebSocket and register connection
+            with tracer.start_as_current_span(
+                "api.v1.media.websocket_accept",
+                kind=SpanKind.SERVER,
+                attributes={
+                    "media.session_id": session_id,
+                    "call.connection.id": call_connection_id,
+                    "streaming.mode": str(stream_mode),
+                },
+            ):
+                conn_id = await websocket.app.state.conn_manager.register(
+                    websocket,
+                    client_type="media",
+                    call_id=call_connection_id,
+                    session_id=session_id,
+                    topics={"media"},
+                    accept_already_done=False,
+                )
+                websocket.state.conn_id = conn_id
+                websocket.state.session_id = session_id
+                websocket.state.call_connection_id = call_connection_id
+                logger.info("WebSocket connected for call %s", call_connection_id)
 
-        # Process media messages
-        await _process_media_stream(websocket, handler, call_connection_id, stream_mode)
+            # Initialize media handler
+            with tracer.start_as_current_span(
+                "api.v1.media.initialize_handler",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "call.connection.id": call_connection_id,
+                    "stream.mode": str(stream_mode),
+                },
+            ):
+                handler = await _create_media_handler(
+                    websocket=websocket,
+                    call_connection_id=call_connection_id,
+                    session_id=session_id,
+                    orchestrator=orchestrator,
+                    stream_mode=stream_mode,
+                )
 
-    except WebSocketDisconnect as e:
-        _log_websocket_disconnect(e, session_id, call_connection_id)
-        # Don't re-raise WebSocketDisconnect as it's a normal part of the lifecycle
-    except Exception as e:
-        _log_websocket_error(e, session_id, call_connection_id)
-        # Only raise non-disconnect errors
-        if not isinstance(e, WebSocketDisconnect):
-            raise
-    finally:
-        await _cleanup_websocket_resources(
-            websocket, handler, call_connection_id, session_id
-        )
+                # Store handler in connection metadata
+                conn_meta = await websocket.app.state.conn_manager.get_connection_meta(conn_id)
+                if conn_meta:
+                    conn_meta.handler = conn_meta.handler or {}
+                    conn_meta.handler["media_handler"] = handler
+
+                await handler.start()
+                await websocket.app.state.session_metrics.increment_connected()
+
+            # Process media messages
+            await _process_media_stream(websocket, handler, call_connection_id, stream_mode)
+
+        except WebSocketDisconnect as e:
+            _log_websocket_disconnect(e, session_id, call_connection_id)
+            # Don't re-raise WebSocketDisconnect as it's a normal part of the lifecycle
+        except Exception as e:
+            _log_websocket_error(e, session_id, call_connection_id)
+            # Only raise non-disconnect errors
+            if not isinstance(e, WebSocketDisconnect):
+                raise
+        finally:
+            await _cleanup_websocket_resources(
+                websocket, handler, call_connection_id, session_id
+            )
 
 
 # ============================================================================

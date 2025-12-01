@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 from fastapi import WebSocket
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from apps.rtagent.backend.src.agents.artagent.prompt_store.prompt_manager import PromptManager
 from apps.rtagent.backend.src.agents.artagent.tool_store import tool_registry as tool_store
@@ -18,6 +20,9 @@ from apps.rtagent.backend.src.orchestration.artagent.gpt_flow import process_gpt
 from utils.ml_logging import get_logger
 
 logger = get_logger("rt_agent")
+
+# Tracer for agent instrumentation
+tracer = trace.get_tracer(__name__)
 
 
 class ARTAgent:
@@ -109,28 +114,59 @@ class ARTAgent:
         :return: GPT response processing result
         :rtype: Any
         """
-        # For context-rich prompting
-        system_prompt = self.pm.get_prompt(self.prompt_path, **prompt_kwargs)
-        cm.ensure_system_prompt(
-            self.name,
-            system_prompt=system_prompt,
-        )
+        # Create invoke_agent span with GenAI semantic conventions
+        # This is required for App Insights Agents blade to show Agent Runs
+        # See: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/
+        with tracer.start_as_current_span(
+            f"invoke_agent {self.name}",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                # Required GenAI semantic conventions for Agent Runs
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.agent.name": self.name,
+                "gen_ai.agent.description": self.description or f"Voice agent: {self.name}",
+                "gen_ai.provider.name": "azure.ai.openai",
+                "gen_ai.request.model": self.model_id,
+                # Additional context
+                "gen_ai.request.temperature": self.temperature,
+                "gen_ai.request.top_p": self.top_p,
+                "gen_ai.request.max_tokens": self.max_tokens,
+                # Session correlation
+                "session.id": cm.session_id if cm else None,
+                "agent.tools_count": len(self.tools),
+                "agent.is_acs": is_acs,
+            },
+        ) as span:
+            try:
+                # For context-rich prompting
+                system_prompt = self.pm.get_prompt(self.prompt_path, **prompt_kwargs)
+                cm.ensure_system_prompt(
+                    self.name,
+                    system_prompt=system_prompt,
+                )
 
-        result = await process_gpt_response(
-            cm,
-            user_prompt,
-            ws,
-            agent_name=self.name,
-            is_acs=is_acs,
-            model_id=self.model_id,
-            temperature=self.temperature,
-            top_p=self.top_p,
-            max_tokens=self.max_tokens,
-            available_tools=self.tools,
-            session_id=cm.session_id,  # Pass session_id for AOAI client pooling
-        )
+                result = await process_gpt_response(
+                    cm,
+                    user_prompt,
+                    ws,
+                    agent_name=self.name,
+                    is_acs=is_acs,
+                    model_id=self.model_id,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.max_tokens,
+                    available_tools=self.tools,
+                    session_id=cm.session_id,  # Pass session_id for AOAI client pooling
+                )
 
-        return result
+                span.set_status(Status(StatusCode.OK))
+                return result
+                
+            except Exception as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("error.type", type(e).__name__)
+                span.record_exception(e)
+                raise
 
     @staticmethod
     def _load_yaml(path: Path) -> Dict[str, Any]:

@@ -5,6 +5,7 @@ import BuildCircleRoundedIcon from '@mui/icons-material/BuildCircleRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import HourglassTopRoundedIcon from '@mui/icons-material/HourglassTopRounded';
+import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import InfoRoundedIcon from '@mui/icons-material/InfoRounded';
 import MicNoneRoundedIcon from '@mui/icons-material/MicNoneRounded';
 import MicOffRoundedIcon from '@mui/icons-material/MicOffRounded';
@@ -512,15 +513,20 @@ const styles = {
     boxShadow: "none",
     flexShrink: 0,
   },
+  appHeaderActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    flexWrap: "wrap",
+  },
   waveformSection: {
     position: "relative",
-    // padding: "18px 28px 20px 28px",
     background: "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,1) 100%)",
     borderBottom: "1px solid rgba(148,163,184,0.18)",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "10px",
+    gap: "6px",
     overflow: "visible",
     boxShadow: "inset 0 -10px 20px rgba(15,23,42,0.04)",
   },
@@ -569,15 +575,16 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
-    height: "72px",
-    padding: "0 16px",
+    height: "96px",
+    padding: "2px 16px 0",
     background: "radial-gradient(ellipse at center, rgba(100, 116, 139, 0.08) 0%, transparent 70%)",
     borderRadius: "0px",
+    overflow: "visible",
   },
   
   waveformSvg: {
     width: "100%",
-    height: "72px",
+    height: "86px",
     filter: "drop-shadow(0 2px 6px rgba(100, 116, 139, 0.15))",
     transition: "filter 0.3s ease",
   },
@@ -593,6 +600,7 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     position: "relative",
+    alignItems: "center",
   },
   
   chatSectionHeader: {
@@ -616,6 +624,282 @@ const styles = {
     color: "#94a3b8",
     fontStyle: "italic",
   },
+
+  graphContainer: {
+    width: "100%",
+    maxWidth: "100%",
+    margin: "0 auto",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    boxShadow: "0 6px 18px rgba(15,23,42,0.06)",
+    padding: "12px 16px",
+    overflowX: "hidden",
+  },
+  graphHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    marginBottom: "8px",
+  },
+  graphTitle: {
+    fontSize: "13px",
+    fontWeight: 700,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: "#0f172a",
+  },
+  graphSubtitle: {
+    fontSize: "11px",
+    color: "#64748b",
+  },
+  graphAgentsRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    marginBottom: "10px",
+  },
+  graphAgentChip: {
+    padding: "6px 10px",
+    borderRadius: "999px",
+    background: "rgba(226,232,240,0.8)",
+    border: "1px solid rgba(148,163,184,0.4)",
+    fontSize: "11px",
+    fontWeight: 700,
+    color: "#0f172a",
+    letterSpacing: "0.04em",
+  },
+  graphEventsList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    width: "100%",
+  },
+  graphEventRow: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "10px",
+    padding: "8px 10px",
+    background: "white",
+    borderRadius: "12px",
+    border: "1px solid rgba(226,232,240,0.8)",
+    boxShadow: "0 4px 12px rgba(15,23,42,0.04)",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+  graphEventMeta: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    minWidth: "82px",
+  },
+  graphBadge: (variant = "message") => {
+    const palettes = {
+      message: { bg: "rgba(59,130,246,0.12)", color: "#1e3a8a", border: "rgba(59,130,246,0.25)" },
+      tool: { bg: "rgba(16,185,129,0.12)", color: "#065f46", border: "rgba(16,185,129,0.28)" },
+      switch: { bg: "rgba(234,179,8,0.14)", color: "#854d0e", border: "rgba(234,179,8,0.32)" },
+      event: { bg: "rgba(100,116,139,0.14)", color: "#111827", border: "rgba(148,163,184,0.4)" },
+      function: { bg: "rgba(94,234,212,0.14)", color: "#0f766e", border: "rgba(94,234,212,0.4)" },
+    };
+    const palette = palettes[variant] || palettes.message;
+    return {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "4px 10px",
+      borderRadius: "999px",
+      background: palette.bg,
+      color: palette.color,
+      border: `1px solid ${palette.border}`,
+      fontSize: "11px",
+      fontWeight: 700,
+      letterSpacing: "0.04em",
+      textTransform: "uppercase",
+      whiteSpace: "nowrap",
+    };
+  },
+  graphTimestamp: {
+    fontSize: "11px",
+    color: "#94a3b8",
+    fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+  },
+  graphFlow: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px",
+    color: "#0f172a",
+    fontWeight: 700,
+    letterSpacing: "0.02em",
+  },
+  graphNode: (variant = "default") => {
+    const palette = {
+      default: { bg: "rgba(226,232,240,0.8)", color: "#0f172a", border: "rgba(148,163,184,0.4)" },
+      target: { bg: "rgba(103,216,239,0.18)", color: "#0b4f6c", border: "rgba(103,216,239,0.35)" },
+    }[variant] || { bg: "rgba(226,232,240,0.8)", color: "#0f172a", border: "rgba(148,163,184,0.4)" };
+    return {
+      padding: "4px 8px",
+      borderRadius: "10px",
+      background: palette.bg,
+      color: palette.color,
+      border: `1px solid ${palette.border}`,
+      fontSize: "11px",
+      fontWeight: 700,
+      letterSpacing: "0.02em",
+    };
+  },
+  graphText: {
+    fontSize: "12px",
+    color: "#475569",
+    lineHeight: 1.45,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  graphFullWrapper: {
+    width: "100%",
+    maxWidth: "100%",
+    padding: "0 0 4px",
+    flex: 1,
+    overflow: "auto",
+  },
+  viewSwitch: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  viewSwitchButton: (active) => ({
+    padding: "10px 12px",
+    borderRadius: "12px",
+    border: active ? "1px solid rgba(59,130,246,0.6)" : "1px solid rgba(148,163,184,0.45)",
+    background: active ? "linear-gradient(135deg, #dbeafe, #bfdbfe)" : "white",
+    color: active ? "#1d4ed8" : "#475569",
+    fontSize: "12px",
+    fontWeight: 700,
+    letterSpacing: "0.03em",
+    cursor: active ? "default" : "pointer",
+    boxShadow: active ? "0 8px 16px rgba(59,130,246,0.18)" : "none",
+    transition: "all 0.15s ease",
+    textAlign: "left",
+  }),
+  mainViewRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "0px",
+    padding: "6px 0 0",
+    width: "100%",
+    flex: 1,
+    minHeight: 0,
+    boxSizing: "border-box",
+  },
+  viewContent: {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
+  viewFloatingDock: {
+    position: "absolute",
+    right: "32px",
+    bottom: "130px",
+    transform: "none",
+    background: "rgba(255,255,255,0.82)",
+    border: "1px solid rgba(226,232,240,0.9)",
+    borderRadius: "12px",
+    padding: "6px",
+    boxShadow: "0 10px 26px rgba(15,23,42,0.15)",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    zIndex: 48,
+    backdropFilter: "blur(10px)",
+  },
+  graphDock: {
+    position: "fixed",
+    left: "max(8px, calc(50% - 480px))",
+    top: "140px",
+    zIndex: 40,
+    width: "280px",
+    pointerEvents: "auto",
+  },
+  graphCollapsedCard: {
+    padding: "10px 12px",
+    borderRadius: "12px",
+    border: "1px solid rgba(148,163,184,0.4)",
+    background: "rgba(255,255,255,0.96)",
+    boxShadow: "0 12px 24px rgba(15,23,42,0.12)",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "10px",
+    position: "relative",
+  },
+  graphCollapsedBadge: {
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "rgba(59,130,246,0.12)",
+    color: "#1d4ed8",
+    fontSize: "11px",
+    fontWeight: 700,
+    border: "1px solid rgba(59,130,246,0.25)",
+    letterSpacing: "0.04em",
+  },
+  graphCollapsedText: {
+    fontSize: "12px",
+    color: "#0f172a",
+    lineHeight: 1.4,
+  },
+  graphPanel: {
+    background: "rgba(255,255,255,0.98)",
+    borderRadius: "16px",
+    border: "1px solid rgba(148,163,184,0.35)",
+    boxShadow: "0 20px 40px rgba(15,23,42,0.16)",
+    overflow: "hidden",
+  },
+  graphPanelHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "12px 14px",
+    borderBottom: "1px solid rgba(226,232,240,0.9)",
+    background: "linear-gradient(135deg, #f8fafc, #edf2f7)",
+  },
+  graphPanelTitle: {
+    fontSize: "12px",
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: "#0f172a",
+  },
+  graphPanelTabs: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  graphTab: (active) => ({
+    padding: "6px 10px",
+    borderRadius: "10px",
+    border: `1px solid ${active ? "rgba(59,130,246,0.6)" : "rgba(148,163,184,0.4)"}`,
+    background: active ? "rgba(59,130,246,0.12)" : "rgba(255,255,255,0.85)",
+    color: active ? "#1d4ed8" : "#475569",
+    fontSize: "11px",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    cursor: active ? "default" : "pointer",
+  }),
+  graphPanelBody: {
+    maxHeight: "70vh",
+    overflowY: "auto",
+    padding: "10px 12px 12px",
+  },
+  graphCanvasWrapper: {
+    border: "1px solid rgba(226,232,240,0.9)",
+    borderRadius: "12px",
+    background: "linear-gradient(180deg, rgba(248,250,252,0.8), rgba(255,255,255,0.95))",
+    padding: "10px",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.8)",
+  },
   
   // Chat section visual indicator
   chatSectionIndicator: {
@@ -634,7 +918,8 @@ const styles = {
     flex: 1,
     overflowY: "auto",
     overflowX: "hidden",
-    padding: "6px 6px 18px",
+    padding: "6px 12px 18px",
+    alignItems: "center",
   },
   
   userMessage: {
@@ -2742,7 +3027,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
   
   const generateWavePath = () => {
     const width = 750;
-    const height = 100;
+    const height = 110;
     const centerY = height / 2;
     const frequency = 0.02;
     const points = 160;
@@ -2761,7 +3046,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
   // Secondary wave
   const generateSecondaryWave = () => {
     const width = 750;
-    const height = 100;
+    const height = 110;
     const centerY = height / 2;
     const frequency = 0.0245;
     const points = 140;
@@ -2844,7 +3129,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
 
   return (
     <div style={styles.waveformContainer}>
-      <svg style={styles.waveformSvg} viewBox="0 0 750 80" preserveAspectRatio="xMidYMid meet">
+      <svg style={styles.waveformSvg} viewBox="0 0 750 110" preserveAspectRatio="xMidYMid meet">
         <defs>
           <linearGradient id="waveGradientBarge" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stopColor="#ef4444" />
@@ -2855,20 +3140,22 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
         {generateMultipleWaves()}
       </svg>
       
-      {/* Audio level indicators for debugging */}
-      {window.location.hostname === 'localhost' && (
-        <div style={{
-          position: 'absolute',
-          bottom: '-25px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          fontSize: '10px',
-          color: '#666',
-          whiteSpace: 'nowrap'
-        }}>
-          Input: {(audioLevel * 100).toFixed(1)}% | Output: {(outputAudioLevel * 100).toFixed(1)}% | Amp: {waveRenderState.amplitude.toFixed(1)} | Speaker: {bothDisplayActive ? 'Barge-In' : (userDisplayActive ? 'User' : assistantDisplayActive ? 'Assistant' : (activeSpeaker || 'Idle'))}
-        </div>
-      )}
+      <div style={{
+        position: 'absolute',
+        bottom: '-14px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        fontSize: '11px',
+        color: '#475569',
+        whiteSpace: 'nowrap',
+        background: 'rgba(255,255,255,0.9)',
+        padding: '4px 10px',
+        borderRadius: '10px',
+        border: '1px solid rgba(226,232,240,0.9)',
+        boxShadow: '0 6px 12px rgba(15,23,42,0.08)',
+      }}>
+        Input: {(audioLevel * 100).toFixed(1)}% | Output: {(outputAudioLevel * 100).toFixed(1)}% | Amp: {waveRenderState.amplitude.toFixed(1)} | Speaker: {bothDisplayActive ? 'Barge-In' : (userDisplayActive ? 'User' : assistantDisplayActive ? 'Assistant' : (activeSpeaker || 'Idle'))}
+      </div>
     </div>
   );
 });
@@ -3158,68 +3445,88 @@ const ChatBubble = ({ message }) => {
     const detailText = isSessionUpdate
       ? message.summary ?? message.data?.message ?? (inferredAgentLabel ? `Active agent: ${inferredAgentLabel}` : baseDetail)
       : baseDetail;
+    const severity = inferStatusTone(detailText || eventLabel);
+    const palette = {
+      success: { bg: "rgba(16,185,129,0.08)", fg: "#065f46", border: "rgba(16,185,129,0.28)" },
+      warning: { bg: "rgba(234,179,8,0.08)", fg: "#854d0e", border: "rgba(234,179,8,0.28)" },
+      error: { bg: "rgba(239,68,68,0.08)", fg: "#7f1d1d", border: "rgba(239,68,68,0.32)" },
+      info: { bg: "rgba(59,130,246,0.08)", fg: "#1e3a8a", border: "rgba(59,130,246,0.22)" },
+    }[severity || "info"];
+
     return (
-      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 0.5 }}>
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "flex-start", px: 1, py: 0.2 }}>
         <Paper
           elevation={0}
           sx={{
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: "4px 1fr auto",
             alignItems: "center",
             gap: 1,
-            px: 1.5,
-            py: 0.75,
+            px: 1.25,
+            py: 0.6,
             borderRadius: 2,
-            border: "1px solid rgba(148, 163, 184, 0.25)",
-            background: "rgba(15, 23, 42, 0.55)",
-            width: "max-content",
-            maxWidth: "90%",
-            color: "#e2e8f0",
+            border: `1px solid ${palette.border}`,
+            background: "rgba(248,250,252,0.85)",
+            width: "fit-content",
+            maxWidth: "92%",
+            minWidth: 0,
+            color: palette.fg,
+            boxShadow: "0 6px 14px rgba(15,23,42,0.05)",
           }}
         >
           <Box
             sx={{
-              width: 28,
-              height: 28,
-              borderRadius: "999px",
-              background: "rgba(94, 234, 212, 0.18)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#5eead4",
+              width: "4px",
+              height: "100%",
+              minHeight: "22px",
+              borderRadius: 999,
+              background: palette.border,
+              opacity: 0.9,
             }}
-          >
-            <InfoRoundedIcon fontSize="small" />
-          </Box>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+            aria-hidden
+          />
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25, minWidth: 0 }}>
             <Typography
               variant="caption"
               sx={{
-                fontWeight: 600,
+                fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
-                color: "#e2e8f0",
+                color: palette.fg,
+                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
               }}
             >
               {eventLabel}
-              {timestampLabel && (
-                <Typography
-                  component="span"
-                  variant="caption"
-                  sx={{ fontWeight: 400, opacity: 0.7, ml: 1 }}
-                >
-                  {timestampLabel}
-                </Typography>
-              )}
             </Typography>
             {detailText && (
               <Typography
                 variant="body2"
-                sx={{ color: "#cbd5f5", fontSize: "0.78rem", lineHeight: 1.4 }}
+                sx={{
+                  color: palette.fg,
+                  fontSize: "0.78rem",
+                  lineHeight: 1.35,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
               >
                 {detailText}
               </Typography>
             )}
           </Box>
+          {timestampLabel && (
+            <Typography
+              variant="caption"
+              sx={{
+                color: palette.fg,
+                opacity: 0.65,
+                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                letterSpacing: "0.04em",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {timestampLabel}
+            </Typography>
+          )}
         </Paper>
       </Box>
     );
@@ -3234,8 +3541,6 @@ const ChatBubble = ({ message }) => {
     cancelReason,
   } = message;
   const isUser = speaker === "User";
-  const isSpecialist = speaker?.includes("Specialist");
-  const isAuthAgent = speaker === "Auth Agent";
   const isSystem = speaker === "System" && !isTool;
   const effectiveText = typeof text === "string" ? text : "";
   const cancellationLabel = cancelReason
@@ -3396,74 +3701,55 @@ const ChatBubble = ({ message }) => {
     const toneKey = message.statusTone && STATUS_TONE_META[message.statusTone] ? message.statusTone : inferStatusTone(text);
     const tone = STATUS_TONE_META[toneKey] ?? STATUS_TONE_META.info;
     const toneLabel = message.statusLabel || tone.label;
-    const ToneIcon = tone.icon;
     const timestampLabel = formatStatusTimestamp(message.timestamp);
     const lines = (text || "").split("\n").filter(Boolean);
-    const surfaceColor = tone.surface ?? tone.background ?? "rgba(15,23,42,0.04)";
+    const surfaceColor = "rgba(248,250,252,0.95)";
     const borderColor = tone.borderColor ?? (tone.border ? tone.border.replace(/^1px\s+solid\s+/u, "") : "rgba(148,163,184,0.28)");
-    const iconBackground = tone.iconBackground ?? "rgba(148,163,184,0.25)";
 
     return (
-      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 0.75 }}>
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "flex-start", px: 1, py: 0.35 }}>
         <Paper
           elevation={0}
           sx={{
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: "4px 1fr auto",
             alignItems: "flex-start",
-            gap: 1.25,
-            px: 1.75,
-            py: 1,
-            borderRadius: 2.5,
+            gap: 1,
+            px: 1.35,
+            py: 0.75,
+            borderRadius: 2,
             border: `1px solid ${borderColor}`,
             background: surfaceColor,
             color: tone.textColor,
-            backdropFilter: "blur(12px)",
-            width: "max-content",
-            maxWidth: "88%",
-            boxShadow: "0 10px 24px rgba(15,23,42,0.08)",
+            width: "fit-content",
+            maxWidth: "94%",
+            minWidth: 0,
+            boxShadow: "0 6px 14px rgba(15,23,42,0.06)",
           }}
         >
           <Box
             sx={{
-              width: 28,
-              height: 28,
-              borderRadius: "50%",
-              background: iconBackground,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: tone.accent,
-              flexShrink: 0,
+              width: "4px",
+              height: "100%",
+              minHeight: "26px",
+              borderRadius: 999,
+              background: tone.accent,
+              opacity: 0.95,
             }}
-          >
-            <ToneIcon sx={{ fontSize: 18 }} />
-          </Box>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, minWidth: 0 }}>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-              <Typography
-                variant="caption"
-                sx={{
-                  textTransform: "uppercase",
-                  letterSpacing: "0.1em",
-                  fontWeight: 600,
-                  color: tone.accent,
-                }}
-              >
-                {toneLabel}
-              </Typography>
-              {timestampLabel && (
-                <Typography
-                  variant="caption"
-                  sx={{
-                    color: tone.captionColor,
-                    fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  {timestampLabel}
-                </Typography>
-              )}
-            </Box>
+            aria-hidden
+          />
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.35, minWidth: 0 }}>
+            <Typography
+              variant="caption"
+              sx={{
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                fontWeight: 700,
+                color: tone.accent,
+              }}
+            >
+              {toneLabel}
+            </Typography>
             <Typography
               variant="body2"
               sx={{
@@ -3490,6 +3776,19 @@ const ChatBubble = ({ message }) => {
               </Typography>
             )}
           </Box>
+          {timestampLabel && (
+            <Typography
+              variant="caption"
+              sx={{
+                color: tone.captionColor,
+                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                letterSpacing: "0.04em",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {timestampLabel}
+            </Typography>
+          )}
         </Paper>
       </Box>
     );
@@ -3499,8 +3798,8 @@ const ChatBubble = ({ message }) => {
 
   return (
     <div style={isUser ? styles.userMessage : styles.assistantMessage}>
-      {/* Show agent name for specialist agents and auth agent */}
-      {!isUser && (isSpecialist || isAuthAgent) && (
+      {/* Show agent name for any non-default assistant */}
+      {!isUser && speaker && speaker !== "Assistant" && (
         <div style={styles.agentNameLabel}>
           {speaker}
         </div>
@@ -3512,6 +3811,221 @@ const ChatBubble = ({ message }) => {
         {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
       </div>
     </div>
+  );
+};
+
+/* ------------------------------------------------------------------ *
+ *  AGENT GRAPH VISUALIZATION (DOCKED)
+ * ------------------------------------------------------------------ */
+const GraphCanvas = ({ events, currentAgent, isFull = false }) => {
+  const recent = useMemo(() => {
+    return events
+      .filter((evt) => {
+        const from = evt.from || evt.agent;
+        const to = evt.to || evt.agent;
+        if (!from || !to) return false;
+        // keep if at least one participant is an agent (not System), but allow agent->User links
+        const bothSystem = from === "System" && to === "System";
+        return !bothSystem;
+      })
+      .slice(-30);
+  }, [events]);
+  const agentNames = useMemo(() => {
+    const names = new Set();
+    recent.forEach((evt) => {
+      if (evt.from) names.add(evt.from);
+      if (evt.to) names.add(evt.to);
+      if (evt.agent) names.add(evt.agent);
+    });
+    return Array.from(names);
+  }, [recent]);
+
+  if (!recent.length) return null;
+
+  const centerX = 150;
+  const centerY = 110;
+  const radius = 90;
+  const nodes = agentNames.map((name, idx) => {
+    const angle = (2 * Math.PI * idx) / agentNames.length;
+    return {
+      id: name,
+      label: name,
+      x: centerX + radius * Math.cos(angle),
+      y: centerY + radius * Math.sin(angle),
+    };
+  });
+
+  const nodeById = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const edges = recent
+    .map((evt, idx) => {
+      const from = evt.from || evt.agent;
+      const to = evt.to || evt.agent || "User";
+      if (!from || !to || !nodeById[from] || !nodeById[to]) return null;
+      return { id: `${from}-${to}-${idx}`, from, to, kind: evt.kind };
+    })
+    .filter(Boolean);
+
+  const height = isFull ? 320 : 220;
+  const viewWidth = isFull ? 540 : 300;
+
+  return (
+    <div style={styles.graphCanvasWrapper}>
+      <svg width="100%" height={height} viewBox={`0 0 ${viewWidth} ${height}`} preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L6,3 L0,6 z" fill="rgba(59,130,246,0.6)" />
+          </marker>
+        </defs>
+        {edges.map((edge) => {
+          const from = nodeById[edge.from];
+          const to = nodeById[edge.to];
+          return (
+            <line
+              key={edge.id}
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+              stroke="rgba(59,130,246,0.55)"
+              strokeWidth="2"
+              markerEnd="url(#arrow)"
+              strokeDasharray={edge.kind === "tool" ? "4 3" : edge.kind === "switch" ? "2 2" : "0"}
+              opacity="0.8"
+            />
+          );
+        })}
+        {nodes.map((node) => {
+          const isActive = currentAgent && node.id === currentAgent;
+          return (
+            <g key={node.id}>
+              <circle
+                cx={node.x}
+                cy={node.y}
+                r={isActive ? 20 : 16}
+                fill={isActive ? "rgba(103,216,239,0.4)" : "rgba(226,232,240,0.9)"}
+                stroke={isActive ? "rgba(8,145,178,0.9)" : "rgba(148,163,184,0.8)"}
+                strokeWidth={isActive ? 3 : 2}
+              />
+              <text
+                x={node.x}
+                y={node.y + 4}
+                textAnchor="middle"
+                fontSize="11"
+                fontWeight="700"
+                fill="#0f172a"
+              >
+                {node.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+};
+
+const GraphListView = ({ events, compact = true }) => {
+  const recentEvents = useMemo(() => {
+    return events
+      .filter((evt) => {
+        const from = evt.from || evt.agent;
+        const to = evt.to || evt.agent;
+        if (!from || !to) return false;
+        const bothSystem = from === "System" && to === "System";
+        return !bothSystem;
+      })
+      .slice(-60);
+  }, [events]);
+  const agentList = useMemo(() => {
+    const names = new Set();
+    recentEvents.forEach((evt) => {
+      if (evt.from) names.add(evt.from);
+      if (evt.to) names.add(evt.to);
+      if (evt.agent) names.add(evt.agent);
+    });
+    return Array.from(names);
+  }, [recentEvents]);
+
+  if (!recentEvents.length) {
+    return null;
+  }
+
+  const kindLabel = (kind) =>
+    ({
+      message: "Message",
+      tool: "Tool",
+      switch: "Switch",
+      event: "Event",
+      function: "Function",
+    }[kind] || "Message");
+
+  return (
+    <Box style={compact ? styles.graphContainer : { ...styles.graphContainer, maxWidth: "95%", overflowX: "hidden" }}>
+      <div style={styles.graphHeader}>
+        <div>
+          <div style={styles.graphTitle}>Agent Flow</div>
+          <div style={styles.graphSubtitle}>
+            Recent agent messages, tool calls, and handoffs
+          </div>
+        </div>
+        <div style={styles.graphSubtitle}>
+          Showing last {recentEvents.length} events
+        </div>
+      </div>
+
+      <div style={styles.graphAgentsRow}>
+        {agentList.map((agent) => (
+          <span key={agent} style={styles.graphAgentChip}>
+            {agent}
+          </span>
+        ))}
+      </div>
+
+      <div style={styles.graphEventsList}>
+        {recentEvents.map((evt) => {
+          const ts = formatStatusTimestamp(evt.ts);
+          const from = evt.from || evt.agent || "System";
+          const to = evt.to || evt.agent || "User";
+          const text = evt.text || evt.detail || evt.tool || "";
+          const isLong = text && text.length > 140;
+          const preview = isLong ? `${text.slice(0, 140)}…` : text;
+          return (
+            <details key={evt.id} style={{ ...styles.graphEventRow, padding: "10px 12px" }}>
+              <summary style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer", listStyle: "none", outline: "none", width: "100%", boxSizing: "border-box", minWidth: 0, flexWrap: "wrap" }}>
+                <div style={styles.graphEventMeta}>
+                  <span style={styles.graphBadge(evt.kind)}>{kindLabel(evt.kind)}</span>
+                  {ts && <span style={styles.graphTimestamp}>{ts}</span>}
+                </div>
+                <div style={{ ...styles.graphFlow, flex: 1, minWidth: 0, flexWrap: "wrap" }}>
+                  <span style={styles.graphNode()}>{from}</span>
+                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>→</span>
+                  <span style={styles.graphNode("target")}>{to}</span>
+                  {(preview || evt.tool) && (
+                    <span style={{ ...styles.graphText, marginLeft: "10px", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {evt.tool ? `Tool: ${evt.tool}` : null}
+                      {evt.tool && preview ? " • " : ""}
+                      {preview}
+                    </span>
+                  )}
+                </div>
+              </summary>
+              {isLong && (
+                <div style={{ ...styles.graphText, marginTop: "8px", wordBreak: "break-word" }}>
+                  {text}
+                </div>
+              )}
+              {evt.data && typeof evt.data === "object" && Object.keys(evt.data).length > 0 && (
+                <div style={{ marginTop: "8px", fontSize: "11px", color: "#64748b", overflowX: "auto" }}>
+                  <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {JSON.stringify(evt.data, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </details>
+          );
+        })}
+      </div>
+    </Box>
   );
 };
 
@@ -3606,8 +4120,43 @@ function RealTimeVoiceApp() {
   const [currentCallId, setCurrentCallId] = useState(null);
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
+  const [graphEvents, setGraphEvents] = useState([]);
+  const graphEventCounterRef = useRef(0);
+  const currentAgentRef = useRef("Assistant");
+  const [mainView, setMainView] = useState("chat"); // chat | graph | timeline
 
   const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
+
+  const appendGraphEvent = useCallback((event) => {
+    graphEventCounterRef.current += 1;
+    const ts = event.ts || event.timestamp || new Date().toISOString();
+    setGraphEvents((prev) => {
+      const trimmed = prev.length > 120 ? prev.slice(prev.length - 120) : prev;
+      return [...trimmed, { ...event, ts, id: `${ts}-${graphEventCounterRef.current}` }];
+    });
+  }, []);
+
+  const resolveAgentLabel = useCallback((payload, fallback = null) => {
+    if (!payload || typeof payload !== "object") {
+      return fallback;
+    }
+    return (
+      payload.active_agent_label ||
+      payload.agent_label ||
+      payload.agentLabel ||
+      payload.agent_name ||
+      payload.agentName ||
+      payload.speaker ||
+      payload.sender ||
+      fallback
+    );
+  }, []);
+
+  const effectiveAgent = useCallback(() => {
+    const label = currentAgentRef.current;
+    if (label && label !== "System" && label !== "User") return label;
+    return null;
+  }, []);
 
   const handleSendText = useCallback(() => {
     if (!textInput.trim()) return;
@@ -4036,6 +4585,24 @@ function RealTimeVoiceApp() {
     };
     outputLevelDecayTimeoutRef.current = window.setTimeout(decayStep, 200);
   }, [cancelOutputLevelDecay]);
+
+  const clearTtsPlaybackQueue = useCallback(
+    (reason) => {
+      if (pcmSinkRef.current) {
+        pcmSinkRef.current.port.postMessage({ type: "clear" });
+      }
+      playbackActiveRef.current = false;
+      cancelOutputLevelDecay();
+      outputAudioLevelRef.current = 0;
+      if (playbackAudioContextRef.current && playbackAudioContextRef.current.state === "running") {
+        playbackAudioContextRef.current.suspend().catch(() => {});
+      }
+      if (reason) {
+        appendLog(`🔇 Cleared TTS audio queue (${reason})`);
+      }
+    },
+    [appendLog, cancelOutputLevelDecay],
+  );
   const metricsRef = useRef(createMetricsState());
 
   const workletSource = `
@@ -4335,13 +4902,16 @@ function RealTimeVoiceApp() {
     setCallActive(false);
     setCurrentCallId(null);
     setShowPhoneInput(false);
+    setGraphEvents([]);
+    graphEventCounterRef.current = 0;
+    currentAgentRef.current = "Assistant";
     micMutedRef.current = false;
     setMicMuted(false);
     closeRelaySocket("session reset");
     appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
     setTimeout(() => {
       appendSystemMessage(
-        "✅ Session restarted with new ID. Ready for a fresh conversation!",
+        "Session restarted with new ID. Ready for a fresh conversation!",
         { tone: "success" },
       );
     }, 500);
@@ -4680,7 +5250,11 @@ function RealTimeVoiceApp() {
   }, [cancelOutputLevelDecay]);
 
   const startRecognition = async (modeOverride) => {
+      clearTtsPlaybackQueue("mic start");
       appendLog("🎤 PCM streaming started");
+      setGraphEvents([]);
+      graphEventCounterRef.current = 0;
+      currentAgentRef.current = "Assistant";
 
       await initializeAudioPlayback();
 
@@ -4855,6 +5429,7 @@ function RealTimeVoiceApp() {
     };
 
     const stopRecognition = () => {
+      clearTtsPlaybackQueue("mic stop");
       if (processorRef.current) {
         try { 
           processorRef.current.disconnect(); 
@@ -5153,15 +5728,27 @@ function RealTimeVoiceApp() {
         const agentLabel =
           typeof candidateAgent === "string" ? candidateAgent.trim() : null;
 
-        if (agentLabel) {
-          const label = agentLabel;
-          combinedData.active_agent_label = combinedData.active_agent_label ?? label;
-          combinedData.agent_label = combinedData.agent_label ?? label;
-          combinedData.agent_name = combinedData.agent_name ?? label;
-          payload.active_agent_label = payload.active_agent_label ?? label;
-          payload.agent_label = payload.agent_label ?? label;
-          payload.agent_name = payload.agent_name ?? label;
+      if (agentLabel) {
+        const label = agentLabel;
+        combinedData.active_agent_label = combinedData.active_agent_label ?? label;
+        combinedData.agent_label = combinedData.agent_label ?? label;
+        combinedData.agent_name = combinedData.agent_name ?? label;
+        payload.active_agent_label = payload.active_agent_label ?? label;
+        payload.agent_label = payload.agent_label ?? label;
+        payload.agent_name = payload.agent_name ?? label;
+        if (currentAgentRef.current && label !== currentAgentRef.current) {
+          appendGraphEvent({
+            kind: "switch",
+            from: currentAgentRef.current,
+            to: label,
+            text: payload.summary || combinedData.message || "Agent switched",
+            ts: payload.ts || payload.timestamp,
+          });
         }
+        if (label !== "System" && label !== "User") {
+          currentAgentRef.current = label;
+        }
+      }
 
         const displayLabel = combinedData.active_agent_label || combinedData.agent_label;
         const resolvedMessage =
@@ -5200,6 +5787,13 @@ function RealTimeVoiceApp() {
         lifecycle.stalledLoggedAt = null;
         payload.summary = payload.summary ?? "Call connected";
         payload.type = payload.type ?? "event";
+        appendGraphEvent({
+          kind: "event",
+          from: payload.speaker || "System",
+          to: currentAgentRef.current || "Assistant",
+          text: "Call connected",
+          ts: payload.ts || payload.timestamp,
+        });
       }
 
       if (payload.event_type === "call_disconnected") {
@@ -5210,6 +5804,13 @@ function RealTimeVoiceApp() {
         appendLog("📞 Call ended");
         payload.summary = payload.summary ?? "Call disconnected";
         payload.type = payload.type ?? "event";
+        appendGraphEvent({
+          kind: "event",
+          from: payload.speaker || "System",
+          to: currentAgentRef.current || "Assistant",
+          text: "Call disconnected",
+          ts: payload.ts || payload.timestamp,
+        });
       }
 
       if (payload.type === "session_end") {
@@ -5231,6 +5832,13 @@ function RealTimeVoiceApp() {
           pushIfChanged(prev, { speaker: "System", text: reasonText })
         );
         setActiveSpeaker("System");
+        appendGraphEvent({
+          kind: "event",
+          from: "System",
+          to: currentAgentRef.current || "Assistant",
+          text: reasonText,
+          ts: payload.ts || payload.timestamp,
+        });
         appendLog(`⚠️ Session ended (${reason})`);
         playbackActiveRef.current = false;
         if (pcmSinkRef.current) {
@@ -5339,6 +5947,14 @@ function RealTimeVoiceApp() {
         const transferText = reasonDetail
           ? `Escalating to a live agent: ${reasonDetail}`
           : "Escalating you to a live agent. Please hold while we connect.";
+        appendGraphEvent({
+          kind: "switch",
+          from: currentAgentRef.current || "Assistant",
+          to: payload.data?.target_agent || "Live Agent",
+          text: transferText,
+          ts: payload.ts || payload.timestamp,
+        });
+        currentAgentRef.current = payload.data?.target_agent || "Live Agent";
         setMessages((prev) =>
           pushIfChanged(prev, { speaker: "System", text: transferText })
         );
@@ -5363,6 +5979,15 @@ function RealTimeVoiceApp() {
         const eventTimestamp = payload.ts || new Date().toISOString();
         const eventSpeaker = payload.speaker || payload.sender || "System";
         const eventTopic = payload.topic || "session";
+        const eventSummary =
+          payload.summary ||
+          payload.message ||
+          describeEventData(eventData) ||
+          formatEventTypeLabel(eventType);
+        const eventAgent = resolveAgentLabel(payload, currentAgentRef.current);
+        if (eventAgent && eventAgent !== "System" && eventAgent !== "User") {
+          currentAgentRef.current = eventAgent;
+        }
 
         setMessages((prev) => [
           ...prev,
@@ -5376,6 +6001,13 @@ function RealTimeVoiceApp() {
             sessionId: payload.session_id || sessionId,
           },
         ]);
+        appendGraphEvent({
+          kind: "event",
+          from: eventSpeaker,
+          to: eventData?.target_agent || eventSpeaker,
+          text: eventSummary,
+          ts: eventTimestamp,
+        });
         appendLog(`📡 Event received: ${eventType}`);
         return;
       }
@@ -5555,6 +6187,21 @@ function RealTimeVoiceApp() {
           });
         }
         appendLog(`User: ${txt}`);
+        const shouldGraph =
+          !isStreamingUser || payload.is_final === true || payload.final === true;
+        if (shouldGraph) {
+          const targetAgent =
+            resolveAgentLabel(payload, effectiveAgent()) ||
+            effectiveAgent() ||
+            "Assistant";
+          appendGraphEvent({
+            kind: "message",
+            from: "User",
+            to: targetAgent,
+            text: txt,
+            ts: payload.ts || payload.timestamp,
+          });
+        }
         return;
       }
 
@@ -5676,9 +6323,9 @@ function RealTimeVoiceApp() {
             return;
           }
         }
-        const assistantSpeaker = speaker || "Assistant";
+        const assistantSpeaker = resolveAgentLabel(payload, speaker || "Assistant");
         registerAssistantFinal(assistantSpeaker);
-        setActiveSpeaker("Assistant");
+        setActiveSpeaker(assistantSpeaker);
         const messageOptions = {
           speaker: assistantSpeaker,
           text: txt,
@@ -5747,13 +6394,49 @@ function RealTimeVoiceApp() {
           });
         }
 
+        const agentLabel = resolveAgentLabel(payload, assistantSpeaker);
+        if (agentLabel && agentLabel !== "System" && agentLabel !== "User") {
+          currentAgentRef.current = agentLabel;
+        }
+        appendGraphEvent({
+          kind: "message",
+          from: agentLabel || assistantSpeaker || "Assistant",
+          to: "User",
+          text: txt,
+          ts: payload.ts || payload.timestamp,
+        });
         appendLog("🤖 Assistant responded");
         return;
       }
     
-      if (type === "tool_start") {
+      if (
+        type === "function_call" ||
+        payload.function_call ||
+        payload.function_call_id ||
+        payload.tool_call_id
+      ) {
+        const fnName =
+          payload.function_call?.name ||
+          payload.name ||
+          payload.tool ||
+          payload.function_name ||
+          payload.tool_name ||
+          "Function";
+        const argText =
+          typeof payload.function_call?.arguments === "string"
+            ? payload.function_call.arguments.slice(0, 120)
+            : "";
+        appendGraphEvent({
+          kind: "function",
+          from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
+          to: fnName,
+          text: argText || payload.summary || "Function call",
+          ts: payload.ts || payload.timestamp,
+        });
+        return;
+      }
 
-      
+      if (type === "tool_start") {
         setMessages((prev) => [
           ...prev,
           {
@@ -5762,7 +6445,14 @@ function RealTimeVoiceApp() {
             text: `🛠️ tool ${payload.tool} started 🔄`,
           },
         ]);
-      
+        appendGraphEvent({
+          kind: "tool",
+          from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
+          to: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
+          tool: payload.tool,
+          text: "started",
+          ts: payload.ts || payload.timestamp,
+        });
         appendLog(`⚙️ ${payload.tool} started`);
         return;
       }
@@ -5787,6 +6477,14 @@ function RealTimeVoiceApp() {
             text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
           }),
         );
+        appendGraphEvent({
+          kind: "tool",
+          from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
+          to: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
+          tool: payload.tool,
+          text: pctText,
+          ts: payload.ts || payload.timestamp,
+        });
         appendLog(`⚙️ ${payload.tool} ${pctText}`);
         return;
       }
@@ -5818,6 +6516,15 @@ function RealTimeVoiceApp() {
           },
         );
       
+        appendGraphEvent({
+          kind: "tool",
+          from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
+          to: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
+          tool: payload.tool,
+          text: payload.status || "completed",
+          detail: serializedResult || payload.error,
+          ts: payload.ts || payload.timestamp,
+        });
         appendLog(`⚙️ ${payload.tool} ${payload.status} (${payload.elapsedMs} ms)`);
         return;
       }
@@ -6125,6 +6832,18 @@ function RealTimeVoiceApp() {
           <BackendIndicator url={API_BASE_URL} onStatusChange={handleSystemStatus} />
         </div>
         <div style={styles.mainShell}>
+          <div style={styles.viewFloatingDock}>
+            {["chat", "graph", "timeline"].map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                style={styles.viewSwitchButton(mainView === mode)}
+                onClick={() => setMainView(mode)}
+              >
+                {mode === "chat" ? "Chat" : mode === "graph" ? "Graph" : "Timeline"}
+              </button>
+            ))}
+          </div>
 
           {/* App Header */}
           <div style={styles.appHeader}>
@@ -6182,13 +6901,33 @@ function RealTimeVoiceApp() {
               <div style={styles.sectionDivider}></div>
             </div>
 
-            {/* Chat Messages */}
-            <div style={styles.chatSection} ref={chatRef}>
-              <div style={styles.chatSectionIndicator}></div>
-              <div style={styles.messageContainer} ref={messageContainerRef}>
-                {messages.map((message, index) => (
-                  <ChatBubble key={index} message={message} />
-                ))}
+            <div style={styles.mainViewRow}>
+              <div style={styles.viewContent}>
+                {mainView === "chat" && (
+                  <div style={styles.chatSection} ref={chatRef}>
+                    <div style={styles.chatSectionIndicator}></div>
+                    <div style={styles.messageContainer} ref={messageContainerRef}>
+                      {messages.map((message, index) => (
+                        <ChatBubble
+                          key={index}
+                          message={message}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {mainView === "graph" && (
+                  <div style={styles.graphFullWrapper}>
+                    <GraphCanvas events={graphEvents} currentAgent={currentAgentRef.current} isFull />
+                  </div>
+                )}
+
+                {mainView === "timeline" && (
+                  <div style={styles.graphFullWrapper}>
+                    <GraphListView events={graphEvents} compact={false} />
+                  </div>
+                )}
               </div>
             </div>
 

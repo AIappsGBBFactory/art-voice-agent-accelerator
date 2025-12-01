@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 import uuid
 from typing import Any, Awaitable, Dict, Literal, Optional, Union
 
@@ -24,7 +25,7 @@ from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.identity.aio import DefaultAzureCredential
 
 from opentelemetry import trace
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from utils.ml_logging import get_logger
 from apps.rtagent.backend.src.agents.vlagent.settings import get_settings
@@ -44,6 +45,12 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.tools_helper import (
 	push_tool_start,
 	push_tool_end,
 )
+from apps.rtagent.backend.src.utils.tracing import (
+	create_service_handler_attrs,
+	create_service_dependency_attrs,
+)
+from utils.telemetry_decorators import ConversationTurnSpan
+from src.enums.monitoring import SpanAttr
 
 logger = get_logger("api.v1.handlers.voice_live_sdk_handler")
 tracer = trace.get_tracer(__name__)
@@ -146,6 +153,8 @@ class _SessionMessenger:
 		self._missing_session_warned = False
 		self._active_turn_id: Optional[str] = None
 		self._pending_user_turn_id: Optional[str] = None
+		self._active_agent_name: Optional[str] = None
+		self._active_agent_label: Optional[str] = None
 
 	def _ensure_turn_id(self, candidate: Optional[str], *, allow_generate: bool = True) -> Optional[str]:
 		if candidate:
@@ -220,8 +229,43 @@ class _SessionMessenger:
 			self._pending_user_turn_id = None
 
 	def set_active_agent(self, agent_name: Optional[str]) -> None:
-		"""Update the default sender name used for assistant/system envelopes."""
-		self._default_sender = _resolve_agent_label(agent_name) or agent_name or None
+		"""Update the default sender name and emit agent change envelope."""
+		if agent_name == self._active_agent_name:
+			return
+
+		previous_agent = self._default_sender
+		new_label = _resolve_agent_label(agent_name) or agent_name or None
+		self._default_sender = new_label
+		self._active_agent_name = agent_name
+		self._active_agent_label = new_label
+		
+		# # Emit agent change envelope for frontend UI
+		# if self._can_emit() and agent_name:
+		# 	envelope = make_envelope(
+		# 		etype="event",
+		# 		sender="System",
+		# 		payload={
+		# 			"event_type": "agent_change",
+		# 			"agent_name": agent_name,
+		# 			"agent_label": new_label,
+		# 			"previous_agent": previous_agent,
+		# 			"message": f"Switched to {new_label or agent_name}",
+		# 		},
+		# 		topic="session",
+		# 		session_id=self._session_id,
+		# 		call_id=self._call_id,
+		# 	)
+		# 	_background_task(
+		# 		send_session_envelope(
+		# 			self._ws,
+		# 			envelope,
+		# 			session_id=self._session_id,
+		# 			conn_id=None,
+		# 			event_label="voicelive_agent_change",
+		# 			broadcast_only=True,
+		# 		),
+		# 		label="agent_change_envelope",
+		# 	)
 
 	@property
 	def _session_id(self) -> Optional[str]:
@@ -265,6 +309,8 @@ class _SessionMessenger:
 				conn_id=None,
 				broadcast_only=True,
 				turn_id=turn_id,
+				active_agent=self._active_agent_name,
+				active_agent_label=self._active_agent_label,
 			),
 			label="send_user_transcript",
 		)
@@ -298,6 +344,9 @@ class _SessionMessenger:
 			"turn_id": turn_id,
 			"response_id": response_id or turn_id,
 			"status": status or "completed",
+			"active_agent": self._active_agent_name,
+			"active_agent_label": self._active_agent_label,
+			"sender": self._active_agent_name,
 		}
 		envelope = make_envelope(
 			etype="event",
@@ -307,6 +356,8 @@ class _SessionMessenger:
 			session_id=self._session_id,
 			call_id=self._call_id,
 		)
+		if self._active_agent_name:
+			envelope["sender"] = self._active_agent_name
 
 		_background_task(
 			send_session_envelope(
@@ -343,11 +394,17 @@ class _SessionMessenger:
 			session_id=self._session_id,
 			call_id=self._call_id,
 		)
+		if self._active_agent_name:
+			envelope["sender"] = self._active_agent_name
+
 		payload = envelope.setdefault("payload", {})
 		payload.setdefault("message", text)
 		payload["turn_id"] = turn_id
 		payload["response_id"] = response_id or turn_id
 		payload["status"] = "streaming"
+		payload["active_agent"] = self._active_agent_name
+		payload["active_agent_label"] = self._active_agent_label
+		payload["sender"] = self._active_agent_name
 		_background_task(
 			send_session_envelope(
 				self._ws,
@@ -384,6 +441,7 @@ class _SessionMessenger:
 			"turn_id": turn_id,
 			"response_id": response_id or turn_id,
 			"status": "cancelled",
+			"sender": self._active_agent_name,
 		}
 		if reason:
 			payload["cancel_reason"] = reason
@@ -396,6 +454,8 @@ class _SessionMessenger:
 			session_id=self._session_id,
 			call_id=self._call_id,
 		)
+		if self._active_agent_name:
+			envelope["sender"] = self._active_agent_name
 
 		_background_task(
 			send_session_envelope(
@@ -626,6 +686,16 @@ class VoiceLiveSDKHandler:
 		self._last_user_transcript: Optional[str] = None
 		self._last_user_turn_id: Optional[str] = None
 
+		# Turn-level latency tracking
+		self._turn_number: int = 0
+		self._active_turn_span: Optional[ConversationTurnSpan] = None
+		self._turn_start_time: Optional[float] = None
+		self._vad_end_time: Optional[float] = None
+		self._transcript_final_time: Optional[float] = None
+		self._llm_first_token_time: Optional[float] = None
+		self._tts_first_audio_time: Optional[float] = None
+		self._current_response_id: Optional[str] = None
+
 	def _set_metadata(self, key: str, value: Any) -> None:
 		if not _set_connection_metadata(self.websocket, key, value):
 			setattr(self.websocket.state, key, value)
@@ -672,114 +742,173 @@ class VoiceLiveSDKHandler:
 		if self._running:
 			return
 
-		try:
-			self._settings = get_settings()
-			connection_options = {
-				"max_msg_size": self._settings.ws_max_msg_size,
-				"heartbeat": self._settings.ws_heartbeat,
-				"timeout": self._settings.ws_timeout,
-			}
+		span_attrs = create_service_handler_attrs(
+			service_name="voicelive_sdk_handler",
+			call_connection_id=self.call_connection_id,
+			session_id=self.session_id,
+			operation="start",
+			transport=self._transport,
+		)
+		with tracer.start_as_current_span(
+			"voicelive.handler.start",
+			kind=SpanKind.SERVER,
+			attributes=span_attrs,
+		) as span:
+			start_ts = time.perf_counter()
+			try:
+				self._settings = get_settings()
+				connection_options = {
+					"max_msg_size": self._settings.ws_max_msg_size,
+					"heartbeat": self._settings.ws_heartbeat,
+					"timeout": self._settings.ws_timeout,
+				}
 
-			self._credential = self._build_credential(self._settings)
-			self._connection_cm = connect(
-				endpoint=self._settings.azure_voicelive_endpoint,
-				credential=self._credential,
-				model=self._settings.azure_voicelive_model,
-				connection_options=connection_options,
-			)
-			self._connection = await self._connection_cm.__aenter__()
-
-			agents = load_registry(str(self._settings.agents_path))
-			
-			user_profile = None
-			if hasattr(self, '_user_email') and self._user_email:
-				logger.info("Loading user profile for session | email=%s", self._user_email)
-				user_profile = await load_user_profile_by_email(self._user_email)
-			
-			self._orchestrator = LiveOrchestrator(
-				conn=self._connection,
-				agents=agents,
-				handoff_map=HANDOFF_MAP,
-				start_agent=self._settings.start_agent,
-				audio_processor=None,
-				messenger=self._messenger,
-				call_connection_id=self.call_connection_id,
-				transport=self._transport,
-			)
-
-			system_vars = {}
-			if user_profile:
-				system_vars["session_profile"] = user_profile
-				system_vars["client_id"] = user_profile.get("client_id")
-				system_vars["customer_intelligence"] = user_profile.get("customer_intelligence", {})
-				logger.info(
-					"✅ Session initialized with user profile | client_id=%s name=%s",
-					user_profile.get("client_id"),
-					user_profile.get("full_name")
+				# Trace VoiceLive connection establishment
+				conn_attrs = create_service_dependency_attrs(
+					source_service="voicelive_sdk_handler",
+					target_service="azure_voicelive",
+					call_connection_id=self.call_connection_id,
+					session_id=self.session_id,
+					ws=True,
 				)
-			
-			await self._orchestrator.start(system_vars=system_vars)
+				with tracer.start_as_current_span(
+					"voicelive.connect",
+					kind=SpanKind.SERVER,
+					attributes=conn_attrs,
+				) as conn_span:
+					self._credential = self._build_credential(self._settings)
+					self._connection_cm = connect(
+						endpoint=self._settings.azure_voicelive_endpoint,
+						credential=self._credential,
+						model=self._settings.azure_voicelive_model,
+						connection_options=connection_options,
+					)
+					self._connection = await self._connection_cm.__aenter__()
+					conn_span.set_attribute("voicelive.model", self._settings.azure_voicelive_model)
 
-			self._running = True
-			self._shutdown.clear()
-			self._event_task = asyncio.create_task(self._event_loop())
-			logger.info(
-				"VoiceLive SDK handler started | session=%s call=%s",
-				self.session_id,
-				self.call_connection_id,
-			)
-		except Exception:
-			await self.stop()
-			raise
+				agents = load_registry(str(self._settings.agents_path))
+				span.set_attribute("voicelive.agents_count", len(agents))
+				
+				user_profile = None
+				if hasattr(self, '_user_email') and self._user_email:
+					logger.info("Loading user profile for session | email=%s", self._user_email)
+					user_profile = await load_user_profile_by_email(self._user_email)
+					if user_profile:
+						span.set_attribute("voicelive.user_profile_loaded", True)
+						span.set_attribute("voicelive.client_id", user_profile.get("client_id", "unknown"))
+				
+				self._orchestrator = LiveOrchestrator(
+					conn=self._connection,
+					agents=agents,
+					handoff_map=HANDOFF_MAP,
+					start_agent=self._settings.start_agent,
+					audio_processor=None,
+					messenger=self._messenger,
+					call_connection_id=self.call_connection_id,
+					transport=self._transport,
+				)
+				span.set_attribute("voicelive.start_agent", self._settings.start_agent)
+
+				system_vars = {}
+				if user_profile:
+					system_vars["session_profile"] = user_profile
+					system_vars["client_id"] = user_profile.get("client_id")
+					system_vars["customer_intelligence"] = user_profile.get("customer_intelligence", {})
+					logger.info(
+						"Session initialized with user profile | client_id=%s name=%s",
+						user_profile.get("client_id"),
+						user_profile.get("full_name")
+					)
+				
+				await self._orchestrator.start(system_vars=system_vars)
+
+				self._running = True
+				self._shutdown.clear()
+				self._event_task = asyncio.create_task(self._event_loop())
+				
+				elapsed_ms = (time.perf_counter() - start_ts) * 1000
+				span.set_attribute("voicelive.startup_ms", round(elapsed_ms, 2))
+				logger.info(
+					"VoiceLive SDK handler started | session=%s call=%s startup_ms=%.2f",
+					self.session_id,
+					self.call_connection_id,
+					elapsed_ms,
+				)
+			except Exception as e:
+				span.set_status(Status(StatusCode.ERROR, str(e)))
+				span.set_attribute("error.type", type(e).__name__)
+				span.set_attribute("error.message", str(e))
+				await self.stop()
+				raise
 
 	async def stop(self) -> None:
 		"""Stop event processing and release VoiceLive resources."""
 		if not self._running:
 			return
 
-		self._running = False
-		self._shutdown.set()
+		with tracer.start_as_current_span(
+			"voicelive_handler.stop",
+			kind=trace.SpanKind.INTERNAL,
+			attributes=create_service_handler_attrs(
+				service_name="VoiceLiveSDKHandler.stop",
+				call_connection_id=self.call_connection_id,
+				session_id=self.session_id,
+			),
+		) as stop_span:
+			self._running = False
+			self._shutdown.set()
 
-		if self._dtmf_flush_task:
-			self._dtmf_flush_task.cancel()
-			try:
-				await self._dtmf_flush_task
-			except asyncio.CancelledError:
-				pass
-			finally:
-				self._dtmf_flush_task = None
-		self._dtmf_digits.clear()
+			if self._dtmf_flush_task:
+				self._dtmf_flush_task.cancel()
+				try:
+					await self._dtmf_flush_task
+				except asyncio.CancelledError:
+					pass
+				finally:
+					self._dtmf_flush_task = None
+			self._dtmf_digits.clear()
 
-		if self._event_task:
-			self._event_task.cancel()
-			try:
-				await self._event_task
-			except asyncio.CancelledError:
-				pass
-			finally:
-				self._event_task = None
+			if self._event_task:
+				self._event_task.cancel()
+				try:
+					await self._event_task
+				except asyncio.CancelledError:
+					pass
+				finally:
+					self._event_task = None
 
-		if self._connection_cm:
-			try:
-				await self._connection_cm.__aexit__(None, None, None)
-			except Exception:
-				logger.exception("Error closing VoiceLive connection")
-			finally:
-				self._connection_cm = None
-				self._connection = None
+			if self._connection_cm:
+				try:
+					with tracer.start_as_current_span(
+						"voicelive.connection.close",
+						kind=trace.SpanKind.SERVER,
+						attributes=create_service_dependency_attrs(
+							source_service="voicelive_handler",
+							target_service="azure_voicelive",
+							call_connection_id=self.call_connection_id,
+							session_id=self.session_id,
+						),
+					):
+						await self._connection_cm.__aexit__(None, None, None)
+				except Exception:
+					logger.exception("Error closing VoiceLive connection")
+				finally:
+					self._connection_cm = None
+					self._connection = None
 
-		if isinstance(self._credential, DefaultAzureCredential):
-			try:
-				await self._credential.close()
-			except Exception:
-				logger.debug("Failed to close DefaultAzureCredential", exc_info=True)
-		self._credential = None
+			if isinstance(self._credential, DefaultAzureCredential):
+				try:
+					await self._credential.close()
+				except Exception:
+					logger.debug("Failed to close DefaultAzureCredential", exc_info=True)
+			self._credential = None
 
-		logger.info(
-			"VoiceLive SDK handler stopped | session=%s call=%s",
-			self.session_id,
-			self.call_connection_id,
-		)
+			stop_span.set_status(trace.StatusCode.OK)
+			logger.info(
+				"VoiceLive SDK handler stopped | session=%s call=%s",
+				self.session_id,
+				self.call_connection_id,
+			)
 
 	async def handle_audio_data(self, message_data: str) -> None:
 		"""Forward ACS media payloads to VoiceLive."""
@@ -849,24 +978,57 @@ class VoiceLiveSDKHandler:
 	async def _event_loop(self) -> None:
 		"""Consume VoiceLive events, orchestrate tools, and stream audio to ACS."""
 		assert self._connection is not None
-		try:
-			async for event in self._connection:
-				if self._shutdown.is_set():
-					break
+		with tracer.start_as_current_span(
+			"voicelive_handler.event_loop",
+			kind=trace.SpanKind.INTERNAL,
+			attributes=create_service_handler_attrs(
+				service_name="VoiceLiveSDKHandler._event_loop",
+				call_connection_id=self.call_connection_id,
+				session_id=self.session_id,
+			),
+		) as loop_span:
+			event_count = 0
+			try:
+				async for event in self._connection:
+					if self._shutdown.is_set():
+						break
 
-				self._observe_event(event)
+					event_count += 1
+					etype = event.type if hasattr(event, "type") else None
+					event_type_str = etype.value if hasattr(etype, "value") else str(etype) if etype else "unknown"
 
-				if self._orchestrator:
-					await self._orchestrator.handle_event(event)
+					# Add span event for each VoiceLive event (batched, not per-event spans)
+					# Filter out high-frequency noisy events
+					if event_type_str not in (
+						"response.audio_transcript.delta",
+						"response.audio.delta",
+					):
+						loop_span.add_event(
+							"voicelive.event_received",
+							{"event_type": event_type_str, "event_index": event_count},
+						)
 
-				await self._forward_event_to_acs(event)
-		except asyncio.CancelledError:
-			logger.debug("VoiceLive event loop cancelled | session=%s", self.session_id)
-			raise
-		except Exception:
-			logger.exception("VoiceLive event loop error | session=%s", self.session_id)
-		finally:
-			self._shutdown.set()
+					self._observe_event(event)
+
+					if self._orchestrator:
+						await self._orchestrator.handle_event(event)
+
+					await self._forward_event_to_acs(event)
+
+				loop_span.set_attribute("voicelive.total_events", event_count)
+				loop_span.set_status(trace.StatusCode.OK)
+			except asyncio.CancelledError:
+				loop_span.set_attribute("voicelive.total_events", event_count)
+				loop_span.add_event("event_loop.cancelled")
+				logger.debug("VoiceLive event loop cancelled | session=%s", self.session_id)
+				raise
+			except Exception as ex:
+				loop_span.set_attribute("voicelive.total_events", event_count)
+				loop_span.set_status(trace.StatusCode.ERROR, str(ex))
+				loop_span.add_event("event_loop.error", {"error.type": type(ex).__name__, "error.message": str(ex)})
+				logger.exception("VoiceLive event loop error | session=%s", self.session_id)
+			finally:
+				self._shutdown.set()
 
 	async def _forward_event_to_acs(self, event: Any) -> None:
 		if not self._websocket_open:
@@ -883,6 +1045,7 @@ class VoiceLiveSDKHandler:
 			)
 		
 		if etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
+			self._transcript_final_time = time.perf_counter()
 			transcript = getattr(event, "transcript", "")
 			turn_id = self._messenger.resolve_user_turn_id(self._extract_item_id(event))
 			if transcript and (
@@ -901,6 +1064,37 @@ class VoiceLiveSDKHandler:
 		elif etype == ServerEventType.RESPONSE_AUDIO_DELTA:
 			response_id = getattr(event, "response_id", None)
 			delta_bytes = getattr(event, "delta", None)
+			
+			# Track TTS TTFB (Time To First Byte) - first audio delta for this turn
+			if self._turn_start_time and self._tts_first_audio_time is None:
+				self._tts_first_audio_time = time.perf_counter()
+				# Calculate latency relative to VAD end (preferred) or turn start
+				start_ref = self._vad_end_time or self._turn_start_time
+				ttfb_ms = (self._tts_first_audio_time - start_ref) * 1000
+				self._current_response_id = response_id
+				
+				# Emit TTFB metric as a span for App Insights Performance tab
+				with tracer.start_as_current_span(
+					"voicelive.tts.ttfb",
+					kind=SpanKind.INTERNAL,
+					attributes={
+						SpanAttr.TURN_NUMBER.value: self._turn_number,
+						SpanAttr.TURN_TTS_TTFB_MS.value: ttfb_ms,
+						SpanAttr.SESSION_ID.value: self.session_id,
+						SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id,
+						"voicelive.response_id": response_id or "unknown",
+						"latency.reference": "vad_end" if self._vad_end_time else "turn_start",
+					},
+				) as ttfb_span:
+					ttfb_span.add_event("tts.first_audio", {"ttfb_ms": ttfb_ms})
+					logger.info(
+						"[VoiceLive] TTS TTFB | session=%s turn=%d ttfb_ms=%.2f ref=%s",
+						self.session_id,
+						self._turn_number,
+						ttfb_ms,
+						"vad_end" if self._vad_end_time else "turn_start",
+					)
+			
 			logger.debug(
 				"[VoiceLive] Audio delta received | session=%s response=%s bytes=%s",
 				self.session_id,
@@ -932,11 +1126,24 @@ class VoiceLiveSDKHandler:
 				self._mark_audio_playback(False)
 
 		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED:
-			# User started speaking - stop assistant playback
+			# User started speaking - stop assistant playback and start turn tracking
 			logger.info(
 				"[VoiceLive] User speech started | session=%s",
 				self.session_id,
 			)
+			
+			# Finalize previous turn if still active
+			await self._finalize_turn_metrics()
+			
+			# Start new turn tracking
+			self._turn_number += 1
+			self._turn_start_time = time.perf_counter()
+			self._vad_end_time = None
+			self._transcript_final_time = None
+			self._llm_first_token_time = None
+			self._tts_first_audio_time = None
+			self._current_response_id = None
+			
 			self._active_response_ids.clear()
 			energy = getattr(event, "speech_energy", None)
 			turn_id = self._extract_item_id(event)
@@ -953,6 +1160,7 @@ class VoiceLiveSDKHandler:
 			self._stop_audio_pending = False
 
 		elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
+			self._vad_end_time = time.perf_counter()
 			logger.debug("🎤 User paused speaking")
 			logger.debug("🤖 Generating assistant reply")
 			self._mark_audio_playback(False)
@@ -970,6 +1178,8 @@ class VoiceLiveSDKHandler:
 				"message": "...",
 				"content": transcript_text,
 				"streaming": True,
+				"active_agent": self._messenger._active_agent_name,
+				"active_agent_label": self._messenger._active_agent_label,
 			}
 			if turn_id:
 				payload["turn_id"] = turn_id
@@ -994,6 +1204,9 @@ class VoiceLiveSDKHandler:
 				label="voicelive_user_transcript_delta",
 			)
 
+		elif etype == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA:
+			if self._llm_first_token_time is None:
+				self._llm_first_token_time = time.perf_counter()
 
 		elif etype == ServerEventType.RESPONSE_AUDIO_DONE:
 			logger.debug(
@@ -1326,20 +1539,30 @@ class VoiceLiveSDKHandler:
 				logger.debug("Failed to decode base64 audio payload", exc_info=True)
 		return None
 
+	# High-frequency events to skip tracing (would create excessive noise)
+	_NOISY_EVENT_TYPES = {
+		"response.audio.delta",
+		"response.audio_transcript.delta",
+		"input_audio_buffer.speech_started",
+		"input_audio_buffer.speech_stopped",
+	}
+
 	def _observe_event(self, event: Any) -> None:
 		type_value = getattr(event, "type", "unknown")
 		type_str = (
 			type_value.value if isinstance(type_value, ServerEventType) else str(type_value)
 		)
 
+		# Skip creating spans for high-frequency noisy events
+		# These would create thousands of spans per conversation and make traces unusable
+		if type_str in self._NOISY_EVENT_TYPES:
+			return
+
 		logger.debug(
 			"[VoiceLiveSDK] Event received | session=%s type=%s",
 			self.session_id,
 			type_str,
 		)
-
-		# if type_str not in _TRACED_EVENTS:
-		# 	return
 
 		attributes = {
 			"voicelive.event.type": type_str,
@@ -1353,8 +1576,12 @@ class VoiceLiveSDKHandler:
 			delta = getattr(event, "delta")
 			attributes["voicelive.delta.size"] = len(delta) if isinstance(delta, (bytes, str)) else 0
 
+		# Create span with descriptive name: voicelive.event.<event_type>
+		# e.g., voicelive.event.session.created, voicelive.event.response.done
+		span_name = f"voicelive.event.{type_str}" if type_str != "unknown" else "voicelive.event"
+		
 		with tracer.start_as_current_span(
-			"voicelive.event",
+			span_name,
 			kind=SpanKind.INTERNAL,
 			attributes=attributes,
 		):
@@ -1443,6 +1670,113 @@ class VoiceLiveSDKHandler:
 		if settings.has_api_key_auth:
 			return AzureKeyCredential(settings.azure_voicelive_api_key)
 		return DefaultAzureCredential()
+
+	# =========================================================================
+	# Turn-Level Latency Tracking Methods
+	# =========================================================================
+
+	def record_llm_first_token(self) -> None:
+		"""Record LLM first token timing (TTFT) for the current turn."""
+		if self._turn_start_time and self._llm_first_token_time is None:
+			self._llm_first_token_time = time.perf_counter()
+			ttft_ms = (self._llm_first_token_time - self._turn_start_time) * 1000
+			
+			# Emit TTFT metric as a span for App Insights Performance tab
+			with tracer.start_as_current_span(
+				"voicelive.llm.ttft",
+				kind=SpanKind.INTERNAL,
+				attributes={
+					SpanAttr.TURN_NUMBER.value: self._turn_number,
+					SpanAttr.TURN_LLM_TTFB_MS.value: ttft_ms,
+					SpanAttr.SESSION_ID.value: self.session_id,
+					SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id,
+				},
+			) as ttft_span:
+				ttft_span.add_event("llm.first_token", {"ttft_ms": ttft_ms})
+				logger.info(
+					"[VoiceLive] LLM TTFT | session=%s turn=%d ttft_ms=%.2f",
+					self.session_id,
+					self._turn_number,
+					ttft_ms,
+				)
+
+	async def _finalize_turn_metrics(self) -> None:
+		"""Finalize and emit turn-level metrics when a turn completes."""
+		if not self._turn_start_time:
+			return
+		
+		turn_end_time = time.perf_counter()
+		total_turn_duration_ms = (turn_end_time - self._turn_start_time) * 1000
+		
+		# Calculate individual latencies relative to VAD End (User Finished Speaking)
+		stt_latency_ms = None
+		llm_ttft_ms = None
+		tts_ttfb_ms = None
+		
+		# Base reference for system latency is VAD End
+		latency_base = self._vad_end_time or self._turn_start_time
+		
+		if self._transcript_final_time and self._vad_end_time:
+			stt_latency_ms = (self._transcript_final_time - self._vad_end_time) * 1000
+			
+		if self._llm_first_token_time and self._transcript_final_time:
+			# Processing time: Transcript Final -> LLM First Token
+			llm_ttft_ms = (self._llm_first_token_time - self._transcript_final_time) * 1000
+		elif self._llm_first_token_time and latency_base:
+			# Fallback: VAD End -> LLM First Token
+			llm_ttft_ms = (self._llm_first_token_time - latency_base) * 1000
+		
+		if self._tts_first_audio_time and latency_base:
+			# End-to-End Latency: VAD End -> TTS First Audio
+			tts_ttfb_ms = (self._tts_first_audio_time - latency_base) * 1000
+		
+		# Emit comprehensive turn metrics span
+		with tracer.start_as_current_span(
+			f"voicelive.turn.{self._turn_number}.complete",
+			kind=SpanKind.INTERNAL,
+			attributes={
+				SpanAttr.TURN_NUMBER.value: self._turn_number,
+				SpanAttr.TURN_TOTAL_LATENCY_MS.value: total_turn_duration_ms, # Renamed concept, kept key
+				SpanAttr.SESSION_ID.value: self.session_id,
+				SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id,
+				SpanAttr.TURN_TRANSPORT_TYPE.value: self._transport,
+				"latency.reference": "vad_end" if self._vad_end_time else "turn_start",
+			},
+		) as turn_span:
+			if stt_latency_ms is not None:
+				turn_span.set_attribute("turn.stt_latency_ms", stt_latency_ms)
+			if llm_ttft_ms is not None:
+				turn_span.set_attribute(SpanAttr.TURN_LLM_TTFB_MS.value, llm_ttft_ms)
+			if tts_ttfb_ms is not None:
+				turn_span.set_attribute(SpanAttr.TURN_TTS_TTFB_MS.value, tts_ttfb_ms)
+			
+			turn_span.add_event(
+				"turn.complete",
+				{
+					"turn.number": self._turn_number,
+					"turn.duration_ms": total_turn_duration_ms,
+					**({"stt_latency_ms": stt_latency_ms} if stt_latency_ms else {}),
+					**({"llm_ttft_ms": llm_ttft_ms} if llm_ttft_ms else {}),
+					**({"tts_ttfb_ms": tts_ttfb_ms} if tts_ttfb_ms else {}),
+				}
+			)
+			
+			logger.info(
+				"[VoiceLive] Turn %d metrics | E2E: %s | STT: %s | LLM: %s | Duration: %.2f",
+				self._turn_number,
+				f"{tts_ttfb_ms:.0f}ms" if tts_ttfb_ms else "N/A",
+				f"{stt_latency_ms:.0f}ms" if stt_latency_ms else "N/A",
+				f"{llm_ttft_ms:.0f}ms" if llm_ttft_ms else "N/A",
+				total_turn_duration_ms,
+			)
+		
+		# Reset turn tracking state
+		self._turn_start_time = None
+		self._vad_end_time = None
+		self._transcript_final_time = None
+		self._llm_first_token_time = None
+		self._tts_first_audio_time = None
+		self._current_response_id = None
 
 
 __all__ = ["VoiceLiveSDKHandler"]

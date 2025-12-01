@@ -1,11 +1,16 @@
 """
 services/openai_client.py
 -------------------------
-Single shared Azure OpenAI client.  Import `client` anywhere you need
-to talk to the Chat Completion API; it will be created once at
-import-time with proper JWT token handling for APIM policy evaluation.
+Shared Azure OpenAI client accessor. Uses lazy initialization to allow
+OpenTelemetry instrumentation to be configured before the client is created.
 """
 
-from src.aoai.client import client as AzureOpenAIClient
+from src.aoai.client import get_client
 
-__all__ = ["AzureOpenAIClient"]
+# For backwards compatibility, provide AzureOpenAIClient as a callable
+# that returns the lazily-initialized client
+def AzureOpenAIClient():
+    """Get the shared Azure OpenAI client (lazy initialization)."""
+    return get_client()
+
+__all__ = ["AzureOpenAIClient", "get_client"]

@@ -113,16 +113,16 @@ def start_backend(env_name: str) -> None:
         logger.error("    conda env create -f %s", ENV_FILE)
         sys.exit(1)
 
-    logger.info("")
+    logger.info("---")  # Use separator instead of empty string
     logger.info("To launch the backend, run:")
     logger.info("  conda activate %s", env_name)
     logger.info("  set PYTHONPATH=%s", PROJECT_ROOT)
     logger.info("  python %s", BACKEND_SCRIPT)
-    logger.info("")
+    logger.info("---")  # Use separator instead of empty string
     logger.info("On Unix shells:")
     logger.info("  export PYTHONPATH=%s", PROJECT_ROOT)
     logger.info("  python %s", BACKEND_SCRIPT)
-    logger.info("")
+    logger.info("---")  # Use separator instead of empty string
     logger.info(
         "(This script does not auto-activate conda envs. "
         "Run the above commands in your terminal.)"

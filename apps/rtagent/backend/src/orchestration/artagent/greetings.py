@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from contextlib import contextmanager
+from textwrap import dedent
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from fastapi import WebSocket
 
+from config import AZURE_OPENAI_CHAT_DEPLOYMENT_ID
 from .bindings import get_agent_instance
 from .cm_utils import cm_get, cm_set, get_correlation_context
 from .config import LAST_ANNOUNCED_KEY, APP_GREETS_ATTR
-from config import ACS_STREAMING_MODE
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     send_tts_audio,
-    send_response_to_acs,
+    queue_acs_tts_blocking,
 )
 from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
+from src.aoai.client import get_client as get_aoai_client
 from utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
@@ -23,12 +27,53 @@ if TYPE_CHECKING:  # pragma: no cover
     from src.stateful.state_managment import MemoManager
 
 
+def _get_speech_cascade(ws: WebSocket):
+    """Get the SpeechCascadeHandler from the media handler if available."""
+    acs_handler = getattr(ws, "_acs_media_handler", None)
+    if acs_handler:
+        return getattr(acs_handler, "speech_cascade", None)
+    return None
+
+
+def _get_thread_bridge(ws: WebSocket):
+    """Get the ThreadBridge from the media handler if available."""
+    speech_cascade = _get_speech_cascade(ws)
+    if speech_cascade:
+        return getattr(speech_cascade, "thread_bridge", None)
+    return None
+
+
+@contextmanager
+def _suppress_barge_in_context(ws: WebSocket):
+    """
+    Context manager to suppress barge-in during agent greeting/handoff audio.
+    
+    Prevents false barge-in triggers from audio echo during handoffs.
+    """
+    thread_bridge = _get_thread_bridge(ws)
+    if thread_bridge:
+        try:
+            thread_bridge.suppress_barge_in()
+            logger.debug("Barge-in suppressed for agent greeting")
+        except Exception as e:
+            logger.debug(f"Failed to suppress barge-in: {e}")
+    try:
+        yield
+    finally:
+        if thread_bridge:
+            try:
+                thread_bridge.allow_barge_in()
+                logger.debug("Barge-in re-enabled after agent greeting")
+            except Exception as e:
+                logger.debug(f"Failed to re-enable barge-in: {e}")
+
+
 def create_personalized_greeting(
     caller_name: Optional[str],
-    agent_name: str, 
+    agent_name: str,
     customer_intelligence: Dict[str, Any],
     institution_name: str,
-    topic: str
+    topic: str,
 ) -> str:
     """
     Create ultra-personalized greeting using 360° customer intelligence.
@@ -102,6 +147,191 @@ def create_personalized_greeting(
             f"Good morning {first_name}, this is your {agent_name} specialist from {institution_name}. "
             f"I have your account information ready and I'm here to help. What can I do for you today?"
         )
+
+
+def _trim_text(value: Optional[str], limit: int = 320) -> Optional[str]:
+    if not value:
+        return None
+    cleaned = " ".join(str(value).split())
+    if not cleaned:
+        return None
+    return cleaned if len(cleaned) <= limit else f"{cleaned[: limit - 3]}..."
+
+
+def _last_message(history: List[Dict[str, Any]], role: str) -> Optional[str]:
+    for entry in reversed(history):
+        if entry.get("role") == role:
+            content = entry.get("content")
+            if isinstance(content, str) and content.strip():
+                return _trim_text(content)
+    return None
+
+
+def _summarize_customer_intel(customer_intelligence: Any) -> Optional[str]:
+    if not isinstance(customer_intelligence, dict):
+        return None
+
+    relationship = customer_intelligence.get("relationship_context") or {}
+    account_status = customer_intelligence.get("account_status") or {}
+    memory_score = customer_intelligence.get("memory_score") or {}
+
+    pieces: List[str] = []
+    tier = relationship.get("relationship_tier")
+    years = relationship.get("relationship_duration_years")
+    if tier:
+        if years:
+            pieces.append(f"Relationship tier {tier}, {int(years)} years")
+        else:
+            pieces.append(f"Relationship tier {tier}")
+
+    communication = memory_score.get("communication_style")
+    if communication:
+        pieces.append(f"Prefers {communication.lower()} tone")
+
+    health = account_status.get("account_health_score")
+    if isinstance(health, (int, float)):
+        pieces.append(f"Account health score {int(health)}")
+
+    alerts = customer_intelligence.get("active_alerts") or []
+    if isinstance(alerts, list) and alerts:
+        samples = ", ".join(map(str, alerts[:2]))
+        pieces.append(f"Active alerts: {samples}")
+
+    summary = "; ".join(pieces)
+    return summary or None
+
+
+def _build_contextual_prompt(
+    agent_name: str,
+    metadata: Dict[str, Optional[str]],
+    last_user: Optional[str],
+    last_agent: Optional[str],
+) -> Tuple[str, str]:
+    caller = metadata.get("caller_name") or "the customer"
+    institution = metadata.get("institution_name") or "our firm"
+    topic = metadata.get("topic") or "their account"
+    summary = metadata.get("intel_summary")
+    tier = metadata.get("relationship_tier")
+    context_bits = [summary, f"Relationship tier: {tier}" if tier else None]
+    context_text = "; ".join(filter(None, context_bits)).strip()
+
+    system_prompt = dedent(
+        f"""
+        You are {agent_name}, a specialist representing {institution}. Respond like a live voice agent.
+        Keep responses under 40 words, sound confident, and avoid repeating the user's name excessively.
+        Provide a single sentence that can be read aloud verbatim.
+        """
+    ).strip()
+
+    if last_user:
+        last_agent = last_agent or ""
+        user_prompt = dedent(
+            f"""
+            The caller {caller} has reconnected to the session. Their last
+            request before disconnecting was: "{last_user}".
+            Your last response snippet was: "{last_agent}".
+            Context: {context_text or 'general assistance'}.
+            Provide a short sentence that acknowledges the reconnection and invites them to continue.
+            Do not apologize for technical issues. End with an open question if possible.
+            """
+        ).strip()
+    else:
+        user_prompt = dedent(
+            f"""
+            A new authenticated session just started with {caller} from {institution}.
+            Topic focus: {topic}. Context: {context_text or 'general assistance'}.
+            Provide a concise welcoming sentence (< 35 words) as the {agent_name} specialist, signaling you are ready to help.
+            Mention the topic if natural and keep the tone warm and professional.
+            """
+        ).strip()
+
+    return system_prompt, user_prompt
+
+
+async def request_contextual_agent_greeting(
+    cm: "MemoManager",
+    ws: WebSocket,
+    *,
+    max_tokens: int = 160,
+) -> Optional[str]:
+    """Generate a greeting/resume prompt using the active agent's persona."""
+
+    if cm is None or ws is None:
+        return None
+
+    agent_name = cm_get(cm, "active_agent") or "AutoAuth"
+    agent = get_agent_instance(ws, agent_name)
+
+    try:
+        history = list(cm.get_history(agent_name)) if hasattr(cm, "get_history") else []
+    except Exception:
+        history = []
+
+    last_user = _last_message(history, "user")
+    last_agent = _last_message(history, "assistant")
+
+    customer_intel = cm_get(cm, "customer_intelligence")
+    metadata = {
+        "caller_name": cm_get(cm, "caller_name"),
+        "topic": cm_get(cm, "topic") or cm_get(cm, "claim_intent"),
+        "institution_name": cm_get(cm, "institution_name"),
+        "relationship_tier": None,
+        "intel_summary": _summarize_customer_intel(customer_intel),
+    }
+
+    if isinstance(customer_intel, dict):
+        relationship = customer_intel.get("relationship_context") or {}
+        metadata["relationship_tier"] = relationship.get("relationship_tier")
+
+    system_prompt, user_prompt = _build_contextual_prompt(
+        getattr(agent, "name", agent_name), metadata, last_user, last_agent
+    )
+
+    model_id = getattr(agent, "model_id", AZURE_OPENAI_CHAT_DEPLOYMENT_ID)
+    temperature = 0.35 if last_user else 0.55
+
+    async def _invoke() -> Optional[str]:
+        client = get_aoai_client()
+
+        def _call_openai() -> Optional[str]:
+            response = client.chat.completions.create(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                top_p=0.9,
+                max_tokens=max_tokens,
+            )
+
+            if not getattr(response, "choices", None):
+                return None
+
+            message = response.choices[0].message
+            content = getattr(message, "content", None)
+            if isinstance(content, str):
+                return content.strip() or None
+
+            # Some SDK versions return a list of content parts
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    text = part.get("text") if isinstance(part, dict) else None
+                    if text:
+                        parts.append(text)
+                combined = " ".join(parts).strip()
+                return combined or None
+
+            return None
+
+        return await asyncio.to_thread(_call_openai)
+
+    try:
+        return await _invoke()
+    except Exception as exc:  # pragma: no cover - AOAI failures fall back to defaults
+        logger.debug("Contextual greeting generation failed: %s", exc)
+        return None
 
 
 def sync_voice_from_agent(cm: "MemoManager", ws: WebSocket, agent_name: str) -> None:
@@ -208,23 +438,63 @@ async def send_agent_greeting(
 
         _, session_id = get_correlation_context(ws, cm)
         await broadcast_message(None, greeting, agent_sender, app_state=ws.app.state, session_id=session_id)
+        
+        # Suppress barge-in during agent handoff greeting to prevent
+        # audio echo from triggering false barge-in events
+        thread_bridge = _get_thread_bridge(ws)
+        if thread_bridge:
+            try:
+                thread_bridge.suppress_barge_in()
+            except Exception as e:
+                logger.debug(f"Failed to suppress barge-in: {e}")
+        
         try:
-            stream_mode = getattr(ws.state, "stream_mode", ACS_STREAMING_MODE)
-            # Use blocking=True to ensure greeting completes before any
-            # subsequent audio, preventing TTS overlap.
-            await send_response_to_acs(
-                ws=ws,
-                text=greeting,
-                blocking=True,
-                latency_tool=ws.state.lt,
-                voice_name=voice_name,
-                voice_style=voice_style,
-                rate=voice_rate,
-                stream_mode=stream_mode,
-            )
+            # Use the unified speech cascade TTS queue to ensure sequential playback.
+            # This prevents greeting from overlapping with other TTS chunks.
+            speech_cascade = _get_speech_cascade(ws)
+            if speech_cascade and hasattr(speech_cascade, "queue_tts"):
+                # Use the unified queue - avoids race condition with acs_playback_tail
+                queued = speech_cascade.queue_tts(
+                    greeting,
+                    voice_name=voice_name,
+                    voice_style=voice_style,
+                    voice_rate=voice_rate,
+                )
+                if queued:
+                    logger.debug("Greeting queued via speech cascade TTS queue")
+                else:
+                    # Fallback if queue failed
+                    logger.warning("Failed to queue greeting via speech cascade, using fallback")
+                    await queue_acs_tts_blocking(
+                        ws=ws,
+                        text=greeting,
+                        voice_name=voice_name,
+                        voice_style=voice_style,
+                        rate=voice_rate,
+                        latency_tool=getattr(ws.state, "lt", None),
+                        is_greeting=True,
+                    )
+            else:
+                # Fallback to original queue method
+                await queue_acs_tts_blocking(
+                    ws=ws,
+                    text=greeting,
+                    voice_name=voice_name,
+                    voice_style=voice_style,
+                    rate=voice_rate,
+                    latency_tool=getattr(ws.state, "lt", None),
+                    is_greeting=True,
+                )
         except Exception as exc:  # pragma: no cover
             logger.error("Failed to send ACS greeting audio: %s", exc)
             logger.warning("ACS greeting sent as text only.")
+        finally:
+            # Re-enable barge-in after greeting completes
+            if thread_bridge:
+                try:
+                    thread_bridge.allow_barge_in()
+                except Exception as e:
+                    logger.debug(f"Failed to re-enable barge-in: {e}")
     else:
         logger.info("WS greeting #%s for %s (voice: %s)", counter + 1, agent_name, voice_name or "default")
         _, session_id = get_correlation_context(ws, cm)

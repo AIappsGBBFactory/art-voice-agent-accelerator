@@ -133,8 +133,9 @@ class ConversationTurnTracker:
         
         start_time = time.perf_counter()
         
+        # Use descriptive span name: voice.turn.<id>.total for end-to-end tracking
         self._turn_span = self.tracer.start_span(
-            f"conversation.turn.{self.metrics.turn_id}",
+            f"voice.turn.{self.metrics.turn_id}.total",
             kind=SpanKind.INTERNAL,
             attributes=attrs,
         )
@@ -369,8 +370,22 @@ class ConversationTurnTracker:
         if extra_attrs:
             attrs.update(extra_attrs)
         
+        # Use descriptive span names: voice.turn.<id>.<phase>
+        # Maps internal phase names to user-friendly span names:
+        # - user_input -> stt (speech-to-text)
+        # - llm_inference -> llm (language model)
+        # - tts_synthesis -> tts (text-to-speech)
+        # - network_delivery -> delivery
+        phase_display_map = {
+            "user_input": "stt",
+            "llm_inference": "llm",
+            "tts_synthesis": "tts",
+            "network_delivery": "delivery",
+        }
+        display_name = phase_display_map.get(phase_name, phase_name)
+        
         span = self.tracer.start_span(
-            f"conversation.turn.{phase_name}",
+            f"voice.turn.{self.metrics.turn_id}.{display_name}",
             kind=SpanKind.INTERNAL,
             attributes=attrs,
         )
@@ -397,32 +412,41 @@ class ConversationTurnTracker:
         
         metrics_attrs = {}
         
+        # Timing metrics with descriptive attribute names (all in milliseconds)
         if self.metrics.total_turn_duration:
-            metrics_attrs["conversation.turn.total_duration_ms"] = self.metrics.total_turn_duration * 1000
+            metrics_attrs["turn.total_latency_ms"] = self.metrics.total_turn_duration * 1000
         if self.metrics.user_input_duration:
-            metrics_attrs["conversation.turn.user_input_duration_ms"] = self.metrics.user_input_duration * 1000
+            metrics_attrs["turn.stt.latency_ms"] = self.metrics.user_input_duration * 1000
         if self.metrics.llm_inference_duration:
-            metrics_attrs["conversation.turn.llm_duration_ms"] = self.metrics.llm_inference_duration * 1000
+            metrics_attrs["turn.llm.total_ms"] = self.metrics.llm_inference_duration * 1000
         if self.metrics.tts_synthesis_duration:
-            metrics_attrs["conversation.turn.tts_duration_ms"] = self.metrics.tts_synthesis_duration * 1000
+            metrics_attrs["turn.tts.total_ms"] = self.metrics.tts_synthesis_duration * 1000
         if self.metrics.network_latency:
-            metrics_attrs["conversation.turn.network_latency_ms"] = self.metrics.network_latency * 1000
+            metrics_attrs["turn.delivery.latency_ms"] = self.metrics.network_latency * 1000
         
-        # Token metrics
+        # LLM TTFB (time to first token)
+        if self.metrics.llm_time_to_first_token:
+            metrics_attrs["turn.llm.ttfb_ms"] = self.metrics.llm_time_to_first_token * 1000
+        
+        # Token metrics - critical for cost/performance analysis
         if self.metrics.llm_tokens_prompt:
-            metrics_attrs["conversation.turn.llm_tokens_prompt"] = self.metrics.llm_tokens_prompt
+            metrics_attrs["turn.llm.input_tokens"] = self.metrics.llm_tokens_prompt
+            metrics_attrs["gen_ai.usage.input_tokens"] = self.metrics.llm_tokens_prompt
         if self.metrics.llm_tokens_completion:
-            metrics_attrs["conversation.turn.llm_tokens_completion"] = self.metrics.llm_tokens_completion
+            metrics_attrs["turn.llm.output_tokens"] = self.metrics.llm_tokens_completion
+            metrics_attrs["gen_ai.usage.output_tokens"] = self.metrics.llm_tokens_completion
+        
+        # Tokens per second - throughput metric
         if self.metrics.llm_tokens_per_second:
-            metrics_attrs["conversation.turn.llm_tokens_per_second"] = self.metrics.llm_tokens_per_second
+            metrics_attrs["turn.llm.tokens_per_sec"] = self.metrics.llm_tokens_per_second
         
         # TTS metrics
         if self.metrics.tts_text_length:
-            metrics_attrs["conversation.turn.tts_text_length"] = self.metrics.tts_text_length
+            metrics_attrs["turn.tts.text_length"] = self.metrics.tts_text_length
         if self.metrics.tts_chunk_count:
-            metrics_attrs["conversation.turn.tts_chunk_count"] = self.metrics.tts_chunk_count
+            metrics_attrs["turn.tts.chunk_count"] = self.metrics.tts_chunk_count
         if self.metrics.tts_synthesis_speed:
-            metrics_attrs["conversation.turn.tts_chars_per_second"] = self.metrics.tts_synthesis_speed
+            metrics_attrs["turn.tts.chars_per_sec"] = self.metrics.tts_synthesis_speed
         
         for key, value in metrics_attrs.items():
             self._turn_span.set_attribute(key, value)

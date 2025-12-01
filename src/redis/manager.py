@@ -7,6 +7,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 from utils.azure_auth import get_credential
+from src.enums.monitoring import PeerService, SpanAttr
 
 import redis
 from redis.cluster import RedisCluster
@@ -154,10 +155,10 @@ class AzureRedisManager:
             name,
             kind=SpanKind.CLIENT,
             attributes={
-                "peer.service": "azure-managed-redis",
-                "server.address": host,
-                "server.port": self.port or 6380,
-                "db.system": "redis",
+                SpanAttr.PEER_SERVICE: PeerService.AZURE_MANAGED_REDIS,
+                SpanAttr.SERVER_ADDRESS: host,
+                SpanAttr.SERVER_PORT: self.port or 6380,
+                SpanAttr.DB_SYSTEM: "redis",
                 **({"db.operation": op} if op else {}),
             },
         )
