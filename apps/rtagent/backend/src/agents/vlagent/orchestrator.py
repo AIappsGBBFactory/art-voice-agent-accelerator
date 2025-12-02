@@ -105,6 +105,12 @@ class LiveOrchestrator:
         self._llm_turn_start_time: Optional[float] = None
         self._llm_first_token_time: Optional[float] = None
         self._llm_turn_number: int = 0
+        
+        # Per-agent token usage tracking for invoke_agent spans
+        self._agent_input_tokens: int = 0
+        self._agent_output_tokens: int = 0
+        self._agent_start_time: float = time.perf_counter()
+        self._agent_response_count: int = 0
 
         if self.messenger:
             try:
@@ -139,6 +145,11 @@ class LiveOrchestrator:
         """Switch to a different agent and apply its session configuration."""
         previous_agent = self.active
         agent = self.agents[agent_name]
+        
+        # Emit invoke_agent summary span for the outgoing agent with accumulated token usage
+        # This ensures each agent invocation gets attributed its token consumption
+        if previous_agent != agent_name and self._agent_response_count > 0:
+            self._emit_agent_summary_span(previous_agent)
 
         with tracer.start_as_current_span(
             "voicelive_orchestrator.switch_agent",
@@ -249,6 +260,12 @@ class LiveOrchestrator:
                 if not has_handoff and self._pending_greeting and self._pending_greeting_agent == agent_name:
                     self._schedule_greeting_fallback(agent_name)
                 
+                # Reset token counters for the new agent
+                self._agent_input_tokens = 0
+                self._agent_output_tokens = 0
+                self._agent_start_time = time.perf_counter()
+                self._agent_response_count = 0
+                
                 switch_span.set_status(trace.StatusCode.OK)
             except Exception as ex:
                 switch_span.set_status(trace.StatusCode.ERROR, str(ex))
@@ -257,6 +274,69 @@ class LiveOrchestrator:
                 raise
             
             logger.info("[Active Agent] %s is now active", self.active)
+
+    def _emit_agent_summary_span(self, agent_name: str) -> None:
+        """
+        Emit an invoke_agent summary span with accumulated token usage.
+        
+        Called when switching away from an agent to record the total tokens
+        consumed during that agent's session. This ensures GenAI semantic
+        conventions for invoke_agent operations include token attribution.
+        """
+        agent = self.agents.get(agent_name)
+        if not agent:
+            return
+        
+        session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
+        agent_duration_ms = (time.perf_counter() - self._agent_start_time) * 1000
+        
+        with tracer.start_as_current_span(
+            f"invoke_agent {agent_name}",
+            kind=trace.SpanKind.INTERNAL,
+            attributes={
+                # Component identifier
+                "component": "voicelive",
+                
+                # Session correlation
+                "ai.session.id": session_id or "",
+                SpanAttr.SESSION_ID.value: session_id or "",
+                SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id or "",
+                
+                # GenAI semantic conventions for Agent Runs
+                SpanAttr.GENAI_OPERATION_NAME.value: GenAIOperation.INVOKE_AGENT,
+                SpanAttr.GENAI_PROVIDER_NAME.value: GenAIProvider.AZURE_OPENAI,
+                SpanAttr.GENAI_REQUEST_MODEL.value: self._model_name,
+                "gen_ai.agent.name": agent_name,
+                "gen_ai.agent.description": getattr(agent, "description", f"VoiceLive agent: {agent_name}"),
+                
+                # Token usage accumulated during this agent's session
+                SpanAttr.GENAI_USAGE_INPUT_TOKENS.value: self._agent_input_tokens,
+                SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value: self._agent_output_tokens,
+                
+                # VoiceLive-specific context
+                "voicelive.agent_name": agent_name,
+                "voicelive.response_count": self._agent_response_count,
+                "voicelive.duration_ms": agent_duration_ms,
+            },
+        ) as agent_span:
+            agent_span.add_event(
+                "gen_ai.agent.session_complete",
+                {
+                    "agent": agent_name,
+                    "input_tokens": self._agent_input_tokens,
+                    "output_tokens": self._agent_output_tokens,
+                    "response_count": self._agent_response_count,
+                    "duration_ms": agent_duration_ms,
+                },
+            )
+            logger.debug(
+                "[Agent Summary] %s complete | tokens=%d/%d responses=%d duration=%.1fms",
+                agent_name,
+                self._agent_input_tokens,
+                self._agent_output_tokens,
+                self._agent_response_count,
+                agent_duration_ms,
+            )
 
     def _transport_supports_acs(self) -> bool:
         return self._transport == "acs"
@@ -758,7 +838,7 @@ class LiveOrchestrator:
 
                 with tracer.start_as_current_span(
                     "voicelive.conversation.item_create",
-                    kind=trace.SpanKind.CLIENT,
+                    kind=trace.SpanKind.SERVER,
                     attributes=create_service_dependency_attrs(
                         source_service="voicelive_orchestrator",
                         target_service="azure_voicelive",
@@ -771,7 +851,7 @@ class LiveOrchestrator:
 
                 with tracer.start_as_current_span(
                     "voicelive.response.create",
-                    kind=trace.SpanKind.CLIENT,
+                    kind=trace.SpanKind.SERVER,
                     attributes=create_service_dependency_attrs(
                         source_service="voicelive_orchestrator",
                         target_service="azure_voicelive",
@@ -1107,6 +1187,13 @@ class LiveOrchestrator:
         if usage:
             input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", None)
             output_tokens = getattr(usage, "output_tokens", None) or getattr(usage, "completion_tokens", None)
+        
+        # Accumulate tokens for per-agent summary (used in invoke_agent spans)
+        if input_tokens:
+            self._agent_input_tokens += input_tokens
+        if output_tokens:
+            self._agent_output_tokens += output_tokens
+        self._agent_response_count += 1
         
         # Use definitive model name from VoiceLive connection (set at initialization)
         # Response object doesn't include model name, so we rely on the configured model
