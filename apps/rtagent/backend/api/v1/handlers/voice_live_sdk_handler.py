@@ -797,6 +797,7 @@ class VoiceLiveSDKHandler:
 						span.set_attribute("voicelive.user_profile_loaded", True)
 						span.set_attribute("voicelive.client_id", user_profile.get("client_id", "unknown"))
 				
+				## TODO: Replace with dependency injection structure for BYO orchestrator
 				self._orchestrator = LiveOrchestrator(
 					conn=self._connection,
 					agents=agents,
@@ -806,6 +807,7 @@ class VoiceLiveSDKHandler:
 					messenger=self._messenger,
 					call_connection_id=self.call_connection_id,
 					transport=self._transport,
+					model_name=self._settings.azure_voicelive_model,
 				)
 				span.set_attribute("voicelive.start_agent", self._settings.start_agent)
 
@@ -1541,10 +1543,18 @@ class VoiceLiveSDKHandler:
 
 	# High-frequency events to skip tracing (would create excessive noise)
 	_NOISY_EVENT_TYPES = {
+		# Audio streaming events (very high frequency)
 		"response.audio.delta",
 		"response.audio_transcript.delta",
 		"input_audio_buffer.speech_started",
 		"input_audio_buffer.speech_stopped",
+		"input_audio_buffer.committed",
+		"input_audio_buffer.cleared",
+		# Function call streaming (many small deltas per call)
+		"response.function_call_arguments.delta",
+		# Conversation deltas
+		"response.text.delta",
+		"response.content_part.delta",
 	}
 
 	def _observe_event(self, event: Any) -> None:

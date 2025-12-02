@@ -55,12 +55,25 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.banking_tools import (
     get_card_details,
     get_retirement_accounts,
     search_rollover_guidance,
+    refund_fee,
     handoff_merrill_advisor,
+)
+from apps.rtagent.backend.src.agents.vlagent.tool_store.investment_tools import (
+    get_account_routing_info,
+    get_401k_details,
+    get_rollover_options,
+    calculate_tax_impact,
+)
+from apps.rtagent.backend.src.agents.vlagent.tool_store.banking_esign_tools import (
+    send_card_agreement,
+    verify_esignature,
+    finalize_card_application,
 )
 from apps.rtagent.backend.src.agents.vlagent.tool_store.banking_handoffs import (
     handoff_card_recommendation,
     handoff_investment_advisor,
     handoff_erica_concierge,
+    handoff_transfer_agency_agent,
 )
 from utils.ml_logging import get_logger
 
@@ -106,12 +119,22 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.schemas import (
     get_recent_transactions_schema,
     search_card_products_schema,
     get_card_details_schema,
+    send_card_agreement_schema,
+    verify_esignature_schema,
+    finalize_card_application_schema,
     get_retirement_accounts_schema,
     search_rollover_guidance_schema,
-    handoff_merrill_advisor_schema,
+    refund_fee_schema,
     handoff_card_recommendation_schema,
+    # Investment Tools
+    get_account_routing_info_schema,
+    get_401k_details_schema,
+    get_rollover_options_schema,
+    calculate_tax_impact_schema,
+    handoff_merrill_advisor_schema,
     handoff_investment_advisor_schema,
     handoff_erica_concierge_schema,
+    handoff_transfer_agency_agent_schema,
     search_knowledge_base_schema,
     get_paypal_account_summary_schema,
     get_paypal_transactions_schema,
@@ -158,12 +181,22 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "get_recent_transactions": get_recent_transactions,
     "search_card_products": search_card_products,
     "get_card_details": get_card_details,
+    "send_card_agreement": send_card_agreement,
+    "verify_esignature": verify_esignature,
+    "finalize_card_application": finalize_card_application,
     "get_retirement_accounts": get_retirement_accounts,
     "search_rollover_guidance": search_rollover_guidance,
-    "handoff_merrill_advisor": handoff_merrill_advisor,
+    "refund_fee": refund_fee,
     "handoff_card_recommendation": handoff_card_recommendation,
     "handoff_investment_advisor": handoff_investment_advisor,
     "handoff_erica_concierge": handoff_erica_concierge,
+    "handoff_transfer_agency_agent": handoff_transfer_agency_agent,
+    # Investment Tools
+    "get_account_routing_info": get_account_routing_info,
+    "get_401k_details": get_401k_details,
+    "get_rollover_options": get_rollover_options,
+    "calculate_tax_impact": calculate_tax_impact,
+    "handoff_merrill_advisor": handoff_merrill_advisor,
 }
 
 
@@ -208,12 +241,22 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": get_recent_transactions_schema},
     {"type": "function", "function": search_card_products_schema},
     {"type": "function", "function": get_card_details_schema},
+    {"type": "function", "function": send_card_agreement_schema},
+    {"type": "function", "function": verify_esignature_schema},
+    {"type": "function", "function": finalize_card_application_schema},
     {"type": "function", "function": get_retirement_accounts_schema},
     {"type": "function", "function": search_rollover_guidance_schema},
-    {"type": "function", "function": handoff_merrill_advisor_schema},
+    {"type": "function", "function": refund_fee_schema},
     {"type": "function", "function": handoff_card_recommendation_schema},
     {"type": "function", "function": handoff_investment_advisor_schema},
     {"type": "function", "function": handoff_erica_concierge_schema},
+    {"type": "function", "function": handoff_transfer_agency_agent_schema},
+    # Investment Tools
+    {"type": "function", "function": get_account_routing_info_schema},
+    {"type": "function", "function": get_401k_details_schema},
+    {"type": "function", "function": get_rollover_options_schema},
+    {"type": "function", "function": calculate_tax_impact_schema},
+    {"type": "function", "function": handoff_merrill_advisor_schema},
     # Knowledge Base & PayPal
     {"type": "function", "function": search_knowledge_base_schema},
     {"type": "function", "function": get_paypal_account_summary_schema},

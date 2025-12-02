@@ -72,14 +72,16 @@ class MFASessionManager:
 # Initialize Cosmos DB managers for financial services
 _cosmos_manager = None
 _mfa_cosmos_manager = None
+database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+collection_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
 
 def get_financial_cosmos_manager() -> CosmosDBMongoCoreManager:
     """Get or create the financial services Cosmos DB manager for client data."""
     global _cosmos_manager
     if _cosmos_manager is None:
         _cosmos_manager = CosmosDBMongoCoreManager(
-            database_name="financial_services_db",
-            collection_name="users"
+            database_name=database_name,
+            collection_name=collection_name
         )
     return _cosmos_manager
 
@@ -88,7 +90,7 @@ def get_mfa_cosmos_manager() -> CosmosDBMongoCoreManager:
     global _mfa_cosmos_manager
     if _mfa_cosmos_manager is None:
         _mfa_cosmos_manager = CosmosDBMongoCoreManager(
-            database_name="financial_services_db",
+            database_name=database_name,
             collection_name="mfa_sessions"
         )
     return _mfa_cosmos_manager
@@ -118,7 +120,7 @@ class VerifyClientResult(TypedDict):
 class VerifyFraudClientArgs(TypedDict):
     """Arguments for fraud client identity verification (simplified)."""
     full_name: str
-    ssn_last4: str  # Last 4 digits of SSN
+    ssn_last_4: str  # Last 4 digits of SSN
 
 class VerifyFraudClientResult(TypedDict):
     """Result of fraud client identity verification."""
@@ -290,9 +292,9 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
     try:
         # Input validation
         full_name = args.get("full_name", "").strip().title()
-        ssn_last4 = args.get("ssn_last4", "").strip()
+        ssn_last_4 = args.get("ssn_last_4", "").strip()
         
-        if not full_name or not ssn_last4:
+        if not full_name or not ssn_last_4:
             return {
                 "verified": False,
                 "message": "Full name and last 4 digits of SSN are required.",
@@ -300,7 +302,7 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
                 "requires_mfa": False
             }
         
-        logger.info(f"🔍 Verifying fraud client: {full_name} (SSN: ***{ssn_last4})", 
+        logger.info(f"🔍 Verifying fraud client: {full_name} (SSN: ***{ssn_last_4})", 
                    extra={"client_name": full_name, "operation": "verify_fraud_client_identity"})
         
         try:
@@ -308,7 +310,7 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
             # Query by name and SSN last 4 from verification_codes
             query = {
                 "full_name": full_name,
-                "verification_codes.ssn4": ssn_last4
+                "verification_codes.ssn4": ssn_last_4
             }
             client_data = await asyncio.to_thread(cosmos.read_document, query)
         except Exception as db_error:
@@ -322,7 +324,7 @@ async def verify_fraud_client_identity(args: VerifyFraudClientArgs) -> VerifyFra
             }
         
         if not client_data:
-            logger.warning(f"❌ Fraud client not found: {full_name} with SSN ending {ssn_last4}")
+            logger.warning(f"❌ Fraud client not found: {full_name} with SSN ending {ssn_last_4}")
             return {
                 "verified": False,
                 "message": f"Client '{full_name}' not found with provided SSN information.",

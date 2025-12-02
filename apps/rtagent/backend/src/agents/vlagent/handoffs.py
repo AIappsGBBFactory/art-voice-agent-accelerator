@@ -282,7 +282,7 @@ async def handoff_transfer_agency_agent(args: HandoffTransferAgencyArgs) -> Dict
         extra["session_overrides"] = session_overrides
 
     payload = _build_handoff_payload(
-        target_agent="TransferAgency",
+        target_agent="TransferAgencyAgent",
         message=message,
         summary=summary,
         context=context,

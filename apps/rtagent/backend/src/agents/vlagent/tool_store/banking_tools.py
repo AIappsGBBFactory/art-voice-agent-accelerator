@@ -190,38 +190,76 @@ async def get_recent_transactions(args: GetRecentTransactionsArgs) -> Dict[str, 
             client_id, limit, account_type
         )
         
+        # Realistic transaction history with ATM fees, foreign transaction fees, and detailed charge information
         transactions = [
             {
                 "date": "2025-11-20",
-                "merchant": "Gas Station",
-                "amount": -42.15,
+                "merchant": "ATM Withdrawal - Non-Network ATM",
+                "amount": -18.00,
+                "account": "****1234",
+                "type": "fee",
+                "category": "atm_fee",
+                "location": "Paris, France",
+                "fee_breakdown": {
+                    "bank_fee": 10.00,
+                    "foreign_atm_surcharge": 8.00,
+                    "description": "Non-network ATM withdrawal outside our partner network. Foreign ATM surcharge set by ATM owner."
+                },
+                "is_foreign_transaction": True,
+                "network_status": "non-network"
+            },
+            {
+                "date": "2025-11-20",
+                "merchant": "ATM Cash Withdrawal",
+                "amount": -200.00,
                 "account": "****1234",
                 "type": "debit",
-                "category": "transportation"
+                "category": "cash_withdrawal",
+                "location": "Paris, France",
+                "is_foreign_transaction": True
             },
             {
                 "date": "2025-11-19",
-                "merchant": "Coffee Shop",
-                "amount": -5.75,
+                "merchant": "Hotel Le Royal",
+                "amount": -385.00,
                 "account": "****9012",
                 "type": "credit",
-                "category": "dining"
+                "category": "travel",
+                "location": "Paris, France",
+                "foreign_transaction_fee": 11.55,
+                "is_foreign_transaction": True
+            },
+            {
+                "date": "2025-11-19",
+                "merchant": "Foreign Transaction Fee",
+                "amount": -11.55,
+                "account": "****9012",
+                "type": "fee",
+                "category": "foreign_transaction_fee",
+                "fee_breakdown": {
+                    "description": "3% foreign transaction fee on $385.00 purchase",
+                    "base_transaction": 385.00,
+                    "fee_percentage": 3.0
+                },
+                "is_foreign_transaction": True
             },
             {
                 "date": "2025-11-18",
-                "merchant": "Online Retailer",
-                "amount": -89.99,
+                "merchant": "Restaurant Le Bistro",
+                "amount": -125.00,
                 "account": "****9012",
                 "type": "credit",
-                "category": "shopping"
+                "category": "dining",
+                "location": "Paris, France",
+                "is_foreign_transaction": True
             },
             {
                 "date": "2025-11-17",
-                "merchant": "Streaming Service",
-                "amount": -14.99,
-                "account": "****1234",
-                "type": "debit",
-                "category": "entertainment"
+                "merchant": "Airline - International Flight",
+                "amount": -850.00,
+                "account": "****9012",
+                "type": "credit",
+                "category": "travel"
             },
             {
                 "date": "2025-11-16",
@@ -241,35 +279,35 @@ async def get_recent_transactions(args: GetRecentTransactionsArgs) -> Dict[str, 
             },
             {
                 "date": "2025-11-14",
-                "merchant": "Electric Company",
-                "amount": -89.32,
-                "account": "****1234",
-                "type": "debit",
-                "category": "utilities"
+                "merchant": "Gas Station",
+                "amount": -65.00,
+                "account": "****9012",
+                "type": "credit",
+                "category": "transportation"
             },
             {
                 "date": "2025-11-13",
-                "merchant": "Restaurant",
-                "amount": -65.20,
+                "merchant": "Coffee Shop",
+                "amount": -5.75,
                 "account": "****9012",
                 "type": "credit",
                 "category": "dining"
             },
             {
                 "date": "2025-11-12",
-                "merchant": "Pharmacy",
-                "amount": -27.50,
-                "account": "****1234",
-                "type": "debit",
-                "category": "health"
+                "merchant": "Online Retailer",
+                "amount": -89.99,
+                "account": "****9012",
+                "type": "credit",
+                "category": "shopping"
             },
             {
                 "date": "2025-11-11",
-                "merchant": "Mobile Phone Bill",
-                "amount": -75.00,
+                "merchant": "Streaming Service",
+                "amount": -14.99,
                 "account": "****1234",
                 "type": "debit",
-                "category": "utilities"
+                "category": "entertainment"
             }
         ]
         
@@ -321,7 +359,7 @@ async def search_card_products(args: SearchCardProductsArgs) -> Dict[str, Any]:
             profile, preferences, categories
         )
         
-        # Card product catalog with matching logic
+        # Card product catalog with tier-based eligibility and detailed benefits
         all_cards = [
             {
                 "product_id": "travel-rewards-001",
@@ -330,15 +368,24 @@ async def search_card_products(args: SearchCardProductsArgs) -> Dict[str, Any]:
                 "foreign_transaction_fee": 0,
                 "rewards_rate": "1.5 points per $1 on all purchases",
                 "intro_apr": "0% for 12 months on purchases",
+                "regular_apr": "19.24% - 29.24% variable APR",
                 "sign_up_bonus": "25,000 bonus points after $1,000 spend in 90 days",
                 "best_for": ["travel", "international", "no_annual_fee", "foreign_fee_avoidance"],
-                "tier_requirement": "None",
+                "tier_requirement": "All tiers (Gold, Platinum, Standard)",
+                "tier_benefits": {
+                    "platinum": "Preferred Rewards members earn 25%-75% more points",
+                    "gold": "Gold members earn 25%-50% more points",
+                    "standard": "Standard rewards earning"
+                },
                 "highlights": [
                     "No annual fee",
-                    "No foreign transaction fees",
-                    "Unlimited 1.5% cash back",
-                    "Travel insurance included"
-                ]
+                    "No foreign transaction fees - perfect for international travelers",
+                    "Unlimited 1.5% cash back or travel rewards",
+                    "Redeem points for travel, dining, or cash back with no blackout dates",
+                    "Travel insurance included (trip delay, baggage delay)",
+                    "No foreign ATM network fees when using partner ATMs"
+                ],
+                "atm_benefits": "No fees at 40,000+ Bank of America ATMs nationwide and partner ATMs internationally"
             },
             {
                 "product_id": "premium-rewards-001",
@@ -347,16 +394,26 @@ async def search_card_products(args: SearchCardProductsArgs) -> Dict[str, Any]:
                 "foreign_transaction_fee": 0,
                 "rewards_rate": "2 points per $1 on travel & dining, 1.5 points per $1 on everything else",
                 "intro_apr": "0% for 15 months on purchases and balance transfers",
+                "regular_apr": "19.24% - 29.24% variable APR",
                 "sign_up_bonus": "60,000 bonus points after $4,000 spend in 90 days",
-                "best_for": ["travel", "dining", "balance_transfer", "premium_benefits"],
-                "tier_requirement": "Preferred Rewards",
+                "best_for": ["travel", "dining", "balance_transfer", "premium_benefits", "international"],
+                "tier_requirement": "Preferred Rewards Platinum or Gold (income verification required)",
+                "tier_benefits": {
+                    "platinum": "Preferred Rewards Platinum: 75% rewards bonus + expedited benefits",
+                    "gold": "Preferred Rewards Gold: 50% rewards bonus",
+                    "standard": "Not recommended - consider Travel Rewards card instead"
+                },
                 "highlights": [
-                    "$95 annual fee",
-                    "2x points on travel and dining",
-                    "$100 airline fee credit",
-                    "$100 TSA PreCheck/Global Entry credit",
-                    "Comprehensive travel insurance"
-                ]
+                    "$95 annual fee (waived first year for Platinum tier)",
+                    "2x points on travel and dining - ideal for high spenders",
+                    "$100 airline fee credit (reimbursement for baggage fees, seat selection)",
+                    "$100 TSA PreCheck/Global Entry credit every 4 years",
+                    "Comprehensive travel insurance (trip cancellation, interruption, delay)",
+                    "No foreign transaction fees on any purchase",
+                    "Priority airport lounge access (4 free visits annually)"
+                ],
+                "atm_benefits": "No fees at 40,000+ Bank of America ATMs + no fees at international partner ATMs",
+                "roi_example": "Customer spending $4,000/month on travel & dining earns ~$1,200/year in rewards, offsetting annual fee"
             },
             {
                 "product_id": "cash-rewards-002",
@@ -365,15 +422,23 @@ async def search_card_products(args: SearchCardProductsArgs) -> Dict[str, Any]:
                 "foreign_transaction_fee": 3,
                 "rewards_rate": "3% cash back on choice category, 2% at grocery stores and wholesale clubs, 1% on everything else",
                 "intro_apr": "0% for 15 months on purchases and balance transfers",
+                "regular_apr": "19.24% - 29.24% variable APR",
                 "sign_up_bonus": "$200 online cash rewards bonus after $1,000 in purchases in first 90 days",
-                "best_for": ["groceries", "gas", "online_shopping", "everyday", "balance_transfer"],
-                "tier_requirement": "None",
+                "best_for": ["groceries", "gas", "online_shopping", "everyday", "balance_transfer", "domestic"],
+                "tier_requirement": "All tiers",
+                "tier_benefits": {
+                    "platinum": "Preferred Rewards Platinum: 75% cash back bonus (up to 5.25% on choice category)",
+                    "gold": "Preferred Rewards Gold: 50% cash back bonus (up to 4.5% on choice category)",
+                    "standard": "Standard 3% cash back on choice category"
+                },
                 "highlights": [
                     "No annual fee",
-                    "3% cash back on your choice category",
-                    "2% at grocery stores and wholesale clubs",
-                    "1% cash back on all other purchases"
-                ]
+                    "3% cash back on your choice category (gas, online shopping, dining, travel, drugstores, or home improvement)",
+                    "2% at grocery stores and wholesale clubs (up to $2,500 in combined quarterly purchases)",
+                    "1% cash back on all other purchases",
+                    "Not ideal for international travelers - 3% foreign transaction fee"
+                ],
+                "atm_benefits": "Standard Bank of America ATM access"
             },
             {
                 "product_id": "unlimited-cash-003",
@@ -382,48 +447,116 @@ async def search_card_products(args: SearchCardProductsArgs) -> Dict[str, Any]:
                 "foreign_transaction_fee": 3,
                 "rewards_rate": "1.5% cash back on all purchases",
                 "intro_apr": "0% for 18 months on purchases and balance transfers",
+                "regular_apr": "19.24% - 29.24% variable APR",
                 "sign_up_bonus": "$200 online cash rewards bonus",
-                "best_for": ["balance_transfer", "everyday", "simple_rewards"],
-                "tier_requirement": "None",
+                "best_for": ["balance_transfer", "everyday", "simple_rewards", "domestic"],
+                "tier_requirement": "All tiers",
+                "tier_benefits": {
+                    "platinum": "Preferred Rewards Platinum: 75% cash back bonus (2.625% on everything)",
+                    "gold": "Preferred Rewards Gold: 50% cash back bonus (2.25% on everything)",
+                    "standard": "Standard 1.5% cash back"
+                },
                 "highlights": [
                     "No annual fee",
                     "Unlimited 1.5% cash back on all purchases",
-                    "0% intro APR for 18 months",
-                    "No categories to track"
-                ]
+                    "0% intro APR for 18 months - longest intro period for balance transfers",
+                    "No categories to track - simple flat-rate rewards",
+                    "Not ideal for international travelers - 3% foreign transaction fee"
+                ],
+                "atm_benefits": "Standard Bank of America ATM access"
             }
         ]
         
-        # Simple matching logic based on preferences and categories
+        # Tier-aware, data-driven matching logic
         def calculate_match_score(card: Dict[str, Any]) -> int:
             score = 0
             prefs_lower = preferences.lower()
+            profile_lower = profile.lower()
             
-            # Match preferences
+            # Extract tier from customer profile
+            tier = None
+            if "platinum" in profile_lower or "preferred rewards" in profile_lower:
+                tier = "platinum"
+            elif "gold" in profile_lower:
+                tier = "gold"
+            else:
+                tier = "standard"
+            
+            # Extract monthly spend from profile
+            monthly_spend = 0
+            if "$" in profile:
+                # Extract numeric spend amount (e.g., "$4500" -> 4500)
+                import re
+                spend_match = re.search(r'\$(\d+(?:,\d+)?)', profile)
+                if spend_match:
+                    monthly_spend = int(spend_match.group(1).replace(',', ''))
+            
+            # Tier-based eligibility and scoring
+            if tier == "platinum":
+                # Platinum customers: Premium cards are great value
+                if "premium" in card["name"].lower():
+                    score += 15
+                elif card["annual_fee"] > 0:
+                    score += 5  # Premium cards still good for high-tier customers
+            elif tier == "gold":
+                # Gold customers: Mid-tier cards, consider annual fee value
+                if card["annual_fee"] == 0:
+                    score += 5
+                if "travel" in card["best_for"] or "rewards" in card["name"].lower():
+                    score += 8
+            else:
+                # Standard tier: No-fee cards are best
+                if card["annual_fee"] == 0:
+                    score += 10
+                if card["annual_fee"] > 50:
+                    score -= 5  # Penalize high annual fees for standard tier
+            
+            # Spending-based ROI calculation
+            if monthly_spend > 3000:
+                # High spenders benefit from premium cards
+                if "2 points" in card["rewards_rate"] or "3%" in card["rewards_rate"]:
+                    score += 10
+                if card["annual_fee"] > 0 and "$100" in str(card.get("highlights", [])):
+                    score += 5  # Credits offset annual fee
+            elif monthly_spend > 1500:
+                # Medium spenders: Balance rewards and fees
+                if "1.5" in card["rewards_rate"]:
+                    score += 5
+            
+            # Match preferences (from handoff context)
             if "travel" in prefs_lower or "foreign" in prefs_lower or "international" in prefs_lower:
                 if card["foreign_transaction_fee"] == 0:
-                    score += 10
+                    score += 15  # Critical for international travelers
                 if "travel" in card["best_for"]:
-                    score += 5
+                    score += 8
+            
+            if "avoid fees" in prefs_lower or "no foreign transaction" in prefs_lower:
+                if card["foreign_transaction_fee"] == 0:
+                    score += 20  # Top priority
             
             if "balance transfer" in prefs_lower or "debt" in prefs_lower:
                 if "balance_transfer" in card["best_for"]:
-                    score += 10
+                    score += 12
                 if "18 months" in card["intro_apr"]:
                     score += 5
             
             if "rewards" in prefs_lower or "cash back" in prefs_lower:
                 if "2 points" in card["rewards_rate"] or "3%" in card["rewards_rate"]:
-                    score += 5
+                    score += 7
             
             if "no fee" in prefs_lower or "free" in prefs_lower:
                 if card["annual_fee"] == 0:
-                    score += 5
+                    score += 10
             
-            # Match spending categories
+            # Match spending categories (from profile behavior)
             for category in categories:
                 if category.lower() in card["best_for"]:
-                    score += 3
+                    score += 5
+            
+            # Foreign transaction frequency boost
+            if "foreign" in " ".join(categories).lower() or "international" in " ".join(categories).lower():
+                if card["foreign_transaction_fee"] == 0:
+                    score += 10
             
             return score
         
@@ -721,3 +854,71 @@ async def handoff_merrill_advisor(args: HandoffMerrillAdvisorArgs) -> Dict[str, 
     except Exception as exc:
         logger.error("Merrill advisor handoff failed: %s", exc, exc_info=True)
         return _json(False, "Unable to connect to advisor.")
+
+
+class RefundFeeArgs(TypedDict, total=False):
+    """Input schema for refund_fee."""
+    client_id: str
+    amount: float
+    fee_type: str
+    reason: str
+
+
+async def refund_fee(args: RefundFeeArgs) -> Dict[str, Any]:
+    """
+    Process a fee refund for the customer.
+    
+    Use when:
+    - Customer qualifies for courtesy refund (based on tier/tenure)
+    - ATM fees, foreign transaction fees, overdraft fees
+    - Customer has confirmed they want the refund processed
+    
+    Args:
+        client_id: Customer identifier
+        amount: Refund amount in dollars (e.g., 10.00)
+        fee_type: Type of fee (e.g., "atm_fee", "foreign_transaction_fee")
+        reason: Reason for refund (e.g., "courtesy refund - Platinum member")
+    
+    Returns success with processing details.
+    """
+    if not isinstance(args, dict):
+        logger.error("Invalid args type: %s. Expected dict.", type(args))
+        return _json(False, "Invalid request format.")
+    
+    try:
+        client_id = (args.get("client_id") or "").strip()
+        amount = args.get("amount")
+        fee_type = (args.get("fee_type") or "").strip()
+        reason = (args.get("reason") or "courtesy refund").strip()
+        
+        if not client_id or not amount:
+            return _json(False, "client_id and amount are required.")
+        
+        # Validate amount
+        try:
+            amount = float(amount)
+            if amount <= 0:
+                return _json(False, "Refund amount must be positive.")
+        except (ValueError, TypeError):
+            return _json(False, "Invalid refund amount.")
+        
+        logger.info(
+            "💵 Processing fee refund | client_id=%s amount=$%.2f type=%s",
+            client_id, amount, fee_type
+        )
+        
+        # Mock refund processing
+        return {
+            "success": True,
+            "message": f"Refund of ${amount:.2f} processed successfully.",
+            "refund_amount": amount,
+            "fee_type": fee_type,
+            "reason": reason,
+            "processing_time": "2 business days",
+            "confirmation_number": f"RFD{client_id[-4:]}{int(amount*100):04d}",
+            "timestamp": _utc_now()
+        }
+    
+    except Exception as exc:
+        logger.error("Fee refund failed: %s", exc, exc_info=True)
+        return _json(False, "Unable to process refund.")

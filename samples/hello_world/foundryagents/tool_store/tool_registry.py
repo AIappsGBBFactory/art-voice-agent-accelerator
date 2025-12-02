@@ -20,7 +20,8 @@ except ImportError:
 # Simple logger for standalone operation
 import logging
 logger = logging.getLogger("tool_registry")
-logging.basicConfig(level=logging.INFO)
+# NOTE: Avoid calling logging.basicConfig() in library modules.
+# It adds handlers to the root logger which can cause duplicate logs.
 
 
 # Tool Registry - maps tool names to actual functions (ARTAgent style)

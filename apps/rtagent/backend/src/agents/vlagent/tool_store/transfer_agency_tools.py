@@ -36,13 +36,15 @@ from .transfer_agency_constants import (
     get_specialist_queue_info, format_currency_amount
 )
 
-# Database configuration
-DATABASE_NAME = "financial_services_db"
-
 def get_ta_collection_manager(collection_name: str) -> CosmosDBMongoCoreManager:
-    """Get a manager for transfer agency collections"""
+    """
+    Get a manager for transfer agency collections.
+    Uses COSMOS_FINANCIAL_DATABASE environment variable for institution-specific databases.
+    Defaults to 'financial_services_db' if not set.
+    """
+    database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
     return CosmosDBMongoCoreManager(
-        database_name=DATABASE_NAME,
+        database_name=database_name,
         collection_name=collection_name
     )
 

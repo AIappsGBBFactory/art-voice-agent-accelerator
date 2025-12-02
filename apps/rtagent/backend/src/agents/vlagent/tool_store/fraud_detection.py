@@ -84,12 +84,14 @@ _transactions_cosmos_manager = None
 _card_orders_cosmos_manager = None
 _mfa_sessions_cosmos_manager = None
 
+database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+user_collection_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
 def get_fraud_cosmos_manager() -> CosmosDBMongoCoreManager:
     """Get or create the fraud cases Cosmos DB manager."""
     global _fraud_cosmos_manager
     if _fraud_cosmos_manager is None:
         _fraud_cosmos_manager = CosmosDBMongoCoreManager(
-            database_name="financial_services_db",
+            database_name=database_name,
             collection_name="fraud_cases"
         )
     return _fraud_cosmos_manager
@@ -99,8 +101,8 @@ def get_users_cosmos_manager() -> CosmosDBMongoCoreManager:
     global _users_cosmos_manager
     if _users_cosmos_manager is None:
         _users_cosmos_manager = CosmosDBMongoCoreManager(
-            database_name="financial_services_db", 
-            collection_name="users"
+            database_name=database_name,
+            collection_name=user_collection_name
         )
     return _users_cosmos_manager
 
@@ -109,7 +111,7 @@ def get_transactions_cosmos_manager() -> CosmosDBMongoCoreManager:
     global _transactions_cosmos_manager
     if _transactions_cosmos_manager is None:
         _transactions_cosmos_manager = CosmosDBMongoCoreManager(
-            database_name="financial_services_db",
+            database_name=database_name,
             collection_name="transactions"
         )
     return _transactions_cosmos_manager
@@ -119,7 +121,7 @@ def get_card_orders_cosmos_manager() -> CosmosDBMongoCoreManager:
     global _card_orders_cosmos_manager
     if _card_orders_cosmos_manager is None:
         _card_orders_cosmos_manager = CosmosDBMongoCoreManager(
-            database_name="financial_services_db",
+            database_name=database_name,
             collection_name="card_orders"
         )
     return _card_orders_cosmos_manager
@@ -129,7 +131,7 @@ def get_mfa_sessions_cosmos_manager() -> CosmosDBMongoCoreManager:
     global _mfa_sessions_cosmos_manager
     if _mfa_sessions_cosmos_manager is None:
         _mfa_sessions_cosmos_manager = CosmosDBMongoCoreManager(
-            database_name="financial_services_db",
+            database_name=database_name,
             collection_name="mfa_sessions"
         )
     return _mfa_sessions_cosmos_manager

@@ -289,3 +289,83 @@ async def handoff_erica_concierge(args: HandoffEricaConciergeArgs) -> Dict[str, 
             "success": False,
             "message": "Unable to return to main assistant."
         }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TRANSFER AGENCY AGENT HANDOFF
+# ═══════════════════════════════════════════════════════════════════
+
+
+class HandoffTransferAgencyArgs(TypedDict, total=False):
+    """Input schema for handoff_transfer_agency_agent."""
+    client_id: str
+    request_type: str
+    client_code: str
+    drip_symbols: str
+
+
+async def handoff_transfer_agency_agent(args: HandoffTransferAgencyArgs) -> Dict[str, Any]:
+    """
+    Hand off customer to Transfer Agency Agent.
+    
+    Use when customer asks about:
+    - DRIP (Dividend Reinvestment Plan) liquidations
+    - Institutional transfer agency services
+    - Compliance verification for institutional accounts
+    - Position inquiries with client codes (e.g., "GCA-48273")
+    
+    Parameters:
+    - client_id: Customer identifier (optional - can be collected by Transfer Agent)
+    - request_type: Type of request ("drip_liquidation", "compliance_inquiry", "position_inquiry")
+    - client_code: Institutional client code (e.g., "GCA-48273", "MLN-90214")
+    - drip_symbols: Stock symbols to liquidate (e.g., "PLTR", "AAPL, MSFT")
+    
+    The Transfer Agency Agent specializes in institutional DRIP services and compliance.
+    """
+    if not isinstance(args, dict):
+        logger.error("Invalid args type: %s. Expected dict.", type(args))
+        return {
+            "success": False,
+            "message": "Invalid request format. Please provide handoff details."
+        }
+    
+    try:
+        client_id = (args.get("client_id") or "").strip()
+        request_type = (args.get("request_type") or "drip_liquidation").strip()
+        client_code = (args.get("client_code") or "").strip()
+        drip_symbols = (args.get("drip_symbols") or "").strip()
+        
+        logger.info(
+            "🏛️ Handoff to Transfer Agency Agent | client=%s type=%s code=%s",
+            client_id or "pending", request_type, client_code
+        )
+        
+        context = {
+            "request_type": request_type,
+            "client_code": client_code,
+            "drip_symbols": drip_symbols,
+            "handoff_timestamp": _utc_now(),
+            "previous_agent": "EricaConcierge"
+        }
+        
+        # Include client_id only if provided
+        if client_id:
+            context["client_id"] = client_id
+        
+        # Transition message that gets spoken via trigger_response(say=...)
+        transition_message = "Let me connect you with our Transfer Agency specialist."
+        
+        return _build_handoff_payload(
+            target_agent="TransferAgencyAgent",
+            message=transition_message,  # This gets spoken, then agent continues
+            summary=f"Transfer agency request: {request_type}",
+            context=context,
+            extra={"should_interrupt_playback": True}
+        )
+    
+    except Exception as exc:
+        logger.error("Transfer agency handoff failed: %s", exc, exc_info=True)
+        return {
+            "success": False,
+            "message": "Unable to transfer to transfer agency specialist. Please try again."
+        }

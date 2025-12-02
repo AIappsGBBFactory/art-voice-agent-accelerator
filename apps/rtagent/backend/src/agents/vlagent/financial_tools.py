@@ -61,10 +61,23 @@ from .tool_store.banking_tools import (
     search_rollover_guidance,
     handoff_merrill_advisor,
 )
+from .tool_store.investment_tools import (
+    get_account_routing_info,
+    get_401k_details,
+    get_rollover_options,
+    calculate_tax_impact,
+)
 from .tool_store.banking_handoffs import (
     handoff_card_recommendation,
     handoff_investment_advisor,
     handoff_erica_concierge,
+    handoff_transfer_agency_agent,
+)
+from .tool_store.transfer_agency_tools import (
+    get_client_data,
+    get_drip_positions,
+    check_compliance_status,
+    calculate_liquidation_proceeds,
 )
 
 logger = get_logger("voicelive.tools.financial")
@@ -127,6 +140,17 @@ STANDARD_TOOL_NAMES: Tuple[str, ...] = (
     "detect_voicemail_and_end_call",
     "confirm_voicemail_and_end_call",
     "transfer_call_to_call_center",
+    # E-signature tools
+    "send_card_agreement",
+    "verify_esignature",
+    "finalize_card_application",
+    # Fee refund tool
+    "refund_fee",
+    # Investment tools
+    "get_account_routing_info",
+    "get_401k_details",
+    "get_rollover_options",
+    "calculate_tax_impact",
 )
 
 
@@ -157,14 +181,16 @@ for tool_name in STANDARD_TOOL_NAMES:
 
 
 _USERS_MANAGER: Optional[CosmosDBMongoCoreManager] = None
+database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+collection_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
 
 
 def _get_users_manager() -> CosmosDBMongoCoreManager:
     global _USERS_MANAGER
     if _USERS_MANAGER is None:
         _USERS_MANAGER = CosmosDBMongoCoreManager(
-            database_name="financial_services_db",
-            collection_name="users",
+            database_name=database_name,
+            collection_name=collection_name,
         )
     return _USERS_MANAGER
 
@@ -482,10 +508,21 @@ register_tool("search_card_products", executor=search_card_products)
 register_tool("get_card_details", executor=get_card_details)
 register_tool("get_retirement_accounts", executor=get_retirement_accounts)
 register_tool("search_rollover_guidance", executor=search_rollover_guidance)
-register_tool("handoff_merrill_advisor", executor=handoff_merrill_advisor)
 register_tool("handoff_card_recommendation", executor=handoff_card_recommendation, is_handoff=True)
 register_tool("handoff_investment_advisor", executor=handoff_investment_advisor, is_handoff=True)
 register_tool("handoff_erica_concierge", executor=handoff_erica_concierge, is_handoff=True)
+register_tool("handoff_transfer_agency_agent", executor=handoff_transfer_agency_agent, is_handoff=True)
+# Transfer Agency tools
+register_tool("get_client_data", executor=get_client_data)
+register_tool("get_drip_positions", executor=get_drip_positions)
+register_tool("check_compliance_status", executor=check_compliance_status)
+register_tool("calculate_liquidation_proceeds", executor=calculate_liquidation_proceeds)
+# Investment tools
+register_tool("get_account_routing_info", executor=get_account_routing_info)
+register_tool("get_401k_details", executor=get_401k_details)
+register_tool("get_rollover_options", executor=get_rollover_options)
+register_tool("calculate_tax_impact", executor=calculate_tax_impact)
+register_tool("handoff_merrill_advisor", executor=handoff_merrill_advisor, is_handoff=False)
 # register_tool(
 #     "transfer_call_to_call_center",
 #     schema=TRANSFER_CALL_CENTER_SCHEMA,
