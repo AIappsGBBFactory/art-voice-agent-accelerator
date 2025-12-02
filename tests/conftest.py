@@ -41,19 +41,18 @@ except ImportError:
     azure_speech_mock.SpeechRecognizer.return_value = MagicMock()
     sys.modules['azure.cognitiveservices.speech'] = azure_speech_mock
 
-# Mock the problematic Lvagent audio_io module to prevent PortAudio imports
+# Mock the problematic vlagents audio_io module to prevent PortAudio imports
 audio_io_mock = MagicMock()
 audio_io_mock.MicSource = MagicMock
 audio_io_mock.SpeakerSink = MagicMock
 audio_io_mock.pcm_to_base64 = MagicMock(return_value="mock_base64_data")
-sys.modules['apps.rtagent.backend.src.agents.Lvagent.audio_io'] = audio_io_mock
+sys.modules['apps.artagent.backend.src.agents.vlagents.audio_io'] = audio_io_mock
 
-# Mock the entire Lvagent module to prevent any problematic imports
-lvagent_mock = MagicMock()
-lvagent_mock.build_lva_from_yaml = MagicMock(return_value=MagicMock())
-sys.modules['apps.rtagent.backend.src.agents.Lvagent'] = lvagent_mock
-sys.modules['apps.rtagent.backend.src.agents.Lvagent.factory'] = lvagent_mock
-sys.modules['apps.rtagent.backend.src.agents.Lvagent.base'] = lvagent_mock
+# Mock the vlagents module to prevent any problematic imports
+vlagent_mock = MagicMock()
+vlagent_mock.AzureVoiceLiveAgent = MagicMock(return_value=MagicMock())
+sys.modules['apps.artagent.backend.src.agents.vlagents'] = vlagent_mock
+sys.modules['apps.artagent.backend.src.agents.vlagents.base'] = vlagent_mock
 
 # Add the project root to Python path
 project_root = Path(__file__).parent

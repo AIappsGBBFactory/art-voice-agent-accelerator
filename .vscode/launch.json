@@ -23,11 +23,11 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-            "apps.rtagent.backend.main:app",
+            "apps.artagent.backend.main:app",
             // Watch only the app backend directory for reloads so changes under tests/ won't trigger reloads
             "--reload",
             "--reload-dir",
-            "${workspaceFolder}/apps/rtagent/backend",
+            "${workspaceFolder}/apps/artagent/backend",
             "--port",
             "8010"
             // "--log-level",

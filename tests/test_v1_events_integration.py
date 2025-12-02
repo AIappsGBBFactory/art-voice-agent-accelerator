@@ -18,18 +18,18 @@ from azure.core.messaging import CloudEvent
 from datetime import datetime
 
 # Import the modules we're testing
-from apps.rtagent.backend.api.v1.events.processor import (
+from apps.artagent.backend.api.v1.events.processor import (
     CallEventProcessor,
     reset_call_event_processor,
 )
-from apps.rtagent.backend.api.v1.events.handlers import CallEventHandlers
-from apps.rtagent.backend.api.v1.events.types import (
+from apps.artagent.backend.api.v1.events.handlers import CallEventHandlers
+from apps.artagent.backend.api.v1.events.types import (
     CallEventContext,
     ACSEventTypes,
     V1EventTypes,
 )
-from apps.rtagent.backend.api.v1.events.registration import register_default_handlers
-from apps.rtagent.backend.api.v1.handlers.acs_call_lifecycle import ACSLifecycleHandler
+from apps.artagent.backend.api.v1.events.registration import register_default_handlers
+from apps.artagent.backend.api.v1.handlers.acs_call_lifecycle import ACSLifecycleHandler
 
 
 class TestV1EventsIntegration:
@@ -120,7 +120,7 @@ class TestV1EventsIntegration:
         """Test that default handlers are registered correctly."""
         register_default_handlers()
 
-        from apps.rtagent.backend.api.v1.events.processor import (
+        from apps.artagent.backend.api.v1.events.processor import (
             get_call_event_processor,
         )
 
@@ -167,7 +167,7 @@ class TestV1EventsIntegration:
     #     sample_call_event_context.clients = mock_clients
 
     #     with patch(
-    #         "apps.rtagent.backend.api.v1.events.acs_events.broadcast_session_envelope",
+    #         "apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope",
     #         new_callable=AsyncMock,
     #     ) as mock_broadcast:
     #         sample_call_event_context.event_type = ACSEventTypes.CALL_CONNECTED
@@ -419,7 +419,7 @@ class TestEndToEndIntegration:
         mock_state.redis = MagicMock()
 
         # 4. Process through event system
-        from apps.rtagent.backend.api.v1.events.processor import (
+        from apps.artagent.backend.api.v1.events.processor import (
             get_call_event_processor,
         )
 
@@ -453,7 +453,7 @@ class TestEndToEndIntegration:
         # Create malformed event
         bad_event = CloudEvent(source="test", type="Unknown.Event.Type", data=None)
 
-        from apps.rtagent.backend.api.v1.events.processor import (
+        from apps.artagent.backend.api.v1.events.processor import (
             get_call_event_processor,
         )
 

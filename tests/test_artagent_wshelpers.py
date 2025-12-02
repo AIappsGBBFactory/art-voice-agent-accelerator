@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 envelopes = importlib.import_module(
-    "apps.rtagent.backend.src.ws_helpers.envelopes"
+    "apps.artagent.backend.src.ws_helpers.envelopes"
 )
 shared_ws = importlib.import_module(
-    "apps.rtagent.backend.src.ws_helpers.shared_ws"
+    "apps.artagent.backend.src.ws_helpers.shared_ws"
 )
 orchestrator = importlib.import_module(
-    "apps.rtagent.backend.src.orchestration.artagent.orchestrator"
+    "apps.artagent.backend.src.orchestration.artagent.orchestrator"
 )
 
 

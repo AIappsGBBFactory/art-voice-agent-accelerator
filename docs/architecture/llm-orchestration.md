@@ -20,7 +20,7 @@
     !!! warning "Implementation Status"
         Voice Live orchestration is **offloaded to Azure AI Foundry agents**. Local orchestration (dependency injection, agent registry) described in this document applies only to Custom Multi-Agent modes.
         
-        **LVAgent integration** (see [`apps/rtagent/backend/src/agents/Lvagent/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/rtagent/backend/src/agents/Lvagent) directory) is **pending full implementation**.
+        **LVAgent integration** (see [`apps/artagent/backend/src/agents/Lvagent/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/artagent/backend/src/agents/Lvagent) directory) is **pending full implementation**.
     
     - **Orchestration**: Managed by Azure AI Foundry (not local)
     - **Configuration**: Azure AI agent configurations
@@ -33,11 +33,11 @@
 !!! info "Scope: Custom Multi-Agent Orchestration Only"
     The dependency injection, agent registry, and orchestration patterns described below apply **only to Custom Multi-Agent modes** (MEDIA/TRANSCRIPTION).
     
-    **Voice Live API** orchestration is handled entirely by Azure AI Foundry agents - see [`apps/rtagent/backend/src/agents/Lvagent/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/rtagent/backend/src/agents/Lvagent) for the integration layer.
+    **Voice Live API** orchestration is handled entirely by Azure AI Foundry agents - see [`apps/artagent/backend/src/agents/Lvagent/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/artagent/backend/src/agents/Lvagent) for the integration layer.
 
 **Simple Function-Based Orchestration:**
 
-```python title="apps/rtagent/backend/api/v1/dependencies/orchestrator.py"
+```python title="apps/artagent/backend/api/v1/dependencies/orchestrator.py"
 def get_orchestrator() -> callable:
     """FastAPI dependency provider for conversation orchestrator."""
     return route_conversation_turn
@@ -49,7 +49,7 @@ async def route_conversation_turn(cm, transcript, ws, **kwargs):
 
 **Usage in Endpoints:**
 
-```python title="apps/rtagent/backend/api/v1/endpoints/media.py"
+```python title="apps/artagent/backend/api/v1/endpoints/media.py"
 @router.websocket("/stream")
 async def acs_media_stream(websocket: WebSocket):
     orchestrator = get_orchestrator()  # Inject orchestrator function
@@ -75,7 +75,7 @@ def get_orchestrator() -> callable:
 ### ARTAgent Framework (YAML-Driven)
 
 !!! example "Authentication Agent Configuration"
-    ```yaml title="apps/rtagent/backend/src/agents/artagent/agent_store/auth_agent.yaml"
+    ```yaml title="apps/artagent/backend/src/agents/artagent/agent_store/auth_agent.yaml"
     agent:
       name: AuthAgent
       description: Handles caller authentication and routing
@@ -100,7 +100,7 @@ def get_orchestrator() -> callable:
     ```
 
 !!! example "Claims Intake Agent Configuration"  
-    ```yaml title="apps/rtagent/backend/src/agents/artagent/agent_store/claim_intake_agent.yaml"
+    ```yaml title="apps/artagent/backend/src/agents/artagent/agent_store/claim_intake_agent.yaml"
     agent:
       name: FNOLIntakeAgent
       description: First Notice of Loss claim processing
@@ -123,7 +123,7 @@ def get_orchestrator() -> callable:
 ### FoundryAgent Framework (Instructions-Based)
 
 !!! example "Customer Service Agent Configuration"
-    ```yaml title="apps/rtagent/backend/src/agents/foundryagents/agent_store/customer_service_agent.yaml"
+    ```yaml title="apps/artagent/backend/src/agents/foundryagents/agent_store/customer_service_agent.yaml"
     agent:
       name: CustomerServiceAgent
       instructions: |
@@ -144,7 +144,7 @@ def get_orchestrator() -> callable:
 
 **Dynamic Agent Registration:**
 
-```python title="apps/rtagent/backend/src/orchestration/artagent/registry.py"
+```python title="apps/artagent/backend/src/orchestration/artagent/registry.py"
 # Registry for pluggable agents
 _REGISTRY: Dict[str, AgentHandler] = {}
 
@@ -159,7 +159,7 @@ def get_specialist(name: str) -> Optional[AgentHandler]:
 
 **Agent Lookup Flow:**
 
-```python title="apps/rtagent/backend/src/orchestration/artagent/orchestrator.py" 
+```python title="apps/artagent/backend/src/orchestration/artagent/orchestrator.py" 
 async def route_turn(cm, transcript, ws, *, is_acs: bool):
     # 1. Check active agent from memory
     active_agent = cm.get_context("active_agent", "General")
@@ -178,7 +178,7 @@ async def route_turn(cm, transcript, ws, *, is_acs: bool):
 
 ### ARTAgent Tools
 
-```python title="apps/rtagent/backend/src/agents/artagent/tool_store/auth.py"
+```python title="apps/artagent/backend/src/agents/artagent/tool_store/auth.py"
 async def authenticate_caller(caller_name: str, phone_number: str):
     """Authenticate caller identity."""
     # Implementation for caller verification
@@ -192,7 +192,7 @@ async def escalate_emergency(reason: str, caller_name: str = None):
 
 ### FoundryAgent Tools
 
-```python title="apps/rtagent/backend/src/agents/foundryagents/tool_store/customer_support_tools.py"
+```python title="apps/artagent/backend/src/agents/foundryagents/tool_store/customer_support_tools.py"
 async def check_order_status(order_id: str):
     """Get real-time order information."""
     # Implementation for order lookup
@@ -271,18 +271,18 @@ cm.set_context("active_agent", "MyAgent")
 
 ### Custom Multi-Agent Integration Files:
 
-- **[`apps/rtagent/backend/api/v1/dependencies/orchestrator.py`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/api/v1/dependencies/orchestrator.py)** - Dependency injection provider
-- **[`apps/rtagent/backend/src/orchestration/artagent/orchestrator.py`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/src/orchestration/artagent/orchestrator.py)** - Main routing logic
-- **[`apps/rtagent/backend/src/orchestration/artagent/registry.py`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/src/orchestration/artagent/registry.py)** - Agent registration system  
-- **[`apps/rtagent/backend/src/agents/artagent/agent_store/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/rtagent/backend/src/agents/artagent/agent_store)** - ARTAgent YAML configurations
-- **[`apps/rtagent/backend/src/agents/foundryagents/agent_store/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/rtagent/backend/src/agents/foundryagents/agent_store)** - FoundryAgent YAML configurations
-- **[`apps/rtagent/backend/src/agents/*/tool_store/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/rtagent/backend/src/agents)** - Function calling implementations
+- **[`apps/artagent/backend/api/v1/dependencies/orchestrator.py`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/api/v1/dependencies/orchestrator.py)** - Dependency injection provider
+- **[`apps/artagent/backend/src/orchestration/artagent/orchestrator.py`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/src/orchestration/artagent/orchestrator.py)** - Main routing logic
+- **[`apps/artagent/backend/src/orchestration/artagent/registry.py`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/src/orchestration/artagent/registry.py)** - Agent registration system  
+- **[`apps/artagent/backend/src/agents/artagent/agent_store/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/artagent/backend/src/agents/artagent/agent_store)** - ARTAgent YAML configurations
+- **[`apps/artagent/backend/src/agents/foundryagents/agent_store/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/artagent/backend/src/agents/foundryagents/agent_store)** - FoundryAgent YAML configurations
+- **[`apps/artagent/backend/src/agents/*/tool_store/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/artagent/backend/src/agents)** - Function calling implementations
 
 ### Voice Live API Integration (Pending):
 
-- **[`apps/rtagent/backend/src/agents/Lvagent/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/rtagent/backend/src/agents/Lvagent)** - LVAgent framework for Voice Live integration
-- **[`apps/rtagent/backend/src/agents/Lvagent/factory.py`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/src/agents/Lvagent/factory.py)** - Agent factory for Voice Live mode
-- **[`apps/rtagent/backend/src/agents/Lvagent/agent_store/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/rtagent/backend/src/agents/Lvagent/agent_store)** - Voice Live agent configurations
+- **[`apps/artagent/backend/src/agents/Lvagent/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/artagent/backend/src/agents/Lvagent)** - LVAgent framework for Voice Live integration
+- **[`apps/artagent/backend/src/agents/Lvagent/factory.py`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/src/agents/Lvagent/factory.py)** - Agent factory for Voice Live mode
+- **[`apps/artagent/backend/src/agents/Lvagent/agent_store/`](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/apps/artagent/backend/src/agents/Lvagent/agent_store)** - Voice Live agent configurations
 
 !!! warning "Voice Live API Status"
     LVAgent integration is **under development**. Current Voice Live mode uses basic passthrough to Azure AI Foundry. Full orchestration capabilities will be available when LVAgent implementation is complete.

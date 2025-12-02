@@ -120,7 +120,7 @@ Pick one of three ways to run the voice inference layer—the rest of the framew
 ### **Understand the Repository map (high‑level)**
 
 ```
-📁 apps/rtagent/           # Main application
+📁 apps/artagent/           # Main application
   ├── 🔧 backend/          # FastAPI + WebSockets voice pipeline
   ├── 🌐 frontend/         # Vite + React demo client
   └── 📜 scripts/          # Helper launchers (backend, frontend, tunnel)

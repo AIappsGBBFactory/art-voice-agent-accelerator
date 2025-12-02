@@ -22,11 +22,26 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, Any
 
 from utils.ml_logging import get_logger
-from apps.rtagent.backend.src.agents.Lvagent.base import AzureLiveVoiceAgent
-from apps.rtagent.backend.src.agents.Lvagent.factory import build_lva_from_yaml
 
+# NOTE: This module references legacy Lvagent code that has been replaced by vlagents.
+# The vlagents module has a different architecture (AzureVoiceLiveAgent is config-only,
+# no .connect()/.close() methods). This pool is currently unused and needs refactoring
+# to work with the new vlagents architecture or should be removed.
+# For now, import the new class for type compatibility but the pool won't function.
+from apps.artagent.backend.src.agents.vlagents.base import AzureVoiceLiveAgent
 
 logger = get_logger("voice_live_pool")
+
+
+def build_lva_from_yaml(yaml_path: str, enable_audio_io: bool = False) -> AzureVoiceLiveAgent:
+    """
+    Legacy compatibility wrapper. Creates an AzureVoiceLiveAgent from a YAML config.
+    
+    NOTE: This is a placeholder for the removed Lvagent.factory.build_lva_from_yaml.
+    The new AzureVoiceLiveAgent is config-only and doesn't have .connect()/.close() methods.
+    This pool module needs refactoring to work with the Azure VoiceLive SDK directly.
+    """
+    return AzureVoiceLiveAgent(config_path=yaml_path)
 
 
 # Environment configuration
@@ -37,13 +52,13 @@ VOICE_LIVE_POOL_PREWARMING_ENABLED = (
 VOICE_LIVE_PREWARMING_BATCH_SIZE = int(os.getenv("VOICE_LIVE_PREWARMING_BATCH_SIZE", "4"))
 VOICE_LIVE_AGENT_YAML = os.getenv(
     "VOICE_LIVE_AGENT_YAML",
-    "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
+    "apps/artagent/backend/src/agents/vlagents/agents_store/agent.yaml",
 )
 
 
 @dataclass
 class VoiceAgentLease:
-    agent: AzureLiveVoiceAgent
+    agent: AzureVoiceLiveAgent
     lease_id: str
     allocated_at: float
 
@@ -79,7 +94,7 @@ class VoiceLiveAgentPool:
             prewarming_batch_size or VOICE_LIVE_PREWARMING_BATCH_SIZE
         )
 
-        self._warm_pool: asyncio.Queue[AzureLiveVoiceAgent] = asyncio.Queue(
+        self._warm_pool: asyncio.Queue[AzureVoiceLiveAgent] = asyncio.Queue(
             maxsize=self._warm_pool_size
         )
 
@@ -114,7 +129,7 @@ class VoiceLiveAgentPool:
         self._metrics["last_updated"] = time.time()
         logger.info("✅ Voice Live pool initialized")
 
-    async def get_agent(self) -> Tuple[AzureLiveVoiceAgent, str]:
+    async def get_agent(self) -> Tuple[AzureVoiceLiveAgent, str]:
         """Get a connected agent. Returns (agent, tier) where tier is 'warm' or 'cold'."""
         async with self._allocation_lock:
             try:
@@ -131,7 +146,7 @@ class VoiceLiveAgentPool:
         self._metrics["last_updated"] = time.time()
         return agent, "cold"
 
-    async def release_agent(self, agent: AzureLiveVoiceAgent) -> None:
+    async def release_agent(self, agent: AzureVoiceLiveAgent) -> None:
         """
         Release agent after use. Safe default is to close and replenish.
 
@@ -174,7 +189,7 @@ class VoiceLiveAgentPool:
         logger.info("✅ Voice Live pool shutdown complete")
 
     # ---------------------------- internals ---------------------------- #
-    async def _create_connected_agent(self) -> AzureLiveVoiceAgent:
+    async def _create_connected_agent(self) -> AzureVoiceLiveAgent:
         agent = build_lva_from_yaml(self._agent_yaml, enable_audio_io=False)
         await asyncio.to_thread(agent.connect)
         logger.debug("Connected new Voice Live agent")

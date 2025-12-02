@@ -154,18 +154,18 @@ https://abc123xy-8010.usw3.devtunnels.ms
 ## 7. Run Backend
 
 ```bash
-cd apps/rtagent/backend
-uvicorn apps.rtagent.backend.main:app --host 0.0.0.0 --port 8010 --reload
+cd apps/artagent/backend
+uvicorn apps.artagent.backend.main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
 ---
 
 ## 8. Frontend Environment
 
-Create or edit `apps/rtagent/frontend/.env`:
+Create or edit `apps/artagent/frontend/.env`:
 
 !!! tip "Sample Configuration"
-    Use [`apps/rtagent/frontend/.env.sample`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/frontend/.env.sample) as a starting template.
+    Use [`apps/artagent/frontend/.env.sample`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/frontend/.env.sample) as a starting template.
 
 Use the dev tunnel URL by default so the frontend (and any external device or ACS-related flows) reaches your backend consistently—even if you open the UI on another machine or need secure HTTPS.
 
@@ -181,7 +181,7 @@ If the tunnel restarts (URL changes), update both `BASE_URL` in the root `.env` 
 ## 9. Run Frontend
 
 ```bash
-cd apps/rtagent/frontend
+cd apps/artagent/frontend
 npm install
 npm run dev
 ```

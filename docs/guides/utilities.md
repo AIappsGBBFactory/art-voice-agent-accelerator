@@ -217,10 +217,10 @@ credential = DefaultAzureCredential()
 # Used by STT/TTS pools, Redis manager, and ACS clients
 ```
 
-### WebSocket Authentication (`apps.rtagent.backend.src.utils.auth`)
+### WebSocket Authentication (`apps.artagent.backend.src.utils.auth`)
 
 ```python
-from apps.rtagent.backend.src.utils.auth import validate_acs_ws_auth
+from apps.artagent.backend.src.utils.auth import validate_acs_ws_auth
 
 # Optional WebSocket authentication for secure environments
 try:

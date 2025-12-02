@@ -171,7 +171,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_acs_media_lifecycle.py -v
 
 # Run with coverage reporting
-python -m pytest --cov=apps.rtagent.backend --cov-report=term-missing tests/
+python -m pytest --cov=apps.artagent.backend --cov-report=term-missing tests/
 
 # Run specific test method
 python -m pytest tests/test_acs_events_handlers.py::TestCallEventHandlers::test_handle_call_connected_with_broadcast -v
@@ -426,7 +426,7 @@ The test suite provides comprehensive coverage of:
 
 ```bash
 # Generate HTML coverage report
-python -m pytest --cov=apps.rtagent.backend --cov-report=html tests/
+python -m pytest --cov=apps.artagent.backend --cov-report=html tests/
 
 # View coverage report
 open htmlcov/index.html
