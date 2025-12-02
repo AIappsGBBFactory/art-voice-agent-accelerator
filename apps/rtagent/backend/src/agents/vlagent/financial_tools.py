@@ -79,6 +79,7 @@ from .tool_store.transfer_agency_tools import (
     check_compliance_status,
     calculate_liquidation_proceeds,
 )
+from .tool_store.ai_search import execute_search_credit_card_faqs
 
 logger = get_logger("voicelive.tools.financial")
 kb_logger = get_logger("voicelive.tools.financial.kb")
@@ -523,6 +524,8 @@ register_tool("get_401k_details", executor=get_401k_details)
 register_tool("get_rollover_options", executor=get_rollover_options)
 register_tool("calculate_tax_impact", executor=calculate_tax_impact)
 register_tool("handoff_merrill_advisor", executor=handoff_merrill_advisor, is_handoff=False)
+# AI Search RAG tools
+register_tool("search_credit_card_faqs", executor=execute_search_credit_card_faqs)
 # register_tool(
 #     "transfer_call_to_call_center",
 #     schema=TRANSFER_CALL_CENTER_SCHEMA,

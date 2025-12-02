@@ -33,6 +33,7 @@ tools:
   - resend_mfa_code
   - search_card_products
   - get_card_details
+  - search_credit_card_faqs
   - send_card_agreement
   - verify_esignature
   - finalize_card_application

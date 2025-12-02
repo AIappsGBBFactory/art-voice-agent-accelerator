@@ -1,0 +1,109 @@
+{
+    "name": "placeholder-index-name",
+    "fields": [
+        {
+            "name": "id",
+            "type": "Edm.String",
+            "key": true,
+            "searchable": false,
+            "filterable": true,
+            "sortable": false,
+            "facetable": false
+        },
+        {
+            "name": "title",
+            "type": "Edm.String",
+            "searchable": true,
+            "filterable": true,
+            "sortable": true,
+            "facetable": false
+        },
+        {
+            "name": "card_name",
+            "type": "Edm.String",
+            "searchable": true,
+            "filterable": true,
+            "sortable": true,
+            "facetable": true
+        },
+        {
+            "name": "content",
+            "type": "Edm.String",
+            "searchable": true,
+            "filterable": false,
+            "sortable": false,
+            "facetable": false
+        },
+        {
+            "name": "file_name",
+            "type": "Edm.String",
+            "searchable": true,
+            "filterable": true,
+            "sortable": true,
+            "facetable": true
+        },
+        {
+            "name": "vector",
+            "type": "Collection(Edm.Single)",
+            "searchable": true,
+            "dimensions": 3072,
+            "vectorSearchProfile": "vector-profile"
+        }
+    ],
+    "vectorSearch": {
+        "algorithms": [
+            {
+                "name": "hnsw-algorithm",
+                "kind": "hnsw",
+                "hnswParameters": {
+                    "metric": "cosine",
+                    "m": 4,
+                    "efConstruction": 400,
+                    "efSearch": 500
+                }
+            }
+        ],
+        "profiles": [
+            {
+                "name": "vector-profile",
+                "algorithm": "hnsw-algorithm",
+                "vectorizer": "openai-vectorizer"
+            }
+        ],
+        "vectorizers": [
+            {
+                "name": "openai-vectorizer",
+                "kind": "azureOpenAI",
+                "azureOpenAIParameters": {
+                    "resourceUri": "placeholder-endpoint",
+                    "deploymentId": "placeholder-deployment",
+                    "apiKey": "placeholder-key",
+                    "modelName": "text-embedding-3-large"
+                }
+            }
+        ]
+    },
+    "semantic": {
+        "defaultConfiguration": "semantic-config",
+        "configurations": [
+            {
+                "name": "semantic-config",
+                "prioritizedFields": {
+                    "titleField": {
+                        "fieldName": "title"
+                    },
+                    "prioritizedContentFields": [
+                        {
+                            "fieldName": "content"
+                        }
+                    ],
+                    "prioritizedKeywordsFields": [
+                        {
+                            "fieldName": "card_name"
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

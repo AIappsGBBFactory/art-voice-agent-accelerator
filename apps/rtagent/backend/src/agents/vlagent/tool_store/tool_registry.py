@@ -75,6 +75,9 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.banking_handoffs import 
     handoff_erica_concierge,
     handoff_transfer_agency_agent,
 )
+from apps.rtagent.backend.src.agents.vlagent.tool_store.ai_search import (
+    search_credit_card_faqs,
+)
 from utils.ml_logging import get_logger
 
 log = get_logger("tools_helper")
@@ -138,6 +141,8 @@ from apps.rtagent.backend.src.agents.vlagent.tool_store.schemas import (
     search_knowledge_base_schema,
     get_paypal_account_summary_schema,
     get_paypal_transactions_schema,
+    # AI Search RAG Tools
+    search_credit_card_faqs_schema,
 )
 
 function_mapping: Dict[str, Callable[..., Any]] = {
@@ -197,6 +202,8 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "get_rollover_options": get_rollover_options,
     "calculate_tax_impact": calculate_tax_impact,
     "handoff_merrill_advisor": handoff_merrill_advisor,
+    # AI Search RAG Tools
+    "search_credit_card_faqs": search_credit_card_faqs,
 }
 
 
@@ -261,6 +268,8 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": search_knowledge_base_schema},
     {"type": "function", "function": get_paypal_account_summary_schema},
     {"type": "function", "function": get_paypal_transactions_schema},
+    # AI Search RAG Tools
+    {"type": "function", "function": search_credit_card_faqs_schema},
 ]
 
 TOOL_REGISTRY: dict[str, dict] = {t["function"]["name"]: t for t in available_tools}

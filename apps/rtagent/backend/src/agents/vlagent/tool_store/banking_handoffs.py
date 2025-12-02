@@ -76,7 +76,7 @@ async def handoff_card_recommendation(args: HandoffCardRecommendationArgs) -> Di
     - Fee disputes or card upgrades
     
     Parameters:
-    - client_id: Customer identifier
+    - client_id: Customer identifier (optional - session context will provide if not passed)
     - customer_goal: What they want (lower fees, better rewards, balance transfer)
     - spending_preferences: Where they spend most (travel, dining, groceries, etc.)
     - current_cards: Brief description of cards they currently have
@@ -91,30 +91,35 @@ async def handoff_card_recommendation(args: HandoffCardRecommendationArgs) -> Di
         }
     
     try:
+        # client_id is optional - the receiving agent will get it from session context
         client_id = (args.get("client_id") or "").strip()
         customer_goal = (args.get("customer_goal") or "").strip()
         spending_prefs = (args.get("spending_preferences") or "").strip()
         current_cards = (args.get("current_cards") or "").strip()
         
-        if not client_id:
+        # customer_goal is the only required field for a meaningful handoff
+        if not customer_goal:
             return {
                 "success": False,
-                "message": "client_id is required for handoff."
+                "message": "Please specify what the customer is looking for (e.g., avoid fees, better rewards)."
             }
         
         logger.info(
             "💳 Handoff to Card Recommendation Agent | client=%s goal=%s",
-            client_id, customer_goal
+            client_id or "from_session", customer_goal
         )
         
         context = {
-            "client_id": client_id,
             "customer_goal": customer_goal,
             "spending_preferences": spending_prefs,
             "current_cards": current_cards,
             "handoff_timestamp": _utc_now(),
             "previous_agent": "EricaConcierge"
         }
+        
+        # Include client_id in context only if provided
+        if client_id:
+            context["client_id"] = client_id
         
         # Transition message that gets spoken via trigger_response(say=...)
         transition_message = "Let me find the best card options for you."
@@ -160,7 +165,7 @@ async def handoff_investment_advisor(args: HandoffInvestmentAdvisorArgs) -> Dict
     - Contribution rate optimization
     
     Parameters:
-    - client_id: Customer identifier
+    - client_id: Customer identifier (optional - session context will provide if not passed)
     - topic: Main topic (rollover, IRA, retirement planning, etc.)
     - employment_change: Details if they changed jobs (optional)
     - retirement_question: Specific question about retirement
@@ -175,30 +180,32 @@ async def handoff_investment_advisor(args: HandoffInvestmentAdvisorArgs) -> Dict
         }
     
     try:
+        # client_id is optional - the receiving agent will get it from session context
         client_id = (args.get("client_id") or "").strip()
         topic = (args.get("topic") or "retirement planning").strip()
         employment_change = (args.get("employment_change") or "").strip()
         retirement_question = (args.get("retirement_question") or "").strip()
         
-        if not client_id:
-            return {
-                "success": False,
-                "message": "client_id is required for handoff."
-            }
+        # topic is the only required field for a meaningful handoff
+        if not topic:
+            topic = "retirement planning"
         
         logger.info(
             "🏦 Handoff to Investment Advisor Agent | client=%s topic=%s",
-            client_id, topic
+            client_id or "from_session", topic
         )
         
         context = {
-            "client_id": client_id,
             "topic": topic,
             "employment_change": employment_change,
             "retirement_question": retirement_question,
             "handoff_timestamp": _utc_now(),
             "previous_agent": "EricaConcierge"
         }
+        
+        # Include client_id in context only if provided
+        if client_id:
+            context["client_id"] = client_id
         
         # Transition message that gets spoken via trigger_response(say=...)
         transition_message = "Let me look at your retirement accounts and options."

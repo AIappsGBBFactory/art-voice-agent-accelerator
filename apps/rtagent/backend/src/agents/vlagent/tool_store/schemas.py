@@ -1554,7 +1554,7 @@ handoff_card_recommendation_schema: Dict[str, Any] = {
         "properties": {
             "client_id": {
                 "type": "string",
-                "description": "Unique customer identifier."
+                "description": "Customer identifier from session_profile.client_id. IMPORTANT: Use the exact client_id from the session profile (e.g., 'pablo_salvador_001'). If session_profile is loaded, this value is available."
             },
             "customer_goal": {
                 "type": "string",
@@ -1569,7 +1569,7 @@ handoff_card_recommendation_schema: Dict[str, Any] = {
                 "description": "Customer's current card(s) with pain points identified. Examples: 'Cash Rewards card - paying 3% foreign transaction fees', 'Basic card - no rewards on $3K monthly spend', 'Premium card - not using benefits to justify $95 fee'"
             }
         },
-        "required": ["client_id"],
+        "required": ["customer_goal"],
         "additionalProperties": False,
     },
 }
@@ -1587,7 +1587,7 @@ handoff_investment_advisor_schema: Dict[str, Any] = {
         "properties": {
             "client_id": {
                 "type": "string",
-                "description": "Unique customer identifier."
+                "description": "Customer identifier from session_profile.client_id. Use the exact client_id if available."
             },
             "topic": {
                 "type": "string",
@@ -1602,7 +1602,7 @@ handoff_investment_advisor_schema: Dict[str, Any] = {
                 "description": "Specific retirement question customer has."
             }
         },
-        "required": ["client_id"],
+        "required": ["topic"],
         "additionalProperties": False,
     },
 }
@@ -1856,6 +1856,61 @@ handoff_merrill_advisor_schema: Dict[str, Any] = {
             },
         },
         "required": ["client_id", "reason"],
+        "additionalProperties": False,
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# AI SEARCH - Credit Card FAQ RAG Tool
+# ═══════════════════════════════════════════════════════════════════
+
+search_credit_card_faqs_schema: Dict[str, Any] = {
+    "name": "search_credit_card_faqs",
+    "description": (
+        "Search the credit card knowledge base to find answers about card features, benefits, fees, "
+        "eligibility requirements, and frequently asked questions. "
+        "\n\n**WHEN TO USE:**"
+        "\n- Customer asks about a SPECIFIC card's features: Use with card_name filter"
+        "\n- Customer asks to COMPARE cards: Call multiple times with different card_name filters"
+        "\n- Customer asks general questions about ALL cards: Use without card_name filter"
+        "\n\n**IMPORTANT BEHAVIORS:**"
+        "\n- If customer mentions a specific card (e.g., 'Premium Rewards APR'), ALWAYS set card_name parameter"
+        "\n- If question is too vague (e.g., 'Tell me about your cards'), ASK a clarifying question first"
+        "\n- For comparisons, call this tool multiple times with each card_name to get accurate per-card info"
+        "\n\n**Examples:**"
+        "\n- 'What's the APR on Premium Rewards?' → card_name='Premium Rewards', query='APR'"
+        "\n- 'Compare foreign fees on Travel vs Premium' → Call twice: card_name='Travel Rewards' then card_name='Premium Rewards'"
+        "\n- 'Which cards have no annual fee?' → No card_name filter, query='no annual fee cards'"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "The specific question or topic to search for. Keep it focused. "
+                    "Good: 'annual fee', 'foreign transaction fees', 'travel insurance benefits', 'APR rate', 'rewards rate' "
+                    "Bad: 'tell me everything about the card' (too broad)"
+                )
+            },
+            "card_name": {
+                "type": "string",
+                "description": (
+                    "Filter to search ONLY within a specific card's documentation. "
+                    "CRITICAL: Always use this when the customer is asking about a specific card to avoid mixing info from other cards. "
+                    "Valid values: 'Premium Rewards', 'Travel Rewards', 'Unlimited Cash Rewards', "
+                    "'Customized Cash Rewards', 'BankAmericard', 'Elite'. "
+                    "Leave empty ONLY when searching across all cards (e.g., 'which cards have no foreign fees?')"
+                )
+            },
+            "top_k": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10,
+                "description": "Number of passages to return. Use 3 for quick answers, 5+ for comprehensive research."
+            }
+        },
+        "required": ["query"],
         "additionalProperties": False,
     },
 }
