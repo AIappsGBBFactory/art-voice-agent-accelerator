@@ -75,6 +75,7 @@ async def run():
             handoff_map=HANDOFF_MAP,
             start_agent=settings.start_agent,
             audio_processor=audio,
+            model_name=settings.azure_voicelive_model,
         )
         await orch.start()
 

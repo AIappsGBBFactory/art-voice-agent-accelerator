@@ -181,14 +181,16 @@ for tool_name in STANDARD_TOOL_NAMES:
 
 
 _USERS_MANAGER: Optional[CosmosDBMongoCoreManager] = None
+database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+collection_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
 
 
 def _get_users_manager() -> CosmosDBMongoCoreManager:
     global _USERS_MANAGER
     if _USERS_MANAGER is None:
         _USERS_MANAGER = CosmosDBMongoCoreManager(
-            database_name="financial_services_db",
-            collection_name="users",
+            database_name=database_name,
+            collection_name=collection_name,
         )
     return _USERS_MANAGER
 

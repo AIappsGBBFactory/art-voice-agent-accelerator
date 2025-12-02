@@ -596,12 +596,12 @@ verify_fraud_client_identity_schema: Dict[str, Any] = {
                 "type": "string",
                 "description": "Client's full legal name.",
             },
-            "ssn_last4": {
+            "ssn_last_4": {
                 "type": "string",
                 "description": "Last 4 digits of Social Security Number.",
             },
         },
-        "required": ["full_name", "ssn_last4"],
+        "required": ["full_name", "ssn_last_4"],
         "additionalProperties": False,
     },
 }
