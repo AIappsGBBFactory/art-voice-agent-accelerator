@@ -37,7 +37,7 @@ opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-requests
 opentelemetry-instrumentation-urllib
 opentelemetry-instrumentation-urllib3
-opentelemetry-instrumentation-openai-v2>=2.2b0  # Fixes LogRecord deprecation warning
+# opentelemetry-instrumentation-openai-v2 - REMOVED: causes duplicate spans with manual spans in aoai/manager.py
 
 # Azure + misc
 azure-core>=1.29.0

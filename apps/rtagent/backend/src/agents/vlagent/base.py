@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+from jinja2 import Template
 from azure.ai.voicelive.models import (
     ServerVad,
     AzureSemanticVad,
@@ -174,9 +175,48 @@ class AzureVoiceLiveAgent:
         self._validate_cfg()
 
         self.name: str = self._cfg["agent"]["name"]
-        self.greeting: Optional[str] = self._cfg["agent"].get("greeting")
-        self.return_greeting: Optional[str] = self._cfg["agent"].get("return_greeting")
-
+        
+        # Render greeting templates with environment variables
+        greeting_raw = self._cfg["agent"].get("greeting")
+        return_greeting_raw = self._cfg["agent"].get("return_greeting")
+        
+        # Get environment variables with defaults
+        agent_name_env = os.getenv("AGENT_NAME", "ARTAgent")
+        institution_name_env = os.getenv("INSTITUTION_NAME", "Contoso Financial Institution")
+        
+        # Render greetings as Jinja2 templates
+        if greeting_raw:
+            try:
+                template = Template(greeting_raw)
+                self.greeting: Optional[str] = template.render(
+                    agent_name=agent_name_env,
+                    institution_name=institution_name_env
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to render greeting template for %s: %s. Using raw greeting.",
+                    self.name, exc
+                )
+                self.greeting = greeting_raw
+        else:
+            self.greeting = None
+            
+        if return_greeting_raw:
+            try:
+                template = Template(return_greeting_raw)
+                self.return_greeting: Optional[str] = template.render(
+                    agent_name=agent_name_env,
+                    institution_name=institution_name_env
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to render return_greeting template for %s: %s. Using raw greeting.",
+                    self.name, exc
+                )
+                self.return_greeting = return_greeting_raw
+        else:
+            self.return_greeting = None
+        
         prompts = self._cfg.get("prompts", {}) or {}
         self.prompt_path: str = prompts.get("path") or prompts.get("system_template_path") or ""
 
@@ -241,24 +281,33 @@ class AzureVoiceLiveAgent:
         """
         # Create invoke_agent span with GenAI semantic conventions
         # This is required for App Insights Agents blade to show Agent Runs
-        # See: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/
+        # Format matches the expected App Insights Agents trace format
         with tracer.start_as_current_span(
             f"invoke_agent {self.name}",
             kind=SpanKind.INTERNAL,
             attributes={
+                # Component identifier
+                "component": "voicelive",
+                
+                # Session correlation (ai.* prefix for App Insights)
+                "ai.session.id": session_id or "",
+                SpanAttr.SESSION_ID.value: session_id or "",
+                SpanAttr.CALL_CONNECTION_ID.value: call_connection_id or "",
+                
                 # Required GenAI semantic conventions for Agent Runs
                 SpanAttr.GENAI_OPERATION_NAME.value: GenAIOperation.INVOKE_AGENT,
+                SpanAttr.GENAI_PROVIDER_NAME.value: GenAIProvider.AZURE_OPENAI,
                 "gen_ai.agent.name": self.name,
                 "gen_ai.agent.description": self.description,
-                SpanAttr.GENAI_PROVIDER_NAME.value: GenAIProvider.AZURE_OPENAI,
+                
+                # VoiceLive-specific agent context
+                "voicelive.agent_name": self.name,
+                
                 # Agent configuration
                 "agent.tools_count": len(self.tools),
                 "agent.voice_name": self.voice_name or "default",
                 "agent.voice_type": self.voice_type,
                 "agent.has_greeting": say is not None,
-                # Session correlation
-                SpanAttr.SESSION_ID.value: session_id or "",
-                SpanAttr.CALL_CONNECTION_ID.value: call_connection_id or "",
             },
         ) as agent_span:
             try:
@@ -481,10 +530,25 @@ class AzureVoiceLiveAgent:
             raise ValueError("'session.turn_detection' must be an object")
 
 def load_agents_from_folder(folder: str = "agents") -> dict[str, AzureVoiceLiveAgent]:
+    """
+    Load all agent YAML files from the specified folder and its subdirectories.
+    
+    Searches recursively for *.yaml files, supporting organized folder structures
+    like agents/banking/, agents/healthcare/, etc.
+    """
     out: dict[str, AzureVoiceLiveAgent] = {}
-    for p in Path(folder).glob("*.yaml"):
-        agent = AzureVoiceLiveAgent(config_path=p)
-        out[agent.name] = agent
+    folder_path = Path(folder)
+    
+    # Search recursively for all .yaml files (including subdirectories)
+    for p in folder_path.rglob("*.yaml"):
+        try:
+            agent = AzureVoiceLiveAgent(config_path=p)
+            out[agent.name] = agent
+            logger.info("Loaded agent '%s' from %s", agent.name, p.relative_to(folder_path))
+        except Exception as exc:
+            logger.error("Failed to load agent from %s: %s", p, exc, exc_info=True)
+    
     if not out:
-        raise RuntimeError(f"No agent YAML files found in {folder}")
+        raise RuntimeError(f"No agent YAML files found in {folder} or its subdirectories")
+    
     return out

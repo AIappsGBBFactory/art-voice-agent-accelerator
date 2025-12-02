@@ -815,6 +815,33 @@ const styles = {
     zIndex: 48,
     backdropFilter: "blur(10px)",
   },
+  viewInlineSwitch: {
+    position: "absolute",
+    right: "18px",
+    top: "50%",
+    transform: "translateY(-50%)",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "4px 6px",
+    background: "rgba(255,255,255,0.85)",
+    border: "1px solid rgba(226,232,240,0.8)",
+    borderRadius: "14px",
+    boxShadow: "0 4px 12px rgba(15,23,42,0.08)",
+  },
+  viewInlineButton: (active) => ({
+    padding: "6px 10px",
+    borderRadius: "10px",
+    border: active ? "1px solid rgba(59,130,246,0.55)" : "1px solid rgba(148,163,184,0.45)",
+    background: active ? "linear-gradient(135deg, #dbeafe, #bfdbfe)" : "rgba(255,255,255,0.95)",
+    color: active ? "#1d4ed8" : "#475569",
+    fontSize: "12px",
+    fontWeight: 700,
+    letterSpacing: "0.02em",
+    cursor: active ? "default" : "pointer",
+    boxShadow: active ? "0 6px 12px rgba(59,130,246,0.18)" : "none",
+    transition: "all 0.12s ease",
+  }),
   graphDock: {
     position: "fixed",
     left: "max(8px, calc(50% - 480px))",
@@ -3156,6 +3183,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
       }}>
         Input: {(audioLevel * 100).toFixed(1)}% | Output: {(outputAudioLevel * 100).toFixed(1)}% | Amp: {waveRenderState.amplitude.toFixed(1)} | Speaker: {bothDisplayActive ? 'Barge-In' : (userDisplayActive ? 'User' : assistantDisplayActive ? 'Assistant' : (activeSpeaker || 'Idle'))}
       </div>
+
     </div>
   );
 });
@@ -3174,6 +3202,8 @@ const ConversationControls = React.memo(({
   micButtonRef,
   micMuted,
   onMuteToggle,
+  mainView,
+  onMainViewChange,
 }) => {
   const [resetHovered, setResetHovered] = useState(false);
   const [micHovered, setMicHovered] = useState(false);
@@ -3390,6 +3420,21 @@ const ConversationControls = React.memo(({
           )}
         </div>
       </div>
+
+      {typeof onMainViewChange === "function" && (
+        <div style={styles.viewInlineSwitch}>
+          {["chat", "graph", "timeline"].map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              style={styles.viewInlineButton(mainView === mode)}
+              onClick={() => onMainViewChange(mode)}
+            >
+              {mode === "chat" ? "Chat" : mode === "graph" ? "Graph" : "Timeline"}
+            </button>
+          ))}
+        </div>
+      )}
 
       {isCallDisabled && showPhoneTooltip && phoneDisabledPos && (
         <div
@@ -6832,19 +6877,6 @@ function RealTimeVoiceApp() {
           <BackendIndicator url={API_BASE_URL} onStatusChange={handleSystemStatus} />
         </div>
         <div style={styles.mainShell}>
-          <div style={styles.viewFloatingDock}>
-            {["chat", "graph", "timeline"].map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                style={styles.viewSwitchButton(mainView === mode)}
-                onClick={() => setMainView(mode)}
-              >
-                {mode === "chat" ? "Chat" : mode === "graph" ? "Graph" : "Timeline"}
-              </button>
-            ))}
-          </div>
-
           {/* App Header */}
           <div style={styles.appHeader}>
             <div style={styles.appHeaderIdentity}>
@@ -6996,6 +7028,8 @@ function RealTimeVoiceApp() {
               onPhoneButtonClick={handlePhoneButtonClick}
               phoneButtonRef={phoneButtonRef}
               micButtonRef={micButtonRef}
+              mainView={mainView}
+              onMainViewChange={setMainView}
             />
 
             <div style={styles.realtimeModeDock} ref={realtimePanelAnchorRef} />

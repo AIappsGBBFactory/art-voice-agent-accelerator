@@ -19,7 +19,7 @@ from apps.rtagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
     create_service_dependency_attrs,
 )
-from src.enums.monitoring import SpanAttr
+from src.enums.monitoring import SpanAttr, GenAIOperation, GenAIProvider
 
 logger = get_logger("voicelive.orchestrator")
 tracer = trace.get_tracer(__name__)
@@ -80,6 +80,7 @@ class LiveOrchestrator:
         call_connection_id: Optional[str] = None,
         *,
         transport: str = "acs",
+        model_name: Optional[str] = None,
     ):
         self.conn = conn
         self.agents = agents
@@ -87,6 +88,7 @@ class LiveOrchestrator:
         self.active = start_agent
         self.audio = audio_processor
         self.messenger = messenger
+        self._model_name = model_name or "gpt-4o-realtime"  # Definitive model from VoiceLive connection
         self.visited_agents: set = set()  # Track which agents have been visited
         self._pending_greeting: Optional[str] = None
         self._pending_greeting_agent: Optional[str] = None
@@ -103,6 +105,12 @@ class LiveOrchestrator:
         self._llm_turn_start_time: Optional[float] = None
         self._llm_first_token_time: Optional[float] = None
         self._llm_turn_number: int = 0
+        
+        # Per-agent token usage tracking for invoke_agent spans
+        self._agent_input_tokens: int = 0
+        self._agent_output_tokens: int = 0
+        self._agent_start_time: float = time.perf_counter()
+        self._agent_response_count: int = 0
 
         if self.messenger:
             try:
@@ -137,6 +145,11 @@ class LiveOrchestrator:
         """Switch to a different agent and apply its session configuration."""
         previous_agent = self.active
         agent = self.agents[agent_name]
+        
+        # Emit invoke_agent summary span for the outgoing agent with accumulated token usage
+        # This ensures each agent invocation gets attributed its token consumption
+        if previous_agent != agent_name and self._agent_response_count > 0:
+            self._emit_agent_summary_span(previous_agent)
 
         with tracer.start_as_current_span(
             "voicelive_orchestrator.switch_agent",
@@ -247,6 +260,12 @@ class LiveOrchestrator:
                 if not has_handoff and self._pending_greeting and self._pending_greeting_agent == agent_name:
                     self._schedule_greeting_fallback(agent_name)
                 
+                # Reset token counters for the new agent
+                self._agent_input_tokens = 0
+                self._agent_output_tokens = 0
+                self._agent_start_time = time.perf_counter()
+                self._agent_response_count = 0
+                
                 switch_span.set_status(trace.StatusCode.OK)
             except Exception as ex:
                 switch_span.set_status(trace.StatusCode.ERROR, str(ex))
@@ -255,6 +274,69 @@ class LiveOrchestrator:
                 raise
             
             logger.info("[Active Agent] %s is now active", self.active)
+
+    def _emit_agent_summary_span(self, agent_name: str) -> None:
+        """
+        Emit an invoke_agent summary span with accumulated token usage.
+        
+        Called when switching away from an agent to record the total tokens
+        consumed during that agent's session. This ensures GenAI semantic
+        conventions for invoke_agent operations include token attribution.
+        """
+        agent = self.agents.get(agent_name)
+        if not agent:
+            return
+        
+        session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
+        agent_duration_ms = (time.perf_counter() - self._agent_start_time) * 1000
+        
+        with tracer.start_as_current_span(
+            f"invoke_agent {agent_name}",
+            kind=trace.SpanKind.INTERNAL,
+            attributes={
+                # Component identifier
+                "component": "voicelive",
+                
+                # Session correlation
+                "ai.session.id": session_id or "",
+                SpanAttr.SESSION_ID.value: session_id or "",
+                SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id or "",
+                
+                # GenAI semantic conventions for Agent Runs
+                SpanAttr.GENAI_OPERATION_NAME.value: GenAIOperation.INVOKE_AGENT,
+                SpanAttr.GENAI_PROVIDER_NAME.value: GenAIProvider.AZURE_OPENAI,
+                SpanAttr.GENAI_REQUEST_MODEL.value: self._model_name,
+                "gen_ai.agent.name": agent_name,
+                "gen_ai.agent.description": getattr(agent, "description", f"VoiceLive agent: {agent_name}"),
+                
+                # Token usage accumulated during this agent's session
+                SpanAttr.GENAI_USAGE_INPUT_TOKENS.value: self._agent_input_tokens,
+                SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value: self._agent_output_tokens,
+                
+                # VoiceLive-specific context
+                "voicelive.agent_name": agent_name,
+                "voicelive.response_count": self._agent_response_count,
+                "voicelive.duration_ms": agent_duration_ms,
+            },
+        ) as agent_span:
+            agent_span.add_event(
+                "gen_ai.agent.session_complete",
+                {
+                    "agent": agent_name,
+                    "input_tokens": self._agent_input_tokens,
+                    "output_tokens": self._agent_output_tokens,
+                    "response_count": self._agent_response_count,
+                    "duration_ms": agent_duration_ms,
+                },
+            )
+            logger.debug(
+                "[Agent Summary] %s complete | tokens=%d/%d responses=%d duration=%.1fms",
+                agent_name,
+                self._agent_input_tokens,
+                self._agent_output_tokens,
+                self._agent_response_count,
+                agent_duration_ms,
+            )
 
     def _transport_supports_acs(self) -> bool:
         return self._transport == "acs"
@@ -450,27 +532,54 @@ class LiveOrchestrator:
             logger.warning("Missing call_id or name for function call")
             return False
         
+        # Parse arguments first so we can include parameter count in span
+        try:
+            args = json.loads(args_json) if args_json else {}
+        except Exception:
+            logger.warning("Could not parse tool arguments for '%s'; using empty dict", name)
+            args = {}
+        
+        # Create execute_tool span with GenAI semantic conventions for App Insights Agents blade
+        # Format matches the expected App Insights Agents trace format (see screenshot reference)
+        session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
         with tracer.start_as_current_span(
-            "voicelive_orchestrator.execute_tool",
+            f"execute_tool {name}",
             kind=trace.SpanKind.INTERNAL,
-            attributes=create_service_handler_attrs(
-                service_name="LiveOrchestrator._execute_tool_call",
-                call_connection_id=self.call_connection_id,
-                session_id=getattr(self.messenger, "session_id", None) if self.messenger else None,
-            ),
+            attributes={
+                # Component identifier
+                "component": "voicelive",
+                
+                # Session correlation (ai.* prefix for App Insights)
+                "ai.session.id": session_id or "",
+                SpanAttr.SESSION_ID.value: session_id or "",
+                SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id or "",
+                
+                # Transport type
+                "transport.type": self._transport.upper() if self._transport else "ACS",
+                
+                # GenAI semantic conventions (required for Agents blade Tool Calls)
+                SpanAttr.GENAI_OPERATION_NAME.value: GenAIOperation.EXECUTE_TOOL,
+                SpanAttr.GENAI_TOOL_NAME.value: name,
+                SpanAttr.GENAI_TOOL_CALL_ID.value: call_id,
+                SpanAttr.GENAI_TOOL_TYPE.value: "function",
+                SpanAttr.GENAI_PROVIDER_NAME.value: GenAIProvider.AZURE_OPENAI,
+                
+                # Duplicate tool attributes for different query patterns
+                "tool.call_id": call_id,
+                "tool.parameters_count": len(args),
+                
+                # VoiceLive-specific context (matches gpt_flow pattern from screenshot)
+                "voicelive.tool_name": name,
+                "voicelive.tool_id": call_id,
+                "voicelive.agent_name": self.active,
+                "voicelive.is_acs": self._transport == "acs",
+                "voicelive.args_length": len(args_json) if args_json else 0,
+                
+                # Tool metadata
+                "voicelive.tool.is_handoff": is_handoff_tool(name),
+                "voicelive.tool.is_transfer": name in TRANSFER_TOOL_NAMES,
+            },
         ) as tool_span:
-            tool_span.set_attribute("voicelive.tool.name", name)
-            tool_span.set_attribute("voicelive.tool.call_id", call_id)
-            tool_span.set_attribute("voicelive.tool.is_handoff", is_handoff_tool(name))
-            tool_span.set_attribute("voicelive.tool.is_transfer", name in TRANSFER_TOOL_NAMES)
-            tool_span.set_attribute("voicelive.active_agent", self.active)
-
-            # Parse arguments
-            try:
-                args = json.loads(args_json) if args_json else {}
-            except Exception:
-                logger.warning("Could not parse tool arguments for '%s'; using empty dict", name)
-                args = {}
             
             if name in TRANSFER_TOOL_NAMES:
                 if self._transport_supports_acs() and (not args.get("call_connection_id")) and self.call_connection_id:
@@ -547,19 +656,27 @@ class LiveOrchestrator:
                 raise
 
             elapsed_ms = (time.perf_counter() - start_ts) * 1000
+            
+            # Set execution metrics (matching App Insights Agents format)
+            tool_span.set_attribute("execution.duration_ms", elapsed_ms)
             tool_span.set_attribute("voicelive.tool.elapsed_ms", elapsed_ms)
 
             error_payload: Optional[str] = None
+            execution_success = True
             if isinstance(result, dict):
                 for key in ("success", "ok", "authenticated"):
                     if key in result and not result[key]:
                         notify_status = "error"
+                        execution_success = False
                         break
                 if notify_status == "error":
                     err_val = result.get("message") or result.get("error")
                     if err_val:
                         error_payload = str(err_val)
-
+            
+            # Set execution result attributes (matching App Insights Agents format)
+            tool_span.set_attribute("execution.success", execution_success)
+            tool_span.set_attribute("result.type", type(result).__name__ if result else "None")
             tool_span.set_attribute("voicelive.tool.status", notify_status)
 
             if name in TRANSFER_TOOL_NAMES and notify_status != "error" and isinstance(result, dict):
@@ -721,7 +838,7 @@ class LiveOrchestrator:
 
                 with tracer.start_as_current_span(
                     "voicelive.conversation.item_create",
-                    kind=trace.SpanKind.CLIENT,
+                    kind=trace.SpanKind.SERVER,
                     attributes=create_service_dependency_attrs(
                         source_service="voicelive_orchestrator",
                         target_service="azure_voicelive",
@@ -734,7 +851,7 @@ class LiveOrchestrator:
 
                 with tracer.start_as_current_span(
                     "voicelive.response.create",
-                    kind=trace.SpanKind.CLIENT,
+                    kind=trace.SpanKind.SERVER,
                     attributes=create_service_dependency_attrs(
                         source_service="voicelive_orchestrator",
                         target_service="azure_voicelive",
@@ -930,6 +1047,10 @@ class LiveOrchestrator:
             response_id = self._response_id_from_event(event)
             if response_id and response_id == self._active_response_id:
                 self._active_response_id = None
+            
+            # Emit GenAI model metrics span for App Insights Agents blade
+            # VoiceLive SDK may expose usage info in the response object
+            self._emit_model_metrics(event)
 
         elif et == ServerEventType.ERROR:
             logger.error("VoiceLive error: %s", getattr(event.error, "message", "unknown"))
@@ -1037,3 +1158,124 @@ class LiveOrchestrator:
                 await self.audio.stop_playback()
             except Exception:
                 logger.debug("Audio stop playback failed during automatic call center transfer", exc_info=True)
+
+    def _emit_model_metrics(self, event: Any) -> None:
+        """
+        Emit GenAI model-level metrics for App Insights Agents blade.
+        
+        The VoiceLive SDK's RESPONSE_DONE event may include usage statistics.
+        This method extracts available metrics and emits them as GenAI spans.
+        
+        Format matches the expected App Insights LLM trace format with:
+        - gen_ai.system: openai
+        - gen_ai.operation.name: chat
+        - gen_ai.request.model / gen_ai.response.model
+        - gen_ai.usage.input_tokens / gen_ai.usage.output_tokens
+        - gen_ai.response.id
+        """
+        response = getattr(event, "response", None)
+        if not response:
+            return
+        
+        response_id = getattr(response, "id", None)
+        
+        # Extract usage metrics if available
+        usage = getattr(response, "usage", None)
+        input_tokens = None
+        output_tokens = None
+        
+        if usage:
+            input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", None)
+            output_tokens = getattr(usage, "output_tokens", None) or getattr(usage, "completion_tokens", None)
+        
+        # Accumulate tokens for per-agent summary (used in invoke_agent spans)
+        if input_tokens:
+            self._agent_input_tokens += input_tokens
+        if output_tokens:
+            self._agent_output_tokens += output_tokens
+        self._agent_response_count += 1
+        
+        # Use definitive model name from VoiceLive connection (set at initialization)
+        # Response object doesn't include model name, so we rely on the configured model
+        model = self._model_name
+        status = getattr(response, "status", None)
+        
+        # Calculate turn duration if we have timing info
+        turn_duration_ms = None
+        if self._llm_turn_start_time:
+            turn_duration_ms = (time.perf_counter() - self._llm_turn_start_time) * 1000
+        
+        # Session correlation
+        session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
+        
+        # Emit GenAI LLM span with model metrics matching App Insights format
+        # Span name should match the model name for proper LLM badge display
+        span_name = model if model else "gpt-4o-realtime"
+        
+        with tracer.start_as_current_span(
+            span_name,
+            kind=trace.SpanKind.CLIENT,
+            attributes={
+                # Component identifier
+                "component": "voicelive",
+                
+                # Session correlation (multiple formats for App Insights compatibility)
+                "call.connection.id": self.call_connection_id or "",
+                "ai.session.id": session_id or "",
+                SpanAttr.SESSION_ID.value: session_id or "",
+                "ai.user.id": session_id or "",
+                
+                # Transport type
+                "transport.type": self._transport.upper() if self._transport else "ACS",
+                
+                # GenAI semantic conventions (required for LLM badge in App Insights)
+                SpanAttr.GENAI_OPERATION_NAME.value: GenAIOperation.CHAT,
+                SpanAttr.GENAI_SYSTEM.value: "openai",  # Required for LLM badge
+                SpanAttr.GENAI_REQUEST_MODEL.value: model,
+                
+                # VoiceLive-specific context
+                "voicelive.agent_name": self.active,
+            },
+        ) as model_span:
+            # Add response model (may differ from request model)
+            model_span.set_attribute(SpanAttr.GENAI_RESPONSE_MODEL.value, model)
+            
+            # Add response ID
+            if response_id:
+                model_span.set_attribute(SpanAttr.GENAI_RESPONSE_ID.value, response_id)
+            
+            # Add token usage metrics (critical for App Insights Models blade)
+            if input_tokens is not None:
+                model_span.set_attribute(SpanAttr.GENAI_USAGE_INPUT_TOKENS.value, input_tokens)
+            if output_tokens is not None:
+                model_span.set_attribute(SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value, output_tokens)
+            
+            # Add timing metrics
+            if turn_duration_ms is not None:
+                model_span.set_attribute(SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, turn_duration_ms)
+            
+            if self._llm_turn_start_time and self._llm_first_token_time:
+                ttft_ms = (self._llm_first_token_time - self._llm_turn_start_time) * 1000
+                model_span.set_attribute(SpanAttr.GENAI_SERVER_TIME_TO_FIRST_TOKEN.value, ttft_ms)
+            
+            # Add event with detailed metrics for debugging
+            model_span.add_event(
+                "gen_ai.response.complete",
+                {
+                    "response_id": response_id or "",
+                    "status": str(status) if status else "",
+                    "input_tokens": input_tokens or 0,
+                    "output_tokens": output_tokens or 0,
+                    "agent": self.active,
+                    "turn_number": self._llm_turn_number,
+                },
+            )
+            
+            logger.debug(
+                "[Model Metrics] Response complete | agent=%s model=%s response_id=%s tokens=%s/%s",
+                self.active,
+                model,
+                response_id or "N/A",
+                input_tokens or "N/A",
+                output_tokens or "N/A",
+            )

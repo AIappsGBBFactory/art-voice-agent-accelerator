@@ -11,7 +11,9 @@ from typing import Dict, Any
 # Simple logger for standalone operation
 import logging
 logger = logging.getLogger("customer_support_tools")
-logging.basicConfig(level=logging.INFO)
+# NOTE: Do NOT call logging.basicConfig() here - it adds handlers to the root logger
+# which causes duplicate logs when configure_azure_monitor() is used.
+# The root logger is configured by the application's telemetry setup.
 
 
 def check_order_status(order_id: str) -> Dict[str, Any]:

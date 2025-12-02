@@ -41,6 +41,7 @@ extra look-ups.  On **failure** these two keys are returned as ``null``.
 
 import asyncio
 import time
+import os
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
@@ -53,10 +54,12 @@ logger = get_logger("tools.acme_auth")
 # Cosmos DB manager for policyholder data
 # ────────────────────────────────────────────────────────────────
 def _get_cosmos_manager() -> CosmosDBMongoCoreManager:
+    database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
+    collection_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
     """Get Cosmos DB manager for user authentication data."""
     return CosmosDBMongoCoreManager(
-        database_name="financial_services_db",
-        collection_name="users"
+        database_name=database_name,
+        collection_name=collection_name
     )
 
 async def _get_policyholder_by_credentials(

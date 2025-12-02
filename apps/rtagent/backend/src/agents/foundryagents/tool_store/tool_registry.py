@@ -20,7 +20,8 @@ except ImportError:
 # Simple logger for standalone operation
 import logging
 logger = logging.getLogger("tool_registry")
-logging.basicConfig(level=logging.INFO)
+# NOTE: Do NOT call logging.basicConfig() here - it adds handlers to the root logger
+# which causes duplicate logs when configure_azure_monitor() is used.
 
 
 # Tool Registry - maps tool names to actual functions (ARTAgent style)

@@ -17,19 +17,12 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
-# ============================================================================
-# CRITICAL: OpenAI instrumentation MUST happen before ANY openai imports
-# This module sets up TracerProvider and instruments openai at import time
-# ============================================================================
-import utils.openai_instrumentation  # noqa: F401
-
 from src.pools.on_demand_pool import OnDemandResourcePool
-# from utils.telemetry_config import setup_azure_monitor
-from utils.telemetry_config_v2 import setup_azure_monitor
+from utils.telemetry_config import setup_azure_monitor
 
 # ---------------- Monitoring ------------------------------------------------
-# setup_azure_monitor configures additional loggers, metrics, and azure monitor export
-# OpenAI instrumentation is already done by utils.openai_instrumentation
+# setup_azure_monitor configures loggers, metrics, and Azure Monitor export
+# OpenAI spans are created manually in aoai/manager.py
 setup_azure_monitor(logger_name="rtagent")
 
 # Initialize OpenAI client AFTER telemetry is configured
