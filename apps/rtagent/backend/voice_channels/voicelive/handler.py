@@ -28,8 +28,16 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from utils.ml_logging import get_logger
+from .metrics import (
+	record_llm_ttft,
+	record_tts_ttfb,
+	record_stt_latency,
+	record_turn_complete,
+)
 from apps.rtagent.backend.src.agents.vlagent.settings import get_settings
-from apps.rtagent.backend.src.agents.vlagent.registry import load_registry, HANDOFF_MAP
+from apps.rtagent.backend.src.agents.vlagent.registry import load_registry
+# Import HANDOFF_MAP from handoffs module (canonical location)
+from apps.rtagent.backend.voice_channels.handoffs import HANDOFF_MAP
 from apps.rtagent.backend.src.agents.vlagent.orchestrator import LiveOrchestrator
 from apps.rtagent.backend.src.agents.vlagent.session_loader import load_user_profile_by_email
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
@@ -55,23 +63,9 @@ from src.enums.monitoring import SpanAttr
 logger = get_logger("api.v1.handlers.voice_live_sdk_handler")
 tracer = trace.get_tracer(__name__)
 
-_TRACED_EVENTS = {
-	ServerEventType.ERROR.value,
-	ServerEventType.RESPONSE_CREATED.value,
-	ServerEventType.RESPONSE_DONE.value,
-	ServerEventType.RESPONSE_AUDIO_DONE.value,
-	ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED.value,
-	ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_DELTA.value,
-	ServerEventType.SESSION_UPDATED.value,
-	ServerEventType.SESSION_CREATED.value,
-	ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED.value,
-	ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED.value,
-}
-
 _DTMF_FLUSH_DELAY_SECONDS = 1.5
 
 _AGENT_LABELS = {
-	"PayPalAgent": "PayPal Specialist",
 	"FraudAgent": "Fraud Specialist",
 	"ComplianceDesk": "Compliance Specialist",
 	"AuthAgent": "Auth Agent",
@@ -1075,6 +1069,15 @@ class VoiceLiveSDKHandler:
 				ttfb_ms = (self._tts_first_audio_time - start_ref) * 1000
 				self._current_response_id = response_id
 				
+				# Record OTel metric for App Insights Performance view
+				record_tts_ttfb(
+					ttfb_ms,
+					session_id=self.session_id,
+					turn_number=self._turn_number,
+					reference="vad_end" if self._vad_end_time else "turn_start",
+					agent_name=self._messenger._active_agent_name or "unknown",
+				)
+				
 				# Emit TTFB metric as a span for App Insights Performance tab
 				with tracer.start_as_current_span(
 					"voicelive.tts.ttfb",
@@ -1691,6 +1694,14 @@ class VoiceLiveSDKHandler:
 			self._llm_first_token_time = time.perf_counter()
 			ttft_ms = (self._llm_first_token_time - self._turn_start_time) * 1000
 			
+			# Record OTel metric for App Insights Performance view
+			record_llm_ttft(
+				ttft_ms,
+				session_id=self.session_id,
+				turn_number=self._turn_number,
+				agent_name=self._messenger._active_agent_name or "unknown",
+			)
+			
 			# Emit TTFT metric as a span for App Insights Performance tab
 			with tracer.start_as_current_span(
 				"voicelive.llm.ttft",
@@ -1740,6 +1751,25 @@ class VoiceLiveSDKHandler:
 			# End-to-End Latency: VAD End -> TTS First Audio
 			tts_ttfb_ms = (self._tts_first_audio_time - latency_base) * 1000
 		
+		# Record OTel metrics for App Insights Performance view
+		if stt_latency_ms is not None:
+			record_stt_latency(
+				stt_latency_ms,
+				session_id=self.session_id,
+				turn_number=self._turn_number,
+			)
+		
+		# Record turn completion metric (aggregates duration + count)
+		record_turn_complete(
+			total_turn_duration_ms,
+			session_id=self.session_id,
+			turn_number=self._turn_number,
+			stt_latency_ms=stt_latency_ms,
+			llm_ttft_ms=llm_ttft_ms,
+			tts_ttfb_ms=tts_ttfb_ms,
+			agent_name=self._messenger._active_agent_name or "unknown",
+		)
+		
 		# Emit comprehensive turn metrics span
 		with tracer.start_as_current_span(
 			f"voicelive.turn.{self._turn_number}.complete",
@@ -1779,6 +1809,30 @@ class VoiceLiveSDKHandler:
 				f"{llm_ttft_ms:.0f}ms" if llm_ttft_ms else "N/A",
 				total_turn_duration_ms,
 			)
+		
+		# Send turn metrics to frontend via WebSocket
+		try:
+			metrics_envelope = make_envelope(
+				etype="turn_metrics",
+				sender=self._messenger._active_agent_name or "System",
+				session_id=self.session_id,
+				payload={
+					"turn_number": self._turn_number,
+					"duration_ms": round(total_turn_duration_ms, 1),
+					"stt_latency_ms": round(stt_latency_ms, 1) if stt_latency_ms else None,
+					"llm_ttft_ms": round(llm_ttft_ms, 1) if llm_ttft_ms else None,
+					"tts_ttfb_ms": round(tts_ttfb_ms, 1) if tts_ttfb_ms else None,
+					"agent_name": self._messenger._active_agent_name,
+				},
+			)
+			await send_session_envelope(
+				self.websocket,
+				metrics_envelope,
+				session_id=self.session_id,
+				event_label="turn_metrics",
+			)
+		except Exception as e:
+			logger.debug("Failed to send turn metrics to frontend: %s", e)
 		
 		# Reset turn tracking state
 		self._turn_start_time = None

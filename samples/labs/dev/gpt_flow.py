@@ -367,7 +367,7 @@ async def _consume_openai_stream(
     except _KNOWN_OPENAI_EXC as exc:
         # Bubble up; outer try/except will add full context. Log a breadcrumb here.
         logger.warning(
-            "Stream interrupted from AOAI: %s", getattr(exc, "message", str(exc))
+            "Stream interrupted from llm: %s", getattr(exc, "message", str(exc))
         )
         raise
     except Exception as exc:  # noqa: BLE001

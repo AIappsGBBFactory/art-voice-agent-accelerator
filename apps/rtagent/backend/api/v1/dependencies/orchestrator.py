@@ -1,11 +1,26 @@
 """
-Orchestrator Dependency Injection
-=================================
+Orchestrator Dependency Injection (DEPRECATED)
+===============================================
 
-Simple orchestrator injection for the V1 API with clean tracing.
-Provides a clean interface to the conversation orchestration logic.
+.. deprecated:: v1.5.0
+    This module is deprecated. The orchestration is now handled directly by:
+    - MediaHandler._create_orchestrator_wrapper() for Speech Cascade mode
+    - VoiceLiveSDKHandler for Voice Live mode
+    
+    Import directly from voice_channels instead:
+        from apps.rtagent.backend.voice_channels import (
+            VoiceLiveSDKHandler,
+            SpeechCascadeHandler,
+            GPTFlowOrchestrator,
+        )
+    
+    The actual orchestration logic remains in:
+        apps.rtagent.backend.src.orchestration.artagent.orchestrator.route_turn
+    
+    This file is kept for backward compatibility but will be removed in a future version.
 """
 
+import warnings
 from typing import Optional
 from fastapi import WebSocket
 from websockets.exceptions import ConnectionClosedError
@@ -19,16 +34,25 @@ from utils.ml_logging import get_logger
 logger = get_logger("api.v1.dependencies.orchestrator")
 tracer = trace.get_tracer(__name__)
 
-# Orchestration Dependency Injection Point
-# ----------------------------------------
-# This module enables a single integration point for orchestration logic,
-# allowing external systems (not just API endpoints) to invoke conversation routing
-# via route_turn or other orchestrator functions. This pattern supports modular
-# expansion (e.g., plugging in different routing strategies or intent handlers)
-# without tightly coupling orchestration to API layer specifics.
-# E.g:
-#   General orchestration -> route_turn
-#   Intent mapped orchestration -> route_turn_for_fnol
+
+def _emit_deprecation_warning() -> None:
+    """Emit deprecation warning for this module."""
+    warnings.warn(
+        "api.v1.dependencies.orchestrator is deprecated. "
+        "MediaHandler now creates its own orchestrator wrapper internally. "
+        "This module will be removed in a future version.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+# Orchestration Dependency Injection Point (DEPRECATED)
+# --------------------------------------------------------
+# This module is deprecated. The orchestration is now handled directly by:
+# - MediaHandler._create_orchestrator_wrapper() for Speech Cascade mode  
+# - VoiceLiveSDKHandler for Voice Live mode
+#
+# The actual orchestration logic remains in:
+#   apps.rtagent.backend.src.orchestration.artagent.orchestrator.route_turn
 
 
 async def route_conversation_turn(
@@ -36,6 +60,10 @@ async def route_conversation_turn(
 ) -> None:
     """
     Route a conversation turn through the orchestration system with error handling.
+    
+    .. deprecated:: v1.5.0
+        Use MediaHandler which creates its own orchestrator wrapper internally.
+        This function is kept for backward compatibility only.
 
     Processes user input through the conversation orchestrator with comprehensive
     error handling for WebSocket disconnections and system failures. Provides
@@ -55,6 +83,7 @@ async def route_conversation_turn(
         WebSocket connection errors are handled gracefully and logged without
         re-raising to prevent unnecessary error propagation during normal disconnects.
     """
+    _emit_deprecation_warning()
     call_id = kwargs.get("call_id")
     session_id = getattr(cm, "session_id", None) if cm else None
 
@@ -102,6 +131,10 @@ async def route_conversation_turn(
 def get_orchestrator() -> callable:
     """
     FastAPI dependency provider for conversation orchestrator function.
+    
+    .. deprecated:: v1.5.0
+        MediaHandler now creates its own orchestrator wrapper internally.
+        This function is kept for backward compatibility only.
 
     Returns the route_conversation_turn function for dependency injection into
     WebSocket endpoints and API handlers. Enables clean separation of concerns
@@ -116,4 +149,5 @@ def get_orchestrator() -> callable:
         >>> async def endpoint(ws: WebSocket, orchestrator=Depends(get_orchestrator)):
         ...     await orchestrator(cm, transcript, ws)
     """
+    _emit_deprecation_warning()
     return route_conversation_turn

@@ -55,8 +55,8 @@ from src.speech.phrase_list_manager import (
 )
 from apps.rtagent.backend.src.services import AzureOpenAIClient, CosmosDBMongoCoreManager, AzureRedisManager, SpeechSynthesizer, StreamingSpeechRecognizerFromBytes
 from src.aoai.client_manager import AoaiClientManager
-from apps.rtagent.backend.config.app_config import AppConfig
-from apps.rtagent.backend.config.app_settings import (
+from apps.rtagent.backend.config import (
+    AppConfig,
     AGENT_AUTH_CONFIG,
     AGENT_FRAUD_CONFIG,
     AGENT_AGENCY_CONFIG,
@@ -69,10 +69,8 @@ from apps.rtagent.backend.config.app_settings import (
     AZURE_COSMOS_COLLECTION_NAME,
     AZURE_COSMOS_CONNECTION_STRING,
     AZURE_COSMOS_DATABASE_NAME,
-
     ENTRA_EXEMPT_PATHS,
     ENABLE_AUTH_VALIDATION,
-    # Documentation settings
     ENABLE_DOCS,
     DOCS_URL,
     REDOC_URL,
@@ -100,6 +98,14 @@ from apps.rtagent.backend.src.services.acs.acs_caller import (
 )
 
 from apps.rtagent.backend.api.v1.events.registration import register_default_handlers
+from apps.rtagent.backend.src.orchestration.artagent.registry import register_specialist
+from apps.rtagent.backend.src.orchestration.artagent.specialists import (
+    run_fraud_agent,
+    run_agency_agent,
+    run_compliance_agent,
+    run_trading_agent,
+)
+from apps.rtagent.backend.src.agents.shared.tool_registry import initialize_tools
 from api.v1.endpoints import demo_env
 
 
@@ -323,7 +329,7 @@ async def lifespan(app: FastAPI):
             return SpeechSynthesizer(voice=app_config.voice.default_voice, playback="always")
 
         async def make_stt() -> StreamingSpeechRecognizerFromBytes:
-            from config.app_settings import (
+            from config import (
                 VAD_SEMANTIC_SEGMENTATION,
                 SILENCE_DURATION_MS,
                 RECOGNIZED_LANGUAGE,
@@ -459,11 +465,21 @@ async def lifespan(app: FastAPI):
     add_step("agents", start_agents)
 
     async def start_event_handlers() -> None:
+        # Initialize unified tool registry (single source of truth for all agents)
+        tool_count = initialize_tools()
+        logger.info("unified tool registry initialized", extra={"tool_count": tool_count})
+        
+        # Register ACS webhook event handlers
         register_default_handlers()
         
-        # Initialize orchestrator and bind all specialists
-        from apps.rtagent.backend.src.orchestration.artagent.orchestrator import bind_default_handlers
-        bind_default_handlers()
+        # Register agent specialists for orchestration
+        # Flow: Auth -> (Fraud | Agency) -> (Compliance | Trading)
+        from apps.rtagent.backend.src.orchestration.artagent.auth import run_auth_agent
+        register_specialist("AutoAuth", run_auth_agent)
+        register_specialist("Fraud", run_fraud_agent)
+        register_specialist("Agency", run_agency_agent)
+        register_specialist("Compliance", run_compliance_agent)
+        register_specialist("Trading", run_trading_agent)
         
         orchestrator_preset = os.getenv("ORCHESTRATOR_PRESET", "production")
         logger.info("event handlers registered", extra={"orchestrator_preset": orchestrator_preset})

@@ -1,34 +1,11 @@
 """
-Security and CORS Configuration
-================================
+Security and CORS Configuration (DEPRECATED)
+=============================================
 
-CORS settings, authentication paths, and security-related configuration
-for the real-time voice agent.
+This file is deprecated. Import from config or config.settings instead.
 """
 
-import os
-from .constants import ACS_CALL_CALLBACK_PATH, ACS_WEBSOCKET_PATH
-
-# ==============================================================================
-# CORS AND SECURITY SETTINGS
-# ==============================================================================
-
-# CORS configuration
-ALLOWED_ORIGINS = (
-    os.getenv("ALLOWED_ORIGINS", "*").split(",")
-    if os.getenv("ALLOWED_ORIGINS")
-    else ["*"]
+from .settings import (
+    ALLOWED_ORIGINS,
+    ENTRA_EXEMPT_PATHS,
 )
-
-# Entra ID exempt paths (paths that don't require authentication)
-ENTRA_EXEMPT_PATHS = [
-    ACS_CALL_CALLBACK_PATH,
-    ACS_WEBSOCKET_PATH,
-    "/health",
-    "/readiness",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-    "/metrics",
-    "/v1/health",
-]

@@ -135,6 +135,8 @@ NOISY_SPAN_PATTERNS: List[Pattern[str]] = [
 # Loggers to suppress (set to WARNING level)
 NOISY_LOGGERS = [
     "azure.identity", "azure.core.pipeline", "azure.monitor.opentelemetry.exporter",
+    "azure.monitor.opentelemetry.exporter._quickpulse",  # Live Metrics ping errors
+    "azure.core.exceptions",  # Transient connection errors
     "websockets", "aiohttp", "httpx", "httpcore",
     "uvicorn.protocols.websockets", "uvicorn.error", "uvicorn.access",
     "starlette.routing", "fastapi",

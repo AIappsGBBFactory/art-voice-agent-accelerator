@@ -44,7 +44,6 @@ from utils.ml_logging import get_logger
 # Note: MediaHandler now supports both ACS and Browser via TransportType
 from .media_handler import MediaHandler, MediaHandlerConfig, TransportType, ACSMediaHandler
 from ..events import get_call_event_processor
-from ..dependencies.orchestrator import get_orchestrator
 from apps.rtagent.backend.src.services.acs.call_transfer import transfer_call as transfer_call_service
 
 
@@ -830,37 +829,46 @@ def get_participant_phone(event: CloudEvent, cm: MemoManager) -> Optional[str]:
 
 def create_enterprise_media_handler(
     websocket,
-    orchestrator: callable,
+    orchestrator: callable,  # Deprecated - ignored
     call_connection_id: str,
-    recognizer,
-    cm: MemoManager,
+    recognizer,  # Deprecated - ignored  
+    cm: MemoManager,  # Deprecated - ignored
     session_id: str,
     stream_mode: Optional[StreamMode] = None,
-) -> ACSMediaHandler:
+) -> None:
     """
     Factory function for creating media handlers.
+    
+    .. deprecated:: v1.5.0
+        This function uses a legacy signature and is no longer functional.
+        Use MediaHandler.create() instead:
+        
+            config = MediaHandlerConfig(
+                websocket=websocket,
+                session_id=session_id,
+                transport=TransportType.ACS,
+                call_connection_id=call_connection_id,
+                stream_mode=stream_mode,
+            )
+            handler = await MediaHandler.create(config, app_state)
 
     :param websocket: WebSocket connection
-    :param orchestrator: Conversation orchestrator
-    :type orchestrator: callable
+    :param orchestrator: IGNORED - orchestration is internal to MediaHandler
     :param call_connection_id: ACS call connection ID
-    :type call_connection_id: str
-    :param recognizer: Speech recognition client
-    :param cm: Conversation memory manager
-    :type cm: MemoManager
+    :param recognizer: IGNORED - STT is handled by MediaHandler pools
+    :param cm: IGNORED - MemoManager is created by MediaHandler
     :param session_id: Session identifier
-    :type session_id: str
-    :return: Configured ACSMediaHandler instance
-    :rtype: ACSMediaHandler
+    :param stream_mode: Optional streaming mode
+    :return: None - this function no longer works
     """
-    if orchestrator is None:
-        orchestrator = get_orchestrator()
-    return ACSMediaHandler(
-        websocket=websocket,
-        orchestrator_func=orchestrator,
-        call_connection_id=call_connection_id,
-        recognizer=recognizer,
-        memory_manager=cm,
-        session_id=session_id,
-        stream_mode=stream_mode or ACS_STREAMING_MODE,
+    import warnings
+    warnings.warn(
+        "create_enterprise_media_handler is deprecated. "
+        "Use MediaHandler.create() instead. See docstring for migration guide.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    raise NotImplementedError(
+        "create_enterprise_media_handler is deprecated. "
+        "Use MediaHandler.create() with MediaHandlerConfig instead."
     )

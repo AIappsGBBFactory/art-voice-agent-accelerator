@@ -22,7 +22,9 @@ import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownR
 import KeyboardArrowUpRoundedIcon from '@mui/icons-material/KeyboardArrowUpRounded';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
-import "reactflow/dist/style.css";
+import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
+import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
+import SettingsEthernetRoundedIcon from '@mui/icons-material/SettingsEthernetRounded';
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
@@ -3180,6 +3182,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
         borderRadius: '10px',
         border: '1px solid rgba(226,232,240,0.9)',
         boxShadow: '0 6px 12px rgba(15,23,42,0.08)',
+        zIndex: '10',
       }}>
         Input: {(audioLevel * 100).toFixed(1)}% | Output: {(outputAudioLevel * 100).toFixed(1)}% | Amp: {waveRenderState.amplitude.toFixed(1)} | Speaker: {bothDisplayActive ? 'Barge-In' : (userDisplayActive ? 'User' : assistantDisplayActive ? 'Assistant' : (activeSpeaker || 'Idle'))}
       </div>
@@ -3492,88 +3495,31 @@ const ChatBubble = ({ message }) => {
       : baseDetail;
     const severity = inferStatusTone(detailText || eventLabel);
     const palette = {
-      success: { bg: "rgba(16,185,129,0.08)", fg: "#065f46", border: "rgba(16,185,129,0.28)" },
-      warning: { bg: "rgba(234,179,8,0.08)", fg: "#854d0e", border: "rgba(234,179,8,0.28)" },
-      error: { bg: "rgba(239,68,68,0.08)", fg: "#7f1d1d", border: "rgba(239,68,68,0.32)" },
-      info: { bg: "rgba(59,130,246,0.08)", fg: "#1e3a8a", border: "rgba(59,130,246,0.22)" },
+      success: "#16a34a",
+      warning: "#f59e0b",
+      error: "#ef4444",
+      info: "#2563eb",
     }[severity || "info"];
 
     return (
-      <Box sx={{ width: "100%", display: "flex", justifyContent: "flex-start", px: 1, py: 0.2 }}>
-        <Paper
-          elevation={0}
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "4px 1fr auto",
-            alignItems: "center",
-            gap: 1,
-            px: 1.25,
-            py: 0.6,
-            borderRadius: 2,
-            border: `1px solid ${palette.border}`,
-            background: "rgba(248,250,252,0.85)",
-            width: "fit-content",
-            maxWidth: "92%",
-            minWidth: 0,
-            color: palette.fg,
-            boxShadow: "0 6px 14px rgba(15,23,42,0.05)",
-          }}
-        >
-          <Box
-            sx={{
-              width: "4px",
-              height: "100%",
-              minHeight: "22px",
-              borderRadius: 999,
-              background: palette.border,
-              opacity: 0.9,
-            }}
-            aria-hidden
-          />
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25, minWidth: 0 }}>
-            <Typography
-              variant="caption"
-              sx={{
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                color: palette.fg,
-                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-              }}
-            >
-              {eventLabel}
-            </Typography>
-            {detailText && (
-              <Typography
-                variant="body2"
-                sx={{
-                  color: palette.fg,
-                  fontSize: "0.78rem",
-                  lineHeight: 1.35,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
-              >
-                {detailText}
-              </Typography>
-            )}
-          </Box>
+      <div style={{ width: "100%", display: "flex", justifyContent: "center", padding: "2px 12px" }}>
+        <span style={{ fontSize: "11px", color: "#94a3b8", marginRight: "6px" }}>•</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center", justifyContent: "center", textAlign: "center", color: "#0f172a", fontSize: "12px" }}>
+          <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: palette }}>
+            {eventLabel}
+          </span>
           {timestampLabel && (
-            <Typography
-              variant="caption"
-              sx={{
-                color: palette.fg,
-                opacity: 0.65,
-                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                letterSpacing: "0.04em",
-                whiteSpace: "nowrap",
-              }}
-            >
+            <span style={{ color: "#94a3b8", fontFamily: 'Roboto Mono, ui-monospace, Menlo, Consolas, "Courier New", monospace', letterSpacing: "0.02em" }}>
               {timestampLabel}
-            </Typography>
+            </span>
           )}
-        </Paper>
-      </Box>
+          {detailText && (
+            <span style={{ color: "#334155", whiteSpace: "pre-wrap" }}>
+              {detailText}
+            </span>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -3748,94 +3694,33 @@ const ChatBubble = ({ message }) => {
     const toneLabel = message.statusLabel || tone.label;
     const timestampLabel = formatStatusTimestamp(message.timestamp);
     const lines = (text || "").split("\n").filter(Boolean);
-    const surfaceColor = "rgba(248,250,252,0.95)";
-    const borderColor = tone.borderColor ?? (tone.border ? tone.border.replace(/^1px\s+solid\s+/u, "") : "rgba(148,163,184,0.28)");
+    const Icon = tone.icon;
 
     return (
-      <Box sx={{ width: "100%", display: "flex", justifyContent: "flex-start", px: 1, py: 0.35 }}>
-        <Paper
-          elevation={0}
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "4px 1fr auto",
-            alignItems: "flex-start",
-            gap: 1,
-            px: 1.35,
-            py: 0.75,
-            borderRadius: 2,
-            border: `1px solid ${borderColor}`,
-            background: surfaceColor,
-            color: tone.textColor,
-            width: "fit-content",
-            maxWidth: "94%",
-            minWidth: 0,
-            boxShadow: "0 6px 14px rgba(15,23,42,0.06)",
-          }}
-        >
-          <Box
-            sx={{
-              width: "4px",
-              height: "100%",
-              minHeight: "26px",
-              borderRadius: 999,
-              background: tone.accent,
-              opacity: 0.95,
-            }}
-            aria-hidden
-          />
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.35, minWidth: 0 }}>
-            <Typography
-              variant="caption"
-              sx={{
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                fontWeight: 700,
-                color: tone.accent,
-              }}
-            >
-              {toneLabel}
-            </Typography>
-            <Typography
-              variant="body2"
-              sx={{
-                whiteSpace: "pre-wrap",
-                fontSize: "0.82rem",
-                lineHeight: 1.45,
-                color: tone.textColor,
-                wordBreak: "break-word",
-              }}
-            >
-              {lines.map((line, idx) => (
-                <React.Fragment key={idx}>
-                  {idx > 0 && <br />}
-                  {line}
-                </React.Fragment>
-              ))}
-            </Typography>
-            {message.statusCaption && (
-              <Typography
-                variant="caption"
-                sx={{ display: "block", color: tone.captionColor }}
-              >
-                {message.statusCaption}
-              </Typography>
-            )}
-          </Box>
+      <div style={{ width: "100%", display: "flex", justifyContent: "center", padding: "2px 12px" }}>
+        <span style={{ fontSize: "11px", color: "#94a3b8", marginRight: "6px" }}>•</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center", justifyContent: "center", textAlign: "center", fontSize: "12px", color: "#0f172a" }}>
+          {Icon ? <Icon sx={{ fontSize: 16, color: tone.accent, mr: 0.5 }} /> : null}
+          <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: tone.accent }}>
+            {toneLabel}
+          </span>
           {timestampLabel && (
-            <Typography
-              variant="caption"
-              sx={{
-                color: tone.captionColor,
-                fontFamily: 'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                letterSpacing: "0.04em",
-                whiteSpace: "nowrap",
-              }}
-            >
+            <span style={{ color: tone.captionColor, fontFamily: 'Roboto Mono, ui-monospace, Menlo, Consolas, "Courier New", monospace', letterSpacing: "0.02em" }}>
               {timestampLabel}
-            </Typography>
+            </span>
           )}
-        </Paper>
-      </Box>
+          {lines.length > 0 && (
+            <span style={{ color: tone.textColor, whiteSpace: "pre-wrap" }}>
+              {lines.join(" ")}
+            </span>
+          )}
+          {message.statusCaption && (
+            <span style={{ color: tone.captionColor }}>
+              {message.statusCaption}
+            </span>
+          )}
+        </div>
+      </div>
     );
   }
   
@@ -3863,13 +3748,13 @@ const ChatBubble = ({ message }) => {
  *  AGENT GRAPH VISUALIZATION (DOCKED)
  * ------------------------------------------------------------------ */
 const GraphCanvas = ({ events, currentAgent, isFull = false }) => {
+  const [selectedNode, setSelectedNode] = useState(null);
   const recent = useMemo(() => {
     return events
       .filter((evt) => {
         const from = evt.from || evt.agent;
         const to = evt.to || evt.agent;
         if (!from || !to) return false;
-        // keep if at least one participant is an agent (not System), but allow agent->User links
         const bothSystem = from === "System" && to === "System";
         return !bothSystem;
       })
@@ -3885,75 +3770,284 @@ const GraphCanvas = ({ events, currentAgent, isFull = false }) => {
     return Array.from(names);
   }, [recent]);
 
-  if (!recent.length) return null;
+  const height = isFull ? 320 : 240;
+  const viewWidth = isFull ? 640 : 340;
+  const centerX = viewWidth / 2;
+  const centerY = height / 2;
+  const radius = Math.min(viewWidth, height) * 0.32;
+  const nodes = useMemo(() => {
+    return agentNames.map((name, idx) => {
+      const angle = (2 * Math.PI * idx) / Math.max(agentNames.length, 1) - Math.PI / 2;
+      return {
+        id: name,
+        label: name,
+        x: centerX + radius * Math.cos(angle),
+        y: centerY + radius * Math.sin(angle),
+      };
+    });
+  }, [agentNames, centerX, centerY, radius]);
 
-  const centerX = 150;
-  const centerY = 110;
-  const radius = 90;
-  const nodes = agentNames.map((name, idx) => {
-    const angle = (2 * Math.PI * idx) / agentNames.length;
-    return {
-      id: name,
-      label: name,
-      x: centerX + radius * Math.cos(angle),
-      y: centerY + radius * Math.sin(angle),
-    };
-  });
+  const buildInitials = useCallback((label, id) => {
+    const base = (label || id || "").trim();
+    if (!base) return "";
+    const parts = base.split(/[\s_-]+/u).filter(Boolean);
+    let candidate = "";
+    if (parts.length) {
+      candidate = parts.map((p) => p[0]).join("").toUpperCase().slice(0, 3);
+    } else {
+      candidate = base.slice(0, 3).toUpperCase();
+    }
+    if (candidate === "ASS") {
+      return "AST";
+    }
+    return candidate;
+  }, []);
 
   const nodeById = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  const edges = recent
-    .map((evt, idx) => {
-      const from = evt.from || evt.agent;
-      const to = evt.to || evt.agent || "User";
+  const rawEdges = recent
+    .map((edge) => {
+      const from = edge.from || edge.agent;
+      const to = edge.kind === "tool" ? (edge.from || edge.agent) : edge.to || edge.agent || "User";
       if (!from || !to || !nodeById[from] || !nodeById[to]) return null;
-      return { id: `${from}-${to}-${idx}`, from, to, kind: evt.kind };
+      const toolLabel = edge.kind === "tool" ? (edge.tool || edge.summary || "Tool") : null;
+      const ts = edge.ts || edge.timestamp || edge.time || "";
+      return { from, to, kind: edge.kind, toolLabel, ts, key: `${from}→${to}` };
     })
     .filter(Boolean);
 
-  const height = isFull ? 320 : 220;
-  const viewWidth = isFull ? 540 : 300;
+  // Keep only the latest tool edge per agent to avoid overlapping tool labels
+  const latestToolByAgent = new Map();
+  rawEdges.forEach((edge, idx) => {
+    if (edge.kind === "tool") {
+      latestToolByAgent.set(edge.from, idx);
+    }
+  });
+  const filteredEdges = rawEdges.filter((edge, idx) => edge.kind !== "tool" || latestToolByAgent.get(edge.from) === idx);
+
+  const edgeCounts = {};
+  const edges = filteredEdges.map((edge) => {
+    const fromNode = nodeById[edge.from];
+    const toNode = nodeById[edge.to];
+    const count = edgeCounts[edge.key] = (edgeCounts[edge.key] || 0) + 1;
+    const offsetIndex = count - 1;
+    const offsetStep = 2;
+    const offset = Math.min(offsetIndex, 2) * offsetStep * (offsetIndex % 2 === 0 ? 1 : -1);
+    const dx = toNode.y - fromNode.y;
+    const dy = fromNode.x - toNode.x;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const ox = (dx / len) * offset;
+    const oy = (dy / len) * offset;
+    return {
+      ...edge,
+      id: `${edge.from}-${edge.to}-${count}-${edge.kind}-${edge.ts}`,
+      ox,
+      oy,
+      count,
+    };
+  });
+
+  const activeEdgeId = edges.length ? edges[edges.length - 1].id : null;
+  const visibleEdges = edges;
+
+  if (!recent.length) {
+    return (
+      <div style={{ ...styles.graphCanvasWrapper, overflow: 'hidden' }}>
+        <div style={{ 
+          width: '100%', 
+          height: height, 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          flexDirection: 'column',
+          gap: '12px',
+          color: '#64748b',
+        }}>
+          <SettingsEthernetRoundedIcon sx={{ fontSize: 48, opacity: 0.3 }} />
+          <div style={{ fontSize: '14px', fontWeight: 500 }}>No agent activity yet</div>
+          <div style={{ fontSize: '12px', opacity: 0.7 }}>Start a conversation to see the agent graph</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={styles.graphCanvasWrapper}>
+    <div style={{ ...styles.graphCanvasWrapper, overflow: "hidden" }}>
       <svg width="100%" height={height} viewBox={`0 0 ${viewWidth} ${height}`} preserveAspectRatio="xMidYMid meet">
         <defs>
-          <marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto" markerUnits="strokeWidth">
-            <path d="M0,0 L6,3 L0,6 z" fill="rgba(59,130,246,0.6)" />
+          <marker id="arrow-primary" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L6,3 L0,6 z" fill="rgba(59,130,246,0.8)" />
+          </marker>
+          <marker id="arrow-strong" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L6,3 L0,6 z" fill="#f97316" />
+          </marker>
+          <marker id="arrow-muted" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L6,3 L0,6 z" fill="rgba(148,163,184,0.55)" />
           </marker>
         </defs>
-        {edges.map((edge) => {
+        {visibleEdges.map((edge) => {
           const from = nodeById[edge.from];
           const to = nodeById[edge.to];
+          const count = edgeCounts[edge.key] || 1;
+        const isRepeated = count > 1;
+          const isActiveEdge = edge.id === activeEdgeId;
+          const base = edge.kind === "tool"
+            ? "16,185,129"
+            : edge.kind === "switch"
+            ? "245,158,11"
+            : edge.from === "System" || edge.to === "System"
+            ? "148,163,184"
+            : "59,130,246";
+          const stroke = isActiveEdge
+            ? `rgba(${base},0.9)`
+            : `rgba(${base},0.25)`;
+          const markerEnd = isActiveEdge
+            ? (isRepeated ? "url(#arrow-strong)" : "url(#arrow-primary)")
+            : "url(#arrow-muted)";
+          const fromRadius = edge.from.includes("-tool-") ? 10 : 18;
+          const toRadius = edge.to.includes("-tool-") ? 10 : 18;
+
+          const sx = from.x + (edge.ox || 0);
+          const sy = from.y + (edge.oy || 0);
+          const tx = to.x + (edge.ox || 0);
+          const ty = to.y + (edge.oy || 0);
+
+          const dx = tx - sx;
+          const dy = ty - sy;
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          const ux = dx / len;
+          const uy = dy / len;
+
+          const startX = sx + ux * (fromRadius + 4);
+          const startY = sy + uy * (fromRadius + 4);
+          const endX = tx - ux * (toRadius + 6);
+          const endY = ty - uy * (toRadius + 6);
+
+          if (edge.kind === "tool") {
+            // clockwise self-loop farther from the node
+            const loopR = fromRadius + 36;
+            const startAngle = -Math.PI / 2; // top
+            const endAngle = -Math.PI; // left
+            const midAngle = -3 * Math.PI / 4; // midpoint of quarter arc
+            const cxLoop = from.x + (edge.ox || 0);
+            const cyLoop = from.y + (edge.oy || 0);
+            const startLoopX = cxLoop + loopR * Math.cos(startAngle);
+            const startLoopY = cyLoop + loopR * Math.sin(startAngle);
+            const endLoopX = cxLoop + loopR * Math.cos(endAngle);
+            const endLoopY = cyLoop + loopR * Math.sin(endAngle);
+            const midLoopX = cxLoop + (loopR + 6) * Math.cos(midAngle);
+            const midLoopY = cyLoop + (loopR + 6) * Math.sin(midAngle);
+            const d = `M ${startLoopX} ${startLoopY} Q ${midLoopX} ${midLoopY} ${endLoopX} ${endLoopY}`;
+            return (
+              <g key={edge.id}>
+                <path
+                  d={d}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={isRepeated ? 2 : 1.4}
+                  markerEnd="url(#arrow-muted)"
+                  strokeDasharray="4 3"
+                  opacity="0.9"
+                  strokeLinecap="round"
+                />
+                {edge.toolLabel && (
+                  <text
+                    x={midLoopX}
+                    y={midLoopY - 8}
+                    textAnchor="middle"
+                    fontSize="10"
+                    fill="#b45309"
+                    fontWeight="600"
+                  >
+                    Tool: {edge.toolLabel}
+                  </text>
+                )}
+              </g>
+            );
+          }
+
+          const perpX = -uy;
+          const perpY = ux;
+          const bendBase = edge.kind === "tool" ? 4 : 8;
+          const bend = bendBase + (Math.min(count, 2) - 1) * 2;
+          const cx = (startX + endX) / 2 + perpX * bend;
+          const cy = (startY + endY) / 2 + perpY * bend;
+          const midX = (startX + endX) / 2;
+          const midY = (startY + endY) / 2;
           return (
-            <line
-              key={edge.id}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              stroke="rgba(59,130,246,0.55)"
-              strokeWidth="2"
-              markerEnd="url(#arrow)"
-              strokeDasharray={edge.kind === "tool" ? "4 3" : edge.kind === "switch" ? "2 2" : "0"}
-              opacity="0.8"
-            />
+            <g key={edge.id}>
+              <path
+                d={`M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`}
+                fill="none"
+                stroke={stroke}
+                strokeWidth={isRepeated ? 3 : 2}
+                markerEnd={markerEnd}
+                strokeDasharray={edge.kind === "tool" ? "4 3" : edge.kind === "switch" ? "2 2" : (edge.from === "System" || edge.to === "System") ? "5 3" : "0"}
+                opacity="0.9"
+                strokeLinecap="round"
+              />
+              {edge.toolLabel && (
+                <text
+                  x={midX + perpX * 6}
+                  y={midY + perpY * 6}
+                  textAnchor="middle"
+                  fontSize="10"
+                  fill="#b45309"
+                  fontWeight="700"
+                >
+                  {edge.toolLabel}
+                </text>
+              )}
+            </g>
           );
         })}
         {nodes.map((node) => {
           const isActive = currentAgent && node.id === currentAgent;
+          const isSelected = selectedNode === node.id;
+          const palette = node.id === "System"
+            ? { fill: "linear-gradient(135deg, #fdfdfd, #f1f5f9)", stroke: "#d6d9dd", fg: "#475569" }
+            : node.id === "User"
+            ? { fill: "linear-gradient(135deg, #f4f8ff, #e7f0ff)", stroke: "#bcd7ff", fg: "#2563eb" }
+            : node.id.includes("-tool-")
+            ? { fill: "linear-gradient(135deg, #fffaf0, #fef6e4)", stroke: "#f5d58a", fg: "#b45309" }
+            : { fill: "linear-gradient(135deg, #f1fdfa, #e3f7ff)", stroke: "#9ae6ff", fg: "#0f4c5c" };
+          const initials = node.id === "System"
+            ? "SYS"
+            : node.id === "User"
+            ? "USR"
+            : buildInitials(node.label, node.id);
+          const innerRadius = node.id.includes("-tool-") ? 10 : 12;
           return (
-            <g key={node.id}>
+            <g key={node.id} onClick={() => setSelectedNode(node.id)} style={{ cursor: "pointer" }}>
               <circle
                 cx={node.x}
                 cy={node.y}
-                r={isActive ? 20 : 16}
-                fill={isActive ? "rgba(103,216,239,0.4)" : "rgba(226,232,240,0.9)"}
-                stroke={isActive ? "rgba(8,145,178,0.9)" : "rgba(148,163,184,0.8)"}
-                strokeWidth={isActive ? 3 : 2}
+                r={isActive || isSelected ? 22 : 18}
+                fill={palette.fill}
+                stroke={palette.stroke}
+                strokeWidth={isActive || isSelected ? 2.5 : 1.6}
+                filter="drop-shadow(0 4px 10px rgba(15,23,42,0.03))"
+              />
+              <circle
+                cx={node.x}
+                cy={node.y}
+                r={isActive || isSelected ? innerRadius + 6 : innerRadius + 4}
+                fill="rgba(255,255,255,0.96)"
+                stroke="rgba(0,0,0,0.04)"
+                strokeWidth={1}
               />
               <text
                 x={node.x}
-                y={node.y + 4}
+                y={node.y + 3}
+                textAnchor="middle"
+                fontSize={node.id.includes("-tool-") ? 9 : 10}
+                fontWeight="700"
+                fill={palette.fg}
+              >
+                {initials}
+              </text>
+              <text
+                x={node.x}
+                y={node.y + (isActive || isSelected ? 26 : 24)}
                 textAnchor="middle"
                 fontSize="11"
                 fontWeight="700"
@@ -3965,11 +4059,48 @@ const GraphCanvas = ({ events, currentAgent, isFull = false }) => {
           );
         })}
       </svg>
+      {selectedNode && (
+        <div style={{ marginTop: "8px", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: "12px", background: "rgba(248,250,252,0.9)", maxHeight: 120, overflowY: "auto" }}>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: "#0f172a", marginBottom: "6px" }}>
+            Events for {selectedNode}
+          </div>
+          {recent
+            .filter((evt) => (evt.from || evt.agent) === selectedNode || (evt.to || evt.agent) === selectedNode)
+            .slice(-10)
+            .map((evt, idx) => (
+              <div key={`${selectedNode}-evt-${idx}`} style={{ fontSize: "11px", color: "#334155", marginBottom: "4px", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                {(() => {
+                  const kind = evt.kind || "event";
+                  const eventTypeLabel = evt.eventType || evt.event_type;
+                  const speakerLabel = evt.speaker || evt.from || evt.agent || "";
+                  const label =
+                    kind === "tool"
+                      ? `Tool: ${evt.tool || evt.toolLabel || "Call"}`
+                      : kind === "switch"
+                      ? "Handoff"
+                      : eventTypeLabel
+                      ? formatEventTypeLabel(eventTypeLabel)
+                      : speakerLabel
+                      ? `${speakerLabel}`
+                      : "Message";
+                  return (
+                    <>
+                      <span style={{ fontWeight: 700, color: "#2563eb" }}>{label}</span>
+                      <span style={{ color: "#94a3b8" }}>{formatStatusTimestamp(evt.ts) || ""}</span>
+                    </>
+                  );
+                })()}
+                <span style={{ color: "#0f172a", whiteSpace: "normal", wordBreak: "break-word" }}>{evt.text || evt.summary || evt.detail || evt.tool || ""}</span>
+              </div>
+            ))}
+        </div>
+      )}
     </div>
   );
 };
 
 const GraphListView = ({ events, compact = true }) => {
+  const [selectedFilters, setSelectedFilters] = useState([]);
   const recentEvents = useMemo(() => {
     return events
       .filter((evt) => {
@@ -3990,6 +4121,43 @@ const GraphListView = ({ events, compact = true }) => {
     });
     return Array.from(names);
   }, [recentEvents]);
+  const paletteByName = useMemo(() => {
+    const map = new Map();
+    const colors = [
+      "#a5b4fc",
+      "#6ee7b7",
+      "#fcd34d",
+      "#fca5a5",
+      "#93c5fd",
+      "#c4b5fd",
+      "#fbbf24",
+      "#7dd3fc",
+      "#d8b4fe",
+      "#f9a8d4",
+    ];
+    agentList.forEach((name, idx) => {
+      map.set(name, colors[idx % colors.length]);
+    });
+    return map;
+  }, [agentList]);
+
+  const filteredEvents = useMemo(() => {
+    if (!selectedFilters.length) return recentEvents;
+    return recentEvents.filter((evt) => {
+      const participants = [
+        evt.from || evt.agent,
+        evt.to || evt.agent,
+        evt.agent,
+      ].filter(Boolean);
+      return participants.some((p) => selectedFilters.includes(p));
+    });
+  }, [recentEvents, selectedFilters]);
+
+  const toggleFilter = (name) => {
+    setSelectedFilters((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+  };
 
   if (!recentEvents.length) {
     return null;
@@ -4014,26 +4182,59 @@ const GraphListView = ({ events, compact = true }) => {
           </div>
         </div>
         <div style={styles.graphSubtitle}>
-          Showing last {recentEvents.length} events
+          Showing last {filteredEvents.length} events
         </div>
       </div>
 
-      <div style={styles.graphAgentsRow}>
-        {agentList.map((agent) => (
-          <span key={agent} style={styles.graphAgentChip}>
-            {agent}
-          </span>
-        ))}
+      <div style={{ ...styles.graphAgentsRow, flexWrap: "wrap" }}>
+        <span
+          key="all"
+          style={{
+            ...styles.graphAgentChip,
+            background: !selectedFilters.length ? "rgba(59,130,246,0.15)" : "rgba(226,232,240,0.7)",
+            borderColor: !selectedFilters.length ? "rgba(59,130,246,0.4)" : "rgba(148,163,184,0.35)",
+          }}
+          onClick={() => setSelectedFilters([])}
+        >
+          All
+        </span>
+        {agentList.map((agent) => {
+          const color = paletteByName.get(agent) || "#cbd5e1";
+          const active = selectedFilters.includes(agent);
+          return (
+            <span
+              key={agent}
+              style={{
+                ...styles.graphAgentChip,
+                background: active ? `${color}33` : "rgba(226,232,240,0.7)",
+                borderColor: active ? color : "rgba(148,163,184,0.35)",
+                color: active ? "#0f172a" : "#334155",
+                boxShadow: active ? `0 4px 10px ${color}44` : "none",
+                cursor: "pointer",
+              }}
+              onClick={() => toggleFilter(agent)}
+            >
+              {agent}
+            </span>
+          );
+        })}
       </div>
 
       <div style={styles.graphEventsList}>
-        {recentEvents.map((evt) => {
+        {filteredEvents.map((evt) => {
           const ts = formatStatusTimestamp(evt.ts);
           const from = evt.from || evt.agent || "System";
           const to = evt.to || evt.agent || "User";
           const text = evt.text || evt.detail || evt.tool || "";
           const isLong = text && text.length > 140;
           const preview = isLong ? `${text.slice(0, 140)}…` : text;
+          const fromColor = paletteByName.get(from) || "#cbd5e1";
+          const toColor = paletteByName.get(to) || "#cbd5e1";
+          const iconFor = (name) => {
+            if (name === "User") return <PersonRoundedIcon sx={{ fontSize: 14, color: toColor }} />;
+            if (name === "System") return <SettingsEthernetRoundedIcon sx={{ fontSize: 14, color: toColor }} />;
+            return <SmartToyRoundedIcon sx={{ fontSize: 14, color: toColor }} />;
+          };
           return (
             <details key={evt.id} style={{ ...styles.graphEventRow, padding: "10px 12px" }}>
               <summary style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer", listStyle: "none", outline: "none", width: "100%", boxSizing: "border-box", minWidth: 0, flexWrap: "wrap" }}>
@@ -4042,9 +4243,15 @@ const GraphListView = ({ events, compact = true }) => {
                   {ts && <span style={styles.graphTimestamp}>{ts}</span>}
                 </div>
                 <div style={{ ...styles.graphFlow, flex: 1, minWidth: 0, flexWrap: "wrap" }}>
-                  <span style={styles.graphNode()}>{from}</span>
+                  <span style={{ ...styles.graphNode(), background: `${fromColor}22`, borderColor: fromColor, color: "#0f172a", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    {iconFor(from)}
+                    {from}
+                  </span>
                   <span style={{ color: "#94a3b8", fontSize: "12px" }}>→</span>
-                  <span style={styles.graphNode("target")}>{to}</span>
+                  <span style={{ ...styles.graphNode("target"), background: `${toColor}22`, borderColor: toColor, color: "#0f172a", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    {iconFor(to)}
+                    {to}
+                  </span>
                   {(preview || evt.tool) && (
                     <span style={{ ...styles.graphText, marginLeft: "10px", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "normal", wordBreak: "break-word" }}>
                       {evt.tool ? `Tool: ${evt.tool}` : null}
@@ -4886,7 +5093,7 @@ function RealTimeVoiceApp() {
     const sessionKey = demoPayload.session_id ?? sessionId;
     let previouslyHadProfile = false;
     const messageLines = [
-      '🚨 DEMO PROFILE GENERATED 🚨',
+      'DEMO PROFILE GENERATED',
       ssn ? `Temporary SSN Last 4: ${ssn}` : null,
       notice,
       'NEVER enter real customer or personal data in this environment.',
@@ -5297,10 +5504,6 @@ function RealTimeVoiceApp() {
   const startRecognition = async (modeOverride) => {
       clearTtsPlaybackQueue("mic start");
       appendLog("🎤 PCM streaming started");
-      setGraphEvents([]);
-      graphEventCounterRef.current = 0;
-      currentAgentRef.current = "Assistant";
-
       await initializeAudioPlayback();
 
       const sessionId = getOrCreateSessionId();
@@ -5892,6 +6095,35 @@ function RealTimeVoiceApp() {
         return;
       }
 
+      // Handle turn_metrics from backend - display TTFT/TTFB per turn
+      if (payload.type === "turn_metrics") {
+        const turnNum = payload.turn_number ?? payload.turnNumber ?? "?";
+        const ttftMs = payload.llm_ttft_ms ?? payload.llmTtftMs;
+        const ttfbMs = payload.tts_ttfb_ms ?? payload.ttsTtfbMs;
+        const sttMs = payload.stt_latency_ms ?? payload.sttLatencyMs;
+        const durationMs = payload.duration_ms ?? payload.durationMs;
+        const agentName = payload.agent_name ?? payload.agentName ?? "Assistant";
+        
+        // Log to metrics panel
+        publishMetricsSummary(`Turn ${turnNum} server metrics`, {
+          ttfbMs: ttfbMs != null ? Math.round(ttfbMs) : undefined,
+          ttftMs: ttftMs != null ? Math.round(ttftMs) : undefined,
+          sttMs: sttMs != null ? Math.round(sttMs) : undefined,
+          durationMs: durationMs != null ? Math.round(durationMs) : undefined,
+          agent: agentName,
+        });
+        
+        logger.info(`📊 Turn ${turnNum} metrics from server:`, {
+          ttfbMs,
+          ttftMs,
+          sttMs,
+          durationMs,
+          agentName,
+        });
+        
+        return;
+      }
+
       if (payload.event_type === "stt_partial" && payload.data) {
         const partialData = payload.data;
         const partialText = (partialData.content || "").trim();
@@ -6022,14 +6254,32 @@ function RealTimeVoiceApp() {
         const eventData =
           rawEventData && typeof rawEventData === "object" ? rawEventData : {};
         const eventTimestamp = payload.ts || new Date().toISOString();
-        const eventSpeaker = payload.speaker || payload.sender || "System";
         const eventTopic = payload.topic || "session";
+        const cascadeType =
+          (eventType || "").toLowerCase().includes("speech_cascade") ||
+          (eventData.streaming_type || eventData.streamingType) === "speech_cascade";
+        const cascadeStage = (eventData.stage || eventData.phase || "").toLowerCase();
+        // Skip noisy cascade envelope parts; assistant/user bubbles already handle content
+        if (cascadeType && cascadeStage && cascadeStage !== "final") {
+          return;
+        }
+
+        const eventSpeaker =
+          eventData.speaker ||
+          eventData.agent ||
+          eventData.active_agent_label ||
+          payload.speaker ||
+          payload.sender ||
+          "System";
         const eventSummary =
           payload.summary ||
           payload.message ||
           describeEventData(eventData) ||
           formatEventTypeLabel(eventType);
-        const eventAgent = resolveAgentLabel(payload, currentAgentRef.current);
+        const eventAgent = resolveAgentLabel(
+          { ...payload, speaker: eventSpeaker, data: eventData },
+          currentAgentRef.current,
+        );
         if (eventAgent && eventAgent !== "System" && eventAgent !== "User") {
           currentAgentRef.current = eventAgent;
         }

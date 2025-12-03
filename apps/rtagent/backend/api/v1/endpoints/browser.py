@@ -31,7 +31,6 @@ from typing import Any, Optional
 
 from fastapi import (
     APIRouter,
-    Depends,
     HTTPException,
     Query,
     Request,
@@ -61,7 +60,6 @@ from src.postcall.push import build_and_flush
 from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
-from ..dependencies.orchestrator import get_orchestrator
 from ..handlers.media_handler import (
     MediaHandler,
     MediaHandlerConfig,
@@ -71,7 +69,7 @@ from ..handlers.media_handler import (
     VOICE_LIVE_SPEECH_RMS_THRESHOLD,
     VOICE_LIVE_SILENCE_GAP_SECONDS,
 )
-from ..handlers.voice_live_sdk_handler import VoiceLiveSDKHandler
+from apps.rtagent.backend.voice_channels import VoiceLiveSDKHandler
 from ..schemas.realtime import RealtimeStatusResponse
 
 logger = get_logger("api.v1.endpoints.browser")
@@ -191,7 +189,6 @@ async def browser_conversation_endpoint(
     session_id: Optional[str] = Query(None),
     streaming_mode: Optional[str] = Query(None),
     user_email: Optional[str] = Query(None),
-    orchestrator: Optional[callable] = Depends(get_orchestrator),
 ) -> None:
     """
     WebSocket endpoint for browser-based voice conversations.
@@ -252,7 +249,6 @@ async def browser_conversation_endpoint(
                         transport=TransportType.BROWSER,
                         conn_id=conn_id,
                         user_email=user_email,
-                        orchestrator_func=orchestrator,
                     )
                     handler = await MediaHandler.create(config, websocket.app.state)
                     memory_manager = handler.memory_manager

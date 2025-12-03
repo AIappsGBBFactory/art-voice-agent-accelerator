@@ -54,6 +54,6 @@ voice:          # Optional: name, style, rate for TTS
 ## File Organization
 
 - `base.py` - ARTAgent class
-- `agent_store/` - Agent YAML configs
+- `agents/` - Agent YAML configs
 - `prompt_store/` - Jinja prompt templates  
 - `tool_store/` - Tool function registry

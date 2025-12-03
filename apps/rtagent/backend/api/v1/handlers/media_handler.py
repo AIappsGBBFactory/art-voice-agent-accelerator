@@ -76,7 +76,7 @@ from apps.rtagent.backend.src.services.acs.call_transfer import (
 from apps.rtagent.backend.src.helpers import check_for_stopwords
 from utils.ml_logging import get_logger
 
-from .speech_cascade_handler import (
+from apps.rtagent.backend.voice_channels import (
     SpeechCascadeHandler,
     SpeechEvent,
     SpeechEventType,
@@ -138,7 +138,6 @@ class MediaHandlerConfig:
     transport: TransportType = TransportType.BROWSER
     conn_id: Optional[str] = None  # Browser only
     call_connection_id: Optional[str] = None  # ACS only
-    orchestrator_func: Optional[Callable] = None
     stream_mode: StreamMode = field(default_factory=lambda: ACS_STREAMING_MODE)
     user_email: Optional[str] = None
 
@@ -312,6 +311,8 @@ class MediaHandler:
             on_partial_transcript=handler._on_partial_transcript,
             on_user_transcript=handler._on_user_transcript,
             on_tts_request=handler._on_tts_request,
+            latency_tool=handler._latency_tool,
+            redis_mgr=redis_mgr,
         )
 
         # Persist
@@ -782,6 +783,11 @@ class MediaHandler:
                 # Emit to UI
                 await self._emit_to_ui(text)
 
+                # Callback for first audio
+                on_first_audio = None
+                if self.speech_cascade and not is_greeting:
+                    on_first_audio = self.speech_cascade.record_tts_first_audio
+
                 # Play via ACS - use blocking=True to ensure sequential playback.
                 # This waits for synthesis AND all frames to stream before returning.
                 await send_response_to_acs(
@@ -793,6 +799,7 @@ class MediaHandler:
                     voice_name=voice_name,
                     voice_style=voice_style,
                     rate=voice_rate,
+                    on_first_audio=on_first_audio,
                 )
                     
             except asyncio.CancelledError:
@@ -830,10 +837,10 @@ class MediaHandler:
                 if is_greeting:
                     self._record_greeting(text)
 
-                # Record TTS first audio timing for turn telemetry
-                # (This marks when TTS starts - actual first audio comes from synthesis)
+                # Callback for first audio
+                on_first_audio = None
                 if self.speech_cascade and not is_greeting:
-                    self.speech_cascade.record_tts_first_audio()
+                    on_first_audio = self.speech_cascade.record_tts_first_audio
 
                 # Send audio - track task for cancellation
                 self._current_tts_task = asyncio.create_task(
@@ -844,6 +851,7 @@ class MediaHandler:
                         voice_name=voice_name,
                         voice_style=voice_style,
                         rate=voice_rate,
+                        on_first_audio=on_first_audio,
                     )
                 )
                 await self._current_tts_task

@@ -1,9 +1,11 @@
 import logging
 import os
 import re
+import time
 import warnings
+from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
 from datetime import datetime, timedelta
 
 import pymongo
@@ -11,14 +13,67 @@ from bson.son import SON
 import yaml
 from utils.azure_auth import get_credential
 from dotenv import load_dotenv
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
 from pymongo.auth_oidc import OIDCCallback, OIDCCallbackContext, OIDCCallbackResult
 from pymongo.errors import DuplicateKeyError, NetworkTimeout, PyMongoError
 
 # Initialize logging
 logger = logging.getLogger(__name__)
 
+# OpenTelemetry tracer for Cosmos DB operations
+_tracer = trace.get_tracer(__name__)
+
+# Type variable for decorator
+F = TypeVar("F", bound=Callable[..., Any])
+
 # Suppress CosmosDB compatibility warnings from PyMongo - these are expected when using Azure CosmosDB with MongoDB API
 warnings.filterwarnings("ignore", message=".*CosmosDB cluster.*", category=UserWarning)
+
+
+def _trace_cosmosdb(operation: str) -> Callable[[F], F]:
+    """
+    Simple decorator for tracing Cosmos DB operations with CLIENT spans.
+    
+    Args:
+        operation: Database operation name (e.g., "find_one", "insert_one")
+    
+    Creates spans visible in App Insights Dependencies view with latency tracking.
+    """
+    def decorator(func: F) -> F:
+        @wraps(func)
+        def wrapper(self, *args, **kwargs) -> Any:
+            # Get cluster host for server.address attribute
+            server_address = getattr(self, "cluster_host", None) or "cosmosdb"
+            collection_name = getattr(getattr(self, "collection", None), "name", "unknown")
+            
+            with _tracer.start_as_current_span(
+                f"cosmosdb.{operation}",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "peer.service": "cosmosdb",
+                    "db.system": "cosmosdb",
+                    "db.operation": operation,
+                    "db.name": collection_name,
+                    "server.address": server_address,
+                },
+            ) as span:
+                start_time = time.perf_counter()
+                try:
+                    result = func(self, *args, **kwargs)
+                    span.set_status(Status(StatusCode.OK))
+                    return result
+                except Exception as e:
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    span.set_attribute("error.type", type(e).__name__)
+                    span.set_attribute("error.message", str(e))
+                    raise
+                finally:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    span.set_attribute("db.operation.duration_ms", duration_ms)
+        
+        return wrapper  # type: ignore
+    return decorator
 
 
 def _extract_cluster_host(connection_string: Optional[str]) -> Optional[str]:
@@ -120,6 +175,7 @@ class CosmosDBMongoCoreManager:
             logger.error(f"Failed to connect to Cosmos DB: {e}")
             raise
 
+    @_trace_cosmosdb("insert_one")
     def insert_document(self, document: Dict[str, Any]) -> Optional[Any]:
         """
         Insert a document into the collection. If the document with the same _id already exists, it will raise a DuplicateKeyError.
@@ -137,6 +193,7 @@ class CosmosDBMongoCoreManager:
             logger.error(f"Failed to insert document: {e}")
             return None
 
+    @_trace_cosmosdb("upsert")
     def upsert_document(
         self, document: Dict[str, Any], query: Dict[str, Any]
     ) -> Optional[Any]:
@@ -162,6 +219,7 @@ class CosmosDBMongoCoreManager:
             logger.error(f"Failed to upsert document for query {query}: {e}")
             raise
 
+    @_trace_cosmosdb("find_one")
     def read_document(self, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Read a document from the collection based on a query.
@@ -179,6 +237,7 @@ class CosmosDBMongoCoreManager:
             logger.error(f"Failed to read document: {e}")
             return None
 
+    @_trace_cosmosdb("find")
     def query_documents(
         self,
         query: Dict[str, Any],
@@ -224,6 +283,7 @@ class CosmosDBMongoCoreManager:
             logger.error(f"Failed to query documents: {e}")
             return []
 
+    @_trace_cosmosdb("count")
     def document_exists(self, query: Dict[str, Any]) -> bool:
         """
         Check if a document exists in the collection based on a query.
@@ -241,6 +301,7 @@ class CosmosDBMongoCoreManager:
             logger.error(f"Failed to check document existence: {e}")
             return False
 
+    @_trace_cosmosdb("delete_one")
     def delete_document(self, query: Dict[str, Any]) -> bool:
         """
         Delete a document from the collection based on a query.
@@ -274,6 +335,7 @@ class CosmosDBMongoCoreManager:
         max_supported = 2_147_483_647
         return min(seconds, max_supported)
 
+    @_trace_cosmosdb("create_index")
     def ensure_ttl_index(self, field_name: str = "ttl", expire_seconds: int = 0) -> bool:
         """
         Create TTL index on collection for automatic document expiration.

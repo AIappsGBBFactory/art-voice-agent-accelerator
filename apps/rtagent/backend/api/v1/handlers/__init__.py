@@ -5,21 +5,18 @@ V1 API Handlers
 Business logic handlers for V1 API endpoints.
 
 Handler Architecture:
-- speech_cascade_handler: Generic three-thread speech processing (protocol-agnostic)
 - media_handler: Unified handler for both ACS and Browser (composing SpeechCascadeHandler)
-- voice_live_sdk_handler: VoiceLive SDK handler for alternative transport
+- acs_call_lifecycle: ACS call lifecycle management
+- dtmf_validation_lifecycle: DTMF validation handling
 
-The unified MediaHandler supports:
-- ACS transport: handle_media_message() for JSON protocol
-- Browser transport: run() message loop for raw audio/text
+Voice channel handlers have moved to:
+    apps/rtagent/backend/voice_channels/
 
-The separation allows:
-- Easy testing of each layer independently
-- Swapping transport layers without changing speech processing
-- Clear separation of protocol-specific vs generic logic
+Re-exports are provided here for backward compatibility.
 """
 
-from .speech_cascade_handler import (
+# Voice channel re-exports (moved to apps/rtagent/backend/voice_channels/)
+from apps.rtagent.backend.voice_channels import (
     SpeechCascadeHandler,
     SpeechEvent,
     SpeechEventType,
@@ -27,7 +24,9 @@ from .speech_cascade_handler import (
     RouteTurnThread,
     SpeechSDKThread,
     BargeInController,
+    VoiceLiveSDKHandler,
 )
+
 from .media_handler import (
     MediaHandler,
     MediaHandlerConfig,
@@ -44,7 +43,6 @@ from .media_handler import (
     VOICE_LIVE_SPEECH_RMS_THRESHOLD,
     VOICE_LIVE_SILENCE_GAP_SECONDS,
 )
-from .voice_live_sdk_handler import VoiceLiveSDKHandler
 
 __all__ = [
     # Speech processing (generic)

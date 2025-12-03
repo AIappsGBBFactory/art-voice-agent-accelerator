@@ -31,7 +31,6 @@ from utils.ml_logging import get_logger
 
 # V1 imports
 from ..handlers.acs_call_lifecycle import ACSLifecycleHandler
-from ..dependencies.orchestrator import get_orchestrator
 from ..events import CallEventProcessor, ACSEventTypes
 from src.enums.stream_modes import StreamMode
 from config import ACS_STREAMING_MODE
@@ -692,35 +691,6 @@ async def answer_inbound_call(
                     redis_mgr=getattr(http_request.app.state, "redis", None),
                     record_call=record_call_override,
                 )
-
-            # op.log_info("Inbound call processed successfully")
-            # # Attempt to pre-initialize Voice Live for this inbound call (no pool)
-            # try:
-            #     if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
-            #         # Extract call_connection_id from response body
-            #         body_bytes = result.body if hasattr(result, "body") else None
-            #         if body_bytes and hasattr(http_request.app.state, "conn_manager"):
-            #             import json
-
-            #             body = json.loads(body_bytes.decode("utf-8"))
-            #             call_connection_id = body.get("call_connection_id")
-            #             if call_connection_id:
-            #                 agent_yaml = os.getenv(
-            #                     "VOICE_LIVE_AGENT_YAML",
-            #                     "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
-            #                 )
-            #                 lva_agent = build_lva_from_yaml(
-            #                     agent_yaml, enable_audio_io=False
-            #                 )
-            #                 await asyncio.to_thread(lva_agent.connect)
-            #                 await http_request.app.state.conn_manager.set_call_context(
-            #                     call_connection_id, {"lva_agent": lva_agent}
-            #                 )
-            #                 logger.info(
-            #                     f"Pre-initialized Voice Live agent for inbound call {call_connection_id}"
-            #                 )
-            # except Exception as e:
-            #     logger.debug(f"Voice Live preinit (inbound) skipped: {e}")
 
             return result
 
