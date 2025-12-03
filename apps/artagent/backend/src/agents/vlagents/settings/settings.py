@@ -36,7 +36,7 @@ class VoiceLiveSettings(BaseSettings):
     
     # Application Configuration
     start_agent: str = Field(default="EricaConcierge", description="Initial agent to start with")
-    agents_dir: str = Field(default="agents", description="Directory containing agent YAML files")
+    agents_dir: str = Field(default="agents_store", description="Directory containing agent YAML files")
     templates_dir: str = Field(default="templates", description="Directory containing prompt templates")
     
     # WebSocket Configuration
@@ -57,14 +57,16 @@ class VoiceLiveSettings(BaseSettings):
     @property
     def agents_path(self) -> Path:
         """Get absolute path to agents directory."""
-        base = Path(__file__).parent
+        # Go up one level from settings/ to vlagents/, then into agents_store/
+        base = Path(__file__).parent.parent
         agents = Path(self.agents_dir)
         return agents if agents.is_absolute() else base / agents
     
     @property
     def templates_path(self) -> Path:
         """Get absolute path to templates directory."""
-        base = Path(__file__).parent
+        # Go up one level from settings/ to vlagents/, then into prompt_store/templates/
+        base = Path(__file__).parent.parent
         templates = Path(self.templates_dir)
         return templates if templates.is_absolute() else base / templates
     

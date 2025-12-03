@@ -142,6 +142,7 @@ STANDARD_TOOL_NAMES: Tuple[str, ...] = (
     "confirm_voicemail_and_end_call",
     "transfer_call_to_call_center",
     # E-signature tools
+    "evaluate_card_eligibility",
     "send_card_agreement",
     "verify_esignature",
     "finalize_card_application",

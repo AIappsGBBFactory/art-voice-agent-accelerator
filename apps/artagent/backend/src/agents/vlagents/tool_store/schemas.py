@@ -1337,6 +1337,34 @@ get_card_details_schema: Dict[str, Any] = {
 # BANKING TOOLS - E-Signature & Card Application
 # ═══════════════════════════════════════════════════════════════════
 
+evaluate_card_eligibility_schema: Dict[str, Any] = {
+    "name": "evaluate_card_eligibility",
+    "description": (
+        "Check if a customer is pre-approved or eligible for a specific credit card BEFORE sending the agreement. "
+        "This evaluates the customer's tier (Platinum/Diamond = likely pre-approved), account tenure, income, "
+        "and existing relationship to determine eligibility. ALWAYS call this before send_card_agreement. "
+        "Returns one of: PRE_APPROVED (can proceed immediately), APPROVED_WITH_REVIEW (approved, proceed to agreement), "
+        "PENDING_VERIFICATION (need more info), or DECLINED (suggest alternatives). "
+        "If can_proceed_to_agreement is true, next call send_card_agreement. "
+        "Returns: {eligibility_status: 'PRE_APPROVED', credit_limit: 15000, can_proceed_to_agreement: true, next_step: '...'}"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier."
+            },
+            "card_product_id": {
+                "type": "string",
+                "description": "Card product ID to check eligibility for (e.g., 'travel-rewards-001')"
+            }
+        },
+        "required": ["client_id", "card_product_id"],
+        "additionalProperties": False,
+    },
+}
+
 send_card_agreement_schema: Dict[str, Any] = {
     "name": "send_card_agreement",
     "description": (
@@ -1345,6 +1373,7 @@ send_card_agreement_schema: Dict[str, Any] = {
         "(annual fee, APR, rewards, benefits) to customer's email address from their profile. "
         "The verification code is included in the email. Customer should check their email inbox. "
         "Use this after customer selects a card and confirms they want to proceed with application. "
+        "IMPORTANT: Pass eligibility_credit_limit from evaluate_card_eligibility to ensure consistent credit limit in final approval. "
         "Returns: {success: true, verification_code: '123456', email: 'customer@email.com', card_name: '...', expires_in_hours: 24}"
     ),
     "parameters": {
@@ -1357,9 +1386,13 @@ send_card_agreement_schema: Dict[str, Any] = {
             "card_product_id": {
                 "type": "string",
                 "description": "Selected card product ID from search_card_products (e.g., 'travel-rewards-001')"
+            },
+            "eligibility_credit_limit": {
+                "type": "integer",
+                "description": "Credit limit from evaluate_card_eligibility response (REQUIRED). Pass the exact credit_limit value from Step 2 to ensure consistency between eligibility estimate and final approval. If not provided, final approval will recalculate and may differ."
             }
         },
-        "required": ["client_id", "card_product_id"],
+        "required": ["client_id", "card_product_id", "eligibility_credit_limit"],
         "additionalProperties": False,
     },
 }

@@ -65,6 +65,7 @@ from apps.artagent.backend.src.agents.vlagents.tool_store.banking.investment_too
     calculate_tax_impact,
 )
 from apps.artagent.backend.src.agents.vlagents.tool_store.banking.banking_esign_tools import (
+    evaluate_card_eligibility,
     send_card_agreement,
     verify_esignature,
     finalize_card_application,
@@ -122,6 +123,7 @@ from apps.artagent.backend.src.agents.vlagents.tool_store.schemas import (
     get_recent_transactions_schema,
     search_card_products_schema,
     get_card_details_schema,
+    evaluate_card_eligibility_schema,
     send_card_agreement_schema,
     verify_esignature_schema,
     finalize_card_application_schema,
@@ -186,6 +188,7 @@ function_mapping: Dict[str, Callable[..., Any]] = {
     "get_recent_transactions": get_recent_transactions,
     "search_card_products": search_card_products,
     "get_card_details": get_card_details,
+    "evaluate_card_eligibility": evaluate_card_eligibility,
     "send_card_agreement": send_card_agreement,
     "verify_esignature": verify_esignature,
     "finalize_card_application": finalize_card_application,
@@ -248,6 +251,7 @@ available_tools: List[Dict[str, Any]] = [
     {"type": "function", "function": get_recent_transactions_schema},
     {"type": "function", "function": search_card_products_schema},
     {"type": "function", "function": get_card_details_schema},
+    {"type": "function", "function": evaluate_card_eligibility_schema},
     {"type": "function", "function": send_card_agreement_schema},
     {"type": "function", "function": verify_esignature_schema},
     {"type": "function", "function": finalize_card_application_schema},

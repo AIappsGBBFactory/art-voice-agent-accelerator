@@ -18,12 +18,15 @@ class PromptManager:
 
         primary_dir = Path(template_dir) if not isinstance(template_dir, Path) else template_dir
 
-        agents_root = Path(__file__).resolve().parent
-        vl_templates = agents_root / "templates"
+        prompt_store_root = Path(__file__).resolve().parent
+        vl_templates = prompt_store_root / "templates"
+        banking_templates = prompt_store_root / "banking"
 
         loaders = []
         if vl_templates.exists():
             loaders.append(FileSystemLoader(str(vl_templates)))
+        if banking_templates.exists():
+            loaders.append(FileSystemLoader(str(banking_templates)))
         if primary_dir.exists():
             loaders.append(FileSystemLoader(str(primary_dir)))
 

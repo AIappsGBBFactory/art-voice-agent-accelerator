@@ -42,7 +42,9 @@ class InstitutionConfig:
     website_domain: str = "bankofamerica.com"
     secure_domain: str = "secure.bankofamerica.com"
     atm_network_count: str = "40,000+"
-    partner_atm_message: str = "No fees at 40,000+ Bank of America ATMs nationwide and partner ATMs internationally"
+    # NOTE: ATM fee waivers apply to DEBIT/ATM cards only, NOT credit cards
+    debit_atm_message: str = "With your Bank of America debit card: No fees at 40,000+ Bank of America ATMs nationwide. Preferred Rewards members may have additional non-network ATM fee waivers."
+    global_atm_alliance_message: str = "Global ATM Alliance: Use your BoA debit card at partner banks abroad (Barclays, BNP Paribas, Deutsche Bank) to avoid some ATM fees."
 
 
 # Allow environment override for multi-tenant demos
@@ -58,33 +60,85 @@ INSTITUTION_CONFIG = InstitutionConfig(
 
 @dataclass(frozen=True)
 class CustomerTierConfig:
-    """Customer tier definitions and benefits."""
+    """Customer tier definitions and benefits including ATM fee waivers."""
     name: str
     rewards_bonus_pct: int  # e.g., 75 for 75% bonus
     annual_fee_waived: bool
     description: str
+    # ATM fee waiver benefits (for DEBIT CARD only - NOT credit cards)
+    debit_atm_fee_waivers_per_cycle: int  # -1 = unlimited, 0 = none
+    international_atm_fee_waived: bool
+    atm_benefit_description: str
 
 
 CUSTOMER_TIERS: Dict[str, CustomerTierConfig] = {
+    "diamond_honors": CustomerTierConfig(
+        name="Preferred Rewards Diamond Honors",
+        rewards_bonus_pct=75,
+        annual_fee_waived=True,
+        description="Preferred Rewards Diamond Honors: 75% rewards bonus + all premium benefits",
+        debit_atm_fee_waivers_per_cycle=-1,  # Unlimited
+        international_atm_fee_waived=True,
+        atm_benefit_description="Unlimited non-Bank of America ATM fee waivers + international ATM fees waived on your debit card"
+    ),
+    "platinum_honors": CustomerTierConfig(
+        name="Preferred Rewards Platinum Honors",
+        rewards_bonus_pct=75,
+        annual_fee_waived=True,
+        description="Preferred Rewards Platinum Honors: 75% rewards bonus + expedited benefits",
+        debit_atm_fee_waivers_per_cycle=-1,  # Unlimited
+        international_atm_fee_waived=False,
+        atm_benefit_description="Unlimited non-Bank of America ATM fee waivers on your debit card (ATM owner surcharge may still apply)"
+    ),
     "platinum": CustomerTierConfig(
         name="Preferred Rewards Platinum",
         rewards_bonus_pct=75,
         annual_fee_waived=True,
-        description="Preferred Rewards Platinum: 75% rewards bonus + expedited benefits"
+        description="Preferred Rewards Platinum: 75% rewards bonus + expedited benefits",
+        debit_atm_fee_waivers_per_cycle=1,  # 1 per cycle
+        international_atm_fee_waived=False,
+        atm_benefit_description="1 non-Bank of America ATM fee waiver per statement cycle on your debit card (ATM owner surcharge may still apply)"
     ),
     "gold": CustomerTierConfig(
         name="Preferred Rewards Gold",
         rewards_bonus_pct=50,
         annual_fee_waived=False,
-        description="Preferred Rewards Gold: 50% rewards bonus"
+        description="Preferred Rewards Gold: 50% rewards bonus",
+        debit_atm_fee_waivers_per_cycle=0,
+        international_atm_fee_waived=False,
+        atm_benefit_description="No ATM fee waivers - use Bank of America ATMs or Global ATM Alliance partners abroad to avoid fees"
     ),
     "standard": CustomerTierConfig(
         name="Standard",
         rewards_bonus_pct=0,
         annual_fee_waived=False,
-        description="Standard rewards earning"
+        description="Standard rewards earning",
+        debit_atm_fee_waivers_per_cycle=0,
+        international_atm_fee_waived=False,
+        atm_benefit_description="No ATM fee waivers - use Bank of America ATMs to avoid fees"
     ),
 }
+
+
+def get_tier_atm_benefits(tier_name: str) -> str:
+    """Get ATM benefit description for a customer tier (for DEBIT cards only)."""
+    tier_key = tier_name.lower().replace(" ", "_").replace("preferred_rewards_", "")
+    # Handle common variations
+    if "diamond" in tier_key:
+        tier_key = "diamond_honors"
+    elif "platinum" in tier_key and "honors" in tier_key:
+        tier_key = "platinum_honors"
+    elif "platinum" in tier_key:
+        tier_key = "platinum"
+    elif "gold" in tier_key:
+        tier_key = "gold"
+    else:
+        tier_key = "standard"
+    
+    tier_config = CUSTOMER_TIERS.get(tier_key)
+    if tier_config:
+        return tier_config.atm_benefit_description
+    return "Use Bank of America ATMs to avoid fees"
 
 # Credit limits by income band (used in card approval)
 CREDIT_LIMITS_BY_INCOME: Dict[str, int] = {
@@ -138,13 +192,13 @@ CARD_PRODUCTS: Dict[str, CardProduct] = {
         },
         highlights=[
             "No annual fee",
-            "No foreign transaction fees - perfect for international travelers",
-            "Unlimited 1.5% cash back or travel rewards",
+            "No foreign transaction fees ON PURCHASES - ideal for international travelers",
+            "Unlimited 1.5 points per $1 on all purchases",
             "Redeem points for travel, dining, or cash back with no blackout dates",
             "Travel insurance included (trip delay, baggage delay)",
-            "No foreign ATM network fees when using partner ATMs"
+            "IMPORTANT: For cash abroad, use your Bank of America debit card at partner ATMs to minimize fees"
         ],
-        atm_benefits="No fees at 40,000+ Bank of America ATMs nationwide and partner ATMs internationally"
+        atm_benefits="Credit card ATM use = cash advance with fees and immediate interest. For travel cash, use your BoA debit card at Bank of America or Global ATM Alliance partner ATMs."
     ),
     "premium-rewards-001": CardProduct(
         product_id="premium-rewards-001",
@@ -168,10 +222,11 @@ CARD_PRODUCTS: Dict[str, CardProduct] = {
             "$100 airline fee credit (reimbursement for baggage fees, seat selection)",
             "$100 TSA PreCheck/Global Entry credit every 4 years",
             "Comprehensive travel insurance (trip cancellation, interruption, delay)",
-            "No foreign transaction fees on any purchase",
-            "Priority airport lounge access (4 free visits annually)"
+            "No foreign transaction fees ON PURCHASES",
+            "Priority airport lounge access (4 free visits annually)",
+            "IMPORTANT: For cash abroad, use your Bank of America debit card - credit card ATM use incurs cash advance fees"
         ],
-        atm_benefits="No fees at 40,000+ Bank of America ATMs + no fees at international partner ATMs",
+        atm_benefits="Credit card ATM use = cash advance (typically 4-5% fee + higher APR from day one, no grace period). For travel cash, use your BoA debit card at Bank of America or Global ATM Alliance partner ATMs.",
         roi_example="Customer spending $4,000/month on travel & dining earns ~$1,200/year in rewards, offsetting annual fee"
     ),
     "cash-rewards-002": CardProduct(
@@ -265,19 +320,23 @@ def card_product_to_dict(card: CardProduct) -> Dict[str, Any]:
 CARD_KNOWLEDGE_BASE: Dict[str, Dict[str, str]] = {
     "travel-rewards-001": {
         "apr": "Variable APR of 19.24% - 29.24% after intro period",
-        "foreign_fees": "No foreign transaction fees on purchases made outside the US",
+        "foreign_fees": "No foreign transaction fees on PURCHASES made outside the US. This does NOT apply to ATM cash withdrawals.",
+        "atm_cash_advance": "IMPORTANT: Using any credit card at an ATM is a CASH ADVANCE, not a purchase. Cash advances have: (1) a fee of 4-5% of the amount, (2) a higher APR than purchases, and (3) interest starts immediately with no grace period. For travel cash, use your Bank of America debit card at partner ATMs instead.",
         "eligibility": "Good to excellent credit (FICO 670+). Must be 18+ and US resident.",
         "benefits": "No annual fee, travel insurance up to $250,000, baggage delay insurance, rental car coverage",
         "rewards": "Earn 1.5 points per $1 on all purchases with no category restrictions or caps",
-        "balance_transfer": "0% intro APR for 12 months, then variable APR. 3% balance transfer fee"
+        "balance_transfer": "0% intro APR for 12 months, then variable APR. 3% balance transfer fee",
+        "best_for_travel": "Ideal for purchases abroad - no foreign transaction fee on purchases. For cash needs while traveling, use your Bank of America debit card at Global ATM Alliance partners (Barclays, BNP Paribas, Deutsche Bank) to reduce fees."
     },
     "premium-rewards-001": {
         "apr": "Variable APR of 18.24% - 28.24% after intro period",
-        "foreign_fees": "No foreign transaction fees",
+        "foreign_fees": "No foreign transaction fees on PURCHASES. This does NOT apply to ATM cash withdrawals.",
+        "atm_cash_advance": "IMPORTANT: Using any credit card at an ATM is a CASH ADVANCE, not a purchase. Cash advances have: (1) a fee of 4-5% of the amount, (2) a higher APR than purchases, and (3) interest starts immediately with no grace period. For travel cash, use your Bank of America debit card at partner ATMs instead.",
         "eligibility": "Excellent credit (FICO 750+). Preferred Rewards tier recommended for maximum benefits.",
         "benefits": "$95 annual fee. $100 airline fee credit, $100 TSA PreCheck/Global Entry credit, travel insurance up to $500,000, trip cancellation coverage, lost luggage reimbursement",
         "rewards": "Earn 2 points per $1 on travel and dining, 1.5 points per $1 on all other purchases. Points value increases with Preferred Rewards tier: up to 75% bonus",
-        "balance_transfer": "0% intro APR for 15 months, then variable APR. 3% balance transfer fee ($10 minimum)"
+        "balance_transfer": "0% intro APR for 15 months, then variable APR. 3% balance transfer fee ($10 minimum)",
+        "best_for_travel": "Premium travel card - no foreign transaction fee on purchases, extensive travel insurance. For cash needs abroad, use your Bank of America debit card at Global ATM Alliance partners."
     },
     "cash-rewards-002": {
         "apr": "Variable APR of 19.24% - 29.24% after intro period",
@@ -594,6 +653,89 @@ REFUND_PROCESSING_DAYS: str = "2 business days"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 11: FEE POLICY KNOWLEDGE BASE (Anti-Hallucination Guardrails)
+# ═══════════════════════════════════════════════════════════════════════════════
+# This section provides accurate, grounded information about fees to prevent
+# the AI from making incorrect claims about ATM fees, foreign transaction fees,
+# and the critical difference between debit cards and credit cards.
+
+FEE_POLICY_KB: Dict[str, str] = {
+    # CRITICAL: Credit Card ATM = Cash Advance
+    "credit_card_atm_usage": """
+CRITICAL POLICY: Using a CREDIT CARD at an ATM is a CASH ADVANCE, not a regular transaction.
+Cash advances have THREE penalties:
+1. Cash advance fee: typically 4-5% of the amount (minimum $10)
+2. Higher APR: cash advance APR is often 25-29%, higher than purchase APR
+3. NO grace period: interest accrues immediately from the day of withdrawal, unlike purchases
+
+NEVER claim that credit cards have "no ATM fees" or "free ATM access" - this is incorrect.
+Credit cards are designed for PURCHASES, not cash withdrawals.
+""",
+
+    # Foreign Transaction Fees - Purchases vs ATM
+    "foreign_transaction_fee_scope": """
+"No foreign transaction fee" on credit cards applies ONLY to PURCHASES made in foreign currencies.
+This benefit does NOT apply to:
+- ATM cash withdrawals (which are cash advances with separate fees)
+- Cash equivalents (wire transfers, money orders, etc.)
+
+Example: Travel Rewards card has 0% foreign transaction fee on a €100 dinner in Paris.
+But using that same card at a Paris ATM for €100 cash = cash advance fee + cash advance APR.
+""",
+
+    # Debit Card ATM Benefits (Preferred Rewards)
+    "debit_atm_preferred_rewards": """
+ATM fee waivers are primarily for DEBIT/ATM CARDS through Preferred Rewards program:
+- Platinum tier: 1 non-BoA ATM fee waiver per statement cycle
+- Platinum Honors: Unlimited non-BoA ATM fee waivers
+- Diamond Honors: Unlimited waivers + international ATM fee waivers
+
+These benefits apply to the DEBIT CARD linked to the checking account, NOT credit cards.
+The ATM owner may still charge their own surcharge even if BoA waives its fee.
+""",
+
+    # Global ATM Alliance
+    "global_atm_alliance": """
+Global ATM Alliance is for DEBIT/ATM CARDS only:
+- Partner banks: Barclays (UK), BNP Paribas (France), Deutsche Bank (Germany), and others
+- Using your BoA debit card at these ATMs avoids BoA's non-BoA ATM fee
+- The ATM owner's surcharge is typically waived at alliance partners
+- A 3% international transaction fee may still apply for currency conversion
+
+This alliance does NOT apply to credit cards.
+""",
+
+    # How to Advise Travelers About Cash
+    "travel_cash_advice": """
+For customers traveling internationally who need cash:
+
+BEST OPTIONS (in order):
+1. Bank of America ATM if available abroad (rare, mainly in Mexico/Canada)
+2. Global ATM Alliance partner ATMs with your BoA DEBIT card
+3. Non-partner ATM with your BoA DEBIT card (BoA fee + possible ATM surcharge)
+
+AVOID: Using credit card for ATM cash - cash advance fees and immediate interest apply.
+
+RECOMMENDED APPROACH: "For purchases abroad, your travel credit card eliminates foreign 
+transaction fees. For cash needs, your Bank of America debit card at partner ATMs is the 
+most cost-effective option. Using a credit card at an ATM is treated as a cash advance 
+with fees and immediate interest, so it's best avoided."
+"""
+}
+
+
+# Helper function to get fee policy information
+def get_fee_policy(topic: str) -> Optional[str]:
+    """Get accurate fee policy information by topic."""
+    return FEE_POLICY_KB.get(topic)
+
+
+def get_all_fee_policies() -> Dict[str, str]:
+    """Get all fee policies for agent grounding."""
+    return FEE_POLICY_KB.copy()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # EXPORTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -605,6 +747,7 @@ __all__ = [
     "CUSTOMER_TIERS",
     "CustomerTierConfig",
     "CREDIT_LIMITS_BY_INCOME",
+    "get_tier_atm_benefits",
     # Card Products
     "CARD_PRODUCTS",
     "CardProduct",
@@ -639,4 +782,8 @@ __all__ = [
     # Fees
     "REFUNDABLE_FEE_TYPES",
     "REFUND_PROCESSING_DAYS",
+    # Fee Policies (Anti-Hallucination)
+    "FEE_POLICY_KB",
+    "get_fee_policy",
+    "get_all_fee_policies",
 ]
