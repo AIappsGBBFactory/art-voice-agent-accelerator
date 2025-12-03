@@ -3,7 +3,7 @@ import BackendHelpButton from './BackendHelpButton.jsx';
 import { styles } from '../styles/voiceAppStyles.js';
 import { useBackendHealth } from '../hooks/useBackendHealth.js';
 
-const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
+const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect }) => {
   const [displayUrl, setDisplayUrl] = useState(url);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isClickedOpen, setIsClickedOpen] = useState(false);
@@ -642,7 +642,7 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
                   alignItems: "center",
                   gap: "6px",
                 }}>
-                  🤖 RT Agents ({agentsData.agents.length})
+                  🤖 Agents ({agentsData.agents.length})
                 </div>
               </div>
 

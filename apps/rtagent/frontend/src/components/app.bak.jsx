@@ -1731,7 +1731,7 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange }) => {
                   alignItems: "center",
                   gap: "6px",
                 }}>
-                  🤖 RT Agents ({agentsData.agents.length})
+                  🤖 Agents ({agentsData.agents.length})
                 </div>
               </div>
 

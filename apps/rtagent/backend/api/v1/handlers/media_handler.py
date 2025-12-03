@@ -50,36 +50,45 @@ from fastapi.websockets import WebSocketState
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from config import ACS_STREAMING_MODE, GREETING
+from config import ACS_STREAMING_MODE, GREETING, STOP_WORDS
 from src.enums.stream_modes import StreamMode
 from src.pools.session_manager import SessionContext
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.stateful.state_managment import MemoManager
 from src.tools.latency_tool import LatencyTool
-from apps.rtagent.backend.src.orchestration.artagent.orchestrator import route_turn
-from apps.rtagent.backend.src.orchestration.artagent.greetings import (
-    create_personalized_greeting,
-    request_contextual_agent_greeting,
+
+# Use unified orchestrator (new modular agent structure)
+from apps.rtagent.backend.src.orchestration.unified import route_turn
+
+# ACS call control services
+from apps.rtagent.backend.src.services.acs.call_transfer import (
+    transfer_call as transfer_call_service,
 )
-from apps.rtagent.backend.src.ws_helpers.envelopes import make_envelope, make_status_envelope
-from apps.rtagent.backend.src.ws_helpers.shared_ws import (
+
+# Personalized greeting generation
+from apps.rtagent.backend.agents.tools.personalized_greeting import (
+    generate_personalized_greeting,
+)
+from utils.ml_logging import get_logger
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Voice Module Imports (self-contained speech orchestration layer)
+# ─────────────────────────────────────────────────────────────────────────────
+from apps.rtagent.backend.voice import (
+    # Speech Cascade Handler
+    SpeechCascadeHandler,
+    SpeechEvent,
+    SpeechEventType,
+    # Messaging (TTS/transcript/envelope helpers)
     send_tts_audio,
     send_response_to_acs,
     send_user_transcript,
     send_user_partial_transcript,
     send_session_envelope,
-)
-from apps.rtagent.backend.src.ws_helpers.barge_in import BargeInController
-from apps.rtagent.backend.src.services.acs.call_transfer import (
-    transfer_call as transfer_call_service,
-)
-from apps.rtagent.backend.src.helpers import check_for_stopwords
-from utils.ml_logging import get_logger
-
-from apps.rtagent.backend.voice_channels import (
-    SpeechCascadeHandler,
-    SpeechEvent,
-    SpeechEventType,
+    make_envelope,
+    make_assistant_streaming_envelope,
+    # Browser barge-in controller
+    BrowserBargeInController,
 )
 
 logger = get_logger("api.v1.handlers.media_handler")
@@ -229,10 +238,10 @@ class MediaHandler:
         self._current_tts_task: Optional[asyncio.Task] = None
         self._orchestration_tasks: set = set()
 
-        # Barge-in state (for browser BargeInController compatibility)
+        # Barge-in state (for browser BrowserBargeInController compatibility)
         self._barge_in_active: bool = False
         self._last_barge_in_ts: float = 0.0
-        self._barge_in_controller: Optional[BargeInController] = None
+        self._barge_in_controller: Optional[BrowserBargeInController] = None
 
         # State
         self._running = False
@@ -315,6 +324,9 @@ class MediaHandler:
             redis_mgr=redis_mgr,
         )
 
+        # Expose speech_cascade on websocket.state for orchestrator TTS callbacks
+        handler._websocket.state.speech_cascade = handler.speech_cascade
+
         # Persist
         await memory_manager.persist_to_redis_async(redis_mgr)
 
@@ -336,28 +348,56 @@ class MediaHandler:
 
     async def _derive_greeting(self) -> str:
         """Generate contextual greeting with agent assistance when possible."""
-        if self.memory_manager and self._websocket:
-            try:
-                contextual = await request_contextual_agent_greeting(
-                    self.memory_manager,
-                    self._websocket,
-                )
-                if contextual:
-                    return contextual
-            except Exception as exc:
-                logger.debug("[%s] Contextual greeting fallback: %s", self._session_short, exc)
-
         return self._derive_default_greeting(self.memory_manager, self._app_state)
 
     @staticmethod
     def _derive_default_greeting(memory_manager: Optional[MemoManager], app_state: Any) -> str:
-        """Derive greeting from agent config or memory context."""
-        auth_agent = getattr(app_state, "auth_agent", None)
+        """Derive greeting from unified agent config or memory context."""
+        # Get start agent from unified agents (scenario-aware)
+        unified_agents = getattr(app_state, "unified_agents", {})
+        start_agent_name = getattr(app_state, "start_agent", "Concierge")
+        start_agent = unified_agents.get(start_agent_name)
+        
+        # Fall back to legacy auth_agent if unified not available
+        if not start_agent:
+            start_agent = getattr(app_state, "auth_agent", None)
+
+        # Build context for greeting templating from session memory
+        context = {}
+        if memory_manager:
+            # Get session_profile for rich context
+            session_profile = memory_manager.get_value_from_corememory("session_profile", None)
+            active_agent = memory_manager.get_value_from_corememory("active_agent", None)
+            context = {
+                "session_profile": session_profile,
+                "caller_name": memory_manager.get_value_from_corememory("caller_name", None),
+                "client_id": memory_manager.get_value_from_corememory("client_id", None),
+                "customer_intelligence": memory_manager.get_value_from_corememory("customer_intelligence", None),
+                "institution_name": memory_manager.get_value_from_corememory("institution_name", None),
+                "active_agent": active_agent,
+                "previous_agent": memory_manager.get_value_from_corememory("previous_agent", None),
+                # Add agent_name for greeting template (use active_agent or start_agent name)
+                "agent_name": active_agent or start_agent_name,
+            }
+            # Also extract from session_profile if available
+            if session_profile:
+                if not context.get("caller_name"):
+                    context["caller_name"] = session_profile.get("full_name")
+                if not context.get("client_id"):
+                    context["client_id"] = session_profile.get("client_id")
+                if not context.get("customer_intelligence"):
+                    context["customer_intelligence"] = session_profile.get("customer_intelligence")
 
         # Check for return greeting (resume)
         if memory_manager and memory_manager.get_value_from_corememory("greeting_sent", False):
-            if auth_agent:
-                return_greeting = getattr(auth_agent, "return_greeting", None)
+            if start_agent:
+                # Use render_return_greeting for Jinja2 template rendering
+                if hasattr(start_agent, "render_return_greeting"):
+                    rendered = start_agent.render_return_greeting(context)
+                    if rendered:
+                        return rendered
+                # Fallback to raw return_greeting (legacy agents)
+                return_greeting = getattr(start_agent, "return_greeting", None)
                 if return_greeting:
                     return return_greeting
             active = (memory_manager.get_value_from_corememory("active_agent", "") or "").strip()
@@ -365,9 +405,15 @@ class MediaHandler:
                 return f'Specialist "{active}" is ready to continue assisting you.'
             return "Session resumed with your previous assistant."
 
-        # Agent config greeting
-        if auth_agent:
-            agent_greeting = getattr(auth_agent, "greeting", None)
+        # Agent config greeting (from unified agent YAML)
+        if start_agent:
+            # Use render_greeting for Jinja2 template rendering
+            if hasattr(start_agent, "render_greeting"):
+                rendered = start_agent.render_greeting(context)
+                if rendered:
+                    return rendered
+            # Fallback to raw greeting (legacy agents)
+            agent_greeting = getattr(start_agent, "greeting", None)
             if agent_greeting:
                 return agent_greeting
 
@@ -380,13 +426,15 @@ class MediaHandler:
                     agent = (memory_manager.get_value_from_corememory("active_agent", "") or "").strip() or "Support"
                     inst = (memory_manager.get_value_from_corememory("institution_name", "") or "").strip()
                     topic = (memory_manager.get_value_from_corememory("topic", "") or "").strip()
-                    return create_personalized_greeting(
-                        caller_name=caller or None,
+                    personalized = generate_personalized_greeting(
                         agent_name=agent,
-                        customer_intelligence=customer_intel,
+                        caller_name=caller or None,
                         institution_name=inst or "our team",
-                        topic=topic or "your account",
+                        customer_intelligence=customer_intel,
+                        is_return_visit=memory_manager.get_value_from_corememory("greeting_sent", False),
                     )
+                    if personalized and personalized.get("greeting"):
+                        return personalized["greeting"]
             except Exception:
                 pass
 
@@ -448,7 +496,7 @@ class MediaHandler:
             if self._current_tts_task and not self._current_tts_task.done():
                 self._current_tts_task.cancel()
 
-        self._barge_in_controller = BargeInController(
+        self._barge_in_controller = BrowserBargeInController(
             websocket=ws,
             session_id=self._session_id,
             conn_id=self._conn_id,
@@ -886,13 +934,36 @@ class MediaHandler:
             logger.debug("[%s] Greeting record failed: %s", self._session_short, e)
 
     async def _emit_to_ui(self, text: str) -> None:
-        """Emit message to UI."""
+        """Emit message to UI with proper agent labeling."""
         try:
-            envelope = make_status_envelope(text, sender="System", topic="session", session_id=self._session_id)
+            normalized = (text or "").strip()
+            cache = getattr(self._websocket.state, "_assistant_stream_cache", None)
+            if normalized and cache:
+                try:
+                    cache.remove(normalized)
+                    # Skip emitting because route_turn already broadcast this chunk
+                    return
+                except ValueError:
+                    pass
+
+            # Get active agent name from memory manager
+            agent_name = "Assistant"
+            if self.memory_manager:
+                agent_name = self.memory_manager.get_value_from_corememory("active_agent", "Assistant") or "Assistant"
+            
+            # Use assistant streaming envelope with agent name
+            envelope = make_assistant_streaming_envelope(
+                content=text,
+                sender=agent_name,
+                session_id=self._session_id,
+            )
+            envelope["speaker"] = agent_name
+            envelope["message"] = text  # Legacy compatibility
+            
             if self._transport == TransportType.ACS:
                 await send_session_envelope(
                     self._websocket, envelope, session_id=self._session_id,
-                    conn_id=None, event_label="message", broadcast_only=True
+                    conn_id=None, event_label="assistant_streaming", broadcast_only=True
                 )
             else:
                 await self._app_state.conn_manager.send_to_connection(self._conn_id, envelope)
@@ -943,7 +1014,8 @@ class MediaHandler:
                     # Text input
                     text = msg.get("text")
                     if text and text.strip():
-                        if check_for_stopwords(text.strip()):
+                        # Check for exit keywords (inline stopwords check)
+                        if any(stop in text.strip().lower() for stop in STOP_WORDS):
                             await self._handle_goodbye()
                             break
                         self.speech_cascade.queue_user_text(text.strip())

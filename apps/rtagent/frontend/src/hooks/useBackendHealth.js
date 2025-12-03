@@ -37,8 +37,13 @@ export const useBackendHealth = (url, { intervalMs = 30000 } = {}) => {
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
-      if (data.status === 'success' && data.agents && Array.isArray(data.agents)) {
-        setAgentsData(data);
+      const agentsArray =
+        (Array.isArray(data.agents) && data.agents) ||
+        (Array.isArray(data.summaries) && data.summaries) ||
+        (Array.isArray(data.agent_summaries) && data.agent_summaries);
+
+      if (data.status === 'success' && agentsArray) {
+        setAgentsData({ ...data, agents: agentsArray });
       } else {
         throw new Error('Invalid agents response structure');
       }

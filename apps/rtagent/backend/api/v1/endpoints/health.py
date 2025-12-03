@@ -42,6 +42,7 @@ from apps.rtagent.backend.api.v1.schemas.health import (
     ServiceCheck,
     ReadinessResponse,
 )
+from apps.rtagent.backend.agents.loader import build_agent_summaries
 from utils.ml_logging import get_logger
 
 logger = get_logger("v1.health")
@@ -792,24 +793,65 @@ async def _check_rt_agents_fast(app_state: Any) -> ServiceCheck:
     """
     start = time.time()
     
-    # Discover agents dynamically
-    discovered = _agent_registry.discover_agents(app_state)
-    missing = _agent_registry.get_missing_agents(app_state)
-    
-    if missing:
+    try:
+        unified_agents = getattr(app_state, "unified_agents", {}) or {}
+        start_agent = getattr(app_state, "start_agent", None)
+        handoff_map = getattr(app_state, "handoff_map", {}) or {}
+        summaries = getattr(app_state, "agent_summaries", None)
+
+        if summaries is None and unified_agents:
+            summaries = build_agent_summaries(unified_agents)
+
+        if not summaries:
+            # Fallback to legacy registry discovery
+            discovered = _agent_registry.discover_agents(app_state)
+            summaries = [
+                {
+                    "name": name,
+                    "description": getattr(agent, "description", ""),
+                    "model": getattr(getattr(agent, "model", None), "deployment_id", None)
+                    or getattr(agent, "model_id", None),
+                    "voice": getattr(getattr(agent, "voice", None), "name", None),
+                }
+                for name, agent in discovered.items()
+            ]
+
+        agent_count = len(summaries or [])
+        if agent_count == 0:
+            missing = _agent_registry.get_missing_agents(app_state)
+            detail = f"agents not initialized: {', '.join(missing)}" if missing else "no agents loaded"
+            return ServiceCheck(
+                component="rt_agents",
+                status="unhealthy",
+                error=detail,
+                check_time_ms=round((time.time() - start) * 1000, 2),
+            )
+
+        agent_names = [s.get("name") for s in summaries if isinstance(s, dict) and s.get("name")]
+        detail_parts = [f"{agent_count} agents loaded"]
+        if agent_names:
+            preview = ", ".join(agent_names[:5])
+            if len(agent_names) > 5:
+                preview += ", …"
+            detail_parts.append(f"names: {preview}")
+        if start_agent:
+            detail_parts.append(f"start_agent={start_agent}")
+        if handoff_map:
+            detail_parts.append(f"handoffs={len(handoff_map)}")
+
+        return ServiceCheck(
+            component="rt_agents",
+            status="healthy",
+            check_time_ms=round((time.time() - start) * 1000, 2),
+            details=" | ".join(detail_parts),
+        )
+    except Exception as exc:
         return ServiceCheck(
             component="rt_agents",
             status="unhealthy",
-            error=f"agents not initialized: {', '.join(missing)}",
+            error=str(exc),
             check_time_ms=round((time.time() - start) * 1000, 2),
         )
-    
-    return ServiceCheck(
-        component="rt_agents",
-        status="healthy",
-        check_time_ms=round((time.time() - start) * 1000, 2),
-        details=f"all agents initialized: {', '.join(discovered.keys())}",
-    )
 
 
 async def _check_auth_configuration_fast() -> ServiceCheck:
@@ -843,7 +885,7 @@ async def _check_auth_configuration_fast() -> ServiceCheck:
 
 
 @router.get("/agents")
-async def get_agents_info(request: Request):
+async def get_agents_info(request: Request, include_state: bool = False):
     """
     Get information about loaded RT agents including their configuration,
     model settings, and voice settings that can be modified.
@@ -852,6 +894,51 @@ async def get_agents_info(request: Request):
     """
     start_time = time.time()
     agents_info = []
+    app_state = request.app.state
+    start_agent = getattr(app_state, "start_agent", None)
+    handoff_map = getattr(app_state, "handoff_map", {}) or {}
+    scenario = getattr(app_state, "scenario", None)
+    scenario_name = getattr(scenario, "name", None) if scenario else None
+
+def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
+    """Normalize tools and handoff tools for consistent payloads."""
+    def _to_name(item: Any) -> Optional[str]:
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict):
+            return item.get("name") or item.get("tool") or item.get("id")
+        return getattr(item, "name", None) or getattr(item, "tool", None) or getattr(item, "id", None)
+
+    tools = (
+        getattr(agent_obj, "tool_names", None)
+        or getattr(agent_obj, "tools", None)
+        or getattr(agent_obj, "tools_preview", None)
+        or []
+    )
+    if isinstance(tools, dict):
+        tools = tools.values()
+    tools_list_raw = tools if isinstance(tools, (list, tuple, set)) else []
+    tools_list: List[str] = []
+    for t in tools_list_raw:
+        name = _to_name(t)
+        if name and name not in tools_list:
+            tools_list.append(name)
+
+    handoff_tools = getattr(agent_obj, "handoff_tools", None) or []
+    if isinstance(handoff_tools, dict):
+        handoff_tools = handoff_tools.values()
+    handoff_list_raw = handoff_tools if isinstance(handoff_tools, (list, tuple, set)) else []
+    handoff_list: List[str] = []
+    for h in handoff_list_raw:
+        name = _to_name(h)
+        if name and name not in handoff_list:
+            handoff_list.append(name)
+
+    # If no explicit handoff_tools, infer from tool names that start with handoff_
+    if not handoff_list:
+        handoff_list = [t for t in tools_list if t.lower().startswith("handoff_")]
+
+    return {"tools": tools_list, "handoff_tools": handoff_list}
 
     def extract_agent_info(agent: Any, defn: AgentDefinition) -> Optional[Dict[str, Any]]:
         """Extract agent info using registry definition."""
@@ -866,6 +953,8 @@ async def get_agents_info(request: Request):
             # Fallback to global GREETING_VOICE_TTS if agent doesn't have voice configured
             from config import GREETING_VOICE_TTS
             current_voice = agent_voice or GREETING_VOICE_TTS
+
+            tools_normalized = _normalize_tools(agent)
 
             return {
                 "name": getattr(agent, "name", defn.name),
@@ -887,10 +976,8 @@ async def get_agents_info(request: Request):
                 },
                 "config_path": defn.config_path,
                 "prompt_path": getattr(agent, "prompt_path", "Unknown"),
-                "tools": [
-                    tool.get("function", {}).get("name", "Unknown")
-                    for tool in getattr(agent, "tools", [])
-                ],
+                "tools": tools_normalized["tools"],
+                "handoff_tools": tools_normalized["handoff_tools"],
                 "modifiable_settings": {
                     "model_deployment": True,
                     "temperature": True,
@@ -908,19 +995,69 @@ async def get_agents_info(request: Request):
             }
 
     try:
-        # Use registry for dynamic discovery
-        for defn in _agent_registry.list_definitions():
-            agent = getattr(request.app.state, defn.state_attr, None)
-            agent_info = extract_agent_info(agent, defn)
-            if agent_info:
-                agents_info.append(agent_info)
+        unified_agents = getattr(app_state, "unified_agents", {}) or {}
+        summaries = getattr(app_state, "agent_summaries", None)
+
+        if summaries is None and unified_agents:
+            summaries = build_agent_summaries(unified_agents)
+
+        if unified_agents:
+            for name, agent in unified_agents.items():
+                voice_obj = getattr(agent, "voice", None)
+                model_obj = getattr(agent, "model", None)
+                tools_normalized = _normalize_tools(agent)
+                agents_info.append(
+                    {
+                        "name": name,
+                        "status": "loaded",
+                        "description": getattr(agent, "description", ""),
+                        "prompt_path": getattr(agent, "prompt_path", None),
+                        "config_path": getattr(agent, "config_path", None),
+                        "model": {
+                            "deployment_id": getattr(model_obj, "deployment_id", None)
+                            or getattr(agent, "model_id", None)
+                        },
+                        "voice": {
+                            "current_voice": getattr(voice_obj, "name", None) or getattr(agent, "voice_name", None),
+                            "voice_style": getattr(voice_obj, "style", None) or getattr(agent, "voice_style", "chat"),
+                            "voice_configurable": True,
+                            "is_per_agent_voice": bool(
+                                getattr(voice_obj, "name", None) or getattr(agent, "voice_name", None)
+                            ),
+                        },
+                        "tool_count": len(tools_normalized["tools"]),
+                        "tools": tools_normalized["tools"],
+                        "handoff_tools": tools_normalized["handoff_tools"],
+                        "handoff_trigger": getattr(getattr(agent, "handoff", None), "trigger", None),
+                        "prompt_preview": (
+                            getattr(agent, "prompt_template", None)[:320]
+                            if getattr(agent, "prompt_template", None)
+                            else None
+                        ),
+                        "source": "unified",
+                    }
+                )
+        else:
+            # Fallback to legacy registry if unified agents not available
+            for defn in _agent_registry.list_definitions():
+                agent = getattr(app_state, defn.state_attr, None)
+                agent_info = extract_agent_info(agent, defn)
+                if agent_info:
+                    agent_info["source"] = "legacy"
+                    agents_info.append(agent_info)
 
         response_time = round((time.time() - start_time) * 1000, 2)
+        connections = [{"tool": tool, "target": target} for tool, target in (handoff_map or {}).items()]
 
-        return {
+        payload = {
             "status": "success",
             "agents_count": len(agents_info),
             "agents": agents_info,
+            "summaries": summaries or agents_info,
+            "handoff_map": handoff_map,
+            "start_agent": start_agent,
+            "scenario": scenario_name,
+            "connections": connections,
             "response_time_ms": response_time,
             "available_voices": {
                 "turbo_voices": [
@@ -945,6 +1082,10 @@ async def get_agents_info(request: Request):
                 ],
             },
         }
+        if include_state:
+            payload["current_agent"] = getattr(app_state, "active_agent", None)
+
+        return payload
 
     except Exception as e:
         logger.error(f"Error getting agents info: {e}")
@@ -956,6 +1097,71 @@ async def get_agents_info(request: Request):
             },
             status_code=500,
         )
+
+
+@router.get("/agents/{agent_name}")
+async def get_agent_detail(agent_name: str, request: Request, session_id: Optional[str] = None):
+    """
+    Get detailed info for a specific agent, including normalized tools/handoff tools.
+    Optional session_id for future session-scoped context (non-blocking for hotpath).
+    """
+    app_state = request.app.state
+    agent_name_lower = agent_name.lower()
+    unified_agents = getattr(app_state, "unified_agents", {}) or {}
+
+    target_agent = None
+    for name, agent in unified_agents.items():
+        if name.lower() == agent_name_lower:
+            target_agent = agent
+            break
+
+    source = "unified"
+    if not target_agent:
+        # Fallback to legacy registry lookup
+        defn = _agent_registry.get_definition(agent_name)
+        if defn:
+            target_agent = getattr(app_state, defn.state_attr, None)
+            source = "legacy"
+
+    if not target_agent:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{agent_name}' not found",
+        )
+
+    tools_normalized = _normalize_tools(target_agent)
+    voice_obj = getattr(target_agent, "voice", None)
+    model_obj = getattr(target_agent, "model", None)
+
+    detail = {
+        "name": getattr(target_agent, "name", agent_name),
+        "description": getattr(target_agent, "description", ""),
+        "prompt_path": getattr(target_agent, "prompt_path", None),
+        "config_path": getattr(target_agent, "config_path", None),
+        "model": {
+            "deployment_id": getattr(model_obj, "deployment_id", None)
+            or getattr(target_agent, "model_id", None)
+        },
+        "voice": {
+            "current_voice": getattr(voice_obj, "name", None) or getattr(target_agent, "voice_name", None),
+            "voice_style": getattr(voice_obj, "style", None) or getattr(target_agent, "voice_style", "chat"),
+        },
+        "tools": tools_normalized["tools"],
+        "handoff_tools": tools_normalized["handoff_tools"],
+        "handoff_trigger": getattr(getattr(target_agent, "handoff", None), "trigger", None),
+        "prompt_preview": (
+            getattr(target_agent, "prompt_template", None)[:320]
+            if getattr(target_agent, "prompt_template", None)
+            else None
+        ),
+        "source": source,
+    }
+
+    if session_id:
+        detail["session_id"] = session_id
+        detail["current_agent"] = getattr(app_state, "active_agent", None)
+
+    return detail
 
 
 class AgentModelUpdate(BaseModel):

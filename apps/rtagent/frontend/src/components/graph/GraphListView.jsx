@@ -6,7 +6,7 @@ import SettingsEthernetRoundedIcon from '@mui/icons-material/SettingsEthernetRou
 import { styles } from '../../styles/voiceAppStyles.js';
 import { formatStatusTimestamp } from '../../utils/formatters.js';
 
-const GraphListView = ({ events, compact = true }) => {
+const GraphListView = ({ events, compact = true, fillHeight = false }) => {
   const [selectedFilters, setSelectedFilters] = useState([]);
   const recentEvents = useMemo(() => {
     return events
@@ -79,8 +79,18 @@ const GraphListView = ({ events, compact = true }) => {
       function: "Function",
     }[kind] || "Message");
 
+  const containerStyle = compact
+    ? styles.graphContainer
+    : { ...styles.graphContainer, maxWidth: "95%", overflowX: "hidden" };
+
+  if (fillHeight) {
+    containerStyle.height = "100%";
+    containerStyle.display = "flex";
+    containerStyle.flexDirection = "column";
+  }
+
   return (
-    <Box style={compact ? styles.graphContainer : { ...styles.graphContainer, maxWidth: "95%", overflowX: "hidden" }}>
+    <Box style={containerStyle}>
       <div style={styles.graphHeader}>
         <div>
           <div style={styles.graphTitle}>Agent Flow</div>
@@ -127,7 +137,13 @@ const GraphListView = ({ events, compact = true }) => {
         })}
       </div>
 
-      <div style={styles.graphEventsList}>
+      <div
+        style={{
+          ...styles.graphEventsList,
+          flex: fillHeight ? 1 : undefined,
+          minHeight: fillHeight ? 0 : undefined,
+        }}
+      >
         {filteredEvents.map((evt) => {
           const ts = formatStatusTimestamp(evt.ts);
           const from = evt.from || evt.agent || "System";

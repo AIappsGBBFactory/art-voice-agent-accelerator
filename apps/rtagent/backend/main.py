@@ -57,11 +57,6 @@ from apps.rtagent.backend.src.services import AzureOpenAIClient, CosmosDBMongoCo
 from src.aoai.client_manager import AoaiClientManager
 from apps.rtagent.backend.config import (
     AppConfig,
-    AGENT_AUTH_CONFIG,
-    AGENT_FRAUD_CONFIG,
-    AGENT_AGENCY_CONFIG,
-    AGENT_COMPLIANCE_CONFIG,
-    AGENT_TRADING_CONFIG,
     ALLOWED_ORIGINS,
     ACS_CONNECTION_STRING,
     ACS_ENDPOINT,
@@ -81,11 +76,14 @@ from apps.rtagent.backend.config import (
     BASE_URL,
 )
 
-from apps.rtagent.backend.src.agents.artagent.base import ARTAgent
-from apps.rtagent.backend.src.utils.auth import validate_entraid_token
-from apps.rtagent.backend.src.agents.artagent.prompt_store.prompt_manager import PromptManager
+# ─────────────────────────────────────────────────────────────────────────────
+# Unified Agents (new modular structure)
+# ─────────────────────────────────────────────────────────────────────────────
+from apps.rtagent.backend.agents.loader import discover_agents, build_handoff_map
+from apps.rtagent.backend.agents.tools.registry import initialize_tools as initialize_unified_tools
 
-# from apps.rtagent.backend.src.routers import router as api_router
+from apps.rtagent.backend.src.utils.auth import validate_entraid_token
+
 from apps.rtagent.backend.api.v1.router import v1_router
 from apps.rtagent.backend.src.services import (
     AzureRedisManager,
@@ -98,15 +96,36 @@ from apps.rtagent.backend.src.services.acs.acs_caller import (
 )
 
 from apps.rtagent.backend.api.v1.events.registration import register_default_handlers
-from apps.rtagent.backend.src.orchestration.artagent.registry import register_specialist
-from apps.rtagent.backend.src.orchestration.artagent.specialists import (
-    run_fraud_agent,
-    run_agency_agent,
-    run_compliance_agent,
-    run_trading_agent,
-)
-from apps.rtagent.backend.src.agents.shared.tool_registry import initialize_tools
+
 from api.v1.endpoints import demo_env
+
+
+# --------------------------------------------------------------------------- #
+# Agent Access Helpers
+# --------------------------------------------------------------------------- #
+def get_unified_agent(app: FastAPI, name: str):
+    """
+    Get a unified agent by name from app.state.
+    
+    Args:
+        app: FastAPI application instance
+        name: Agent name (e.g., "AuthAgent", "FraudAgent")
+        
+    Returns:
+        UnifiedAgent or None
+    """
+    agents = getattr(app.state, "unified_agents", {})
+    return agents.get(name)
+
+
+def get_all_unified_agents(app: FastAPI):
+    """Get all unified agents from app.state."""
+    return getattr(app.state, "unified_agents", {})
+
+
+def get_handoff_map(app: FastAPI):
+    """Get the handoff map from app.state."""
+    return getattr(app.state, "handoff_map", {})
 
 
 # --------------------------------------------------------------------------- #
@@ -163,6 +182,13 @@ def _build_startup_dashboard(
         f" ACS         : {acs_line}",
         " Speech Mode : on-demand resource factories",
     ]
+    
+    # Show scenario if loaded
+    scenario = getattr(app.state, "scenario", None)
+    if scenario:
+        lines.append(f" Scenario   : {scenario.name}")
+        start_agent = getattr(app.state, "start_agent", "Concierge")
+        lines.append(f"   Start    : {start_agent}")
 
     if docs_enabled:
         lines.append(" Docs       : ENABLED")
@@ -183,26 +209,30 @@ def _build_startup_dashboard(
         lines.append(f"   {stage_name:<13}{stage_duration:.2f}")
 
     lines.append("")
-    agent_configs = [
-        ("auth", "auth_agent", AGENT_AUTH_CONFIG),
-        ("fraud", "fraud_agent", AGENT_FRAUD_CONFIG),
-        ("agency", "agency_agent", AGENT_AGENCY_CONFIG),
-        ("compliance", "compliance_agent", AGENT_COMPLIANCE_CONFIG),
-        ("trading", "trading_agent", AGENT_TRADING_CONFIG),
-    ]
-    loaded_agents: List[str] = []
-    for label, attr, config_path in agent_configs:
+    
+    # Display unified agents (new modular structure)
+    unified_agents = getattr(app.state, "unified_agents", {})
+    if unified_agents:
+        lines.append(" Unified Agents (apps/rtagent/agents/):")
+        for name in sorted(unified_agents.keys()):
+            agent = unified_agents[name]
+            desc = getattr(agent, "description", "")[:40]
+            lines.append(f"   {name:<18}{desc}")
+    else:
+        lines.append(" Unified Agents: (none loaded)")
+    
+    # Display legacy agents if present
+    legacy_agents = []
+    for attr in ["auth_agent", "fraud_agent", "agency_agent", "compliance_agent", "trading_agent"]:
         agent = getattr(app.state, attr, None)
-        if agent is None:
-            loaded_agents.append(f"   {label:<13}missing (check {os.path.basename(config_path)})")
-        else:
-            loaded_agents.append(
-                f"   {label:<13}{agent.__class__.__name__} from {os.path.basename(config_path)}"
-            )
-
-    lines.append("")
-    lines.append(" Loaded Agents:")
-    lines.extend(loaded_agents)
+        if agent is not None:
+            legacy_agents.append(attr)
+    
+    if legacy_agents:
+        lines.append("")
+        lines.append(" Legacy Agents (to be migrated):")
+        for attr in legacy_agents:
+            lines.append(f"   {attr}")
 
     lines.append("")
     lines.append(" Key API Endpoints:")
@@ -454,32 +484,79 @@ async def lifespan(app: FastAPI):
     add_step("services", start_external_services)
 
     async def start_agents() -> None:
-        app.state.auth_agent = ARTAgent(config_path=AGENT_AUTH_CONFIG)
-        app.state.fraud_agent = ARTAgent(config_path=AGENT_FRAUD_CONFIG)
-        app.state.agency_agent = ARTAgent(config_path=AGENT_AGENCY_CONFIG)
-        app.state.compliance_agent = ARTAgent(config_path=AGENT_COMPLIANCE_CONFIG)
-        app.state.trading_agent = ARTAgent(config_path=AGENT_TRADING_CONFIG)
-        app.state.promptsclient = PromptManager()
-        logger.info("agents initialized")
+        # ─────────────────────────────────────────────────────────────────────
+        # Initialize Unified Agents (new modular structure)
+        # ─────────────────────────────────────────────────────────────────────
+        
+        # Check for scenario-based configuration
+        scenario_name = os.getenv("AGENT_SCENARIO", "").strip()
+        
+        if scenario_name:
+            # Load agents with scenario overrides
+            from apps.rtagent.backend.agents.scenarios import (
+                load_scenario,
+                get_scenario_agents,
+                get_scenario_start_agent,
+            )
+            
+            scenario = load_scenario(scenario_name)
+            if scenario:
+                unified_agents = get_scenario_agents(scenario_name)
+                start_agent = get_scenario_start_agent(scenario_name) or "Concierge"
+                app.state.scenario = scenario
+                app.state.start_agent = start_agent
+                logger.info(
+                    "Loaded scenario: %s",
+                    scenario_name,
+                    extra={
+                        "start_agent": start_agent,
+                        "template_vars": list(scenario.global_template_vars.keys()),
+                    },
+                )
+            else:
+                logger.warning("Scenario '%s' not found, using default agents", scenario_name)
+                unified_agents = discover_agents()
+        else:
+            # Standard agent loading
+            unified_agents = discover_agents()
+        
+        handoff_map = build_handoff_map(unified_agents)
+        from apps.rtagent.backend.agents.loader import build_agent_summaries
+        agent_summaries = build_agent_summaries(unified_agents)
+        
+        app.state.unified_agents = unified_agents
+        app.state.handoff_map = handoff_map
+        app.state.agent_summaries = agent_summaries
+        
+        logger.info(
+            "Unified agents loaded",
+            extra={
+                "agent_count": len(unified_agents),
+                "agents": list(unified_agents.keys()),
+                "handoff_count": len(handoff_map),
+                "agent_summaries": agent_summaries,
+                "scenario": scenario_name or "(none)",
+            },
+        )
+        
+        # Set default start_agent if not set by scenario
+        if not hasattr(app.state, "start_agent"):
+            app.state.start_agent = "Concierge"
 
     add_step("agents", start_agents)
 
     async def start_event_handlers() -> None:
-        # Initialize unified tool registry (single source of truth for all agents)
-        tool_count = initialize_tools()
-        logger.info("unified tool registry initialized", extra={"tool_count": tool_count})
+        # ─────────────────────────────────────────────────────────────────────
+        # Initialize Unified Tool Registry (new - apps/rtagent/agents/tools/)
+        # ─────────────────────────────────────────────────────────────────────
+        unified_tool_count = initialize_unified_tools()
+        logger.info(
+            "Unified tool registry initialized",
+            extra={"tool_count": unified_tool_count},
+        )
         
         # Register ACS webhook event handlers
         register_default_handlers()
-        
-        # Register agent specialists for orchestration
-        # Flow: Auth -> (Fraud | Agency) -> (Compliance | Trading)
-        from apps.rtagent.backend.src.orchestration.artagent.auth import run_auth_agent
-        register_specialist("AutoAuth", run_auth_agent)
-        register_specialist("Fraud", run_fraud_agent)
-        register_specialist("Agency", run_agency_agent)
-        register_specialist("Compliance", run_compliance_agent)
-        register_specialist("Trading", run_trading_agent)
         
         orchestrator_preset = os.getenv("ORCHESTRATOR_PRESET", "production")
         logger.info("event handlers registered", extra={"orchestrator_preset": orchestrator_preset})

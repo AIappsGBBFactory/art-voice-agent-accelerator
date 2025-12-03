@@ -31,7 +31,7 @@ Usage:
     print(fraud_agent.handoff.strategy)   # HandoffStrategy.AUTO
 """
 
-from apps.rtagent.agents.base import (
+from apps.rtagent.backend.agents.base import (
     UnifiedAgent,
     HandoffConfig,
     HandoffStrategy,
@@ -47,6 +47,7 @@ from apps.rtagent.agents.loader import (
     list_agent_names,
     load_defaults,
     render_prompt,
+    AGENTS_DIR,
 )
 
 from apps.rtagent.agents.session_manager import (
@@ -59,7 +60,7 @@ from apps.rtagent.agents.session_manager import (
 )
 
 __all__ = [
-    # New unified types
+    # Core types
     "UnifiedAgent",
     "HandoffConfig",
     "HandoffStrategy",
@@ -73,11 +74,12 @@ __all__ = [
     "AgentProvider",
     "HandoffProvider",
     "create_session_agent_manager",
-    # Legacy/loader functions
+    # Loader functions
     "AgentConfig",
     "discover_agents",
     "get_agent",
     "list_agent_names",
     "load_defaults",
     "render_prompt",
+    "AGENTS_DIR",
 ]

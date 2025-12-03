@@ -17,7 +17,7 @@ import json
 import time
 import uuid
 from contextlib import suppress
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, List
 
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
@@ -37,6 +37,7 @@ from apps.rtagent.backend.src.ws_helpers.envelopes import (
     make_event_envelope,
     make_status_envelope,
 )
+from apps.rtagent.backend.agents.loader import build_agent_summaries
 from apps.rtagent.backend.src.services.speech_services import SpeechSynthesizer
 from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
@@ -207,6 +208,59 @@ async def send_user_partial_transcript(
         event_label="user_transcript_partial",
         broadcast_only=True,
     )
+
+
+async def send_agent_inventory(
+    app_state,
+    *,
+    session_id: str,
+    call_id: Optional[str] = None,
+) -> bool:
+    """Send a lightweight agent/tool snapshot to dashboards for a session."""
+    if not app_state or not hasattr(app_state, "conn_manager"):
+        return False
+
+    agents = getattr(app_state, "unified_agents", {}) or {}
+    summaries = getattr(app_state, "agent_summaries", None) or build_agent_summaries(agents)
+    start_agent = getattr(app_state, "start_agent", None)
+    scenario = getattr(app_state, "scenario", None)
+    scenario_name = getattr(scenario, "name", None) if scenario else None
+    handoff_map = getattr(app_state, "handoff_map", {}) or {}
+
+    payload = {
+        "type": "agent_inventory",
+        "event_type": "agent_inventory",
+        "source": "unified",
+        "scenario": scenario_name,
+        "start_agent": start_agent,
+        "agent_count": len(summaries),
+        "agents": summaries,
+        "handoff_map": handoff_map,
+    }
+
+    envelope = make_envelope(
+        etype="event",
+        sender="System",
+        payload=payload,
+        topic="dashboard",
+        session_id=session_id,
+        call_id=call_id,
+    )
+
+    try:
+        await broadcast_session_envelope(
+            app_state,
+            envelope,
+            session_id=session_id,
+            event_label="agent_inventory",
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "Failed to broadcast agent inventory",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return False
 
 
 async def send_session_envelope(
@@ -1364,4 +1418,5 @@ __all__ = [
     "broadcast_session_envelope",
     "send_session_envelope",
     "get_connection_metadata",
+    "send_agent_inventory",
 ]

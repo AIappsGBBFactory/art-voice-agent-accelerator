@@ -130,15 +130,15 @@ MERCHANT_OPTIONS = {
         "LinkedIn Sales Navigator",
     ],
     "global_advisors": [
-        "Charles Schwab",
-        "Goldman Sachs",
-        "Bloomberg Terminal",
-        "American Express Travel",
-        "Four Seasons",
-        "Whole Foods",
-        "Tesla Supercharger",
-        "Apple Store",
-        "Nordstrom",
+        "Woodgrove Financial",
+        "Proseware Investments",
+        "Margie's Travel",
+        "Alpine Ski House",
+        "Coho Winery",
+        "Wide World Importers",
+        "Adatum Corporation",
+        "Trey Research",
+        "Lucerne Publishing",
     ],
 }
 LOCATION_OPTIONS = {
@@ -472,8 +472,8 @@ def _serialize_demo_user(response: DemoUserResponse) -> dict:
 
 async def _persist_demo_user(response: DemoUserResponse) -> None:
     document = _serialize_demo_user(response)
-    database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
-    container_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
+    database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME", "financial_services_db")
+    container_name = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
 
     def _upsert() -> None:
         manager = CosmosDBMongoCoreManager(
@@ -578,8 +578,8 @@ async def lookup_demo_user(
 ) -> DemoUserLookupResponse:
     """Retrieve the latest synthetic demo profile by email if it exists."""
 
-    database_name = os.getenv("COSMOS_FINANCIAL_DATABASE", "financial_services_db")
-    container_name = os.getenv("COSMOS_FINANCIAL_USERS_CONTAINER", "users")
+    database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME", "financial_services_db")
+    container_name = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
 
     def _query() -> dict | None:
         manager = CosmosDBMongoCoreManager(

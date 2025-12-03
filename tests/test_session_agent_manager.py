@@ -15,14 +15,14 @@ import time
 from typing import Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from apps.rtagent.agents.base import (
+from apps.rtagent.backend.agents.base import (
     UnifiedAgent,
     HandoffConfig,
     HandoffStrategy,
     VoiceConfig,
     ModelConfig,
 )
-from apps.rtagent.agents.session_manager import (
+from apps.rtagent.backend.agents.session_manager import (
     SessionAgentConfig,
     SessionAgentRegistry,
     SessionAgentManager,

@@ -4,6 +4,31 @@ import InfoRoundedIcon from '@mui/icons-material/InfoRounded';
 import PhoneInTalkRoundedIcon from '@mui/icons-material/PhoneInTalkRounded';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 
+export const formatAgentInventory = (payload = {}) => {
+  if (!payload || payload.type !== 'agent_inventory') return null;
+  const agents = payload.agents || [];
+  return {
+    source: payload.source || 'unified',
+    scenario: payload.scenario || null,
+    startAgent: payload.start_agent || null,
+    count: payload.agent_count || agents.length,
+    agents: agents.map((a) => ({
+      name: a.name,
+      description: a.description,
+      greeting: !!a.greeting,
+      returnGreeting: !!a.return_greeting,
+      toolCount: a.tool_count || (a.tools || []).length,
+      toolsPreview: a.tools_preview || a.tools || a.tool_names || a.toolNames || [],
+      tools: a.tools || a.tools_preview || a.tool_names || a.toolNames || [],
+      handoffTrigger: a.handoff_trigger || null,
+      model: a.model || null,
+      voice: a.voice || null,
+    })),
+    handoffMap: payload.handoff_map || {},
+    connections: Object.entries(payload.handoff_map || {}).map(([tool, target]) => ({ tool, target })),
+  };
+};
+
 export const formatStatusTimestamp = (isoValue) => {
   if (!isoValue) {
     return null;
