@@ -27,7 +27,8 @@ from utils.ml_logging import get_logger
 from utils.session_context import session_context
 
 from ..handlers.media_handler import MediaHandler, MediaHandlerConfig, TransportType
-from apps.rtagent.backend.voice_channels import VoiceLiveSDKHandler
+from apps.rtagent.backend.voice import VoiceLiveSDKHandler
+from apps.rtagent.backend.src.ws_helpers.shared_ws import send_agent_inventory
 
 logger = get_logger("api.v1.endpoints.media")
 tracer = trace.get_tracer(__name__)
@@ -181,6 +182,12 @@ async def acs_media_stream(websocket: WebSocket) -> None:
                 websocket.state.session_id = session_id
                 websocket.state.call_connection_id = call_connection_id
                 logger.info("WebSocket connected for call %s", call_connection_id)
+
+            # Emit agent inventory to dashboards for this session
+            try:
+                await send_agent_inventory(websocket.app.state, session_id=session_id, call_id=call_connection_id)
+            except Exception:
+                logger.debug("Failed to emit agent inventory", exc_info=True)
 
             # Initialize media handler
             with tracer.start_as_current_span(

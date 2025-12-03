@@ -53,6 +53,7 @@ from apps.rtagent.backend.src.ws_helpers.envelopes import make_status_envelope
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     _get_connection_metadata,
     _set_connection_metadata,
+    send_agent_inventory,
 )
 from src.enums.stream_modes import StreamMode
 from src.pools.session_manager import SessionContext
@@ -69,7 +70,7 @@ from ..handlers.media_handler import (
     VOICE_LIVE_SPEECH_RMS_THRESHOLD,
     VOICE_LIVE_SILENCE_GAP_SECONDS,
 )
-from apps.rtagent.backend.voice_channels import VoiceLiveSDKHandler
+from apps.rtagent.backend.voice import VoiceLiveSDKHandler
 from ..schemas.realtime import RealtimeStatusResponse
 
 logger = get_logger("api.v1.endpoints.browser")
@@ -261,6 +262,11 @@ async def browser_conversation_endpoint(
                     websocket,
                     metadata=metadata,
                 )
+                # Emit agent inventory to dashboards for this session
+                try:
+                    await send_agent_inventory(websocket.app.state, session_id=session_id)
+                except Exception:
+                    logger.debug("Failed to emit agent inventory", exc_info=True)
 
                 if hasattr(websocket.app.state, "session_metrics"):
                     await websocket.app.state.session_metrics.increment_connected()
@@ -489,6 +495,8 @@ async def _process_voice_live_messages(
                 if text_payload and text_payload.strip():
                     try:
                         payload = json.loads(text_payload)
+                        if not isinstance(payload, dict):
+                            payload = {"type": "text", "message": str(payload)}
                         kind = payload.get("kind") or payload.get("type")
                         if kind == "StopAudio":
                             await handler.commit_audio_buffer()

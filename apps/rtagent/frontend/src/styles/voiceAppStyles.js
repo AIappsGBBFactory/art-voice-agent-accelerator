@@ -1,7 +1,7 @@
 export const styles = {
   root: {
-    width: "768px",
-    maxWidth: "768px",
+    width: "100%",
+    maxWidth: "1040px",
     fontFamily: "Segoe UI, Roboto, sans-serif",
     background: "transparent",
     minHeight: "100vh",
@@ -18,7 +18,7 @@ export const styles = {
   mainContainer: {
     position: "relative",
     width: "100%",
-    maxWidth: "100%",
+    maxWidth: "1040px",
     height: "calc(100vh - 32px)",
     minHeight: "calc(100vh - 32px)",
     maxHeight: "calc(100vh - 32px)",
@@ -53,11 +53,14 @@ export const styles = {
   backendIndicatorDock: {
     position: "fixed",
     bottom: "20px",
-    left: "28px",
+    left: "20px",
     transform: "scale(0.94)",
     transformOrigin: "bottom left",
     boxShadow: "0 6px 18px rgba(15,23,42,0.18)",
     zIndex: 7,
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
   },
 
   appHeader: {
@@ -225,7 +228,7 @@ export const styles = {
     display: "flex",
     flexDirection: "column",
     position: "relative",
-    alignItems: "center",
+    alignItems: "stretch",
   },
   
   chatSectionHeader: {
@@ -571,7 +574,8 @@ export const styles = {
     overflowY: "auto",
     overflowX: "hidden",
     padding: "6px 12px 18px",
-    alignItems: "center",
+    alignItems: "stretch",
+    width: "100%",
   },
   
   userMessage: {
@@ -646,8 +650,8 @@ export const styles = {
     display: "flex",
     gap: "10px",
     background: "rgba(255,255,255,0.9)",
-    padding: "12px 18px",
-    borderRadius: "22px",
+    padding: "10px 14px",
+    borderRadius: "18px",
     boxShadow: "0 4px 14px rgba(15,23,42,0.12)",
     border: "1px solid rgba(226,232,240,0.9)",
     width: "fit-content",
@@ -1251,7 +1255,8 @@ export const styles = {
   helpTooltip: {
     position: "absolute",
     top: "calc(100% + 10px)",
-    left: 0,
+    left: "auto",
+    right: 0,
     background: "white",
     border: "1px solid #e2e8f0",
     borderRadius: "12px",

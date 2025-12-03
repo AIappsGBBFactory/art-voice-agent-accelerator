@@ -15,11 +15,11 @@ import {
 } from '@mui/material';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
+import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
 import ProfileDetailsPanel from './ProfileDetailsPanel.jsx';
-import DemoScenariosWidget from './DemoScenariosWidget.jsx';
 import BackendIndicator from './BackendIndicator.jsx';
 import HelpButton from './HelpButton.jsx';
 import IndustryTag from './IndustryTag.jsx';
@@ -28,6 +28,8 @@ import ConversationControls from './ConversationControls.jsx';
 import ChatBubble from './ChatBubble.jsx';
 import GraphCanvas from './graph/GraphCanvas.jsx';
 import GraphListView from './graph/GraphListView.jsx';
+import AgentTopologyPanel from './AgentTopologyPanel.jsx';
+import AgentDetailsPanel from './AgentDetailsPanel.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import { API_BASE_URL, WS_URL } from '../config/constants.js';
 import { ensureVoiceAppKeyframes, styles } from '../styles/voiceAppStyles.js';
@@ -37,6 +39,7 @@ import {
   formatEventTypeLabel,
   formatStatusTimestamp,
   inferStatusTone,
+  formatAgentInventory,
 } from '../utils/formatters.js';
 import {
   buildSessionProfile,
@@ -76,7 +79,8 @@ function RealTimeVoiceApp() {
 
   // Component state
   const [messages, setMessages] = useState([]);
-  const [log, setLog] = useState("");
+  // Keep logs off React state to avoid re-renders on every envelope/audio frame.
+  const logBufferRef = useRef("");
   const [recording, setRecording] = useState(false);
   const [micMuted, setMicMuted] = useState(false);
   const [targetPhoneNumber, setTargetPhoneNumber] = useState("");
@@ -85,7 +89,16 @@ function RealTimeVoiceApp() {
   const [showPhoneInput, setShowPhoneInput] = useState(false);
   const [showRealtimeModePanel, setShowRealtimeModePanel] = useState(false);
   const [pendingRealtimeStart, setPendingRealtimeStart] = useState(false);
+  const [agentInventory, setAgentInventory] = useState(null);
+  const [agentDetail, setAgentDetail] = useState(null);
+  const [showAgentsPanel, setShowAgentsPanel] = useState(false);
+  const [selectedAgentName, setSelectedAgentName] = useState(null);
   const [realtimePanelCoords, setRealtimePanelCoords] = useState({ top: 0, left: 0 });
+  const [chatWidth, setChatWidth] = useState(1040);
+  const [isResizingChat, setIsResizingChat] = useState(false);
+  const chatWidthRef = useRef(chatWidth);
+  const resizeStartXRef = useRef(0);
+  const mainShellRef = useRef(null);
   const [systemStatus, setSystemStatus] = useState({
     status: "checking",
     acsOnlyIssue: false,
@@ -143,14 +156,23 @@ function RealTimeVoiceApp() {
   // Profile menu state moved to ProfileButton component
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   const [currentCallId, setCurrentCallId] = useState(null);
+  const [showAgentPanel, setShowAgentPanel] = useState(false);
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
   const [graphEvents, setGraphEvents] = useState([]);
   const graphEventCounterRef = useRef(0);
   const currentAgentRef = useRef("Assistant");
   const [mainView, setMainView] = useState("chat"); // chat | graph | timeline
+  const [lastUserMessage, setLastUserMessage] = useState(null);
+  const [lastAssistantMessage, setLastAssistantMessage] = useState(null);
 
-  const appendLog = useCallback(m => setLog(p => `${p}\n${new Date().toLocaleTimeString()} - ${m}`), []);
+  const appendLog = useCallback((message) => {
+    const line = `${new Date().toLocaleTimeString()} - ${message}`;
+    logBufferRef.current = logBufferRef.current
+      ? `${logBufferRef.current}\n${line}`
+      : line;
+    logger.debug(line);
+  }, []);
 
   const appendGraphEvent = useCallback((event) => {
     graphEventCounterRef.current += 1;
@@ -160,6 +182,133 @@ function RealTimeVoiceApp() {
       return [...trimmed, { ...event, ts, id: `${ts}-${graphEventCounterRef.current}` }];
     });
   }, []);
+
+  // Chat width resize listeners (placed after state initialization)
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizingChat) return;
+      const delta = e.clientX - resizeStartXRef.current;
+      const next = Math.min(1320, Math.max(900, chatWidthRef.current + delta));
+      setChatWidth(next);
+    };
+    const handleMouseUp = () => {
+      if (isResizingChat) {
+        chatWidthRef.current = chatWidth;
+        setIsResizingChat(false);
+      }
+    };
+    if (isResizingChat) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingChat, chatWidth]);
+
+  // Preload agent inventory from the health/agents endpoint so the topology can render before the first event.
+  const activeAgentNameRaw =
+    selectedAgentName ||
+    currentAgentRef.current ||
+    agentInventory?.startAgent ||
+    (agentInventory?.agents && agentInventory.agents[0]?.name) ||
+    "Assistant";
+  const activeAgentName = (activeAgentNameRaw || "").trim();
+
+  const activeAgentInfo = useMemo(() => {
+    if (agentDetail && (agentDetail.name || "").toLowerCase().trim() === activeAgentName.toLowerCase()) {
+      return agentDetail;
+    }
+    if (!agentInventory?.agents) return null;
+    const target = activeAgentName.toLowerCase();
+    return (
+      agentInventory.agents.find((a) => (a.name || "").toLowerCase().trim() === target) ||
+      null
+    );
+  }, [agentInventory, agentDetail, activeAgentName]);
+
+  const resolvedAgentName = activeAgentInfo?.name || activeAgentName;
+
+  const resolvedAgentTools = useMemo(() => {
+    if (!activeAgentInfo) return [];
+    return Array.isArray(activeAgentInfo.tools) ? activeAgentInfo.tools : [];
+  }, [activeAgentInfo]);
+
+  const resolvedHandoffTools = useMemo(
+    () => (Array.isArray(activeAgentInfo?.handoff_tools) ? activeAgentInfo.handoff_tools : []),
+    [activeAgentInfo]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchAgents = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/v1/agents`);
+        if (!res.ok) return;
+        const data = await res.json();
+        // Prefer full agent payload; fallback to summaries if that's all we have.
+        const agents = Array.isArray(data.agents) && data.agents.length > 0
+          ? data.agents
+          : (Array.isArray(data.summaries) ? data.summaries : []);
+        if (!Array.isArray(agents) || cancelled || agents.length === 0) return;
+        const normalized = {
+          agents: agents.map((a) => ({
+            name: a.name,
+            description: a.description,
+            model: a.model?.deployment_id || a.model || null,
+            voice: a.voice?.current_voice || a.voice || null,
+            tools: a.tools || a.tool_names || a.toolNames || a.tools_preview || [],
+            handoffTools: a.handoff_tools || a.handoffTools || [],
+            toolCount:
+              a.tool_count ??
+              a.toolCount ??
+              (a.tools?.length ?? a.tool_names?.length ?? a.tools_preview?.length ?? 0),
+          })),
+          startAgent: data.start_agent || data.startAgent || null,
+          scenario: data.scenario || null,
+          handoffMap: data.handoff_map || data.handoffMap || {},
+        };
+        setAgentInventory(normalized);
+        // Initialize active agent if not already set
+        if (
+          normalized.startAgent &&
+          (currentAgentRef.current === "Assistant" || !currentAgentRef.current)
+        ) {
+          currentAgentRef.current = normalized.startAgent;
+          setSelectedAgentName(normalized.startAgent);
+        }
+      } catch (err) {
+        appendLog(`Agent preload failed: ${err.message}`);
+      }
+   };
+   fetchAgents();
+    return () => {
+      cancelled = true;
+    };
+  }, [appendLog]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchAgentDetail = async () => {
+      if (!resolvedAgentName) return;
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/agents/${encodeURIComponent(resolvedAgentName)}?session_id=${encodeURIComponent(sessionId)}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setAgentDetail(data);
+      } catch (err) {
+        appendLog(`Agent detail fetch failed: ${err.message}`);
+      }
+    };
+    fetchAgentDetail();
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedAgentName, sessionId, appendLog]);
 
   const resolveAgentLabel = useCallback((payload, fallback = null) => {
     if (!payload || typeof payload !== "object") {
@@ -257,13 +406,24 @@ function RealTimeVoiceApp() {
         : []),
     ]);
   }, [setMessages]);
-  const handleSystemStatus = useCallback((nextStatus) => {
-    setSystemStatus((prev) =>
-      prev.status === nextStatus.status && prev.acsOnlyIssue === nextStatus.acsOnlyIssue
-        ? prev
-        : nextStatus
-    );
-  }, []);
+  const handleSystemStatus = useCallback((nextStatus = { status: "checking", acsOnlyIssue: false }) => {
+    setSystemStatus((prev) => {
+      const hasChanged =
+        !prev ||
+        prev.status !== nextStatus.status ||
+        prev.acsOnlyIssue !== nextStatus.acsOnlyIssue;
+
+      if (hasChanged && nextStatus?.status) {
+        appendLog(
+          `Backend status: ${nextStatus.status}${
+            nextStatus.acsOnlyIssue ? " (ACS configuration issue)" : ""
+          }`,
+        );
+      }
+
+      return hasChanged ? nextStatus : prev;
+    });
+  }, [appendLog]);
 
   const [showDemoForm, setShowDemoForm] = useState(false);
   const openDemoForm = useCallback(() => setShowDemoForm(true), [setShowDemoForm]);
@@ -1631,7 +1791,19 @@ function RealTimeVoiceApp() {
         let flattenedPayload;
 
         // Transform envelope back to legacy format for compatibility
-        if (
+        if (envelopeType === "event" && (actualPayload.event_type || actualPayload.eventType)) {
+          const evtType = actualPayload.event_type || actualPayload.eventType;
+          const evtData = actualPayload.data || {};
+          flattenedPayload = {
+            type: evtType,
+            event_type: evtType,
+            data: evtData,
+            message: actualPayload.message || evtData.message,
+            content: actualPayload.content || evtData.content || actualPayload.message,
+            sender: envelopeSender,
+            speaker: envelopeSender,
+          };
+        } else if (
           envelopeType === "event" &&
           actualPayload.message &&
           !actualPayload.event_type &&
@@ -1691,6 +1863,20 @@ function RealTimeVoiceApp() {
 
         payload = flattenedPayload;
         logger.debug("📨 Transformed envelope to legacy format:", payload);
+      }
+
+      // Normalize source/target for graph/timeline views
+      const inferredSpeaker = payload.speaker || payload.sender || payload.from;
+      if (!payload.from && inferredSpeaker) {
+        payload.from = inferredSpeaker;
+      }
+      if (!payload.to) {
+        // If speaker is user, target is current agent; otherwise target user by default.
+        if (inferredSpeaker === "User") {
+          payload.to = currentAgentRef.current || payload.agent_name || "Assistant";
+        } else if (inferredSpeaker) {
+          payload.to = "User";
+        }
       }
 
       if (callLifecycleRef.current.pending) {
@@ -2020,6 +2206,38 @@ function RealTimeVoiceApp() {
           payload.name ||
           payload.data?.event_type ||
           "event";
+        // Agent inventory/debug info
+        if (eventType === "agent_inventory" || payload.payload?.type === "agent_inventory") {
+          const summary = formatAgentInventory(payload.payload || payload);
+          if (summary) {
+            setAgentInventory(summary);
+          }
+          const names = summary?.agents?.slice(0, 5).map((a) => a.name).join(", ");
+          setMessages((prev) => [
+            ...prev,
+            {
+              speaker: "System",
+              text: `Agents loaded (${summary?.count ?? 0})${summary?.scenario ? ` · scenario: ${summary.scenario}` : ""}${
+                names ? ` · ${names}` : ""
+              }`,
+              statusTone: "info",
+              meta: summary,
+            },
+          ]);
+          appendGraphEvent({
+            kind: "system",
+            from: "System",
+            to: "Dashboard",
+            text: `Agent inventory (${summary?.source || "unified"})`,
+            ts: payload.ts || payload.timestamp,
+          });
+          appendLog(
+            `📦 Agent inventory received (${summary?.count ?? 0} agents${
+              summary?.scenario ? ` | scenario=${summary.scenario}` : ""
+            })`,
+          );
+          return;
+        }
         const rawEventData =
           payload.data ??
           payload.event_data ??
@@ -2189,6 +2407,11 @@ function RealTimeVoiceApp() {
         payload.content = payload.message;
         // fall through to unified logic below
       }
+      if (!payload || typeof payload !== "object") {
+        appendLog("Ignored malformed payload");
+        return;
+      }
+
       const { type, content = "", message = "", speaker } = payload;
       const txt = content || message;
       const msgType = (type || "").toLowerCase();
@@ -2255,6 +2478,7 @@ function RealTimeVoiceApp() {
           });
         }
         appendLog(`User: ${txt}`);
+        setLastUserMessage(txt);
         const shouldGraph =
           !isStreamingUser || payload.is_final === true || payload.final === true;
         if (shouldGraph) {
@@ -2474,6 +2698,7 @@ function RealTimeVoiceApp() {
           ts: payload.ts || payload.timestamp,
         });
         appendLog("🤖 Assistant responded");
+        setLastAssistantMessage(txt);
         return;
       }
     
@@ -2888,18 +3113,65 @@ function RealTimeVoiceApp() {
   /* ------------------------------------------------------------------ *
    *  RENDER
    * ------------------------------------------------------------------ */
+  const recentTools = useMemo(
+    () => graphEvents.filter((evt) => evt.kind === "tool").slice(-5).reverse(),
+    [graphEvents],
+  );
+
   return (
-    <div style={styles.root}>
-      <div style={styles.mainContainer}>
+    <div style={{ ...styles.root, maxWidth: `${chatWidth}px` }}>
+      <div
+        style={{
+          position: "fixed",
+          top: 18,
+          right: 18,
+          zIndex: 1300,
+        }}
+      >
+        <HelpButton />
+      </div>
+      <div style={{ ...styles.mainContainer, maxWidth: `${chatWidth}px` }}>
         <IndustryTag />
         <div style={styles.helpButtonDock}>
-          <DemoScenariosWidget inline />
-          <HelpButton />
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => setShowAgentPanel((prev) => !prev)}
+            startIcon={<SmartToyRoundedIcon fontSize="small" />}
+            sx={{
+              textTransform: "none",
+              borderRadius: "12px",
+              background: "linear-gradient(135deg, #0ea5e9, #6366f1)",
+              boxShadow: "0 8px 18px rgba(79,70,229,0.25)",
+              fontWeight: 700,
+              color: "#fff",
+              '&:hover': {
+                background: "linear-gradient(135deg, #0284c7, #4f46e5)",
+              },
+            }}
+          >
+            Agent Context
+          </Button>
         </div>
         <div style={styles.backendIndicatorDock}>
-          <BackendIndicator url={API_BASE_URL} onStatusChange={handleSystemStatus} />
+          <BackendIndicator
+            url={API_BASE_URL}
+            onStatusChange={handleSystemStatus}
+            onAgentSelect={(name) => {
+              setSelectedAgentName(name);
+              setShowAgentsPanel(true);
+            }}
+          />
         </div>
-        <div style={styles.mainShell}>
+        <div
+          ref={mainShellRef}
+          style={{
+            ...styles.mainShell,
+            width: `${chatWidth}px`,
+            maxWidth: `${chatWidth}px`,
+            minWidth: "900px",
+          }}
+        >
           {/* App Header */}
           <div style={styles.appHeader}>
             <div style={styles.appHeaderIdentity}>
@@ -2979,8 +3251,8 @@ function RealTimeVoiceApp() {
                 )}
 
                 {mainView === "timeline" && (
-                  <div style={styles.graphFullWrapper}>
-                    <GraphListView events={graphEvents} compact={false} />
+                  <div style={{ ...styles.graphFullWrapper, minHeight: "420px" }}>
+                    <GraphListView events={graphEvents} compact={false} fillHeight />
                   </div>
                 )}
               </div>
@@ -3053,6 +3325,23 @@ function RealTimeVoiceApp() {
               micButtonRef={micButtonRef}
               mainView={mainView}
               onMainViewChange={setMainView}
+            />
+            {/* Resize handle for chat width */}
+            <div
+              style={{
+                position: "absolute",
+                top: "0",
+                right: "-6px",
+                width: "12px",
+                height: "100%",
+                cursor: "ew-resize",
+                zIndex: 5,
+              }}
+              onMouseDown={(e) => {
+                resizeStartXRef.current = e.clientX;
+                chatWidthRef.current = chatWidth;
+                setIsResizingChat(true);
+              }}
             />
 
             <div style={styles.realtimeModeDock} ref={realtimePanelAnchorRef} />
@@ -3129,12 +3418,32 @@ function RealTimeVoiceApp() {
           )
         }
       </div>
+      {showAgentsPanel && (
+        <AgentTopologyPanel
+          inventory={agentInventory}
+          activeAgent={selectedAgentName}
+          onClose={() => setShowAgentsPanel(false)}
+        />
+      )}
     </div>
     <ProfileDetailsPanel
       profile={activeSessionProfile}
       sessionId={sessionId}
       open={showProfilePanel}
       onClose={() => setShowProfilePanel(false)}
+    />
+    <AgentDetailsPanel
+      open={showAgentPanel}
+      onClose={() => setShowAgentPanel(false)}
+      agentName={resolvedAgentName}
+      agentDescription={activeAgentInfo?.description}
+      sessionId={sessionId}
+      lastUserMessage={lastUserMessage}
+      lastAssistantMessage={lastAssistantMessage}
+      recentTools={recentTools}
+      messages={messages}
+      agentTools={resolvedAgentTools}
+      handoffTools={resolvedHandoffTools}
     />
   </div>
 );

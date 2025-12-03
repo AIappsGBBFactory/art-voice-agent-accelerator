@@ -16,7 +16,7 @@ Re-exports are provided here for backward compatibility.
 """
 
 # Voice channel re-exports (moved to apps/rtagent/backend/voice_channels/)
-from apps.rtagent.backend.voice_channels import (
+from apps.rtagent.backend.voice import (
     SpeechCascadeHandler,
     SpeechEvent,
     SpeechEventType,

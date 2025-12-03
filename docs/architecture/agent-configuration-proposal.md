@@ -288,7 +288,7 @@ The orchestrators consume `UnifiedAgent` and apply the appropriate handoff strat
 ```python
 # voice_channels/orchestrators/speech_cascade_adapter.py
 
-from apps.rtagent.agents.loader import discover_agents, AgentConfig
+from apps.rtagent.backend.agents.loader import discover_agents, AgentConfig
 from voice_channels.handoffs.strategies import StateBasedHandoff
 
 class SpeechCascadeOrchestrator:
@@ -325,7 +325,7 @@ class SpeechCascadeOrchestrator:
 ```python
 # voice_channels/orchestrators/voicelive_adapter.py
 
-from apps.rtagent.agents.loader import discover_agents, build_handoff_map, AgentConfig
+from apps.rtagent.backend.agents.loader import discover_agents, build_handoff_map, AgentConfig
 from voice_channels.handoffs.strategies import ToolBasedHandoff
 
 class VoiceLiveOrchestrator:
@@ -649,7 +649,7 @@ def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
     }
 
 # voice_channels/handoffs/registry.py now just imports from loader
-from apps.rtagent.agents.loader import discover_agents, build_handoff_map
+from apps.rtagent.backend.agents.loader import discover_agents, build_handoff_map
 
 _agents = discover_agents()
 HANDOFF_MAP = build_handoff_map(_agents)

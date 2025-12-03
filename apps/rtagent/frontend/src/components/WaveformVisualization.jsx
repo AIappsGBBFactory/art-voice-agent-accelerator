@@ -6,6 +6,8 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
   const [waveRenderState, setWaveRenderState] = useState({ amplitude: 0, offset: 0 });
   const [speakerState, setSpeakerState] = useState({ user: false, assistant: false });
   const animationRef = useRef();
+  const containerRef = useRef(null);
+  const [canvasWidth, setCanvasWidth] = useState(750);
   const combinedLevelRef = useRef(0);
   const latestLevelsRef = useRef({ input: 0, output: 0 });
   const levelTimestampRef = useRef(performance.now());
@@ -16,6 +18,25 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
   const userDisplayActive = speakerState.user || activeSpeaker === "User";
   const assistantDisplayActive = speakerState.assistant || activeSpeaker === "Assistant";
   const bothDisplayActive = userDisplayActive && assistantDisplayActive;
+
+  useEffect(() => {
+    const updateWidth = () => {
+      const next = containerRef.current?.getBoundingClientRect()?.width;
+      if (next && Math.abs(next - canvasWidth) > 2) {
+        setCanvasWidth(next);
+      }
+    };
+    updateWidth();
+    const ro = new ResizeObserver(updateWidth);
+    if (containerRef.current) {
+      ro.observe(containerRef.current);
+    }
+    window.addEventListener("resize", updateWidth);
+    return () => {
+      window.removeEventListener("resize", updateWidth);
+      ro.disconnect();
+    };
+  }, [canvasWidth]);
 
   useEffect(() => {
     let rafId;
@@ -105,7 +126,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
   }, [bargeInActive]);
   
   const generateWavePath = () => {
-    const width = 750;
+    const width = Math.max(canvasWidth, 200);
     const height = 110;
     const centerY = height / 2;
     const frequency = 0.02;
@@ -124,7 +145,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
 
   // Secondary wave
   const generateSecondaryWave = () => {
-    const width = 750;
+    const width = Math.max(canvasWidth, 200);
     const height = 110;
     const centerY = height / 2;
     const frequency = 0.0245;
@@ -165,7 +186,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
           key="wave-idle"
           x1="0"
           y1="40"
-          x2="750"
+          x2={Math.max(canvasWidth, 200)}
           y2="40"
           stroke={baseColor}
           strokeWidth="2"
@@ -207,8 +228,8 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
   const outputAudioLevel = latestLevelsRef.current.output;
 
   return (
-    <div style={styles.waveformContainer}>
-      <svg style={styles.waveformSvg} viewBox="0 0 750 110" preserveAspectRatio="xMidYMid meet">
+    <div style={styles.waveformContainer} ref={containerRef}>
+      <svg style={styles.waveformSvg} viewBox={`0 0 ${Math.max(canvasWidth, 200)} 110`} preserveAspectRatio="xMidYMid meet">
         <defs>
           <linearGradient id="waveGradientBarge" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stopColor="#ef4444" />
