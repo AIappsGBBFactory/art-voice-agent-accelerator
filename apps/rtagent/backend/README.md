@@ -58,7 +58,7 @@ config/
 ```
 src/agents/              # YAML-driven agent framework
 ├── base.py              # ARTAgent class for agent creation
-├── agent_store/         # Agent YAML configurations
+├── agents/         # Agent YAML configurations
 ├── prompt_store/        # Jinja prompt templates
 ├── tool_store/          # Agent tool registry
 └── README.md            # Agent creation guide

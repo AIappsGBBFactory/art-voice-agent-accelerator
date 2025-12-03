@@ -27,8 +27,7 @@ from utils.ml_logging import get_logger
 from utils.session_context import session_context
 
 from ..handlers.media_handler import MediaHandler, MediaHandlerConfig, TransportType
-from ..handlers.voice_live_sdk_handler import VoiceLiveSDKHandler
-from ..dependencies.orchestrator import get_orchestrator
+from apps.rtagent.backend.voice_channels import VoiceLiveSDKHandler
 
 logger = get_logger("api.v1.endpoints.media")
 tracer = trace.get_tracer(__name__)
@@ -130,7 +129,6 @@ async def acs_media_stream(websocket: WebSocket) -> None:
     call_connection_id = None
     session_id = None
     conn_id = None
-    orchestrator = get_orchestrator()
     redis_mgr = getattr(websocket.app.state, "redis", None)
     stream_mode = ACS_STREAMING_MODE
 
@@ -197,7 +195,6 @@ async def acs_media_stream(websocket: WebSocket) -> None:
                     websocket=websocket,
                     call_connection_id=call_connection_id,
                     session_id=session_id,
-                    orchestrator=orchestrator,
                     stream_mode=stream_mode,
                 )
 
@@ -236,7 +233,6 @@ async def _create_media_handler(
     websocket: WebSocket,
     call_connection_id: str,
     session_id: str,
-    orchestrator: callable,
     stream_mode: StreamMode,
 ):
     """Create appropriate media handler based on streaming mode."""
@@ -246,7 +242,6 @@ async def _create_media_handler(
             session_id=session_id,
             transport=TransportType.ACS,
             call_connection_id=call_connection_id,
-            orchestrator_func=orchestrator,
             stream_mode=stream_mode,
         )
         return await MediaHandler.create(config, websocket.app.state)

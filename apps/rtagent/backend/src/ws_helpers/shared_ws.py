@@ -17,7 +17,7 @@ import json
 import time
 import uuid
 from contextlib import suppress
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
@@ -359,6 +359,7 @@ async def send_tts_audio(
     voice_name: Optional[str] = None,
     voice_style: Optional[str] = None,
     rate: Optional[str] = None,
+    on_first_audio: Optional[Callable[[], None]] = None,
 ) -> None:
     """Send TTS audio to browser WebSocket client with optimized pool management."""
     run_id = str(uuid.uuid4())[:8]
@@ -562,6 +563,13 @@ async def send_tts_audio(
             _set_connection_metadata(ws, "last_tts_end_ts", time.monotonic())
             return
 
+        # Signal first audio available
+        if on_first_audio:
+            try:
+                on_first_audio()
+            except Exception as e:
+                logger.warning(f"on_first_audio callback failed: {e}")
+
         _lt_stop(
             latency_tool,
             "tts:synthesis",
@@ -720,6 +728,7 @@ async def send_response_to_acs(
     voice_name: Optional[str] = None,
     voice_style: Optional[str] = None,
     rate: Optional[str] = None,
+    on_first_audio: Optional[Callable[[], None]] = None,
 ) -> Optional[asyncio.Task]:
     """Send TTS response to ACS phone call."""
 
@@ -886,7 +895,14 @@ async def send_response_to_acs(
                         f"Error releasing temporary ACS TTS synthesizer (run={run_id}): {release_exc}"
                     )
             return None
+# Signal first audio available (frames prepared)
+        if on_first_audio:
+            try:
+                on_first_audio()
+            except Exception as e:
+                logger.warning(f"on_first_audio callback failed: {e}")
 
+        
         frame_count = len(frames)
         estimated_duration = frame_count * 0.02
         total_bytes = len(pcm_bytes)

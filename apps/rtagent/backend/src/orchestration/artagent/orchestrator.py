@@ -160,8 +160,20 @@ def bind_default_handlers() -> None:
     """
     Register default agent handlers for Financial Services multi-agent system.
     
+    .. deprecated::
+        Registration is now done directly in main.py during startup.
+        This function is kept for backwards compatibility.
+    
     Flow: Auth -> (Fraud | Agency) -> (Compliance | Trading)
     """
+    import warnings
+    warnings.warn(
+        "bind_default_handlers is deprecated. "
+        "Specialist registration is now done in main.py startup.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    
     # Entry point agent 
     register_specialist("AutoAuth", run_auth_agent)
     

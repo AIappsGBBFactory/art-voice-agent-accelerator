@@ -24,7 +24,7 @@
     "prop-types": "^15.8.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "reactflow": "^11.11.4",
+    "reagraph": "^4.30.7",
     "serve": "^14.2.4",
     "styled-components": "^6.1.19",
     "vite": "^6.4.1"

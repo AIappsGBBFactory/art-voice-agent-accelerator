@@ -4,12 +4,17 @@ Health Endpoints
 
 Comprehensive health check and readiness endpoints for monitoring.
 Includes all critical dependency checks with proper timeouts and error handling.
+
+Note: Health checks are secondary priority to the core voice-to-voice orchestration
+pipeline. All checks use short timeouts and non-blocking patterns to avoid
+impacting real-time audio processing.
 """
 
 import asyncio
 import re
 import time
-from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any, Callable, Iterable
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
@@ -26,6 +31,11 @@ from config import (
     AZURE_TENANT_ID,
     ALLOWED_CLIENT_IDS,
     ENABLE_AUTH_VALIDATION,
+    AGENT_AUTH_CONFIG,
+    AGENT_FRAUD_CONFIG,
+    AGENT_AGENCY_CONFIG,
+    AGENT_COMPLIANCE_CONFIG,
+    AGENT_TRADING_CONFIG,
 )
 from apps.rtagent.backend.api.v1.schemas.health import (
     HealthResponse,
@@ -37,6 +47,107 @@ from utils.ml_logging import get_logger
 logger = get_logger("v1.health")
 
 router = APIRouter()
+
+
+# ==============================================================================
+# AGENT REGISTRY - Dynamic Agent Discovery
+# ==============================================================================
+
+@dataclass
+class AgentDefinition:
+    """Definition of an agent for discovery and health checks."""
+    name: str  # Human-readable name (e.g., "auth", "fraud")
+    state_attr: str  # Attribute name on app.state (e.g., "auth_agent")
+    config_path: str  # Path to YAML config
+    aliases: List[str] = field(default_factory=list)  # Alternative names for API lookup
+
+
+class AgentRegistry:
+    """
+    Dynamic agent registry for health checks and API operations.
+    
+    Provides a single source of truth for agent discovery, avoiding
+    hardcoded agent names scattered throughout the codebase.
+    """
+    
+    def __init__(self) -> None:
+        self._definitions: Dict[str, AgentDefinition] = {}
+        self._alias_map: Dict[str, str] = {}  # alias -> canonical name
+    
+    def register(self, definition: AgentDefinition) -> None:
+        """Register an agent definition."""
+        self._definitions[definition.name] = definition
+        # Build alias map for fast lookup
+        for alias in definition.aliases:
+            self._alias_map[alias.lower()] = definition.name
+        self._alias_map[definition.name.lower()] = definition.name
+        self._alias_map[definition.state_attr.lower()] = definition.name
+    
+    def get_definition(self, name_or_alias: str) -> Optional[AgentDefinition]:
+        """Get agent definition by name or alias."""
+        canonical = self._alias_map.get(name_or_alias.lower())
+        return self._definitions.get(canonical) if canonical else None
+    
+    def list_definitions(self) -> Iterable[AgentDefinition]:
+        """List all registered agent definitions."""
+        return self._definitions.values()
+    
+    def discover_agents(self, app_state: Any) -> Dict[str, Any]:
+        """
+        Discover all agents from app.state based on registered definitions.
+        
+        Returns dict of {name: agent_instance} for found agents.
+        """
+        discovered = {}
+        for defn in self._definitions.values():
+            agent = getattr(app_state, defn.state_attr, None)
+            if agent is not None:
+                discovered[defn.name] = agent
+        return discovered
+    
+    def get_missing_agents(self, app_state: Any) -> List[str]:
+        """Get list of expected but uninitialized agents."""
+        missing = []
+        for defn in self._definitions.values():
+            if getattr(app_state, defn.state_attr, None) is None:
+                missing.append(defn.name)
+        return missing
+
+
+# Global registry instance - populated at module load
+_agent_registry = AgentRegistry()
+
+# Register all known agents (configuration-driven, single source of truth)
+_agent_registry.register(AgentDefinition(
+    name="auth",
+    state_attr="auth_agent",
+    config_path=AGENT_AUTH_CONFIG,
+    aliases=["authagent", "auth_agent", "authentication"],
+))
+_agent_registry.register(AgentDefinition(
+    name="fraud",
+    state_attr="fraud_agent",
+    config_path=AGENT_FRAUD_CONFIG,
+    aliases=["fraudagent", "fraud_agent", "fraud_detection"],
+))
+_agent_registry.register(AgentDefinition(
+    name="agency",
+    state_attr="agency_agent",
+    config_path=AGENT_AGENCY_CONFIG,
+    aliases=["agencyagent", "agency_agent", "transfer_agency"],
+))
+_agent_registry.register(AgentDefinition(
+    name="compliance",
+    state_attr="compliance_agent",
+    config_path=AGENT_COMPLIANCE_CONFIG,
+    aliases=["complianceagent", "compliance_agent"],
+))
+_agent_registry.register(AgentDefinition(
+    name="trading",
+    state_attr="trading_agent",
+    config_path=AGENT_TRADING_CONFIG,
+    aliases=["tradingagent", "trading_agent"],
+))
 
 
 def _validate_phone_number(phone_number: str) -> tuple[bool, str]:
@@ -435,14 +546,10 @@ async def readiness_check(
     )
     health_checks.append(acs_status)
 
-    # Check RT Agents
+    # Check RT Agents (dynamic discovery via registry)
     agent_status = await fast_ping(
         _check_rt_agents_fast,
-        request.app.state.auth_agent,
-        request.app.state.fraud_agent,
-        request.app.state.agency_agent,
-        request.app.state.compliance_agent,
-        request.app.state.trading_agent,
+        request.app.state,
         component="rt_agents",
     )
     health_checks.append(agent_status)
@@ -675,26 +782,25 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
     )
 
 
-async def _check_rt_agents_fast(auth_agent, fraud_agent, agency_agent, compliance_agent, trading_agent) -> ServiceCheck:
-    """Fast RT Agents check for all Transfer Agency system agents."""
+async def _check_rt_agents_fast(app_state: Any) -> ServiceCheck:
+    """
+    Fast RT Agents check using dynamic agent discovery.
+    
+    Uses the AgentRegistry to discover agents from app.state rather than
+    hardcoded parameter lists. This ensures health checks stay in sync
+    with actual agent configuration.
+    """
     start = time.time()
     
-    # Check all required agents are initialized
-    agents = {
-        "auth": auth_agent,
-        "fraud": fraud_agent, 
-        "agency": agency_agent,
-        "compliance": compliance_agent,
-        "trading": trading_agent
-    }
+    # Discover agents dynamically
+    discovered = _agent_registry.discover_agents(app_state)
+    missing = _agent_registry.get_missing_agents(app_state)
     
-    missing_agents = [name for name, agent in agents.items() if not agent]
-    
-    if missing_agents:
+    if missing:
         return ServiceCheck(
             component="rt_agents",
             status="unhealthy",
-            error=f"agents not initialized: {', '.join(missing_agents)}",
+            error=f"agents not initialized: {', '.join(missing)}",
             check_time_ms=round((time.time() - start) * 1000, 2),
         )
     
@@ -702,7 +808,7 @@ async def _check_rt_agents_fast(auth_agent, fraud_agent, agency_agent, complianc
         component="rt_agents",
         status="healthy",
         check_time_ms=round((time.time() - start) * 1000, 2),
-        details=f"all agents initialized: {', '.join(agents.keys())}",
+        details=f"all agents initialized: {', '.join(discovered.keys())}",
     )
 
 
@@ -741,117 +847,71 @@ async def get_agents_info(request: Request):
     """
     Get information about loaded RT agents including their configuration,
     model settings, and voice settings that can be modified.
+    
+    Uses dynamic agent discovery via AgentRegistry for maintainability.
     """
     start_time = time.time()
     agents_info = []
 
+    def extract_agent_info(agent: Any, defn: AgentDefinition) -> Optional[Dict[str, Any]]:
+        """Extract agent info using registry definition."""
+        if not agent:
+            return None
+
+        try:
+            # Get voice setting from agent configuration
+            agent_voice = getattr(agent, "voice_name", None)
+            agent_voice_style = getattr(agent, "voice_style", "chat")
+
+            # Fallback to global GREETING_VOICE_TTS if agent doesn't have voice configured
+            from config import GREETING_VOICE_TTS
+            current_voice = agent_voice or GREETING_VOICE_TTS
+
+            return {
+                "name": getattr(agent, "name", defn.name),
+                "status": "loaded",
+                "creator": getattr(agent, "creator", "Unknown"),
+                "organization": getattr(agent, "organization", "Unknown"),
+                "description": getattr(agent, "description", ""),
+                "model": {
+                    "deployment_id": getattr(agent, "model_id", "Unknown"),
+                    "temperature": getattr(agent, "temperature", 0.7),
+                    "top_p": getattr(agent, "top_p", 1.0),
+                    "max_tokens": getattr(agent, "max_tokens", 4096),
+                },
+                "voice": {
+                    "current_voice": current_voice,
+                    "voice_style": agent_voice_style,
+                    "voice_configurable": True,
+                    "is_per_agent_voice": bool(agent_voice),
+                },
+                "config_path": defn.config_path,
+                "prompt_path": getattr(agent, "prompt_path", "Unknown"),
+                "tools": [
+                    tool.get("function", {}).get("name", "Unknown")
+                    for tool in getattr(agent, "tools", [])
+                ],
+                "modifiable_settings": {
+                    "model_deployment": True,
+                    "temperature": True,
+                    "voice_name": True,
+                    "voice_style": True,
+                    "max_tokens": True,
+                },
+            }
+        except Exception as e:
+            logger.warning(f"Error extracting agent info for {defn.name}: {e}")
+            return {
+                "name": defn.name,
+                "status": "error",
+                "error": str(e),
+            }
+
     try:
-        # Get agents from app state
-        auth_agent = getattr(request.app.state, "auth_agent", None)
-        fraud_agent = getattr(request.app.state, "fraud_agent", None)
-        agency_agent = getattr(request.app.state, "agency_agent", None)
-        compliance_agent = getattr(request.app.state, "compliance_agent", None)
-        trading_agent = getattr(request.app.state, "trading_agent", None)
-
-        # Helper function to extract agent info
-        def extract_agent_info(agent, config_path: str = None):
-            if not agent:
-                return None
-
-            try:
-                # Get voice setting from agent configuration
-                agent_voice = getattr(agent, "voice_name", None)
-                agent_voice_style = getattr(agent, "voice_style", "chat")
-
-                # Fallback to global GREETING_VOICE_TTS if agent doesn't have voice configured
-                from config import GREETING_VOICE_TTS
-
-                current_voice = agent_voice or GREETING_VOICE_TTS
-
-                agent_info = {
-                    "name": getattr(agent, "name", "Unknown"),
-                    "status": "loaded",
-                    "creator": getattr(agent, "creator", "Unknown"),
-                    "organization": getattr(agent, "organization", "Unknown"),
-                    "description": getattr(agent, "description", ""),
-                    "model": {
-                        "deployment_id": getattr(agent, "model_id", "Unknown"),
-                        "temperature": getattr(agent, "temperature", 0.7),
-                        "top_p": getattr(agent, "top_p", 1.0),
-                        "max_tokens": getattr(agent, "max_tokens", 4096),
-                    },
-                    "voice": {
-                        "current_voice": current_voice,
-                        "voice_style": agent_voice_style,
-                        "voice_configurable": True,
-                        "is_per_agent_voice": bool(
-                            agent_voice
-                        ),  # True if agent has its own voice
-                    },
-                    "config_path": config_path,
-                    "prompt_path": getattr(agent, "prompt_path", "Unknown"),
-                    "tools": [
-                        tool.get("function", {}).get("name", "Unknown")
-                        for tool in getattr(agent, "tools", [])
-                    ],
-                    "modifiable_settings": {
-                        "model_deployment": True,
-                        "temperature": True,
-                        "voice_name": True,
-                        "voice_style": True,
-                        "max_tokens": True,
-                    },
-                }
-                return agent_info
-            except Exception as e:
-                logger.warning(f"Error extracting agent info: {e}")
-                return {
-                    "name": getattr(agent, "name", "Unknown"),
-                    "status": "error",
-                    "error": str(e),
-                }
-
-        # Extract info for each agent
-        if auth_agent:
-            from config import AGENT_AUTH_CONFIG
-
-            agent_info = extract_agent_info(auth_agent, AGENT_AUTH_CONFIG)
-            if agent_info:
-                agents_info.append(agent_info)
-
-        if fraud_agent:
-            from config import AGENT_FRAUD_CONFIG
-
-            agent_info = extract_agent_info(
-                fraud_agent, AGENT_FRAUD_CONFIG
-            )
-            if agent_info:
-                agents_info.append(agent_info)
-
-        if agency_agent:
-            from config import AGENT_AGENCY_CONFIG
-
-            agent_info = extract_agent_info(
-                agency_agent, AGENT_AGENCY_CONFIG
-            )
-            if agent_info:
-                agents_info.append(agent_info)
-
-        if compliance_agent:
-            from config import AGENT_COMPLIANCE_CONFIG
-
-            agent_info = extract_agent_info(
-                compliance_agent, AGENT_COMPLIANCE_CONFIG
-            )
-            if agent_info:
-                agents_info.append(agent_info)
-
-        if trading_agent:
-            from config import AGENT_TRADING_CONFIG
-
-            agent_info = extract_agent_info(
-                trading_agent, AGENT_TRADING_CONFIG
-            )
+        # Use registry for dynamic discovery
+        for defn in _agent_registry.list_definitions():
+            agent = getattr(request.app.state, defn.state_attr, None)
+            agent_info = extract_agent_info(agent, defn)
             if agent_info:
                 agents_info.append(agent_info)
 
@@ -922,32 +982,26 @@ async def update_agent_config(
     """
     Update configuration for a specific agent (model settings, voice, etc.).
     Changes are applied to the runtime instance but not persisted to YAML files.
+    
+    Uses AgentRegistry for dynamic agent lookup via name or alias.
     """
     start_time = time.time()
 
     try:
-        # Get the agent instance from app state
-        agent = None
-        if agent_name.lower() in ["authagent", "auth_agent", "auth"]:
-            agent = getattr(request.app.state, "auth_agent", None)
-        elif agent_name.lower() in [
-            "fnolintakeagent",
-            "claim_intake_agent",
-            "claim",
-            "fnol",
-        ]:
-            agent = getattr(request.app.state, "claim_intake_agent", None)
-        elif agent_name.lower() in [
-            "fraudagent",
-            "fraud_agent", 
-            "fraud",
-        ]:
-            agent = getattr(request.app.state, "fraud_agent", None)
-
+        # Use registry to find agent by name or alias
+        defn = _agent_registry.get_definition(agent_name)
+        if not defn:
+            available = [d.name for d in _agent_registry.list_definitions()]
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent '{agent_name}' not found. Available agents: {', '.join(available)}",
+            )
+        
+        agent = getattr(request.app.state, defn.state_attr, None)
         if not agent:
             raise HTTPException(
                 status_code=404,
-                detail=f"Agent '{agent_name}' not found. Available agents: auth, claim, fraud",
+                detail=f"Agent '{defn.name}' is registered but not initialized",
             )
 
         updated_fields = []
@@ -991,22 +1045,20 @@ async def update_agent_config(
             if config.voice.voice_name is not None:
                 agent.voice_name = config.voice.voice_name
                 updated_fields.append(f"voice_name -> {config.voice.voice_name}")
-                logger.info(f"Updated {agent.name} voice to: {config.voice.voice_name}")
+                logger.info(f"Updated {defn.name} voice to: {config.voice.voice_name}")
 
             if config.voice.voice_style is not None:
                 agent.voice_style = config.voice.voice_style
                 updated_fields.append(f"voice_style -> {config.voice.voice_style}")
-                logger.info(
-                    f"Updated {agent.name} voice style to: {config.voice.voice_style}"
-                )
+                logger.info(f"Updated {defn.name} voice style to: {config.voice.voice_style}")
 
         response_time = round((time.time() - start_time) * 1000, 2)
 
         return {
             "status": "success",
-            "agent_name": agent.name,
+            "agent_name": getattr(agent, "name", defn.name),
             "updated_fields": updated_fields,
-            "message": f"Successfully updated {len(updated_fields)} settings for {agent.name}",
+            "message": f"Successfully updated {len(updated_fields)} settings for {defn.name}",
             "response_time_ms": response_time,
             "note": "Changes applied to runtime instance. Restart required for persistence.",
         }

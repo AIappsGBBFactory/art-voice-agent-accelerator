@@ -591,6 +591,7 @@ class TurnMetrics:
     tts_ttfb_ms: Optional[float] = None
     tts_total_ms: Optional[float] = None
     total_latency_ms: Optional[float] = None
+    speech_cascade_ttfb_ms: Optional[float] = None
     
     # Token metrics
     llm_input_tokens: Optional[int] = None
@@ -762,6 +763,8 @@ class ConversationTurnSpan:
             self.span.set_attribute(SpanAttr.TURN_TTS_TOTAL_MS.value, self.metrics.tts_total_ms)
         if self.metrics.total_latency_ms is not None:
             self.span.set_attribute(SpanAttr.TURN_TOTAL_LATENCY_MS.value, self.metrics.total_latency_ms)
+        if self.metrics.speech_cascade_ttfb_ms is not None:
+            self.span.set_attribute("turn.speech_cascade_ttfb_ms", self.metrics.speech_cascade_ttfb_ms)
         
         # Token metrics - set on both GenAI standard and turn-specific attributes
         if self.metrics.llm_input_tokens is not None:
@@ -899,10 +902,18 @@ class ConversationTurnSpan:
         reference_time = self.metrics.llm_complete_time or self.metrics.tts_start_time or self.metrics.turn_start_time
         self.metrics.tts_ttfb_ms = (now - reference_time) * 1000
         
+        # Speech Cascade TTFB: STT Complete -> First Audio
+        if self.metrics.stt_complete_time:
+            self.metrics.speech_cascade_ttfb_ms = (now - self.metrics.stt_complete_time) * 1000
+        
         if self.span:
+            attrs = {"tts.ttfb_ms": self.metrics.tts_ttfb_ms}
+            if self.metrics.speech_cascade_ttfb_ms is not None:
+                attrs["turn.speech_cascade_ttfb_ms"] = self.metrics.speech_cascade_ttfb_ms
+            
             self.span.add_event(
                 "tts.first_audio",
-                attributes={"tts.ttfb_ms": self.metrics.tts_ttfb_ms}
+                attributes=attrs
             )
     
     def record_tts_complete(self, total_ms: Optional[float] = None) -> None:

@@ -10,7 +10,7 @@ Usage:
     from foundryagents.agent_builder import AzureFoundryAgentBuilder
     
     builder = AzureFoundryAgentBuilder()
-    agent_id = builder.create_agent_from_yaml("agent_store/customer_support_agent.yaml")
+    agent_id = builder.create_agent_from_yaml("agents/customer_support_agent.yaml")
 """
 
 import os

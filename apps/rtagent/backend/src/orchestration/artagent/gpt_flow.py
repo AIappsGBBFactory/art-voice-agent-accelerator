@@ -285,6 +285,17 @@ def _lt(ws: WebSocket):
         return _NoOpLatency()
 
 
+def _lt_stop(ws: WebSocket, stage: str, *, meta: Optional[Dict[str, Any]] = None) -> Optional[float]:
+    """Stop latency timer with proper redis_mgr parameter for OTel span emission."""
+    lt = _lt(ws)
+    try:
+        redis_mgr = getattr(ws.app.state, "redis", None)
+        return lt.stop(stage, redis_mgr, meta=meta)
+    except Exception as e:
+        logger.debug(f"Latency stop error for stage '{stage}': {e}")
+        return None
+
+
 def _log_latency_stop(name: str, dur: Any) -> None:
     try:
         if isinstance(dur, (int, float)):
@@ -1114,12 +1125,12 @@ async def _consume_openai_stream(
         if not first_seen:
             first_seen = True
             try:
-                dur = lt.stop("aoai:ttfb")
-                _log_latency_stop("aoai:ttfb", dur)
+                dur = _lt_stop(ws, "llm:ttfb")
+                _log_latency_stop("llm:ttfb", dur)
             except Exception:
                 pass
             try:
-                lt.start("aoai:consume")
+                lt.start("llm:consume")
                 consume_started = True
             except Exception:
                 consume_started = False
@@ -1181,8 +1192,8 @@ async def _consume_openai_stream(
 
     if consume_started:
         try:
-            dur = lt.stop("aoai:consume")
-            _log_latency_stop("aoai:consume", dur)
+            dur = _lt_stop(ws, "llm:consume")
+            _log_latency_stop("llm:consume", dur)
         except Exception:
             pass
 
@@ -1445,7 +1456,7 @@ async def process_gpt_response(  # noqa: PLR0913
         lt = _lt(ws)
         # Total timer for AOAI path
         try:
-            lt.start("aoai:total")
+            lt.start("llm")
         except Exception:
             pass
 
@@ -1470,7 +1481,7 @@ async def process_gpt_response(  # noqa: PLR0913
             ) as dep_span:
                 # Start TTFB just before issuing the stream call
                 try:
-                    lt.start("aoai:ttfb")
+                    lt.start("llm:ttfb")
                 except Exception:
                     pass
 
@@ -1524,18 +1535,18 @@ async def process_gpt_response(  # noqa: PLR0913
         except Exception as exc:  # noqa: BLE001
             # Ensure timers stop on all error paths
             try:
-                dur = lt.stop("aoai:ttfb")
-                _log_latency_stop("aoai:ttfb", dur)
+                dur = _lt_stop(ws, "llm:ttfb")
+                _log_latency_stop("llm:ttfb", dur)
             except Exception:
                 pass
             try:
-                dur = lt.stop("aoai:consume")
-                _log_latency_stop("aoai:consume", dur)
+                dur = _lt_stop(ws, "llm:consume")
+                _log_latency_stop("llm:consume", dur)
             except Exception:
                 pass
             try:
-                dur = lt.stop("aoai:total")
-                _log_latency_stop("aoai:total", dur)
+                dur = _lt_stop(ws, "llm")
+                _log_latency_stop("llm", dur)
             except Exception:
                 pass
 
@@ -1558,8 +1569,8 @@ async def process_gpt_response(  # noqa: PLR0913
 
         finally:
             try:
-                dur = lt.stop("aoai:total")
-                _log_latency_stop("aoai:total", dur)
+                dur = _lt_stop(ws, "llm")
+                _log_latency_stop("llm", dur)
             except Exception:
                 pass
 

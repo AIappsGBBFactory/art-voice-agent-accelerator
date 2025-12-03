@@ -2,7 +2,14 @@
 
 ## Overview
 
-This package contains the core voice processing handlers. Understanding the layered architecture is key to working with this codebase.
+This package contains the **transport-level** handlers for ACS media processing.
+Voice channel handlers (speech processing, orchestration) have moved to:
+
+```
+apps/rtagent/backend/voice_channels/
+```
+
+### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -21,12 +28,10 @@ This package contains the core voice processing handlers. Understanding the laye
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                  SpeechCascadeHandler                           │
-│  Protocol-agnostic speech processing                            │
-│  - Three-thread architecture (main, STT, orchestrator)          │
-│  - VAD (Voice Activity Detection)                               │
-│  - Barge-in detection                                           │
-│  - Callbacks for UI updates                                     │
+│              voice_channels/ (NEW LOCATION)                     │
+│  - SpeechCascadeHandler: Three-thread STT→LLM→TTS               │
+│  - VoiceLiveSDKHandler: Azure VoiceLive + multi-agent           │
+│  - voicelive_metrics: Latency tracking                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -35,9 +40,16 @@ This package contains the core voice processing handlers. Understanding the laye
 | File | Purpose | When to modify |
 |------|---------|----------------|
 | `media_handler.py` | Unified ACS + Browser handler | Adding transport-level features, TTS/STT flow changes |
-| `speech_cascade_handler.py` | Core speech processing | VAD tuning, barge-in logic, STT pipeline changes |
 | `acs_call_lifecycle.py` | ACS call setup/teardown | Phone call initiation, webhooks |
-| `voice_live_sdk_handler.py` | Alternative realtime transport | VoiceLive SDK integration |
+| `dtmf_validation_lifecycle.py` | DTMF validation handling | DTMF flow changes |
+
+### Moved to `voice_channels/`
+
+| File | Purpose |
+|------|---------|
+| `speech_cascade_handler.py` | Core speech processing (VAD, barge-in, STT pipeline) |
+| `voice_live_sdk_handler.py` | VoiceLive SDK integration with multi-agent support |
+| `voicelive_metrics.py` | OpenTelemetry metrics for latency tracking |
 
 ## Key Concepts
 
@@ -94,7 +106,7 @@ await send_user_transcript(ws, text)  # broadcast_only defaults to False
 
 ### Changing barge-in behavior
 
-1. Core detection in `SpeechCascadeHandler._detect_barge_in()`
+1. Core detection in `SpeechCascadeHandler._detect_barge_in()` (in `voice_channels/`)
 2. Handler response in `MediaHandler._on_barge_in()`
 
 ## Testing
@@ -102,5 +114,4 @@ await send_user_transcript(ws, text)  # broadcast_only defaults to False
 ```bash
 # Run handler tests
 pytest tests/test_acs_media_lifecycle.py -v
-pytest tests/test_speech_cascade_handler.py -v
 ```
