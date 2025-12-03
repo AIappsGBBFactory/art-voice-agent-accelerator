@@ -7,6 +7,9 @@ import StopCircleRoundedIcon from '@mui/icons-material/StopCircleRounded';
 import PhoneDisabledRoundedIcon from '@mui/icons-material/PhoneDisabledRounded';
 import PhoneRoundedIcon from '@mui/icons-material/PhoneRounded';
 import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
+import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded';
+import AutoGraphRoundedIcon from '@mui/icons-material/AutoGraphRounded';
+import NotificationsNoneRoundedIcon from '@mui/icons-material/NotificationsNoneRounded';
 import { styles } from '../styles/voiceAppStyles.js';
 
 const ConversationControls = React.memo(({
@@ -36,6 +39,10 @@ const ConversationControls = React.memo(({
   const [micTooltipPos, setMicTooltipPos] = useState(null);
   const [phoneTooltipPos, setPhoneTooltipPos] = useState(null);
   const [muteTooltipPos, setMuteTooltipPos] = useState(null);
+  const [hatHovered, setHatHovered] = useState(false);
+
+  // Lift the mini view toggle when the inline text input is visible (e.g., recording)
+  const hatOffset = recording ? -78 : -42;
 
   const handlePhoneMouseEnter = useCallback((event) => {
     setShowPhoneTooltip(true);
@@ -65,6 +72,65 @@ const ConversationControls = React.memo(({
 
   return (
     <div style={styles.controlSection}>
+      {/* Mini view toggle "hat" above the main control cluster (non-intrusive) */}
+      {typeof onMainViewChange === "function" && (
+        <div
+          onMouseEnter={() => setHatHovered(true)}
+          onMouseLeave={() => setHatHovered(false)}
+          style={{
+            position: "absolute",
+            top: `${hatOffset}px`,
+            left: "50%",
+            transform: "translateX(-50%)",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "2px 0",
+            zIndex: 12,
+            pointerEvents: "auto",
+            opacity: hatHovered ? 1 : 0.45,
+            transition: "opacity 0.18s ease",
+          }}
+        >
+          {[
+            { mode: "chat", icon: <ChatBubbleOutlineRoundedIcon fontSize="small" /> },
+            { mode: "graph", icon: <AutoGraphRoundedIcon fontSize="small" /> },
+            { mode: "timeline", icon: <NotificationsNoneRoundedIcon fontSize="small" /> },
+          ].map(({ mode, icon }) => {
+            const active = mainView === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                aria-label={`Switch to ${mode}`}
+                style={{
+                  pointerEvents: "auto",
+                  width: 36,
+                  height: 36,
+                  borderRadius: 12,
+                  border: active ? "1px solid #2563eb" : "1px solid rgba(226,232,240,0.9)",
+                  background: active
+                    ? "linear-gradient(135deg, #e0ecff, #f2f7ff)"
+                    : "rgba(255,255,255,0.94)",
+                  color: active ? "#0f172a" : "#475569",
+                  cursor: "pointer",
+                  transition: "all 0.18s ease",
+                  boxShadow: active
+                    ? "0 8px 18px rgba(59,130,246,0.2)"
+                    : "0 6px 16px rgba(15,23,42,0.12)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                onClick={() => onMainViewChange(mode)}
+              >
+                {icon}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div style={styles.controlContainer}>
         {/* Reset */}
         <div style={{ position: 'relative' }}>
@@ -240,115 +306,7 @@ const ConversationControls = React.memo(({
       </div>
 
       {typeof onMainViewChange === "function" && (
-        <>
-          {/* Mini floating view selector (non-intrusive, above main cluster) */}
-          <div
-            style={{
-              position: "fixed",
-              right: "28px",
-              bottom: "72px",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 6px",
-              borderRadius: 12,
-              background: "rgba(255,255,255,0.42)",
-              backdropFilter: "blur(10px)",
-              border: "1px solid rgba(148,163,184,0.35)",
-              boxShadow: "0 10px 26px rgba(15,23,42,0.12)",
-              zIndex: 19,
-            }}
-          >
-            {[
-              { mode: "chat", label: "C" },
-              { mode: "graph", label: "G" },
-              { mode: "timeline", label: "T" },
-            ].map(({ mode, label }) => {
-              const active = mainView === mode;
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-label={`Switch to ${mode}`}
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 10,
-                    border: active ? "1px solid #2563eb" : "1px solid rgba(148,163,184,0.45)",
-                    background: active
-                      ? "linear-gradient(135deg, rgba(59,130,246,0.2), rgba(59,130,246,0.08))"
-                      : "rgba(255,255,255,0.75)",
-                    color: active ? "#0f172a" : "#475569",
-                    fontWeight: 700,
-                    fontSize: 12,
-                    cursor: "pointer",
-                    transition: "all 0.14s ease",
-                    boxShadow: active ? "0 8px 14px rgba(59,130,246,0.15)" : "none",
-                  }}
-                  onClick={() => onMainViewChange(mode)}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Full view selector (existing control cluster) */}
-          <div
-            style={{
-              position: "fixed",
-              right: "20px",
-              bottom: "24px",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              zIndex: 18,
-            }}
-          >
-            <span style={{ fontSize: 11, color: "#94a3b8", paddingLeft: 4 }}>View</span>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "6px 8px",
-                borderRadius: 12,
-                background: "rgba(255,255,255,0.92)",
-                border: "1px solid #e5e7eb",
-                boxShadow: "0 8px 20px rgba(15,23,42,0.14)",
-              }}
-            >
-              {["chat", "graph", "timeline"].map((mode) => {
-                const active = mainView === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    style={{
-                      border: "1px solid " + (active ? "#3b82f6" : "#e5e7eb"),
-                      background: active ? "linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%)" : "#ffffff",
-                      color: active ? "#0f172a" : "#475569",
-                      borderRadius: 10,
-                      padding: "6px 10px",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      minWidth: 68,
-                      transition: "all 0.12s ease",
-                    }}
-                    onClick={() => onMainViewChange(mode)}
-                  >
-                    {mode === "chat"
-                      ? "Chat"
-                      : mode === "graph"
-                        ? "Graph"
-                        : "Timeline"}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </>
+        null
       )}
 
       {isCallDisabled && showPhoneTooltip && phoneDisabledPos && (

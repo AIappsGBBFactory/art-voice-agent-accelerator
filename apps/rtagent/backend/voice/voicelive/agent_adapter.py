@@ -349,8 +349,16 @@ class VoiceLiveAgentAdapter:
         conn,
         *,
         say: Optional[str] = None,
+        cancel_active: bool = True,
     ) -> None:
-        """Trigger a response from the agent."""
+        """
+        Trigger a response from the agent.
+        
+        Args:
+            conn: VoiceLive connection
+            say: Optional instruction text for the response
+            cancel_active: If True, cancel any active response before triggering
+        """
         if not _VOICELIVE_AVAILABLE:
             return
         
@@ -360,14 +368,25 @@ class VoiceLiveAgentAdapter:
                 ResponseCreateParams,
             )
             
+            # Cancel any active response first to avoid conflicts
+            if cancel_active:
+                try:
+                    await conn.response.cancel()
+                except Exception:
+                    pass  # No active response to cancel
+            
             # Create response with injected text
-            await conn.send(
-                ClientEventResponseCreate(
-                    response=ResponseCreateParams(
-                        instructions=say,
+            try:
+                await conn.send(
+                    ClientEventResponseCreate(
+                        response=ResponseCreateParams(
+                            instructions=say,
+                        )
                     )
                 )
-            )
+            except Exception as e:
+                # Log but don't fail - might still have active response
+                logger.warning("trigger_response failed: %s", e)
     
     # ═══════════════════════════════════════════════════════════════════
     # PRIVATE HELPERS

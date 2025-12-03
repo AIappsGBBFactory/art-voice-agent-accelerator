@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import SettingsEthernetRoundedIcon from '@mui/icons-material/SettingsEthernetRounded';
 import { styles } from '../../styles/voiceAppStyles.js';
 import { formatStatusTimestamp } from '../../utils/formatters.js';
@@ -105,6 +105,28 @@ const GraphCanvas = ({ events, currentAgent, isFull = false }) => {
   const activeEdgeId = edges.length ? edges[edges.length - 1].id : null;
   const visibleEdges = edges;
 
+  // Auto-select last active participant (or current agent) for default events view
+  useEffect(() => {
+    if (selectedNode && agentNames.includes(selectedNode)) {
+      return;
+    }
+    const lastEvt = [...recent].reverse().find((evt) => {
+      const names = [evt.to, evt.from, evt.agent].filter(Boolean);
+      return names.some((n) => n && n !== "System");
+    });
+    const fallback = currentAgent && agentNames.includes(currentAgent) ? currentAgent : null;
+    const candidate =
+      (lastEvt &&
+        [lastEvt.to, lastEvt.from, lastEvt.agent].filter(
+          (n) => n && n !== "System",
+        )[0]) ||
+      fallback ||
+      null;
+    if (candidate) {
+      setSelectedNode(candidate);
+    }
+  }, [recent, selectedNode, agentNames, currentAgent]);
+
   if (!recent.length) {
     return (
       <div style={{ ...styles.graphCanvasWrapper, overflow: 'hidden' }}>
@@ -126,8 +148,18 @@ const GraphCanvas = ({ events, currentAgent, isFull = false }) => {
     );
   }
 
+  const containerStyle = {
+    ...styles.graphCanvasWrapper,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    height: isFull ? "100%" : "auto",
+    minHeight: isFull ? 380 : undefined,
+  };
+
   return (
-    <div style={{ ...styles.graphCanvasWrapper, overflow: "hidden" }}>
+    <div style={containerStyle}>
       <svg width="100%" height={height} viewBox={`0 0 ${viewWidth} ${height}`} preserveAspectRatio="xMidYMid meet">
         <defs>
           <marker id="arrow-primary" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto" markerUnits="strokeWidth">
@@ -316,7 +348,19 @@ const GraphCanvas = ({ events, currentAgent, isFull = false }) => {
         })}
       </svg>
       {selectedNode && (
-        <div style={{ marginTop: "8px", padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: "12px", background: "rgba(248,250,252,0.9)", maxHeight: 120, overflowY: "auto" }}>
+        <div
+          style={{
+            marginTop: "4px",
+            padding: "10px 12px",
+            border: "1px solid #e2e8f0",
+            borderRadius: "12px",
+            background: "rgba(248,250,252,0.9)",
+            flex: isFull ? "1 1 auto" : "0 0 auto",
+            minHeight: isFull ? 200 : 120,
+            maxHeight: isFull ? "none" : 260,
+            overflowY: "auto",
+          }}
+        >
           <div style={{ fontSize: "11px", fontWeight: 700, color: "#0f172a", marginBottom: "6px" }}>
             Events for {selectedNode}
           </div>

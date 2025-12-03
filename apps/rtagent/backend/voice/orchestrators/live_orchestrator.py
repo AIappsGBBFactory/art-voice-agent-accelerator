@@ -45,8 +45,6 @@ from opentelemetry import trace
 from azure.ai.voicelive.models import (
     ServerEventType,
     FunctionCallOutputItem,
-    UserMessageItem,
-    InputTextContentPart,
 )
 
 # Self-contained tool registry (no legacy vlagent dependency)
@@ -661,14 +659,13 @@ class LiveOrchestrator:
                         logger.debug("Messenger does not support set_active_agent", exc_info=True)
                 
                 has_handoff = bool(system_vars.get("handoff_context"))
-                handoff_message = system_vars.get("handoff_message") if has_handoff else None
                 switch_span.set_attribute("voicelive.is_handoff", has_handoff)
                 
-                if handoff_message:
-                    self._pending_greeting = handoff_message
-                    self._pending_greeting_agent = agent_name
-                    logger.info("[Handoff] Pending transition message: %s",
-                                handoff_message[:50] + "..." if len(handoff_message) > 50 else handoff_message)
+                # For handoffs, DON'T use the handoff_message as a greeting.
+                # The handoff_message is meant for the OLD agent to say ("I'll connect you to...")
+                # but by the time we're here, the session has switched to the NEW agent.
+                # Instead, let the new agent respond naturally as itself.
+                # We'll trigger a response after session update, and the new agent will introduce itself.
                 
                 with tracer.start_as_current_span(
                     "voicelive.agent.apply_session",
@@ -690,7 +687,9 @@ class LiveOrchestrator:
                         call_connection_id=self.call_connection_id,
                     )
                 
-                if not has_handoff and self._pending_greeting and self._pending_greeting_agent == agent_name:
+                # Schedule greeting fallback if we have a pending greeting
+                # This applies to both handoffs and normal agent switches
+                if self._pending_greeting and self._pending_greeting_agent == agent_name:
                     self._schedule_greeting_fallback(agent_name)
                 
                 # Reset token counters for the new agent
@@ -981,18 +980,38 @@ class LiveOrchestrator:
                 except Exception as item_err:
                     logger.warning("Failed to create handoff tool output: %s", item_err)
                 
-                # Clear active response tracking since we're transitioning agents
-                self._active_response_id = None
+                # Trigger the new agent to respond naturally as itself
+                # Build context about the handoff for the new agent's instruction
+                user_question = (
+                    handoff_context.get("question")
+                    or handoff_context.get("details")
+                    or last_user_message
+                    or "general inquiry"
+                )
+                handoff_summary = result.get("handoff_summary", "") if isinstance(result, dict) else ""
+                previous_agent = self._system_vars.get("previous_agent", "previous agent")
                 
-                # Try to trigger new agent response, but don't fail if already active
-                # The model should naturally continue after receiving the tool result
-                try:
-                    await self.conn.response.create()
-                    logger.info("[Handoff] Triggered new agent '%s' to respond", target)
-                except Exception as resp_err:
-                    # This is expected if a response is already in progress
-                    # The model will continue on its own after the tool result
-                    logger.debug("Handoff response.create skipped (response may already be active): %s", resp_err)
+                # Give the new agent context to respond naturally
+                instruction = (
+                    f"A customer was just transferred to you from {previous_agent}. "
+                    f"{handoff_summary}. Their request: {user_question}. "
+                    f"Briefly introduce yourself and help them with their request."
+                )
+                
+                # Schedule response trigger after a brief delay to let session settle
+                async def _trigger_handoff_response():
+                    await asyncio.sleep(0.3)
+                    try:
+                        await self.agents[target].trigger_response(
+                            self.conn,
+                            say=instruction,
+                            cancel_active=True,
+                        )
+                        logger.info("[Handoff] Triggered new agent '%s' to respond", target)
+                    except Exception as e:
+                        logger.warning("[Handoff] Failed to trigger response: %s", e)
+                
+                asyncio.create_task(_trigger_handoff_response(), name=f"handoff-response-{target}")
                 
                 tool_span.set_status(trace.StatusCode.OK)
                 return True
