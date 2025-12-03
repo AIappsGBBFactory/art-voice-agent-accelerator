@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Box } from '@mui/material';
 import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
@@ -60,6 +60,23 @@ const GraphListView = ({ events, compact = true, fillHeight = false }) => {
     });
   }, [recentEvents, selectedFilters]);
 
+  // Default to last active participant when nothing is selected
+  useEffect(() => {
+    if (selectedFilters.length || !recentEvents.length) return;
+    const lastEvt = [...recentEvents].reverse().find((evt) => {
+      const names = [evt.to, evt.from, evt.agent].filter(Boolean);
+      return names.some((n) => n && n !== "System");
+    });
+    if (!lastEvt) return;
+    const preferred =
+      [lastEvt.to, lastEvt.from, lastEvt.agent].filter(
+        (n) => n && n !== "System",
+      )[0];
+    if (preferred) {
+      setSelectedFilters([preferred]);
+    }
+  }, [recentEvents, selectedFilters.length]);
+
   const toggleFilter = (name) => {
     setSelectedFilters((prev) =>
       prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
@@ -85,6 +102,7 @@ const GraphListView = ({ events, compact = true, fillHeight = false }) => {
 
   if (fillHeight) {
     containerStyle.height = "100%";
+    containerStyle.minHeight = "100%";
     containerStyle.display = "flex";
     containerStyle.flexDirection = "column";
   }

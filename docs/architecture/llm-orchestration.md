@@ -3,6 +3,11 @@
 !!! abstract "Agent-Based Conversation Orchestration"
     Two distinct orchestration approaches: **Custom Multi-Agent** with local dependency injection and **Voice Live API** with Azure AI Foundry-managed orchestration.
 
+!!! tip "Recent updates (Dec 2025)"
+    - **Shared session services**: VoiceLive re-exports now point to the shared `apps/rtagent/backend/src/services/session_loader.py` helpers for profile lookup (email/client_id) to keep all entrypoints aligned.
+    - **Agent inventory API**: `/api/v1/agents` and `/api/v1/agents/{agent_name}?session_id=...` return normalized tools/handoff_tools, prompt metadata, and the active agent for the current session to drive the Agent Details panel.
+    - **Graph/timeline UX**: The last-active participant is auto-selected by default and the events panel stretches to fill available height for quicker debugging of recent tool calls/handoffs.
+
 ## :material-select-group: Orchestration Approaches
 
 === "🎯 Custom Multi-Agent (MEDIA/TRANSCRIPTION)"

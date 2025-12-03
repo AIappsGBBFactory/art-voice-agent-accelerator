@@ -300,38 +300,6 @@ const AgentDetailsPanel = ({
           <SummaryRow label="Tool Count" value={agentTools.length ? agentTools.length.toString() : '0'} />
         </PanelCard>
 
-        <PanelCard
-          title={`Agent Tools Available (${agentTools.length || 0})`}
-          icon={<BuildRoundedIcon sx={{ fontSize: 16, color: '#0ea5e9' }} />}
-        >
-          {agentTools.length === 0 ? (
-            <Typography sx={{ fontSize: '12px', color: '#94a3b8' }}>
-              No tools registered for this agent.
-            </Typography>
-          ) : (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-              {agentTools.map((tool) => {
-                const isHandoff = handoffTools.includes(tool);
-                return (
-                  <Chip
-                    key={tool}
-                    label={tool}
-                    size="small"
-                    icon={isHandoff ? <TimelineRoundedIcon fontSize="small" /> : <BuildRoundedIcon fontSize="small" />}
-                    sx={{
-                      borderRadius: '10px',
-                      fontWeight: 700,
-                      borderColor: isHandoff ? 'rgba(234,88,12,0.5)' : 'rgba(14,165,233,0.5)',
-                      background: isHandoff ? 'rgba(234,88,12,0.08)' : 'rgba(14,165,233,0.08)',
-                      color: isHandoff ? '#ea580c' : '#0ea5e9',
-                    }}
-                    variant="outlined"
-                  />
-                );
-              })}
-            </Box>
-          )}
-        </PanelCard>
       </Box>
     </div>,
     document.body,
