@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import SettingsEthernetRoundedIcon from '@mui/icons-material/SettingsEthernetRounded';
-import { styles } from '../styles/voiceAppStyles.js';
-import { formatStatusTimestamp } from '../utils/formatters.js';
+import { styles } from '../../styles/voiceAppStyles.js';
+import { formatStatusTimestamp } from '../../utils/formatters.js';
 
 const GraphCanvas = ({ events, currentAgent, isFull = false }) => {
   const [selectedNode, setSelectedNode] = useState(null);
