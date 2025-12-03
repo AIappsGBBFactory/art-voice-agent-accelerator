@@ -3,8 +3,8 @@ import { Box } from '@mui/material';
 import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
 import SettingsEthernetRoundedIcon from '@mui/icons-material/SettingsEthernetRounded';
-import { styles } from '../styles/voiceAppStyles.js';
-import { formatStatusTimestamp } from '../utils/formatters.js';
+import { styles } from '../../styles/voiceAppStyles.js';
+import { formatStatusTimestamp } from '../../utils/formatters.js';
 
 const GraphListView = ({ events, compact = true }) => {
   const [selectedFilters, setSelectedFilters] = useState([]);

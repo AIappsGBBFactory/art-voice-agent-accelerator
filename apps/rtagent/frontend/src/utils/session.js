@@ -38,3 +38,81 @@ export const createMetricsState = () => ({
 });
 
 export const toMs = (value) => (typeof value === 'number' ? Math.round(value) : undefined);
+
+export const buildSessionProfile = (raw, fallbackSessionId, previous) => {
+  if (!raw && !previous) {
+    return null;
+  }
+  const container = raw ?? {};
+  const data = container.data ?? {};
+  const demoMeta =
+    container.demo_metadata ??
+    container.demoMetadata ??
+    data.demo_metadata ??
+    data.demoMetadata ??
+    {};
+  const sessionValue =
+    container.session_id ??
+    container.sessionId ??
+    data.session_id ??
+    data.sessionId ??
+    demoMeta.session_id ??
+    previous?.sessionId ??
+    fallbackSessionId;
+  const profileValue =
+    container.profile ??
+    data.profile ??
+    demoMeta.profile ??
+    previous?.profile ??
+    null;
+  const rawTransactions = container.transactions ?? data.transactions;
+  const metaTransactions = demoMeta.transactions;
+  const transactionsValue =
+    Array.isArray(rawTransactions) && rawTransactions.length
+      ? rawTransactions
+      : Array.isArray(metaTransactions) && metaTransactions.length
+      ? metaTransactions
+      : previous?.transactions ?? [];
+  const interactionPlanValue =
+    container.interaction_plan ??
+    container.interactionPlan ??
+    data.interaction_plan ??
+    data.interactionPlan ??
+    demoMeta.interaction_plan ??
+    previous?.interactionPlan ??
+    null;
+  const entryIdValue =
+    container.entry_id ??
+    container.entryId ??
+    data.entry_id ??
+    data.entryId ??
+    demoMeta.entry_id ??
+    previous?.entryId ??
+    null;
+  const expiresAtValue =
+    container.expires_at ??
+    container.expiresAt ??
+    data.expires_at ??
+    data.expiresAt ??
+    demoMeta.expires_at ??
+    previous?.expiresAt ??
+    null;
+  const safetyNoticeValue =
+    container.safety_notice ??
+    container.safetyNotice ??
+    data.safety_notice ??
+    data.safetyNotice ??
+    demoMeta.safety_notice ??
+    previous?.safetyNotice ??
+    null;
+
+  return {
+    sessionId: sessionValue,
+    profile: profileValue,
+    transactions: transactionsValue,
+    interactionPlan: interactionPlanValue,
+    entryId: entryIdValue,
+    expiresAt: expiresAtValue,
+    safetyNotice: safetyNoticeValue,
+  };
+};

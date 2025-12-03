@@ -7,9 +7,6 @@ import StopCircleRoundedIcon from '@mui/icons-material/StopCircleRounded';
 import PhoneDisabledRoundedIcon from '@mui/icons-material/PhoneDisabledRounded';
 import PhoneRoundedIcon from '@mui/icons-material/PhoneRounded';
 import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
-import MicRoundedIcon from '@mui/icons-material/MicRounded';
-import PhoneInTalkRoundedIcon from '@mui/icons-material/PhoneInTalkRounded';
-import KeyboardRoundedIcon from '@mui/icons-material/KeyboardRounded';
 import { styles } from '../styles/voiceAppStyles.js';
 
 const ConversationControls = React.memo(({
