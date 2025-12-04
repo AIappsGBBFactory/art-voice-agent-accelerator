@@ -44,7 +44,7 @@ from .metrics import (
     record_turn_processing,
     record_barge_in,
 )
-from .orchestrator import CascadeOrchestratorAdapter
+from .orchestrator import CascadeOrchestratorAdapter, StateKeys
 from .tts import TTSPlayback, SAMPLE_RATE_BROWSER, SAMPLE_RATE_ACS
 
 # Legacy exports for backward compatibility (deprecated)
@@ -73,6 +73,7 @@ __all__ = [
     "send_tts_to_acs",
     # Orchestrator shim
     "CascadeOrchestratorAdapter",
+    "StateKeys",  # Re-export of SessionStateKeys for backward compatibility
     # Metrics
     "record_stt_recognition",
     "record_turn_processing",

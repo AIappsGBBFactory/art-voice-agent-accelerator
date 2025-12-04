@@ -63,6 +63,11 @@ from apps.rtagent.backend.voice.shared.config_resolver import (
     resolve_orchestrator_config,
     resolve_from_app_state,
 )
+from apps.rtagent.backend.voice.shared.session_state import (
+    SessionStateKeys,
+    sync_state_from_memo,
+    sync_state_to_memo,
+)
 from apps.rtagent.backend.agents.tools.registry import is_handoff_tool
 
 if TYPE_CHECKING:
@@ -82,16 +87,11 @@ tracer = trace.get_tracer(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────
-# State Keys (for MemoManager state-based handoffs)
+# State Keys (use shared SessionStateKeys for consistency)
 # ─────────────────────────────────────────────────────────────────────
 
-class StateKeys:
-    """Keys used in MemoManager for cascade orchestration."""
-    ACTIVE_AGENT = "active_agent"
-    PENDING_HANDOFF = "pending_handoff"
-    HANDOFF_CONTEXT = "handoff_context"
-    PREVIOUS_AGENT = "previous_agent"
-    VISITED_AGENTS = "visited_agents"
+# Re-export for backward compatibility
+StateKeys = SessionStateKeys
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -161,7 +161,14 @@ class CascadeSessionScope:
 
 @dataclass
 class CascadeHandoffContext:
-    """Context passed during agent handoffs."""
+    """
+    Context passed during agent handoffs in Cascade mode.
+    
+    Note: This is intentionally separate from voice/handoffs/context.py's
+    HandoffContext. Cascade mode has simpler needs (single-turn, synchronous)
+    so this is a leaner structure. VoiceLive mode uses the richer HandoffContext
+    which includes session_overrides, greeting, and async-friendly methods.
+    """
     
     source_agent: str = ""
     target_agent: str = ""
@@ -1343,55 +1350,34 @@ class CascadeOrchestratorAdapter:
         Args:
             cm: MemoManager instance
         """
-        # Check for pending handoff
-        pending = cm.get_value_from_corememory(StateKeys.PENDING_HANDOFF)
-        if pending and pending in self.agents:
-            logger.info("Pending handoff detected: %s", pending)
-            self._active_agent = pending
-            cm.set_corememory(StateKeys.PENDING_HANDOFF, None)
-            cm.set_corememory(StateKeys.ACTIVE_AGENT, self._active_agent)
+        # Use shared sync utility
+        state = sync_state_from_memo(cm, available_agents=set(self.agents.keys()))
         
-        # Sync active agent
-        stored_agent = cm.get_value_from_corememory(StateKeys.ACTIVE_AGENT)
-        if stored_agent and stored_agent in self.agents:
-            self._active_agent = stored_agent
+        # Handle pending handoff (clears the pending key)
+        if state.pending_handoff:
+            target = state.pending_handoff.get("target_agent")
+            if target and target in self.agents:
+                logger.info("Pending handoff detected: %s", target)
+                self._active_agent = target
+                sync_state_to_memo(cm, active_agent=self._active_agent, clear_pending_handoff=True)
         
-        # Restore visited agents for context awareness
-        visited = cm.get_value_from_corememory(StateKeys.VISITED_AGENTS)
-        if visited and isinstance(visited, list):
-            self._visited_agents = set(visited)
+        # Apply synced state
+        if state.active_agent:
+            self._active_agent = state.active_agent
+        if state.visited_agents:
+            self._visited_agents = state.visited_agents
+        if state.system_vars:
+            self._session_vars.update(state.system_vars)
         
-        # Restore turn count for continuity
-        turn_count = cm.get_value_from_corememory("cascade_turn_count")
+        # Restore cascade-specific state (turn count, tokens)
+        turn_count = cm.get_value_from_corememory("cascade_turn_count") if hasattr(cm, "get_value_from_corememory") else None
         if turn_count and isinstance(turn_count, int):
             self._turn_count = turn_count
         
-        # Restore token counts for analytics continuity
-        tokens = cm.get_value_from_corememory("cascade_tokens")
+        tokens = cm.get_value_from_corememory("cascade_tokens") if hasattr(cm, "get_value_from_corememory") else None
         if tokens and isinstance(tokens, dict):
             self._agent_input_tokens = tokens.get("input", 0)
             self._agent_output_tokens = tokens.get("output", 0)
-        
-        # Restore session profile for conversation continuity
-        session_profile = cm.get_value_from_corememory("session_profile")
-        if session_profile:
-            self._session_vars["session_profile"] = session_profile
-            self._session_vars["client_id"] = session_profile.get("client_id")
-            self._session_vars["caller_name"] = session_profile.get("full_name")
-            self._session_vars["customer_intelligence"] = session_profile.get("customer_intelligence", {})
-            if session_profile.get("institution_name"):
-                self._session_vars["institution_name"] = session_profile["institution_name"]
-            logger.info(
-                "🔄 Restored session context | client_id=%s name=%s",
-                session_profile.get("client_id"),
-                session_profile.get("full_name"),
-            )
-        else:
-            # Try individual fields as fallback
-            for key in ("client_id", "caller_name", "customer_intelligence", "institution_name"):
-                val = cm.get_value_from_corememory(key)
-                if val and key not in self._session_vars:
-                    self._session_vars[key] = val
     
     def sync_to_memo_manager(self, cm: "MemoManager") -> None:
         """
@@ -1403,27 +1389,21 @@ class CascadeOrchestratorAdapter:
         Args:
             cm: MemoManager instance
         """
-        cm.set_corememory(StateKeys.ACTIVE_AGENT, self._active_agent)
-        cm.set_corememory(StateKeys.VISITED_AGENTS, list(self._visited_agents))
+        # Use shared sync utility for common state
+        sync_state_to_memo(
+            cm,
+            active_agent=self._active_agent,
+            visited_agents=self._visited_agents,
+            system_vars=self._session_vars,
+        )
         
-        # Store turn count for context continuity
-        cm.set_corememory("cascade_turn_count", self._turn_count)
-        
-        # Store token usage for analytics
-        cm.set_corememory("cascade_tokens", {
-            "input": self._agent_input_tokens,
-            "output": self._agent_output_tokens,
-        })
-        
-        # Persist session profile for next session restore
-        session_profile = self._session_vars.get("session_profile")
-        if session_profile:
-            cm.set_corememory("session_profile", session_profile)
-        
-        # Also persist individual fields for backward compatibility
-        for key in ("client_id", "caller_name", "customer_intelligence", "institution_name"):
-            if key in self._session_vars and self._session_vars[key]:
-                cm.set_corememory(key, self._session_vars[key])
+        # Persist cascade-specific state (turn count, tokens)
+        if hasattr(cm, "set_corememory"):
+            cm.set_corememory("cascade_turn_count", self._turn_count)
+            cm.set_corememory("cascade_tokens", {
+                "input": self._agent_input_tokens,
+                "output": self._agent_output_tokens,
+            })
     
     # ─────────────────────────────────────────────────────────────────
     # Legacy Interface for SpeechCascadeHandler

@@ -78,8 +78,6 @@ class MemoManager:
         corememory (CoreMemory): Persistent key-value store for agent context
         message_queue (MessageQueue): Sequential message playback queue
         latency (LatencyTracker): Performance monitoring for operation timing
-        auto_refresh_interval (float, optional): Auto-refresh interval in seconds
-        last_refresh_time (float): Timestamp of last Redis refresh operation
 
     Redis Keys:
         - corememory: Agent context, slots, tool outputs, and configuration
@@ -94,9 +92,6 @@ class MemoManager:
 
         # Redis persistence
         await manager.persist_to_redis_async(redis_mgr)
-
-        # Live refresh with auto-sync
-        manager.enable_auto_refresh(redis_mgr, interval_seconds=30.0)
         ```
 
     Note:
@@ -110,7 +105,6 @@ class MemoManager:
     def __init__(
         self,
         session_id: Optional[str] = None,
-        auto_refresh_interval: Optional[float] = None,
         redis_mgr: Optional[AzureRedisManager] = None,
     ) -> None:
         """
@@ -123,8 +117,6 @@ class MemoManager:
         Args:
             session_id (Optional[str]): Unique session identifier. If None,
                 generates a new UUID4 truncated to 8 characters for readability.
-            auto_refresh_interval (Optional[float]): Interval in seconds for
-                automatic Redis state refresh. If None, auto-refresh is disabled.
             redis_mgr (Optional[AzureRedisManager]): Redis connection manager
                 for persistence operations. Can be set later via method calls.
 
@@ -135,7 +127,6 @@ class MemoManager:
             - message_queue: MessageQueue for sequential TTS playback
             - latency: LatencyTracker for performance monitoring
             - _is_tts_interrupted: Flag for TTS interruption state
-            - _refresh_task: Background task for auto-refresh (if enabled)
             - _redis_manager: Stored Redis manager for persistence
 
         Example:
@@ -143,11 +134,11 @@ class MemoManager:
             # Auto-generate session ID
             manager = MemoManager()
 
-            # Specific session with auto-refresh
+            # Specific session with Redis manager
             manager = MemoManager(
                 session_id="custom_session",
-                auto_refresh_interval=30.0,
                 redis_mgr=redis_manager
+            )
             )
             ```
 
@@ -161,10 +152,8 @@ class MemoManager:
         self.message_queue = MessageQueue()
         self._is_tts_interrupted: bool = False
         self.latency = LatencyTracker()
-        self.auto_refresh_interval = auto_refresh_interval
-        self.last_refresh_time = 0
-        self._refresh_task: Optional[asyncio.Task] = None
         self._redis_manager: Optional[AzureRedisManager] = redis_mgr
+        self._pending_persist_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------
     # Compatibility aliases
@@ -297,37 +286,31 @@ class MemoManager:
         """
         Create a MemoManager with stored Redis manager reference.
 
-        Alternative factory method that creates a session manager from Redis
-        data while storing the Redis manager instance for future operations.
-        This enables automatic persistence and refresh capabilities.
+        Factory method that creates a session manager from Redis data while
+        storing the Redis manager instance for future operations.
 
         Args:
             session_id (str): Unique session identifier to load
             redis_mgr (AzureRedisManager): Redis connection manager to store and use
 
         Returns:
-            MemoManager: New instance with Redis manager stored for auto-operations
+            MemoManager: New instance with state loaded from Redis and manager stored
 
         Example:
             ```python
-            # Create with stored manager
             manager = MemoManager.from_redis_with_manager("session_123", redis_mgr)
-
-            # Auto-persist without passing manager
-            await manager.persist()
-
-            # Enable auto-refresh
-            manager.enable_auto_refresh(redis_mgr, 30.0)
+            await manager.persist()  # Uses stored manager
             ```
-
-        Note:
-            This method is preferred when the manager will perform multiple
-            Redis operations, as it eliminates the need to pass the Redis
-            manager to each method call.
         """
-        cm = cls(session_id=session_id, redis_mgr=redis_mgr)
-        # ...existing logic...
-        return cm
+        key = cls.build_redis_key(session_id)
+        data = redis_mgr.get_session_data(key)
+        mm = cls(session_id=session_id, redis_mgr=redis_mgr)
+        if data:
+            if cls._CORE_KEY in data:
+                mm.corememory.from_json(data[cls._CORE_KEY])
+            if cls._HISTORY_KEY in data:
+                mm.chatHistory.from_json(data[cls._HISTORY_KEY])
+        return mm
 
     async def persist(self, redis_mgr: Optional[AzureRedisManager] = None) -> None:
         """
@@ -471,11 +454,15 @@ class MemoManager:
         ttl_seconds: Optional[int] = None,
     ) -> None:
         """
-        OPTIMIZATION: Persist session state in background without blocking the current operation.
+        Schedule background persistence to Redis without blocking.
 
-        This method creates a background task for session persistence, allowing the
-        calling code to continue without waiting for Redis I/O completion. Ideal for
+        Creates an asyncio task to persist session state, allowing the
+        calling operation to continue without waiting for Redis I/O. Ideal for
         hot path operations where latency is critical.
+
+        Implements task deduplication: if a previous persist is still in flight,
+        it is cancelled before starting a new one. This prevents queue buildup
+        during rapid state changes.
 
         Args:
             redis_mgr (Optional[AzureRedisManager]): Redis manager to use.
@@ -492,9 +479,10 @@ class MemoManager:
             ```
 
         Note:
-            Background tasks are fire-and-forget. If persistence fails, it will be
-            logged but won't affect the calling operation. Use regular persist()
-            when you need to handle persistence errors.
+            - Background tasks are fire-and-forget with error logging.
+            - Previous pending persists are cancelled to avoid queue buildup.
+            - Use regular persist() when you need to handle persistence errors.
+            - Call cancel_pending_persist() on session end for cleanup.
         """
         mgr = redis_mgr or self._redis_manager
         if not mgr:
@@ -503,8 +491,15 @@ class MemoManager:
             )
             return
 
+        # Cancel previous persist if still running (deduplication)
+        if self._pending_persist_task and not self._pending_persist_task.done():
+            self._pending_persist_task.cancel()
+            logger.debug(
+                f"[PERF] Cancelled pending persist for session {self.session_id} (superseded)"
+            )
+
         # Create background task for non-blocking persistence
-        asyncio.create_task(
+        self._pending_persist_task = asyncio.create_task(
             self._background_persist_task(mgr, ttl_seconds),
             name=f"persist_session_{self.session_id}",
         )
@@ -515,10 +510,44 @@ class MemoManager:
         """Internal background task for session persistence."""
         try:
             await self.persist_to_redis_async(redis_mgr, ttl_seconds)
+        except asyncio.CancelledError:
+            # Expected when superseded by a newer persist request
+            logger.debug(
+                f"[PERF] Background persist cancelled for session {self.session_id}"
+            )
         except Exception as e:
             logger.error(
                 f"[PERF] Background persistence failed for session {self.session_id}: {e}"
             )
+
+    def cancel_pending_persist(self) -> bool:
+        """
+        Cancel any pending background persist task.
+
+        Should be called during session cleanup to ensure no orphaned tasks
+        remain after the session ends. Safe to call even if no task is pending.
+
+        Returns:
+            bool: True if a task was cancelled, False if no task was pending.
+
+        Example:
+            ```python
+            # During session cleanup
+            async def end_session(manager: MemoManager):
+                cancelled = manager.cancel_pending_persist()
+                if cancelled:
+                    logger.info("Cancelled pending persist on session end")
+                # Final sync persist to ensure state is saved
+                await manager.persist_to_redis_async(redis_mgr)
+            ```
+        """
+        if self._pending_persist_task and not self._pending_persist_task.done():
+            self._pending_persist_task.cancel()
+            logger.debug(
+                f"[PERF] Cancelled pending persist for session {self.session_id} (cleanup)"
+            )
+            return True
+        return False
 
     # --- TTS Interrupt ------------------------------------------------
     def is_tts_interrupted(self) -> bool:
@@ -605,8 +634,9 @@ class MemoManager:
             agent instances, ensuring TTS interruptions are recognized
             across all active connections for the same session.
         """
+        # Use simple key - corememory is already session-scoped
         await self.set_live_context_value(
-            redis_mgr or self._redis_manager, f"tts_interrupted:{session_id}", value
+            redis_mgr or self._redis_manager, "tts_interrupted", value
         )
 
     async def is_tts_interrupted_live(
@@ -644,12 +674,12 @@ class MemoManager:
             updates local state from Redis before returning the result,
             ensuring consistency across distributed processes.
         """
-        if redis_mgr and session_id:
+        if redis_mgr:
             self._is_tts_interrupted = await self.get_live_context_value(
-                redis_mgr, f"tts_interrupted:{session_id}", False
+                redis_mgr, "tts_interrupted", False
             )
             return self._is_tts_interrupted
-        return self.get_context(f"tts_interrupted:{session_id}", False)
+        return self.get_context("tts_interrupted", False)
 
     # --- SLOTS & TOOL OUTPUTS -----------------------------------------
     def update_slots(self, slots: Dict[str, Any]) -> None:
@@ -1337,39 +1367,10 @@ class MemoManager:
             )
             return False
 
-    def enable_auto_refresh(
-        self, redis_mgr: AzureRedisManager, interval_seconds: float = 30.0
-    ) -> None:
-        """Enable automatic refresh of data from Redis at specified intervals."""
-        self._redis_manager = redis_mgr
-        self.auto_refresh_interval = interval_seconds
-        if self._refresh_task and not self._refresh_task.done():
-            self._refresh_task.cancel()
-        self._refresh_task = asyncio.create_task(self._auto_refresh_loop())
-        logger.info(
-            f"Enabled auto-refresh every {interval_seconds}s for session {self.session_id}"
-        )
-
-    def disable_auto_refresh(self) -> None:
-        """Disable automatic refresh."""
-        if self._refresh_task and not self._refresh_task.done():
-            self._refresh_task.cancel()
-        self._refresh_task = None
-        self._redis_manager = None
-        logger.info(f"Disabled auto-refresh for session {self.session_id}")
-
-    async def _auto_refresh_loop(self) -> None:
-        """Internal method to handle automatic refresh loop."""
-        while self.auto_refresh_interval and self._redis_manager:
-            try:
-                await asyncio.sleep(self.auto_refresh_interval)
-                await self.refresh_from_redis_async(self._redis_manager)
-                self.last_refresh_time = asyncio.get_event_loop().time()
-            except asyncio.CancelledError:
-                logger.info(f"Auto-refresh cancelled for session {self.session_id}")
-                break
-            except Exception as e:
-                logger.error(f"Auto-refresh error for session {self.session_id}: {e}")
+    # NOTE: Auto-refresh functionality was removed as it was never used in production.
+    # The system syncs state at turn boundaries which is sufficient for voice calls.
+    # If polling-based refresh is needed in the future, re-implement with proper
+    # task lifecycle management (cancellation on session end, deduplication, etc.)
 
     async def check_for_changes(self, redis_mgr: AzureRedisManager) -> Dict[str, bool]:
         """Check what has changed in Redis compared to local state."""

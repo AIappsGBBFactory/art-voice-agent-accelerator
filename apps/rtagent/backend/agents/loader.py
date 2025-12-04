@@ -24,6 +24,7 @@ from apps.rtagent.backend.agents.base import (
     HandoffConfig,
     VoiceConfig,
     ModelConfig,
+    SpeechConfig,
 )
 from utils.ml_logging import get_logger
 
@@ -137,9 +138,10 @@ def load_agent(
     # Extract identity (handles nested 'agent:' block)
     identity = _extract_agent_identity(raw, agent_dir)
 
-    # Merge with defaults for model, voice, session
+    # Merge with defaults for model, voice, speech, session
     model_raw = _deep_merge(defaults.get("model", {}), raw.get("model", {}))
     voice_raw = _deep_merge(defaults.get("voice", {}), raw.get("voice", {}))
+    speech_raw = _deep_merge(defaults.get("speech", {}), raw.get("speech", {}))
     session_raw = _deep_merge(defaults.get("session", {}), raw.get("session", {}))
     template_vars = _deep_merge(defaults.get("template_vars", {}), raw.get("template_vars", {}))
     
@@ -161,6 +163,7 @@ def load_agent(
         handoff=handoff,
         model=ModelConfig.from_dict(model_raw),
         voice=VoiceConfig.from_dict(voice_raw),
+        speech=SpeechConfig.from_dict(speech_raw),
         session=session_raw,
         prompt_template=prompt_template,
         tool_names=raw.get("tools", []),

@@ -55,6 +55,10 @@ from apps.rtagent.backend.agents.tools import (
 )
 from apps.rtagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.rtagent.backend.voice.handoffs import build_handoff_system_vars, sanitize_handoff_context
+from apps.rtagent.backend.voice.shared.session_state import (
+    sync_state_from_memo,
+    sync_state_to_memo,
+)
 
 if TYPE_CHECKING:
     from .agent_adapter import VoiceLiveAgentAdapter
@@ -233,114 +237,60 @@ class LiveOrchestrator:
         Sync orchestrator state from MemoManager.
         Called at initialization and optionally at turn boundaries.
         
-        Loads:
-        - active_agent: Current agent name
-        - visited_agents: Set of previously visited agents
-        - session_profile: User profile for personalization
-        - customer_intelligence: Customer data for agent context
-        - client_id, caller_name, institution_name: Core identity info
+        Uses shared sync_state_from_memo for consistency with CascadeOrchestratorAdapter.
         """
         if not self._memo_manager:
             return
         
-        mm = self._memo_manager
+        # Use shared sync utility
+        state = sync_state_from_memo(
+            self._memo_manager,
+            available_agents=set(self.agents.keys()),
+        )
         
-        # Sync active agent (from attribute or corememory)
-        active = getattr(mm, "active_agent", None)
-        if not active and hasattr(mm, "get_value_from_corememory"):
-            active = mm.get_value_from_corememory("active_agent")
-        if active and active in self.agents:
-            self.active = active
-            logger.debug("[LiveOrchestrator] Synced active_agent from MemoManager: %s", self.active)
+        # Apply synced state
+        if state.active_agent:
+            self.active = state.active_agent
+            logger.debug("[LiveOrchestrator] Synced active_agent: %s", self.active)
         
-        # Sync visited agents
-        visited = getattr(mm, "visited_agents", None)
-        if not visited and hasattr(mm, "get_value_from_corememory"):
-            visited = mm.get_value_from_corememory("visited_agents")
-        if visited:
-            self.visited_agents = set(visited)
-            logger.debug("[LiveOrchestrator] Synced visited_agents from MemoManager: %s", self.visited_agents)
+        if state.visited_agents:
+            self.visited_agents = state.visited_agents
+            logger.debug("[LiveOrchestrator] Synced visited_agents: %s", self.visited_agents)
         
-        # Sync system_vars from attribute if available
-        if hasattr(mm, "system_vars") and mm.system_vars:
-            self._system_vars.update(mm.system_vars)
-            logger.debug("[LiveOrchestrator] Synced system_vars from MemoManager")
+        if state.system_vars:
+            self._system_vars.update(state.system_vars)
+            logger.debug("[LiveOrchestrator] Synced system_vars")
         
-        # Load session profile and related context from corememory
-        if hasattr(mm, "get_value_from_corememory"):
-            # Session profile is the main user context
-            session_profile = mm.get_value_from_corememory("session_profile")
-            if session_profile:
-                self._system_vars["session_profile"] = session_profile
-                self._system_vars["client_id"] = session_profile.get("client_id")
-                self._system_vars["caller_name"] = session_profile.get("full_name")
-                self._system_vars["customer_intelligence"] = session_profile.get("customer_intelligence", {})
-                if session_profile.get("institution_name"):
-                    self._system_vars["institution_name"] = session_profile["institution_name"]
-                logger.info(
-                    "🔄 Restored session context | client_id=%s name=%s",
-                    session_profile.get("client_id"),
-                    session_profile.get("full_name"),
-                )
-            else:
-                # Try loading individual fields as fallback
-                for key in ("client_id", "caller_name", "customer_intelligence", "institution_name"):
-                    val = mm.get_value_from_corememory(key)
-                    if val and key not in self._system_vars:
-                        self._system_vars[key] = val
-        
-        # Legacy: sync user_profile attribute if available
-        if hasattr(mm, "user_profile") and mm.user_profile:
-            if "session_profile" not in self._system_vars:
-                self._system_vars["session_profile"] = mm.user_profile
-                logger.debug("[LiveOrchestrator] Synced user_profile to session_profile")
+        # Handle pending handoff if any
+        if state.pending_handoff:
+            target = state.pending_handoff.get("target_agent")
+            if target and target in self.agents:
+                logger.info("[LiveOrchestrator] Pending handoff detected: %s", target)
+                self.active = target
+                # Clear the pending handoff
+                sync_state_to_memo(self._memo_manager, active_agent=self.active, clear_pending_handoff=True)
 
     def _sync_to_memo_manager(self) -> None:
         """
         Sync orchestrator state back to MemoManager.
         Called at turn boundaries to persist state.
         
-        Saves:
-        - active_agent: Current agent name
-        - visited_agents: Set of visited agents
-        - session_profile: User profile for next session
-        - customer_intelligence, client_id, etc.: Core context
+        Uses shared sync_state_to_memo for consistency with CascadeOrchestratorAdapter.
         """
         if not self._memo_manager:
             return
         
-        mm = self._memo_manager
+        # Use shared sync utility
+        sync_state_to_memo(
+            self._memo_manager,
+            active_agent=self.active,
+            visited_agents=self.visited_agents,
+            system_vars=self._system_vars,
+        )
         
-        # Sync active agent
-        if hasattr(mm, "set_corememory"):
-            mm.set_corememory("active_agent", self.active)
-        elif hasattr(mm, "active_agent"):
-            mm.active_agent = self.active
-        
-        # Sync visited agents
-        if hasattr(mm, "set_corememory"):
-            mm.set_corememory("visited_agents", list(self.visited_agents))
-        elif hasattr(mm, "visited_agents"):
-            mm.visited_agents = list(self.visited_agents)
-        
-        # Sync system_vars (legacy attribute)
-        if hasattr(mm, "system_vars"):
-            mm.system_vars = dict(self._system_vars)
-        
-        # Persist session profile to corememory for next session restore
-        if hasattr(mm, "set_corememory"):
-            session_profile = self._system_vars.get("session_profile")
-            if session_profile:
-                mm.set_corememory("session_profile", session_profile)
-            
-            # Also persist individual fields for backward compatibility
-            for key in ("client_id", "caller_name", "customer_intelligence", "institution_name"):
-                if key in self._system_vars and self._system_vars[key]:
-                    mm.set_corememory(key, self._system_vars[key])
-        
-        # Sync last user message
-        if hasattr(mm, "last_user_message") and self._last_user_message:
-            mm.last_user_message = self._last_user_message
+        # Sync last user message (VoiceLive-specific)
+        if hasattr(self._memo_manager, "last_user_message") and self._last_user_message:
+            self._memo_manager.last_user_message = self._last_user_message
         
         logger.debug("[LiveOrchestrator] Synced state to MemoManager")
 
