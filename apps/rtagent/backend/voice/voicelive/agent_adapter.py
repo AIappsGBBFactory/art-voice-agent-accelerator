@@ -303,6 +303,13 @@ class VoiceLiveAgentAdapter:
             # Build voice payload
             voice_payload = self._build_voice_payload()
             
+            logger.debug(
+                "[%s] Applying session | voice=%s | voice_type=%s",
+                self.name,
+                getattr(voice_payload, "name", None) if voice_payload else None,
+                self.voice_type,
+            )
+            
             # Build transcription settings
             transcription_kwargs: Dict[str, Any] = {}
             if self.input_transcription_cfg.get("model"):
@@ -360,7 +367,7 @@ class VoiceLiveAgentAdapter:
         
         Args:
             conn: VoiceLive connection
-            say: Optional instruction text for the response
+            say: Optional text for the agent to say verbatim as its response
             cancel_active: If True, cancel any active response before triggering
         """
         if not _VOICELIVE_AVAILABLE:
@@ -379,15 +386,24 @@ class VoiceLiveAgentAdapter:
                 except Exception:
                     pass  # No active response to cancel
             
-            # Create response with injected text
+            # Create response with explicit instruction to say the greeting verbatim.
+            # The instruction wraps the greeting text to make the model understand
+            # it should speak this exact content, not paraphrase or modify it.
+            verbatim_instruction = (
+                f"Say exactly the following greeting to the user, word for word. "
+                f"Do not add anything before or after. Do not modify the wording:\n\n"
+                f'"{say}"'
+            )
+            
             try:
                 await conn.send(
                     ClientEventResponseCreate(
                         response=ResponseCreateParams(
-                            instructions=say,
+                            instructions=verbatim_instruction,
                         )
                     )
                 )
+                logger.debug("[%s] Triggered verbatim greeting response", self.name)
             except Exception as e:
                 # Log but don't fail - might still have active response
                 logger.warning("trigger_response failed: %s", e)

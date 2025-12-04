@@ -255,6 +255,64 @@ async def route_turn(
             
             tool_invocations: dict[str, dict[str, float]] = {}
 
+            # Define agent switch callback - emits agent_change envelope for UI cascade updates
+            async def on_agent_switch(previous_agent: str, new_agent: str) -> None:
+                """Emit agent_change envelope and update voice configuration when handoff occurs."""
+                new_label = _resolve_agent_label(new_agent)
+                
+                # Update MemoManager with new agent
+                try:
+                    cm.set_corememory("active_agent", new_agent)
+                    cm.set_corememory("previous_agent", previous_agent)
+                except Exception:
+                    pass
+                
+                # Get new agent's voice configuration for TTS updates
+                new_agent_config = adapter.agents.get(new_agent)
+                voice_name = None
+                voice_rate = None
+                if new_agent_config and new_agent_config.voice:
+                    voice_name = new_agent_config.voice.name
+                    voice_rate = new_agent_config.voice.rate
+                
+                # Emit agent_change envelope for frontend UI (cascade updates)
+                envelope = make_envelope(
+                    etype="event",
+                    sender="System",
+                    payload={
+                        "event_type": "agent_change",
+                        "agent_name": new_agent,
+                        "agent_label": new_label,
+                        "previous_agent": previous_agent,
+                        "voice_name": voice_name,
+                        "voice_rate": voice_rate,
+                        "message": f"Switched to {new_label or new_agent}",
+                    },
+                    topic="session",
+                    session_id=session_id,
+                    call_id=call_connection_id,
+                )
+                try:
+                    await send_session_envelope(
+                        ws,
+                        envelope,
+                        session_id=session_id,
+                        conn_id=None if is_acs else getattr(ws.state, "conn_id", None),
+                        event_label="cascade_agent_change",
+                        broadcast_only=is_acs,
+                    )
+                    logger.info(
+                        "Agent change emitted | %s → %s (voice=%s)",
+                        previous_agent,
+                        new_agent,
+                        voice_name,
+                    )
+                except Exception:
+                    logger.debug("Failed to emit agent_change envelope", exc_info=True)
+            
+            # Register agent switch callback on adapter
+            adapter.set_on_agent_switch(on_agent_switch)
+
             # Define TTS chunk callback - uses speech_cascade's queue_tts for proper sequencing
             async def on_tts_chunk(text: str) -> None:
                 """Queue TTS and broadcast structured assistant streaming envelopes."""
@@ -275,9 +333,21 @@ async def route_turn(
                 agent_name = adapter.current_agent or memo_agent or "Assistant"
                 agent_label = _resolve_agent_label(agent_name)
 
-                # Queue TTS via speech cascade
+                # Get current agent's voice configuration for TTS
+                voice_name = None
+                voice_rate = None
+                agent_config = adapter.agents.get(agent_name)
+                if agent_config and agent_config.voice:
+                    voice_name = agent_config.voice.name
+                    voice_rate = agent_config.voice.rate
+
+                # Queue TTS via speech cascade with agent's voice configuration
                 if hasattr(ws.state, "speech_cascade") and ws.state.speech_cascade:
-                    ws.state.speech_cascade.queue_tts(text)
+                    ws.state.speech_cascade.queue_tts(
+                        text,
+                        voice_name=voice_name,
+                        voice_rate=voice_rate,
+                    )
 
                 envelope = make_assistant_streaming_envelope(
                     content=text,

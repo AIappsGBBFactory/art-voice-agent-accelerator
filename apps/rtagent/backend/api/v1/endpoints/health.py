@@ -31,11 +31,7 @@ from config import (
     AZURE_TENANT_ID,
     ALLOWED_CLIENT_IDS,
     ENABLE_AUTH_VALIDATION,
-    AGENT_AUTH_CONFIG,
-    AGENT_FRAUD_CONFIG,
-    AGENT_AGENCY_CONFIG,
-    AGENT_COMPLIANCE_CONFIG,
-    AGENT_TRADING_CONFIG,
+    DEFAULT_TTS_VOICE,
 )
 from apps.rtagent.backend.api.v1.schemas.health import (
     HealthResponse,
@@ -59,7 +55,7 @@ class AgentDefinition:
     """Definition of an agent for discovery and health checks."""
     name: str  # Human-readable name (e.g., "auth", "fraud")
     state_attr: str  # Attribute name on app.state (e.g., "auth_agent")
-    config_path: str  # Path to YAML config
+    config_path: str = ""  # Legacy - agents now in backend/agents/<name>/agent.yaml
     aliases: List[str] = field(default_factory=list)  # Alternative names for API lookup
 
 
@@ -116,37 +112,34 @@ class AgentRegistry:
 
 
 # Global registry instance - populated at module load
+# NOTE: Agents are now auto-discovered from apps/rtagent/backend/agents/
+# This registry provides backward compatibility for health checks.
 _agent_registry = AgentRegistry()
 
-# Register all known agents (configuration-driven, single source of truth)
+# Register known agent patterns for health check discovery
 _agent_registry.register(AgentDefinition(
     name="auth",
     state_attr="auth_agent",
-    config_path=AGENT_AUTH_CONFIG,
     aliases=["authagent", "auth_agent", "authentication"],
 ))
 _agent_registry.register(AgentDefinition(
     name="fraud",
     state_attr="fraud_agent",
-    config_path=AGENT_FRAUD_CONFIG,
     aliases=["fraudagent", "fraud_agent", "fraud_detection"],
 ))
 _agent_registry.register(AgentDefinition(
     name="agency",
     state_attr="agency_agent",
-    config_path=AGENT_AGENCY_CONFIG,
     aliases=["agencyagent", "agency_agent", "transfer_agency"],
 ))
 _agent_registry.register(AgentDefinition(
     name="compliance",
     state_attr="compliance_agent",
-    config_path=AGENT_COMPLIANCE_CONFIG,
     aliases=["complianceagent", "compliance_agent"],
 ))
 _agent_registry.register(AgentDefinition(
     name="trading",
     state_attr="trading_agent",
-    config_path=AGENT_TRADING_CONFIG,
     aliases=["tradingagent", "trading_agent"],
 ))
 
@@ -950,9 +943,8 @@ def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
             agent_voice = getattr(agent, "voice_name", None)
             agent_voice_style = getattr(agent, "voice_style", "chat")
 
-            # Fallback to global GREETING_VOICE_TTS if agent doesn't have voice configured
-            from config import GREETING_VOICE_TTS
-            current_voice = agent_voice or GREETING_VOICE_TTS
+            # Fallback to DEFAULT_TTS_VOICE if agent doesn't have voice configured
+            current_voice = agent_voice or DEFAULT_TTS_VOICE
 
             tools_normalized = _normalize_tools(agent)
 

@@ -12,7 +12,7 @@ Structure (4 files):
 
 Usage:
     # Direct settings access
-    from config import POOL_SIZE_TTS, AZURE_OPENAI_ENDPOINT, AGENT_AUTH_CONFIG
+    from config import POOL_SIZE_TTS, AZURE_OPENAI_ENDPOINT
     
     # Structured config object
     from config import AppConfig
@@ -70,23 +70,15 @@ from .settings import (
     AZURE_COSMOS_DATABASE_NAME,
     AZURE_COSMOS_COLLECTION_NAME,
     
-    # Agent Configurations
-    AGENT_AUTH_CONFIG,
-    AGENT_CLAIM_INTAKE_CONFIG,
-    AGENT_FRAUD_CONFIG,
-    AGENT_AGENCY_CONFIG,
-    AGENT_COMPLIANCE_CONFIG,
-    AGENT_TRADING_CONFIG,
-    
-    # Voice & TTS
-    GREETING_VOICE_TTS,
+    # Voice & TTS (per-agent voice is defined in agent.yaml)
+    DEFAULT_TTS_VOICE,
+    GREETING_VOICE_TTS,  # Deprecated alias for DEFAULT_TTS_VOICE
     DEFAULT_VOICE_STYLE,
     DEFAULT_VOICE_RATE,
     TTS_SAMPLE_RATE_UI,
     TTS_SAMPLE_RATE_ACS,
     TTS_CHUNK_SIZE,
     TTS_PROCESSING_TIMEOUT,
-    get_agent_voice,
     
     # Speech Recognition
     VAD_SEMANTIC_SEGMENTATION,
@@ -238,12 +230,8 @@ __all__ = [
     "ACS_CONNECTION_STRING",
     "ACS_ENDPOINT",
     "ACS_SOURCE_PHONE_NUMBER",
-    "AGENT_AUTH_CONFIG",
-    "AGENT_FRAUD_CONFIG",
-    "AGENT_AGENCY_CONFIG",
-    "AGENT_COMPLIANCE_CONFIG",
-    "AGENT_TRADING_CONFIG",
     "ALLOWED_ORIGINS",
+    "DEFAULT_TTS_VOICE",
     "AOAI_REQUEST_TIMEOUT",
     "AZURE_OPENAI_ENDPOINT",
     "AZURE_SPEECH_REGION",

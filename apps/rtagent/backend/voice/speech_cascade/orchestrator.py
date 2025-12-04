@@ -443,6 +443,20 @@ class CascadeOrchestratorAdapter:
         """
         self._handoff_provider = provider
     
+    def set_on_agent_switch(
+        self, callback: Optional[Callable[[str, str], Awaitable[None]]]
+    ) -> None:
+        """
+        Set callback for agent switch notifications.
+        
+        The callback receives (previous_agent, new_agent) when a handoff occurs.
+        Use this to emit agent_change envelopes or update voice configuration.
+        
+        Args:
+            callback: Async function(previous_agent, new_agent) -> None
+        """
+        self._on_agent_switch = callback
+    
     # ─────────────────────────────────────────────────────────────────
     # Turn Processing
     # ─────────────────────────────────────────────────────────────────
@@ -549,11 +563,31 @@ class CascadeOrchestratorAdapter:
                                     parsed_args = {}
                             else:
                                 parsed_args = raw_args if isinstance(raw_args, dict) else {}
+                            
+                            # Emit tool_start for handoff tool (before execution)
+                            if on_tool_start:
+                                try:
+                                    await on_tool_start(tool_name, raw_args)
+                                except Exception:
+                                    logger.debug("Failed to emit handoff tool_start", exc_info=True)
+                            
                             await self._execute_handoff(
                                 target_agent=target_agent,
                                 tool_name=tool_name,
                                 args=parsed_args,
                             )
+                            
+                            # Emit tool_end for handoff tool (after execution)
+                            if on_tool_end:
+                                try:
+                                    await on_tool_end(tool_name, {
+                                        "handoff": True,
+                                        "target_agent": target_agent,
+                                        "success": True,
+                                    })
+                                except Exception:
+                                    logger.debug("Failed to emit handoff tool_end", exc_info=True)
+                            
                             handoff_executed = True
                             handoff_target = target_agent
                             break

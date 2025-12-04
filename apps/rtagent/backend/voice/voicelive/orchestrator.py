@@ -918,6 +918,22 @@ class LiveOrchestrator:
                 tool_span.set_attribute("voicelive.handoff.target_agent", target)
                 tool_span.add_event("tool.handoff_triggered", {"target_agent": target})
 
+                # CRITICAL: Cancel any ongoing response from the OLD agent immediately.
+                # This prevents the old agent from saying "I'll connect you..." while
+                # the session switches to the new agent.
+                try:
+                    await self.conn.response.cancel()
+                    logger.debug("[Handoff] Cancelled old agent response before switch")
+                except Exception:
+                    pass  # No active response to cancel
+                
+                # Stop audio playback to prevent old agent's voice from continuing
+                if self.audio:
+                    try:
+                        await self.audio.stop_playback()
+                    except Exception:
+                        logger.debug("[Handoff] Audio stop failed", exc_info=True)
+
                 # Use shared helper to build consistent handoff context
                 ctx = build_handoff_system_vars(
                     source_agent=self.active,
@@ -981,23 +997,37 @@ class LiveOrchestrator:
                 handoff_summary = result.get("handoff_summary", "") if isinstance(result, dict) else ""
                 previous_agent = self._system_vars.get("previous_agent", "previous agent")
                 
-                # Give the new agent context to respond naturally
-                instruction = (
-                    f"A customer was just transferred to you from {previous_agent}. "
-                    f"{handoff_summary}. Their request: {user_question}. "
-                    f"Briefly introduce yourself and help them with their request."
-                )
-                
-                # Schedule response trigger after a brief delay to let session settle
+                # Schedule response trigger after a brief delay to let session settle.
+                # The new agent will respond naturally to the context.
                 async def _trigger_handoff_response():
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.25)
                     try:
-                        await self.agents[target].trigger_response(
-                            self.conn,
-                            say=instruction,
-                            cancel_active=True,
+                        # Don't use trigger_response with say= for handoffs.
+                        # Instead, create a response.create() so the new agent
+                        # responds naturally using its own personality and instructions.
+                        # The session has already been updated with the new agent's config.
+                        from azure.ai.voicelive.models import (
+                            ClientEventResponseCreate,
+                            ResponseCreateParams,
                         )
-                        logger.info("[Handoff] Triggered new agent '%s' to respond", target)
+                        
+                        # Give the new agent context about the handoff
+                        handoff_instruction = (
+                            f"You just received a transfer from {previous_agent}. "
+                            f"The customer's request: \"{user_question}\". "
+                            f"Briefly greet them and address their request directly."
+                        )
+                        if handoff_summary:
+                            handoff_instruction += f" Context: {handoff_summary}"
+                        
+                        await self.conn.send(
+                            ClientEventResponseCreate(
+                                response=ResponseCreateParams(
+                                    instructions=handoff_instruction,
+                                )
+                            )
+                        )
+                        logger.info("[Handoff] Triggered new agent '%s' to respond naturally", target)
                     except Exception as e:
                         logger.warning("[Handoff] Failed to trigger response: %s", e)
                 
