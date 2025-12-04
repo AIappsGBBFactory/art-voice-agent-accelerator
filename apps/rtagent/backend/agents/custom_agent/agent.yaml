@@ -17,7 +17,6 @@ return_greeting: "Welcome back! What else can I help you learn about?"
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
   trigger: handoff_general_kb         # Other agents call this to reach GeneralKBAgent
-  strategy: auto                      # Works with both orchestrators
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration

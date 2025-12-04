@@ -3,7 +3,7 @@ Orchestrator Data Classes
 ==========================
 
 Shared data classes for orchestrator context and results.
-Used by CascadeOrchestratorAdapter and other orchestration components.
+Used by CascadeOrchestratorAdapter and LiveOrchestrator.
 """
 
 from __future__ import annotations

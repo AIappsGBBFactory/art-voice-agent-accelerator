@@ -22,7 +22,7 @@ Architecture:
            └─► HandoffManager ─────────► build_handoff_map()
 
 Usage:
-    from apps.rtagent.backend.voice.orchestrators import CascadeOrchestratorAdapter
+    from apps.rtagent.backend.voice.speech_cascade import CascadeOrchestratorAdapter
     
     # Create with unified agents
     adapter = CascadeOrchestratorAdapter.create(
@@ -54,20 +54,22 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, TYPE_CHECKING
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
-from .base import (
+from apps.rtagent.backend.voice.shared.base import (
     OrchestratorContext,
     OrchestratorResult,
 )
-from .config_resolver import (
+from apps.rtagent.backend.voice.shared.config_resolver import (
     DEFAULT_START_AGENT,
     resolve_orchestrator_config,
     resolve_from_app_state,
 )
+from apps.rtagent.backend.agents.tools.registry import is_handoff_tool
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
     from src.stateful.state_managment import MemoManager
     from apps.rtagent.backend.agents.base import UnifiedAgent
+    from apps.rtagent.backend.agents.session_manager import HandoffProvider
 
 try:
     from utils.ml_logging import get_logger
@@ -263,6 +265,9 @@ class CascadeOrchestratorAdapter:
     _current_memo_manager: Optional["MemoManager"] = field(default=None, init=False)
     _session_vars: Dict[str, Any] = field(default_factory=dict, init=False)
     
+    # HandoffProvider for session-aware handoff lookups (preferred over handoff_map)
+    _handoff_provider: Optional["HandoffProvider"] = field(default=None, init=False)
+    
     # Token tracking
     _agent_input_tokens: int = field(default=0, init=False)
     _agent_output_tokens: int = field(default=0, init=False)
@@ -339,6 +344,7 @@ class CascadeOrchestratorAdapter:
         session_id: Optional[str] = None,
         agents: Optional[Dict[str, "UnifiedAgent"]] = None,
         handoff_map: Optional[Dict[str, str]] = None,
+        handoff_provider: Optional["HandoffProvider"] = None,
         enable_rag: bool = True,
         streaming: bool = False,  # Non-streaming for sentence-level TTS
     ) -> "CascadeOrchestratorAdapter":
@@ -351,7 +357,8 @@ class CascadeOrchestratorAdapter:
             call_connection_id: ACS call ID for tracing
             session_id: Session ID for tracing
             agents: Optional pre-loaded agent registry
-            handoff_map: Optional pre-built handoff map
+            handoff_map: Optional pre-built handoff map (fallback if no provider)
+            handoff_provider: Optional provider for session-aware handoff lookups
             enable_rag: Whether to enable RAG search
             streaming: Whether to stream responses
             
@@ -367,11 +374,16 @@ class CascadeOrchestratorAdapter:
             streaming=streaming,
         )
         
-        return cls(
+        adapter = cls(
             config=config,
             agents=agents or {},
             handoff_map=handoff_map or {},
         )
+        
+        if handoff_provider:
+            adapter.set_handoff_provider(handoff_provider)
+        
+        return adapter
     
     # ─────────────────────────────────────────────────────────────────
     # Properties
@@ -410,6 +422,26 @@ class CascadeOrchestratorAdapter:
             return scope.memo_manager
         # Fall back to instance reference
         return self._current_memo_manager
+    
+    def get_handoff_target(self, tool_name: str) -> Optional[str]:
+        """
+        Get the target agent for a handoff tool.
+        
+        Prefers HandoffProvider (live lookup) over static handoff_map.
+        This allows session-level handoff_map updates to take effect.
+        """
+        if self._handoff_provider:
+            return self._handoff_provider.get_handoff_target(tool_name)
+        return self.handoff_map.get(tool_name)
+    
+    def set_handoff_provider(self, provider: "HandoffProvider") -> None:
+        """
+        Set the HandoffProvider for session-aware handoff lookups.
+        
+        When set, get_handoff_target() will use the provider instead of
+        the static handoff_map, enabling dynamic handoff configuration.
+        """
+        self._handoff_provider = provider
     
     # ─────────────────────────────────────────────────────────────────
     # Turn Processing
@@ -503,8 +535,11 @@ class CascadeOrchestratorAdapter:
                     handoff_target = None
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("name", "")
-                        if tool_name in self.handoff_map:
-                            target_agent = self.handoff_map[tool_name]
+                        if is_handoff_tool(tool_name):
+                            target_agent = self.get_handoff_target(tool_name)
+                            if not target_agent:
+                                logger.warning("Handoff tool '%s' not in handoff_map", tool_name)
+                                continue
                             # Parse arguments - they come as JSON string from streaming
                             raw_args = tool_call.get("arguments", "{}")
                             if isinstance(raw_args, str):
@@ -934,11 +969,11 @@ class CascadeOrchestratorAdapter:
                 # Process tool calls if any
                 non_handoff_tools = [
                     tc for tc in tool_calls
-                    if tc.get("name", "") not in self.handoff_map
+                    if not is_handoff_tool(tc.get("name", ""))
                 ]
                 handoff_tools = [
                     tc for tc in tool_calls
-                    if tc.get("name", "") in self.handoff_map
+                    if is_handoff_tool(tc.get("name", ""))
                 ]
                 
                 all_tool_calls.extend(tool_calls)

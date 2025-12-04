@@ -1,23 +1,177 @@
 """
-Handoff Context and Result Dataclasses
-======================================
+Handoff Context, Result, and Helper Functions
+==============================================
 
-These dataclasses carry information through the handoff lifecycle:
+This module provides the core handoff data structures and helper functions
+used by all orchestrators (LiveOrchestrator, CascadeAdapter) to build
+consistent handoff context during agent transitions.
 
-1. **HandoffContext**: Built when a handoff is detected, contains all
-   information needed to switch agents (source, target, reason, user context).
+Dataclasses:
+- **HandoffContext**: Built when a handoff is detected, contains all
+  information needed to switch agents (source, target, reason, user context).
+- **HandoffResult**: Returned by execute_handoff(), signals success/failure
+  and provides data for the orchestrator to complete the switch.
 
-2. **HandoffResult**: Returned by execute_handoff(), signals success/failure
-   and provides data for the orchestrator to complete the switch.
-
-The separation allows strategies to make decisions without coupling to
-the actual transport mechanism (VoiceLive session.update, ACS media, etc.).
+Helper Functions:
+- **sanitize_handoff_context**: Removes control flags from handoff context
+- **build_handoff_system_vars**: Builds system_vars dict for agent switches
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Control flags that should never appear in handoff_context passed to agents
+_HANDOFF_CONTROL_FLAGS = frozenset({
+    "success",
+    "handoff",
+    "target_agent",
+    "message",
+    "handoff_summary",
+    "should_interrupt_playback",
+    "session_overrides",
+})
+
+
+def sanitize_handoff_context(raw: Any) -> Dict[str, Any]:
+    """
+    Remove control flags from raw handoff context so prompt variables stay clean.
+    
+    Control flags like 'success', 'target_agent', 'handoff_summary' are internal
+    signaling mechanisms and should not be passed to agent prompts.
+    
+    Args:
+        raw: Raw handoff context dict (or non-dict value which returns empty dict)
+        
+    Returns:
+        Cleaned dict with control flags and empty values removed.
+        
+    Example:
+        raw = {"reason": "fraud inquiry", "success": True, "target_agent": "FraudAgent"}
+        clean = sanitize_handoff_context(raw)
+        # clean = {"reason": "fraud inquiry"}
+    """
+    if not isinstance(raw, dict):
+        return {}
+    
+    return {
+        key: value
+        for key, value in raw.items()
+        if key not in _HANDOFF_CONTROL_FLAGS and value not in (None, "", [], {})
+    }
+
+
+def build_handoff_system_vars(
+    *,
+    source_agent: str,
+    target_agent: str,
+    tool_result: Dict[str, Any],
+    tool_args: Dict[str, Any],
+    current_system_vars: Dict[str, Any],
+    user_last_utterance: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Build system_vars dict for agent handoff from tool result and session state.
+    
+    This is the shared logic used by all orchestrators to build consistent
+    handoff context. It:
+    1. Extracts and sanitizes handoff_context from tool result
+    2. Builds handoff_reason from multiple fallback sources
+    3. Carries forward key session variables (profile, client_id, etc.)
+    4. Applies session_overrides if present
+    
+    Args:
+        source_agent: Name of the agent initiating the handoff
+        target_agent: Name of the agent receiving the handoff  
+        tool_result: Result dict from the handoff tool execution
+        tool_args: Arguments passed to the handoff tool
+        current_system_vars: Current session's system_vars dict
+        user_last_utterance: User's most recent speech (for context)
+        
+    Returns:
+        system_vars dict ready for agent.apply_session()
+        
+    Example:
+        ctx = build_handoff_system_vars(
+            source_agent="Concierge",
+            target_agent="FraudAgent",
+            tool_result={"handoff_summary": "User suspects fraud", "handoff_context": {...}},
+            tool_args={"reason": "fraud inquiry"},
+            current_system_vars={"session_profile": {...}, "client_id": "123"},
+            user_last_utterance="I think someone stole my card",
+        )
+    """
+    # Extract and sanitize handoff_context from tool result
+    raw_handoff_context = tool_result.get("handoff_context") if isinstance(tool_result, dict) else {}
+    handoff_context: Dict[str, Any] = {}
+    if isinstance(raw_handoff_context, dict):
+        handoff_context = dict(raw_handoff_context)
+    
+    # Add user utterance to handoff_context if available
+    if user_last_utterance:
+        handoff_context.setdefault("user_last_utterance", user_last_utterance)
+        handoff_context.setdefault("details", user_last_utterance)
+    
+    # Clean control flags from handoff_context
+    handoff_context = sanitize_handoff_context(handoff_context)
+    
+    # Extract session_overrides if present and valid
+    session_overrides = tool_result.get("session_overrides")
+    if not isinstance(session_overrides, dict) or not session_overrides:
+        session_overrides = None
+    
+    # Build reason from multiple fallback sources
+    handoff_reason = (
+        tool_result.get("handoff_summary")
+        or handoff_context.get("reason")
+        or tool_args.get("reason", "unspecified")
+    )
+    
+    # Build details from multiple fallback sources
+    details = (
+        handoff_context.get("details")
+        or tool_result.get("details")
+        or tool_args.get("details")
+        or user_last_utterance
+    )
+    
+    # Build the system_vars dict
+    ctx: Dict[str, Any] = {
+        "handoff_reason": handoff_reason,
+        "previous_agent": source_agent,
+        "active_agent": target_agent,
+        "handoff_context": handoff_context,
+        "handoff_message": tool_result.get("message"),
+    }
+    
+    if details:
+        ctx["details"] = details
+    
+    if user_last_utterance:
+        ctx["user_last_utterance"] = user_last_utterance
+    
+    if session_overrides:
+        ctx["session_overrides"] = session_overrides
+    
+    # Carry forward key session variables from current session
+    for key in ("session_profile", "client_id", "customer_intelligence", "institution_name"):
+        if key in current_system_vars:
+            ctx[key] = current_system_vars[key]
+    
+    return ctx
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DATACLASSES
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 @dataclass
@@ -130,4 +284,9 @@ class HandoffResult:
     should_interrupt: bool = True
 
 
-__all__ = ["HandoffContext", "HandoffResult"]
+__all__ = [
+    "HandoffContext",
+    "HandoffResult",
+    "sanitize_handoff_context",
+    "build_handoff_system_vars",
+]

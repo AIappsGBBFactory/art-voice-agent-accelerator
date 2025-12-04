@@ -1,70 +1,59 @@
 """
-Handoff System for Multi-Agent Voice Applications
-==================================================
+Handoff Context for Multi-Agent Voice Applications
+===================================================
 
-This module provides a pluggable handoff abstraction for agent-to-agent
-transitions in voice systems. Different transports use different mechanisms:
+Provides shared dataclasses and helper functions for agent-to-agent transitions:
 
-- **VoiceLive SDK**: Tool-based handoffs via LLM function calls
-- **Speech Cascade**: State-based handoffs via MemoManager/Redis
+- **HandoffContext**: Information passed when switching agents
+- **HandoffResult**: Outcome of a handoff operation
+- **sanitize_handoff_context**: Removes control flags from handoff context
+- **build_handoff_system_vars**: Builds system_vars dict for agent switches
 
-Quick Start:
-    from voice_channels.handoffs import (
+The handoff_map (tool_name → agent_name) is built dynamically from agent
+YAML declarations via `build_handoff_map()` in agents/loader.py.
+
+Usage:
+    from apps.rtagent.backend.voice.handoffs import (
         HandoffContext,
         HandoffResult,
-        ToolBasedHandoff,
-        StateBasedHandoff,
-        HANDOFF_MAP,
+        build_handoff_system_vars,
+    )
+    from apps.rtagent.backend.agents.loader import build_handoff_map, discover_agents
+
+    # Build handoff_map from agent declarations
+    agents = discover_agents()
+    handoff_map = build_handoff_map(agents)
+
+    # Build system_vars for handoff
+    ctx = build_handoff_system_vars(
+        source_agent="EricaConcierge",
+        target_agent="FraudAgent",
+        tool_result={"handoff_summary": "fraud inquiry"},
+        tool_args={"reason": "user reported fraud"},
+        current_system_vars={"session_profile": {...}},
+        user_last_utterance="I think my card was stolen",
     )
 
-    # VoiceLive style
-    strategy = ToolBasedHandoff(handoff_map=HANDOFF_MAP)
-
-    # Check if a tool triggers handoff
-    if strategy.is_handoff_tool("handoff_fraud_agent"):
-        context = strategy.build_context_from_args(
-            tool_name="handoff_fraud_agent",
-            args={"reason": "suspicious activity"},
-            source_agent="EricaConcierge",
-        )
-        result = await strategy.execute_handoff("handoff_fraud_agent", args, context)
-        if result.success:
-            # Orchestrator calls _switch_to_agent(result.target_agent, ...)
-            pass
-
 See Also:
-    - docs/architecture/handoff-strategies.md for detailed documentation
-    - voice_channels/orchestrators/live_adapter.py for integration example
+    - docs/architecture/handoff-inventory.md for handoff architecture
+    - apps/rtagent/backend/agents/loader.py for build_handoff_map()
 """
 
 from __future__ import annotations
 
-# Context and result dataclasses
-from .context import HandoffContext, HandoffResult
-
-# Strategy base class and implementations
-from .strategies import (
-    HandoffStrategy,
-    ToolBasedHandoff,
-    StateBasedHandoff,
-    create_tool_based_handoff,
-    create_state_based_handoff,
+# Context, result dataclasses, and helper functions
+from .context import (
+    HandoffContext,
+    HandoffResult,
+    build_handoff_system_vars,
+    sanitize_handoff_context,
 )
-
-# Registry with handoff mappings
-from .registry import HANDOFF_MAP
 
 __all__ = [
     # Dataclasses
     "HandoffContext",
     "HandoffResult",
-    # Strategy classes
-    "HandoffStrategy",
-    "ToolBasedHandoff",
-    "StateBasedHandoff",
-    # Factory functions
-    "create_tool_based_handoff",
-    "create_state_based_handoff",
-    # Registry
-    "HANDOFF_MAP",
+    # Helper functions
+    "build_handoff_system_vars",
+    "sanitize_handoff_context",
 ]

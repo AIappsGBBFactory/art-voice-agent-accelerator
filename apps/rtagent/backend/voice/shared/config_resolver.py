@@ -5,14 +5,14 @@ Orchestrator Configuration Resolver
 Shared configuration resolution for voice channel orchestrators.
 Provides scenario-aware agent and handoff map resolution.
 
-CascadeOrchestratorAdapter uses this resolver to ensure consistent behavior for:
+CascadeOrchestratorAdapter and LiveOrchestrator use this resolver for:
 - Start agent selection
 - Agent registry loading
 - Handoff map building
 - Greeting configuration
 
 Usage:
-    from apps.rtagent.backend.voice.orchestrators.config_resolver import (
+    from apps.rtagent.backend.voice.shared import (
         resolve_orchestrator_config,
         OrchestratorConfigResult,
     )
@@ -40,10 +40,10 @@ if TYPE_CHECKING:
 
 try:
     from utils.ml_logging import get_logger
-    logger = get_logger("orchestrator.config_resolver")
+    logger = get_logger("voice.shared.config_resolver")
 except ImportError:
     import logging
-    logger = logging.getLogger("orchestrator.config_resolver")
+    logger = logging.getLogger("voice.shared.config_resolver")
 
 
 # ─────────────────────────────────────────────────────────────────────

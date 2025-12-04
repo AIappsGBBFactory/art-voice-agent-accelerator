@@ -44,17 +44,16 @@ from apps.rtagent.backend.voice.voicelive.tool_helpers import (
 	push_tool_start,
 	push_tool_end,
 )
-# Import HANDOFF_MAP from handoffs module (canonical location)
-from apps.rtagent.backend.voice.handoffs import HANDOFF_MAP
 # Import config resolver for scenario-aware agent loading
-from apps.rtagent.backend.voice.orchestrators.config_resolver import (
+from apps.rtagent.backend.voice.shared import (
 	resolve_orchestrator_config,
 	resolve_from_app_state,
 	DEFAULT_START_AGENT,
 )
-# Import LiveOrchestrator from voice_channels (canonical location)
-from apps.rtagent.backend.voice.orchestrators import LiveOrchestrator
-from apps.rtagent.backend.agents.loader import build_agent_summaries, discover_agents
+# Import LiveOrchestrator from voicelive (canonical location after deprovisioning)
+from .orchestrator import LiveOrchestrator
+# Import agents loader for dynamic handoff_map building
+from apps.rtagent.backend.agents.loader import build_agent_summaries, discover_agents, build_handoff_map
 # ─────────────────────────────────────────────────────────────────────────────
 # WebSocket Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -868,14 +867,17 @@ class VoiceLiveSDKHandler:
 						span.set_attribute("voicelive.user_profile_loaded", True)
 						span.set_attribute("voicelive.client_id", user_profile.get("client_id", "unknown"))
 				
-				# Determine handoff map - prefer from app.state or orchestrator config
-				effective_handoff_map = HANDOFF_MAP
+				# Determine handoff map - prefer from app.state or orchestrator config,
+				# fallback to dynamically building from current agents
+				effective_handoff_map: Dict[str, str] = {}
 				if app_state and hasattr(app_state, "handoff_map") and app_state.handoff_map:
 					effective_handoff_map = app_state.handoff_map
 				elif orchestrator_config and orchestrator_config.handoff_map:
 					effective_handoff_map = orchestrator_config.handoff_map
+				else:
+					# Build dynamically from agent declarations (single source of truth)
+					effective_handoff_map = build_handoff_map(agents)
 				
-				## TODO: Replace with dependency injection structure for BYO orchestrator
 				# Get MemoManager from websocket state (set by media_handler)
 				memo_manager = getattr(self.websocket.state, "cm", None)
 				if memo_manager:

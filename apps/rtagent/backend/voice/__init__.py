@@ -24,22 +24,25 @@ Architecture:
 
 
 Structure:
-    voice_channels/
+    voice/
     ├── speech_cascade/
     │   ├── handler.py      # SpeechCascadeHandler (three-thread architecture)
+    │   ├── orchestrator.py # CascadeOrchestratorAdapter (unified agents)
     │   └── metrics.py      # STT/turn/barge-in metrics
     ├── voicelive/
     │   ├── handler.py      # VoiceLiveSDKHandler
+    │   ├── orchestrator.py # LiveOrchestrator (VoiceLive SDK)
     │   ├── agent_adapter.py # VoiceLiveAgentAdapter (UnifiedAgent → VoiceLive SDK)
     │   └── metrics.py      # OTel latency metrics
-    ├── orchestrators/
+    ├── shared/
     │   ├── base.py             # OrchestratorContext/Result data classes
-    │   ├── cascade_adapter.py  # CascadeOrchestratorAdapter (unified agents)
-    │   ├── live_orchestrator.py # LiveOrchestrator (VoiceLive SDK)
     │   └── config_resolver.py  # Scenario-aware config resolution
     └── handoffs/
-        ├── strategies/     # ToolBasedHandoff, StateBasedHandoff
-        └── registry.py     # HANDOFF_MAP
+        └── context.py      # HandoffContext/HandoffResult dataclasses
+
+Note: The handoff_map (tool_name → agent_name) is built dynamically from agent
+YAML declarations via `build_handoff_map()` in agents/loader.py. See
+docs/architecture/handoff-inventory.md for the full handoff architecture.
 """
 
 # Speech Cascade (STT→LLM→TTS three-thread architecture)
@@ -56,6 +59,8 @@ from .speech_cascade import (
     record_stt_recognition,
     record_turn_processing,
     record_barge_in,
+    # Orchestrator (co-located with handler)
+    CascadeOrchestratorAdapter,
 )
 
 # VoiceLive SDK (Azure VoiceLive + multi-agent)
@@ -65,34 +70,32 @@ from .voicelive import (
     record_tts_ttfb,
     record_stt_latency,
     record_turn_complete,
-)
-
-# Orchestrator data classes and adapters
-from .orchestrators import (
-    OrchestratorContext,
-    OrchestratorResult,
-    CascadeOrchestratorAdapter,
-    CascadeConfig,
-    get_cascade_orchestrator,
-    create_cascade_orchestrator_func,
+    # Orchestrator (co-located with handler)
     LiveOrchestrator,
     TRANSFER_TOOL_NAMES,
     CALL_CENTER_TRIGGER_PHRASES,
+)
+
+# Shared orchestrator data classes and config resolution
+from .shared import (
+    OrchestratorContext,
+    OrchestratorResult,
     DEFAULT_START_AGENT,
     resolve_orchestrator_config,
     resolve_from_app_state,
 )
 
-# Handoff strategies
+# Cascade orchestrator factory functions (re-exported from speech_cascade)
+from .speech_cascade.orchestrator import (
+    CascadeConfig,
+    get_cascade_orchestrator,
+    create_cascade_orchestrator_func,
+)
+
+# Handoff context dataclasses (strategies removed - see handoff-inventory.md)
 from .handoffs import (
     HandoffContext,
     HandoffResult,
-    HandoffStrategy,
-    ToolBasedHandoff,
-    StateBasedHandoff,
-    create_tool_based_handoff,
-    create_state_based_handoff,
-    HANDOFF_MAP,
 )
 
 # Messaging (WebSocket helpers for voice transports)
@@ -148,15 +151,9 @@ __all__ = [
     "DEFAULT_START_AGENT",
     "resolve_orchestrator_config",
     "resolve_from_app_state",
-    # Handoff Strategies
+    # Handoff Context
     "HandoffContext",
     "HandoffResult",
-    "HandoffStrategy",
-    "ToolBasedHandoff",
-    "StateBasedHandoff",
-    "create_tool_based_handoff",
-    "create_state_based_handoff",
-    "HANDOFF_MAP",
     # Messaging (WebSocket helpers)
     "send_tts_audio",
     "send_response_to_acs",

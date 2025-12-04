@@ -16,7 +16,6 @@ return_greeting: "What else about your retirement or investments?"
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
   trigger: handoff_investment_advisor
-  strategy: auto                       # Works with both orchestrators
   # Handoff transition message spoken when entering this agent
   transition_message: "Let me look at your retirement accounts and options."
 

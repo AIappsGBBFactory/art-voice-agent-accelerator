@@ -23,7 +23,9 @@ from utils.telemetry_config import setup_azure_monitor
 # ---------------- Monitoring ------------------------------------------------
 # setup_azure_monitor configures loggers, metrics, and Azure Monitor export
 # OpenAI spans are created manually in aoai/manager.py
-setup_azure_monitor(logger_name="rtagent")
+# NOTE: Use empty string for logger_name to capture ALL loggers, not just a specific hierarchy
+# Our loggers use various names (voicelive.*, agents.*, api.*, etc.) that aren't children of any single root
+setup_azure_monitor(logger_name="")
 
 # Initialize OpenAI client AFTER telemetry is configured
 from src.aoai.client import _init_client as _init_aoai_client
@@ -160,6 +162,8 @@ def _build_startup_dashboard(
         ("GET", "/api/v1/health", "liveness"),
         ("GET", "/api/v1/readiness", "dependency readiness"),
         ("GET", "/api/info", "environment metadata"),
+        ("GET", "/api/v1/agents", "agent inventory"),
+        ("GET", "/api/v1/agents/{agent_name}", "agent detail (optional session_id)"),
         ("POST", "/api/v1/calls/initiate", "outbound call"),
         ("POST", "/api/v1/calls/answer", "ACS inbound webhook"),
         ("POST", "/api/v1/calls/callbacks", "ACS events"),

@@ -42,19 +42,6 @@ from utils.ml_logging import get_logger
 logger = get_logger("agents.base")
 
 
-class HandoffStrategy(str, Enum):
-    """
-    Handoff strategy determines how agent transfers are handled.
-    
-    - AUTO: Works with any orchestrator (recommended)
-    - TOOL_BASED: LLM calls handoff tools (VoiceLive pattern)
-    - STATE_BASED: Code updates MemoManager state (SpeechCascade pattern)
-    """
-    AUTO = "auto"
-    TOOL_BASED = "tool_based"
-    STATE_BASED = "state_based"
-
-
 @dataclass
 class HandoffConfig:
     """
@@ -62,12 +49,10 @@ class HandoffConfig:
     
     Attributes:
         trigger: Tool name that routes TO this agent (e.g., "handoff_fraud_agent")
-        strategy: How handoffs are executed (auto, tool_based, state_based)
-        state_key: MemoManager key for state-based handoffs
+        is_entry_point: Whether this agent is the default starting agent
     """
     trigger: str = ""
-    strategy: HandoffStrategy = HandoffStrategy.AUTO
-    state_key: str = "pending_handoff"
+    is_entry_point: bool = False
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HandoffConfig":
@@ -75,17 +60,9 @@ class HandoffConfig:
         if not data:
             return cls()
         
-        strategy_str = data.get("strategy", "auto").lower()
-        try:
-            strategy = HandoffStrategy(strategy_str)
-        except ValueError:
-            logger.warning("Unknown handoff strategy '%s', defaulting to auto", strategy_str)
-            strategy = HandoffStrategy.AUTO
-        
         return cls(
             trigger=data.get("trigger", ""),
-            strategy=strategy,
-            state_key=data.get("state_key", "pending_handoff"),
+            is_entry_point=data.get("is_entry_point", False),
         )
 
 
@@ -503,7 +480,6 @@ def build_handoff_map(agents: Dict[str, "UnifiedAgent"]) -> Dict[str, str]:
 __all__ = [
     "UnifiedAgent",
     "HandoffConfig",
-    "HandoffStrategy",
     "VoiceConfig",
     "ModelConfig",
     "build_handoff_map",
