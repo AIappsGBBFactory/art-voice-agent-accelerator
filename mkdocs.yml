@@ -58,13 +58,25 @@ nav:
     - Configuration Guide: getting-started/configuration.md
   - Architecture:
     - Overview: architecture/README.md
-    - LLM Orchestration: architecture/llm-orchestration.md
-    - ACS Flows: architecture/acs-flows.md
-    - Data Flows: architecture/data-flows.md
-    - Speech Recognition: architecture/speech-recognition.md
-    - Speech Synthesis: architecture/speech-synthesis.md
-    - Streaming Modes: architecture/streaming-modes.md
-    - Integrations: architecture/integrations.md
+    - Agents:
+      - Agent Framework: architecture/agents/README.md
+      - Handoff Strategies: architecture/agents/handoffs.md
+    - Orchestration:
+      - Overview: architecture/orchestration/README.md
+      - Cascade Orchestrator: architecture/orchestration/cascade.md
+      - VoiceLive Orchestrator: architecture/orchestration/voicelive.md
+    - Speech:
+      - Streaming Modes: architecture/speech/README.md
+      - Recognition: architecture/speech/recognition.md
+      - Synthesis: architecture/speech/synthesis.md
+    - Data:
+      - Session Management: architecture/data/README.md
+      - Data Flows: architecture/data/flows.md
+    - ACS:
+      - Call Flows: architecture/acs/README.md
+      - Telephony Integration: architecture/acs/integrations.md
+    - Telemetry: architecture/telemetry.md
+    - Archive: architecture/archive/README.md
   - Deployment:
     - Deployment Guide: deployment/README.md
     - Production: deployment/production.md
