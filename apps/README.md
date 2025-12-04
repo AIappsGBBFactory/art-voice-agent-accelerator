@@ -11,7 +11,7 @@ Phone/Browser → ACS/WebSocket → FastAPI Backend → Multi-Agent AI → Azure
 ## **Structure**
 
 ```
-apps/rtagent/
+apps/artagent/
 ├── backend/           # FastAPI + multi-agent framework
 │   ├── main.py       # 🚀 Entry point
 │   ├── src/agents/   # 🤖 ARTAgent, LVAgent, FoundryAgents
@@ -84,7 +84,7 @@ apps/rtagent/
 
 ### **Backend Setup**
 ```bash
-cd apps/rtagent/backend
+cd apps/artagent/backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.sample .env  # Configure Azure credentials
@@ -93,7 +93,7 @@ python main.py  # Starts on localhost:8010
 
 ### **Frontend Setup**  
 ```bash
-cd apps/rtagent/frontend
+cd apps/artagent/frontend
 npm install && npm run dev  # Starts on localhost:5173
 ```
 

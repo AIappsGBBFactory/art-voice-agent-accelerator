@@ -2222,7 +2222,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\main.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\main.py",
       "functions": [
         {
           "name": "create_app",
@@ -2278,7 +2278,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\settings.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\settings.py",
       "functions": [
         {
           "name": "get_agent_voice",
@@ -2306,13 +2306,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\scripts\\start_backend.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\scripts\\start_backend.py",
       "functions": [
         {
           "name": "find_project_root",
@@ -2395,13 +2395,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\scripts\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\scripts\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\swagger_docs.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\swagger_docs.py",
       "functions": [
         {
           "name": "get_tags",
@@ -2594,13 +2594,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\helpers.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\helpers.py",
       "error": "unexpected indent (<unknown>, line 7)",
       "functions": [],
       "classes": [],
@@ -2609,25 +2609,25 @@
       ]
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\shared_ws.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\shared_ws.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\router.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\router.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\dependencies\\orchestrator.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\dependencies\\orchestrator.py",
       "functions": [
         {
           "name": "get_orchestrator",
@@ -2648,7 +2648,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\calls.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\endpoints\\calls.py",
       "functions": [
         {
           "name": "create_call_event",
@@ -2684,7 +2684,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\health.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\endpoints\\health.py",
       "functions": [
         {
           "name": "_validate_phone_number",
@@ -2806,7 +2806,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\media.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\endpoints\\media.py",
       "functions": [
         {
           "name": "_log_websocket_disconnect",
@@ -2871,7 +2871,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\realtime.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\endpoints\\realtime.py",
       "functions": [
         {
           "name": "_log_dashboard_disconnect",
@@ -3022,13 +3022,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\endpoints\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\endpoints\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\demo.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\events\\demo.py",
       "functions": [
         {
           "name": "create_webhook_handler_example",
@@ -3098,7 +3098,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\handlers.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\events\\handlers.py",
       "functions": [
         {
           "name": "_extract_caller_id",
@@ -3787,7 +3787,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\processor.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\events\\processor.py",
       "functions": [
         {
           "name": "get_call_event_processor",
@@ -4283,7 +4283,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\registration.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\events\\registration.py",
       "functions": [
         {
           "name": "register_default_handlers",
@@ -4335,7 +4335,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\types.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\events\\types.py",
       "functions": [
         {
           "name": "get_event_data",
@@ -4518,13 +4518,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\events\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\events\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\acs_call_lifecycle.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\handlers\\acs_call_lifecycle.py",
       "functions": [
         {
           "name": "safe_set_span_attributes",
@@ -5089,7 +5089,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\acs_media_lifecycle.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\handlers\\acs_media_lifecycle.py",
       "functions": [
         {
           "name": "__init__",
@@ -6441,7 +6441,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\realtime.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\handlers\\realtime.py",
       "functions": [
         {
           "name": "create_v1_realtime_handler",
@@ -6632,7 +6632,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\base.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\models\\base.py",
       "functions": [
         {
           "name": "update_timestamp",
@@ -6721,7 +6721,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\call.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\models\\call.py",
       "functions": [],
       "classes": [
         {
@@ -6778,7 +6778,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\event.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\models\\event.py",
       "functions": [],
       "classes": [
         {
@@ -6835,7 +6835,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\participant.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\models\\participant.py",
       "functions": [],
       "classes": [
         {
@@ -6878,13 +6878,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\models\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\models\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\call.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\schemas\\call.py",
       "functions": [],
       "classes": [
         {
@@ -7029,7 +7029,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\event.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\schemas\\event.py",
       "functions": [],
       "classes": [
         {
@@ -7198,7 +7198,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\health.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\schemas\\health.py",
       "functions": [],
       "classes": [
         {
@@ -7274,7 +7274,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\media.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\schemas\\media.py",
       "functions": [],
       "classes": [
         {
@@ -7488,7 +7488,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\participant.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\schemas\\participant.py",
       "functions": [],
       "classes": [
         {
@@ -7610,7 +7610,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\realtime.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\schemas\\realtime.py",
       "functions": [],
       "classes": [
         {
@@ -7737,7 +7737,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\webhook.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\schemas\\webhook.py",
       "functions": [],
       "classes": [
         {
@@ -7882,13 +7882,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\schemas\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\schemas\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\utils\\simple_events.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\utils\\simple_events.py",
       "functions": [
         {
           "name": "get_simple_health_status",
@@ -7927,7 +7927,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\back\\acs_media_handler.back.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\handlers\\back\\acs_media_handler.back.py",
       "functions": [
         {
           "name": "get_current_time",
@@ -9004,7 +9004,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\api\\v1\\handlers\\back\\legacy_acs_lifecycle.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\api\\v1\\handlers\\back\\legacy_acs_lifecycle.py",
       "functions": [
         {
           "name": "get_current_time",
@@ -9365,7 +9365,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\base.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\base.py",
       "functions": [
         {
           "name": "__init__",
@@ -9559,13 +9559,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\factories\\stt_factory.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\factories\\stt_factory.py",
       "functions": [
         {
           "name": "create_stt_recognizer",
@@ -9585,7 +9585,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\handlers\\acs_handler.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\handlers\\acs_handler.py",
       "functions": [
         {
           "name": "_get_participant_phone",
@@ -10151,7 +10151,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\handlers\\acs_media_handler.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\handlers\\acs_media_handler.py",
       "functions": [
         {
           "name": "__init__",
@@ -10931,7 +10931,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\handlers\\acs_transcript_handler.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\handlers\\acs_transcript_handler.py",
       "functions": [
         {
           "name": "__init__",
@@ -11151,13 +11151,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\handlers\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\handlers\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\latency\\latency_tool.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\latency\\latency_tool.py",
       "functions": [
         {
           "name": "__init__",
@@ -11365,13 +11365,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\latency\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\latency\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\orchestration\\gpt_flow.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\orchestration\\gpt_flow.py",
       "functions": [
         {
           "name": "_get_agent_voice_config",
@@ -11481,7 +11481,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\orchestration\\orchestrator.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\orchestration\\orchestrator.py",
       "functions": [
         {
           "name": "configure_entry_and_specialists",
@@ -11812,13 +11812,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\orchestration\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\orchestration\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\routers\\acs.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\routers\\acs.py",
       "functions": [],
       "classes": [
         {
@@ -11836,7 +11836,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\routers\\health.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\routers\\health.py",
       "functions": [
         {
           "name": "_validate_phone_number",
@@ -11865,7 +11865,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\routers\\realtime.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\routers\\realtime.py",
       "functions": [
         {
           "name": "on_partial",
@@ -11916,19 +11916,19 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\routers\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\routers\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\cosmosdb_services.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\cosmosdb_services.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\openai_services.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\openai_services.py",
       "functions": [
         {
           "name": "create_azure_openai_client",
@@ -11949,25 +11949,25 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\redis_services.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\redis_services.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\speech_services.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\speech_services.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\utils\\auth.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\utils\\auth.py",
       "functions": [
         {
           "name": "get_jwks",
@@ -12095,7 +12095,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\utils\\auth_utils.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\utils\\auth_utils.py",
       "functions": [
         {
           "name": "decode_jwt_payload",
@@ -12195,7 +12195,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\utils\\tracing.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\utils\\tracing.py",
       "functions": [
         {
           "name": "create_span_attrs",
@@ -12829,7 +12829,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\utils\\tracing_utils.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\utils\\tracing_utils.py",
       "functions": [
         {
           "name": "create_span_attrs",
@@ -12957,7 +12957,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\prompt_store\\prompt_manager.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\prompt_store\\prompt_manager.py",
       "functions": [
         {
           "name": "__init__",
@@ -13075,13 +13075,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\prompt_store\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\prompt_store\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\auth.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\auth.py",
       "functions": [],
       "classes": [
         {
@@ -13112,7 +13112,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\emergency.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\emergency.py",
       "functions": [],
       "classes": [
         {
@@ -13130,7 +13130,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\fnol.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\fnol.py",
       "functions": [
         {
           "name": "_new_claim_id",
@@ -13238,7 +13238,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\functions_helper.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\functions_helper.py",
       "functions": [
         {
           "name": "_json",
@@ -13267,7 +13267,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\handoffs.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\handoffs.py",
       "functions": [],
       "classes": [
         {
@@ -13310,7 +13310,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\policies.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\policies.py",
       "functions": [
         {
           "name": "_best_attr",
@@ -13380,13 +13380,13 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\schemas.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\schemas.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\tools_helper.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\tools_helper.py",
       "functions": [
         {
           "name": "_frame",
@@ -13419,19 +13419,19 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\tool_registry.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\tool_registry.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\agents\\tool_store\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\agents\\tool_store\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\acs\\acs_caller.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\acs\\acs_caller.py",
       "functions": [
         {
           "name": "initialize_acs_caller_instance",
@@ -13453,7 +13453,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\acs\\acs_helpers.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\acs\\acs_helpers.py",
       "functions": [
         {
           "name": "construct_websocket_url",
@@ -13513,7 +13513,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\acs\\session_terminator.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\acs\\session_terminator.py",
       "functions": [
         {
           "name": "_get_disconnect_event",
@@ -13616,7 +13616,7 @@
       "issues": []
     },
     {
-      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\rtagent\\backend\\src\\services\\acs\\__init__.py",
+      "file_path": "C:\\Users\\pablosal\\Desktop\\art-voice-agent-accelerator\\apps\\artagent\\backend\\src\\services\\acs\\__init__.py",
       "functions": [],
       "classes": [],
       "issues": []

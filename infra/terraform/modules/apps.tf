@@ -94,7 +94,7 @@
 #     always_on = true
 
 #     # FastAPI startup command matching deployment script expectations
-#     app_command_line = "python -m uvicorn apps.rtagent.backend.main:app --host 0.0.0.0 --port 8000"
+#     app_command_line = "python -m uvicorn apps.artagent.backend.main:app --host 0.0.0.0 --port 8000"
 
 #     # CORS configuration - will be updated after frontend is created
 #     cors {

@@ -118,7 +118,7 @@ ACS Call Audio ➜ WebSocket ➜ Azure Voice Live Agent ➜ Direct Audio Respons
 if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
     # Create and connect Voice Live agent
     agent_yaml = os.getenv("VOICE_LIVE_AGENT_YAML", 
-                          "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml")
+                          "apps/artagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml")
     lva_agent = build_lva_from_yaml(agent_yaml, enable_audio_io=False)
     await asyncio.to_thread(lva_agent.connect)
     

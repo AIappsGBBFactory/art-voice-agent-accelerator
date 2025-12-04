@@ -2,7 +2,7 @@
 
 Status: Draft  
 Author: Codex  
-Scope: ARTAgent stack (`apps/rtagent/backend/src/agents`) and orchestrator (`apps/rtagent/backend/src/orchestration/artagent`)
+Scope: ARTAgent stack (`apps/artagent/backend/src/agents`) and orchestrator (`apps/artagent/backend/src/orchestration/artagent`)
 
 > Note: The workstation has restricted network access, so this write-up is based on recent Microsoft/Azure agent SDK patterns (`azure.ai.agents`, Azure AI Agent Service) plus code already present in this repo (see `agents/foundryagents`). Please cross-check against the latest official docs.
 

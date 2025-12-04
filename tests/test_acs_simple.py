@@ -25,7 +25,7 @@ from unittest.mock import Mock, AsyncMock, patch
 # Test the basic functionality without complex logging
 def test_thread_bridge_basic():
     """Test basic ThreadBridge functionality."""
-    from apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle import ThreadBridge
+    from apps.artagent.backend.api.v1.handlers.acs_media_lifecycle import ThreadBridge
 
     bridge = ThreadBridge()
     assert bridge.main_loop is None
@@ -39,7 +39,7 @@ def test_thread_bridge_basic():
 
 def test_speech_event_creation():
     """Test SpeechEvent creation."""
-    from apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle import (
+    from apps.artagent.backend.api.v1.handlers.acs_media_lifecycle import (
         SpeechEvent,
         SpeechEventType,
     )
@@ -58,7 +58,7 @@ def test_speech_event_creation():
 @pytest.mark.asyncio
 async def test_main_event_loop_basic():
     """Test basic MainEventLoop functionality."""
-    from apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle import MainEventLoop
+    from apps.artagent.backend.api.v1.handlers.acs_media_lifecycle import MainEventLoop
 
     # Mock websocket and route turn thread
     mock_websocket = Mock()
@@ -103,7 +103,7 @@ class MockRecognizer:
 
 def test_speech_sdk_thread_basic():
     """Test basic SpeechSDKThread functionality."""
-    from apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle import (
+    from apps.artagent.backend.api.v1.handlers.acs_media_lifecycle import (
         SpeechSDKThread,
         ThreadBridge,
     )
@@ -114,7 +114,7 @@ def test_speech_sdk_thread_basic():
     barge_in_handler = AsyncMock()
 
     # Mock logging to avoid OpenTelemetry issues
-    with patch("apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
+    with patch("apps.artagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
         thread = SpeechSDKThread(
             call_connection_id="test-call",
             recognizer=recognizer,
@@ -145,7 +145,7 @@ def test_speech_sdk_thread_basic():
 @pytest.mark.asyncio
 async def test_simple_media_processing():
     """Test simple media message processing."""
-    from apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle import MainEventLoop
+    from apps.artagent.backend.api.v1.handlers.acs_media_lifecycle import MainEventLoop
 
     mock_websocket = Mock()
     mock_websocket.send_text = AsyncMock()
@@ -170,7 +170,7 @@ async def test_simple_media_processing():
     mock_acs_handler.speech_sdk_thread = Mock()
     mock_acs_handler.speech_sdk_thread.start_recognizer = Mock()
 
-    with patch("apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
+    with patch("apps.artagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
         await main_loop.handle_media_message(
             metadata_json, mock_recognizer, mock_acs_handler
         )
@@ -182,7 +182,7 @@ async def test_simple_media_processing():
 
 def test_callback_triggering():
     """Test speech recognition callback triggering."""
-    from apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle import (
+    from apps.artagent.backend.api.v1.handlers.acs_media_lifecycle import (
         SpeechSDKThread,
         ThreadBridge,
     )
@@ -204,7 +204,7 @@ def test_callback_triggering():
     bridge.schedule_barge_in = mock_schedule_barge_in
     bridge.queue_speech_result = mock_queue_speech_result
 
-    with patch("apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
+    with patch("apps.artagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
         thread = SpeechSDKThread(
             call_connection_id="test-call",
             recognizer=recognizer,

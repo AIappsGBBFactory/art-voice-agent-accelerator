@@ -147,7 +147,7 @@ variable "backend_config" {
     # WebApp-specific
     sku_name         = optional(string, "B1")
     python_version   = optional(string, "3.11")
-    app_command_line = optional(string, "python -m uvicorn apps.rtagent.backend.main:app --host 0.0.0.0 --port 8000")
+    app_command_line = optional(string, "python -m uvicorn apps.artagent.backend.main:app --host 0.0.0.0 --port 8000")
     always_on        = optional(bool, true)
   })
   default = {}

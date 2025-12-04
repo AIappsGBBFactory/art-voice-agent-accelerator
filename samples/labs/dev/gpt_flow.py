@@ -21,27 +21,27 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from urllib.parse import urlparse
 
-from apps.rtagent.backend.config import AZURE_OPENAI_CHAT_DEPLOYMENT_ID, TTS_END
-from apps.rtagent.backend.src.agents.artagent.tool_store.tool_registry import (
+from apps.artagent.backend.config import AZURE_OPENAI_CHAT_DEPLOYMENT_ID, TTS_END
+from apps.artagent.backend.src.agents.artagent.tool_store.tool_registry import (
     available_tools as DEFAULT_TOOLS,
 )
-from apps.rtagent.backend.src.agents.artagent.tool_store.tools_helper import (
+from apps.artagent.backend.src.agents.artagent.tool_store.tools_helper import (
     function_mapping,
     push_tool_end,
     push_tool_start,
 )
-from apps.rtagent.backend.src.helpers import add_space
+from apps.artagent.backend.src.helpers import add_space
 from src.aoai.client import client as az_openai_client
-from apps.rtagent.backend.src.ws_helpers.shared_ws import (
+from apps.artagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
     push_final,
     send_response_to_acs,
     send_tts_audio,
 )
-from apps.rtagent.backend.config import AZURE_OPENAI_ENDPOINT
+from apps.artagent.backend.config import AZURE_OPENAI_ENDPOINT
 from utils.ml_logging import get_logger
 from utils.trace_context import create_trace_context
-from apps.rtagent.backend.src.utils.tracing import (
+from apps.artagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
     create_service_dependency_attrs,
 )

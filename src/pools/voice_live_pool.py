@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, Any
 
 from utils.ml_logging import get_logger
-from apps.rtagent.backend.src.agents.Lvagent.base import AzureLiveVoiceAgent
-from apps.rtagent.backend.src.agents.Lvagent.factory import build_lva_from_yaml
+from apps.artagent.backend.src.agents.Lvagent.base import AzureLiveVoiceAgent
+from apps.artagent.backend.src.agents.Lvagent.factory import build_lva_from_yaml
 
 
 logger = get_logger("voice_live_pool")
@@ -37,7 +37,7 @@ VOICE_LIVE_POOL_PREWARMING_ENABLED = (
 VOICE_LIVE_PREWARMING_BATCH_SIZE = int(os.getenv("VOICE_LIVE_PREWARMING_BATCH_SIZE", "4"))
 VOICE_LIVE_AGENT_YAML = os.getenv(
     "VOICE_LIVE_AGENT_YAML",
-    "apps/rtagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
+    "apps/artagent/backend/src/agents/Lvagent/agent_store/auth_agent.yaml",
 )
 
 

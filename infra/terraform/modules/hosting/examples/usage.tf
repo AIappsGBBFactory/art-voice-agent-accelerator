@@ -162,7 +162,7 @@ module "hosting_webapps" {
     # WebApp-specific settings are now used
     sku_name         = "S2" # Standard tier for production
     python_version   = "3.11"
-    app_command_line = "python -m uvicorn apps.rtagent.backend.main:app --host 0.0.0.0 --port 8000"
+    app_command_line = "python -m uvicorn apps.artagent.backend.main:app --host 0.0.0.0 --port 8000"
     always_on        = true
   }
 

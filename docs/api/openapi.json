@@ -38,7 +38,7 @@
                   "message": "Real-Time Audio Agent API v1 is running",
                   "details": {
                     "api_version": "v1",
-                    "service": "rtagent-backend"
+                    "service": "artagent-backend"
                   }
                 }
               }
@@ -1050,7 +1050,7 @@
             "description": "Additional health details",
             "example": {
               "api_version": "v1",
-              "service": "rtagent-backend"
+              "service": "artagent-backend"
             }
           },
           "active_sessions": {
@@ -1097,7 +1097,7 @@
           "active_sessions": 3,
           "details": {
             "api_version": "v1",
-            "service": "rtagent-backend"
+            "service": "artagent-backend"
           },
           "message": "Real-Time Audio Agent API v1 is running",
           "session_metrics": {

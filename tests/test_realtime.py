@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocketDisconnect
 from fastapi.testclient import TestClient
 from fastapi.websockets import WebSocketState
 
-from apps.rtagent.backend.api.v1.endpoints import browser
+from apps.artagent.backend.api.v1.endpoints import browser
 from src.pools.on_demand_pool import OnDemandResourcePool
 from src.pools.async_pool import AllocationTier
 

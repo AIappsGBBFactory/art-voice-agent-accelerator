@@ -83,7 +83,7 @@ variable "backend_config" {
     sku_name         = optional(string, "B1")
     python_version   = optional(string, "3.11")
     port             = optional(number, 8000)
-    app_command_line = optional(string, "python -m uvicorn apps.rtagent.backend.main:app --host 0.0.0.0 --port 8000")
+    app_command_line = optional(string, "python -m uvicorn apps.artagent.backend.main:app --host 0.0.0.0 --port 8000")
     azd_service_name = optional(string, "rtaudio-server")
     always_on        = optional(bool, true)
   })

@@ -22,7 +22,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AzureOpenAI
 import threading
 
-from apps.rtagent.backend.config import (
+from apps.artagent.backend.config import (
     AZURE_OPENAI_ENDPOINT,
     AZURE_OPENAI_KEY,
 )

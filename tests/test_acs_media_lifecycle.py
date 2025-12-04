@@ -16,17 +16,17 @@ from fastapi.websockets import WebSocketState
 
 from src.enums.stream_modes import StreamMode
 
-openai_stub = ModuleType("apps.rtagent.backend.src.services.openai_services")
+openai_stub = ModuleType("apps.artagent.backend.src.services.openai_services")
 openai_stub.client = Mock()
-sys.modules.setdefault("apps.rtagent.backend.src.services.openai_services", openai_stub)
+sys.modules.setdefault("apps.artagent.backend.src.services.openai_services", openai_stub)
 
-acs_helpers_stub = ModuleType("apps.rtagent.backend.src.services.acs.acs_helpers")
+acs_helpers_stub = ModuleType("apps.artagent.backend.src.services.acs.acs_helpers")
 async def _play_response_with_queue(*_args, **_kwargs):
     return None
 acs_helpers_stub.play_response_with_queue = _play_response_with_queue
-sys.modules.setdefault("apps.rtagent.backend.src.services.acs.acs_helpers", acs_helpers_stub)
+sys.modules.setdefault("apps.artagent.backend.src.services.acs.acs_helpers", acs_helpers_stub)
 
-speech_services_stub = ModuleType("apps.rtagent.backend.src.services.speech_services")
+speech_services_stub = ModuleType("apps.artagent.backend.src.services.speech_services")
 class _SpeechSynthesizerStub:
     @staticmethod
     def split_pcm_to_base64_frames(pcm_bytes: bytes, sample_rate: int) -> list[str]:
@@ -52,7 +52,7 @@ class _MockStreamingSpeechRecognizer:
         pass
 
 speech_services_stub.StreamingSpeechRecognizerFromBytes = _MockStreamingSpeechRecognizer
-sys.modules.setdefault("apps.rtagent.backend.src.services.speech_services", speech_services_stub)
+sys.modules.setdefault("apps.artagent.backend.src.services.speech_services", speech_services_stub)
 
 config_stub = ModuleType("config")
 config_stub.GREETING = "Hello"
@@ -75,9 +75,9 @@ sys.modules.setdefault("config", config_stub)
 
 module_path = next(
     (
-        parent / "apps/rtagent/backend/api/v1/handlers/acs_media_lifecycle.py"
+        parent / "apps/artagent/backend/api/v1/handlers/acs_media_lifecycle.py"
         for parent in Path(__file__).resolve().parents
-        if (parent / "apps/rtagent/backend/api/v1/handlers/acs_media_lifecycle.py").exists()
+        if (parent / "apps/artagent/backend/api/v1/handlers/acs_media_lifecycle.py").exists()
     ),
     None,
 )
@@ -430,7 +430,7 @@ async def test_process_direct_text_playback_skips_empty_text(dummy_websocket, du
         websocket=dummy_websocket,
     )
     with patch(
-        "apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle.send_response_to_acs",
+        "apps.artagent.backend.api.v1.handlers.acs_media_lifecycle.send_response_to_acs",
         new=AsyncMock(),
     ) as mock_send:
         event = SpeechEvent(event_type=SpeechEventType.GREETING, text="")

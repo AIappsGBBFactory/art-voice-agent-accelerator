@@ -10,7 +10,8 @@ PYTHON_INTERPRETER = python
 CONDA_ENV ?= audioagent
 # Ensure current directory is in PYTHONPATH
 export PYTHONPATH=$(PWD):$PYTHONPATH;
-SCRIPTS_DIR = apps/rtagent/scripts
+# Updated path: scripts folder renamed to starters_scripts
+SCRIPTS_DIR = apps/artagent/starters_scripts
 SCRIPTS_LOAD_DIR = tests/load
 PHONE = +18165019907
 
@@ -110,12 +111,31 @@ start_frontend:
 start_tunnel:
 	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
 
+# Quick reference for starting all services (run each in separate terminals)
+start_all_info:
+	@echo ""
+	@echo "🚀 Quick Start Guide - Run each command in a separate terminal:"
+	@echo "================================================================"
+	@echo ""
+	@echo "Terminal 1 - Start Dev Tunnel (for public URL):"
+	@echo "  make start_tunnel"
+	@echo ""
+	@echo "Terminal 2 - Start Backend (FastAPI server on port 8080):"
+	@echo "  make start_backend"
+	@echo ""
+	@echo "Terminal 3 - Start Frontend (Vite dev server):"
+	@echo "  make start_frontend"
+	@echo ""
+	@echo "📝 Note: Update BASE_URL in .env with your devtunnel URL"
+	@echo ""
+
 generate_audio:
 	python $(SCRIPTS_LOAD_DIR)/utils/audio_generator.py --max-turns 5
 
 # WebSocket endpoint load testing (current approach)
 # DEPLOYED_URL = 
-HOST = localhost:8010
+# Default port: 8080 (matches backend main.py and devtunnel config)
+HOST = localhost:8080
 run_load_test_acs_media:
 	@echo "Running load test (override with e.g. make run_load_test URL=ws://host USERS=10 SPAWN_RATE=2 TIME=30s EXTRA_ARGS='--headless')"
 	$(eval WS_URL ?= ws://$(HOST)/api/v1/media/stream)
@@ -398,13 +418,14 @@ help:
 	@echo "  remove_conda_env                 Remove conda environment"
 	@echo ""
 	@echo "🚀 Application:"
-	@echo "  start_backend                    Start backend via script"
-	@echo "  start_frontend                   Start frontend via script"
-	@echo "  start_tunnel                     Start dev tunnel via script"
+	@echo "  start_backend                    Start backend via script (port 8080)"
+	@echo "  start_frontend                   Start frontend via script (Vite dev server)"
+	@echo "  start_tunnel                     Start dev tunnel via script (port 8080)"
+	@echo "  start_all_info                   Show guide for starting all services"
 	@echo ""
 	@echo "⚡ Load Testing:"
 	@echo "  generate_audio                   Generate PCM audio files for load testing"
-	@echo "  run_load_test_acs_media          Run ACS media WebSocket load test (HOST=$(HOST))"
+	@echo "  run_load_test_acs_media          Run ACS media WebSocket load test (HOST=localhost:8080)"
 	@echo "  run_load_test_realtime_conversation  Run realtime conversation WebSocket load test"
 	@echo ""
 	@echo "📞 Azure Communication Services:"
@@ -417,7 +438,7 @@ help:
 	@echo ""
 	@echo "📖 Configuration Variables:"
 	@echo "  CONDA_ENV                        Conda environment name (default: audioagent)"
-	@echo "  HOST                             Host for load testing (default: localhost:8010)"
+	@echo "  HOST                             Host for load testing (default: localhost:8080)"
 	@echo "  PHONE                            Phone number for testing (default: +18165019907)"
 	@echo ""
 	@echo "💡 Load Testing Parameters:"

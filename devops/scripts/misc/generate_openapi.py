@@ -18,7 +18,7 @@ import argparse
 from pathlib import Path
 
 # Add the backend directory to Python path
-backend_dir = Path(__file__).parent.parent / "apps" / "rtagent" / "backend"
+backend_dir = Path(__file__).parent.parent / "apps" / "artagent" / "backend"
 sys.path.insert(0, str(backend_dir))
 
 def generate_openapi_json(output_path: str = "docs/api/openapi.json", pretty: bool = True):

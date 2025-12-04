@@ -33,11 +33,11 @@ The Application Map shows **components** (your code) and **dependencies** (exter
                       │                        │                        │
                       ▼                        ▼                        ▼
         ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
-        │   rtagent-api       │  │   rtagent-api       │  │   rtagent-api       │
+        │   artagent-api       │  │   artagent-api       │  │   artagent-api       │
         │  (voice-handler)    │  │  (acs-handler)      │  │  (events-webhook)   │
         │                     │  │                     │  │                     │
         │  cloud.role.name=   │  │  cloud.role.name=   │  │  cloud.role.name=   │
-        │  "rtagent-api"      │  │  "rtagent-api"      │  │  "rtagent-api"      │
+        │  "artagent-api"      │  │  "artagent-api"      │  │  "artagent-api"      │
         └──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘
                    │                        │                        │
                    └────────────────────────┼────────────────────────┘
@@ -84,7 +84,7 @@ The Application Map shows **components** (your code) and **dependencies** (exter
 from opentelemetry.sdk.resources import Resource
 
 resource = Resource.create({
-    "service.name": "rtagent-api",           # → Cloud Role Name
+    "service.name": "artagent-api",           # → Cloud Role Name
     "service.namespace": "voice-agent",       # → Groups related services
     "service.instance.id": os.getenv("HOSTNAME", socket.gethostname()),  # → Instance
     "service.version": os.getenv("APP_VERSION", "1.0.0"),
@@ -1155,7 +1155,7 @@ The instrumentor follows OpenTelemetry GenAI semantic conventions:
 - [ ] W3C traceparent header propagated on HTTP calls
 
 ### Verification
-- [ ] Application Map shows `rtagent-api` node
+- [ ] Application Map shows `artagent-api` node
 - [ ] Application Map shows edges to `azure.ai.openai`
 - [ ] Application Map shows edges to `azure.speech`
 - [ ] Application Map shows edges to `redis`
