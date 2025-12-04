@@ -748,6 +748,7 @@ export default function AgentBuilder({
   const [sessionAgents, setSessionAgents] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [_defaults, setDefaults] = useState(null);
+  const [expandedTemplates, setExpandedTemplates] = useState({});
   
   // Agent configuration state
   const [config, setConfig] = useState({
@@ -873,22 +874,30 @@ export default function AgentBuilder({
   }, []);
 
   const fetchSessionAgents = useCallback(async () => {
+    const collected = [];
     try {
-      const urlWithSession = sessionId
-        ? `${API_BASE_URL}/api/v1/agents?session_id=${encodeURIComponent(sessionId)}`
-        : `${API_BASE_URL}/api/v1/agents`;
-      const res = await fetch(urlWithSession);
-      if (!res.ok) throw new Error('Failed to fetch agents');
-      const data = await res.json();
-      const agentsArray =
-        (Array.isArray(data.agents) && data.agents) ||
-        (Array.isArray(data.summaries) && data.summaries) ||
-        (Array.isArray(data.agent_summaries) && data.agent_summaries) ||
-        [];
-      setSessionAgents(agentsArray);
+      if (sessionId) {
+        // Fetch the live session-scoped agent so it shows up immediately in the template grid
+        const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.config) {
+            collected.push({
+              id: `session-${sessionId}`,
+              name: data.config.name || data.agent_name || 'Session Agent',
+              description: data.config.description || '',
+              tools: data.config.tools || [],
+              model: data.config.model,
+              voice: data.config.voice,
+              source: 'session',
+            });
+          }
+        }
+      }
+      setSessionAgents(collected);
     } catch (err) {
-      logger.error('Error fetching agents:', err);
-      setSessionAgents([]);
+      logger.error('Error fetching session agents:', err);
+      setSessionAgents(collected);
     }
   }, [sessionId]);
 
@@ -1052,6 +1061,10 @@ export default function AgentBuilder({
       }
     });
   };
+
+  const toggleTemplateExpansion = useCallback((templateId) => {
+    setExpandedTemplates(prev => ({ ...prev, [templateId]: !prev[templateId] }));
+  }, []);
 
   const handleApplyTemplate = async (templateId) => {
     if (!templateId) {
@@ -1431,95 +1444,38 @@ export default function AgentBuilder({
 
                 <Card variant="outlined" sx={styles.sectionCard}>
                   <CardContent>
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
-                      📂 Start from Template
-                    </Typography>
-                    <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
-                      <Autocomplete
-                        options={templateCards}
-                        getOptionLabel={(option) => option.name || ''}
-                        value={templateCards.find(t => t.id === selectedTemplate) || null}
-                        onChange={(_, newValue) => handleApplyTemplate(newValue?.id)}
-                        size="small"
-                        sx={{ flex: 1, maxWidth: 420 }}
-                        renderOption={(props, option) => {
-                          const { key, ...otherProps } = props;
-                          return (
-                            <ListItem key={key} {...otherProps} sx={{ py: 1 }}>
-                              <ListItemAvatar>
-                                <Avatar sx={{ 
-                                  bgcolor: option.is_entry_point ? '#6366f1' : '#94a3b8',
-                                  width: 28,
-                                  height: 28,
-                                }}>
-                                  {option.is_entry_point ? <StarIcon sx={{ fontSize: 14 }} /> : <SmartToyIcon sx={{ fontSize: 14 }} />}
-                                </Avatar>
-                              </ListItemAvatar>
-                              <ListItemText
-                                primary={
-                                  <Stack direction="row" alignItems="center" spacing={1}>
-                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                      {option.name}
-                                    </Typography>
-                                    {option.is_entry_point && (
-                                      <Chip label="Entry" size="small" color="primary" sx={{ height: 18, fontSize: '10px' }} />
-                                    )}
-                                  </Stack>
-                                }
-                                secondary={
-                                  <Typography variant="caption" color="text.secondary" noWrap>
-                                    {option.tools?.length || 0} tools
-                                  </Typography>
-                                }
-                              />
-                            </ListItem>
-                          );
-                        }}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            placeholder="Browse templates..."
-                            InputProps={{
-                              ...params.InputProps,
-                              startAdornment: (
-                                <>
-                                  <InputAdornment position="start">
-                                    <ContentCopyIcon fontSize="small" color="action" />
-                                  </InputAdornment>
-                                  {params.InputProps.startAdornment}
-                                </>
-                              ),
-                            }}
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+                      <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>
+                        📂 Start from Template
+                      </Typography>
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        {selectedTemplate && (
+                          <Chip
+                            icon={<CheckIcon />}
+                            label="Template applied"
+                            color="success"
+                            size="small"
+                            onDelete={() => setSelectedTemplate(null)}
                           />
                         )}
-                        noOptionsText="No templates found"
-                      />
-                      {selectedTemplate && (
-                        <Chip
-                          icon={<CheckIcon />}
-                          label="Template applied"
-                          color="success"
-                          size="small"
-                          onDelete={() => setSelectedTemplate(null)}
-                        />
-                      )}
-                      <Tooltip title="Refresh agent templates from disk">
-                        <IconButton
-                          size="small"
-                          onClick={reloadAgentTemplates}
-                          disabled={reloadingTemplates}
-                          sx={{
-                            color: 'primary.main',
-                            '&:hover': { backgroundColor: 'rgba(99, 102, 241, 0.1)' },
-                          }}
-                        >
-                          {reloadingTemplates ? (
-                            <CircularProgress size={18} />
-                          ) : (
-                            <RefreshIcon fontSize="small" />
-                          )}
-                        </IconButton>
-                      </Tooltip>
+                        <Tooltip title="Refresh agent templates from disk">
+                          <IconButton
+                            size="small"
+                            onClick={reloadAgentTemplates}
+                            disabled={reloadingTemplates}
+                            sx={{
+                              color: 'primary.main',
+                              '&:hover': { backgroundColor: 'rgba(99, 102, 241, 0.1)' },
+                            }}
+                          >
+                            {reloadingTemplates ? (
+                              <CircularProgress size={18} />
+                            ) : (
+                              <RefreshIcon fontSize="small" />
+                            )}
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
                     </Stack>
                     <Stack direction="row" flexWrap="wrap" gap={1.5}>
                       {templateCards.map((tmpl) => (
@@ -1530,11 +1486,14 @@ export default function AgentBuilder({
                             minWidth: 220,
                             maxWidth: 260,
                             flex: '1 1 220px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            height: expandedTemplates[tmpl.id] ? 'auto' : 260,
                             borderColor: tmpl.id === selectedTemplate ? '#6366f1' : '#e5e7eb',
                             boxShadow: tmpl.id === selectedTemplate ? '0 6px 18px rgba(99,102,241,0.15)' : 'none',
                           }}
                         >
-                          <CardContent sx={{ pb: '12px !important' }}>
+                          <CardContent sx={{ pb: '12px !important', display: 'flex', flexDirection: 'column', height: '100%' }}>
                             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
                               <Avatar sx={{ width: 28, height: 28, bgcolor: '#eef2ff', color: '#4338ca' }}>
                                 {tmpl.name?.[0] || 'A'}
@@ -1543,9 +1502,34 @@ export default function AgentBuilder({
                                 {tmpl.name}
                               </Typography>
                             </Stack>
-                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{
+                                mb: 1,
+                                flexGrow: 1,
+                                ...(expandedTemplates[tmpl.id]
+                                  ? {}
+                                  : {
+                                      display: '-webkit-box',
+                                      WebkitLineClamp: 3,
+                                      WebkitBoxOrient: 'vertical',
+                                      overflow: 'hidden',
+                                    }),
+                              }}
+                            >
                               {tmpl.description || 'No description provided.'}
                             </Typography>
+                            {(tmpl.description || '').length > 140 && (
+                              <Button
+                                size="small"
+                                variant="text"
+                                onClick={() => toggleTemplateExpansion(tmpl.id)}
+                                sx={{ alignSelf: 'flex-start', textTransform: 'none', mb: 1 }}
+                              >
+                                {expandedTemplates[tmpl.id] ? 'Show less' : 'Show more'}
+                              </Button>
+                            )}
                             <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 1 }}>
                               <Chip size="small" label={`${tmpl.tools?.length || 0} tools`} />
                               {tmpl.is_entry_point && (
@@ -1557,6 +1541,7 @@ export default function AgentBuilder({
                               fullWidth
                               variant={selectedTemplate === tmpl.id ? 'contained' : 'outlined'}
                               onClick={() => handleApplyTemplate(tmpl.id)}
+                              sx={{ mt: 'auto' }}
                             >
                               Use Template
                             </Button>
