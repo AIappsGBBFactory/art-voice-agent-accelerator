@@ -16,7 +16,6 @@ return_greeting: "What else would you like to know about cards?"
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
   trigger: handoff_card_recommendation
-  strategy: auto                       # Works with both orchestrators
   transition_message: "Let me find the best card options for you."
 
 # ─────────────────────────────────────────────────────────────────────────────

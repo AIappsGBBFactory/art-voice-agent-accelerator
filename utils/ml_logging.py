@@ -284,7 +284,8 @@ class TraceLogFilter(logging.Filter):
             record.call_connection_id = session_ctx.call_connection_id or "-"
             record.transport_type = session_ctx.transport_type or "-"
             record.agent_name = session_ctx.agent_name or "-"
-            record.operation_name = span.name if span else "-"
+            # Safely get span name - NonRecordingSpan doesn't have 'name' attribute
+            record.operation_name = getattr(span, "name", "-") if span else "-"
             record.component = session_ctx.extra.get("component", "-")
             
             # Add any extra attributes from session context
@@ -302,7 +303,7 @@ class TraceLogFilter(logging.Filter):
             record.call_connection_id = span_attributes.get(
                 "call.connection.id", span_attributes.get("ai.session.id", "-")
             )
-            record.operation_name = span_attributes.get("operation.name", span.name)
+            record.operation_name = span_attributes.get("operation.name", getattr(span, "name", "-"))
             record.component = span_attributes.get("component", "-")
 
             # Add custom properties from span

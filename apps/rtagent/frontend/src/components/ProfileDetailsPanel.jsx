@@ -215,6 +215,8 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
   const [renderContent, setRenderContent] = useState(false);
   const [activeTab, setActiveTab] = useState('verification');
   const contentRef = useRef(null);
+  const [panelWidth, setPanelWidth] = useState(360);
+  const resizingRef = useRef(null);
 
   useEffect(() => {
     if (open) {
@@ -806,15 +808,16 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
     <Box
       sx={{
         position: 'fixed',
-        top: '20px',
-        right: '20px',
-        width: '360px',
-        height: 'calc(100vh - 40px)',
-        maxHeight: 'calc(100vh - 40px)',
-        backgroundColor: '#fff',
-        borderRadius: '20px',
-        boxShadow: '0 20px 60px rgba(15,15,30,0.45)',
-        zIndex: 11000,
+        top: '0px',
+        right: '0px',
+        width: `${panelWidth}px`,
+        height: '100vh',
+        maxHeight: '100vh',
+        background: 'linear-gradient(180deg, #f8fafc, #ffffff)',
+        borderRadius: '0px',
+        border: '1px solid rgba(226,232,240,0.9)',
+        boxShadow: '8px 0 24px rgba(15,23,42,0.12)',
+        zIndex: 1200,
         transform: open ? 'translateY(0)' : 'translateY(12px)',
         opacity: open ? 1 : 0,
         pointerEvents: open ? 'auto' : 'none',
@@ -822,14 +825,51 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
+        backdropFilter: 'blur(8px)',
+        minWidth: '320px',
+        maxWidth: '520px',
       }}
     >
+      {/* Left-edge resize handle */}
+      <Box
+        onMouseDown={(e) => {
+          resizingRef.current = {
+            startX: e.clientX,
+            startWidth: panelWidth,
+          };
+          const onMove = (evt) => {
+            if (!resizingRef.current) return;
+            const delta = evt.clientX - resizingRef.current.startX;
+            const next = Math.min(
+              520,
+              Math.max(320, resizingRef.current.startWidth - delta),
+            );
+            setPanelWidth(next);
+          };
+          const onUp = () => {
+            resizingRef.current = null;
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+          };
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        }}
+        sx={{
+          position: 'absolute',
+          left: '-6px',
+          top: 0,
+          bottom: 0,
+          width: '12px',
+          cursor: 'ew-resize',
+          zIndex: 3,
+        }}
+      />
         {renderContent && (
           <>
             <Box sx={{
               padding: '18px',
-              background: 'linear-gradient(150deg, #eef2ff 0%, rgba(238,242,255,0.75) 50%, #f8fafc 100%)',
-              borderBottom: '1px solid #e2e8f0',
+              background: 'linear-gradient(150deg, #eef2ff 0%, rgba(238,242,255,0.7) 40%, #f8fafc 100%)',
+              borderBottom: '1px solid rgba(226,232,240,0.9)',
               position: 'relative',
               overflow: 'hidden',
             }}>
@@ -1014,6 +1054,8 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
                 flex: 1,
                 padding: '20px',
                 overflowY: 'auto',
+                scrollbarWidth: 'none',
+                '&::-webkit-scrollbar': { display: 'none' },
                 overscrollBehavior: 'contain',
                 scrollBehavior: 'smooth',
                 WebkitOverflowScrolling: 'touch',

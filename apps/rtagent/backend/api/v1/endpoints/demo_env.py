@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from random import Random
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 import secrets
 
 import asyncio
@@ -14,6 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 from pymongo.errors import NetworkTimeout, PyMongoError
 
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
+from src.stateful.state_managment import MemoManager
 
 __all__ = ["router"]
 
@@ -526,6 +527,69 @@ async def _append_phrase_bias_entries(profile: DemoUserProfile, request: Request
         logger.debug("Could not append phrase bias entry", exc_info=True)
 
 
+async def _persist_profile_to_session(
+    request: Request,
+    profile: DemoUserProfile,
+    session_id: Optional[str],
+) -> None:
+    """
+    Persist demo profile to Redis MemoManager for media handler discovery.
+    
+    This enables the media_handler to access the demo profile data (caller_name,
+    customer_intelligence, institution_name, etc.) when the voice session starts.
+    
+    Args:
+        request: FastAPI request with app.state.redis
+        profile: The demo user profile to persist
+        session_id: Browser session ID to use as the Redis key
+    """
+    if not session_id:
+        logger.debug("No session_id provided, skipping session profile persistence")
+        return
+    
+    redis_mgr = getattr(request.app.state, "redis", None)
+    if not redis_mgr:
+        logger.warning("Redis manager not available, skipping session profile persistence")
+        return
+    
+    try:
+        # Load or create MemoManager for this session
+        mm = MemoManager.from_redis(session_id, redis_mgr)
+        if mm is None:
+            mm = MemoManager(session_id=session_id)
+        
+        # Build full session profile dict for comprehensive context
+        profile_dict = profile.model_dump(mode="json")
+        
+        # Set core memory values that media_handler._derive_default_greeting expects
+        mm.set_corememory("session_profile", profile_dict)
+        mm.set_corememory("caller_name", profile.full_name)
+        mm.set_corememory("client_id", profile.client_id)
+        mm.set_corememory("institution_name", profile.institution_name)
+        mm.set_corememory("customer_intelligence", profile.customer_intelligence)
+        mm.set_corememory("relationship_tier", profile.relationship_tier)
+        mm.set_corememory("user_email", str(profile.email))
+        
+        # Persist to Redis with TTL matching demo expiration
+        await mm.persist_to_redis_async(redis_mgr, ttl_seconds=DEMOS_TTL_SECONDS)
+        
+        logger.info(
+            "Persisted demo profile to session",
+            extra={
+                "session_id": session_id,
+                "client_id": profile.client_id,
+                "caller_name": profile.full_name,
+            },
+        )
+    except Exception as exc:
+        # Don't fail the request if session persistence fails
+        logger.warning(
+            "Failed to persist demo profile to session: %s",
+            exc,
+            extra={"session_id": session_id, "client_id": profile.client_id},
+        )
+
+
 @router.post(
     "/temporary-user",
     response_model=DemoUserResponse,
@@ -564,6 +628,8 @@ async def create_temporary_user(
     )
     await _persist_demo_user(response)
     await _append_phrase_bias_entries(profile, request)
+    # Persist profile to Redis session so media_handler can discover it
+    await _persist_profile_to_session(request, profile, payload.session_id)
     return response
 
 
@@ -573,6 +639,7 @@ async def create_temporary_user(
     status_code=status.HTTP_200_OK,
 )
 async def lookup_demo_user(
+    request: Request,
     email: EmailStr,
     session_id: str | None = None,
 ) -> DemoUserLookupResponse:
@@ -648,6 +715,9 @@ async def lookup_demo_user(
         "notification_message": "Banking profile loaded successfully"
     }
 
+    # Determine effective session_id
+    effective_session_id = session_id or demo_metadata.get("session_id")
+
     response = DemoUserLookupResponse(
         entry_id=demo_metadata.get("entry_id") or document.get("_id") or document.get("client_id") or "",
         expires_at=_parse_iso8601(
@@ -656,9 +726,13 @@ async def lookup_demo_user(
         profile=profile_model,
         transactions=[DemoTransaction.model_validate(txn) for txn in transactions_payload],
         interaction_plan=DemoInteractionPlan.model_validate(interaction_payload),
-        session_id=session_id or demo_metadata.get("session_id"),
+        session_id=effective_session_id,
         safety_notice=demo_metadata.get(
             "safety_notice", "Demo data only. Never enter real customer or personal information in this sandbox."
         ),
     )
+    
+    # Persist profile to Redis session so media_handler can discover it
+    await _persist_profile_to_session(request, profile_model, effective_session_id)
+    
     return response

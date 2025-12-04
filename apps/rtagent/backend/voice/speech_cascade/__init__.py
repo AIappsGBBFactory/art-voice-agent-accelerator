@@ -43,6 +43,7 @@ from .metrics import (
     record_turn_processing,
     record_barge_in,
 )
+from .orchestrator import CascadeOrchestratorAdapter
 
 __all__ = [
     # Handler components
@@ -55,6 +56,8 @@ __all__ = [
     "BargeInController",
     "ResponseSender",
     "TranscriptEmitter",
+    # Orchestrator shim
+    "CascadeOrchestratorAdapter",
     # Metrics
     "record_stt_recognition",
     "record_turn_processing",

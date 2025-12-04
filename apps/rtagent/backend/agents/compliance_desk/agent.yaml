@@ -16,7 +16,6 @@ return_greeting: "Welcome back to compliance. Let me know any new details and we
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
   trigger: handoff_compliance_desk
-  strategy: auto                       # Works with both orchestrators
   transition_message: "Let me review the compliance requirements for your transaction."
 
 # ─────────────────────────────────────────────────────────────────────────────

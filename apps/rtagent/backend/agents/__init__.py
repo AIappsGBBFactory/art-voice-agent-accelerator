@@ -3,11 +3,11 @@ Unified Agent Configuration Module
 ===================================
 
 Modular, orchestrator-agnostic agent configuration with auto-discovery.
-Agents are handoff-strategy-aware but don't care about orchestration type.
+Agents define a handoff.trigger (how to reach them) for routing.
 
 Architecture:
-- Agents define handoff.trigger (how to reach them) and handoff.strategy (auto/tool_based/state_based)
-- Orchestrators (VoiceLive, SpeechCascade) use the appropriate handoff strategy implementation
+- Agents define handoff.trigger (how to reach them)
+- Orchestrators (VoiceLive, SpeechCascade) use build_handoff_map() for routing
 - All tools are referenced by name from the shared tool registry
 
 Usage:
@@ -28,13 +28,11 @@ Usage:
     
     # Check handoff configuration
     print(fraud_agent.handoff.trigger)    # "handoff_fraud_agent"
-    print(fraud_agent.handoff.strategy)   # HandoffStrategy.AUTO
 """
 
 from apps.rtagent.backend.agents.base import (
     UnifiedAgent,
     HandoffConfig,
-    HandoffStrategy,
     VoiceConfig,
     ModelConfig,
     build_handoff_map,
@@ -63,7 +61,6 @@ __all__ = [
     # Core types
     "UnifiedAgent",
     "HandoffConfig",
-    "HandoffStrategy",
     "VoiceConfig",
     "ModelConfig",
     "build_handoff_map",

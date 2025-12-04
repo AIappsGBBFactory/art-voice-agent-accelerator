@@ -60,22 +60,11 @@ const GraphListView = ({ events, compact = true, fillHeight = false }) => {
     });
   }, [recentEvents, selectedFilters]);
 
-  // Default to last active participant when nothing is selected
+  // Leave filters empty by default (show all) and let the user pick any agent
   useEffect(() => {
-    if (selectedFilters.length || !recentEvents.length) return;
-    const lastEvt = [...recentEvents].reverse().find((evt) => {
-      const names = [evt.to, evt.from, evt.agent].filter(Boolean);
-      return names.some((n) => n && n !== "System");
-    });
-    if (!lastEvt) return;
-    const preferred =
-      [lastEvt.to, lastEvt.from, lastEvt.agent].filter(
-        (n) => n && n !== "System",
-      )[0];
-    if (preferred) {
-      setSelectedFilters([preferred]);
-    }
-  }, [recentEvents, selectedFilters.length]);
+    if (!recentEvents.length) return;
+    // no-op; keep "All" as default
+  }, [recentEvents]);
 
   const toggleFilter = (name) => {
     setSelectedFilters((prev) =>

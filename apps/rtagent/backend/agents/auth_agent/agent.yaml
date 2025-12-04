@@ -19,7 +19,7 @@ return_greeting: "Let's continue with verification."
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
   trigger: handoff_to_auth            # Other agents call this to reach AuthAgent
-  strategy: auto                      # Works with both orchestrators
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration

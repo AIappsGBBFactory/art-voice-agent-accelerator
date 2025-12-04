@@ -18,7 +18,6 @@ return_greeting: "Welcome back to the Fraud Prevention desk. Tell me what's chan
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
   trigger: handoff_fraud_agent      # Other agents call this to reach FraudAgent
-  strategy: auto                     # Works with both orchestrators
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model Configuration (overrides _defaults.yaml)

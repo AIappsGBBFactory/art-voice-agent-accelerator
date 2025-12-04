@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from apps.rtagent.backend.agents.base import (
     UnifiedAgent,
     HandoffConfig,
-    HandoffStrategy,
     VoiceConfig,
     ModelConfig,
 )

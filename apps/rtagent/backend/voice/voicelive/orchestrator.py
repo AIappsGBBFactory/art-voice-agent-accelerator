@@ -19,7 +19,7 @@ Architecture:
            └─► _execute_tool_call() ───► shared tool registry
 
 Usage:
-    from apps.rtagent.backend.voice.orchestrators import (
+    from apps.rtagent.backend.voice.voicelive import (
         LiveOrchestrator,
         TRANSFER_TOOL_NAMES,
         CALL_CENTER_TRIGGER_PHRASES,
@@ -54,10 +54,12 @@ from apps.rtagent.backend.agents.tools import (
     initialize_tools,
 )
 from apps.rtagent.backend.src.services.session_loader import load_user_profile_by_client_id
+from apps.rtagent.backend.voice.handoffs import build_handoff_system_vars, sanitize_handoff_context
 
 if TYPE_CHECKING:
-    from ..voicelive.agent_adapter import VoiceLiveAgentAdapter
+    from .agent_adapter import VoiceLiveAgentAdapter
     from src.stateful.state_managment import MemoManager
+    from apps.rtagent.backend.agents.session_manager import HandoffProvider
 
 from utils.ml_logging import get_logger
 from apps.rtagent.backend.src.utils.tracing import (
@@ -92,27 +94,6 @@ _PAYPAL_SEARCH_PREFACE_MESSAGES: Tuple[str, ...] = (
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def _sanitize_handoff_context(raw: Any) -> Dict[str, Any]:
-    """Remove control flags so prompt variables stay clean."""
-    if not isinstance(raw, dict):
-        return {}
-
-    disallowed = {
-        "success",
-        "handoff",
-        "target_agent",
-        "message",
-        "handoff_summary",
-        "should_interrupt_playback",
-        "session_overrides",
-    }
-    return {
-        key: value
-        for key, value in raw.items()
-        if key not in disallowed and value not in (None, "", [], {})
-    }
-
 
 async def _auto_load_user_context(system_vars: Dict[str, Any]) -> None:
     """
@@ -176,7 +157,7 @@ class LiveOrchestrator:
         self,
         conn,
         agents: Dict[str, "VoiceLiveAgentAdapter"],
-        handoff_map: Dict[str, str],
+        handoff_map: Optional[Dict[str, str]] = None,
         start_agent: str = "EricaConcierge",
         audio_processor=None,
         messenger=None,
@@ -185,10 +166,13 @@ class LiveOrchestrator:
         transport: str = "acs",
         model_name: Optional[str] = None,
         memo_manager: Optional["MemoManager"] = None,
+        handoff_provider: Optional["HandoffProvider"] = None,
     ):
         self.conn = conn
         self.agents = agents
-        self.handoff_map = handoff_map
+        # Prefer handoff_provider for live lookups; fallback to static handoff_map
+        self._handoff_provider = handoff_provider
+        self._handoff_map = handoff_map or {}
         self.active = start_agent
         self.audio = audio_processor
         self.messenger = messenger
@@ -359,6 +343,32 @@ class LiveOrchestrator:
             mm.last_user_message = self._last_user_message
         
         logger.debug("[LiveOrchestrator] Synced state to MemoManager")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # HANDOFF RESOLUTION
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def get_handoff_target(self, tool_name: str) -> Optional[str]:
+        """
+        Get the target agent for a handoff tool.
+        
+        Prefers HandoffProvider (live lookup) over static handoff_map.
+        This allows session-level handoff_map updates to take effect.
+        """
+        if self._handoff_provider:
+            return self._handoff_provider.get_handoff_target(tool_name)
+        return self._handoff_map.get(tool_name)
+
+    @property
+    def handoff_map(self) -> Dict[str, str]:
+        """
+        Get the current handoff map (for backward compatibility).
+        
+        Returns a copy if using HandoffProvider, or the static map.
+        """
+        if self._handoff_provider:
+            return self._handoff_provider.handoff_map
+        return self._handoff_map
 
     # ═══════════════════════════════════════════════════════════════════════════
     # PUBLIC API
@@ -638,7 +648,7 @@ class LiveOrchestrator:
                 self._pending_greeting = None
                 self._pending_greeting_agent = None
 
-            handoff_context = _sanitize_handoff_context(system_vars.get("handoff_context"))
+            handoff_context = sanitize_handoff_context(system_vars.get("handoff_context"))
             if handoff_context:
                 system_vars["handoff_context"] = handoff_context
                 for key in ("caller_name", "client_id", "institution_name", "service_type",
@@ -886,7 +896,7 @@ class LiveOrchestrator:
 
             # Handle handoff tools
             if is_handoff_tool(name):
-                target = self.handoff_map.get(name)
+                target = self.get_handoff_target(name)
                 if not target:
                     logger.warning("Handoff tool '%s' not in handoff_map", name)
                     notify_status = "error"
@@ -908,36 +918,15 @@ class LiveOrchestrator:
                 tool_span.set_attribute("voicelive.handoff.target_agent", target)
                 tool_span.add_event("tool.handoff_triggered", {"target_agent": target})
 
-                raw_handoff_context = result.get("handoff_context") if isinstance(result, dict) else {}
-                handoff_context: Dict[str, Any] = {}
-                if isinstance(raw_handoff_context, dict):
-                    handoff_context = dict(raw_handoff_context)
-                if last_user_message:
-                    handoff_context.setdefault("user_last_utterance", last_user_message)
-                    handoff_context.setdefault("details", last_user_message)
-                handoff_context = _sanitize_handoff_context(handoff_context)
-                session_overrides = result.get("session_overrides")
-                if not isinstance(session_overrides, dict) or not session_overrides:
-                    session_overrides = None
-                ctx = {
-                    "handoff_reason": result.get("handoff_summary")
-                    or handoff_context.get("reason")
-                    or args.get("reason", "unspecified"),
-                    "details": handoff_context.get("details")
-                    or result.get("details")
-                    or args.get("details")
-                    or last_user_message,
-                    "previous_agent": self.active,
-                    "handoff_context": handoff_context,
-                    "handoff_message": result.get("message"),
-                }
-                for key in ("session_profile", "client_id", "customer_intelligence", "institution_name"):
-                    if key in self._system_vars:
-                        ctx[key] = self._system_vars[key]
-                if last_user_message:
-                    ctx.setdefault("user_last_utterance", last_user_message)
-                if session_overrides:
-                    ctx["session_overrides"] = session_overrides
+                # Use shared helper to build consistent handoff context
+                ctx = build_handoff_system_vars(
+                    source_agent=self.active,
+                    target_agent=target,
+                    tool_result=result if isinstance(result, dict) else {},
+                    tool_args=args,
+                    current_system_vars=self._system_vars,
+                    user_last_utterance=last_user_message,
+                )
                 
                 logger.info("[Handoff Tool] '%s' triggered | %s → %s", name, self.active, target)
 
@@ -982,9 +971,10 @@ class LiveOrchestrator:
                 
                 # Trigger the new agent to respond naturally as itself
                 # Build context about the handoff for the new agent's instruction
+                handoff_ctx = ctx.get("handoff_context", {})
                 user_question = (
-                    handoff_context.get("question")
-                    or handoff_context.get("details")
+                    handoff_ctx.get("question")
+                    or handoff_ctx.get("details")
                     or last_user_message
                     or "general inquiry"
                 )

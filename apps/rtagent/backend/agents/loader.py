@@ -286,30 +286,6 @@ def render_prompt(config: UnifiedAgent, context: Dict[str, Any]) -> str:
     return config.render_prompt(context)
 
 
-def get_agents_by_handoff_strategy(
-    agents: Dict[str, UnifiedAgent],
-    strategy: str,
-) -> Dict[str, UnifiedAgent]:
-    """
-    Filter agents by handoff strategy.
-    
-    Args:
-        agents: Dict of agents
-        strategy: "auto", "tool_based", or "state_based"
-    
-    Returns:
-        Filtered dict of agents
-    """
-    from apps.rtagent.backend.agents.base import HandoffStrategy
-    
-    target_strategy = HandoffStrategy(strategy.lower())
-    return {
-        name: agent
-        for name, agent in agents.items()
-        if agent.handoff.strategy == target_strategy or agent.handoff.strategy == HandoffStrategy.AUTO
-    }
-
-
 __all__ = [
     "UnifiedAgent",
     "AgentConfig",  # Legacy alias
@@ -320,5 +296,4 @@ __all__ = [
     "list_agent_names",
     "load_defaults",
     "render_prompt",
-    "get_agents_by_handoff_strategy",
 ]

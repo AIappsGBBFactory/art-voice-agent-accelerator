@@ -16,7 +16,7 @@ You serve two purposes:
 **Client ID:** `{{ session_profile.client_id }}`
 {% if session_profile.customer_intelligence %}
 **Tier:** {{ session_profile.customer_intelligence.relationship_context.relationship_tier | default('Standard') }}
-**Balance:** ${{ "{:,.2f}".format(session_profile.customer_intelligence.bank_profile.current_balance | default(0)) }}
+**Balance:** ${{ "{:,.2f}".format(session_profile.customer_intelligence.account_status.current_balance | default(0)) }}
 {% endif %}
 
 ✅ **Identity verified - proceed directly to their request.**

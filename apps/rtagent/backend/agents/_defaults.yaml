@@ -25,15 +25,10 @@ voice:
   style: chat
   rate: "+0%"
 
-# Handoff configuration (strategy-aware)
+# Handoff configuration
 handoff:
-  # Strategy determines how handoffs are processed:
-  # - auto: Works with any orchestrator (recommended)
-  # - tool_based: LLM calls handoff tools (VoiceLive pattern)
-  # - state_based: Code updates MemoManager state (SpeechCascade pattern)
-  strategy: auto
-  # MemoManager key for state-based handoffs
-  state_key: pending_handoff
+  # No default trigger - each agent defines its own
+  # trigger: handoff_<agent_name>
 
 # Session settings (VoiceLive / Realtime API)
 session:

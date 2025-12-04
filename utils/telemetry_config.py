@@ -54,7 +54,7 @@ class TelemetryConfig:
     # Core settings
     enabled: bool = True
     connection_string: Optional[str] = None
-    logger_name: str = "default"
+    logger_name: str = ""  # Empty string captures ALL loggers
     
     # Service identification (for Application Map)
     service_name: str = "rtagent-api"
@@ -99,7 +99,7 @@ class TelemetryConfig:
         return cls(
             enabled=not _bool_env("DISABLE_CLOUD_TELEMETRY", False),
             connection_string=os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"),
-            logger_name=os.getenv("AZURE_MONITOR_LOGGER_NAME", "default"),
+            logger_name=os.getenv("AZURE_MONITOR_LOGGER_NAME", ""),  # Empty = capture all loggers
             service_name=os.getenv("SERVICE_NAME", "rtagent-api"),
             service_namespace=os.getenv("SERVICE_NAMESPACE", "callcenter-app"),
             service_version=os.getenv("SERVICE_VERSION") or os.getenv("APP_VERSION"),
