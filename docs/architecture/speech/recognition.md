@@ -306,4 +306,4 @@ recognizer.call_connection_id = "acs-call-123"  # For ACS correlation
 # - Error conditions and recovery
 ```
 
-See **[Streaming Modes Documentation](streaming-modes.md)** for detailed configuration options and **[Speech Synthesis](speech-synthesis.md)** for TTS integration patterns.
+See **[Streaming Modes Documentation](README.md)** for detailed configuration options and **[Speech Synthesis](synthesis.md)** for TTS integration patterns.
