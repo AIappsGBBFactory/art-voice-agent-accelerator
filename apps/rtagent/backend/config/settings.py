@@ -137,69 +137,21 @@ AZURE_COSMOS_COLLECTION_NAME: str = os.getenv("AZURE_COSMOS_COLLECTION_NAME", ""
 
 
 # ==============================================================================
-# AGENT CONFIGURATIONS
-# ==============================================================================
-
-_AGENT_BASE_PATH = "apps/rtagent/backend/src/agents/artagent/agents"
-
-AGENT_AUTH_CONFIG: str = os.getenv(
-    "AGENT_AUTH_CONFIG", f"{_AGENT_BASE_PATH}/auth_agent.yaml"
-)
-AGENT_CLAIM_INTAKE_CONFIG: str = os.getenv(
-    "AGENT_CLAIM_INTAKE_CONFIG", f"{_AGENT_BASE_PATH}/claim_intake_agent.yaml"
-)
-AGENT_FRAUD_CONFIG: str = os.getenv(
-    "AGENT_FRAUD_CONFIG", f"{_AGENT_BASE_PATH}/fraud_agent.yaml"
-)
-AGENT_AGENCY_CONFIG: str = os.getenv(
-    "AGENT_AGENCY_CONFIG", f"{_AGENT_BASE_PATH}/agency_agent.yaml"
-)
-AGENT_COMPLIANCE_CONFIG: str = os.getenv(
-    "AGENT_COMPLIANCE_CONFIG", f"{_AGENT_BASE_PATH}/compliance_agent.yaml"
-)
-AGENT_TRADING_CONFIG: str = os.getenv(
-    "AGENT_TRADING_CONFIG", f"{_AGENT_BASE_PATH}/trading_agent.yaml"
-)
-
-
-# ==============================================================================
 # VOICE & TTS SETTINGS
 # ==============================================================================
+# NOTE: Per-agent voice settings are now defined in each agent's agent.yaml.
+# These settings provide fallback defaults used by legacy code paths.
+# See: apps/rtagent/backend/agents/<agent_name>/agent.yaml
+# ==============================================================================
 
-import yaml
-from typing import Dict
+# Fallback TTS voice (used when agent voice is not available)
+DEFAULT_TTS_VOICE: str = os.getenv("DEFAULT_TTS_VOICE", "en-US-OnyxTurboMultilingualNeural")
+# Legacy alias - deprecated, use DEFAULT_TTS_VOICE
+GREETING_VOICE_TTS: str = os.getenv("GREETING_VOICE_TTS", DEFAULT_TTS_VOICE)
 
-_voice_cache: Dict[str, str] = {}
-
-def get_agent_voice(agent_config_path: str) -> str:
-    """Extract voice from agent YAML configuration. Cached to avoid repeated file reads."""
-    if agent_config_path in _voice_cache:
-        return _voice_cache[agent_config_path]
-
-    default_voice = "en-US-AvaMultilingualNeural"
-    try:
-        with open(agent_config_path, "r", encoding="utf-8") as file:
-            agent_config = yaml.safe_load(file)
-            voice_config = agent_config.get("voice", {})
-            if isinstance(voice_config, dict):
-                voice_name = voice_config.get("voice_name") or voice_config.get("name")
-                if voice_name:
-                    _voice_cache[agent_config_path] = voice_name
-                    return voice_name
-            elif isinstance(voice_config, str):
-                _voice_cache[agent_config_path] = voice_config
-                return voice_config
-    except Exception:
-        pass
-    
-    _voice_cache[agent_config_path] = default_voice
-    return default_voice
-
-
-# Primary TTS voice
-GREETING_VOICE_TTS: str = os.getenv("GREETING_VOICE_TTS") or get_agent_voice(AGENT_AUTH_CONFIG)
-DEFAULT_VOICE_STYLE: str = os.getenv("DEFAULT_VOICE_STYLE", "neutral")
-DEFAULT_VOICE_RATE: str = os.getenv("DEFAULT_VOICE_RATE", "0%")
+# Fallback voice style/rate (agents define these in agent.yaml voice config)
+DEFAULT_VOICE_STYLE: str = os.getenv("DEFAULT_VOICE_STYLE", "chat")
+DEFAULT_VOICE_RATE: str = os.getenv("DEFAULT_VOICE_RATE", "+0%")
 
 # TTS audio format
 TTS_SAMPLE_RATE_UI: int = _env_int("TTS_SAMPLE_RATE_UI", 48000)
@@ -335,9 +287,9 @@ def validate_settings() -> dict:
     if CONNECTION_TIMEOUT_SECONDS < 60:
         warnings.append(f"CONNECTION_TIMEOUT_SECONDS ({CONNECTION_TIMEOUT_SECONDS}) is quite short")
 
-    # Voice settings
-    if not GREETING_VOICE_TTS:
-        issues.append("GREETING_VOICE_TTS is empty")
+    # Voice settings - DEFAULT_TTS_VOICE is the primary fallback
+    if not DEFAULT_TTS_VOICE:
+        issues.append("DEFAULT_TTS_VOICE is empty")
 
     # Count settings
     import sys

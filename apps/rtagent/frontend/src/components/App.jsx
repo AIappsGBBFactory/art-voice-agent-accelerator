@@ -1793,13 +1793,20 @@ function RealTimeVoiceApp() {
         // Transform envelope back to legacy format for compatibility
         if (envelopeType === "event" && (actualPayload.event_type || actualPayload.eventType)) {
           const evtType = actualPayload.event_type || actualPayload.eventType;
-          const evtData = actualPayload.data || {};
+          const eventData = {
+            ...(typeof actualPayload.data === "object" && actualPayload.data ? actualPayload.data : {}),
+            ...actualPayload,
+          };
+          delete eventData.event_type;
+          delete eventData.eventType;
           flattenedPayload = {
-            type: evtType,
+            ...eventData,
+            type: "event",
             event_type: evtType,
-            data: evtData,
-            message: actualPayload.message || evtData.message,
-            content: actualPayload.content || evtData.content || actualPayload.message,
+            event_data: eventData,
+            data: eventData,
+            message: actualPayload.message || eventData.message,
+            content: actualPayload.content || eventData.content || actualPayload.message,
             sender: envelopeSender,
             speaker: envelopeSender,
           };
@@ -1894,7 +1901,7 @@ function RealTimeVoiceApp() {
         payload.event_type = normalizedEventType;
       }
 
-      if (normalizedEventType === "session_updated") {
+      if (normalizedEventType === "session_updated" || normalizedEventType === "agent_change") {
         const combinedData = {
           ...(typeof payload.event_data === "object" && payload.event_data ? payload.event_data : {}),
           ...(typeof payload.data === "object" && payload.data ? payload.data : {}),
@@ -1935,27 +1942,41 @@ function RealTimeVoiceApp() {
         const agentLabel =
           typeof candidateAgent === "string" ? candidateAgent.trim() : null;
 
-      if (agentLabel) {
-        const label = agentLabel;
-        combinedData.active_agent_label = combinedData.active_agent_label ?? label;
-        combinedData.agent_label = combinedData.agent_label ?? label;
-        combinedData.agent_name = combinedData.agent_name ?? label;
-        payload.active_agent_label = payload.active_agent_label ?? label;
-        payload.agent_label = payload.agent_label ?? label;
-        payload.agent_name = payload.agent_name ?? label;
-        if (currentAgentRef.current && label !== currentAgentRef.current) {
-          appendGraphEvent({
-            kind: "switch",
-            from: currentAgentRef.current,
-            to: label,
-            text: payload.summary || combinedData.message || "Agent switched",
-            ts: payload.ts || payload.timestamp,
-          });
+        if (agentLabel) {
+          const label = agentLabel;
+          combinedData.active_agent_label = combinedData.active_agent_label ?? label;
+          combinedData.agent_label = combinedData.agent_label ?? label;
+          combinedData.agent_name = combinedData.agent_name ?? label;
+          payload.active_agent_label = payload.active_agent_label ?? label;
+          payload.agent_label = payload.agent_label ?? label;
+          payload.agent_name = payload.agent_name ?? label;
+          const previousAgent =
+            payload.previous_agent ||
+            payload.previousAgent ||
+            combinedData.previous_agent ||
+            combinedData.previousAgent ||
+            combinedData.handoff_source ||
+            combinedData.handoffSource;
+          const fromAgent = previousAgent || currentAgentRef.current;
+          const reasonText =
+            payload.summary ||
+            combinedData.handoff_reason ||
+            combinedData.handoffReason ||
+            combinedData.message ||
+            "Agent switched";
+          if (fromAgent && label && label !== fromAgent) {
+            appendGraphEvent({
+              kind: "switch",
+              from: fromAgent,
+              to: label,
+              text: reasonText,
+              ts: payload.ts || payload.timestamp,
+            });
+          }
+          if (label !== "System" && label !== "User") {
+            currentAgentRef.current = label;
+          }
         }
-        if (label !== "System" && label !== "User") {
-          currentAgentRef.current = label;
-        }
-      }
 
         const displayLabel = combinedData.active_agent_label || combinedData.agent_label;
         const resolvedMessage =
@@ -2808,7 +2829,37 @@ function RealTimeVoiceApp() {
             text: finalText,
           },
         );
-      
+
+        const handoffTarget =
+          (resultPayload &&
+            typeof resultPayload === "object" &&
+            (resultPayload.target_agent ||
+              resultPayload.handoff_target ||
+              resultPayload.handoffTarget ||
+              resultPayload.targetAgent)) ||
+          payload.target_agent ||
+          payload.handoff_target ||
+          payload.handoffTarget;
+        if (handoffTarget) {
+          const sourceAgent = resolveAgentLabel(payload, currentAgentRef.current || "Assistant");
+          const handoffReason =
+            (resultPayload &&
+              typeof resultPayload === "object" &&
+              (resultPayload.handoff_summary ||
+                resultPayload.handoffSummary ||
+                resultPayload.message ||
+                resultPayload.reason)) ||
+            payload.summary ||
+            payload.message;
+          appendGraphEvent({
+            kind: "switch",
+            from: sourceAgent,
+            to: handoffTarget,
+            text: handoffReason || `Handoff via ${payload.tool}`,
+            ts: payload.ts || payload.timestamp,
+          });
+        }
+
         appendGraphEvent({
           kind: "tool",
           from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),

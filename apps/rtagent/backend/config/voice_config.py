@@ -3,11 +3,14 @@ Voice and TTS Configuration (DEPRECATED)
 ========================================
 
 This file is deprecated. Import from config or config.settings instead.
+
+Note: Per-agent voice settings are now defined in each agent's agent.yaml.
+      These settings provide fallback defaults.
 """
 
 from .settings import (
-    get_agent_voice,
-    GREETING_VOICE_TTS,
+    DEFAULT_TTS_VOICE,
+    GREETING_VOICE_TTS,  # Deprecated alias
     DEFAULT_VOICE_STYLE,
     DEFAULT_VOICE_RATE,
     TTS_SAMPLE_RATE_UI,
@@ -22,5 +25,4 @@ from .settings import (
     AZURE_VOICE_LIVE_ENDPOINT,
     AZURE_VOICE_API_KEY,
     AZURE_VOICE_LIVE_MODEL,
-    AGENT_AUTH_CONFIG,
 )

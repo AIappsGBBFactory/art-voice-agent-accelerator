@@ -248,33 +248,38 @@ class _SessionMessenger:
 		self._active_agent_name = agent_name
 		self._active_agent_label = new_label
 		
-		# # Emit agent change envelope for frontend UI
-		# if self._can_emit() and agent_name:
-		# 	envelope = make_envelope(
-		# 		etype="event",
-		# 		sender="System",
-		# 		payload={
-		# 			"event_type": "agent_change",
-		# 			"agent_name": agent_name,
-		# 			"agent_label": new_label,
-		# 			"previous_agent": previous_agent,
-		# 			"message": f"Switched to {new_label or agent_name}",
-		# 		},
-		# 		topic="session",
-		# 		session_id=self._session_id,
-		# 		call_id=self._call_id,
-		# 	)
-		# 	_background_task(
-		# 		send_session_envelope(
-		# 			self._ws,
-		# 			envelope,
-		# 			session_id=self._session_id,
-		# 			conn_id=None,
-		# 			event_label="voicelive_agent_change",
-		# 			broadcast_only=True,
-		# 		),
-		# 		label="agent_change_envelope",
-		# 	)
+		# Emit agent change envelope for frontend UI (cascade updates)
+		if self._can_emit() and agent_name:
+			envelope = make_envelope(
+				etype="event",
+				sender="System",
+				payload={
+					"event_type": "agent_change",
+					"agent_name": agent_name,
+					"agent_label": new_label,
+					"previous_agent": previous_agent,
+					"message": f"Switched to {new_label or agent_name}",
+				},
+				topic="session",
+				session_id=self._session_id,
+				call_id=self._call_id,
+			)
+			_background_task(
+				send_session_envelope(
+					self._ws,
+					envelope,
+					session_id=self._session_id,
+					conn_id=None,
+					event_label="voicelive_agent_change",
+					broadcast_only=True,
+				),
+				label="agent_change_envelope",
+			)
+			logger.info(
+				"[VoiceLive] Agent change emitted: %s → %s",
+				previous_agent,
+				new_label or agent_name,
+			)
 
 	@property
 	def _session_id(self) -> Optional[str]:
