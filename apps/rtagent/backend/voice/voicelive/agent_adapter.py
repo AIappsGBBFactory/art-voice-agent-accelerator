@@ -170,10 +170,6 @@ class VoiceLiveAgentAdapter:
         self.turn_detection = _vad(sess.get("turn_detection"))
         self.tool_choice: Optional[str] = sess.get("tool_choice", "auto")
         
-        # Cache rendered greetings
-        self._greeting_rendered: Optional[str] = None
-        self._return_greeting_rendered: Optional[str] = None
-        
         # Build tools
         self._tools: Optional[List["FunctionTool"]] = None
     
@@ -191,45 +187,53 @@ class VoiceLiveAgentAdapter:
     
     @property
     def greeting(self) -> Optional[str]:
-        """Get rendered greeting."""
-        if self._greeting_rendered is not None:
-            return self._greeting_rendered
+        """
+        Get default greeting (rendered with env vars only).
         
-        if not self._agent.greeting:
-            return None
-        
-        # Render with environment variables
-        try:
-            template = Template(self._agent.greeting)
-            self._greeting_rendered = template.render(
-                agent_name=os.getenv("AGENT_NAME", "Erica"),
-                institution_name=os.getenv("INSTITUTION_NAME", "Contoso Bank"),
-            )
-            return self._greeting_rendered
-        except Exception as e:
-            logger.warning("Failed to render greeting for %s: %s", self.name, e)
-            return self._agent.greeting
+        For context-aware greetings, use render_greeting(context) instead.
+        """
+        return self._agent.render_greeting()
     
     @property
     def return_greeting(self) -> Optional[str]:
-        """Get rendered return greeting."""
-        if self._return_greeting_rendered is not None:
-            return self._return_greeting_rendered
+        """
+        Get default return greeting (rendered with env vars only).
         
-        if not self._agent.return_greeting:
-            return None
-        
-        try:
-            template = Template(self._agent.return_greeting)
-            self._return_greeting_rendered = template.render(
-                agent_name=os.getenv("AGENT_NAME", "Erica"),
-                institution_name=os.getenv("INSTITUTION_NAME", "Contoso Bank"),
-            )
-            return self._return_greeting_rendered
-        except Exception as e:
-            logger.warning("Failed to render return_greeting for %s: %s", self.name, e)
-            return self._agent.return_greeting
+        For context-aware greetings, use render_return_greeting(context) instead.
+        """
+        return self._agent.render_return_greeting()
     
+    def render_greeting(self, context: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """
+        Render greeting with session context.
+        
+        Delegates to UnifiedAgent.render_greeting() for consistent behavior
+        with Speech Cascade mode.
+        
+        Args:
+            context: Session context (caller_name, institution_name, 
+                    customer_intelligence, session_profile, etc.)
+        
+        Returns:
+            Rendered greeting string, or None if not configured
+        """
+        return self._agent.render_greeting(context)
+    
+    def render_return_greeting(self, context: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """
+        Render return greeting with session context.
+        
+        Delegates to UnifiedAgent.render_return_greeting() for consistent
+        behavior with Speech Cascade mode.
+        
+        Args:
+            context: Session context (caller_name, institution_name, etc.)
+        
+        Returns:
+            Rendered return greeting string, or None if not configured
+        """
+        return self._agent.render_return_greeting(context)
+
     @property
     def voice_name(self) -> Optional[str]:
         return self._agent.voice.name
