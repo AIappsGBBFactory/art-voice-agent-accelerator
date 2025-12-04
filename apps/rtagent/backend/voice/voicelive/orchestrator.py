@@ -1064,7 +1064,14 @@ class LiveOrchestrator:
         system_vars: dict,
         is_first_visit: bool,
     ) -> Optional[str]:
-        """Return a contextual greeting the agent should deliver once the session is ready."""
+        """
+        Return a contextual greeting the agent should deliver once the session is ready.
+        
+        Uses the same context-aware rendering as Speech Cascade mode for consistency.
+        Context variables (caller_name, institution_name, customer_intelligence, etc.)
+        are passed to the greeting template for personalization.
+        """
+        # Priority 1: Explicit greeting override in system_vars
         explicit = system_vars.get("greeting")
         if not explicit:
             overrides = system_vars.get("session_overrides")
@@ -1073,6 +1080,7 @@ class LiveOrchestrator:
         if explicit:
             return explicit.strip() or None
 
+        # Check for handoff context
         handoff_context = system_vars.get("handoff_context") or {}
         has_handoff = bool(
             handoff_context
@@ -1080,53 +1088,78 @@ class LiveOrchestrator:
             or system_vars.get("handoff_reason")
         )
 
-        if not has_handoff:
-            if is_first_visit:
-                return (agent.greeting or "").strip() or None
-            return (agent.return_greeting or "Welcome back! How can I help you?").strip()
-
-        caller = (
-            handoff_context.get("caller_name")
-            if isinstance(handoff_context, dict)
-            else None
-        ) or system_vars.get("caller_name") or "there"
-
-        intent = None
-        if isinstance(handoff_context, dict):
-            intent = (
-                handoff_context.get("issue_summary")
-                or handoff_context.get("details")
-                or handoff_context.get("reason")
-            )
-        intent = (
-            system_vars.get("handoff_reason")
-            or system_vars.get("issue_summary")
-            or system_vars.get("details")
-            or intent
-        )
-
-        intro = agent.return_greeting if not is_first_visit else agent.greeting
-        intro = (intro or "").strip()
-        
         # For handoffs (seamless continuation), skip automatic greeting
+        # The new agent will respond naturally to the context
         if has_handoff:
             return None
 
-        if intent:
-            intent = intent.strip().rstrip(".")
-            if intro:
-                return f"Hi {caller}, {intro} I understand you're calling about {intent}. Let's get started."
-            return None
+        # Priority 2: Render greeting/return_greeting with full session context
+        # This is consistent with Speech Cascade's _derive_default_greeting behavior
+        greeting_context = self._build_greeting_context(system_vars, handoff_context)
+        
+        logger.debug(
+            "[Greeting] Building greeting for %s | first_visit=%s | context keys=%s | caller_name=%s",
+            agent_name,
+            is_first_visit,
+            list(greeting_context.keys()),
+            greeting_context.get("caller_name"),
+        )
+        
+        if is_first_visit:
+            rendered = agent.render_greeting(greeting_context)
+            logger.info(
+                "[Greeting] Rendered first-visit greeting for %s | has_caller=%s | greeting_len=%d",
+                agent_name,
+                bool(greeting_context.get("caller_name")),
+                len(rendered) if rendered else 0,
+            )
+            return (rendered or "").strip() or None
+        else:
+            rendered = agent.render_return_greeting(greeting_context)
+            return (rendered or "Welcome back! How can I help you?").strip()
 
-        handoff_message = (system_vars.get("handoff_message") or "").strip()
-        if handoff_message:
-            if intro:
-                return f"Hi {caller}, {intro} {handoff_message}"
-            return None
-
-        if intro:
-            return f"Hi {caller}, {intro}".strip()
-        return None
+    def _build_greeting_context(
+        self,
+        system_vars: dict,
+        handoff_context: Optional[dict] = None,
+    ) -> Dict[str, Any]:
+        """
+        Build context dict for greeting template rendering.
+        
+        Extracts relevant variables from system_vars and handoff_context
+        to pass to Jinja2 templates. This ensures consistent context
+        with Speech Cascade mode's greeting rendering.
+        """
+        context: Dict[str, Any] = {}
+        
+        # Core identity fields
+        for key in (
+            "caller_name", "client_id", "institution_name", 
+            "customer_intelligence", "session_profile", "relationship_tier",
+            "active_agent", "previous_agent", "agent_name",
+        ):
+            if system_vars.get(key) is not None:
+                context[key] = system_vars[key]
+        
+        # Extract from handoff_context if available
+        if handoff_context and isinstance(handoff_context, dict):
+            for key in ("caller_name", "client_id", "institution_name", "customer_intelligence"):
+                if key not in context and handoff_context.get(key) is not None:
+                    context[key] = handoff_context[key]
+        
+        # Extract from session_profile if available
+        session_profile = system_vars.get("session_profile")
+        if session_profile and isinstance(session_profile, dict):
+            if "caller_name" not in context and session_profile.get("full_name"):
+                context["caller_name"] = session_profile["full_name"]
+            if "client_id" not in context and session_profile.get("client_id"):
+                context["client_id"] = session_profile["client_id"]
+            if "customer_intelligence" not in context and session_profile.get("customer_intelligence"):
+                context["customer_intelligence"] = session_profile["customer_intelligence"]
+            if "institution_name" not in context and session_profile.get("institution_name"):
+                context["institution_name"] = session_profile["institution_name"]
+        
+        return context
 
     def _cancel_pending_greeting_tasks(self) -> None:
         if not self._greeting_tasks:

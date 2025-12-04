@@ -23,6 +23,8 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from config import ACS_STREAMING_MODE
 from src.enums.stream_modes import StreamMode
+from src.pools.session_manager import SessionContext
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 from utils.session_context import session_context
 
@@ -253,6 +255,26 @@ async def _create_media_handler(
         )
         return await MediaHandler.create(config, websocket.app.state)
     elif stream_mode == StreamMode.VOICE_LIVE:
+        # Initialize MemoManager with session context for VoiceLive
+        # This ensures greeting can access caller_name, session_profile, etc.
+        redis_mgr = getattr(websocket.app.state, "redis", None)
+        memory_manager = MemoManager.from_redis(session_id, redis_mgr) if redis_mgr else MemoManager(session_id=session_id)
+        
+        # Set up session context on websocket.state (consistent with browser.py)
+        websocket.state.cm = memory_manager
+        websocket.state.session_context = SessionContext(
+            session_id=session_id,
+            memory_manager=memory_manager,
+            websocket=websocket,
+        )
+        websocket.state.session_id = session_id
+        
+        logger.debug(
+            "[%s] VoiceLive session context initialized | caller_name=%s",
+            session_id[:8],
+            memory_manager.get_value_from_corememory("caller_name", None),
+        )
+        
         return VoiceLiveSDKHandler(
             websocket=websocket,
             session_id=session_id,
