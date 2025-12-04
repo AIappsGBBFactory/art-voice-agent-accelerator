@@ -79,6 +79,7 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import StarIcon from '@mui/icons-material/Star';
 import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
+import HearingIcon from '@mui/icons-material/Hearing';
 import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
 
@@ -137,6 +138,169 @@ const TEMPLATE_VARIABLES = [
     source: 'Agent Config',
   },
 ];
+
+const TEMPLATE_VARIABLE_DOCS = [
+  {
+    key: 'caller_name',
+    label: 'caller_name',
+    type: 'string',
+    source: 'Session Profile',
+    paths: ['profile.caller_name', 'profile.name', 'profile.contact_info.full_name', 'profile.contact_info.first_name'],
+    example: 'Ava Harper',
+    description: 'Full name of the caller as captured or inferred from the session profile.',
+  },
+  {
+    key: 'institution_name',
+    label: 'institution_name',
+    type: 'string',
+    source: 'Template Vars (defaults) or Session Profile',
+    paths: ['template_vars.institution_name', 'profile.institution_name'],
+    example: 'Contoso Financial',
+    description: 'Brand or institution name used for introductions and persona anchoring.',
+  },
+  {
+    key: 'agent_name',
+    label: 'agent_name',
+    type: 'string',
+    source: 'Template Vars (defaults)',
+    paths: ['template_vars.agent_name'],
+    example: 'Concierge',
+    description: 'Display name of the current AI agent.',
+  },
+  {
+    key: 'client_id',
+    label: 'client_id',
+    type: 'string',
+    source: 'Session Profile / memo',
+    paths: ['profile.client_id', 'profile.customer_id', 'profile.contact_info.client_id', 'memo_manager.client_id'],
+    example: 'C123-9982',
+    description: 'Internal customer identifier or account code if present in the session context.',
+  },
+  {
+    key: 'customer_intelligence',
+    label: 'customer_intelligence',
+    type: 'object',
+    source: 'Session Profile',
+    paths: ['profile.customer_intelligence', 'profile.customer_intel'],
+    example: '{ "preferred_channel": "voice", "risk_score": 0.12 }',
+    description: 'Structured insight object about the customer (preferences, segments, scores).',
+  },
+  {
+    key: 'customer_intelligence.relationship_context.relationship_tier',
+    label: 'customer_intelligence.relationship_context.relationship_tier',
+    type: 'string',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.relationship_context.relationship_tier',
+      'profile.customer_intel.relationship_context.relationship_tier',
+    ],
+    example: 'Platinum',
+    description: 'Relationship tier from customer_intelligence.relationship_context.',
+  },
+  {
+    key: 'customer_intelligence.relationship_context.relationship_duration_years',
+    label: 'customer_intelligence.relationship_context.relationship_duration_years',
+    type: 'number',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.relationship_context.relationship_duration_years',
+      'profile.customer_intel.relationship_context.relationship_duration_years',
+    ],
+    example: '8',
+    description: 'Relationship duration (years) from customer_intelligence.relationship_context.',
+  },
+  {
+    key: 'customer_intelligence.preferences.preferredContactMethod',
+    label: 'customer_intelligence.preferences.preferredContactMethod',
+    type: 'string',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.preferences.preferredContactMethod',
+      'profile.customer_intel.preferences.preferredContactMethod',
+    ],
+    example: 'mobile',
+    description: 'Preferred contact method from customer_intelligence.preferences.',
+  },
+  {
+    key: 'customer_intelligence.bank_profile.current_balance',
+    label: 'customer_intelligence.bank_profile.current_balance',
+    type: 'number',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.bank_profile.current_balance',
+      'profile.customer_intel.bank_profile.current_balance',
+    ],
+    example: '45230.50',
+    description: 'Current balance from customer_intelligence.bank_profile.',
+  },
+  {
+    key: 'customer_intelligence.spending_patterns.avg_monthly_spend',
+    label: 'customer_intelligence.spending_patterns.avg_monthly_spend',
+    type: 'number',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.spending_patterns.avg_monthly_spend',
+      'profile.customer_intel.spending_patterns.avg_monthly_spend',
+    ],
+    example: '4500',
+    description: 'Average monthly spend from customer_intelligence.spending_patterns.',
+  },
+  {
+    key: 'session_profile',
+    label: 'session_profile',
+    type: 'object',
+    source: 'Session Profile',
+    paths: ['profile'],
+    example: '{ "email": "user@example.com", "contact_info": { ... } }',
+    description: 'Full session profile object containing contact_info, verification codes, and custom fields.',
+  },
+  {
+    key: 'session_profile.email',
+    label: 'session_profile.email',
+    type: 'string',
+    source: 'Session Profile',
+    paths: ['profile.email'],
+    example: 'user@example.com',
+    description: 'Email from the session profile.',
+  },
+  {
+    key: 'session_profile.contact_info.phone_last_4',
+    label: 'session_profile.contact_info.phone_last_4',
+    type: 'string',
+    source: 'Session Profile',
+    paths: ['profile.contact_info.phone_last_4'],
+    example: '5678',
+    description: 'Phone last 4 from session profile contact_info.',
+  },
+  {
+    key: 'tools',
+    label: 'tools',
+    type: 'array<string>',
+    source: 'Agent Config',
+    paths: ['tools'],
+    example: '["get_account_summary", "handoff_to_auth"]',
+    description: 'List of enabled tool names for the agent (honors your current selection).',
+  },
+];
+
+// Extract Jinja-style variables from text (e.g., "{{ caller_name }}", "{{ user.name | default('') }}")
+const extractJinjaVariables = (text = '') => {
+  const vars = new Set();
+  const regex = /\{\{\s*([a-zA-Z0-9_.]+)(?:\s*\|[^}]*)?\s*\}\}/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const candidate = match[1];
+    if (candidate) {
+        const trimmed = candidate.trim();
+        if (trimmed) {
+          vars.add(trimmed);
+          const root = trimmed.split('.')[0];
+          if (root) vars.add(root);
+        }
+    }
+  }
+  return Array.from(vars);
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODEL DEFINITIONS
@@ -274,6 +438,12 @@ const styles = {
       backgroundColor: '#1e1e2e',
       color: '#cdd6f4',
       borderRadius: '8px',
+      '& .MuiInputBase-input': {
+        color: '#cdd6f4',
+      },
+    },
+    '& .MuiInputBase-input::placeholder': {
+      color: 'rgba(255,255,255,0.6)',
     },
   },
 };
@@ -300,62 +470,112 @@ function TabPanel({ children, value, index, ...other }) {
 // TEMPLATE VARIABLE HELPER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function TemplateVariableHelper({ onInsert }) {
+const TemplateVariableHelper = React.memo(function TemplateVariableHelper({ onInsert, usedVars = [] }) {
   const [copiedVar, setCopiedVar] = useState(null);
+  const [expanded, setExpanded] = useState(true);
+  const usedSet = useMemo(() => new Set(usedVars || []), [usedVars]);
 
-  const handleCopy = (varName) => {
-    const textToCopy = `{{ ${varName} }}`;
-    navigator.clipboard.writeText(textToCopy);
-    setCopiedVar(varName);
-    setTimeout(() => setCopiedVar(null), 2000);
-    if (onInsert) onInsert(textToCopy);
-  };
+  const varsBySource = useMemo(() => {
+    const groups = {
+      'Session Profile': [],
+      'Customer Intelligence': [],
+      Other: [],
+    };
+    TEMPLATE_VARIABLE_DOCS.forEach((doc) => {
+      const key = doc.key || '';
+      if (key.startsWith('customer_intelligence')) {
+        groups['Customer Intelligence'].push(doc);
+      } else if (key.startsWith('session_profile')) {
+        groups['Session Profile'].push(doc);
+      } else {
+        groups.Other.push(doc);
+      }
+    });
+    Object.keys(groups).forEach((key) => {
+      groups[key].sort((a, b) => a.label.localeCompare(b.label));
+    });
+    return groups;
+  }, []);
+
+  const handleCopy = useCallback(
+    (varName) => {
+      const textToCopy = `{{ ${varName} }}`;
+      navigator.clipboard.writeText(textToCopy);
+      setCopiedVar(varName);
+      setTimeout(() => setCopiedVar(null), 2000);
+      if (onInsert) onInsert(textToCopy);
+    },
+    [onInsert],
+  );
 
   return (
     <Card variant="outlined" sx={{ ...styles.sectionCard, mb: 2 }}>
       <CardContent sx={{ pb: '12px !important' }}>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-          <InfoOutlinedIcon color="primary" fontSize="small" />
-          <Typography variant="subtitle2" color="primary">
-            Available Template Variables
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2, justifyContent: 'space-between' }}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <InfoOutlinedIcon color="primary" fontSize="small" />
+            <Typography variant="subtitle2" color="primary">
+              Available Template Variables
+            </Typography>
+          </Stack>
+          <Button size="small" onClick={() => setExpanded((prev) => !prev)}>
+            {expanded ? 'Hide' : 'Show'}
+          </Button>
+        </Stack>
+        <Collapse in={expanded} timeout="auto">
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+            Click a variable to copy. These are populated from the session profile at runtime.
           </Typography>
-        </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-          Click a variable to copy. These are populated from the session profile at runtime.
-        </Typography>
-        <Stack direction="row" flexWrap="wrap" gap={1}>
-          {TEMPLATE_VARIABLES.map((v) => (
-            <Tooltip
-              key={v.name}
-              title={
-                <Box sx={{ p: 0.5 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{v.description}</Typography>
-                  <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#93c5fd' }}>
-                    {v.example}
-                  </Typography>
-                  <Typography variant="caption" display="block" sx={{ mt: 0.5, color: '#a5b4fc' }}>
-                    Source: {v.source}
-                  </Typography>
-                </Box>
-              }
-              arrow
-            >
-              <Chip
-                icon={copiedVar === v.name ? <CheckIcon fontSize="small" /> : v.icon}
-                label={`{{ ${v.name} }}`}
-                size="small"
-                variant={copiedVar === v.name ? 'filled' : 'outlined'}
-                color={copiedVar === v.name ? 'success' : 'default'}
-                onClick={() => handleCopy(v.name)}
-                sx={styles.templateVarChip}
-              />
-            </Tooltip>
-          ))}
-        </Stack>
+          <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
+            <Chip label="Used in template" size="small" color="success" variant="filled" />
+            <Chip label="Not used" size="small" variant="outlined" />
+          </Stack>
+          <Stack spacing={1.5}>
+            {Object.entries(varsBySource).map(([source, docs]) => (
+              <Box key={source}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: '#475569', mb: 0.5, display: 'block' }}>
+                  {source}
+                </Typography>
+                <Stack direction="row" flexWrap="wrap" gap={1}>
+                  {docs.map((doc) => {
+                    const active = usedSet.has(doc.key) || copiedVar === doc.key;
+                    return (
+                      <Tooltip
+                        key={doc.key}
+                        title={
+                          <Box sx={{ p: 0.5 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{doc.description}</Typography>
+                            <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#93c5fd' }}>
+                              {doc.example}
+                            </Typography>
+                            <Typography variant="caption" display="block" sx={{ mt: 0.5, color: '#a5b4fc' }}>
+                              Type: {doc.type}
+                            </Typography>
+                          </Box>
+                        }
+                        arrow
+                      >
+                        <Chip
+                          icon={copiedVar === doc.key ? <CheckIcon fontSize="small" /> : undefined}
+                          label={`{{ ${doc.key} }}`}
+                          size="small"
+                          variant={active ? 'filled' : 'outlined'}
+                          color={active ? 'success' : 'default'}
+                          onClick={() => handleCopy(doc.key)}
+                          sx={styles.templateVarChip}
+                        />
+                      </Tooltip>
+                    );
+                  })}
+                </Stack>
+              </Box>
+            ))}
+          </Stack>
+        </Collapse>
       </CardContent>
     </Card>
   );
-}
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODEL SELECTOR COMPONENT
@@ -506,6 +726,7 @@ export default function AgentBuilder({
   onAgentUpdated,
   existingConfig = null,
   editMode = false,
+  sessionProfile = null,
 }) {
   // Tab state
   const [activeTab, setActiveTab] = useState(0);
@@ -518,11 +739,13 @@ export default function AgentBuilder({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [templateVarsExpanded, setTemplateVarsExpanded] = useState(true);
   
   // Available options from backend
   const [availableTools, setAvailableTools] = useState([]);
   const [availableVoices, setAvailableVoices] = useState([]);
   const [availableTemplates, setAvailableTemplates] = useState([]);
+  const [sessionAgents, setSessionAgents] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [_defaults, setDefaults] = useState(null);
   
@@ -531,6 +754,7 @@ export default function AgentBuilder({
     name: 'Custom Agent',
     description: '',
     greeting: '',
+    return_greeting: '',
     prompt: DEFAULT_PROMPT,
     tools: [],
     model: {
@@ -545,6 +769,13 @@ export default function AgentBuilder({
       style: 'chat',
       rate: '+0%',
     },
+    speech: {
+      vad_silence_timeout_ms: 800,
+      use_semantic_segmentation: false,
+      candidate_languages: ['en-US'],
+      enable_diarization: false,
+      speaker_count_hint: 2,
+    },
     template_vars: {
       institution_name: 'Contoso Financial',
       agent_name: 'Assistant',
@@ -556,6 +787,34 @@ export default function AgentBuilder({
   
   // Tool filter state: 'all', 'normal', 'handoff'
   const [toolFilter, setToolFilter] = useState('all');
+
+  // Detect template variables from greeting and prompt for convenience defaults
+  const greetingVariables = useMemo(
+    () => extractJinjaVariables(config.greeting),
+    [config.greeting],
+  );
+  const detectedTemplateVars = useMemo(() => {
+    const fromGreeting = extractJinjaVariables(config.greeting);
+    const fromReturnGreeting = extractJinjaVariables(config.return_greeting);
+    const fromPrompt = extractJinjaVariables(config.prompt);
+    const merged = new Set([...fromGreeting, ...fromReturnGreeting, ...fromPrompt]);
+    return Array.from(merged);
+  }, [config.greeting, config.return_greeting, config.prompt]);
+
+  // Ensure config.template_vars includes any detected variables so users can set defaults
+  useEffect(() => {
+    setConfig((prev) => {
+      const nextTemplateVars = { ...(prev.template_vars || {}) };
+      let changed = false;
+      detectedTemplateVars.forEach((key) => {
+        if (!(key in nextTemplateVars)) {
+          nextTemplateVars[key] = '';
+          changed = true;
+        }
+      });
+      return changed ? { ...prev, template_vars: nextTemplateVars } : prev;
+    });
+  }, [detectedTemplateVars]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // DATA FETCHING
@@ -613,6 +872,26 @@ export default function AgentBuilder({
     }
   }, []);
 
+  const fetchSessionAgents = useCallback(async () => {
+    try {
+      const urlWithSession = sessionId
+        ? `${API_BASE_URL}/api/v1/agents?session_id=${encodeURIComponent(sessionId)}`
+        : `${API_BASE_URL}/api/v1/agents`;
+      const res = await fetch(urlWithSession);
+      if (!res.ok) throw new Error('Failed to fetch agents');
+      const data = await res.json();
+      const agentsArray =
+        (Array.isArray(data.agents) && data.agents) ||
+        (Array.isArray(data.summaries) && data.summaries) ||
+        (Array.isArray(data.agent_summaries) && data.agent_summaries) ||
+        [];
+      setSessionAgents(agentsArray);
+    } catch (err) {
+      logger.error('Error fetching agents:', err);
+      setSessionAgents([]);
+    }
+  }, [sessionId]);
+
   // Reload agents from disk and refresh templates
   const [reloadingTemplates, setReloadingTemplates] = useState(false);
   
@@ -630,6 +909,7 @@ export default function AgentBuilder({
       
       // Then refresh the templates list
       await fetchAvailableTemplates();
+      await fetchSessionAgents();
       setSuccess('Agent templates refreshed successfully');
       logger.info('Agent templates reloaded from disk');
     } catch (err) {
@@ -638,7 +918,7 @@ export default function AgentBuilder({
     } finally {
       setReloadingTemplates(false);
     }
-  }, [fetchAvailableTemplates]);
+  }, [fetchAvailableTemplates, fetchSessionAgents]);
 
   const fetchExistingConfig = useCallback(async () => {
     if (!sessionId) return;
@@ -652,10 +932,12 @@ export default function AgentBuilder({
             name: data.config.name || 'Custom Agent',
             description: data.config.description || '',
             greeting: data.config.greeting || '',
+            return_greeting: data.config.return_greeting || prev.return_greeting || '',
             prompt: data.config.prompt_full || data.config.prompt_preview || DEFAULT_PROMPT,
             tools: data.config.tools || [],
             model: data.config.model || prev.model,
             voice: data.config.voice || prev.voice,
+            speech: data.config.speech || prev.speech,
             template_vars: data.config.template_vars || prev.template_vars,
           }));
           // Set edit mode since we have an existing config
@@ -682,11 +964,12 @@ export default function AgentBuilder({
         fetchAvailableTools(),
         fetchAvailableVoices(),
         fetchAvailableTemplates(),
+        fetchSessionAgents(),
         fetchDefaults(),
         fetchExistingConfig(),
       ]).finally(() => setLoading(false));
     }
-  }, [open, editMode, fetchAvailableTools, fetchAvailableVoices, fetchAvailableTemplates, fetchDefaults, fetchExistingConfig]);
+  }, [open, editMode, fetchAvailableTools, fetchAvailableVoices, fetchAvailableTemplates, fetchSessionAgents, fetchDefaults, fetchExistingConfig]);
 
   // Apply existing config if provided
   useEffect(() => {
@@ -726,9 +1009,9 @@ export default function AgentBuilder({
     setActiveTab(newValue);
   };
 
-  const handleConfigChange = (field, value) => {
+  const handleConfigChange = useCallback((field, value) => {
     setConfig(prev => ({ ...prev, [field]: value }));
-  };
+  }, []);
 
   const handleNestedConfigChange = (parent, field, value) => {
     setConfig(prev => ({
@@ -737,21 +1020,21 @@ export default function AgentBuilder({
     }));
   };
 
-  const handleToolToggle = (toolName) => {
+  const handleToolToggle = useCallback((toolName) => {
     setConfig(prev => {
       const tools = prev.tools.includes(toolName)
         ? prev.tools.filter(t => t !== toolName)
         : [...prev.tools, toolName];
       return { ...prev, tools };
     });
-  };
+  }, []);
 
-  const toggleCategory = (category) => {
+  const toggleCategory = useCallback((category) => {
     setExpandedCategories(prev => ({
       ...prev,
       [category]: !prev[category],
     }));
-  };
+  }, []);
 
   const handleSelectAllCategory = (category, categoryTools) => {
     setConfig(prev => {
@@ -788,10 +1071,12 @@ export default function AgentBuilder({
         name: template.name || prev.name,
         description: template.description || prev.description,
         greeting: template.greeting || prev.greeting,
+        return_greeting: template.return_greeting || prev.return_greeting,
         prompt: template.prompt || prev.prompt,
         tools: template.tools || prev.tools,
         voice: template.voice ? { ...prev.voice, ...template.voice } : prev.voice,
         model: template.model ? { ...prev.model, ...template.model } : prev.model,
+        speech: template.speech ? { ...prev.speech, ...template.speech } : prev.speech,
         template_vars: template.template_vars ? { ...prev.template_vars, ...template.template_vars } : prev.template_vars,
       }));
       
@@ -817,6 +1102,7 @@ export default function AgentBuilder({
         name: config.name,
         description: config.description,
         greeting: config.greeting,
+        return_greeting: config.return_greeting,
         prompt: config.prompt,  // Backend expects 'prompt', not 'prompt_template'
         tools: config.tools,
         model: {
@@ -830,6 +1116,13 @@ export default function AgentBuilder({
           type: config.voice.type,
           style: config.voice.style,
           rate: config.voice.rate,
+        },
+        speech: {
+          vad_silence_timeout_ms: config.speech?.vad_silence_timeout_ms,
+          use_semantic_segmentation: config.speech?.use_semantic_segmentation,
+          candidate_languages: config.speech?.candidate_languages,
+          enable_diarization: config.speech?.enable_diarization,
+          speaker_count_hint: config.speech?.speaker_count_hint,
         },
         template_vars: config.template_vars,
       };
@@ -886,6 +1179,7 @@ export default function AgentBuilder({
       } else if (onAgentCreated) {
         onAgentCreated(agentConfig);
       }
+      fetchSessionAgents();
     } catch (err) {
       setError(err.message || 'An unexpected error occurred');
       logger.error('Error saving agent:', err);
@@ -902,10 +1196,12 @@ export default function AgentBuilder({
         name: 'Custom Agent',
         description: '',
         greeting: '',
+        return_greeting: fetchedDefaults?.return_greeting || '',
         prompt: fetchedDefaults?.prompt_template || DEFAULT_PROMPT,
         tools: [],
         model: fetchedDefaults?.model || config.model,
         voice: fetchedDefaults?.voice || config.voice,
+        speech: fetchedDefaults?.speech || config.speech,
         template_vars: fetchedDefaults?.template_vars || config.template_vars,
       });
       setSuccess('Agent configuration reset to defaults');
@@ -926,6 +1222,37 @@ export default function AgentBuilder({
     }
     return categories;
   }, [availableVoices]);
+
+  const templateVarKeys = useMemo(() => {
+    const keys = new Set(Object.keys(config.template_vars || {}));
+    detectedTemplateVars.forEach((v) => keys.add(v));
+    return Array.from(keys).sort();
+  }, [config.template_vars, detectedTemplateVars]);
+
+  const templateCards = useMemo(() => {
+    const merged = [];
+    const seen = new Set();
+    (availableTemplates || []).forEach((tmpl) => {
+      const key = tmpl.id || tmpl.name;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      merged.push({ ...tmpl, source: 'template' });
+    });
+    (sessionAgents || []).forEach((agent) => {
+      const key = agent.id || agent.name || agent.agent_name;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      merged.push({
+        id: key,
+        name: agent.name || agent.agent_name || 'Agent',
+        description: agent.description || agent.summary || '',
+        tools: agent.tools || agent.tool_names || agent.toolNames || [],
+        is_entry_point: agent.is_entry_point || agent.entry_point || false,
+        source: 'session',
+      });
+    });
+    return merged;
+  }, [availableTemplates, sessionAgents]);
 
   return (
     <Dialog
@@ -953,7 +1280,7 @@ export default function AgentBuilder({
           </Stack>
           <Stack direction="row" alignItems="center" spacing={2}>
             {/* Mode Toggle */}
-            <ToggleButtonGroup
+            {/* <ToggleButtonGroup
               value={isEditMode ? 'edit' : 'create'}
               exclusive
               onChange={(_, newMode) => {
@@ -995,10 +1322,10 @@ export default function AgentBuilder({
                 Edit Existing
               </ToggleButton>
             </ToggleButtonGroup>
-            
+             */}
             {sessionId && (
               <Chip
-                label={`Session: ${sessionId.slice(0, 8)}...`}
+                label={`Session: ${sessionId}`}
                 size="small"
                 sx={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'white' }}
               />
@@ -1050,111 +1377,13 @@ export default function AgentBuilder({
         </Alert>
       )}
 
-      {/* Template Selector - Always visible */}
-      {!loading && (
-        <Box sx={{ px: 3, py: 2, backgroundColor: '#f8fafc', borderBottom: '1px solid #e5e7eb' }}>
-          <Stack direction="row" alignItems="center" spacing={2}>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 180 }}>
-              <FolderOpenIcon color="primary" fontSize="small" />
-              <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>
-                Start from Template
-              </Typography>
-            </Stack>
-            <Autocomplete
-              options={availableTemplates}
-              getOptionLabel={(option) => option.name || ''}
-              value={availableTemplates.find(t => t.id === selectedTemplate) || null}
-              onChange={(_, newValue) => handleApplyTemplate(newValue?.id)}
-              size="small"
-              sx={{ flex: 1, maxWidth: 400 }}
-              renderOption={(props, option) => {
-                const { key, ...otherProps } = props;
-                return (
-                  <ListItem key={key} {...otherProps} sx={{ py: 1 }}>
-                    <ListItemAvatar>
-                      <Avatar sx={{ 
-                        bgcolor: option.is_entry_point ? '#6366f1' : '#94a3b8',
-                        width: 28,
-                        height: 28,
-                      }}>
-                        {option.is_entry_point ? <StarIcon sx={{ fontSize: 14 }} /> : <SmartToyIcon sx={{ fontSize: 14 }} />}
-                      </Avatar>
-                    </ListItemAvatar>
-                    <ListItemText
-                      primary={
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            {option.name}
-                          </Typography>
-                          {option.is_entry_point && (
-                            <Chip label="Entry" size="small" color="primary" sx={{ height: 18, fontSize: '10px' }} />
-                          )}
-                        </Stack>
-                      }
-                      secondary={
-                        <Typography variant="caption" color="text.secondary" noWrap>
-                          {option.tools?.length || 0} tools
-                        </Typography>
-                      }
-                    />
-                  </ListItem>
-                );
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  placeholder="Select an existing agent as template..."
-                  InputProps={{
-                    ...params.InputProps,
-                    startAdornment: (
-                      <>
-                        <InputAdornment position="start">
-                          <ContentCopyIcon fontSize="small" color="action" />
-                        </InputAdornment>
-                        {params.InputProps.startAdornment}
-                      </>
-                    ),
-                  }}
-                />
-              )}
-              noOptionsText="No templates found"
-            />
-            {selectedTemplate && (
-              <Chip
-                icon={<CheckIcon />}
-                label="Template applied"
-                color="success"
-                size="small"
-                onDelete={() => setSelectedTemplate(null)}
-              />
-            )}
-            <Tooltip title="Refresh agent templates from disk">
-              <IconButton
-                size="small"
-                onClick={reloadAgentTemplates}
-                disabled={reloadingTemplates}
-                sx={{
-                  color: 'primary.main',
-                  '&:hover': { backgroundColor: 'rgba(99, 102, 241, 0.1)' },
-                }}
-              >
-                {reloadingTemplates ? (
-                  <CircularProgress size={18} />
-                ) : (
-                  <RefreshIcon fontSize="small" />
-                )}
-              </IconButton>
-            </Tooltip>
-          </Stack>
-        </Box>
-      )}
-
       {/* Tabs */}
       <Tabs value={activeTab} onChange={handleTabChange} sx={styles.tabs} variant="fullWidth">
         <Tab icon={<SmartToyIcon />} label="Identity" iconPosition="start" />
         <Tab icon={<CodeIcon />} label="Prompt" iconPosition="start" />
         <Tab icon={<BuildIcon />} label="Tools" iconPosition="start" />
         <Tab icon={<RecordVoiceOverIcon />} label="Voice" iconPosition="start" />
+        <Tab icon={<HearingIcon />} label="Speech" iconPosition="start" />
         <Tab icon={<TuneIcon />} label="Model" iconPosition="start" />
       </Tabs>
 
@@ -1173,6 +1402,171 @@ export default function AgentBuilder({
             {/* ═══════════════════════════════════════════════════════════════════ */}
             <TabPanel value={activeTab} index={0}>
               <Stack spacing={3}>
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                      🟢 Active Session Agent
+                    </Typography>
+                    <Stack direction="row" alignItems="center" spacing={2}>
+                      <Avatar sx={{ bgcolor: '#e0f2fe', color: '#0284c7', width: 40, height: 40 }}>
+                        <SmartToyIcon fontSize="small" />
+                      </Avatar>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                          {config.name || 'Untitled Agent'}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                          {config.description || 'No description provided.'}
+                        </Typography>
+                        <Stack direction="row" spacing={1} flexWrap="wrap">
+                          <Chip size="small" label={`${config.tools?.length || 0} tools`} />
+                          {config.model?.deployment_id && (
+                            <Chip size="small" label={`Model: ${config.model.deployment_id}`} />
+                          )}
+                        </Stack>
+                      </Box>
+                    </Stack>
+                  </CardContent>
+                </Card>
+
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                      📂 Start from Template
+                    </Typography>
+                    <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
+                      <Autocomplete
+                        options={templateCards}
+                        getOptionLabel={(option) => option.name || ''}
+                        value={templateCards.find(t => t.id === selectedTemplate) || null}
+                        onChange={(_, newValue) => handleApplyTemplate(newValue?.id)}
+                        size="small"
+                        sx={{ flex: 1, maxWidth: 420 }}
+                        renderOption={(props, option) => {
+                          const { key, ...otherProps } = props;
+                          return (
+                            <ListItem key={key} {...otherProps} sx={{ py: 1 }}>
+                              <ListItemAvatar>
+                                <Avatar sx={{ 
+                                  bgcolor: option.is_entry_point ? '#6366f1' : '#94a3b8',
+                                  width: 28,
+                                  height: 28,
+                                }}>
+                                  {option.is_entry_point ? <StarIcon sx={{ fontSize: 14 }} /> : <SmartToyIcon sx={{ fontSize: 14 }} />}
+                                </Avatar>
+                              </ListItemAvatar>
+                              <ListItemText
+                                primary={
+                                  <Stack direction="row" alignItems="center" spacing={1}>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                      {option.name}
+                                    </Typography>
+                                    {option.is_entry_point && (
+                                      <Chip label="Entry" size="small" color="primary" sx={{ height: 18, fontSize: '10px' }} />
+                                    )}
+                                  </Stack>
+                                }
+                                secondary={
+                                  <Typography variant="caption" color="text.secondary" noWrap>
+                                    {option.tools?.length || 0} tools
+                                  </Typography>
+                                }
+                              />
+                            </ListItem>
+                          );
+                        }}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            placeholder="Browse templates..."
+                            InputProps={{
+                              ...params.InputProps,
+                              startAdornment: (
+                                <>
+                                  <InputAdornment position="start">
+                                    <ContentCopyIcon fontSize="small" color="action" />
+                                  </InputAdornment>
+                                  {params.InputProps.startAdornment}
+                                </>
+                              ),
+                            }}
+                          />
+                        )}
+                        noOptionsText="No templates found"
+                      />
+                      {selectedTemplate && (
+                        <Chip
+                          icon={<CheckIcon />}
+                          label="Template applied"
+                          color="success"
+                          size="small"
+                          onDelete={() => setSelectedTemplate(null)}
+                        />
+                      )}
+                      <Tooltip title="Refresh agent templates from disk">
+                        <IconButton
+                          size="small"
+                          onClick={reloadAgentTemplates}
+                          disabled={reloadingTemplates}
+                          sx={{
+                            color: 'primary.main',
+                            '&:hover': { backgroundColor: 'rgba(99, 102, 241, 0.1)' },
+                          }}
+                        >
+                          {reloadingTemplates ? (
+                            <CircularProgress size={18} />
+                          ) : (
+                            <RefreshIcon fontSize="small" />
+                          )}
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                    <Stack direction="row" flexWrap="wrap" gap={1.5}>
+                      {templateCards.map((tmpl) => (
+                        <Card
+                          key={tmpl.id}
+                          variant="outlined"
+                          sx={{
+                            minWidth: 220,
+                            maxWidth: 260,
+                            flex: '1 1 220px',
+                            borderColor: tmpl.id === selectedTemplate ? '#6366f1' : '#e5e7eb',
+                            boxShadow: tmpl.id === selectedTemplate ? '0 6px 18px rgba(99,102,241,0.15)' : 'none',
+                          }}
+                        >
+                          <CardContent sx={{ pb: '12px !important' }}>
+                            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+                              <Avatar sx={{ width: 28, height: 28, bgcolor: '#eef2ff', color: '#4338ca' }}>
+                                {tmpl.name?.[0] || 'A'}
+                              </Avatar>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                                {tmpl.name}
+                              </Typography>
+                            </Stack>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                              {tmpl.description || 'No description provided.'}
+                            </Typography>
+                            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 1 }}>
+                              <Chip size="small" label={`${tmpl.tools?.length || 0} tools`} />
+                              {tmpl.is_entry_point && (
+                                <Chip size="small" color="primary" label="Entry" />
+                              )}
+                            </Stack>
+                            <Button
+                              size="small"
+                              fullWidth
+                              variant={selectedTemplate === tmpl.id ? 'contained' : 'outlined'}
+                              onClick={() => handleApplyTemplate(tmpl.id)}
+                            >
+                              Use Template
+                            </Button>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </Stack>
+                  </CardContent>
+                </Card>
+
                 <Card variant="outlined" sx={styles.sectionCard}>
                   <CardContent>
                     <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
@@ -1206,88 +1600,8 @@ export default function AgentBuilder({
                     </Stack>
                   </CardContent>
                 </Card>
+                
 
-                <Card variant="outlined" sx={styles.sectionCard}>
-                  <CardContent>
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
-                      👋 Greeting Message
-                    </Typography>
-                    <TextField
-                      label="Greeting (Jinja2 supported)"
-                      value={config.greeting}
-                      onChange={(e) => handleConfigChange('greeting', e.target.value)}
-                      fullWidth
-                      multiline
-                      rows={3}
-                      placeholder="Hi {{ caller_name | default('there') }}, I'm {{ agent_name }}. How can I help you today?"
-                      helperText="Initial message spoken when conversation starts. Use template variables for personalization."
-                    />
-                    <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
-                      <Chip 
-                        label="{{ caller_name }}" 
-                        size="small" 
-                        variant="outlined"
-                        onClick={() => handleConfigChange('greeting', config.greeting + '{{ caller_name }}')}
-                        sx={styles.templateVarChip}
-                      />
-                      <Chip 
-                        label="{{ agent_name }}" 
-                        size="small" 
-                        variant="outlined"
-                        onClick={() => handleConfigChange('greeting', config.greeting + '{{ agent_name }}')}
-                        sx={styles.templateVarChip}
-                      />
-                      <Chip 
-                        label="{{ institution_name }}" 
-                        size="small" 
-                        variant="outlined"
-                        onClick={() => handleConfigChange('greeting', config.greeting + '{{ institution_name }}')}
-                        sx={styles.templateVarChip}
-                      />
-                    </Stack>
-                  </CardContent>
-                </Card>
-
-                <Card variant="outlined" sx={styles.sectionCard}>
-                  <CardContent>
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
-                      🏢 Template Variables
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                      Default values for template variables. These can be overridden by session profile data at runtime.
-                    </Typography>
-                    <Stack direction="row" spacing={2}>
-                      <TextField
-                        label="Institution Name"
-                        value={config.template_vars.institution_name}
-                        onChange={(e) => handleNestedConfigChange('template_vars', 'institution_name', e.target.value)}
-                        size="small"
-                        sx={{ flex: 1 }}
-                        InputProps={{
-                          startAdornment: (
-                            <InputAdornment position="start">
-                              <BusinessIcon fontSize="small" color="action" />
-                            </InputAdornment>
-                          ),
-                        }}
-                      />
-                      <TextField
-                        label="Agent Display Name"
-                        value={config.template_vars.agent_name}
-                        onChange={(e) => handleNestedConfigChange('template_vars', 'agent_name', e.target.value)}
-                        size="small"
-                        sx={{ flex: 1 }}
-                        InputProps={{
-                          startAdornment: (
-                            <InputAdornment position="start">
-                              <SmartToyIcon fontSize="small" color="action" />
-                            </InputAdornment>
-                          ),
-                        }}
-                      />
-                    </Stack>
-                  </CardContent>
-                </Card>
               </Stack>
             </TabPanel>
 
@@ -1296,8 +1610,80 @@ export default function AgentBuilder({
             {/* ═══════════════════════════════════════════════════════════════════ */}
             <TabPanel value={activeTab} index={1}>
               <Stack spacing={2}>
-                <TemplateVariableHelper />
-                
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Stack spacing={2.5}>
+                      <Box>
+                        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+                          <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>
+                            👋 Greeting Message (Optional)
+                          </Typography>
+                        </Stack>
+                        <TextField
+                          value={config.greeting}
+                          onChange={(e) => handleConfigChange('greeting', e.target.value)}
+                          fullWidth
+                          multiline
+                          rows={4}
+                          placeholder="Hi {{ caller_name | default('there') }}, I'm {{ agent_name }}. How can I help you today?"
+                          helperText="Optional: initial message when conversation starts. Use template variables for personalization."
+                          sx={styles.promptEditor}
+                          InputLabelProps={{
+                            shrink: true,
+                            sx: {
+                              color: '#cdd6f4',
+                              backgroundColor: '#1e1e2e',
+                              px: 0.5,
+                              borderRadius: 0.75,
+                              '&.Mui-focused': { color: '#cdd6f4' },
+                            },
+                          }}
+                        />
+                        <TemplateVariableHelper
+                          usedVars={detectedTemplateVars}
+                          onInsert={(val) =>
+                            setConfig(prev => ({ ...prev, greeting: (prev.greeting || '') + val }))
+                          }
+                        />
+                      </Box>
+
+                      <Box>
+                        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+                          <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>
+                            🔁 Return Greeting (Optional)
+                          </Typography>
+                        </Stack>
+                        <TextField
+                          value={config.return_greeting || ''}
+                          onChange={(e) => handleConfigChange('return_greeting', e.target.value)}
+                          fullWidth
+                          multiline
+                          rows={3}
+                          placeholder="Welcome back {{ caller_name | default('friend') }}. Picking up where we left off."
+                          helperText="Optional: message when the caller returns. Leave blank to use default behavior."
+                          sx={styles.promptEditor}
+                          InputLabelProps={{
+                            shrink: true,
+                            sx: {
+                              color: '#cdd6f4',
+                              backgroundColor: '#1e1e2e',
+                              px: 0.5,
+                              borderRadius: 0.75,
+                              '&.Mui-focused': { color: '#cdd6f4' },
+                            },
+                          }}
+                        />
+                        <TemplateVariableHelper
+                          usedVars={detectedTemplateVars}
+                          onInsert={(val) =>
+                            setConfig(prev => ({ ...prev, return_greeting: (prev.return_greeting || '') + val }))
+                          }
+                        />
+                      </Box>
+                    </Stack>
+                  </CardContent>
+                </Card>
+
                 <Card variant="outlined" sx={{ ...styles.sectionCard, flex: 1 }}>
                   <CardContent>
                     <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
@@ -1318,7 +1704,78 @@ export default function AgentBuilder({
                       rows={12}
                       placeholder="Enter your system prompt with Jinja2 template syntax..."
                       sx={styles.promptEditor}
+                      InputLabelProps={{
+                        shrink: true,
+                        sx: {
+                          color: '#cdd6f4',
+                          backgroundColor: '#1e1e2e',
+                          px: 0.5,
+                          borderRadius: 0.75,
+                          '&.Mui-focused': { color: '#cdd6f4' },
+                        },
+                      }}
                     />
+                    <Box sx={{ mt: 1.5 }}>
+                      <TemplateVariableHelper
+                        usedVars={detectedTemplateVars}
+                        onInsert={(val) =>
+                          setConfig(prev => ({ ...prev, prompt: (prev.prompt || '') + val }))
+                        }
+                      />
+                    </Box>
+
+                    <Card variant="outlined" sx={{ mt: 2, borderColor: '#e2e8f0' }}>
+                      <CardContent>
+                        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+                          <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>
+                            🏢 Template Variables (Prompt Defaults)
+                          </Typography>
+                          <Button size="small" onClick={() => setTemplateVarsExpanded((prev) => !prev)}>
+                            {templateVarsExpanded ? 'Hide' : 'Show'}
+                          </Button>
+                        </Stack>
+                        <Collapse in={templateVarsExpanded} timeout="auto">
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                            Default values for template variables used in your prompt. Session profile data can override these at runtime.
+                          </Typography>
+                          <Stack spacing={1.2}>
+                            {templateVarKeys.length === 0 && (
+                              <Typography variant="body2" color="text.secondary">
+                                Add variables in your greeting or prompt to customize defaults.
+                              </Typography>
+                            )}
+                            {templateVarKeys.map((key) => {
+                              const friendly =
+                                key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+                              const icon =
+                                key === 'institution_name'
+                                  ? <BusinessIcon fontSize="small" color="action" />
+                                  : key === 'agent_name'
+                                  ? <SmartToyIcon fontSize="small" color="action" />
+                                  : <InfoOutlinedIcon fontSize="small" color="action" />;
+                              return (
+                                <TextField
+                                  key={key}
+                                  label={`${friendly} ({{ ${key} }})`}
+                                  value={config.template_vars[key] ?? ''}
+                                  onChange={(e) => handleNestedConfigChange('template_vars', key, e.target.value)}
+                                  size="small"
+                                  fullWidth
+                                  InputProps={{
+                                    startAdornment: (
+                                      <InputAdornment position="start">
+                                        {icon}
+                                      </InputAdornment>
+                                    ),
+                                  }}
+                                  helperText="Default value; session data can override at runtime"
+                                />
+                              );
+                            })}
+                          </Stack>
+                        </Collapse>
+                      </CardContent>
+                    </Card>
                   </CardContent>
                 </Card>
 
@@ -1568,7 +2025,8 @@ export default function AgentBuilder({
                       </List>
                     </AccordionDetails>
                   </Accordion>
-                )}
+      )}
+
               </Stack>
             </TabPanel>
 
@@ -1689,9 +2147,178 @@ export default function AgentBuilder({
             </TabPanel>
 
             {/* ═══════════════════════════════════════════════════════════════════ */}
-            {/* TAB 4: MODEL */}
+            {/* TAB 4: SPEECH RECOGNITION (STT / VAD) */}
             {/* ═══════════════════════════════════════════════════════════════════ */}
             <TabPanel value={activeTab} index={4}>
+              <Stack spacing={3}>
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                      🎤 Voice Activity Detection (VAD)
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                      Control how the speech recognizer detects when you've finished speaking.
+                    </Typography>
+                    
+                    <Stack spacing={4}>
+                      <Box>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2" fontWeight={500}>Silence Timeout</Typography>
+                            <Tooltip title="Duration of silence (in milliseconds) before finalizing recognition. Lower = faster response, Higher = more complete sentences.">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                          <Chip label={`${config.speech?.vad_silence_timeout_ms || 800}ms`} size="small" color="primary" />
+                        </Stack>
+                        <Slider
+                          value={config.speech?.vad_silence_timeout_ms || 800}
+                          onChange={(_e, v) => handleNestedConfigChange('speech', 'vad_silence_timeout_ms', v)}
+                          min={200}
+                          max={2000}
+                          step={100}
+                          marks={[
+                            { value: 200, label: 'Fast' },
+                            { value: 800, label: '800ms' },
+                            { value: 1300, label: '1.3s' },
+                            { value: 2000, label: 'Slow' },
+                          ]}
+                        />
+                      </Box>
+
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={config.speech?.use_semantic_segmentation || false}
+                            onChange={(e) => handleNestedConfigChange('speech', 'use_semantic_segmentation', e.target.checked)}
+                          />
+                        }
+                        label={
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2">Enable Semantic Segmentation</Typography>
+                            <Tooltip title="Uses AI to detect natural sentence boundaries instead of just silence. Can improve transcription quality for longer utterances.">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                        }
+                      />
+                    </Stack>
+                  </CardContent>
+                </Card>
+
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                      🌍 Language Detection
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                      Languages available for automatic detection. More languages may slightly increase latency.
+                    </Typography>
+                    
+                    <Autocomplete
+                      multiple
+                      options={['en-US', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 'pt-BR', 'ja-JP', 'ko-KR', 'zh-CN']}
+                      value={config.speech?.candidate_languages || ['en-US']}
+                      onChange={(_, newValue) => handleNestedConfigChange('speech', 'candidate_languages', newValue)}
+                      renderInput={(params) => (
+                        <TextField {...params} label="Candidate Languages" placeholder="Add language..." />
+                      )}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip
+                            {...getTagProps({ index })}
+                            key={option}
+                            label={option}
+                            size="small"
+                          />
+                        ))
+                      }
+                    />
+                  </CardContent>
+                </Card>
+
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                      👥 Speaker Diarization (Advanced)
+                    </Typography>
+                    
+                    <Stack spacing={2}>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={config.speech?.enable_diarization || false}
+                            onChange={(e) => handleNestedConfigChange('speech', 'enable_diarization', e.target.checked)}
+                          />
+                        }
+                        label={
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2">Enable Speaker Diarization</Typography>
+                            <Tooltip title="Identifies different speakers in the audio. Useful for multi-speaker scenarios but adds latency.">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                        }
+                      />
+                      
+                      {config.speech?.enable_diarization && (
+                        <Box sx={{ pl: 3 }}>
+                          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                            <Typography variant="body2" fontWeight={500}>Expected Speakers</Typography>
+                            <Chip label={config.speech?.speaker_count_hint || 2} size="small" color="primary" />
+                          </Stack>
+                          <Slider
+                            value={config.speech?.speaker_count_hint || 2}
+                            onChange={(_e, v) => handleNestedConfigChange('speech', 'speaker_count_hint', v)}
+                            min={1}
+                            max={10}
+                            step={1}
+                            marks={[
+                              { value: 1, label: '1' },
+                              { value: 2, label: '2' },
+                              { value: 5, label: '5' },
+                              { value: 10, label: '10' },
+                            ]}
+                          />
+                        </Box>
+                      )}
+                    </Stack>
+                  </CardContent>
+                </Card>
+
+                {/* Speech Settings Summary */}
+                <Card variant="outlined" sx={{ ...styles.sectionCard, bgcolor: 'action.hover' }}>
+                  <CardContent>
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                      📋 Current Speech Settings
+                    </Typography>
+                    <Stack direction="row" spacing={3} divider={<Divider orientation="vertical" flexItem />}>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">Silence Timeout</Typography>
+                        <Typography variant="body2" fontWeight={600}>{config.speech?.vad_silence_timeout_ms || 800}ms</Typography>
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">Semantic</Typography>
+                        <Typography variant="body2" fontWeight={600}>{config.speech?.use_semantic_segmentation ? 'Enabled' : 'Disabled'}</Typography>
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">Languages</Typography>
+                        <Typography variant="body2" fontWeight={600}>{(config.speech?.candidate_languages || ['en-US']).length}</Typography>
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">Diarization</Typography>
+                        <Typography variant="body2" fontWeight={600}>{config.speech?.enable_diarization ? 'On' : 'Off'}</Typography>
+                      </Box>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Stack>
+            </TabPanel>
+
+            {/* ═══════════════════════════════════════════════════════════════════ */}
+            {/* TAB 5: MODEL */}
+            {/* ═══════════════════════════════════════════════════════════════════ */}
+            <TabPanel value={activeTab} index={5}>
               <Stack spacing={3}>
                 <ModelSelector
                   value={config.model.deployment_id}

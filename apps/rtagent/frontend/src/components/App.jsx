@@ -3542,6 +3542,7 @@ function RealTimeVoiceApp() {
       open={showAgentBuilder}
       onClose={() => setShowAgentBuilder(false)}
       sessionId={sessionId}
+      sessionProfile={activeSessionProfile}
       onAgentCreated={(agentConfig) => {
         appendLog(`✨ Dynamic agent created: ${agentConfig.name}`);
         appendSystemMessage(`🤖 Agent "${agentConfig.name}" is now active`, {

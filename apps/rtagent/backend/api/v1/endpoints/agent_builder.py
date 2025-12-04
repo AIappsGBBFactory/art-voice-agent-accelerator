@@ -41,6 +41,7 @@ from apps.rtagent.backend.agents.base import (
     VoiceConfig,
     ModelConfig,
     HandoffConfig,
+    SpeechConfig,
 )
 from apps.rtagent.backend.agents.session_manager import (
     SessionAgentManager,
@@ -99,15 +100,45 @@ class VoiceConfigSchema(BaseModel):
     rate: str = "+0%"
 
 
+class SpeechConfigSchema(BaseModel):
+    """Speech recognition (STT) configuration schema."""
+    vad_silence_timeout_ms: int = Field(
+        default=800, 
+        ge=100, 
+        le=5000, 
+        description="Silence duration (ms) before finalizing recognition"
+    )
+    use_semantic_segmentation: bool = Field(
+        default=False, 
+        description="Enable semantic sentence boundary detection"
+    )
+    candidate_languages: List[str] = Field(
+        default_factory=lambda: ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"],
+        description="Languages for automatic detection"
+    )
+    enable_diarization: bool = Field(
+        default=False, 
+        description="Enable speaker diarization"
+    )
+    speaker_count_hint: int = Field(
+        default=2, 
+        ge=1, 
+        le=10, 
+        description="Hint for number of speakers"
+    )
+
+
 class DynamicAgentConfig(BaseModel):
     """Configuration for creating a dynamic agent."""
     name: str = Field(..., min_length=1, max_length=64, description="Agent display name")
     description: str = Field(default="", max_length=512, description="Agent description")
     greeting: str = Field(default="", max_length=1024, description="Initial greeting message")
+    return_greeting: str = Field(default="", max_length=1024, description="Return greeting when caller comes back")
     prompt: str = Field(..., min_length=10, description="System prompt for the agent")
     tools: List[str] = Field(default_factory=list, description="List of tool names to enable")
     model: Optional[ModelConfigSchema] = None
     voice: Optional[VoiceConfigSchema] = None
+    speech: Optional[SpeechConfigSchema] = None
     template_vars: Optional[Dict[str, Any]] = None
 
 
@@ -525,14 +556,25 @@ async def create_dynamic_agent(
         rate=config.voice.rate if config.voice else "+0%",
     )
     
+    # Build speech config (STT / VAD settings)
+    speech_config = SpeechConfig(
+        vad_silence_timeout_ms=config.speech.vad_silence_timeout_ms if config.speech else 800,
+        use_semantic_segmentation=config.speech.use_semantic_segmentation if config.speech else False,
+        candidate_languages=config.speech.candidate_languages if config.speech else ["en-US"],
+        enable_diarization=config.speech.enable_diarization if config.speech else False,
+        speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
+    )
+    
     # Create the agent
     agent = UnifiedAgent(
         name=config.name,
         description=config.description,
         greeting=config.greeting,
+        return_greeting=config.return_greeting,
         handoff=HandoffConfig(trigger=f"handoff_{config.name.lower().replace(' ', '_')}"),
         model=model_config,
         voice=voice_config,
+        speech=speech_config,
         prompt_template=config.prompt,
         tool_names=config.tools,
         template_vars=config.template_vars or {},
@@ -561,10 +603,12 @@ async def create_dynamic_agent(
             "name": config.name,
             "description": config.description,
             "greeting": config.greeting,
+            "return_greeting": config.return_greeting,
             "prompt_preview": config.prompt[:200] + "..." if len(config.prompt) > 200 else config.prompt,
             "tools": config.tools,
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
+            "speech": speech_config.to_dict(),
         },
         created_at=time.time(),
     )
@@ -598,6 +642,7 @@ async def get_session_agent_config(
             "name": agent.name,
             "description": agent.description,
             "greeting": agent.greeting,
+            "return_greeting": agent.return_greeting,
             "prompt_preview": agent.prompt_template[:200] + "..." if len(agent.prompt_template) > 200 else agent.prompt_template,
             "prompt_full": agent.prompt_template,
             "tools": agent.tool_names,
@@ -654,14 +699,25 @@ async def update_session_agent(
         rate=config.voice.rate if config.voice else "+0%",
     )
     
+    # Build speech config (STT / VAD settings)
+    speech_config = SpeechConfig(
+        vad_silence_timeout_ms=config.speech.vad_silence_timeout_ms if config.speech else 800,
+        use_semantic_segmentation=config.speech.use_semantic_segmentation if config.speech else False,
+        candidate_languages=config.speech.candidate_languages if config.speech else ["en-US"],
+        enable_diarization=config.speech.enable_diarization if config.speech else False,
+        speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
+    )
+    
     # Create updated agent
     agent = UnifiedAgent(
         name=config.name,
         description=config.description,
         greeting=config.greeting,
+        return_greeting=config.return_greeting,
         handoff=HandoffConfig(trigger=f"handoff_{config.name.lower().replace(' ', '_')}"),
         model=model_config,
         voice=voice_config,
+        speech=speech_config,
         prompt_template=config.prompt,
         tool_names=config.tools,
         template_vars=config.template_vars or {},
@@ -689,10 +745,12 @@ async def update_session_agent(
             "name": config.name,
             "description": config.description,
             "greeting": config.greeting,
+            "return_greeting": config.return_greeting,
             "prompt_preview": config.prompt[:200] + "...",
             "tools": config.tools,
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
+            "speech": speech_config.to_dict(),
         },
         created_at=created_at,
         modified_at=time.time(),

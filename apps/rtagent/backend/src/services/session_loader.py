@@ -75,11 +75,17 @@ def _sanitize_for_json(obj: Any) -> Any:
     except Exception:
         return "<unserializable>"
 
-# Minimal in-memory catalog keyed by email for quick demo lookups.
-_EMAIL_TO_PROFILE: Dict[str, Dict[str, Any]] = {
-    "john.smith@email.com": {
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MOCK PROFILES (Single Source of Truth)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# All mock profiles defined once - indexes built at module load
+_MOCK_PROFILES = [
+    {
         "full_name": "John Smith",
         "client_id": "CLT-001-JS",
+        "email": "john.smith@email.com",
         "institution_name": "Contoso Bank",
         "contact_info": {"email": "john.smith@email.com", "phone_last_4": "5678"},
         "customer_intelligence": {
@@ -98,9 +104,10 @@ _EMAIL_TO_PROFILE: Dict[str, Dict[str, Any]] = {
             "preferences": {"preferredContactMethod": "mobile"},
         },
     },
-    "jane.doe@email.com": {
+    {
         "full_name": "Jane Doe",
         "client_id": "CLT-002-JD",
+        "email": "jane.doe@email.com",
         "institution_name": "Contoso Bank",
         "contact_info": {"email": "jane.doe@email.com", "phone_last_4": "9012"},
         "customer_intelligence": {
@@ -119,13 +126,21 @@ _EMAIL_TO_PROFILE: Dict[str, Dict[str, Any]] = {
             "preferences": {"preferredContactMethod": "email"},
         },
     },
+]
+
+# Build lookup indexes at module load
+_EMAIL_INDEX: Dict[str, Dict[str, Any]] = {
+    p["email"].lower(): p for p in _MOCK_PROFILES
+}
+_CLIENT_ID_INDEX: Dict[str, Dict[str, Any]] = {
+    p["client_id"]: p for p in _MOCK_PROFILES
 }
 
 
 @lru_cache(maxsize=64)
 def _get_profile_by_email(normalized_email: str) -> Optional[Dict[str, Any]]:
-    """Return profile if available."""
-    return _EMAIL_TO_PROFILE.get(normalized_email)
+    """Return profile if available from the email index."""
+    return _EMAIL_INDEX.get(normalized_email)
 
 
 async def load_user_profile_by_email(email: str) -> Optional[Dict[str, Any]]:
@@ -150,52 +165,6 @@ async def load_user_profile_by_email(email: str) -> Optional[Dict[str, Any]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # CLIENT ID LOOKUP (with Cosmos DB support)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# Mock profiles keyed by client_id for fallback
-_CLIENT_ID_TO_PROFILE: Dict[str, Dict[str, Any]] = {
-    "CLT-001-JS": {
-        "full_name": "John Smith",
-        "client_id": "CLT-001-JS",
-        "institution_name": "Contoso Bank",
-        "contact_info": {"email": "john.smith@email.com", "phone_last_4": "5678"},
-        "customer_intelligence": {
-            "relationship_context": {"relationship_tier": "Platinum", "relationship_duration_years": 8},
-            "bank_profile": {
-                "current_balance": 45230.50,
-                "accountTenureYears": 8,
-                "cards": [{"productName": "Cash Rewards"}],
-                "behavior_summary": {
-                    "travelSpendShare": 0.25,
-                    "diningSpendShare": 0.15,
-                    "foreignTransactionCount": 4,
-                },
-            },
-            "spending_patterns": {"avg_monthly_spend": 4500},
-            "preferences": {"preferredContactMethod": "mobile"},
-        },
-    },
-    "CLT-002-JD": {
-        "full_name": "Jane Doe",
-        "client_id": "CLT-002-JD",
-        "institution_name": "Contoso Bank",
-        "contact_info": {"email": "jane.doe@email.com", "phone_last_4": "9012"},
-        "customer_intelligence": {
-            "relationship_context": {"relationship_tier": "Gold", "relationship_duration_years": 3},
-            "bank_profile": {
-                "current_balance": 12500.00,
-                "accountTenureYears": 3,
-                "cards": [{"productName": "Travel Rewards"}],
-                "behavior_summary": {
-                    "travelSpendShare": 0.40,
-                    "diningSpendShare": 0.20,
-                    "foreignTransactionCount": 8,
-                },
-            },
-            "spending_patterns": {"avg_monthly_spend": 3200},
-            "preferences": {"preferredContactMethod": "email"},
-        },
-    },
-}
 
 
 async def _lookup_cosmos_by_client_id(client_id: str) -> Optional[Dict[str, Any]]:
@@ -255,8 +224,8 @@ async def load_user_profile_by_client_id(client_id: str) -> Optional[Dict[str, A
     if cosmos_profile:
         return cosmos_profile
     
-    # Fall back to mock data
-    mock_profile = _CLIENT_ID_TO_PROFILE.get(normalized_id)
+    # Fall back to mock data using the consolidated index
+    mock_profile = _CLIENT_ID_INDEX.get(normalized_id)
     if mock_profile:
         logger.info("📋 Profile loaded from mock data: %s", normalized_id)
         return mock_profile

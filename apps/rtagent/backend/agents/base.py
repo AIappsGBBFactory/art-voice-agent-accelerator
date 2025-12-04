@@ -131,6 +131,63 @@ class ModelConfig:
 
 
 @dataclass
+class SpeechConfig:
+    """
+    Speech recognition (STT) configuration for the agent.
+    
+    Controls VAD, segmentation, language detection, and other speech processing settings.
+    These settings affect how the speech recognizer processes incoming audio.
+    """
+    # VAD (Voice Activity Detection)
+    vad_silence_timeout_ms: int = 800  # Silence duration before finalizing recognition
+    use_semantic_segmentation: bool = False  # Enable semantic sentence boundary detection
+    
+    # Language settings
+    candidate_languages: List[str] = field(
+        default_factory=lambda: ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"]
+    )
+    
+    # Advanced features
+    enable_diarization: bool = False  # Speaker diarization for multi-speaker scenarios
+    speaker_count_hint: int = 2  # Hint for number of speakers in diarization
+    
+    # Default languages constant for from_dict
+    _DEFAULT_LANGS: List[str] = field(
+        default=None, 
+        init=False, 
+        repr=False,
+    )
+    
+    def __post_init__(self):
+        """Initialize default languages constant."""
+        object.__setattr__(self, '_DEFAULT_LANGS', ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"])
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SpeechConfig":
+        """Create SpeechConfig from dict."""
+        if not data:
+            return cls()
+        default_langs = ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"]
+        return cls(
+            vad_silence_timeout_ms=int(data.get("vad_silence_timeout_ms", 800)),
+            use_semantic_segmentation=bool(data.get("use_semantic_segmentation", False)),
+            candidate_languages=data.get("candidate_languages", default_langs),
+            enable_diarization=bool(data.get("enable_diarization", False)),
+            speaker_count_hint=int(data.get("speaker_count_hint", 2)),
+        )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict for serialization."""
+        return {
+            "vad_silence_timeout_ms": self.vad_silence_timeout_ms,
+            "use_semantic_segmentation": self.use_semantic_segmentation,
+            "candidate_languages": self.candidate_languages,
+            "enable_diarization": self.enable_diarization,
+            "speaker_count_hint": self.speaker_count_hint,
+        }
+
+
+@dataclass
 class UnifiedAgent:
     """
     Orchestrator-agnostic agent configuration.
@@ -169,6 +226,11 @@ class UnifiedAgent:
     # Voice Settings (TTS)
     # ─────────────────────────────────────────────────────────────────
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    
+    # ─────────────────────────────────────────────────────────────────
+    # Speech Recognition Settings (STT)
+    # ─────────────────────────────────────────────────────────────────
+    speech: SpeechConfig = field(default_factory=SpeechConfig)
     
     # ─────────────────────────────────────────────────────────────────
     # Session Settings (VoiceLive-specific)

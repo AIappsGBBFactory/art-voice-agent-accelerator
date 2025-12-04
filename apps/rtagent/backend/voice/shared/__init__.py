@@ -9,13 +9,18 @@ Contents:
     - OrchestratorResult: Result from an orchestrator turn
     - resolve_orchestrator_config: Scenario-aware configuration resolution
     - resolve_from_app_state: Configuration from FastAPI app.state
+    - SessionStateKeys: Standard keys for MemoManager state
+    - sync_state_from_memo: Load session state from MemoManager
+    - sync_state_to_memo: Persist session state to MemoManager
 
 Usage:
     from apps.rtagent.backend.voice.shared import (
         OrchestratorContext,
         OrchestratorResult,
         resolve_orchestrator_config,
-        DEFAULT_START_AGENT,
+        SessionStateKeys,
+        sync_state_from_memo,
+        sync_state_to_memo,
     )
 """
 
@@ -35,6 +40,14 @@ from .config_resolver import (
     get_scenario_greeting,
 )
 
+# Session state sync (shared between orchestrators)
+from .session_state import (
+    SessionStateKeys,
+    SessionState,
+    sync_state_from_memo,
+    sync_state_to_memo,
+)
+
 __all__ = [
     # Context/Result (shared data classes)
     "OrchestratorContext",
@@ -46,4 +59,9 @@ __all__ = [
     "resolve_orchestrator_config",
     "resolve_from_app_state",
     "get_scenario_greeting",
+    # Session State Sync
+    "SessionStateKeys",
+    "SessionState",
+    "sync_state_from_memo",
+    "sync_state_to_memo",
 ]
