@@ -61,6 +61,13 @@ from .speech_cascade import (
     record_barge_in,
     # Orchestrator (co-located with handler)
     CascadeOrchestratorAdapter,
+    # Unified TTS Playback (preferred)
+    TTSPlayback,
+    SAMPLE_RATE_BROWSER,
+    SAMPLE_RATE_ACS,
+    # Legacy TTS Sender (deprecated - use TTSPlayback)
+    send_tts_to_browser,
+    send_tts_to_acs,
 )
 
 # VoiceLive SDK (Azure VoiceLive + multi-agent)
@@ -108,6 +115,7 @@ from .messaging import (
     broadcast_session_envelope,
     make_envelope,
     make_status_envelope,
+    make_assistant_envelope,
     make_assistant_streaming_envelope,
     make_event_envelope,
     BrowserBargeInController,
@@ -128,6 +136,13 @@ __all__ = [
     "record_stt_recognition",
     "record_turn_processing",
     "record_barge_in",
+    # Unified TTS Playback (preferred)
+    "TTSPlayback",
+    "SAMPLE_RATE_BROWSER",
+    "SAMPLE_RATE_ACS",
+    # Legacy TTS Sender (deprecated - use TTSPlayback)
+    "send_tts_to_browser",
+    "send_tts_to_acs",
     # VoiceLive SDK Handler
     "VoiceLiveSDKHandler",
     # VoiceLive Metrics
@@ -163,6 +178,7 @@ __all__ = [
     "broadcast_session_envelope",
     "make_envelope",
     "make_status_envelope",
+    "make_assistant_envelope",
     "make_assistant_streaming_envelope",
     "make_event_envelope",
     "BrowserBargeInController",

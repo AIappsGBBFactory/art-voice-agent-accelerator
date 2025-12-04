@@ -70,6 +70,7 @@ const AgentDetailsPanel = ({
   agentName,
   agentDescription,
   sessionId,
+  sessionAgentConfig = null,
   lastUserMessage,
   lastAssistantMessage,
   recentTools = [],
@@ -77,6 +78,25 @@ const AgentDetailsPanel = ({
   agentTools = [],
   handoffTools = [],
 }) => {
+  const sessionConfig = sessionAgentConfig?.config || null;
+  const displayAgentName = sessionConfig?.name || agentName;
+  const displayDescription = sessionConfig?.description || agentDescription;
+  const displayTools = sessionConfig?.tools?.length ? sessionConfig.tools : agentTools;
+
+  const modelLabel =
+    sessionConfig?.model?.deployment_id ||
+    sessionConfig?.model?.deploymentId ||
+    sessionConfig?.model?.name ||
+    null;
+  const voiceLabel =
+    sessionConfig?.voice?.name ||
+    sessionConfig?.voice?.current_voice ||
+    sessionConfig?.voice?.display_name ||
+    null;
+  const promptPreview =
+    sessionConfig?.prompt_preview ||
+    (sessionConfig?.prompt_full ? sessionConfig.prompt_full.slice(0, 200) : null);
+
   const toolRows = useMemo(
     () => recentTools.slice(0, 5),
     [recentTools],
@@ -136,18 +156,18 @@ const AgentDetailsPanel = ({
           icon={<SmartToyRoundedIcon sx={{ fontSize: 16, color: '#0ea5e9' }} />}
         >
           <Typography sx={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', mb: 0.5 }}>
-            {agentName || 'Unknown'}
+            {displayAgentName || 'Unknown'}
           </Typography>
-          {agentDescription && (
+          {(displayDescription || sessionConfig?.greeting) && (
             <Typography sx={{ fontSize: '12px', color: '#475569', mb: 1 }}>
-              {agentDescription}
+              {displayDescription || sessionConfig?.greeting}
             </Typography>
           )}
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
-            {agentName && (
+            {displayAgentName && (
               <Chip
                 size="small"
-                label={agentName}
+                label={displayAgentName}
                 icon={<SmartToyRoundedIcon fontSize="small" />}
                 sx={{ background: 'rgba(14,165,233,0.12)', color: '#0ea5e9', fontWeight: 700 }}
               />
@@ -168,13 +188,13 @@ const AgentDetailsPanel = ({
           collapsible
           defaultOpen={true}
         >
-          {agentTools.length === 0 ? (
+          {displayTools.length === 0 ? (
             <Typography sx={{ fontSize: '12px', color: '#94a3b8' }}>
               No tools registered for this agent.
             </Typography>
           ) : (
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-              {agentTools.map((tool) => {
+              {displayTools.map((tool) => {
                 const isHandoff = handoffTools.includes(tool);
                 return (
                   <Chip
@@ -295,10 +315,33 @@ const AgentDetailsPanel = ({
           title="Session Snapshot"
           icon={<PersonRoundedIcon sx={{ fontSize: 16, color: '#f97316' }} />}
         >
-          <SummaryRow label="Speaker" value={lastAssistantMessage ? agentName || 'Assistant' : '—'} />
+          <SummaryRow label="Speaker" value={lastAssistantMessage ? displayAgentName || 'Assistant' : '—'} />
           <SummaryRow label="Last User Turn" value={lastUserMessage ? 'Captured' : '—'} />
-          <SummaryRow label="Tool Count" value={agentTools.length ? agentTools.length.toString() : '0'} />
+          <SummaryRow label="Tool Count" value={displayTools.length ? displayTools.length.toString() : '0'} />
         </PanelCard>
+
+        {sessionConfig && (
+          <PanelCard
+            title="Session Agent Config"
+            icon={<BuildRoundedIcon sx={{ fontSize: 16, color: '#0ea5e9' }} />}
+            collapsible
+            defaultOpen={true}
+          >
+            <SummaryRow label="Model" value={modelLabel || '—'} />
+            <SummaryRow label="Voice" value={voiceLabel || '—'} />
+            {sessionConfig.template_vars && Object.keys(sessionConfig.template_vars).length > 0 && (
+              <SummaryRow label="Template Vars" value={Object.keys(sessionConfig.template_vars).length.toString()} />
+            )}
+            <Box sx={{ mt: 1 }}>
+              <Typography sx={{ fontSize: '11px', fontWeight: 700, color: '#475569', mb: 0.5 }}>
+                Prompt Preview
+              </Typography>
+              <Typography sx={{ fontSize: '11px', color: '#0f172a', whiteSpace: 'pre-wrap' }}>
+                {promptPreview || 'No prompt preview available.'}
+              </Typography>
+            </Box>
+          </PanelCard>
+        )}
 
       </Box>
     </div>,

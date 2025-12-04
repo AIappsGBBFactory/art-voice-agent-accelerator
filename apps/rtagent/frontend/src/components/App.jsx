@@ -16,6 +16,7 @@ import {
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
+import BuildRoundedIcon from '@mui/icons-material/BuildRounded';
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
@@ -30,6 +31,7 @@ import GraphCanvas from './graph/GraphCanvas.jsx';
 import GraphListView from './graph/GraphListView.jsx';
 import AgentTopologyPanel from './AgentTopologyPanel.jsx';
 import AgentDetailsPanel from './AgentDetailsPanel.jsx';
+import AgentBuilder from './AgentBuilder.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import { API_BASE_URL, WS_URL } from '../config/constants.js';
 import { ensureVoiceAppKeyframes, styles } from '../styles/voiceAppStyles.js';
@@ -91,6 +93,7 @@ function RealTimeVoiceApp() {
   const [pendingRealtimeStart, setPendingRealtimeStart] = useState(false);
   const [agentInventory, setAgentInventory] = useState(null);
   const [agentDetail, setAgentDetail] = useState(null);
+  const [sessionAgentConfig, setSessionAgentConfig] = useState(null);
   const [showAgentsPanel, setShowAgentsPanel] = useState(false);
   const [selectedAgentName, setSelectedAgentName] = useState(null);
   const [realtimePanelCoords, setRealtimePanelCoords] = useState({ top: 0, left: 0 });
@@ -182,6 +185,24 @@ function RealTimeVoiceApp() {
       return [...trimmed, { ...event, ts, id: `${ts}-${graphEventCounterRef.current}` }];
     });
   }, []);
+
+  const fetchSessionAgentConfig = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}`
+      );
+      if (res.status === 404) {
+        setSessionAgentConfig(null);
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json();
+      setSessionAgentConfig(data);
+    } catch (err) {
+      appendLog(`Session agent fetch failed: ${err.message}`);
+    }
+  }, [sessionId, appendLog]);
 
   // Chat width resize listeners (placed after state initialization)
   useEffect(() => {
@@ -310,6 +331,11 @@ function RealTimeVoiceApp() {
     };
   }, [resolvedAgentName, sessionId, appendLog]);
 
+  useEffect(() => {
+    if (!showAgentPanel) return;
+    fetchSessionAgentConfig();
+  }, [showAgentPanel, fetchSessionAgentConfig, resolvedAgentName]);
+
   const resolveAgentLabel = useCallback((payload, fallback = null) => {
     if (!payload || typeof payload !== "object") {
       return fallback;
@@ -354,16 +380,10 @@ function RealTimeVoiceApp() {
       // Send as raw text message
       const userText = textInput.trim();
       socketRef.current.send(userText);
-      
-      // Add user message immediately to UI (optimistic update)
-      // Backend should also echo, but we show it immediately for better UX
-      setMessages((prev) => [
-        ...prev,
-        { speaker: "User", text: userText }
-      ]);
-      setActiveSpeaker("User");
+
+      // Let backend echo the user message to avoid duplicate bubbles
       appendLog(`User (text): ${userText}`);
-      
+      setActiveSpeaker("User");
       setTextInput("");
     } else {
       appendLog("⚠️ Cannot send text: WebSocket not connected");
@@ -428,6 +448,7 @@ function RealTimeVoiceApp() {
   const [showDemoForm, setShowDemoForm] = useState(false);
   const openDemoForm = useCallback(() => setShowDemoForm(true), [setShowDemoForm]);
   const closeDemoForm = useCallback(() => setShowDemoForm(false), [setShowDemoForm]);
+  const [showAgentBuilder, setShowAgentBuilder] = useState(false);
   const [createProfileHovered, setCreateProfileHovered] = useState(false);
   const demoFormCloseTimeoutRef = useRef(null);
   const profileHighlightTimeoutRef = useRef(null);
@@ -3187,6 +3208,26 @@ function RealTimeVoiceApp() {
           <Button
             variant="contained"
             size="small"
+            onClick={() => setShowAgentBuilder(true)}
+            startIcon={<BuildRoundedIcon fontSize="small" />}
+            sx={{
+              textTransform: "none",
+              borderRadius: "12px",
+              background: "linear-gradient(135deg, #f59e0b, #d97706)",
+              boxShadow: "0 8px 18px rgba(217,119,6,0.25)",
+              fontWeight: 700,
+              color: "#fff",
+              marginRight: "8px",
+              '&:hover': {
+                background: "linear-gradient(135deg, #d97706, #b45309)",
+              },
+            }}
+          >
+            Agent Builder
+          </Button>
+          <Button
+            variant="contained"
+            size="small"
             onClick={() => setShowAgentPanel((prev) => !prev)}
             startIcon={<SmartToyRoundedIcon fontSize="small" />}
             sx={{
@@ -3489,12 +3530,95 @@ function RealTimeVoiceApp() {
       agentName={resolvedAgentName}
       agentDescription={activeAgentInfo?.description}
       sessionId={sessionId}
+      sessionAgentConfig={sessionAgentConfig}
       lastUserMessage={lastUserMessage}
       lastAssistantMessage={lastAssistantMessage}
       recentTools={recentTools}
       messages={messages}
       agentTools={resolvedAgentTools}
       handoffTools={resolvedHandoffTools}
+    />
+    <AgentBuilder
+      open={showAgentBuilder}
+      onClose={() => setShowAgentBuilder(false)}
+      sessionId={sessionId}
+      onAgentCreated={(agentConfig) => {
+        appendLog(`✨ Dynamic agent created: ${agentConfig.name}`);
+        appendSystemMessage(`🤖 Agent "${agentConfig.name}" is now active`, {
+          tone: "success",
+          statusCaption: `Tools: ${agentConfig.tools?.length || 0} · Voice: ${agentConfig.voice?.name || 'default'}`,
+          statusLabel: "Agent Active",
+        });
+        // Set the created agent as the active agent
+        setSelectedAgentName(agentConfig.name);
+        fetchSessionAgentConfig();
+        // Refresh agent inventory to include the new session agent
+        setAgentInventory((prev) => {
+          if (!prev) return prev;
+          const existing = prev.agents?.find((a) => a.name === agentConfig.name);
+          if (existing) {
+            // Update existing agent
+            return {
+              ...prev,
+              agents: prev.agents.map((a) => 
+                a.name === agentConfig.name
+                  ? {
+                      ...a,
+                      description: agentConfig.description,
+                      tools: agentConfig.tools || [],
+                      toolCount: agentConfig.tools?.length || 0,
+                      model: agentConfig.model?.deployment_id || null,
+                      voice: agentConfig.voice?.name || null,
+                    }
+                  : a
+              ),
+            };
+          }
+          return {
+            ...prev,
+            agents: [
+              ...(prev.agents || []),
+              {
+                name: agentConfig.name,
+                description: agentConfig.description,
+                tools: agentConfig.tools || [],
+                toolCount: agentConfig.tools?.length || 0,
+                model: agentConfig.model?.deployment_id || null,
+                voice: agentConfig.voice?.name || null,
+              },
+            ],
+          };
+        });
+        setShowAgentBuilder(false);
+      }}
+      onAgentUpdated={(agentConfig) => {
+        appendLog(`✏️ Dynamic agent updated: ${agentConfig.name}`);
+        appendSystemMessage(`🤖 Agent "${agentConfig.name}" updated`, {
+          tone: "success",
+          statusCaption: `Tools: ${agentConfig.tools?.length || 0} · Voice: ${agentConfig.voice?.name || 'default'}`,
+          statusLabel: "Agent Updated",
+        });
+        // Update the agent in inventory
+        setAgentInventory((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            agents: prev.agents.map((a) => 
+              a.name === agentConfig.name
+                ? {
+                    ...a,
+                    description: agentConfig.description,
+                    tools: agentConfig.tools || [],
+                    toolCount: agentConfig.tools?.length || 0,
+                    model: agentConfig.model?.deployment_id || null,
+                    voice: agentConfig.voice?.name || null,
+                  }
+                : a
+            ),
+          };
+        });
+        // Don't close the dialog on update - user may want to continue editing
+      }}
     />
   </div>
 );

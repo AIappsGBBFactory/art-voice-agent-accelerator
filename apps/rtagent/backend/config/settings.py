@@ -145,7 +145,8 @@ AZURE_COSMOS_COLLECTION_NAME: str = os.getenv("AZURE_COSMOS_COLLECTION_NAME", ""
 # ==============================================================================
 
 # Fallback TTS voice (used when agent voice is not available)
-DEFAULT_TTS_VOICE: str = os.getenv("DEFAULT_TTS_VOICE", "en-US-OnyxTurboMultilingualNeural")
+# NOTE: Should be empty - voice comes from active agent's agent.yaml
+DEFAULT_TTS_VOICE: str = os.getenv("DEFAULT_TTS_VOICE", "")
 # Legacy alias - deprecated, use DEFAULT_TTS_VOICE
 GREETING_VOICE_TTS: str = os.getenv("GREETING_VOICE_TTS", DEFAULT_TTS_VOICE)
 

@@ -17,8 +17,8 @@ greeting: |
   {% endif %}
 
 return_greeting: |
-  {% if caller_name %}Welcome back, {{ caller_name }}. What else can I help you with?
-  {% else %}Welcome back. What else can I help you with?
+  {% if caller_name %}Welcome back, {{ caller_name }}. Is there anything else I can assist you with?
+  {% else %}Welcome back. I'm the Concierge agent. Is there anything else I can assist you with?
   {% endif %}
 
 # ─────────────────────────────────────────────────────────────────────────────

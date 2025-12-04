@@ -6,10 +6,11 @@ WebSocket and REST endpoints for voice conversations.
 
 Endpoint Overview:
 ------------------
-health.py  - Health checks, readiness probes (GET /api/v1/health/*)
-calls.py   - ACS call lifecycle webhooks (POST /api/v1/calls/*)
-media.py   - ACS media streaming WebSocket (WS /api/v1/media/*)
-browser.py - Browser WebSocket endpoints (WS /api/v1/browser/*)
+health.py       - Health checks, readiness probes (GET /api/v1/health/*)
+calls.py        - ACS call lifecycle webhooks (POST /api/v1/calls/*)
+media.py        - ACS media streaming WebSocket (WS /api/v1/media/*)
+browser.py      - Browser WebSocket endpoints (WS /api/v1/browser/*)
+agent_builder.py - Dynamic agent configuration (POST /api/v1/agent-builder/*)
 
 WebSocket Flow:
 ---------------
@@ -28,8 +29,9 @@ Key Files:
 - media.py: ACS telephony - receives JSON-wrapped audio from phone
 - browser.py: Web browser - receives raw PCM audio from mic
 - Both use the same MediaHandler with different transport modes
+- agent_builder.py: REST API for creating dynamic agents at runtime
 """
 
-from . import health, calls, media, browser
+from . import health, calls, media, browser, agent_builder
 
-__all__ = ["health", "calls", "media", "browser"]
+__all__ = ["health", "calls", "media", "browser", "agent_builder"]

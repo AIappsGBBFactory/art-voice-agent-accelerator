@@ -221,6 +221,17 @@ class DedicatedTtsPoolManager:
             # Fallback: Create on-demand client
             if len(self._dedicated_clients) < self._max_dedicated_clients:
                 cold_client = await self._create_client()
+                
+                # Validate cold client is properly initialized
+                if not getattr(cold_client, "is_ready", False):
+                    logger.error(
+                        f"🚨 On-demand TTS client creation failed for session {session_id} "
+                        f"- Azure Speech credentials may be invalid"
+                    )
+                    raise RuntimeError(
+                        f"TTS client initialization failed for session {session_id} - check Azure credentials"
+                    )
+                
                 session_client = TtsSessionClient(
                     client=cold_client,
                     session_id=session_id,
@@ -323,6 +334,12 @@ class DedicatedTtsPoolManager:
         """Create a client and add it to the warm pool."""
         try:
             client = await self._create_client()
+            # Validate client is properly initialized before adding to pool
+            if not getattr(client, "is_ready", False):
+                logger.error(
+                    f"TTS client initialization failed (batch={batch_id}) - check Azure credentials"
+                )
+                return
             await self._warm_pool.put(client)
             logger.debug(f"Pre-warmed TTS client added (batch={batch_id})")
         except Exception as e:

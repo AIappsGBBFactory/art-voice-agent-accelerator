@@ -48,6 +48,10 @@ from apps.rtagent.backend.voice.voicelive.tool_helpers import (
 from apps.rtagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
 )
+from apps.rtagent.backend.src.orchestration.session_agents import (
+    get_session_agent,
+    register_adapter_update_callback,
+)
 from utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
@@ -55,6 +59,7 @@ tracer = trace.get_tracer(__name__)
 
 if TYPE_CHECKING:
     from src.stateful.state_managment import MemoManager
+    from apps.rtagent.backend.agents.base import UnifiedAgent
 
 
 # Module-level adapter cache (per session)
@@ -126,6 +131,7 @@ def _get_or_create_adapter(
     Get or create a CascadeOrchestratorAdapter for the session.
     
     Uses app_state to get pre-loaded unified agents and scenario config.
+    Also injects any pre-existing session agent from Agent Builder.
     """
     if session_id in _adapters:
         return _adapters[session_id]
@@ -138,6 +144,18 @@ def _get_or_create_adapter(
     )
     
     _adapters[session_id] = adapter
+    
+    # Check for pre-existing session agent (created via Agent Builder before call started)
+    session_agent = get_session_agent(session_id)
+    if session_agent:
+        adapter.agents[session_agent.name] = session_agent
+        adapter._active_agent = session_agent.name
+        logger.info(
+            "🎨 Injected pre-existing session agent | session=%s agent=%s voice=%s",
+            session_id,
+            session_agent.name,
+            session_agent.voice.name if session_agent.voice else None,
+        )
     
     logger.info(
         "Created CascadeOrchestratorAdapter",
@@ -156,6 +174,52 @@ def cleanup_adapter(session_id: str) -> None:
     if session_id in _adapters:
         del _adapters[session_id]
         logger.debug("Cleaned up adapter for session: %s", session_id)
+
+
+def update_session_agent(session_id: str, agent: "UnifiedAgent") -> bool:
+    """
+    Update or inject a dynamic agent into the session's orchestrator adapter.
+    
+    This is the single integration point for Agent Builder updates.
+    When called, the agent is injected directly into the adapter's agents dict,
+    ensuring all downstream voice/model/prompt lookups use the updated config.
+    
+    Args:
+        session_id: The session to update
+        agent: The UnifiedAgent with updated configuration
+        
+    Returns:
+        True if adapter was found and updated, False if no active adapter exists
+    """
+    if session_id not in _adapters:
+        logger.debug(
+            "No active adapter for session %s - agent will be used when adapter is created",
+            session_id,
+        )
+        return False
+    
+    adapter = _adapters[session_id]
+    
+    # Inject/update the agent in the adapter's agents dict
+    # Use a special key for the session agent so it doesn't conflict with base agents
+    adapter.agents[agent.name] = agent
+    
+    # If this is meant to be the active agent, update the adapter's active agent
+    adapter._active_agent = agent.name
+    
+    logger.info(
+        "🔄 Session agent updated in adapter | session=%s agent=%s voice=%s model=%s",
+        session_id,
+        agent.name,
+        agent.voice.name if agent.voice else None,
+        agent.model.deployment_id if agent.model else None,
+    )
+    
+    return True
+
+
+# Register the callback so session_agents module can notify us of updates
+register_adapter_update_callback(update_session_agent)
 
 
 async def route_turn(
@@ -268,11 +332,14 @@ async def route_turn(
                     pass
                 
                 # Get new agent's voice configuration for TTS updates
+                # Adapter.agents contains session agent overrides from Agent Builder
                 new_agent_config = adapter.agents.get(new_agent)
                 voice_name = None
+                voice_style = None
                 voice_rate = None
                 if new_agent_config and new_agent_config.voice:
                     voice_name = new_agent_config.voice.name
+                    voice_style = new_agent_config.voice.style
                     voice_rate = new_agent_config.voice.rate
                 
                 # Emit agent_change envelope for frontend UI (cascade updates)
@@ -285,6 +352,7 @@ async def route_turn(
                         "agent_label": new_label,
                         "previous_agent": previous_agent,
                         "voice_name": voice_name,
+                        "voice_style": voice_style,
                         "voice_rate": voice_rate,
                         "message": f"Switched to {new_label or new_agent}",
                     },
@@ -334,11 +402,14 @@ async def route_turn(
                 agent_label = _resolve_agent_label(agent_name)
 
                 # Get current agent's voice configuration for TTS
+                # Adapter.agents contains session agent overrides from Agent Builder
                 voice_name = None
+                voice_style = None
                 voice_rate = None
                 agent_config = adapter.agents.get(agent_name)
                 if agent_config and agent_config.voice:
                     voice_name = agent_config.voice.name
+                    voice_style = agent_config.voice.style
                     voice_rate = agent_config.voice.rate
 
                 # Queue TTS via speech cascade with agent's voice configuration
@@ -346,6 +417,7 @@ async def route_turn(
                     ws.state.speech_cascade.queue_tts(
                         text,
                         voice_name=voice_name,
+                        voice_style=voice_style,
                         voice_rate=voice_rate,
                     )
 
@@ -524,8 +596,24 @@ def _get_conversation_history(cm: "MemoManager") -> list[dict]:
     """Extract conversation history from MemoManager."""
     history = []
     
-    # Try to get conversation history from working memory
-    if hasattr(cm, "workingmemory") and cm.workingmemory:
+    # Get the active agent to retrieve its history
+    active_agent = None
+    try:
+        active_agent = cm.get_value_from_corememory("active_agent")
+    except Exception:
+        pass
+    
+    # Try to get history from the MemoManager's history for the active agent
+    if active_agent and hasattr(cm, "get_history"):
+        try:
+            agent_history = cm.get_history(active_agent)
+            if agent_history:
+                history.extend(agent_history)
+        except Exception:
+            pass
+    
+    # Fallback: try working memory (legacy compatibility)
+    if not history and hasattr(cm, "workingmemory") and cm.workingmemory:
         for item in cm.workingmemory:
             if isinstance(item, dict) and "role" in item:
                 history.append(item)

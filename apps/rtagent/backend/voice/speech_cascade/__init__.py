@@ -23,6 +23,7 @@ Usage:
         SpeechCascadeHandler,
         SpeechEvent,
         SpeechEventType,
+        TTSPlayback,
         record_stt_recognition,
     )
 """
@@ -44,6 +45,13 @@ from .metrics import (
     record_barge_in,
 )
 from .orchestrator import CascadeOrchestratorAdapter
+from .tts import TTSPlayback, SAMPLE_RATE_BROWSER, SAMPLE_RATE_ACS
+
+# Legacy exports for backward compatibility (deprecated)
+from .tts_sender import (
+    send_tts_to_browser,
+    send_tts_to_acs,
+)
 
 __all__ = [
     # Handler components
@@ -56,6 +64,13 @@ __all__ = [
     "BargeInController",
     "ResponseSender",
     "TranscriptEmitter",
+    # Unified TTS Playback (preferred)
+    "TTSPlayback",
+    "SAMPLE_RATE_BROWSER",
+    "SAMPLE_RATE_ACS",
+    # Legacy TTS (deprecated - use TTSPlayback)
+    "send_tts_to_browser",
+    "send_tts_to_acs",
     # Orchestrator shim
     "CascadeOrchestratorAdapter",
     # Metrics
