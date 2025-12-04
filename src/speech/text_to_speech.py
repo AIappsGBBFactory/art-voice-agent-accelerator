@@ -633,8 +633,23 @@ class SpeechSynthesizer:
             self.cfg = self._create_speech_config()
             logger.debug("Speech synthesizer initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize speech config: {e}")
+            import traceback
+            tb_str = traceback.format_exc()
+            logger.error(
+                f"Failed to initialize speech config: {e} "
+                f"(key={'set' if self.key else 'unset'}, region={self.region}, voice={self.voice})\n"
+                f"Traceback:\n{tb_str}"
+            )
             # Don't fail completely - allow for memory-only synthesis
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if the synthesizer is properly initialized and ready for use.
+        
+        Returns:
+            True if the speech config is initialized, False otherwise.
+        """
+        return self.cfg is not None
 
     def set_call_connection_id(self, call_connection_id: str) -> None:
         """Set the call connection ID for correlation in tracing and logging.

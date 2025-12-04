@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Literal
 
 EnvelopeType = Literal[
-    "event", "status", "assistant_streaming", "exit", "error", "debug"
+    "event", "status", "assistant", "assistant_streaming", "exit", "error", "debug"
 ]
 TopicType = Literal["dashboard", "session", "call", "user", "system", "media"]
 SenderType = Literal["Assistant", "User", "System", "ACS", "STT", "TTS"]
@@ -67,6 +67,26 @@ def make_status_envelope(
         sender=sender,
         payload=payload,
         topic=topic,
+        session_id=session_id,
+        call_id=call_id,
+        user_id=user_id,
+    )
+
+
+def make_assistant_envelope(
+    content: str,
+    *,
+    sender: SenderType = "Assistant",
+    session_id: Optional[str] = None,
+    call_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create non-streaming assistant response envelope."""
+    return make_envelope(
+        etype="assistant",
+        sender=sender,
+        payload={"content": content, "message": content, "streaming": False},
+        topic="session",
         session_id=session_id,
         call_id=call_id,
         user_id=user_id,

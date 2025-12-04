@@ -744,6 +744,9 @@ class CascadeOrchestratorAdapter:
         - Tool calls are aggregated during streaming
         - After stream completes, tools are executed and we recurse
         
+        Uses the current agent's model configuration (deployment_id, temperature, etc.)
+        to allow session agents to specify their own LLM settings.
+        
         Args:
             messages: Conversation messages including system prompt
             tools: OpenAI-format tool definitions
@@ -757,6 +760,20 @@ class CascadeOrchestratorAdapter:
             Tuple of (response_text, all_tool_calls)
         """
         import json
+        
+        # Get model configuration from current agent (allows session agents to override)
+        agent = self.current_agent_config
+        model_name = self.config.model_name  # Default from adapter config
+        temperature = 0.7  # Default
+        top_p = 0.9  # Default
+        max_tokens = 4096  # Default
+        
+        if agent and agent.model:
+            # Use agent's model configuration
+            model_name = agent.model.deployment_id or model_name
+            temperature = agent.model.temperature
+            top_p = agent.model.top_p
+            max_tokens = agent.model.max_tokens
         
         # Safety: prevent infinite tool loops
         if _iteration >= _max_iterations:
@@ -791,7 +808,10 @@ class CascadeOrchestratorAdapter:
                 "gen_ai.agent.name": self._active_agent,
                 "gen_ai.agent.description": f"Voice agent: {self._active_agent}",
                 "gen_ai.provider.name": "azure.ai.openai",
-                "gen_ai.request.model": self.config.model_name,
+                "gen_ai.request.model": model_name,
+                "gen_ai.request.temperature": temperature,
+                "gen_ai.request.top_p": top_p,
+                "gen_ai.request.max_tokens": max_tokens,
                 "session.id": self.config.session_id or "",
                 "rt.session.id": self.config.session_id or "",
                 "rt.call.connection_id": self.config.call_connection_id or "",
@@ -803,9 +823,10 @@ class CascadeOrchestratorAdapter:
         ) as span:
             try:
                 logger.info(
-                    "Starting LLM request (streaming) | agent=%s model=%s iteration=%d",
+                    "Starting LLM request (streaming) | agent=%s model=%s temp=%.2f iteration=%d",
                     self._active_agent,
-                    self.config.model_name,
+                    model_name,
+                    temperature,
                     _iteration,
                 )
 
@@ -831,18 +852,22 @@ class CascadeOrchestratorAdapter:
                     nonlocal sentence_buffer
                     try:
                         logger.debug(
-                            "Starting OpenAI stream | model=%s messages=%d tools=%d",
-                            self.config.model_name,
+                            "Starting OpenAI stream | model=%s messages=%d tools=%d temp=%.2f",
+                            model_name,
                             len(messages),
                             len(tools) if tools else 0,
+                            temperature,
                         )
                         chunk_count = 0
                         for chunk in client.chat.completions.create(
-                            model=self.config.model_name,
+                            model=model_name,
                             messages=messages,
                             tools=tools if tools else None,
                             stream=True,
                             timeout=60,
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_tokens=max_tokens,
                         ):
                             chunk_count += 1
                             if not getattr(chunk, "choices", None):

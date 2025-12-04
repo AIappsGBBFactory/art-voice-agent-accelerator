@@ -50,6 +50,7 @@ from apps.rtagent.backend.src.ws_helpers.shared_ws import (
 from apps.rtagent.backend.src.ws_helpers.envelopes import (
     make_envelope,
     make_status_envelope,
+    make_assistant_envelope,
     make_assistant_streaming_envelope,
     make_event_envelope,
 )
@@ -75,6 +76,7 @@ __all__ = [
     # Envelope Builders
     "make_envelope",
     "make_status_envelope",
+    "make_assistant_envelope",
     "make_assistant_streaming_envelope",
     "make_event_envelope",
     # Browser Barge-In

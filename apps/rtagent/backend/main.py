@@ -360,7 +360,23 @@ async def lifespan(app: FastAPI):
 
     async def start_speech_pools() -> None:
         async def make_tts() -> SpeechSynthesizer:
-            return SpeechSynthesizer(voice=app_config.voice.default_voice, playback="always")
+            import os
+            key = os.getenv("AZURE_SPEECH_KEY")
+            region = os.getenv("AZURE_SPEECH_REGION")
+            logger.info(
+                f"Creating TTS synthesizer (key={'set' if key else 'MISSING'}, "
+                f"region={region or 'MISSING'})"
+            )
+            # Don't set voice here - voice comes from active agent at synthesis time
+            synth = SpeechSynthesizer(playback="always")
+            if not synth.is_ready:
+                logger.error(
+                    "TTS synthesizer failed to initialize - check Azure Speech credentials "
+                    "(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION)"
+                )
+            else:
+                logger.info("TTS synthesizer initialized successfully")
+            return synth
 
         async def make_stt() -> StreamingSpeechRecognizerFromBytes:
             from config import (

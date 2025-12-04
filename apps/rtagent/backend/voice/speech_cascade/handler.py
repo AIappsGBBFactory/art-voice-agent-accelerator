@@ -1140,24 +1140,46 @@ class SpeechCascadeHandler:
             logger.error(f"[{self._conn_short}] Failed to queue event: {e}")
             return False
 
-    def queue_greeting(self, text: str, language: str = "en-US") -> bool:
-        """Queue a greeting for playback."""
+    def queue_greeting(
+        self,
+        text: str,
+        language: str = "en-US",
+        *,
+        voice_name: Optional[str] = None,
+        voice_style: Optional[str] = None,
+        voice_rate: Optional[str] = None,
+    ) -> bool:
+        """Queue a greeting for playback with optional voice configuration."""
         return self.queue_event(
             SpeechEvent(
                 event_type=SpeechEventType.GREETING,
                 text=text,
                 language=language,
                 speaker_id=self.connection_id,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                voice_rate=voice_rate,
             )
         )
 
-    def queue_announcement(self, text: str, language: str = "en-US") -> bool:
-        """Queue an announcement for playback."""
+    def queue_announcement(
+        self,
+        text: str,
+        language: str = "en-US",
+        *,
+        voice_name: Optional[str] = None,
+        voice_style: Optional[str] = None,
+        voice_rate: Optional[str] = None,
+    ) -> bool:
+        """Queue an announcement for playback with optional voice configuration."""
         return self.queue_event(
             SpeechEvent(
                 event_type=SpeechEventType.ANNOUNCEMENT,
                 text=text,
                 language=language,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                voice_rate=voice_rate,
             )
         )
 

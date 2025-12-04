@@ -73,9 +73,14 @@ class OnDemandResourcePool(Generic[T]):
         async with self._lock:
             resource = self._session_cache.get(session_id)
             if resource is not None:
-                self._metrics.allocations_total += 1
-                self._metrics.allocations_cached += 1
-                return resource, AllocationTier.DEDICATED
+                # Validate cached resource is still ready
+                if getattr(resource, "is_ready", True):
+                    self._metrics.allocations_total += 1
+                    self._metrics.allocations_cached += 1
+                    return resource, AllocationTier.DEDICATED
+                else:
+                    # Cached resource is no longer valid, remove it
+                    self._session_cache.pop(session_id, None)
 
             resource = await self._factory()
             self._session_cache[session_id] = resource
