@@ -45,6 +45,49 @@ cm.append_to_history(self._active_agent, "user", transcript)
 cm.append_to_history(self._active_agent, "assistant", result.response_text)
 ```
 
+### :material-tools: Tool Call History Persistence
+
+!!! success "Tool Calls Preserved Across Turns"
+    Tool calls and their results are persisted to MemoManager as JSON-encoded messages, ensuring conversation continuity across turns.
+
+When a tool is executed during a turn:
+
+1. **Assistant message with tool_calls** is persisted as JSON
+2. **Tool result messages** are persisted as JSON
+3. **`_build_messages()`** decodes these JSON messages when building the next request
+
+```python
+# In _process_llm() - persist assistant message with tool calls
+cm.append_to_history(
+    self._active_agent, 
+    "assistant", 
+    json.dumps(assistant_msg)  # Includes tool_calls structure
+)
+
+# Persist each tool result
+cm.append_to_history(
+    self._active_agent,
+    "tool",
+    json.dumps(tool_result_msg)  # Includes tool_call_id, name, content
+)
+```
+
+When building messages for the next turn, `_build_messages()` automatically decodes JSON-encoded messages:
+
+```python
+# In _build_messages() - decode JSON messages
+for msg in context.conversation_history:
+    if role in ("assistant", "tool") and content.startswith("{"):
+        try:
+            decoded = json.loads(content)
+            if isinstance(decoded, dict) and "role" in decoded:
+                messages.append(decoded)  # Full message structure restored
+                continue
+        except json.JSONDecodeError:
+            pass
+    messages.append(msg)  # Regular message
+```
+
 ### :material-swap-horizontal: Handoff Behavior
 
 When switching agents, the new agent receives:
@@ -122,27 +165,38 @@ flowchart TD
             G["FraudAgent Thread"]
             H["PayPalAgent Thread"]
         end
+        
+        subgraph MessageTypes ["📝 Message Types"]
+            I["user: plain text"]
+            J["assistant: text or JSON"]
+            K["tool: JSON encoded"]
+        end
     end
     
     subgraph Orchestrators ["🎭 Orchestrators"]
-        I["CascadeOrchestrator"]
-        J["LiveOrchestrator"]
+        L["CascadeOrchestrator"]
+        M["LiveOrchestrator"]
     end
     
-    I --> F
-    I --> G
-    I --> H
-    I --> A
-    J --> A
-    J --> B
+    L --> F
+    L --> G
+    L --> H
+    L --> A
+    M --> A
+    M --> B
+    F --> I
+    F --> J
+    F --> K
     
     classDef coreNode fill:#2196F3,stroke:#1565C0,stroke-width:2px,color:#fff
     classDef historyNode fill:#4CAF50,stroke:#2E7D32,stroke-width:2px,color:#fff
     classDef orchNode fill:#FF9800,stroke:#EF6C00,stroke-width:2px,color:#fff
+    classDef msgNode fill:#9C27B0,stroke:#7B1FA2,stroke-width:2px,color:#fff
     
     class A,B,C,D,E coreNode
     class F,G,H historyNode
-    class I,J orchNode
+    class L,M orchNode
+    class I,J,K msgNode
 ```
 
 ### ChatHistory Structure
@@ -151,6 +205,9 @@ flowchart TD
 class ChatHistory:
     _threads: Dict[str, List[Dict[str, str]]]  # agent_name → messages
 ```
+
+!!! note "Complex Message Storage"
+    While ChatHistory stores `{"role": ..., "content": ...}` format, **tool-related messages** are stored with JSON-encoded content to preserve the full OpenAI message structure (including `tool_calls`, `tool_call_id`, etc.). The orchestrator decodes these when building messages.
 
 ### API Reference
 
@@ -167,9 +224,26 @@ class ChatHistory:
 cm.append_to_history("FraudAgent", "user", "My SSN is 123-45-6789")
 cm.append_to_history("FraudAgent", "assistant", "Thank you for verifying...")
 
+# Tool call message (JSON-encoded for complex structure)
+assistant_with_tools = {
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": "call_123", "type": "function", "function": {...}}]
+}
+cm.append_to_history("FraudAgent", "assistant", json.dumps(assistant_with_tools))
+
+# Tool result message (JSON-encoded)
+tool_result = {
+    "role": "tool",
+    "tool_call_id": "call_123",
+    "name": "analyze_transactions",
+    "content": '{"suspicious": true, "transactions": [...]}'
+}
+cm.append_to_history("FraudAgent", "tool", json.dumps(tool_result))
+
 # Read agent's history
 history = cm.get_history("FraudAgent")
-# Returns: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+# Returns mix of simple and JSON-encoded messages
 ```
 
 ---
@@ -207,7 +281,9 @@ Persists to MemoManager:
 
 1. **Always retrieve per-agent history** at the start of each turn
 2. **Persist both user and assistant messages** to maintain continuity
-3. **Include handoff context** when switching agents
+3. **Persist tool calls and results as JSON** to preserve the full message structure
+4. **Include handoff context** when switching agents
+5. **Decode JSON messages in `_build_messages()`** to restore tool call structures
 
 ### For VoiceLive Orchestrator
 

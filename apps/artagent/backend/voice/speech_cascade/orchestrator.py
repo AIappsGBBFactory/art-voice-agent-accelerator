@@ -744,7 +744,11 @@ class CascadeOrchestratorAdapter:
         context: OrchestratorContext,
         agent: "UnifiedAgent",
     ) -> List[Dict[str, Any]]:
-        """Build messages for LLM request."""
+        """Build messages for LLM request.
+        
+        Handles both simple messages (role + content) and complex messages
+        (tool calls, tool results) which are stored as JSON in the content field.
+        """
         messages = []
         
         # System prompt from agent
@@ -752,8 +756,24 @@ class CascadeOrchestratorAdapter:
         if system_content:
             messages.append({"role": "system", "content": system_content})
         
-        # Conversation history
-        messages.extend(context.conversation_history)
+        # Conversation history - expand any JSON-encoded tool messages
+        for msg in context.conversation_history:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            
+            # Check if this is a JSON-encoded complex message (tool call or tool result)
+            if role in ("assistant", "tool") and content and content.startswith("{"):
+                try:
+                    decoded = json.loads(content)
+                    # If it has the expected structure, use it directly
+                    if isinstance(decoded, dict) and "role" in decoded:
+                        messages.append(decoded)
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass  # Not JSON, use as-is
+            
+            # Regular message
+            messages.append(msg)
         
         # Current user message
         if context.user_text:
@@ -1108,6 +1128,21 @@ class CascadeOrchestratorAdapter:
                     session_scope = CascadeSessionScope.get_current()
                     cm = session_scope.memo_manager if session_scope else self._current_memo_manager
                     
+                    # Persist assistant message with tool calls to MemoManager
+                    # This ensures the tool call is in history for subsequent turns
+                    if cm:
+                        try:
+                            # Store the assistant message as JSON to preserve tool_calls structure
+                            cm.append_to_history(
+                                self._active_agent, 
+                                "assistant", 
+                                json.dumps(assistant_msg) if assistant_msg.get("tool_calls") else (response_text or "")
+                            )
+                        except Exception:
+                            logger.debug("Failed to persist assistant tool_call message to history", exc_info=True)
+                    
+                    tool_results_for_history: List[Dict[str, Any]] = []
+                    
                     for tool_call in non_handoff_tools:
                         tool_name = tool_call.get("name", "")
                         tool_id = tool_call.get("id", "")
@@ -1145,12 +1180,26 @@ class CascadeOrchestratorAdapter:
                             await on_tool_end(tool_name, result)
                         
                         # Append tool result message
-                        messages.append({
+                        tool_result_msg = {
                             "tool_call_id": tool_id,
                             "role": "tool",
                             "name": tool_name,
                             "content": json.dumps(result) if isinstance(result, dict) else str(result),
-                        })
+                        }
+                        messages.append(tool_result_msg)
+                        tool_results_for_history.append(tool_result_msg)
+                    
+                    # Persist tool results to MemoManager for history continuity
+                    if cm and tool_results_for_history:
+                        try:
+                            for tool_msg in tool_results_for_history:
+                                cm.append_to_history(
+                                    self._active_agent,
+                                    "tool",
+                                    json.dumps(tool_msg)
+                                )
+                        except Exception:
+                            logger.debug("Failed to persist tool results to history", exc_info=True)
                     
                     # Recurse to get LLM follow-up response
                     span.add_event("tool_followup_starting", {"tools_executed": len(non_handoff_tools)})
