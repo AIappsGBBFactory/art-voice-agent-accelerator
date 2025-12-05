@@ -17,7 +17,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from src.pools.on_demand_pool import OnDemandResourcePool
+from src.pools.warmable_pool import WarmableResourcePool
 from utils.telemetry_config import setup_azure_monitor
 
 # ---------------- Monitoring ------------------------------------------------
@@ -398,22 +398,75 @@ async def lifespan(app: FastAPI):
                 audio_format=AUDIO_FORMAT,
                 initial_phrases=initial_bias,
             )
-        logger.info("Initializing on-demand speech providers")
+        
+        # Import warm pool configuration
+        from config import (
+            WARM_POOL_ENABLED,
+            WARM_POOL_TTS_SIZE,
+            WARM_POOL_STT_SIZE,
+            WARM_POOL_BACKGROUND_REFRESH,
+            WARM_POOL_REFRESH_INTERVAL,
+            WARM_POOL_SESSION_MAX_AGE,
+        )
+        
+        # Define warm_fn callbacks that use Phase 2 warmup methods
+        async def warm_tts_connection(tts: SpeechSynthesizer) -> bool:
+            """Warm TTS connection by synthesizing minimal audio."""
+            try:
+                return await asyncio.to_thread(tts.warm_connection)
+            except Exception as e:
+                logger.warning("TTS warm_fn failed: %s", e)
+                return False
+        
+        async def warm_stt_connection(stt: StreamingSpeechRecognizerFromBytes) -> bool:
+            """Warm STT connection by calling prepare_start()."""
+            try:
+                return await asyncio.to_thread(stt.warm_connection)
+            except Exception as e:
+                logger.warning("STT warm_fn failed: %s", e)
+                return False
+        
+        if WARM_POOL_ENABLED:
+            logger.info(
+                "Initializing warm speech pools (TTS=%d, STT=%d, background=%s)",
+                WARM_POOL_TTS_SIZE, WARM_POOL_STT_SIZE, WARM_POOL_BACKGROUND_REFRESH
+            )
+        else:
+            logger.info("Initializing speech pools (warm pool disabled, on-demand mode)")
 
-        app.state.stt_pool = OnDemandResourcePool(
+        # Use WarmableResourcePool for both modes. When warm_pool_size=0,
+        # it behaves identically to OnDemandResourcePool.
+        app.state.stt_pool = WarmableResourcePool(
             factory=make_stt,
-            session_awareness=False,
             name="speech-stt",
+            warm_pool_size=WARM_POOL_STT_SIZE if WARM_POOL_ENABLED else 0,
+            enable_background_warmup=WARM_POOL_BACKGROUND_REFRESH if WARM_POOL_ENABLED else False,
+            warmup_interval_sec=WARM_POOL_REFRESH_INTERVAL,
+            session_awareness=False,
+            warm_fn=warm_stt_connection if WARM_POOL_ENABLED else None,
         )
 
-        app.state.tts_pool = OnDemandResourcePool(
+        app.state.tts_pool = WarmableResourcePool(
             factory=make_tts,
-            session_awareness=True,
             name="speech-tts",
+            warm_pool_size=WARM_POOL_TTS_SIZE if WARM_POOL_ENABLED else 0,
+            enable_background_warmup=WARM_POOL_BACKGROUND_REFRESH if WARM_POOL_ENABLED else False,
+            warmup_interval_sec=WARM_POOL_REFRESH_INTERVAL,
+            session_awareness=True,
+            session_max_age_sec=WARM_POOL_SESSION_MAX_AGE,
+            warm_fn=warm_tts_connection if WARM_POOL_ENABLED else None,
         )
 
         await asyncio.gather(app.state.tts_pool.prepare(), app.state.stt_pool.prepare())
-        logger.info("speech providers ready")
+        
+        # Log pool status
+        tts_snapshot = app.state.tts_pool.snapshot()
+        stt_snapshot = app.state.stt_pool.snapshot()
+        logger.info(
+            "Speech pools ready (TTS warm=%s, STT warm=%s)",
+            tts_snapshot.get("warm_pool_size", 0),
+            stt_snapshot.get("warm_pool_size", 0),
+        )
 
     async def stop_speech_pools() -> None:
         shutdown_tasks = []
@@ -439,6 +492,101 @@ async def lifespan(app: FastAPI):
         logger.info("Azure OpenAI client attached", extra={"manager_enabled": True})
 
     add_step("aoai", start_aoai_client)
+
+    async def start_connection_warmup() -> None:
+        """
+        Pre-warm Azure connections to eliminate cold-start latency.
+        
+        Phase 1 warmup (this step):
+        1. Azure AD token pre-fetch for Speech services (if using managed identity)
+        2. Azure OpenAI HTTP/2 connection establishment
+        
+        Phase 2 warmup is now handled by WarmableResourcePool:
+        - TTS/STT pools pre-warm resources during prepare() with warm_fn callbacks
+        - Background warmup maintains pool levels automatically
+        
+        All warmup tasks run in parallel and are non-blocking — failures are logged
+        but do not prevent application startup.
+        """
+        warmup_tasks = []
+        
+        # ── Phase 1: Token + OpenAI Connection ─────────────────────────────
+        
+        # 1. Speech token pre-fetch (if using Azure AD auth, not API key)
+        speech_key = os.getenv("AZURE_SPEECH_KEY")
+        speech_resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
+        
+        if not speech_key and speech_resource_id:
+            async def warm_speech_token():
+                try:
+                    from src.speech.auth_manager import get_speech_token_manager
+                    token_mgr = get_speech_token_manager()
+                    success = await asyncio.to_thread(token_mgr.warm_token)
+                    return ("speech_token", success)
+                except Exception as e:
+                    logger.warning("Speech token warmup setup failed: %s", e)
+                    return ("speech_token", False)
+            
+            warmup_tasks.append(warm_speech_token())
+        else:
+            if speech_key:
+                logger.debug("Speech token warmup skipped: using API key auth")
+            else:
+                logger.debug("Speech token warmup skipped: AZURE_SPEECH_RESOURCE_ID not set")
+        
+        # 2. OpenAI connection warm
+        async def warm_openai():
+            try:
+                from src.aoai.client import warm_openai_connection
+                success = await warm_openai_connection(timeout_sec=10.0)
+                return ("openai_connection", success)
+            except Exception as e:
+                logger.warning("OpenAI warmup setup failed: %s", e)
+                return ("openai_connection", False)
+        
+        warmup_tasks.append(warm_openai())
+        
+        # ── Phase 2: Now handled by WarmableResourcePool ───────────────────
+        # TTS/STT warming is done automatically during pool.prepare() via warm_fn
+        # and maintained by background warmup task. Report pool warmup status here.
+        
+        tts_pool = getattr(app.state, "tts_pool", None)
+        stt_pool = getattr(app.state, "stt_pool", None)
+        
+        pool_warmup_status = {
+            "tts_pool_warmed": tts_pool.snapshot().get("warm_pool_size", 0) if tts_pool else 0,
+            "stt_pool_warmed": stt_pool.snapshot().get("warm_pool_size", 0) if stt_pool else 0,
+        }
+        
+        # Run all warmup tasks in parallel
+        if warmup_tasks:
+            results = await asyncio.gather(*warmup_tasks, return_exceptions=True)
+            
+            # Log warmup results
+            warmup_results_dict = {}
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.warning("Warmup task failed with exception: %s", result)
+                elif isinstance(result, tuple):
+                    name, success = result
+                    warmup_results_dict[name] = success
+                    if success:
+                        logger.info("Warmup completed: %s", name)
+                    else:
+                        logger.warning("Warmup failed (non-blocking): %s", name)
+            
+            # Include pool warmup status
+            warmup_results_dict.update(pool_warmup_status)
+            
+            # Store warmup status for health checks
+            app.state.warmup_completed = True
+            app.state.warmup_results = warmup_results_dict
+        else:
+            app.state.warmup_completed = True
+            app.state.warmup_results = pool_warmup_status
+            logger.debug("No warmup tasks configured")
+
+    add_step("warmup", start_connection_warmup)
 
     async def start_external_services() -> None:
         app.state.cosmos = CosmosDBMongoCoreManager(

@@ -37,6 +37,8 @@ from apps.rtagent.backend.api.v1.schemas.health import (
     HealthResponse,
     ServiceCheck,
     ReadinessResponse,
+    PoolMetrics,
+    PoolsHealthResponse,
 )
 from apps.rtagent.backend.agents.loader import build_agent_summaries
 from utils.ml_logging import get_logger
@@ -574,6 +576,98 @@ async def readiness_check(
     # Return appropriate status code
     status_code = 200 if overall_status != "unhealthy" else 503
     return JSONResponse(content=response_data.dict(), status_code=status_code)
+
+
+@router.get(
+    "/pools",
+    response_model=PoolsHealthResponse,
+    summary="Resource Pool Health",
+    description="""
+    Get detailed health and metrics for resource pools (TTS/STT).
+    
+    Returns allocation statistics, warm pool levels, and session cache status.
+    Useful for monitoring warm pool effectiveness and tuning pool sizes.
+    """,
+    tags=["Health"],
+)
+async def pools_health(request: Request) -> PoolsHealthResponse:
+    """
+    Get resource pool health and metrics.
+    
+    Returns detailed metrics for each pool including:
+    - Warm pool levels vs targets
+    - Allocation tier breakdown (DEDICATED/WARM/COLD)
+    - Session cache statistics
+    - Background warmup status
+    """
+    pools_data: Dict[str, PoolMetrics] = {}
+    totals = {
+        "warm": 0,
+        "active_sessions": 0,
+        "allocations_total": 0,
+        "allocations_dedicated": 0,
+        "allocations_warm": 0,
+        "allocations_cold": 0,
+    }
+    
+    for pool_attr in ("tts_pool", "stt_pool"):
+        pool = getattr(request.app.state, pool_attr, None)
+        if pool is None:
+            continue
+            
+        snapshot = pool.snapshot() if hasattr(pool, "snapshot") else {}
+        metrics_raw = snapshot.get("metrics", {})
+        
+        pool_metrics = PoolMetrics(
+            name=snapshot.get("name", pool_attr),
+            ready=snapshot.get("ready", False),
+            warm_pool_size=snapshot.get("warm_pool_size", 0),
+            warm_pool_target=snapshot.get("warm_pool_target", 0),
+            active_sessions=snapshot.get("active_sessions", 0),
+            session_awareness=snapshot.get("session_awareness", False),
+            allocations_total=metrics_raw.get("allocations_total", 0),
+            allocations_dedicated=metrics_raw.get("allocations_dedicated", 0),
+            allocations_warm=metrics_raw.get("allocations_warm", 0),
+            allocations_cold=metrics_raw.get("allocations_cold", 0),
+            warmup_cycles=metrics_raw.get("warmup_cycles", 0),
+            warmup_failures=metrics_raw.get("warmup_failures", 0),
+            background_warmup=snapshot.get("background_warmup", False),
+        )
+        pools_data[pool_metrics.name] = pool_metrics
+        
+        # Accumulate totals
+        totals["warm"] += pool_metrics.warm_pool_size
+        totals["active_sessions"] += pool_metrics.active_sessions
+        totals["allocations_total"] += pool_metrics.allocations_total
+        totals["allocations_dedicated"] += pool_metrics.allocations_dedicated
+        totals["allocations_warm"] += pool_metrics.allocations_warm
+        totals["allocations_cold"] += pool_metrics.allocations_cold
+    
+    # Calculate hit rate (DEDICATED + WARM vs COLD)
+    total_allocs = totals["allocations_total"]
+    fast_allocs = totals["allocations_dedicated"] + totals["allocations_warm"]
+    hit_rate = round((fast_allocs / total_allocs * 100), 1) if total_allocs > 0 else 0.0
+    
+    # Determine overall status
+    all_ready = all(p.ready for p in pools_data.values()) if pools_data else False
+    status = "healthy" if all_ready else "degraded" if pools_data else "unhealthy"
+    
+    return PoolsHealthResponse(
+        status=status,
+        timestamp=time.time(),
+        pools=pools_data,
+        summary={
+            "total_warm": totals["warm"],
+            "total_active_sessions": totals["active_sessions"],
+            "allocations_total": totals["allocations_total"],
+            "hit_rate_percent": hit_rate,
+            "tier_breakdown": {
+                "dedicated": totals["allocations_dedicated"],
+                "warm": totals["allocations_warm"],
+                "cold": totals["allocations_cold"],
+            },
+        },
+    )
 
 
 async def _check_redis_fast(redis_manager) -> ServiceCheck:

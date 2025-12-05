@@ -91,9 +91,9 @@ export ACS_STREAMING_MODE=VOICE_LIVE
 | Lowest possible latency | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
 | Custom VAD/segmentation | ⭐⭐⭐⭐⭐ | ⭐⭐ |
 | Sentence-level TTS control | ⭐⭐⭐⭐⭐ | ⭐⭐ |
-| Azure Speech voices | ⭐⭐⭐⭐⭐ | ❌ |
+| Azure Speech voices | ⭐⭐⭐⭐⭐ | ⭐⭐ |
 | Phrase list customization | ⭐⭐⭐⭐⭐ | ❌ |
-| Simplicity of setup | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| Simplicity of setup | ⭐⭐ | ⭐⭐⭐⭐ |
 | Audio quality control | ⭐⭐⭐⭐ | ⭐⭐⭐ |
 
 ---

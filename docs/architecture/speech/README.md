@@ -150,6 +150,7 @@ Both use the same `StreamingModeSelector` component with options for VoiceLive a
 
 ## Related Documentation
 
+- [Resource Pools](resource-pools.md) - TTS/STT client pooling and session isolation
 - [Orchestration Overview](../orchestration/README.md) - Dual orchestrator architecture
 - [Cascade Orchestrator](../orchestration/cascade.md) - SpeechCascade deep dive
 - [VoiceLive Orchestrator](../orchestration/voicelive.md) - VoiceLive deep dive

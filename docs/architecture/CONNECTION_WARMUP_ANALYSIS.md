@@ -1,8 +1,32 @@
 # Connection Warmup Analysis for Azure Speech & Azure OpenAI
 
-> **Status:** Proposal  
+> **Status:** ✅ Phase 1 & Phase 2 Implemented  
 > **Date:** 2025-12-04  
 > **Scope:** Service connection initialization optimization for low-latency voice applications
+
+---
+
+## Implementation Status
+
+| Phase | Component | Status | Impact |
+|-------|-----------|--------|--------|
+| 1 | Token Pre-fetch | ✅ Implemented | -100-300ms |
+| 1 | OpenAI Connection Warm | ✅ Implemented | -200-500ms |
+| 2 | TTS Factory Warming | ✅ Implemented | -200-400ms |
+| 2 | STT Push Stream Pre-connect | ✅ Implemented | -300-600ms |
+| 3 | WarmableResourcePool | 📋 Planned | Variable |
+
+### Implementation Details
+
+**Phase 1 (Completed):**
+- `src/speech/auth_manager.py`: Added `warm_token()` method and `is_warmed` property
+- `src/aoai/client.py`: Added `warm_openai_connection()` async function
+- `apps/rtagent/backend/main.py`: Added `start_connection_warmup` lifecycle step
+
+**Phase 2 (Completed):**
+- `src/speech/text_to_speech.py`: Added `warm_connection()` method
+- `src/speech/speech_recognizer.py`: Added `warm_connection()` method  
+- `apps/rtagent/backend/main.py`: Extended warmup step with TTS/STT warming
 
 ---
 
@@ -501,7 +525,7 @@ STARTUP_WARMUP_TIMEOUT_SEC = float(os.getenv("STARTUP_WARMUP_TIMEOUT_SEC", "10")
 ```
 Current Flow (First Call):
 ┌─────────────────────────────────────────────────────────────────┐
-│ Call Arrives → Create STT → Connect → Create TTS → Connect     │
+│ Call Arrives → Create STT → Connect → Create TTS → Connect      │
 │     0ms         100ms        400ms      500ms       700ms       │
 │                                                                 │
 │ → Fetch Token → LLM Request → Response                          │
@@ -511,9 +535,9 @@ Total: ~1500ms to first response
 
 Proposed Flow (With Warming):
 ┌─────────────────────────────────────────────────────────────────┐
-│ [Startup: Token+Connections pre-warmed in background]          │
+│ [Startup: Token+Connections pre-warmed in background]           │
 │                                                                 │
-│ Call Arrives → Use Warm STT → Use Warm TTS → LLM Request       │
+│ Call Arrives → Use Warm STT → Use Warm TTS → LLM Request        │
 │     0ms           50ms           100ms          300ms           │
 │                                                                 │
 │ → Response                                                      │

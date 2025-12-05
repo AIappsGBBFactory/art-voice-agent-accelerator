@@ -228,7 +228,7 @@ class TTSPlayback:
         voice_name: Optional[str] = None,
         voice_style: Optional[str] = None,
         voice_rate: Optional[str] = None,
-        blocking: bool = True,
+        blocking: bool = False,
         on_first_audio: Optional[Callable[[], None]] = None,
     ) -> bool:
         """

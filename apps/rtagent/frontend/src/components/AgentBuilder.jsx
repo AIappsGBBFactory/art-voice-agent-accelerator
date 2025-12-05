@@ -730,6 +730,11 @@ export default function AgentBuilder({
 }) {
   // Tab state
   const [activeTab, setActiveTab] = useState(0);
+  const [effectiveSessionId, setEffectiveSessionId] = useState(sessionId);
+  const [editingSessionId, setEditingSessionId] = useState(false);
+  const [pendingSessionId, setPendingSessionId] = useState(sessionId || '');
+  const [sessionUpdating, setSessionUpdating] = useState(false);
+  const [sessionUpdateError, setSessionUpdateError] = useState(null);
   
   // Track if we're editing an existing session agent
   const [isEditMode, setIsEditMode] = useState(editMode);
@@ -876,19 +881,24 @@ export default function AgentBuilder({
   const fetchSessionAgents = useCallback(async () => {
     const collected = [];
     try {
-      if (sessionId) {
+      if (effectiveSessionId) {
         // Fetch the live session-scoped agent so it shows up immediately in the template grid
-        const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}`);
+        const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(effectiveSessionId)}`);
         if (res.ok) {
           const data = await res.json();
           if (data?.config) {
             collected.push({
-              id: `session-${sessionId}`,
+              id: `session-${effectiveSessionId}`,
               name: data.config.name || data.agent_name || 'Session Agent',
               description: data.config.description || '',
               tools: data.config.tools || [],
+              greeting: data.config.greeting,
+              return_greeting: data.config.return_greeting,
+              prompt: data.config.prompt_full || data.config.prompt_preview,
               model: data.config.model,
               voice: data.config.voice,
+              template_vars: data.config.template_vars,
+              speech: data.config.speech,
               source: 'session',
             });
           }
@@ -899,7 +909,7 @@ export default function AgentBuilder({
       logger.error('Error fetching session agents:', err);
       setSessionAgents(collected);
     }
-  }, [sessionId]);
+  }, [effectiveSessionId]);
 
   // Reload agents from disk and refresh templates
   const [reloadingTemplates, setReloadingTemplates] = useState(false);
@@ -930,9 +940,9 @@ export default function AgentBuilder({
   }, [fetchAvailableTemplates, fetchSessionAgents]);
 
   const fetchExistingConfig = useCallback(async () => {
-    if (!sessionId) return;
+    if (!effectiveSessionId) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/session/${sessionId}`);
+      const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/session/${effectiveSessionId}`);
       if (res.ok) {
         const data = await res.json();
         if (data.config) {
@@ -956,10 +966,10 @@ export default function AgentBuilder({
       }
       return false;
     } catch {
-      logger.debug('No existing config for session:', sessionId);
+      logger.debug('No existing config for session:', effectiveSessionId);
       return false;
     }
-  }, [sessionId]);  // Only depend on sessionId
+  }, [effectiveSessionId]);  // Only depend on sessionId
 
   useEffect(() => {
     if (open) {
@@ -986,6 +996,11 @@ export default function AgentBuilder({
       setConfig(prev => ({ ...prev, ...existingConfig }));
     }
   }, [existingConfig]);
+
+  useEffect(() => {
+    setEffectiveSessionId(sessionId);
+    setPendingSessionId(sessionId || '');
+  }, [sessionId]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // TOOL GROUPING
@@ -1066,6 +1081,26 @@ export default function AgentBuilder({
     setExpandedTemplates(prev => ({ ...prev, [templateId]: !prev[templateId] }));
   }, []);
 
+  const handleApplySessionAgent = useCallback((agentCard) => {
+    if (!agentCard) return;
+    setConfig(prev => ({
+      ...prev,
+      name: agentCard.name || prev.name,
+      description: agentCard.description || prev.description,
+      greeting: agentCard.greeting ?? prev.greeting,
+      return_greeting: agentCard.return_greeting ?? prev.return_greeting,
+      prompt: agentCard.prompt || prev.prompt,
+      tools: agentCard.tools || prev.tools,
+      voice: agentCard.voice ? { ...prev.voice, ...agentCard.voice } : prev.voice,
+      model: agentCard.model ? { ...prev.model, ...agentCard.model } : prev.model,
+      speech: agentCard.speech ? { ...prev.speech, ...agentCard.speech } : prev.speech,
+      template_vars: agentCard.template_vars ? { ...prev.template_vars, ...agentCard.template_vars } : prev.template_vars,
+    }));
+    setSelectedTemplate(agentCard.id);
+    setSuccess(`Applied session agent: ${agentCard.name || 'Session Agent'}`);
+    setTimeout(() => setSuccess(null), 3000);
+  }, []);
+
   const handleApplyTemplate = async (templateId) => {
     if (!templateId) {
       setSelectedTemplate(null);
@@ -1143,8 +1178,8 @@ export default function AgentBuilder({
       // Use PUT for update, POST for create
       const isUpdate = isEditMode;
       const url = isUpdate
-        ? `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}`
-        : `${API_BASE_URL}/api/v1/agent-builder/create?session_id=${encodeURIComponent(sessionId)}`;
+        ? `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(effectiveSessionId)}`
+        : `${API_BASE_URL}/api/v1/agent-builder/create?session_id=${encodeURIComponent(effectiveSessionId)}`;
       const method = isUpdate ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
@@ -1183,7 +1218,7 @@ export default function AgentBuilder({
       
       const agentConfig = {
         ...config,
-        session_id: sessionId,
+        session_id: effectiveSessionId,
         agent_id: data.agent_id,
       };
       
@@ -1242,6 +1277,56 @@ export default function AgentBuilder({
     return Array.from(keys).sort();
   }, [config.template_vars, detectedTemplateVars]);
 
+  const validateSessionId = useCallback(async (id) => {
+    if (!id) return false;
+    const pattern = /^session_[0-9]{6,}_[A-Za-z0-9]+$/;
+    if (!pattern.test(id)) {
+      setSessionUpdateError('Session ID must match pattern: session_<timestamp>_<suffix>');
+      return false;
+    }
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/metrics/session/${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        setSessionUpdateError('Session not found or inactive.');
+        return false;
+      }
+      return true;
+    } catch (err) {
+      setSessionUpdateError('Session validation failed.');
+      return false;
+    }
+  }, []);
+
+  const handleSessionIdSave = useCallback(async () => {
+    const target = (pendingSessionId || '').trim();
+    if (!target) {
+      setSessionUpdateError('Session ID is required');
+      return;
+    }
+    if (target === effectiveSessionId) {
+      setEditingSessionId(false);
+      setSessionUpdateError(null);
+      return;
+    }
+    setSessionUpdating(true);
+    const isValid = await validateSessionId(target);
+    if (isValid) {
+      setEffectiveSessionId(target);
+      setEditingSessionId(false);
+      setSessionUpdateError(null);
+      await Promise.all([fetchSessionAgents(), fetchExistingConfig()]);
+    } else {
+      setPendingSessionId(effectiveSessionId || '');
+    }
+    setSessionUpdating(false);
+  }, [pendingSessionId, effectiveSessionId, fetchExistingConfig, fetchSessionAgents, validateSessionId]);
+
+  const handleSessionIdCancel = useCallback(() => {
+    setPendingSessionId(effectiveSessionId || '');
+    setSessionUpdateError(null);
+    setEditingSessionId(false);
+  }, [effectiveSessionId]);
+
   const templateCards = useMemo(() => {
     const merged = [];
     const seen = new Set();
@@ -1292,57 +1377,93 @@ export default function AgentBuilder({
             </Box>
           </Stack>
           <Stack direction="row" alignItems="center" spacing={2}>
-            {/* Mode Toggle */}
-            {/* <ToggleButtonGroup
-              value={isEditMode ? 'edit' : 'create'}
-              exclusive
-              onChange={(_, newMode) => {
-                if (newMode === 'edit') {
-                  setIsEditMode(true);
-                  // Fetch existing config when switching to edit mode
-                  fetchExistingConfig();
-                } else if (newMode === 'create') {
-                  setIsEditMode(false);
-                  // Reset to defaults when switching to create mode
-                  handleReset();
+            <Box
+              sx={{
+                px: 1.5,
+                py: 0.75,
+                borderRadius: '999px',
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                position: 'relative',
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                if (!editingSessionId) {
+                  setPendingSessionId(effectiveSessionId || '');
+                  setEditingSessionId(true);
+                  setSessionUpdateError(null);
                 }
               }}
-              size="small"
-              sx={{
-                backgroundColor: 'rgba(255,255,255,0.1)',
-                '& .MuiToggleButton-root': {
-                  color: 'rgba(255,255,255,0.7)',
-                  borderColor: 'rgba(255,255,255,0.2)',
-                  px: 2,
-                  py: 0.5,
-                  textTransform: 'none',
-                  '&.Mui-selected': {
-                    color: 'white',
-                    backgroundColor: 'rgba(255,255,255,0.2)',
-                  },
-                  '&:hover': {
-                    backgroundColor: 'rgba(255,255,255,0.15)',
-                  },
-                },
-              }}
             >
-              <ToggleButton value="create">
-                <AddIcon fontSize="small" sx={{ mr: 0.5 }} />
-                Create New
-              </ToggleButton>
-              <ToggleButton value="edit">
-                <EditIcon fontSize="small" sx={{ mr: 0.5 }} />
-                Edit Existing
-              </ToggleButton>
-            </ToggleButtonGroup>
-             */}
-            {sessionId && (
-              <Chip
-                label={`Session: ${sessionId}`}
-                size="small"
-                sx={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'white' }}
-              />
-            )}
+              <Typography variant="caption" sx={{ color: 'white', opacity: 0.8 }}>
+                Session
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'white', fontFamily: 'monospace' }}>
+                {effectiveSessionId || 'none'}
+              </Typography>
+              {editingSessionId && (
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    right: 0,
+                    backgroundColor: '#0f172a',
+                    borderRadius: 1.5,
+                    boxShadow: '0 12px 30px rgba(0,0,0,0.25)',
+                    p: 1.5,
+                    minWidth: 280,
+                    zIndex: 10,
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)' }}>
+                    {'Update session id (session_<timestamp>_<suffix>)'}
+                  </Typography>
+                  <TextField
+                    value={pendingSessionId}
+                    onChange={(e) => setPendingSessionId(e.target.value)}
+                    size="small"
+                    fullWidth
+                    sx={{ mt: 1 }}
+                    InputProps={{
+                      sx: {
+                        backgroundColor: '#1e293b',
+                        color: 'white',
+                        fontFamily: 'monospace',
+                      },
+                    }}
+                    autoFocus
+                  />
+                  {sessionUpdateError && (
+                    <Typography variant="caption" color="error" sx={{ mt: 0.5, display: 'block' }}>
+                      {sessionUpdateError}
+                    </Typography>
+                  )}
+                  <Stack direction="row" spacing={1} sx={{ mt: 1, justifyContent: 'flex-end' }}>
+                    <Button
+                      size="small"
+                      onClick={handleSessionIdCancel}
+                      disabled={sessionUpdating}
+                      sx={{ textTransform: 'none' }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      onClick={handleSessionIdSave}
+                      disabled={sessionUpdating}
+                      sx={{ textTransform: 'none' }}
+                    >
+                      {sessionUpdating ? 'Saving...' : 'Save'}
+                    </Button>
+                  </Stack>
+                </Box>
+              )}
+            </Box>
             <IconButton onClick={onClose} sx={{ color: 'white' }}>
               <CloseIcon />
             </IconButton>
@@ -1415,32 +1536,68 @@ export default function AgentBuilder({
             {/* ═══════════════════════════════════════════════════════════════════ */}
             <TabPanel value={activeTab} index={0}>
               <Stack spacing={3}>
-                <Card variant="outlined" sx={styles.sectionCard}>
-                  <CardContent>
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
-                      🟢 Active Session Agent
-                    </Typography>
-                    <Stack direction="row" alignItems="center" spacing={2}>
-                      <Avatar sx={{ bgcolor: '#e0f2fe', color: '#0284c7', width: 40, height: 40 }}>
-                        <SmartToyIcon fontSize="small" />
-                      </Avatar>
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                          {config.name || 'Untitled Agent'}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                          {config.description || 'No description provided.'}
-                        </Typography>
-                        <Stack direction="row" spacing={1} flexWrap="wrap">
-                          <Chip size="small" label={`${config.tools?.length || 0} tools`} />
-                          {config.model?.deployment_id && (
-                            <Chip size="small" label={`Model: ${config.model.deployment_id}`} />
-                          )}
-                        </Stack>
-                      </Box>
-                    </Stack>
-                  </CardContent>
-                </Card>
+                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                  <Card variant="outlined" sx={{ ...styles.sectionCard, flex: 1 }}>
+                    <CardContent>
+                      <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                        🟢 Active Session Agent
+                      </Typography>
+                      <Stack direction="row" alignItems="center" spacing={2}>
+                        <Avatar sx={{ bgcolor: '#e0f2fe', color: '#0284c7', width: 40, height: 40 }}>
+                          <SmartToyIcon fontSize="small" />
+                        </Avatar>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                            {config.name || 'Untitled Agent'}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                            {config.description || 'No description provided.'}
+                          </Typography>
+                          <Stack direction="row" spacing={1} flexWrap="wrap">
+                            <Chip size="small" label={`${config.tools?.length || 0} tools`} />
+                            {config.model?.deployment_id && (
+                              <Chip size="small" label={`Model: ${config.model.deployment_id}`} />
+                            )}
+                          </Stack>
+                        </Box>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+
+                  <Card variant="outlined" sx={{ ...styles.sectionCard, flex: 1 }}>
+                    <CardContent>
+                      <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                        🤖 Agent Identity
+                      </Typography>
+                      <Stack spacing={2.5}>
+                        <TextField
+                          label="Agent Name"
+                          value={config.name}
+                          onChange={(e) => handleConfigChange('name', e.target.value)}
+                          fullWidth
+                          required
+                          helperText="A friendly name for your agent (e.g., 'Banking Concierge', 'Tech Support Bot')"
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <SmartToyIcon color="action" />
+                              </InputAdornment>
+                            ),
+                          }}
+                        />
+                        <TextField
+                          label="Description"
+                          value={config.description}
+                          onChange={(e) => handleConfigChange('description', e.target.value)}
+                          fullWidth
+                          multiline
+                          rows={2}
+                          helperText="Brief description of what this agent does and its purpose"
+                        />
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                </Stack>
 
                 <Card variant="outlined" sx={styles.sectionCard}>
                   <CardContent>
@@ -1540,7 +1697,13 @@ export default function AgentBuilder({
                               size="small"
                               fullWidth
                               variant={selectedTemplate === tmpl.id ? 'contained' : 'outlined'}
-                              onClick={() => handleApplyTemplate(tmpl.id)}
+                              onClick={() => {
+                                if (tmpl.source === 'session') {
+                                  handleApplySessionAgent(tmpl);
+                                } else {
+                                  handleApplyTemplate(tmpl.id);
+                                }
+                              }}
                               sx={{ mt: 'auto' }}
                             >
                               Use Template
@@ -1551,41 +1714,6 @@ export default function AgentBuilder({
                     </Stack>
                   </CardContent>
                 </Card>
-
-                <Card variant="outlined" sx={styles.sectionCard}>
-                  <CardContent>
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
-                      🤖 Agent Identity
-                    </Typography>
-                    <Stack spacing={2.5}>
-                      <TextField
-                        label="Agent Name"
-                        value={config.name}
-                        onChange={(e) => handleConfigChange('name', e.target.value)}
-                        fullWidth
-                        required
-                        helperText="A friendly name for your agent (e.g., 'Banking Concierge', 'Tech Support Bot')"
-                        InputProps={{
-                          startAdornment: (
-                            <InputAdornment position="start">
-                              <SmartToyIcon color="action" />
-                            </InputAdornment>
-                          ),
-                        }}
-                      />
-                      <TextField
-                        label="Description"
-                        value={config.description}
-                        onChange={(e) => handleConfigChange('description', e.target.value)}
-                        fullWidth
-                        multiline
-                        rows={2}
-                        helperText="Brief description of what this agent does and its purpose"
-                      />
-                    </Stack>
-                  </CardContent>
-                </Card>
-                
 
               </Stack>
             </TabPanel>

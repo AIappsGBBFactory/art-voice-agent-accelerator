@@ -38,10 +38,16 @@ class SpeechTokenManager:
         self._resource_id = resource_id
         self._token_lock = threading.Lock()
         self._cached_token: Optional[AccessToken] = None
+        self._warmed: bool = False
 
     @property
     def resource_id(self) -> str:
         return self._resource_id
+
+    @property
+    def is_warmed(self) -> bool:
+        """Return True if token has been pre-fetched."""
+        return self._warmed
 
     def _needs_refresh(self) -> bool:
         if not self._cached_token:
@@ -60,6 +66,24 @@ class SpeechTokenManager:
             if token is None:
                 raise RuntimeError("Failed to obtain Azure Speech token")
             return token
+
+    def warm_token(self) -> bool:
+        """
+        Pre-fetch token during startup to avoid first-call latency.
+        
+        Eliminates 100-300ms token acquisition latency on first Speech API call.
+        
+        Returns:
+            True if token was successfully pre-fetched, False otherwise.
+        """
+        try:
+            self.get_token(force_refresh=True)
+            self._warmed = True
+            logger.info("Speech token pre-fetched successfully")
+            return True
+        except Exception as e:
+            logger.warning("Speech token pre-fetch failed: %s", e)
+            return False
 
     def apply_to_config(
         self, speech_config: speechsdk.SpeechConfig, *, force_refresh: bool = False

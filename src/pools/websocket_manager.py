@@ -1,11 +1,18 @@
 """
 Thread-safe WebSocket client management for concurrent ACS calls.
 
+.. deprecated::
+    This module is deprecated and not used in the main application.
+    The ThreadSafeConnectionManager in connection_manager.py provides
+    more comprehensive WebSocket connection management with Redis pub/sub.
+    
+    Kept for backward compatibility with sample code in samples/labs/dev/.
+
 This module provides a thread-safe replacement for the shared app.state.clients set
 to prevent race conditions with concurrent WebSocket connections.
 """
 import asyncio
-import weakref
+import warnings
 from typing import Set
 from fastapi import WebSocket
 from utils.ml_logging import get_logger
