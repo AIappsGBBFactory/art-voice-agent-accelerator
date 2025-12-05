@@ -318,7 +318,9 @@ async def send_tts_to_browser(
         
         if temp_synth and synth:
             try:
-                await ws.app.state.tts_pool.release(synth)
+                # Use release_for_session with None to avoid returning to warm pool
+                # since temp synth may have accumulated session state
+                await ws.app.state.tts_pool.release_for_session(None, synth)
             except Exception:
                 pass
 
@@ -376,6 +378,7 @@ async def send_tts_to_acs(
     # Acquire TTS synthesizer
     synth = None
     client_tier = None
+    temp_synth = None  # Track if we acquired a temp synth that needs releasing
     
     try:
         synth, client_tier = await ws.app.state.tts_pool.acquire_for_session(session_id)
@@ -387,6 +390,7 @@ async def send_tts_to_acs(
         if not synth:
             try:
                 synth = await ws.app.state.tts_pool.acquire(timeout=2.0)
+                temp_synth = synth  # Mark as temp synth needing release
             except Exception as e:
                 logger.error("[%s] TTS pool exhausted for ACS (run=%s): %s", session_id, run_id, e)
                 return
@@ -456,6 +460,13 @@ async def send_tts_to_acs(
         
     except Exception as e:
         logger.error("[%s] ACS TTS failed (run=%s): %s", session_id, run_id, e)
+    finally:
+        # Release temp synth if we acquired one
+        if temp_synth:
+            try:
+                await ws.app.state.tts_pool.release_for_session(None, temp_synth)
+            except Exception as e:
+                logger.warning("[%s] Failed to release temp TTS synth (run=%s): %s", session_id, run_id, e)
 
 
 __all__ = [

@@ -2,13 +2,42 @@ import logger from './logger.js';
 
 export const SESSION_STORAGE_KEY = 'voice_agent_session_id';
 
+const pickSessionIdFromUrl = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    return (
+      params.get('session_id') ||
+      params.get('sessionId') ||
+      params.get('sid')
+    );
+  } catch {
+    return null;
+  }
+};
+
+export const setSessionId = (sessionId) => {
+  if (!sessionId) return null;
+  sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+  logger.info('Session ID set explicitly:', sessionId);
+  return sessionId;
+};
+
 export const getOrCreateSessionId = () => {
   let sessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
+
+  // Allow users to bring their own session id (e.g., restoring a short-term conversation)
+  if (!sessionId) {
+    const fromUrl = pickSessionIdFromUrl();
+    if (fromUrl) {
+      sessionId = setSessionId(fromUrl);
+    }
+  }
 
   if (!sessionId) {
     const tabId = Math.random().toString(36).substr(2, 6);
     sessionId = `session_${Date.now()}_${tabId}`;
-    sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+    setSessionId(sessionId);
   }
 
   return sessionId;
@@ -17,9 +46,7 @@ export const getOrCreateSessionId = () => {
 export const createNewSessionId = () => {
   const tabId = Math.random().toString(36).substr(2, 6);
   const sessionId = `session_${Date.now()}_${tabId}`;
-  sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
-  logger.info('Created NEW session ID for reset:', sessionId);
-  return sessionId;
+  return setSessionId(sessionId);
 };
 
 export const createMetricsState = () => ({

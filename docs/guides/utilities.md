@@ -85,24 +85,8 @@ await synthesizer.speak_text_async("Hello world")
 await tts_pool.release(synthesizer)
 ```
 
-### Azure OpenAI Pool (`src.pools.aoai_pool`)
-
-```python
-from src.pools.aoai_pool import AOAIResourcePool
-
-# Managed OpenAI client connections
-aoai_pool = AOAIResourcePool(
-    pool_size=8,  # Higher concurrency for AI processing
-    endpoint=AZURE_OPENAI_ENDPOINT,
-    model="gpt-4o",
-    max_tokens=150
-)
-
-# Used by orchestrator for conversation processing
-client = await aoai_pool.acquire()
-response = await client.chat_completions_create(messages=conversation_history)
-await aoai_pool.release(client)
-```
+!!! note "On-Demand Resource Pattern"
+    Azure OpenAI clients are stateless HTTP wrappers with automatic HTTP/2 connection reuse at the transport layer. The codebase uses `OnDemandResourcePool` for these resources, which provides session-aware caching without unnecessary connection pooling overhead.
 
 ## Connection Management (`src.pools.connection_manager`)
 

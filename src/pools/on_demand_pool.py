@@ -5,12 +5,19 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import asdict, dataclass
+from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Generic, Optional, Tuple, TypeVar
-
-from src.pools.async_pool import AllocationTier
 
 
 T = TypeVar("T")
+
+
+class AllocationTier(Enum):
+    """Resource allocation tiers for different latency requirements."""
+
+    DEDICATED = "dedicated"  # Per-session, 0ms latency
+    WARM = "warm"  # Pre-warmed pool, <50ms latency
+    COLD = "cold"  # On-demand creation, <200ms latency
 
 
 @dataclass
@@ -92,13 +99,29 @@ class OnDemandResourcePool(Generic[T]):
     async def release_for_session(
         self, session_id: Optional[str], resource: Optional[T] = None  # noqa: ARG002
     ) -> bool:
-        """Remove the cached resource for the given session if present."""
+        """Remove the cached resource for the given session if present.
+        
+        Clears any session-specific state on the resource before discarding.
+        """
         if not self._session_awareness or not session_id:
+            # Clear session state before discard
+            if resource is not None and hasattr(resource, "clear_session_state"):
+                try:
+                    resource.clear_session_state()
+                except Exception:
+                    pass
             return True
 
         async with self._lock:
             removed = self._session_cache.pop(session_id, None)
             self._metrics.active_sessions = len(self._session_cache)
+            if removed is not None:
+                # Clear session state on the cached resource
+                if hasattr(removed, "clear_session_state"):
+                    try:
+                        removed.clear_session_state()
+                    except Exception:
+                        pass
             return removed is not None
 
     def snapshot(self) -> Dict[str, Any]:

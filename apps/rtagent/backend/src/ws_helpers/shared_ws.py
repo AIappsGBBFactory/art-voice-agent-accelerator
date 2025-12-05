@@ -762,7 +762,8 @@ async def send_tts_audio(
             )
         elif temp_synth and synth:
             try:
-                await ws.app.state.tts_pool.release(synth)
+                # Use release_for_session with None to clear state before discard
+                await ws.app.state.tts_pool.release_for_session(None, synth)
                 logger.debug(
                     f"[PERF] Released temporary TTS client back to pool (run={run_id})"
                 )
@@ -1085,7 +1086,8 @@ async def send_response_to_acs(
                     )
                     if temp_synth and synth:
                         try:
-                            await ws.app.state.tts_pool.release(synth)
+                            # Use release_for_session with None to clear state
+                            await ws.app.state.tts_pool.release_for_session(None, synth)
                         except Exception as release_exc:
                             logger.error(
                                 f"Error releasing temporary ACS TTS synthesizer (run={run_id}): {release_exc}"

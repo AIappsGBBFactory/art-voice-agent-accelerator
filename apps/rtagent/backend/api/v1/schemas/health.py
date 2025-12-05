@@ -8,6 +8,109 @@ from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 
+class PoolMetrics(BaseModel):
+    """Resource pool metrics for monitoring warm pool behavior."""
+
+    name: str = Field(..., description="Pool name", example="speech-tts")
+    ready: bool = Field(..., description="Whether pool is ready", example=True)
+    warm_pool_size: int = Field(
+        ..., description="Current number of pre-warmed resources", example=3
+    )
+    warm_pool_target: int = Field(
+        ..., description="Target warm pool size", example=3
+    )
+    active_sessions: int = Field(
+        ..., description="Number of active session-bound resources", example=2
+    )
+    session_awareness: bool = Field(
+        ..., description="Whether session caching is enabled", example=True
+    )
+    allocations_total: int = Field(
+        ..., description="Total allocations since startup", example=150
+    )
+    allocations_dedicated: int = Field(
+        ..., description="Allocations from session cache (0ms)", example=95
+    )
+    allocations_warm: int = Field(
+        ..., description="Allocations from warm pool (<50ms)", example=40
+    )
+    allocations_cold: int = Field(
+        ..., description="On-demand allocations (~200ms)", example=15
+    )
+    warmup_cycles: int = Field(
+        ..., description="Background warmup cycles completed", example=42
+    )
+    warmup_failures: int = Field(
+        ..., description="Warmup failures count", example=0
+    )
+    background_warmup: bool = Field(
+        ..., description="Whether background warmup is enabled", example=True
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "speech-tts",
+                "ready": True,
+                "warm_pool_size": 3,
+                "warm_pool_target": 3,
+                "active_sessions": 2,
+                "session_awareness": True,
+                "allocations_total": 150,
+                "allocations_dedicated": 95,
+                "allocations_warm": 40,
+                "allocations_cold": 15,
+                "warmup_cycles": 42,
+                "warmup_failures": 0,
+                "background_warmup": True,
+            }
+        }
+    )
+
+
+class PoolsHealthResponse(BaseModel):
+    """Response for pool health endpoint."""
+
+    status: str = Field(..., description="Overall pools status", example="healthy")
+    timestamp: float = Field(..., description="Timestamp", example=1691668800.0)
+    pools: Dict[str, PoolMetrics] = Field(
+        ..., description="Pool metrics by name"
+    )
+    summary: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Aggregate metrics across all pools",
+        json_schema_extra={
+            "example": {
+                "total_warm": 5,
+                "total_active_sessions": 4,
+                "hit_rate_percent": 90.0,
+            }
+        },
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "status": "healthy",
+                "timestamp": 1691668800.0,
+                "pools": {
+                    "speech-tts": {
+                        "name": "speech-tts",
+                        "ready": True,
+                        "warm_pool_size": 3,
+                        "warm_pool_target": 3,
+                    }
+                },
+                "summary": {
+                    "total_warm": 5,
+                    "total_active_sessions": 4,
+                    "hit_rate_percent": 90.0,
+                },
+            }
+        }
+    )
+
+
 class HealthResponse(BaseModel):
     """Health check response model."""
 

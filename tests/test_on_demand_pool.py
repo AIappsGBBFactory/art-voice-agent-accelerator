@@ -17,8 +17,7 @@ import time
 from unittest.mock import AsyncMock, Mock, patch
 from typing import Any, Dict
 
-from src.pools.on_demand_pool import OnDemandResourcePool, _ProviderMetrics
-from src.pools.async_pool import AllocationTier
+from src.pools.on_demand_pool import OnDemandResourcePool, _ProviderMetrics, AllocationTier
 
 
 class MockResource:

@@ -3,14 +3,9 @@ import { createPortal } from 'react-dom';
 import {
   Box,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
-  Chip,
   Divider,
   IconButton,
   LinearProgress,
-  Paper,
   Typography,
 } from '@mui/material';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
@@ -48,6 +43,7 @@ import {
   createMetricsState,
   createNewSessionId,
   getOrCreateSessionId,
+  setSessionId as persistSessionId,
   toMs,
 } from '../utils/session.js';
 import logger from '../utils/logger.js';
@@ -57,6 +53,15 @@ const STREAM_MODE_FALLBACK = 'voice_live';
 const REALTIME_STREAM_MODE_STORAGE_KEY = 'rtagent.realtimeStreamingMode';
 const REALTIME_STREAM_MODE_FALLBACK = 'realtime';
 const PANEL_MARGIN = 16;
+
+// Infer template id from config path (e.g., /agents/concierge/agent.yaml -> concierge)
+const deriveTemplateId = (configPath) => {
+  if (!configPath || typeof configPath !== 'string') return null;
+  const parts = configPath.split(/[/\\]/).filter(Boolean);
+  const agentIdx = parts.lastIndexOf('agents');
+  if (agentIdx >= 0 && parts[agentIdx + 1]) return parts[agentIdx + 1];
+  return parts.length >= 2 ? parts[parts.length - 2] : null;
+};
 
 // Component styles
 
@@ -158,6 +163,10 @@ function RealTimeVoiceApp() {
   // Profile menu state moved to ProfileButton component
   // Profile menu state moved to ProfileButton component
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
+  const [editingSessionId, setEditingSessionId] = useState(false);
+  const [pendingSessionId, setPendingSessionId] = useState(() => getOrCreateSessionId());
+  const [sessionUpdating, setSessionUpdating] = useState(false);
+  const [sessionUpdateError, setSessionUpdateError] = useState(null);
   const [currentCallId, setCurrentCallId] = useState(null);
   const [showAgentPanel, setShowAgentPanel] = useState(false);
   const [showTextInput, setShowTextInput] = useState(false);
@@ -186,11 +195,11 @@ function RealTimeVoiceApp() {
     });
   }, []);
 
-  const fetchSessionAgentConfig = useCallback(async () => {
-    if (!sessionId) return;
+  const fetchSessionAgentConfig = useCallback(async (targetSessionId = sessionId) => {
+    if (!targetSessionId) return;
     try {
       const res = await fetch(
-        `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}`
+        `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(targetSessionId)}`
       );
       if (res.status === 404) {
         setSessionAgentConfig(null);
@@ -203,6 +212,10 @@ function RealTimeVoiceApp() {
       appendLog(`Session agent fetch failed: ${err.message}`);
     }
   }, [sessionId, appendLog]);
+
+  useEffect(() => {
+    fetchSessionAgentConfig();
+  }, [fetchSessionAgentConfig]);
 
   // Chat width resize listeners (placed after state initialization)
   useEffect(() => {
@@ -261,53 +274,62 @@ function RealTimeVoiceApp() {
     [activeAgentInfo]
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchAgents = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/v1/agents`);
-        if (!res.ok) return;
-        const data = await res.json();
-        // Prefer full agent payload; fallback to summaries if that's all we have.
-        const agents = Array.isArray(data.agents) && data.agents.length > 0
-          ? data.agents
-          : (Array.isArray(data.summaries) ? data.summaries : []);
-        if (!Array.isArray(agents) || cancelled || agents.length === 0) return;
-        const normalized = {
-          agents: agents.map((a) => ({
-            name: a.name,
-            description: a.description,
-            model: a.model?.deployment_id || a.model || null,
-            voice: a.voice?.current_voice || a.voice || null,
-            tools: a.tools || a.tool_names || a.toolNames || a.tools_preview || [],
-            handoffTools: a.handoff_tools || a.handoffTools || [],
-            toolCount:
-              a.tool_count ??
-              a.toolCount ??
-              (a.tools?.length ?? a.tool_names?.length ?? a.tools_preview?.length ?? 0),
-          })),
-          startAgent: data.start_agent || data.startAgent || null,
+  const fetchAgentInventory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/agents`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const agents = Array.isArray(data.agents) && data.agents.length > 0
+        ? data.agents
+        : (Array.isArray(data.summaries) ? data.summaries : []);
+      if (!Array.isArray(agents) || agents.length === 0) return;
+      const normalized = {
+        agents: agents.map((a) => ({
+          name: a.name,
+          description: a.description,
+          model: a.model?.deployment_id || a.model || null,
+          voice: a.voice?.current_voice || a.voice || null,
+          tools: a.tools || a.tool_names || a.toolNames || a.tools_preview || [],
+          handoffTools: a.handoff_tools || a.handoffTools || [],
+          toolCount:
+            a.tool_count ??
+            a.toolCount ??
+            (a.tools?.length ?? a.tool_names?.length ?? a.tools_preview?.length ?? 0),
+          templateId: deriveTemplateId(a.config_path || a.configPath || a.configPathname),
+          configPath: a.config_path || a.configPath || null,
+        })),
+        startAgent: data.start_agent || data.startAgent || null,
           scenario: data.scenario || null,
           handoffMap: data.handoff_map || data.handoffMap || {},
         };
         setAgentInventory(normalized);
-        // Initialize active agent if not already set
         if (
           normalized.startAgent &&
           (currentAgentRef.current === "Assistant" || !currentAgentRef.current)
         ) {
           currentAgentRef.current = normalized.startAgent;
-          setSelectedAgentName(normalized.startAgent);
-        }
-      } catch (err) {
-        appendLog(`Agent preload failed: ${err.message}`);
+        setSelectedAgentName(normalized.startAgent);
       }
-   };
-   fetchAgents();
-    return () => {
-      cancelled = true;
-    };
+    } catch (err) {
+      appendLog(`Agent preload failed: ${err.message}`);
+    }
   }, [appendLog]);
+
+  useEffect(() => {
+    fetchAgentInventory();
+  }, [fetchAgentInventory]);
+
+  useEffect(() => {
+    setPendingSessionId(sessionId);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (sessionAgentConfig?.config?.name) {
+      const name = sessionAgentConfig.config.name;
+      setSelectedAgentName((prev) => prev || name);
+      currentAgentRef.current = name;
+    }
+  }, [sessionAgentConfig]);
 
   useEffect(() => {
     let cancelled = false;
@@ -426,6 +448,61 @@ function RealTimeVoiceApp() {
         : []),
     ]);
   }, [setMessages]);
+
+  const validateSessionId = useCallback(
+    async (id) => {
+      if (!id) return false;
+      const pattern = /^session_[0-9]{6,}_[A-Za-z0-9]+$/;
+      if (!pattern.test(id)) {
+        setSessionUpdateError("Session ID must match pattern: session_<timestamp>_<suffix>");
+        return false;
+      }
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/v1/metrics/session/${encodeURIComponent(id)}`
+        );
+        return res.ok;
+      } catch (err) {
+        appendLog(`Session validation failed: ${err.message}`);
+        return false;
+      }
+    },
+    [appendLog]
+  );
+
+  const handleSessionIdSave = useCallback(async () => {
+    const target = (pendingSessionId || "").trim();
+    if (!target) {
+      setSessionUpdateError("Session ID is required");
+      return;
+    }
+    if (target === sessionId) {
+      setEditingSessionId(false);
+      setSessionUpdateError(null);
+      return;
+    }
+    setSessionUpdating(true);
+    const isValid = await validateSessionId(target);
+    if (isValid) {
+      persistSessionId(target);
+      setSessionId(target);
+      setPendingSessionId(target);
+      setSessionUpdateError(null);
+      setEditingSessionId(false);
+      await fetchSessionAgentConfig(target);
+    } else {
+      setSessionUpdateError("Session not found or inactive. Reverting.");
+      setPendingSessionId(sessionId);
+    }
+    setSessionUpdating(false);
+  }, [pendingSessionId, sessionId, validateSessionId, fetchSessionAgentConfig]);
+
+  const handleSessionIdCancel = useCallback(() => {
+    setPendingSessionId(sessionId);
+    setSessionUpdateError(null);
+    setEditingSessionId(false);
+  }, [sessionId]);
+
   const handleSystemStatus = useCallback((nextStatus = { status: "checking", acsOnlyIssue: false }) => {
     setSystemStatus((prev) => {
       const hasChanged =
@@ -2254,12 +2331,13 @@ function RealTimeVoiceApp() {
           if (summary) {
             setAgentInventory(summary);
           }
+          const agentCount = summary ? (summary.count ?? summary.agents?.length ?? 0) : 0;
           const names = summary?.agents?.slice(0, 5).map((a) => a.name).join(", ");
           setMessages((prev) => [
             ...prev,
             {
               speaker: "System",
-              text: `Agents loaded (${summary?.count ?? 0})${summary?.scenario ? ` · scenario: ${summary.scenario}` : ""}${
+              text: `Agents loaded (${agentCount})${summary?.scenario ? ` · scenario: ${summary.scenario}` : ""}${
                 names ? ` · ${names}` : ""
               }`,
               statusTone: "info",
@@ -3273,13 +3351,102 @@ function RealTimeVoiceApp() {
               </div>
             </div>
 
-            <div style={styles.appHeaderFooter}>
-              <div style={styles.sessionTag}>
+            <div style={{ ...styles.appHeaderFooter, alignItems: "center", gap: "16px" }}>
+              <div
+                style={{
+                  ...styles.sessionTag,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  cursor: "pointer",
+                  position: "relative",
+                }}
+                onClick={() => {
+                  if (!editingSessionId) {
+                    setPendingSessionId(sessionId);
+                    setEditingSessionId(true);
+                    setSessionUpdateError(null);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (!editingSessionId) {
+                      setPendingSessionId(sessionId);
+                      setEditingSessionId(true);
+                      setSessionUpdateError(null);
+                    }
+                  }
+                }}
+              >
                 <span style={styles.sessionTagIcon}>💬</span>
-                <div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                   <div style={styles.sessionTagLabel}>Active Session</div>
                   <code style={styles.sessionTagValue}>{sessionId}</code>
+                  {sessionUpdateError && !editingSessionId && (
+                    <div style={{ color: "#dc2626", fontSize: "12px" }}>
+                      {sessionUpdateError}
+                    </div>
+                  )}
                 </div>
+                {editingSessionId && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 6px)",
+                      left: 0,
+                      background: "#fff",
+                      padding: "10px",
+                      borderRadius: "12px",
+                      boxShadow: "0 10px 30px rgba(0,0,0,0.12)",
+                      minWidth: "260px",
+                      zIndex: 10,
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <input
+                        value={pendingSessionId}
+                        onChange={(e) => setPendingSessionId(e.target.value)}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: "8px",
+                          border: "1px solid #e2e8f0",
+                          fontFamily: "monospace",
+                          fontSize: "13px",
+                          minWidth: "220px",
+                        }}
+                        placeholder="session_123..."
+                        autoFocus
+                      />
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={handleSessionIdSave}
+                        disabled={sessionUpdating}
+                        sx={{ textTransform: "none" }}
+                      >
+                        {sessionUpdating ? "Saving..." : "Save"}
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={handleSessionIdCancel}
+                        disabled={sessionUpdating}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                    {sessionUpdateError && (
+                      <div style={{ color: "#dc2626", fontSize: "12px", marginTop: "6px" }}>
+                        {sessionUpdateError}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div style={styles.appHeaderActions}>
@@ -3586,6 +3753,7 @@ function RealTimeVoiceApp() {
                 toolCount: agentConfig.tools?.length || 0,
                 model: agentConfig.model?.deployment_id || null,
                 voice: agentConfig.voice?.name || null,
+                templateId: agentConfig.name ? agentConfig.name.toLowerCase().replace(/\s+/g, "_") : null,
               },
             ],
           };
@@ -3613,6 +3781,9 @@ function RealTimeVoiceApp() {
                     toolCount: agentConfig.tools?.length || 0,
                     model: agentConfig.model?.deployment_id || null,
                     voice: agentConfig.voice?.name || null,
+                    templateId: agentConfig.name
+                      ? agentConfig.name.toLowerCase().replace(/\s+/g, "_")
+                      : a.templateId,
                   }
                 : a
             ),

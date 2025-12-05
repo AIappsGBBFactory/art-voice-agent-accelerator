@@ -6,12 +6,20 @@ import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 
 export const formatAgentInventory = (payload = {}) => {
   if (!payload || payload.type !== 'agent_inventory') return null;
-  const agents = payload.agents || [];
+  const agentsRaw = payload.agents || payload.agent_summaries || payload.summaries || [];
+  const agents = Array.isArray(agentsRaw) ? agentsRaw : [];
+  const countFromPayload =
+    typeof payload.agent_count === 'number'
+      ? payload.agent_count
+      : typeof payload.count === 'number'
+      ? payload.count
+      : null;
+  const count = Math.max(countFromPayload ?? 0, agents.length);
   return {
     source: payload.source || 'unified',
     scenario: payload.scenario || null,
     startAgent: payload.start_agent || null,
-    count: payload.agent_count || agents.length,
+    count,
     agents: agents.map((a) => ({
       name: a.name,
       description: a.description,

@@ -3,6 +3,9 @@
 !!! success "Real-Time Voice AI Accelerator"
     Get your voice agent running with Azure Communication Services, Speech Services, and AI in just a few steps.
 
+!!! tip "New to the Platform?"
+    **Start with the [Demo Guide](demo-guide.md)** — A step-by-step walkthrough from creating your first demo profile to testing multi-agent conversations. Covers basic, intermediate, and advanced user tracks.
+
 ## :material-check-circle: Prerequisites
 
 === "System Requirements"
@@ -20,6 +23,15 @@
         - **[Azure CLI Fundamentals](https://learn.microsoft.com/en-us/cli/azure/get-started-with-azure-cli)** - Essential CLI commands
 
 ## :material-school: Learning Paths
+
+=== "🎯 Demo First (Recommended)"
+    **See the platform in action immediately**:
+    
+    1. **[Demo Guide](demo-guide.md)** - Complete walkthrough with user tracks
+    2. **[Local Development](local-development.md)** - Set up your environment
+    3. **[API Reference](../api/README.md)** - Explore available endpoints
+    
+    **Best for**: First-time users, stakeholder demos, quick evaluations
 
 === "🚀 Quick Start (15 minutes)"
     **Get up and running fast**:
@@ -117,7 +129,12 @@ azd provision  # Azure Developer CLI (recommended)
 
 ## :material-arrow-right: What's Next?
 
-Choose your path above and start building your voice-powered applications! Most developers find success starting with the **[Local Development Guide](local-development.md)** to see the accelerator in action immediately.
+Choose your path above and start building your voice-powered applications!
+
+**Recommended starting points:**
+
+1. **[Demo Guide](demo-guide.md)** — Best for understanding the platform's capabilities
+2. **[Local Development Guide](local-development.md)** — Best for getting your environment set up
 
 !!! tip "New to Voice AI?"
     Check out the **[Architecture Overview](../architecture/README.md)** first to understand how real-time voice processing works with Azure Communication Services and Speech Services.

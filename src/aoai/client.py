@@ -187,4 +187,67 @@ def _init_client():
     global client
     client = get_client()
 
-__all__ = ["client", "get_client", "create_azure_openai_client", "_init_client"]
+
+async def warm_openai_connection(
+    deployment: str | None = None,
+    timeout_sec: float = 10.0,
+) -> bool:
+    """
+    Warm the OpenAI connection with a minimal request.
+    
+    Establishes HTTP/2 connection and token acquisition before first real request,
+    eliminating 200-500ms cold-start latency on first LLM call.
+    
+    Args:
+        deployment: Azure OpenAI deployment name. Defaults to AZURE_OPENAI_DEPLOYMENT.
+        timeout_sec: Maximum time to wait for warmup request.
+        
+    Returns:
+        True if warmup succeeded, False otherwise.
+        
+    Latency:
+        Expected ~300-500ms for first connection, near-instant on subsequent calls.
+    """
+    import asyncio
+    
+    deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID")
+    if not deployment:
+        logger.warning("OpenAI warmup skipped: no deployment configured")
+        return False
+    
+    aoai_client = get_client()
+    
+    try:
+        # Use a tiny prompt that exercises the connection with minimal tokens
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                aoai_client.chat.completions.create,
+                model=deployment,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=1,
+                temperature=0,
+            ),
+            timeout=timeout_sec,
+        )
+        logger.info(
+            "OpenAI connection warmed successfully",
+            extra={"deployment": deployment, "tokens_used": 1},
+        )
+        return True
+    except asyncio.TimeoutError:
+        logger.warning(
+            "OpenAI warmup timed out after %.1fs",
+            timeout_sec,
+            extra={"deployment": deployment},
+        )
+        return False
+    except Exception as e:
+        logger.warning(
+            "OpenAI warmup failed (non-blocking): %s",
+            str(e),
+            extra={"deployment": deployment, "error_type": type(e).__name__},
+        )
+        return False
+
+
+__all__ = ["client", "get_client", "create_azure_openai_client", "_init_client", "warm_openai_connection"]

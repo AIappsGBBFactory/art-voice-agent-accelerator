@@ -24,6 +24,13 @@ from .settings import (
     POOL_ACQUIRE_TIMEOUT,
     STT_PROCESSING_TIMEOUT,
     TTS_PROCESSING_TIMEOUT,
+    # Warm pool
+    WARM_POOL_ENABLED,
+    WARM_POOL_TTS_SIZE,
+    WARM_POOL_STT_SIZE,
+    WARM_POOL_BACKGROUND_REFRESH,
+    WARM_POOL_REFRESH_INTERVAL,
+    WARM_POOL_SESSION_MAX_AGE,
     # Connections
     MAX_WEBSOCKET_CONNECTIONS,
     CONNECTION_QUEUE_SIZE,
@@ -71,6 +78,13 @@ class SpeechPoolConfig:
     acquire_timeout: float = POOL_ACQUIRE_TIMEOUT
     stt_timeout: float = STT_PROCESSING_TIMEOUT
     tts_timeout: float = TTS_PROCESSING_TIMEOUT
+    # Warm pool settings
+    warm_pool_enabled: bool = WARM_POOL_ENABLED
+    warm_pool_tts_size: int = WARM_POOL_TTS_SIZE
+    warm_pool_stt_size: int = WARM_POOL_STT_SIZE
+    warm_pool_background_refresh: bool = WARM_POOL_BACKGROUND_REFRESH
+    warm_pool_refresh_interval: float = WARM_POOL_REFRESH_INTERVAL
+    warm_pool_session_max_age: float = WARM_POOL_SESSION_MAX_AGE
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}

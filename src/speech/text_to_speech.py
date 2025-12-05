@@ -710,6 +710,43 @@ class SpeechSynthesizer:
         """
         self.call_connection_id = call_connection_id
 
+    def clear_session_state(self) -> None:
+        """Clear session-specific state for safe pool recycling.
+        
+        Resets instance attributes that accumulate during a session to prevent
+        state leakage when the synthesizer is returned to a resource pool and
+        potentially reused by a different session.
+        
+        Cleared State:
+            - call_connection_id: Reset to None
+            - _session_span: End and clear any active tracing span
+            - _prepared_voices: Clear cached voice warmup state (if exists)
+        
+        Thread Safety:
+            - Safe to call from any thread
+            - Does not affect operations already in progress
+        
+        Example:
+            ```python
+            # Before returning to pool
+            synth.clear_session_state()
+            await pool.release(synth)
+            ```
+        """
+        self.call_connection_id = None
+        
+        # End any active session span
+        if self._session_span:
+            try:
+                self._session_span.end()
+            except Exception:
+                pass
+            self._session_span = None
+        
+        # Clear cached voice warmup state (set by tts_sender.py)
+        if hasattr(self, "_prepared_voices"):
+            delattr(self, "_prepared_voices")
+
     def _create_speech_config(self):
         """Create and configure Azure Speech SDK configuration with flexible authentication.
 
@@ -1775,6 +1812,53 @@ class SpeechSynthesizer:
 
         except Exception as e:
             logger.error(f"Error during configuration validation: {e}")
+            return False
+
+    def warm_connection(self) -> bool:
+        """
+        Warm the TTS connection by synthesizing minimal audio.
+        
+        This pre-establishes the Azure Speech TTS connection during startup,
+        eliminating 200-400ms of cold-start latency on the first real synthesis call.
+        
+        Returns:
+            bool: True if warmup succeeded, False otherwise.
+        """
+        if not self.is_ready:
+            logger.warning("TTS warmup skipped: synthesizer not ready")
+            return False
+        
+        try:
+            # Synthesize minimal audio - a single period with minimal text
+            # This establishes the WebSocket connection and caches auth
+            self._ensure_auth_token()
+            
+            speech_config = self.cfg
+            speech_config.speech_synthesis_language = self.language
+            speech_config.speech_synthesis_voice_name = self.voice
+            speech_config.set_speech_synthesis_output_format(
+                speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm
+            )
+            
+            # Use memory synthesis (no audio hardware needed)
+            synthesizer = speechsdk.SpeechSynthesizer(
+                speech_config=speech_config, audio_config=None
+            )
+            
+            # Synthesize minimal text - just a period/dot
+            result = synthesizer.speak_text_async(" .").get()
+            
+            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                logger.info("TTS connection warmed successfully")
+                return True
+            else:
+                logger.warning(
+                    "TTS warmup synthesis did not complete: %s", result.reason
+                )
+                return False
+                
+        except Exception as e:
+            logger.warning("TTS connection warmup failed: %s", e)
             return False
 
     ## Cleaned up methods
