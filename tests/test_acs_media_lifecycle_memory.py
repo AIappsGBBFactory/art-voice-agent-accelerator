@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle import (
+from apps.artagent.backend.api.v1.handlers.acs_media_lifecycle import (
     ACSMediaHandler,
 )
 
@@ -149,7 +149,7 @@ async def test_aggressive_leak_detection_gc_counts():
     """Aggressively detect leaks by counting GC objects of key classes, threads and tasks."""
     # Import module to ensure class names are present in gc objects
     acs_mod = __import__(
-        "apps.rtagent.backend.api.v1.handlers.acs_media_lifecycle",
+        "apps.artagent.backend.api.v1.handlers.acs_media_lifecycle",
         fromlist=["*"],
     )
 

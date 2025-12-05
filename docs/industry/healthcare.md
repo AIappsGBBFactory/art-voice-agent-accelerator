@@ -52,12 +52,12 @@ flowchart TD
 Create a new agent directory:
 
 ```bash
-mkdir -p apps/rtagent/backend/agents/nurse_triage
+mkdir -p apps/artagent/backend/agents/nurse_triage
 ```
 
 ### Agent Configuration
 
-Create `apps/rtagent/backend/agents/nurse_triage/agent.yaml`:
+Create `apps/artagent/backend/agents/nurse_triage/agent.yaml`:
 
 ```yaml
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -137,7 +137,7 @@ template_vars:
 
 ### Prompt Template
 
-Create `apps/rtagent/backend/agents/nurse_triage/prompt.jinja`:
+Create `apps/artagent/backend/agents/nurse_triage/prompt.jinja`:
 
 ```jinja
 You are **{{ agent_name | default('the Triage Assistant') }}** at {{ institution_name | default('Contoso Health') }}'s nurse triage line.
@@ -248,7 +248,7 @@ Context: {{ handoff_context | tojson }}
 
 ## Step 2: Create Healthcare Tools
 
-Create `apps/rtagent/backend/agents/tools/healthcare.py`:
+Create `apps/artagent/backend/agents/tools/healthcare.py`:
 
 ```python
 """
@@ -264,7 +264,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from apps.rtagent.backend.agents.tools.registry import register_tool
+from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
 
 logger = get_logger("agents.tools.healthcare")
@@ -925,7 +925,7 @@ Create `tests/test_healthcare_tools.py`:
 
 ```python
 import pytest
-from apps.rtagent.backend.agents.tools.healthcare import (
+from apps.artagent.backend.agents.tools.healthcare import (
     verify_patient_identity,
     search_clinical_knowledge_base,
     assess_symptom_urgency,
@@ -969,7 +969,7 @@ async def test_urgency_assessment_routine():
 
 ```bash
 # Start the backend
-cd apps/rtagent/backend
+cd apps/artagent/backend
 make run
 
 # Test via browser UI or curl
@@ -1020,8 +1020,8 @@ curl -X POST http://localhost:8000/api/v1/test/agent \
 
 ## Related Documentation
 
-- [Agent Framework Guide](../../apps/rtagent/backend/agents/README.md)
-- [Knowledge Base Tools](../../apps/rtagent/backend/agents/tools/knowledge_base.py)
+- [Agent Framework Guide](../../apps/artagent/backend/agents/README.md)
+- [Knowledge Base Tools](../../apps/artagent/backend/agents/tools/knowledge_base.py)
 - [Resource Pools](../architecture/speech/resource-pools.md)
 
 

@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This document proposes a path forward for consolidating the agent architecture in `apps/rtagent/backend/src/agents/` to enable easier maintenance through YAML-based configuration. The current system requires updates across 5-7 different files when adding a new agent or tool, creating maintenance burden and potential for errors.
+This document proposes a path forward for consolidating the agent architecture in `apps/artagent/backend/src/agents/` to enable easier maintenance through YAML-based configuration. The current system requires updates across 5-7 different files when adding a new agent or tool, creating maintenance burden and potential for errors.
 
 **Key Goals:**
 1. Single source of truth for agent definitions (YAML only)
@@ -35,7 +35,7 @@ The codebase currently has three parallel agent implementations:
 ### Pain Points in Current System
 
 #### 1. **Manual Handoff Registration** (Highest Priority)
-**Location**: [`src/agents/vlagent/registry.py:11-23`](apps/rtagent/backend/src/agents/vlagent/registry.py#L11-L23)
+**Location**: [`src/agents/vlagent/registry.py:11-23`](apps/artagent/backend/src/agents/vlagent/registry.py#L11-L23)
 
 ```python
 HANDOFF_MAP: Dict[str, str] = {
@@ -54,8 +54,8 @@ HANDOFF_MAP: Dict[str, str] = {
 
 #### 2. **Duplicate Tool Registries** (High Priority)
 **Locations**:
-- [`src/agents/artagent/tool_store/tool_registry.py:145`](apps/rtagent/backend/src/agents/artagent/tool_store/tool_registry.py#L145)
-- [`src/agents/vlagent/tool_store/tool_registry.py:262`](apps/rtagent/backend/src/agents/vlagent/tool_store/tool_registry.py#L262)
+- [`src/agents/artagent/tool_store/tool_registry.py:145`](apps/artagent/backend/src/agents/artagent/tool_store/tool_registry.py#L145)
+- [`src/agents/vlagent/tool_store/tool_registry.py:262`](apps/artagent/backend/src/agents/vlagent/tool_store/tool_registry.py#L262)
 
 **Problem**: Two separate but overlapping registries mean:
 - Duplicate tool definitions
@@ -64,7 +64,7 @@ HANDOFF_MAP: Dict[str, str] = {
 - No shared validation
 
 #### 3. **Hard-coded UI Labels** (Medium Priority)
-**Location**: [`api/v1/handlers/voice_live_sdk_handler.py:66-76`](apps/rtagent/backend/api/v1/handlers/voice_live_sdk_handler.py#L66-L76)
+**Location**: [`api/v1/handlers/voice_live_sdk_handler.py:66-76`](apps/artagent/backend/api/v1/handlers/voice_live_sdk_handler.py#L66-L76)
 
 ```python
 agent_labels = {
@@ -111,7 +111,7 @@ Current system doesn't validate:
 ### Enhanced YAML Schema
 
 ```yaml
-# apps/rtagent/backend/src/agents/vlagent/agents/banking/fraud_agent.yaml
+# apps/artagent/backend/src/agents/vlagent/agents/banking/fraud_agent.yaml
 
 metadata:
   name: FraudAgent                    # Must match filename (minus .yaml)
@@ -179,7 +179,7 @@ handoff_routing:
 
 #### Phase 1: Auto-Discovery Engine
 
-**New File**: [`src/agents/registry.py`](apps/rtagent/backend/src/agents/registry.py)
+**New File**: [`src/agents/registry.py`](apps/artagent/backend/src/agents/registry.py)
 
 ```python
 from dataclasses import dataclass
@@ -394,7 +394,7 @@ class AgentRegistry:
 
 #### Phase 2: Unified Tool Registry
 
-**New File**: [`src/agents/tool_registry.py`](apps/rtagent/backend/src/agents/tool_registry.py)
+**New File**: [`src/agents/tool_registry.py`](apps/artagent/backend/src/agents/tool_registry.py)
 
 ```python
 from dataclasses import dataclass
@@ -551,7 +551,7 @@ UNIFIED_TOOL_REGISTRY = UnifiedToolRegistry()
 
 #### Phase 3: Migration of Existing Tools
 
-**Migration Script**: [`scripts/migrate_tools.py`](apps/rtagent/backend/scripts/migrate_tools.py)
+**Migration Script**: [`scripts/migrate_tools.py`](apps/artagent/backend/scripts/migrate_tools.py)
 
 ```python
 """
@@ -583,7 +583,7 @@ UNIFIED_TOOL_REGISTRY.register(
 
 ### Updated Handler Integration
 
-**Location**: [`api/v1/handlers/voice_live_sdk_handler.py`](apps/rtagent/backend/api/v1/handlers/voice_live_sdk_handler.py)
+**Location**: [`api/v1/handlers/voice_live_sdk_handler.py`](apps/artagent/backend/api/v1/handlers/voice_live_sdk_handler.py)
 
 ```python
 from src.agents.registry import AgentRegistry
@@ -802,7 +802,7 @@ Benefits:
 
 ### Unit Tests
 
-**File**: [`tests/agents/test_registry.py`](apps/rtagent/backend/tests/agents/test_registry.py)
+**File**: [`tests/agents/test_registry.py`](apps/artagent/backend/tests/agents/test_registry.py)
 
 ```python
 import pytest
@@ -860,7 +860,7 @@ class TestAgentRegistry:
 
 ### Integration Tests
 
-**File**: [`tests/agents/test_integration.py`](apps/rtagent/backend/tests/agents/test_integration.py)
+**File**: [`tests/agents/test_integration.py`](apps/artagent/backend/tests/agents/test_integration.py)
 
 ```python
 class TestAgentIntegration:
@@ -887,7 +887,7 @@ class TestAgentIntegration:
 
 ### Validation Tests
 
-**File**: [`tests/agents/test_validation.py`](apps/rtagent/backend/tests/agents/test_validation.py)
+**File**: [`tests/agents/test_validation.py`](apps/artagent/backend/tests/agents/test_validation.py)
 
 ```python
 class TestValidation:

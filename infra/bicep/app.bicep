@@ -44,8 +44,8 @@ param backendEnvVars array = []
 param backendCertificate object = {}
 param backendCustomDomains array = []
 
-var beContainerName =  toLower(substring('rtagent-server-${resourceToken}', 0, 22))
-var feContainerName =  toLower(substring('rtagent-client-${resourceToken}', 0, 22))
+var beContainerName =  toLower(substring('artagent-server-${resourceToken}', 0, 22))
+var feContainerName =  toLower(substring('artagent-client-${resourceToken}', 0, 22))
 
 // Container registry
 module containerRegistry 'br/public:avm/res/container-registry/registry:0.1.1' = {

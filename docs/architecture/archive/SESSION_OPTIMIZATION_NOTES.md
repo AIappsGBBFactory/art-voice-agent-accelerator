@@ -30,7 +30,7 @@ async def _auto_refresh_loop(...)
 
 ### 2. Duplicate Profile Data in Mock Dictionaries
 
-**Location:** `apps/rtagent/backend/src/services/session_loader.py`
+**Location:** `apps/artagent/backend/src/services/session_loader.py`
 
 **Finding:** Same profile data is duplicated in both `_EMAIL_TO_PROFILE` and `_CLIENT_ID_TO_PROFILE` dictionaries.
 
@@ -143,7 +143,7 @@ def from_redis_with_manager(cls, session_id, redis_mgr):
 
 ### 6. Missing `__all__` in session_loader.py
 
-**Location:** `apps/rtagent/backend/src/services/session_loader.py`
+**Location:** `apps/artagent/backend/src/services/session_loader.py`
 
 **Finding:** The file exports via `__all__` but could also export the sanitization helper for reuse.
 

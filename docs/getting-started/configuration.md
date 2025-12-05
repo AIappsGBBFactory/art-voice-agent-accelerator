@@ -106,7 +106,7 @@ USE_MANAGED_IDENTITY=true
 
 ### Default Voice Settings
 
-Customize default voices via `apps/rtagent/backend/config/voice_config.py`. You can override values with environment variables:
+Customize default voices via `apps/artagent/backend/config/voice_config.py`. You can override values with environment variables:
 
 === "Voice Selection"
     ```bash title="Voice configuration options"

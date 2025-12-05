@@ -38,7 +38,7 @@ The repository follows a modular, microservice-oriented structure with clear sep
 │
 ├── 📁 apps/                               # Deployable applications
 │   ├── 📄 README.md                       # Apps overview and usage
-│   └── 📁 rtagent/                        # Real-time voice agent application
+│   └── 📁 artagent/                        # Real-time voice agent application
 │       ├── 📁 backend/                    # FastAPI backend service
 │       │   ├── 📄 .env.example            # Environment variables template
 │       │   ├── 📄 Dockerfile              # Container definition
@@ -359,7 +359,7 @@ The repository follows a modular, microservice-oriented structure with clear sep
 │   │   └── 📄 generator.py               # Documentation generation
 │   └── 📁 images/                        # Project images and diagrams
 │       ├── 📄 ARTAGENT.png               # Main logo
-│       ├── 📄 RTAGENT.png                # RT Agent logo
+│       ├── 📄 artagent.png                # RT Agent logo
 │       ├── 📄 ARTAgentarch.png           # Architecture diagram
 │       ├── 📄 LIVEVOICEApi.png           # Live Voice API diagram
 │       └── 📄 RTAgentArch.png            # RT Agent architecture
@@ -392,8 +392,8 @@ The repository follows a modular, microservice-oriented structure with clear sep
 ## Key Concepts
 
 ### Application Architecture
-- **Backend** (`apps/rtagent/backend/`): FastAPI-based REST API with WebSocket support for real-time communication
-- **Frontend** (`apps/rtagent/frontend/`): React + TypeScript SPA with Vite for fast development
+- **Backend** (`apps/artagent/backend/`): FastAPI-based REST API with WebSocket support for real-time communication
+- **Frontend** (`apps/artagent/frontend/`): React + TypeScript SPA with Vite for fast development
 - **Core Libraries** (`src/`): Reusable business logic that can be imported across applications
 
 ### Infrastructure Patterns
@@ -418,10 +418,10 @@ The repository follows a modular, microservice-oriented structure with clear sep
 
 | What you need | Where to look |
 |---------------|---------------|
-| API endpoints | `apps/rtagent/backend/app/api/` |
-| Business logic | `apps/rtagent/backend/app/services/` |
-| WebSocket handlers | `apps/rtagent/backend/app/ws/` |
-| React components | `apps/rtagent/frontend/src/components/` |
+| API endpoints | `apps/artagent/backend/app/api/` |
+| Business logic | `apps/artagent/backend/app/services/` |
+| WebSocket handlers | `apps/artagent/backend/app/ws/` |
+| React components | `apps/artagent/frontend/src/components/` |
 | Speech processing | `src/speech/` |
 | ACS integration | `src/acs/` |
 | AI/LLM logic | `src/aoai/` |
@@ -432,8 +432,8 @@ The repository follows a modular, microservice-oriented structure with clear sep
 
 ### 🚀 **Getting Started Paths**
 
-1. **Frontend Developer**: Start with `apps/rtagent/frontend/src/App.tsx`
-2. **Backend Developer**: Start with `apps/rtagent/backend/main.py` 
+1. **Frontend Developer**: Start with `apps/artagent/frontend/src/App.tsx`
+2. **Backend Developer**: Start with `apps/artagent/backend/main.py` 
 3. **DevOps Engineer**: Start with `infra/` and `Makefile`
 4. **AI Engineer**: Start with `src/aoai/` and `src/speech/`
 5. **Integration Developer**: Start with `src/acs/` and `src/tools/`

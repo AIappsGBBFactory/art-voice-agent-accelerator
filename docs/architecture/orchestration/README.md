@@ -15,7 +15,7 @@ The accelerator provides two orchestrator implementations that share the same [U
 
 Both orchestrators:
 
-- Use the same `UnifiedAgent` configurations from `apps/rtagent/backend/agents/`
+- Use the same `UnifiedAgent` configurations from `apps/artagent/backend/agents/`
 - Share the centralized tool registry
 - Support multi-agent handoffs
 - Integrate with `MemoManager` for session state
@@ -100,7 +100,7 @@ export ACS_STREAMING_MODE=VOICE_LIVE
 
 ## Shared Abstractions
 
-Both orchestrators use common data structures defined in `apps/rtagent/backend/voice/shared/base.py`:
+Both orchestrators use common data structures defined in `apps/artagent/backend/voice/shared/base.py`:
 
 ### OrchestratorContext
 

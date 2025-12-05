@@ -69,9 +69,9 @@ Comprehensive architecture for Azure Communication Services (ACS) media handling
 The event processor follows Azure's `CallAutomationEventProcessor` pattern for clean, performant event handling:
 
 ```python
-# apps/rtagent/backend/api/v1/events/
+# apps/artagent/backend/api/v1/events/
 
-from apps.rtagent.backend.api.v1.events import (
+from apps.artagent.backend.api.v1.events import (
     get_call_event_processor,
     register_default_handlers,
     ACSEventTypes,
@@ -107,7 +107,7 @@ Raw JSON → Structured → Call Correlation → Business Logic
 ### Custom Handler Registration
 
 ```python
-from apps.rtagent.backend.api.v1.events import CallEventContext
+from apps.artagent.backend.api.v1.events import CallEventContext
 
 async def my_custom_handler(context: CallEventContext) -> None:
     """Custom handler for call events."""
@@ -218,7 +218,7 @@ sequenceDiagram
 ### SpeechCascadeHandler
 
 ```python
-# apps/rtagent/backend/voice/speech_cascade/handler.py
+# apps/artagent/backend/voice/speech_cascade/handler.py
 
 class SpeechCascadeHandler:
     """
@@ -242,7 +242,7 @@ class SpeechCascadeHandler:
 ### VoiceLiveSDKHandler
 
 ```python
-# apps/rtagent/backend/voice/voicelive/handler.py
+# apps/artagent/backend/voice/voicelive/handler.py
 
 class VoiceLiveSDKHandler:
     """
@@ -340,7 +340,7 @@ async def handle_call_disconnected(context: CallEventContext) -> None:
 
 ```python
 # Register handlers at app startup
-from apps.rtagent.backend.api.v1.events import register_default_handlers
+from apps.artagent.backend.api.v1.events import register_default_handlers
 
 @app.on_event("startup")
 async def startup():

@@ -70,7 +70,7 @@
         ```
     3.  **Run with Debug Logging:**
         ```bash
-        uvicorn apps.rtagent.backend.main:app --reload --port 8010 --log-level debug
+        uvicorn apps.artagent.backend.main:app --reload --port 8010 --log-level debug
         ```
     4.  **Verify Environment File (`.env`):** Ensure the file exists and all required variables for Azure, Redis, and OpenAI are correctly set.
 

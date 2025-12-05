@@ -523,7 +523,7 @@ async def session_config_ws(
 
 ### Phase 1: Foundation (Week 1)
 
-1. **Create `SessionAgentManager` class** in `apps/rtagent/agents/session_manager.py`
+1. **Create `SessionAgentManager` class** in `apps/artagent/agents/session_manager.py`
 2. **Add serialization to `SessionAgentRegistry`** and `SessionAgentConfig`
 3. **Update `MemoManager`** with `_AGENT_REGISTRY_KEY` handling
 4. **Unit tests** for override resolution
@@ -626,7 +626,7 @@ logger.info(
 ## 9. Appendix: Full File Structure
 
 ```
-apps/rtagent/
+apps/artagent/
 ├── agents/
 │   ├── base.py                    # UnifiedAgent (existing)
 │   ├── loader.py                  # discover_agents() (existing)
@@ -651,8 +651,8 @@ apps/rtagent/
 
 ## 10. References
 
-- [UnifiedAgent base class](apps/rtagent/agents/base.py)
-- [Agent loader](apps/rtagent/agents/loader.py)
+- [UnifiedAgent base class](apps/artagent/agents/base.py)
+- [Agent loader](apps/artagent/agents/loader.py)
 - [MemoManager](src/stateful/state_managment.py)
-- [LiveOrchestratorAdapter](apps/rtagent/backend/voice_channels/orchestrators/live_adapter.py)
-- [VoiceLiveSDKHandler](apps/rtagent/backend/voice_channels/voicelive/handler.py)
+- [LiveOrchestratorAdapter](apps/artagent/backend/voice_channels/orchestrators/live_adapter.py)
+- [VoiceLiveSDKHandler](apps/artagent/backend/voice_channels/voicelive/handler.py)

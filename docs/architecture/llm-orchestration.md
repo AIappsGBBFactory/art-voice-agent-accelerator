@@ -45,10 +45,10 @@ export ACS_STREAMING_MODE=VOICE_LIVE
 
 | Component | Location |
 |-----------|----------|
-| **Cascade Orchestrator** | `apps/rtagent/backend/voice/speech_cascade/orchestrator.py` |
-| **VoiceLive Orchestrator** | `apps/rtagent/backend/voice/voicelive/orchestrator.py` |
-| **Agent Framework** | `apps/rtagent/backend/agents/` |
-| **Tool Registry** | `apps/rtagent/backend/agents/tools/registry.py` |
+| **Cascade Orchestrator** | `apps/artagent/backend/voice/speech_cascade/orchestrator.py` |
+| **VoiceLive Orchestrator** | `apps/artagent/backend/voice/voicelive/orchestrator.py` |
+| **Agent Framework** | `apps/artagent/backend/agents/` |
+| **Tool Registry** | `apps/artagent/backend/agents/tools/registry.py` |
 
 ---
 
@@ -57,9 +57,9 @@ export ACS_STREAMING_MODE=VOICE_LIVE
 !!! info "What Changed"
     The following legacy paths referenced in older documentation are no longer used:
     
-    - ~~`apps/rtagent/backend/src/agents/artagent/`~~ → Use `apps/rtagent/backend/agents/`
-    - ~~`apps/rtagent/backend/src/orchestration/artagent/`~~ → Use orchestrators in `voice/`
-    - ~~`apps/rtagent/backend/src/agents/Lvagent/`~~ → Use `voice/voicelive/`
+    - ~~`apps/artagent/backend/src/agents/artagent/`~~ → Use `apps/artagent/backend/agents/`
+    - ~~`apps/artagent/backend/src/orchestration/artagent/`~~ → Use orchestrators in `voice/`
+    - ~~`apps/artagent/backend/src/agents/Lvagent/`~~ → Use `voice/voicelive/`
     
     The new **Unified Agent Framework** consolidates agent definitions in YAML and provides a single agent registry used by both orchestrators.
 

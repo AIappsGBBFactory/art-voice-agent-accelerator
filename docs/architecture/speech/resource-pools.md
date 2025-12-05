@@ -103,7 +103,7 @@ pool = OnDemandResourcePool(
 ### Initialization Example
 
 ```python
-# apps/rtagent/backend/main.py
+# apps/artagent/backend/main.py
 
 from src.pools import WarmableResourcePool
 from src.speech import SpeechSynthesizer, StreamingSpeechRecognizerFromBytes

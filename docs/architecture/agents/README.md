@@ -76,7 +76,7 @@ The agent framework in this accelerator was designed with specific requirements 
 ## Directory Structure
 
 ```text
-apps/rtagent/backend/agents/
+apps/artagent/backend/agents/
 ├── __init__.py
 ├── base.py                    # UnifiedAgent dataclass & HandoffConfig
 ├── loader.py                  # discover_agents(), build_handoff_map()
@@ -309,7 +309,7 @@ Tools are defined once in the central registry and referenced by name across age
 
 ```python
 # tools/fraud.py
-from apps.rtagent.backend.agents.tools.registry import register_tool
+from apps.artagent.backend.agents.tools.registry import register_tool
 
 analyze_transactions_schema = {
     "name": "analyze_recent_transactions",
@@ -366,7 +366,7 @@ async def handoff_fraud_agent(args: Dict[str, Any]) -> Dict[str, Any]:
 ### Discovering Agents
 
 ```python
-from apps.rtagent.backend.agents.loader import discover_agents, build_handoff_map
+from apps.artagent.backend.agents.loader import discover_agents, build_handoff_map
 
 # Auto-discover all agents from the agents/ directory
 agents: Dict[str, UnifiedAgent] = discover_agents()
@@ -406,7 +406,7 @@ if handoff_map.get(tool_name):
 The `SessionAgentManager` enables runtime modification of agent configurations without redeployment:
 
 ```python
-from apps.rtagent.backend.agents.session_manager import SessionAgentManager
+from apps.artagent.backend.agents.session_manager import SessionAgentManager
 
 # Create session manager
 mgr = SessionAgentManager(
@@ -483,7 +483,7 @@ In SpeechCascade mode, handoffs use the `MemoManager` to persist agent state:
 1. **Create agent directory:**
 
    ```bash
-   mkdir apps/rtagent/backend/agents/my_agent
+   mkdir apps/artagent/backend/agents/my_agent
    ```
 
 2. **Create agent.yaml:**

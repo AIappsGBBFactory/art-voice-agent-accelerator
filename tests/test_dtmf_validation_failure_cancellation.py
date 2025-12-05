@@ -7,10 +7,10 @@ This test verifies that calls are properly cancelled when DTMF validation fails.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
+from apps.artagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
     DTMFValidationLifecycle,
 )
-from apps.rtagent.backend.api.v1.events.types import CallEventContext
+from apps.artagent.backend.api.v1.events.types import CallEventContext
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ async def test_cancel_call_for_validation_failure_with_session_terminator(mock_c
 
     # Act
     with patch(
-        "apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle.terminate_session",
+        "apps.artagent.backend.api.v1.handlers.dtmf_validation_lifecycle.terminate_session",
         new_callable=AsyncMock,
     ) as mock_terminate:
         await DTMFValidationLifecycle._cancel_call_for_validation_failure(mock_context)

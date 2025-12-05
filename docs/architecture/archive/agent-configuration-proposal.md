@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This proposal flattens `vlagent/` and `artagent/` into a **single unified agent structure** under `apps/rtagent/agents/`. Agents are orchestrator-agnostic but handoff-strategy-aware, compatible with both:
+This proposal flattens `vlagent/` and `artagent/` into a **single unified agent structure** under `apps/artagent/agents/`. Agents are orchestrator-agnostic but handoff-strategy-aware, compatible with both:
 
 - **SpeechCascade** (gpt_flow) → State-based handoffs via MemoManager
 - **VoiceLive** (LiveOrchestrator) → Tool-based handoffs via HANDOFF_MAP
@@ -23,19 +23,19 @@ Currently we have **two separate agent implementations** with duplicated concept
 
 ```text
 Current State (Duplicated):
-├── apps/rtagent/backend/src/agents/artagent/
+├── apps/artagent/backend/src/agents/artagent/
 │   ├── agents/*.yaml              # ARTAgent YAML configs
 │   ├── prompt_store/templates/    # Jinja prompts
 │   ├── tool_store/                # Tools + registry
 │   └── base.py                    # ARTAgent class
 │
-├── apps/rtagent/backend/src/agents/vlagent/
+├── apps/artagent/backend/src/agents/vlagent/
 │   ├── agents/*.yaml              # VoiceLive YAML configs
 │   ├── templates/                 # Jinja prompts  
 │   ├── tool_store/                # Tools + registry (duplicated!)
 │   └── base.py                    # AzureVoiceLiveAgent class
 │
-└── apps/rtagent/backend/voice_channels/handoffs/
+└── apps/artagent/backend/voice_channels/handoffs/
     ├── strategies/                # HandoffStrategy interface
     │   ├── tool_based.py          # VoiceLive: LLM calls handoff tools
     │   └── state_based.py         # ARTAgent: MemoManager state changes
@@ -55,7 +55,7 @@ Current State (Duplicated):
 Flatten into a single, orchestrator-agnostic structure:
 
 ```text
-apps/rtagent/agents/                     # ← Single source of truth
+apps/artagent/agents/                     # ← Single source of truth
 ├── __init__.py
 ├── loader.py                            # Universal agent loader
 ├── base.py                              # UnifiedAgent class
@@ -74,11 +74,11 @@ apps/rtagent/agents/                     # ← Single source of truth
 │
 └── (more agents...)
 
-apps/rtagent/backend/src/agents/shared/  # ← Shared infrastructure
+apps/artagent/backend/src/agents/shared/  # ← Shared infrastructure
 ├── tool_registry.py                     # Single tool registry
 └── prompt_manager.py                    # Unified prompt loading
 
-apps/rtagent/backend/voice_channels/     # ← Orchestration layer
+apps/artagent/backend/voice_channels/     # ← Orchestration layer
 ├── handoffs/
 │   ├── strategies/
 │   │   ├── tool_based.py                # VoiceLive handoffs
@@ -166,7 +166,7 @@ The unified schema supports both orchestration patterns with sensible defaults:
 ### Complete Schema
 
 ```yaml
-# apps/rtagent/agents/fraud_agent/agent.yaml
+# apps/artagent/agents/fraud_agent/agent.yaml
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # IDENTITY (Required)
@@ -262,7 +262,7 @@ prompt: prompt.jinja              # Or inline: prompt: |
 ### Minimal Agent (Uses Defaults)
 
 ```yaml
-# apps/rtagent/agents/simple_agent/agent.yaml
+# apps/artagent/agents/simple_agent/agent.yaml
 name: SimpleAgent
 description: A minimal agent example
 
@@ -288,13 +288,13 @@ The orchestrators consume `UnifiedAgent` and apply the appropriate handoff strat
 ```python
 # voice_channels/orchestrators/speech_cascade_adapter.py
 
-from apps.rtagent.backend.agents.loader import discover_agents, AgentConfig
+from apps.artagent.backend.agents.loader import discover_agents, AgentConfig
 from voice_channels.handoffs.strategies import StateBasedHandoff
 
 class SpeechCascadeOrchestrator:
     """Adapter for gpt_flow-style orchestration with state-based handoffs."""
     
-    def __init__(self, agents_dir: str = "apps/rtagent/agents"):
+    def __init__(self, agents_dir: str = "apps/artagent/agents"):
         self.agents = discover_agents(agents_dir)
         self.handoff_strategy = StateBasedHandoff()
         self.active_agent: str = "EricaConcierge"
@@ -325,13 +325,13 @@ class SpeechCascadeOrchestrator:
 ```python
 # voice_channels/orchestrators/voicelive_adapter.py
 
-from apps.rtagent.backend.agents.loader import discover_agents, build_handoff_map, AgentConfig
+from apps.artagent.backend.agents.loader import discover_agents, build_handoff_map, AgentConfig
 from voice_channels.handoffs.strategies import ToolBasedHandoff
 
 class VoiceLiveOrchestrator:
     """Adapter for VoiceLive SDK with tool-based handoffs."""
     
-    def __init__(self, agents_dir: str = "apps/rtagent/agents"):
+    def __init__(self, agents_dir: str = "apps/artagent/agents"):
         self.agents = discover_agents(agents_dir)
         self.handoff_map = build_handoff_map(self.agents)
         self.handoff_strategy = ToolBasedHandoff(handoff_map=self.handoff_map)
@@ -367,7 +367,7 @@ class VoiceLiveOrchestrator:
 The core agent class that works with any orchestrator:
 
 ```python
-# apps/rtagent/agents/base.py
+# apps/artagent/agents/base.py
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -433,14 +433,14 @@ class UnifiedAgent:
     
     def get_tools(self) -> List[Dict[str, Any]]:
         """Get OpenAI-compatible tool schemas from shared registry."""
-        from apps.rtagent.backend.src.agents.shared.tool_registry import (
+        from apps.artagent.backend.src.agents.shared.tool_registry import (
             get_tools_for_agent,
         )
         return get_tools_for_agent(self.tool_names)
     
     async def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool by name."""
-        from apps.rtagent.backend.src.agents.shared.tool_registry import execute_tool
+        from apps.artagent.backend.src.agents.shared.tool_registry import execute_tool
         return await execute_tool(tool_name, args)
     
     # ─────────────────────────────────────────────────────────────────
@@ -474,7 +474,7 @@ class UnifiedAgent:
 Single source of truth for all tools:
 
 ```python
-# apps/rtagent/backend/src/agents/shared/tool_registry.py
+# apps/artagent/backend/src/agents/shared/tool_registry.py
 
 from typing import Any, Callable, Dict, List, Optional, Set
 from dataclasses import dataclass, field
@@ -542,7 +542,7 @@ def get_handoff_tools() -> Dict[str, str]:
 ### Tool Registration (Banking Example)
 
 ```python
-# apps/rtagent/backend/src/agents/shared/tools/banking.py
+# apps/artagent/backend/src/agents/shared/tools/banking.py
 
 from ..tool_registry import register_tool
 
@@ -578,7 +578,7 @@ register_tool(
 ### Handoff Tool Registration
 
 ```python
-# apps/rtagent/backend/src/agents/shared/tools/handoffs.py
+# apps/artagent/backend/src/agents/shared/tools/handoffs.py
 
 from ..tool_registry import register_tool
 
@@ -627,7 +627,7 @@ register_tool(
 No manual `HANDOFF_MAP` maintenance. Built automatically from agent configs:
 
 ```python
-# apps/rtagent/agents/loader.py
+# apps/artagent/agents/loader.py
 
 def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
     """
@@ -649,7 +649,7 @@ def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
     }
 
 # voice_channels/handoffs/registry.py now just imports from loader
-from apps.rtagent.backend.agents.loader import discover_agents, build_handoff_map
+from apps.artagent.backend.agents.loader import discover_agents, build_handoff_map
 
 _agents = discover_agents()
 HANDOFF_MAP = build_handoff_map(_agents)
@@ -662,12 +662,12 @@ HANDOFF_MAP = build_handoff_map(_agents)
 **One folder, one file:**
 
 ```bash
-mkdir apps/rtagent/agents/new_specialist
-touch apps/rtagent/agents/new_specialist/agent.yaml
+mkdir apps/artagent/agents/new_specialist
+touch apps/artagent/agents/new_specialist/agent.yaml
 ```
 
 ```yaml
-# apps/rtagent/agents/new_specialist/agent.yaml
+# apps/artagent/agents/new_specialist/agent.yaml
 
 name: NewSpecialist
 description: Handles specialized domain X
@@ -715,8 +715,8 @@ prompt: |
 ## Migration Path
 
 ### Phase 1: Unified Structure (Week 1)
-1. Create `apps/rtagent/agents/` with `loader.py` and `base.py`
-2. Create `apps/rtagent/backend/src/agents/shared/tool_registry.py`
+1. Create `apps/artagent/agents/` with `loader.py` and `base.py`
+2. Create `apps/artagent/backend/src/agents/shared/tool_registry.py`
 3. Migrate one agent (FraudAgent) as proof of concept
 4. Test with both SpeechCascade and VoiceLive
 
@@ -740,7 +740,7 @@ prompt: |
 ## Directory Structure: Final State
 
 ```text
-apps/rtagent/
+apps/artagent/
 ├── agents/                              # ← Unified agent configs
 │   ├── __init__.py
 │   ├── loader.py                        # Auto-discovery
