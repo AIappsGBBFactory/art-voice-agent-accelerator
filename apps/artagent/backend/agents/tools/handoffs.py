@@ -13,6 +13,9 @@ Each handoff tool returns a standardized payload:
     "handoff_summary": "Brief summary",
     "handoff_context": {...}
 }
+
+IMPORTANT: Handoffs are SILENT - the agent must NOT say "Let me connect you" or
+similar before calling a handoff tool. The target agent will greet the customer.
 """
 
 from __future__ import annotations
@@ -24,6 +27,9 @@ from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
 
 logger = get_logger("agents.tools.handoffs")
+
+# Suffix to add to all handoff tool descriptions to reinforce silent handoff behavior
+SILENT_HANDOFF_NOTE = " IMPORTANT: Call this tool immediately without saying anything first. The target agent will greet the customer."
 
 
 def _utc_now() -> str:
@@ -69,6 +75,7 @@ handoff_concierge_schema: Dict[str, Any] = {
     "description": (
         "Return customer to Erica Concierge (main banking assistant). "
         "Use after completing specialist task or when customer needs different help."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -86,6 +93,7 @@ handoff_fraud_agent_schema: Dict[str, Any] = {
     "description": (
         "Transfer to Fraud Detection Agent for suspicious activity investigation. "
         "Use when customer reports fraud, unauthorized charges, or suspicious transactions."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -106,6 +114,7 @@ handoff_to_auth_schema: Dict[str, Any] = {
     "description": (
         "Transfer to Authentication Agent for identity verification. "
         "Use when MFA or additional identity verification is required."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -122,6 +131,7 @@ handoff_card_recommendation_schema: Dict[str, Any] = {
     "description": (
         "Transfer to Card Recommendation Agent for credit card advice. "
         "Use when customer asks about new cards, rewards, or upgrades."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -146,6 +156,7 @@ handoff_investment_advisor_schema: Dict[str, Any] = {
     "description": (
         "Transfer to Investment Advisor for retirement and investment questions. "
         "Use for 401(k) rollover, IRA, retirement planning topics."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -164,6 +175,7 @@ handoff_compliance_desk_schema: Dict[str, Any] = {
     "description": (
         "Transfer to Compliance Desk for AML/FATCA verification and regulatory review. "
         "Use for compliance issues, sanctions screening, or regulatory requirements."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -182,6 +194,7 @@ handoff_transfer_agency_agent_schema: Dict[str, Any] = {
     "description": (
         "Transfer to Transfer Agency Agent for DRIP liquidations and institutional services. "
         "Use for dividend reinvestment, institutional client codes, position inquiries."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -203,6 +216,7 @@ handoff_bank_advisor_schema: Dict[str, Any] = {
     "description": (
         "Schedule callback with Merrill human advisor for personalized investment advice. "
         "Use when customer needs human specialist for complex investment decisions."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -220,6 +234,7 @@ handoff_to_trading_schema: Dict[str, Any] = {
     "description": (
         "Transfer to Trading Desk for complex execution. "
         "Use for FX conversions, large trades, or institutional execution."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
@@ -237,6 +252,7 @@ handoff_general_kb_schema: Dict[str, Any] = {
     "description": (
         "Transfer to General Knowledge Base agent for general inquiries. "
         "No authentication required. Use for product info, FAQs, policies, and general questions."
+        + SILENT_HANDOFF_NOTE
     ),
     "parameters": {
         "type": "object",
