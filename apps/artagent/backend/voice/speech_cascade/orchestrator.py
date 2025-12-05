@@ -620,13 +620,29 @@ class CascadeOrchestratorAdapter:
                             updated_metadata["previous_agent"] = context.metadata.get("agent_name") if context.metadata else None
                             updated_metadata["handoff_context"] = parsed_args.get("context") or parsed_args.get("reason")
                             
-                            # Build messages for new agent with handoff context
+                            # Get the new agent's existing history (if returning to this agent)
+                            # Plus add user's current message for context about why handoff happened
+                            new_agent_history = []
+                            if self._current_memo_manager:
+                                try:
+                                    new_agent_history = list(self._current_memo_manager.get_history(handoff_target) or [])
+                                except Exception:
+                                    pass
+                            
+                            # If this is first visit to agent, add context about user's request
+                            if not new_agent_history and context.user_text:
+                                new_agent_history.append({
+                                    "role": "user",
+                                    "content": context.user_text,
+                                })
+                            
+                            # Build messages for new agent with its own history
                             new_context = OrchestratorContext(
                                 session_id=context.session_id,
                                 websocket=context.websocket,
                                 call_connection_id=context.call_connection_id,
-                                user_text=context.user_text,
-                                conversation_history=[],  # Fresh history for new agent
+                                user_text="" if new_agent_history else context.user_text,  # Avoid duplicate if added above
+                                conversation_history=new_agent_history,
                                 metadata=updated_metadata,
                             )
                             
@@ -650,8 +666,22 @@ class CascadeOrchestratorAdapter:
                                     len(new_tool_calls),
                                 )
                                 
-                                # Sync state back to MemoManager
+                                # Persist the handoff turn to new agent's history
                                 if self._current_memo_manager:
+                                    try:
+                                        # Add user message if not already in history
+                                        if context.user_text and not new_agent_history:
+                                            self._current_memo_manager.append_to_history(
+                                                handoff_target, "user", context.user_text
+                                            )
+                                        # Add assistant response
+                                        if new_response_text:
+                                            self._current_memo_manager.append_to_history(
+                                                handoff_target, "assistant", new_response_text
+                                            )
+                                    except Exception:
+                                        logger.debug("Failed to persist handoff turn to history", exc_info=True)
+                                    
                                     self.sync_to_memo_manager(self._current_memo_manager)
                                 
                                 span.set_status(Status(StatusCode.OK))
