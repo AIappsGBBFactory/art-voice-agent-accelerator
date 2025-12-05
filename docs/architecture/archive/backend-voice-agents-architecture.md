@@ -1,6 +1,6 @@
 # Backend Voice & Agents Architecture
 
-This document describes the architecture of the `apps/rtagent/backend/` modules, specifically the separation of concerns between `voice/` (transport & orchestration) and `agents/` (configuration & business logic).
+This document describes the architecture of the `apps/artagent/backend/` modules, specifically the separation of concerns between `voice/` (transport & orchestration) and `agents/` (configuration & business logic).
 
 ---
 

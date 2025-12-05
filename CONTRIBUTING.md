@@ -118,7 +118,7 @@ This sets up automated code quality checks that run before commits.
 
 ### Key Directories
 - `src/` → Core application modules (ACS, Speech, AI, etc.)
-- `apps/rtagent/` → Main application code
+- `apps/artagent/` → Main application code
 - `infra/` → Infrastructure as Code (Bicep/Terraform)
 - `docs/` → Documentation and guides
 

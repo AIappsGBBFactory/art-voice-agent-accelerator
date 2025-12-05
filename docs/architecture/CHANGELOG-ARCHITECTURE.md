@@ -168,7 +168,7 @@ This plan outlines a comprehensive documentation update to align the `docs/archi
 | Cascade Orchestrator | ✅ Documented | [orchestration/cascade.md](orchestration/cascade.md) |
 | VoiceLive Orchestrator | ✅ Documented | [orchestration/voicelive.md](orchestration/voicelive.md) |
 | Handoff Strategies | ✅ Updated | [handoff-strategies.md](handoff-strategies.md) |
-| MemoManager Integration | ✅ Documented | [SESSION_MAPPING.md](../../apps/rtagent/backend/agents/SESSION_MAPPING.md) |
+| MemoManager Integration | ✅ Documented | [SESSION_MAPPING.md](../../apps/artagent/backend/agents/SESSION_MAPPING.md) |
 
 ### 3. **Voice Processing (Moderate Gap)** — Phase 3
 
@@ -446,28 +446,28 @@ Updated with:
 ## 🔗 Key Source Files Reference
 
 ### Agent Framework
-- [`apps/rtagent/backend/agents/README.md`](../../../apps/rtagent/backend/agents/README.md)
-- [`apps/rtagent/backend/agents/base.py`](../../../apps/rtagent/backend/agents/base.py)
-- [`apps/rtagent/backend/agents/loader.py`](../../../apps/rtagent/backend/agents/loader.py)
-- [`apps/rtagent/backend/agents/tools/registry.py`](../../../apps/rtagent/backend/agents/tools/registry.py)
+- [`apps/artagent/backend/agents/README.md`](../../../apps/artagent/backend/agents/README.md)
+- [`apps/artagent/backend/agents/base.py`](../../../apps/artagent/backend/agents/base.py)
+- [`apps/artagent/backend/agents/loader.py`](../../../apps/artagent/backend/agents/loader.py)
+- [`apps/artagent/backend/agents/tools/registry.py`](../../../apps/artagent/backend/agents/tools/registry.py)
 
 ### Orchestration
-- [`apps/rtagent/backend/voice/speech_cascade/orchestrator.py`](../../../apps/rtagent/backend/voice/speech_cascade/orchestrator.py)
-- [`apps/rtagent/backend/voice/voicelive/orchestrator.py`](../../../apps/rtagent/backend/voice/voicelive/orchestrator.py)
-- [`apps/rtagent/backend/voice/shared/base.py`](../../../apps/rtagent/backend/voice/shared/base.py)
+- [`apps/artagent/backend/voice/speech_cascade/orchestrator.py`](../../../apps/artagent/backend/voice/speech_cascade/orchestrator.py)
+- [`apps/artagent/backend/voice/voicelive/orchestrator.py`](../../../apps/artagent/backend/voice/voicelive/orchestrator.py)
+- [`apps/artagent/backend/voice/shared/base.py`](../../../apps/artagent/backend/voice/shared/base.py)
 
 ### Voice Handlers
-- [`apps/rtagent/backend/voice/speech_cascade/handler.py`](../../../apps/rtagent/backend/voice/speech_cascade/handler.py)
-- [`apps/rtagent/backend/voice/voicelive/handler.py`](../../../apps/rtagent/backend/voice/voicelive/handler.py)
+- [`apps/artagent/backend/voice/speech_cascade/handler.py`](../../../apps/artagent/backend/voice/speech_cascade/handler.py)
+- [`apps/artagent/backend/voice/voicelive/handler.py`](../../../apps/artagent/backend/voice/voicelive/handler.py)
 
 ### Session & State
-- [`apps/rtagent/backend/src/services/session_loader.py`](../../../apps/rtagent/backend/src/services/session_loader.py)
-- [`apps/rtagent/backend/agents/session_manager.py`](../../../apps/rtagent/backend/agents/session_manager.py)
-- [`apps/rtagent/backend/voice/shared/session_state.py`](../../../apps/rtagent/backend/voice/shared/session_state.py) - Shared sync utilities
-- [`apps/rtagent/backend/agents/SESSION_MAPPING.md`](../../../apps/rtagent/backend/agents/SESSION_MAPPING.md) - Onboarding guide
+- [`apps/artagent/backend/src/services/session_loader.py`](../../../apps/artagent/backend/src/services/session_loader.py)
+- [`apps/artagent/backend/agents/session_manager.py`](../../../apps/artagent/backend/agents/session_manager.py)
+- [`apps/artagent/backend/voice/shared/session_state.py`](../../../apps/artagent/backend/voice/shared/session_state.py) - Shared sync utilities
+- [`apps/artagent/backend/agents/SESSION_MAPPING.md`](../../../apps/artagent/backend/agents/SESSION_MAPPING.md) - Onboarding guide
 
 ### API Events
-- [`apps/rtagent/backend/api/v1/events/`](../../../apps/rtagent/backend/api/v1/events/)
+- [`apps/artagent/backend/api/v1/events/`](../../../apps/artagent/backend/api/v1/events/)
 
 ---
 

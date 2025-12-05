@@ -269,18 +269,18 @@ ACR_LOGIN_SERVER="$ACR_NAME.azurecr.io"
 
 az acr login --name $ACR_NAME
 
-# Backend image (Dockerfile: apps/rtagent/backend/Dockerfile)
+# Backend image (Dockerfile: apps/artagent/backend/Dockerfile)
 docker build \
-  -f apps/rtagent/backend/Dockerfile \
+  -f apps/artagent/backend/Dockerfile \
   -t $ACR_LOGIN_SERVER/voice-agent-backend:$(git rev-parse --short HEAD) \
-  apps/rtagent/backend
+  apps/artagent/backend
 docker push $ACR_LOGIN_SERVER/voice-agent-backend:$(git rev-parse --short HEAD)
 
-# Frontend image (Dockerfile: apps/rtagent/frontend/Dockerfile)
+# Frontend image (Dockerfile: apps/artagent/frontend/Dockerfile)
 docker build \
-  -f apps/rtagent/frontend/Dockerfile \
+  -f apps/artagent/frontend/Dockerfile \
   -t $ACR_LOGIN_SERVER/voice-agent-frontend:$(git rev-parse --short HEAD) \
-  apps/rtagent/frontend
+  apps/artagent/frontend
 docker push $ACR_LOGIN_SERVER/voice-agent-frontend:$(git rev-parse --short HEAD)
 ```
 

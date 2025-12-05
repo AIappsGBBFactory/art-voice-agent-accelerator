@@ -21,7 +21,7 @@ SessionAgentManager (implements HandoffProvider)
 Orchestrators (via handoff_provider or static fallback)
 ```
 
-**Key function**: `apps/rtagent/backend/agents/loader.py::build_handoff_map()`
+**Key function**: `apps/artagent/backend/agents/loader.py::build_handoff_map()`
 
 ```python
 def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
@@ -54,43 +54,43 @@ class HandoffProvider(Protocol):
 ---
 
 ## Agent Definitions & Registry
-- `apps/rtagent/backend/agents/base.py`
+- `apps/artagent/backend/agents/base.py`
   - `HandoffConfig` (trigger, is_entry_point) and helpers: `get_handoff_tools()`, `can_handoff_to()`, `is_handoff_target()`, `handoff_trigger`, and `build_handoff_map(agents)`.
-- `apps/rtagent/backend/agents/loader.py`
+- `apps/artagent/backend/agents/loader.py`
   - Parses YAML (`handoff` block or legacy `handoff_trigger`) via `_extract_handoff_config`.
   - **`build_handoff_map()`** — single source for tool → agent mappings.
-- `apps/rtagent/backend/agents/_defaults.yaml`
+- `apps/artagent/backend/agents/_defaults.yaml`
   - Default handoff settings (no defaults - each agent defines its own trigger).
-- `apps/rtagent/backend/agents/tools/registry.py`
+- `apps/artagent/backend/agents/tools/registry.py`
   - Tool metadata includes `is_handoff`; `is_handoff_tool(name)` and `list_tools(..., handoffs_only=True)`.
   - Handoff tools registered in `agents/tools/handoffs.py`.
 - Agent YAMLs (e.g., `concierge`, `fraud_agent`, `card_recommendation`, `investment_advisor`, `custom_agent`, `compliance_desk`) declare `handoff.trigger` and outbound handoff tools.
 
 ## Session & State
-- `apps/rtagent/backend/agents/session_manager.py`
+- `apps/artagent/backend/agents/session_manager.py`
   - Wraps base agents + `handoff_map` into per-session registry; exposes `is_handoff_tool`, `get_handoff_target`, `update_handoff_map`, `remove_handoff`.
   - Calls `build_handoff_map()` at session creation.
 
 ## Orchestration (Voice)
-- `apps/rtagent/backend/voice/handoffs/__init__.py`
+- `apps/artagent/backend/voice/handoffs/__init__.py`
   - Exports: `HandoffContext`, `HandoffResult`, `build_handoff_system_vars`, `sanitize_handoff_context`
   - ~~Strategies removed~~ — see Cleanup History
-- `apps/rtagent/backend/voice/handoffs/context.py`
+- `apps/artagent/backend/voice/handoffs/context.py`
   - Dataclasses for `HandoffContext` (source/target/reason/context data) and `HandoffResult`.
   - **`sanitize_handoff_context()`** — removes control flags from raw handoff context
   - **`build_handoff_system_vars()`** — builds system_vars dict for agent switches (used by LiveOrchestrator)
-- `apps/rtagent/backend/voice/speech_cascade/orchestrator.py`
+- `apps/artagent/backend/voice/speech_cascade/orchestrator.py`
   - Local shim re-exporting `CascadeOrchestratorAdapter` to keep cascade orchestration discoverable next to the handler.
-- `apps/rtagent/backend/voice/orchestrators/config_resolver.py`
+- `apps/artagent/backend/voice/orchestrators/config_resolver.py`
   - Builds or injects `handoff_map` for voice orchestrators; falls back to agent loader or `app.state`.
-- `apps/rtagent/backend/voice/orchestrators/live_orchestrator.py`
+- `apps/artagent/backend/voice/orchestrators/live_orchestrator.py`
   - VoiceLive path: accepts optional `handoff_provider` parameter for live lookups
   - Uses `get_handoff_target(tool_name)` method for handoff resolution
   - Falls back to static `handoff_map` if no provider given (backward compatible)
-- `apps/rtagent/backend/voice/orchestrators/cascade_adapter.py`
+- `apps/artagent/backend/voice/orchestrators/cascade_adapter.py`
   - Speech cascade path: uses `get_handoff_target()` and `is_handoff_tool()` helper methods
   - Separates handoff vs non-handoff tools, executes `_execute_handoff`
-- `apps/rtagent/backend/voice/voicelive/handler.py`
+- `apps/artagent/backend/voice/voicelive/handler.py`
   - Uses `build_handoff_map(agents)` as fallback when no `app_state.handoff_map` is available.
 
 ## Prompts & Context
@@ -109,13 +109,13 @@ class HandoffProvider(Protocol):
 
 **Resolution**: Deleted unused files:
 ```
-DELETED: apps/rtagent/backend/voice/handoffs/strategies/  (entire folder)
+DELETED: apps/artagent/backend/voice/handoffs/strategies/  (entire folder)
          ├── __init__.py
          ├── base.py        # HandoffStrategy ABC
          ├── tool_based.py  # ToolBasedHandoff class
          └── state_based.py # StateBasedHandoff class
 
-DELETED: apps/rtagent/backend/voice/handoffs/registry.py  (static HANDOFF_MAP)
+DELETED: apps/artagent/backend/voice/handoffs/registry.py  (static HANDOFF_MAP)
 ```
 
 **Updated exports**:
@@ -250,7 +250,7 @@ After all cleanup phases, the handoff system is now much simpler:
 
 1. **CascadeOrchestratorAdapter** now imports `is_handoff_tool` from tool registry:
    ```python
-   from apps.rtagent.backend.agents.tools.registry import is_handoff_tool
+   from apps.artagent.backend.agents.tools.registry import is_handoff_tool
    ```
 
 2. **Removed duplicate method** from `CascadeOrchestratorAdapter`:
@@ -273,7 +273,7 @@ After all cleanup phases, the handoff system is now much simpler:
 
 Both `LiveOrchestrator` and `CascadeOrchestratorAdapter` now use:
 ```python
-from apps.rtagent.backend.agents.tools.registry import is_handoff_tool
+from apps.artagent.backend.agents.tools.registry import is_handoff_tool
 
 # Check if handoff tool, then get target
 if is_handoff_tool(name):

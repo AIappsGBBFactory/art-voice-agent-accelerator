@@ -57,9 +57,9 @@ The VoiceLive Orchestrator is designed for scenarios requiring:
 
 | File | Purpose |
 |------|---------|
-| [orchestrator.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/voice/voicelive/orchestrator.py) | Main orchestrator implementation |
-| [handler.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/voice/voicelive/handler.py) | WebSocket handler integration |
-| [agent_adapter.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/voice/voicelive/agent_adapter.py) | VoiceLive agent adapter |
+| [orchestrator.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/voice/voicelive/orchestrator.py) | Main orchestrator implementation |
+| [handler.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/voice/voicelive/handler.py) | WebSocket handler integration |
+| [agent_adapter.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/voice/voicelive/agent_adapter.py) | VoiceLive agent adapter |
 
 ---
 
@@ -395,7 +395,7 @@ CALL_CENTER_TRIGGER_PHRASES = {
 ### Creating the Orchestrator
 
 ```python
-from apps.rtagent.backend.voice.voicelive import LiveOrchestrator
+from apps.artagent.backend.voice.voicelive import LiveOrchestrator
 
 # Create with adapted agents
 orchestrator = LiveOrchestrator(

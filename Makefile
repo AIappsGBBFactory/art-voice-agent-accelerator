@@ -10,7 +10,7 @@ PYTHON_INTERPRETER = python
 CONDA_ENV ?= audioagent
 # Ensure current directory is in PYTHONPATH
 export PYTHONPATH=$(PWD):$PYTHONPATH;
-SCRIPTS_DIR = apps/rtagent/scripts
+SCRIPTS_DIR = apps/artagent/scripts
 SCRIPTS_LOAD_DIR = tests/load
 PHONE = +18165019907
 

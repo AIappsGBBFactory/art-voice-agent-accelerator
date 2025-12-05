@@ -18,7 +18,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock
 
-from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
+from apps.artagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
     DTMFValidationLifecycle,
 )
 

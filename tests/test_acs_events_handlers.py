@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
 from azure.core.messaging import CloudEvent
 
-import apps.rtagent.backend.api.v1.events.handlers as events_handlers
-from apps.rtagent.backend.api.v1.events.handlers import CallEventHandlers
-from apps.rtagent.backend.api.v1.events.types import (
+import apps.artagent.backend.api.v1.events.handlers as events_handlers
+from apps.artagent.backend.api.v1.events.handlers import CallEventHandlers
+from apps.artagent.backend.api.v1.events.types import (
     CallEventContext,
     ACSEventTypes,
     V1EventTypes,
@@ -63,7 +63,7 @@ class TestCallEventHandlers:
         context.app_state = SimpleNamespace(redis=redis_mgr, conn_manager=None)
         return context
 
-    @patch("apps.rtagent.backend.api.v1.events.handlers.logger")
+    @patch("apps.artagent.backend.api.v1.events.handlers.logger")
     async def test_handle_call_initiated(self, mock_logger, mock_context):
         """Test call initiated handler."""
         mock_context.event_type = V1EventTypes.CALL_INITIATED
@@ -86,7 +86,7 @@ class TestCallEventHandlers:
         assert updates["api_version"] == "v1"
         assert updates["call_direction"] == "outbound"
 
-    @patch("apps.rtagent.backend.api.v1.events.acs_events.logger")
+    @patch("apps.artagent.backend.api.v1.events.acs_events.logger")
     async def test_handle_inbound_call_received(self, mock_logger, mock_context):
         """Test inbound call received handler."""
         mock_context.event_type = V1EventTypes.INBOUND_CALL_RECEIVED
@@ -104,15 +104,15 @@ class TestCallEventHandlers:
         assert updates["call_direction"] == "inbound"
         assert updates["caller_id"] == "+1987654321"
 
-    # @patch("apps.rtagent.backend.api.v1.events.acs_events.logger")
+    # @patch("apps.artagent.backend.api.v1.events.acs_events.logger")
     # async def test_handle_call_connected_with_broadcast(
     #     self, mock_logger, mock_context
     # ):
     #     """Test call connected handler with WebSocket broadcast."""
     #     with patch(
-    #         "apps.rtagent.backend.api.v1.events.acs_events.broadcast_session_envelope"
+    #         "apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope"
     #     ) as mock_broadcast, patch(
-    #         "apps.rtagent.backend.api.v1.events.acs_events.DTMFValidationLifecycle.setup_aws_connect_validation_flow",
+    #         "apps.artagent.backend.api.v1.events.acs_events.DTMFValidationLifecycle.setup_aws_connect_validation_flow",
     #         new=AsyncMock(),
     #     ) as mock_dtmf:
     #         await CallEventHandlers.handle_call_connected(mock_context)
@@ -137,7 +137,7 @@ class TestCallEventHandlers:
     #         assert event_envelope["payload"]["call_connection_id"] == "test_123"
     #         assert event_call.kwargs["session_id"] == "test_123"
 
-    @patch("apps.rtagent.backend.api.v1.events.acs_events.logger")
+    @patch("apps.artagent.backend.api.v1.events.acs_events.logger")
     async def test_handle_dtmf_tone_received(self, mock_logger, mock_context):
         """Test DTMF tone handling."""
         mock_context.event_type = ACSEventTypes.DTMF_TONE_RECEIVED
@@ -176,7 +176,7 @@ class TestCallEventHandlers:
         caller_id = CallEventHandlers._extract_caller_id(caller_info)
         assert caller_id == "unknown"
 
-    @patch("apps.rtagent.backend.api.v1.events.acs_events.broadcast_session_envelope", new_callable=AsyncMock)
+    @patch("apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope", new_callable=AsyncMock)
     async def test_call_transfer_accepted_envelope(self, mock_broadcast, mock_context):
         mock_context.event_type = ACSEventTypes.CALL_TRANSFER_ACCEPTED
         mock_context.event.data = {
@@ -203,7 +203,7 @@ class TestCallEventHandlers:
             == "call_transfer_accepted"
         )
 
-    @patch("apps.rtagent.backend.api.v1.events.acs_events.broadcast_session_envelope", new_callable=AsyncMock)
+    @patch("apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope", new_callable=AsyncMock)
     async def test_call_transfer_failed_envelope(self, mock_broadcast, mock_context):
         mock_context.event_type = ACSEventTypes.CALL_TRANSFER_FAILED
         mock_context.event.data = {
@@ -236,7 +236,7 @@ class TestCallEventHandlers:
 class TestEventProcessingFlow:
     """Test event processing flow."""
 
-    @patch("apps.rtagent.backend.api.v1.events.handlers.logger")
+    @patch("apps.artagent.backend.api.v1.events.handlers.logger")
     async def test_webhook_event_routing(self, mock_logger):
         """Test webhook event router."""
         event = CloudEvent(
@@ -255,7 +255,7 @@ class TestEventProcessingFlow:
             await CallEventHandlers.handle_webhook_events(context)
             mock_handler.assert_called_once_with(context)
 
-    @patch("apps.rtagent.backend.api.v1.events.handlers.logger")
+    @patch("apps.artagent.backend.api.v1.events.handlers.logger")
     async def test_unknown_event_type_handling(self, mock_logger):
         """Test handling of unknown event types."""
         event = CloudEvent(

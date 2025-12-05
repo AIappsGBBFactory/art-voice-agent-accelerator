@@ -28,7 +28,7 @@ The main deployment workflow that handles both infrastructure and application de
 - Action type selection
 - Terraform state storage configuration:
   - Resource Group (default: "Default-ActivityLogAlerts")
-  - Storage Account (default: "rtagent")
+  - Storage Account (default: "artagent")
   - Container Name (default: "tfstate")
 
 **Triggers:**
@@ -111,7 +111,7 @@ Action: deploy
 ### Terraform State Configuration
 Customize where Terraform state is stored:
 - **Resource Group**: Default "Default-ActivityLogAlerts"
-- **Storage Account**: Default "rtagent"
+- **Storage Account**: Default "artagent"
 - **Container**: Default "tfstate"
 
 ## 🔐 Security & Authentication

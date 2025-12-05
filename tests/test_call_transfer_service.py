@@ -2,8 +2,8 @@ import types
 
 import pytest
 
-from apps.rtagent.backend.src.services.acs import call_transfer as call_transfer_module
-from apps.rtagent.backend.src.agents.vlagent.tool_store import call_transfer as tool_module
+from apps.artagent.backend.src.services.acs import call_transfer as call_transfer_module
+from apps.artagent.backend.src.agents.vlagent.tool_store import call_transfer as tool_module
 
 
 @pytest.mark.asyncio

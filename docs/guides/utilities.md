@@ -55,7 +55,7 @@ await pool.release(synth)
 Tools are registered centrally and referenced by agents:
 
 ```python
-from apps.rtagent.backend.agents.tools.registry import register_tool
+from apps.artagent.backend.agents.tools.registry import register_tool
 
 # Define and register a tool
 register_tool(
@@ -198,7 +198,7 @@ credential = DefaultAzureCredential()
 ### WebSocket Authentication
 
 ```python
-from apps.rtagent.backend.src.utils.auth import validate_acs_ws_auth
+from apps.artagent.backend.src.utils.auth import validate_acs_ws_auth
 
 try:
     await validate_acs_ws_auth(websocket, required_scope="media.stream")
@@ -211,5 +211,5 @@ except AuthError:
 ## Related Documentation
 
 - [Resource Pools](../architecture/speech/resource-pools.md) - Pool configuration and troubleshooting
-- [Agent Framework](../../apps/rtagent/backend/agents/README.md) - Creating and configuring agents
+- [Agent Framework](../../apps/artagent/backend/agents/README.md) - Creating and configuring agents
 - [Streaming Modes](../architecture/speech/README.md) - SpeechCascade vs VoiceLive

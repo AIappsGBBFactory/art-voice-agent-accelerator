@@ -62,7 +62,7 @@ docs = [
 ]
 [project.scripts]
 # Define entry points for uv run
-rtagent-server = "apps.rtagent.backend.main:main"
+artagent-server = "apps.artagent.backend.main:main"
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}

@@ -223,7 +223,7 @@ class AzureRedisManager:
             "socket_connect_timeout": 0.2,
             "socket_timeout": 1.0,
             "max_connections": 200,
-            "client_name": "rtagent-api",
+            "client_name": "artagent-api",
         }
 
         cluster_kwargs = {

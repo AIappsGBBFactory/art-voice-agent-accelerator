@@ -47,9 +47,9 @@ The Cascade Orchestrator is designed for scenarios requiring:
 
 | File | Purpose |
 |------|---------|
-| [orchestrator.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/voice/speech_cascade/orchestrator.py) | Main adapter implementation |
-| [handler.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/voice/speech_cascade/handler.py) | WebSocket handler integration |
-| [shared/base.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/rtagent/backend/voice/shared/base.py) | Shared data structures |
+| [orchestrator.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/voice/speech_cascade/orchestrator.py) | Main adapter implementation |
+| [handler.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/voice/speech_cascade/handler.py) | WebSocket handler integration |
+| [shared/base.py](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/apps/artagent/backend/voice/shared/base.py) | Shared data structures |
 
 ---
 
@@ -73,7 +73,7 @@ class CascadeConfig:
 ### Factory Method
 
 ```python
-from apps.rtagent.backend.voice.speech_cascade import CascadeOrchestratorAdapter
+from apps.artagent.backend.voice.speech_cascade import CascadeOrchestratorAdapter
 
 adapter = CascadeOrchestratorAdapter.create(
     start_agent="Concierge",
@@ -396,7 +396,7 @@ return OrchestratorResult(
 ### Creating the Adapter
 
 ```python
-from apps.rtagent.backend.voice.speech_cascade import (
+from apps.artagent.backend.voice.speech_cascade import (
     CascadeOrchestratorAdapter,
     get_cascade_orchestrator,
 )

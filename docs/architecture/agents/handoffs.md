@@ -138,7 +138,7 @@ Both orchestrators use **tool-based handoffs** where the LLM calls a handoff fun
 
 The handoff map is built **dynamically from agent YAML declarations** at startup:
 
-```python title="apps/rtagent/backend/agents/loader.py"
+```python title="apps/artagent/backend/agents/loader.py"
 def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
     """
     Build handoff map from agent declarations.
@@ -160,7 +160,7 @@ def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
 
 **Agent YAML configuration** (declaring the trigger):
 
-```yaml title="apps/rtagent/backend/agents/fraud_agent/agent.yaml"
+```yaml title="apps/artagent/backend/agents/fraud_agent/agent.yaml"
 agent:
   name: FraudAgent
   description: Specialist for fraud and security concerns
@@ -187,7 +187,7 @@ handoff_tools:
 
 **Checking if a tool is a handoff**:
 
-```python title="apps/rtagent/backend/agents/tools/registry.py"
+```python title="apps/artagent/backend/agents/tools/registry.py"
 def is_handoff_tool(name: str) -> bool:
     """Check if a tool triggers agent handoff."""
     defn = _TOOL_DEFINITIONS.get(name)
@@ -202,7 +202,7 @@ def is_handoff_tool(name: str) -> bool:
 
 In `LiveOrchestrator`, handoffs happen via the event loop when a function call is detected:
 
-```python title="apps/rtagent/backend/voice/voicelive/orchestrator.py"
+```python title="apps/artagent/backend/voice/voicelive/orchestrator.py"
 async def _execute_tool_call(self, call_id: str, name: str, args: Dict[str, Any]) -> None:
     """Execute a tool call from the realtime API."""
     
@@ -233,7 +233,7 @@ async def _execute_tool_call(self, call_id: str, name: str, args: Dict[str, Any]
 
 In `CascadeOrchestratorAdapter`, handoffs happen within the tool-call loop:
 
-```python title="apps/rtagent/backend/voice/speech_cascade/orchestrator.py"
+```python title="apps/artagent/backend/voice/speech_cascade/orchestrator.py"
 async def _execute_tool_call(self, call: ChatCompletionMessageToolCall) -> Tuple[Dict, bool]:
     """Execute tool call, returning (result, is_handoff)."""
     name = call.function.name
@@ -259,7 +259,7 @@ async def _execute_tool_call(self, call: ChatCompletionMessageToolCall) -> Tuple
 
 Both orchestrators use the shared `build_handoff_system_vars()` helper:
 
-```python title="apps/rtagent/backend/voice/handoffs/context.py"
+```python title="apps/artagent/backend/voice/handoffs/context.py"
 def build_handoff_system_vars(
     *,
     source_agent: str,
@@ -411,7 +411,7 @@ def build_handoff_system_vars(
 
 1. **Create the target agent YAML** with a `handoff.trigger`:
 
-```yaml title="apps/rtagent/backend/agents/new_specialist/agent.yaml"
+```yaml title="apps/artagent/backend/agents/new_specialist/agent.yaml"
 agent:
   name: NewSpecialistAgent
   description: Specialist for new domain
@@ -447,7 +447,7 @@ tools:
 
 2. **Add the handoff tool to source agents**:
 
-```yaml title="apps/rtagent/backend/agents/concierge/agent.yaml"
+```yaml title="apps/artagent/backend/agents/concierge/agent.yaml"
 tools:
   # ... other tools
   - handoff_new_specialist  # Now this agent can transfer
@@ -455,7 +455,7 @@ tools:
 
 3. **Register the tool executor** (if it does anything special):
 
-```python title="apps/rtagent/backend/agents/tools/registry.py"
+```python title="apps/artagent/backend/agents/tools/registry.py"
 @register_tool(
     name="handoff_new_specialist",
     description="Transfer to the new specialist",
@@ -475,7 +475,7 @@ async def handoff_new_specialist(reason: str, details: str = "") -> Dict[str, An
 
 4. **Create the prompt template**:
 
-```jinja title="apps/rtagent/backend/agents/new_specialist/new_specialist.jinja"
+```jinja title="apps/artagent/backend/agents/new_specialist/new_specialist.jinja"
 You are a specialist in the new domain.
 
 {{#if previous_agent}}
@@ -497,7 +497,7 @@ Customer: {{session_profile.name}}
 
 ```python title="tests/test_handoff.py"
 import pytest
-from apps.rtagent.backend.agents import discover_agents, build_handoff_map
+from apps.artagent.backend.agents import discover_agents, build_handoff_map
 
 def test_handoff_map_includes_new_agent():
     agents = discover_agents()
@@ -507,7 +507,7 @@ def test_handoff_map_includes_new_agent():
     assert handoff_map["handoff_new_specialist"] == "NewSpecialistAgent"
 
 def test_handoff_context_building():
-    from apps.rtagent.backend.voice.handoffs import build_handoff_system_vars
+    from apps.artagent.backend.voice.handoffs import build_handoff_system_vars
     
     ctx = build_handoff_system_vars(
         source_agent="Concierge",
@@ -530,7 +530,7 @@ def test_handoff_context_building():
 
 ### HandoffContext Dataclass
 
-```python title="apps/rtagent/backend/voice/handoffs/context.py"
+```python title="apps/artagent/backend/voice/handoffs/context.py"
 @dataclass
 class HandoffContext:
     """
@@ -563,7 +563,7 @@ class HandoffContext:
 
 ### HandoffResult Dataclass
 
-```python title="apps/rtagent/backend/voice/handoffs/context.py"
+```python title="apps/artagent/backend/voice/handoffs/context.py"
 @dataclass
 class HandoffResult:
     """
@@ -590,7 +590,7 @@ class HandoffResult:
 
 ### Helper Functions
 
-```python title="apps/rtagent/backend/voice/handoffs/context.py"
+```python title="apps/artagent/backend/voice/handoffs/context.py"
 def sanitize_handoff_context(raw: Any) -> Dict[str, Any]:
     """
     Remove control flags from raw handoff context.
@@ -693,9 +693,9 @@ _HANDOFF_CONTROL_FLAGS = frozenset({
 
 | Component | Location |
 |-----------|----------|
-| **Handoff Context** | `apps/rtagent/backend/voice/handoffs/context.py` |
-| **Tool Registry** | `apps/rtagent/backend/agents/tools/registry.py` |
-| **Handoff Map Builder** | `apps/rtagent/backend/agents/loader.py` |
-| **LiveOrchestrator** | `apps/rtagent/backend/voice/voicelive/orchestrator.py` |
-| **CascadeOrchestrator** | `apps/rtagent/backend/voice/speech_cascade/orchestrator.py` |
-| **Agent Definitions** | `apps/rtagent/backend/agents/*/agent.yaml` |
+| **Handoff Context** | `apps/artagent/backend/voice/handoffs/context.py` |
+| **Tool Registry** | `apps/artagent/backend/agents/tools/registry.py` |
+| **Handoff Map Builder** | `apps/artagent/backend/agents/loader.py` |
+| **LiveOrchestrator** | `apps/artagent/backend/voice/voicelive/orchestrator.py` |
+| **CascadeOrchestrator** | `apps/artagent/backend/voice/speech_cascade/orchestrator.py` |
+| **Agent Definitions** | `apps/artagent/backend/agents/*/agent.yaml` |

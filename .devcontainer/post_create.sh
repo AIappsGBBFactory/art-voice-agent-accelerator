@@ -26,7 +26,7 @@ uv sync --dev
 # Display helpful commands
 echo ""
 echo "📋 Useful commands:"
-echo "  uv run rtagent-server          # Run main orchestrator"
+echo "  uv run artagent-server          # Run main orchestrator"
 echo "  uv run pytest                  # Run tests"
 echo "  uv run hatch run lint          # Run linting"
 echo "  uv run hatch run format        # Format code"
