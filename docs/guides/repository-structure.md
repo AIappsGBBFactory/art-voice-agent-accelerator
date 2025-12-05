@@ -1,21 +1,24 @@
 # Repository Structure
 
-This document provides a complete 5-level deep map of the ARTVoice accelerator repository, designed for engineers who need to understand the codebase architecture, locate specific components, and contribute effectively.
+This document provides a map of the ART Voice Agent Accelerator repository, designed for engineers who need to understand the codebase architecture, locate specific components, and contribute effectively.
 
 ## Overview
 
 The repository follows a modular, microservice-oriented structure with clear separation of concerns:
 
-- **`apps/`** — Deployable applications (backend API, frontend UI, helper scripts)
-- **`src/`** — Core business logic libraries (reusable across apps)
-- **`infra/`** — Infrastructure-as-Code (Bicep, Terraform)
-- **`docs/`** — Documentation and guides
-- **`tests/`** — Test suites and load testing
-- **`utils/`** — Cross-cutting utilities (logging, telemetry, images)
+| Directory | Purpose |
+|-----------|---------|
+| `apps/` | Deployable applications (backend API, frontend UI) |
+| `src/` | Core business logic libraries (reusable across apps) |
+| `infra/` | Infrastructure-as-Code (Bicep, Terraform) |
+| `docs/` | Documentation and guides |
+| `tests/` | Test suites and load testing |
+| `utils/` | Cross-cutting utilities (logging, telemetry) |
+| `samples/` | Example implementations and labs |
 
 ---
 
-## Complete Repository Map (5 Levels Deep)
+## Core Application Structure
 
 ```
 📁 art-voice-agent-accelerator/
