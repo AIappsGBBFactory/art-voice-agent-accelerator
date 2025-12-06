@@ -156,6 +156,22 @@ azd up   # ~15 min for complete infra and code deployment
 
 For a detailed deployment walkthrough, see [`docs/deployment/README.md`](docs/deployment/README.md).
 
+
+## **Community & ARTist Certification**
+
+**ARTist** = Artist + ART (Azure Real-Time Voice Agent Framework)
+
+Join the community of practitioners building real-time voice AI agents! The **ARTist Certification Program** recognizes builders at three levels:
+
+- **Level 1: Apprentice** — Successfully deploy and understand the architecture
+- **Level 2: Creator** — Build custom agents with YAML config and tool integrations  
+- **Level 3: Maestro** — Lead production deployments, optimize performance, and mentor others
+
+Earn your badge, join the Hall of Fame, and connect with fellow ARTists!
+
+👉 **[Learn about ARTist Certification →](docs/community/artist-certification.md)**
+
+
 ## **Contributing**
 PRs & issues welcome—see [`CONTRIBUTING.md`](CONTRIBUTING.md) before pushing.
 
