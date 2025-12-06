@@ -6,8 +6,7 @@ on:
       - main
     paths:
       - 'docs/**'
-      - 'mkdocs.yml'
-      - 'requirements-docs.txt'
+      - 'pyproject.toml'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 # Permissions for GitHub Actions deployment
@@ -82,12 +81,19 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install docs dependencies
+        run: uv sync --extra docs
+
       - name: Deploy docs
         uses: mhausenblas/mkdocs-deploy-gh-pages@1.26
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
-          CONFIG_FILE: mkdocs.yml
-          REQUIREMENTS: requirements-docs.txt
+          CONFIG_FILE: docs/mkdocs.yml
           # Set dummy Azure env vars for build
           AZURE_SPEECH_KEY: "dummy-key-for-docs"
           AZURE_SPEECH_REGION: "eastus"
