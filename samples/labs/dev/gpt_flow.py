@@ -240,9 +240,7 @@ async def _emit_streaming_text(
             )
             speaker = _get_agent_sender_name(cm, include_autoauth=True)
             await ws.send_text(
-                json.dumps(
-                    {"type": "assistant_streaming", "content": text, "speaker": speaker}
-                )
+                json.dumps({"type": "assistant_streaming", "content": text, "speaker": speaker})
             )
 
 
@@ -356,9 +354,7 @@ async def _consume_openai_stream(
                 collected.append(delta.content)
                 if delta.content in TTS_END:
                     streaming = add_space("".join(collected).strip())
-                    logger.info(
-                        "process_gpt_response – streaming text chunk: %s", streaming
-                    )
+                    logger.info("process_gpt_response – streaming text chunk: %s", streaming)
                     await _emit_streaming_text(
                         streaming, ws, is_acs, cm, call_connection_id, session_id
                     )
@@ -366,9 +362,7 @@ async def _consume_openai_stream(
                     collected.clear()
     except _KNOWN_OPENAI_EXC as exc:
         # Bubble up; outer try/except will add full context. Log a breadcrumb here.
-        logger.warning(
-            "Stream interrupted from llm: %s", getattr(exc, "message", str(exc))
-        )
+        logger.warning("Stream interrupted from llm: %s", getattr(exc, "message", str(exc)))
         raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("Stream interrupted by unexpected error: %s", exc)
@@ -378,9 +372,7 @@ async def _consume_openai_stream(
     if collected:
         pending = "".join(collected).strip()
         if pending:
-            await _emit_streaming_text(
-                pending, ws, is_acs, cm, call_connection_id, session_id
-            )
+            await _emit_streaming_text(pending, ws, is_acs, cm, call_connection_id, session_id)
             final_chunks.append(pending)
 
     return "".join(final_chunks).strip(), tool
@@ -437,9 +429,7 @@ async def process_gpt_response(  # noqa: D401
         prompt_length=len(user_prompt) if user_prompt else 0,
     )
 
-    with tracer.start_as_current_span(
-        "gpt_flow.process_response", attributes=span_attrs
-    ) as span:
+    with tracer.start_as_current_span("gpt_flow.process_response", attributes=span_attrs) as span:
         # Build history and tools
         agent_history: List[JSONDict] = cm.get_history(agent_name)
         agent_history.append({"role": "user", "content": user_prompt})
@@ -510,18 +500,14 @@ async def process_gpt_response(  # noqa: D401
             )
             try:
                 body_json = (
-                    getattr(resp, "json", None)()
-                    if resp and hasattr(resp, "json")
-                    else None
+                    getattr(resp, "json", None)() if resp and hasattr(resp, "json") else None
                 )
             except Exception:  # noqa: BLE001
                 body_json = None
             body_text = None
             if body_json is None and resp is not None:
                 try:
-                    body_text = getattr(resp, "text", None) or getattr(
-                        resp, "content", None
-                    )
+                    body_text = getattr(resp, "text", None) or getattr(resp, "content", None)
                 except Exception:  # noqa: BLE001
                     body_text = None
 
@@ -530,25 +516,23 @@ async def process_gpt_response(  # noqa: D401
                 "status": status,
                 "type": type(exc).__name__,
                 "message": getattr(exc, "message", None) or str(exc),
-                "error_code": (body_json or {}).get("error", {}).get("code")
-                if isinstance(body_json, dict)
-                else None,
-                "error_type": (body_json or {}).get("error", {}).get("type")
-                if isinstance(body_json, dict)
-                else None,
-                "x_request_id": headers.get("x-request-id")
-                or headers.get("X-Request-Id"),
-                "x_ms_error_code": headers.get("x-ms-error-code")
-                or headers.get("X-Ms-Error-Code"),
+                "error_code": (
+                    (body_json or {}).get("error", {}).get("code")
+                    if isinstance(body_json, dict)
+                    else None
+                ),
+                "error_type": (
+                    (body_json or {}).get("error", {}).get("type")
+                    if isinstance(body_json, dict)
+                    else None
+                ),
+                "x_request_id": headers.get("x-request-id") or headers.get("X-Request-Id"),
+                "x_ms_error_code": headers.get("x-ms-error-code") or headers.get("X-Ms-Error-Code"),
                 "retry_after": headers.get("retry-after") or headers.get("Retry-After"),
                 "ratelimit_limit_requests": headers.get("x-ratelimit-limit-requests"),
-                "ratelimit_remaining_requests": headers.get(
-                    "x-ratelimit-remaining-requests"
-                ),
+                "ratelimit_remaining_requests": headers.get("x-ratelimit-remaining-requests"),
                 "ratelimit_reset_requests": headers.get("x-ratelimit-reset-requests"),
-                "ratelimit_remaining_tokens": headers.get(
-                    "x-ratelimit-remaining-tokens"
-                ),
+                "ratelimit_remaining_tokens": headers.get("x-ratelimit-remaining-tokens"),
                 "ratelimit_reset_tokens": headers.get("x-ratelimit-reset-tokens"),
                 "body_json": body_json,
                 "body_text": body_text if isinstance(body_text, (str, bytes)) else None,
@@ -642,9 +626,7 @@ async def process_gpt_response(  # noqa: D401
 
                 asyncio.create_task(persist_tool_results())
                 span.set_attribute("tool.execution_success", True)
-                span.add_event(
-                    "tool_execution_completed", {"tool_name": tool_state.name}
-                )
+                span.add_event("tool_execution_completed", {"tool_name": tool_state.name})
             return result
 
         span.set_attribute("completion_type", "text_only")
@@ -720,9 +702,7 @@ async def _handle_tool_call(  # noqa: PLR0913
             exec_ctx.set_attribute("execution.duration_ms", elapsed_ms)
             exec_ctx.set_attribute("execution.success", True)
 
-            result: JSONDict = (
-                json.loads(result_raw) if isinstance(result_raw, str) else result_raw
-            )
+            result: JSONDict = json.loads(result_raw) if isinstance(result_raw, str) else result_raw
             exec_ctx.set_attribute("result.type", type(result).__name__)
 
         agent_history = cm.get_history(agent_name)
@@ -748,9 +728,7 @@ async def _handle_tool_call(  # noqa: PLR0913
 
         # Broadcast tool completion to relay dashboard (only for ACS calls)
         if is_acs:
-            await _broadcast_dashboard(
-                ws, cm, f"🛠️ {tool_name} ✔️", include_autoauth=False
-            )
+            await _broadcast_dashboard(ws, cm, f"🛠️ {tool_name} ✔️", include_autoauth=False)
 
         # Handle tool follow-up with tracing
         trace_ctx.add_event("starting_tool_followup")

@@ -6,11 +6,12 @@ Simple registration module that sets up event handlers inspired by Azure's Event
 Registers legacy handlers with the V1 CallEventProcessor for clean event processing.
 """
 
-from .processor import get_call_event_processor
-from .handlers import CallEventHandlers
-from .types import ACSEventTypes, V1EventTypes
-from ..handlers.dtmf_validation_lifecycle import DTMFValidationLifecycle
 from utils.ml_logging import get_logger
+
+from ..handlers.dtmf_validation_lifecycle import DTMFValidationLifecycle
+from .handlers import CallEventHandlers
+from .processor import get_call_event_processor
+from .types import ACSEventTypes, V1EventTypes
 
 logger = get_logger("v1.events.registration")
 
@@ -37,13 +38,9 @@ def register_default_handlers() -> None:
     processor = get_call_event_processor()
 
     # Register V1 API-initiated events
-    processor.register_handler(
-        V1EventTypes.CALL_INITIATED, CallEventHandlers.handle_call_initiated
-    )
+    processor.register_handler(V1EventTypes.CALL_INITIATED, CallEventHandlers.handle_call_initiated)
 
-    processor.register_handler(
-        V1EventTypes.WEBHOOK_EVENTS, CallEventHandlers.handle_webhook_events
-    )
+    processor.register_handler(V1EventTypes.WEBHOOK_EVENTS, CallEventHandlers.handle_webhook_events)
 
     # Register standard ACS webhook events
     processor.register_handler(
@@ -84,9 +81,7 @@ def register_default_handlers() -> None:
         ACSEventTypes.PLAY_COMPLETED, CallEventHandlers.handle_play_completed
     )
 
-    processor.register_handler(
-        ACSEventTypes.PLAY_FAILED, CallEventHandlers.handle_play_failed
-    )
+    processor.register_handler(ACSEventTypes.PLAY_FAILED, CallEventHandlers.handle_play_failed)
 
     # Register recognition handlers
     processor.register_handler(

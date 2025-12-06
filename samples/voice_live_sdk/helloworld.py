@@ -17,7 +17,7 @@ Requirements:
 
 Usage:
     ./helloworld.py --api-key YOUR_KEY --endpoint YOUR_ENDPOINT
-    
+
     or with environment variables in .env file:
     ./helloworld.py
 
@@ -58,7 +58,7 @@ from azure.ai.voicelive.models import (
     OutputAudioFormat,
     RequestSession,
     ServerEventType,
-    ServerVad
+    ServerVad,
 )
 from dotenv import load_dotenv
 import pyaudio
@@ -71,24 +71,25 @@ if TYPE_CHECKING:
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Environment variable loading
-load_dotenv('./.env', override=True)
+load_dotenv("./.env", override=True)
 
 # Set up logging
 ## Add folder for logging
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+if not os.path.exists("logs"):
+    os.makedirs("logs")
 
 ## Add timestamp for logfiles
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 ## Set up logging
 logging.basicConfig(
-    filename=f'logs/{timestamp}_voicelive.log',
+    filename=f"logs/{timestamp}_voicelive.log",
     filemode="w",
-    format='%(asctime)s:%(name)s:%(levelname)s:%(message)s',
-    level=logging.INFO
+    format="%(asctime)s:%(name)s:%(levelname)s:%(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
 
 class AudioProcessor:
     """
@@ -100,11 +101,12 @@ class AudioProcessor:
     - Send thread: Async audio data transmission to VoiceLive
     - Playback thread: PyAudio output stream writing
     """
-    
+
     loop: asyncio.AbstractEventLoop
-    
+
     class AudioPlaybackPacket:
         """Represents a packet that can be sent to the audio playback queue."""
+
         def __init__(self, seq_num: int, data: Optional[bytes]):
             self.seq_num = seq_num
             self.data = data
@@ -117,7 +119,7 @@ class AudioProcessor:
         self.format = pyaudio.paInt16
         self.channels = 1
         self.rate = 24000
-        self.chunk_size = 1200 # 50ms
+        self.chunk_size = 1200  # 50ms
 
         # Capture and playback state
         self.input_stream = None
@@ -131,11 +133,13 @@ class AudioProcessor:
 
     def start_capture(self):
         """Start capturing audio from microphone."""
+
         def _capture_callback(
-            in_data,      # data
+            in_data,  # data
             _frame_count,  # number of frames
-            _time_info,    # dictionary
-            _status_flags):
+            _time_info,  # dictionary
+            _status_flags,
+        ):
             """Audio capture thread - runs in background."""
             audio_base64 = base64.b64encode(in_data).decode("utf-8")
             asyncio.run_coroutine_threadsafe(
@@ -170,11 +174,10 @@ class AudioProcessor:
             return
 
         remaining = bytes()
+
         def _playback_callback(
-            _in_data,
-            frame_count,  # number of frames
-            _time_info,
-            _status_flags):
+            _in_data, frame_count, _time_info, _status_flags  # number of frames
+        ):
 
             nonlocal remaining
             frame_count *= pyaudio.get_sample_size(pyaudio.paInt16)
@@ -220,7 +223,7 @@ class AudioProcessor:
                 rate=self.rate,
                 output=True,
                 frames_per_buffer=self.chunk_size,
-                stream_callback=_playback_callback
+                stream_callback=_playback_callback,
             )
             logger.info("Audio playback system ready")
         except Exception:
@@ -236,8 +239,9 @@ class AudioProcessor:
         """Queue audio data for playback."""
         self.playback_queue.put(
             AudioProcessor.AudioPlaybackPacket(
-                seq_num=self._get_and_increase_seq_num(),
-                data=audio_data))
+                seq_num=self._get_and_increase_seq_num(), data=audio_data
+            )
+        )
 
     def skip_pending_audio(self):
         """Skip current audio in playback queue."""
@@ -266,6 +270,7 @@ class AudioProcessor:
             self.audio.terminate()
 
         logger.info("Audio processor cleaned up")
+
 
 class BasicVoiceAssistant:
     """Basic voice assistant implementing the VoiceLive SDK patterns."""
@@ -342,9 +347,8 @@ class BasicVoiceAssistant:
 
         # Create turn detection configuration
         turn_detection_config = ServerVad(
-            threshold=0.5,
-            prefix_padding_ms=300,
-            silence_duration_ms=500)
+            threshold=0.5, prefix_padding_ms=300, silence_duration_ms=500
+        )
 
         # Create session configuration
         session_config = RequestSession(
@@ -462,7 +466,9 @@ def parse_arguments():
         "--endpoint",
         help="Azure VoiceLive endpoint",
         type=str,
-        default=os.environ.get("AZURE_VOICELIVE_ENDPOINT", "https://aihubnw3478841489.services.ai.azure.com/"),
+        default=os.environ.get(
+            "AZURE_VOICELIVE_ENDPOINT", "https://aihubnw3478841489.services.ai.azure.com/"
+        ),
     )
 
     parser.add_argument(
@@ -491,7 +497,10 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        "--use-token-credential", help="Use Azure token credential instead of API key", action="store_true", default=False
+        "--use-token-credential",
+        help="Use Azure token credential instead of API key",
+        action="store_true",
+        default=False,
     )
 
     parser.add_argument("--verbose", help="Enable verbose logging", action="store_true")
@@ -510,7 +519,9 @@ def main():
     # Validate credentials
     if not args.api_key and not args.use_token_credential:
         print("❌ Error: No authentication provided")
-        print("Please provide an API key using --api-key or set AZURE_VOICELIVE_API_KEY environment variable,")
+        print(
+            "Please provide an API key using --api-key or set AZURE_VOICELIVE_API_KEY environment variable,"
+        )
         print("or use --use-token-credential for Azure authentication.")
         sys.exit(1)
 
@@ -548,6 +559,7 @@ def main():
     except Exception as e:
         print("Fatal Error: ", e)
 
+
 if __name__ == "__main__":
     # Check audio system
     try:
@@ -556,13 +568,19 @@ if __name__ == "__main__":
         input_devices = [
             i
             for i in range(p.get_device_count())
-            if cast(Union[int, float], p.get_device_info_by_index(i).get("maxInputChannels", 0) or 0) > 0
+            if cast(
+                Union[int, float], p.get_device_info_by_index(i).get("maxInputChannels", 0) or 0
+            )
+            > 0
         ]
         # Check for output devices
         output_devices = [
             i
             for i in range(p.get_device_count())
-            if cast(Union[int, float], p.get_device_info_by_index(i).get("maxOutputChannels", 0) or 0) > 0
+            if cast(
+                Union[int, float], p.get_device_info_by_index(i).get("maxOutputChannels", 0) or 0
+            )
+            > 0
         ]
         p.terminate()
 

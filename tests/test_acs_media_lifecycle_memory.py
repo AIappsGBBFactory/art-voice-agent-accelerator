@@ -1,11 +1,10 @@
 import asyncio
 import gc
-import tracemalloc
-import time
 import threading
+import time
+import tracemalloc
 
 import pytest
-
 from apps.artagent.backend.api.v1.handlers.acs_media_lifecycle import (
     ACSMediaHandler,
 )
@@ -91,7 +90,6 @@ async def _create_start_stop_handler(loop: asyncio.AbstractEventLoop):
     return handler, ws, recog
 
 
-
 @pytest.mark.asyncio
 async def test_threads_terminated_on_stop():
     """Ensure SpeechSDKThread thread is not alive after stop."""
@@ -121,9 +119,7 @@ async def test_no_unbounded_memory_growth_on_repeated_start_stop():
 
     cycles = 8
     for _ in range(cycles):
-        handler, ws, recog = await _create_start_stop_handler(
-            asyncio.get_running_loop()
-        )
+        handler, ws, recog = await _create_start_stop_handler(asyncio.get_running_loop())
         # explicit collect between cycles
         await asyncio.sleep(0)
         gc.collect()
@@ -137,9 +133,7 @@ async def test_no_unbounded_memory_growth_on_repeated_start_stop():
     growth = total2 - total1
 
     # Allow some tolerance for variations; assert growth is bounded (1MB)
-    assert (
-        growth <= 1_000_000
-    ), f"Memory growth too large after repeated cycles: {growth} bytes"
+    assert growth <= 1_000_000, f"Memory growth too large after repeated cycles: {growth} bytes"
 
     tracemalloc.stop()
 
@@ -186,9 +180,7 @@ async def test_aggressive_leak_detection_gc_counts():
 
     cycles = 10
     for _ in range(cycles):
-        handler, ws, recog = await _create_start_stop_handler(
-            asyncio.get_running_loop()
-        )
+        handler, ws, recog = await _create_start_stop_handler(asyncio.get_running_loop())
         # small pause and collect to allow cleanup
         await asyncio.sleep(0)
         gc.collect()
@@ -199,9 +191,7 @@ async def test_aggressive_leak_detection_gc_counts():
 
     # Tolerances: allow small fluctuations but fail on growing trends
     for name in monitor_names:
-        assert (
-            diffs.get(name, 0) <= 2
-        ), f"{name} increased unexpectedly by {diffs.get(name,0)}"
+        assert diffs.get(name, 0) <= 2, f"{name} increased unexpectedly by {diffs.get(name,0)}"
 
     assert (
         diffs.get("threading.Thread", 0) <= 2
@@ -220,21 +210,13 @@ async def test_p0_registry_and_threadpool_no_leak():
     def count_rlocks():
         # Some Python builds expose RLock in a way that makes isinstance checks fragile.
         # Count by class name instead to be robust across environments.
-        return sum(
-            1
-            for o in gc.get_objects()
-            if getattr(o.__class__, "__name__", "") == "RLock"
-        )
+        return sum(1 for o in gc.get_objects() if getattr(o.__class__, "__name__", "") == "RLock")
 
     def count_cleanup_threads():
-        return sum(
-            1 for t in threading.enumerate() if "handler-cleanup" in (t.name or "")
-        )
+        return sum(1 for t in threading.enumerate() if "handler-cleanup" in (t.name or ""))
 
     def count_fake_recognizers():
-        return sum(
-            1 for o in gc.get_objects() if o.__class__.__name__ == "FakeRecognizer"
-        )
+        return sum(1 for o in gc.get_objects() if o.__class__.__name__ == "FakeRecognizer")
 
     before_rlocks = count_rlocks()
     before_cleanup = count_cleanup_threads()
@@ -242,9 +224,7 @@ async def test_p0_registry_and_threadpool_no_leak():
 
     cycles = 12
     for _ in range(cycles):
-        handler, ws, recog = await _create_start_stop_handler(
-            asyncio.get_running_loop()
-        )
+        handler, ws, recog = await _create_start_stop_handler(asyncio.get_running_loop())
         await asyncio.sleep(0)
         gc.collect()
 

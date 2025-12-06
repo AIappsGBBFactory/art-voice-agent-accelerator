@@ -6,8 +6,8 @@ Clean, focused message formatting for WebSocket communications.
 Provides standardized envelope format with minimal complexity.
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 EnvelopeType = Literal[
     "event", "status", "assistant", "assistant_streaming", "exit", "error", "debug"
@@ -15,22 +15,23 @@ EnvelopeType = Literal[
 TopicType = Literal["dashboard", "session", "call", "user", "system", "media"]
 SenderType = Literal["Assistant", "User", "System", "ACS", "STT", "TTS"]
 
+
 def _utc_now_iso() -> str:
     """Return the current UTC timestamp in ISO-8601 format."""
 
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def make_envelope(
     *,
     etype: EnvelopeType,
     sender: SenderType,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     topic: TopicType,
-    session_id: Optional[str] = None,
-    call_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    session_id: str | None = None,
+    call_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
     """Build standard WebSocket message envelope."""
     return {
         "type": etype,
@@ -41,7 +42,7 @@ def make_envelope(
         "sender": sender,
         "ts": _utc_now_iso(),
         "payload": payload,
-        "speaker_id": sender
+        "speaker_id": sender,
     }
 
 
@@ -50,11 +51,11 @@ def make_status_envelope(
     *,
     sender: SenderType = "System",
     topic: TopicType = "system",
-    session_id: Optional[str] = None,
-    call_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    label: Optional[str] = None,
-) -> Dict[str, Any]:
+    session_id: str | None = None,
+    call_id: str | None = None,
+    user_id: str | None = None,
+    label: str | None = None,
+) -> dict[str, Any]:
     """Create status message envelope."""
     payload = {"message": message}
     if label:
@@ -77,10 +78,10 @@ def make_assistant_envelope(
     content: str,
     *,
     sender: SenderType = "Assistant",
-    session_id: Optional[str] = None,
-    call_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    session_id: str | None = None,
+    call_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
     """Create non-streaming assistant response envelope."""
     return make_envelope(
         etype="assistant",
@@ -97,10 +98,10 @@ def make_assistant_streaming_envelope(
     content: str,
     *,
     sender: SenderType = "Assistant",
-    session_id: Optional[str] = None,
-    call_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    session_id: str | None = None,
+    call_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
     """Create assistant streaming response envelope."""
     return make_envelope(
         etype="assistant_streaming",
@@ -115,14 +116,14 @@ def make_assistant_streaming_envelope(
 
 def make_event_envelope(
     event_type: str,
-    event_data: Dict[str, Any],
+    event_data: dict[str, Any],
     *,
     sender: SenderType = "System",
     topic: TopicType = "system",
-    session_id: Optional[str] = None,
-    call_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    session_id: str | None = None,
+    call_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
     payload_data = dict(event_data or {})
     payload_data.setdefault("timestamp", _utc_now_iso())
     """Create system event envelope."""
@@ -143,10 +144,10 @@ def make_error_envelope(
     *,
     sender: SenderType = "System",
     topic: TopicType = "system",
-    session_id: Optional[str] = None,
-    call_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    session_id: str | None = None,
+    call_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
     """Create error message envelope."""
     return make_envelope(
         etype="error",

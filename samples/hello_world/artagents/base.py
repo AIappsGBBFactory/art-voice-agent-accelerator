@@ -30,14 +30,10 @@ sys.path.insert(0, str(samples_dir))
 try:
     from samples.hello_world.artagents.tool_store import tool_registry as tool_store
 
-    logger.info(
-        "✅ Using LOCAL tool registry from samples/hello_world/agents/tool_store"
-    )
+    logger.info("✅ Using LOCAL tool registry from samples/hello_world/agents/tool_store")
 except ImportError as e:
     logger.error(f"❌ Could not load local tool store: {e}")
-    logger.error(
-        "💡 Make sure you have created the tool_store directory with all required files"
-    )
+    logger.error("💡 Make sure you have created the tool_store directory with all required files")
     raise ImportError(
         "This demo ARTAgent requires the local tool store. "
         "Please ensure samples/hello_world/agents/tool_store/ exists with all tool files."
@@ -210,8 +206,7 @@ class ARTAgent:
             + (f"@{self.voice_rate}" if hasattr(self, "voice_rate") else "")
         )
         logger.info(
-            "Loaded agent '%s' | org='%s' | desc='%s' | model=%s | %s | prompt=%s | "
-            "tools=%s",
+            "Loaded agent '%s' | org='%s' | desc='%s' | model=%s | %s | prompt=%s | " "tools=%s",
             self.name,
             self.organization or "-",
             desc_preview,

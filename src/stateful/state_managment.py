@@ -26,14 +26,14 @@ Example:
     ```python
     # Initialize session manager
     manager = MemoManager(session_id="session_123")
-    
+
     # Add conversation history
     manager.append_to_history("agent1", "user", "Hello")
     manager.append_to_history("agent1", "assistant", "Hi there!")
-    
+
     # Persist to Redis
     await manager.persist_to_redis_async(redis_mgr)
-    
+
     # Refresh from live data
     await manager.refresh_from_redis_async(redis_mgr)
     ```
@@ -43,7 +43,9 @@ import asyncio
 import json
 import uuid
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from utils.ml_logging import get_logger
 
 from src.agenticmemory.playback_queue import MessageQueue
 from src.agenticmemory.types import ChatHistory, CoreMemory
@@ -51,11 +53,7 @@ from src.agenticmemory.utils import LatencyTracker
 
 # TODO Fix this area
 from src.redis.manager import AzureRedisManager
-from src.tools.latency_helpers import StageSample
-from src.tools.latency_helpers import PersistentLatency
-
-
-from utils.ml_logging import get_logger
+from src.tools.latency_helpers import PersistentLatency, StageSample
 
 logger = get_logger("src.stateful.state_managment")
 
@@ -104,8 +102,8 @@ class MemoManager:
 
     def __init__(
         self,
-        session_id: Optional[str] = None,
-        redis_mgr: Optional[AzureRedisManager] = None,
+        session_id: str | None = None,
+        redis_mgr: AzureRedisManager | None = None,
     ) -> None:
         """
         Initialize a new MemoManager instance for session state management.
@@ -152,27 +150,27 @@ class MemoManager:
         self.message_queue = MessageQueue()
         self._is_tts_interrupted: bool = False
         self.latency = LatencyTracker()
-        self._redis_manager: Optional[AzureRedisManager] = redis_mgr
-        self._pending_persist_task: Optional[asyncio.Task] = None
+        self._redis_manager: AzureRedisManager | None = redis_mgr
+        self._pending_persist_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------
     # Compatibility aliases
     # TODO Fix
     # ------------------------------------------------------------------
     @property
-    def histories(self) -> Dict[str, List[Dict[str, str]]]:  # noqa: D401
+    def histories(self) -> dict[str, list[dict[str, str]]]:  # noqa: D401
         return self.chatHistory.get_all()
 
     @histories.setter
-    def histories(self, value: Dict[str, List[Dict[str, str]]]) -> None:  # noqa: D401
+    def histories(self, value: dict[str, list[dict[str, str]]]) -> None:  # noqa: D401
         self.chatHistory._threads = value  # direct assignment
 
     @property
-    def context(self) -> Dict[str, Any]:  # noqa: D401
+    def context(self) -> dict[str, Any]:  # noqa: D401
         return self.corememory._store
 
     @context.setter
-    def context(self, value: Dict[str, Any]) -> None:  # noqa: D401
+    def context(self, value: dict[str, Any]) -> None:  # noqa: D401
         self.corememory._store = value
 
     # single‑history alias for minimal diff elsewhere
@@ -207,7 +205,7 @@ class MemoManager:
         """
         return f"session:{session_id}"
 
-    def to_redis_dict(self) -> Dict[str, str]:
+    def to_redis_dict(self) -> dict[str, str]:
         """
         Serialize session state to Redis-compatible dictionary format.
 
@@ -312,7 +310,7 @@ class MemoManager:
                 mm.chatHistory.from_json(data[cls._HISTORY_KEY])
         return mm
 
-    async def persist(self, redis_mgr: Optional[AzureRedisManager] = None) -> None:
+    async def persist(self, redis_mgr: AzureRedisManager | None = None) -> None:
         """
         Persist session state to Redis using stored or provided manager.
 
@@ -348,7 +346,7 @@ class MemoManager:
         await self.persist_to_redis_async(mgr)
 
     def persist_to_redis(
-        self, redis_mgr: AzureRedisManager, ttl_seconds: Optional[int] = None
+        self, redis_mgr: AzureRedisManager, ttl_seconds: int | None = None
     ) -> None:
         """
         Synchronously persist session state to Redis.
@@ -389,7 +387,7 @@ class MemoManager:
         )
 
     async def persist_to_redis_async(
-        self, redis_mgr: AzureRedisManager, ttl_seconds: Optional[int] = None
+        self, redis_mgr: AzureRedisManager, ttl_seconds: int | None = None
     ) -> None:
         """
         Asynchronously persist session state to Redis without blocking.
@@ -431,17 +429,13 @@ class MemoManager:
             await redis_mgr.store_session_data_async(key, self.to_redis_dict())
             if ttl_seconds:
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None, redis_mgr.redis_client.expire, key, ttl_seconds
-                )
+                await loop.run_in_executor(None, redis_mgr.redis_client.expire, key, ttl_seconds)
             logger.info(
                 f"Persisted session {self.session_id} async – "
                 f"histories per agent: {[f'{a}: {len(h)}' for a, h in self.histories.items()]}, ctx_keys={list(self.context.keys())}"
             )
         except asyncio.CancelledError:
-            logger.debug(
-                f"persist_to_redis_async cancelled for session {self.session_id}"
-            )
+            logger.debug(f"persist_to_redis_async cancelled for session {self.session_id}")
             # Re-raise cancellation to allow proper cleanup
             raise
         except Exception as e:
@@ -450,8 +444,8 @@ class MemoManager:
 
     async def persist_background(
         self,
-        redis_mgr: Optional[AzureRedisManager] = None,
-        ttl_seconds: Optional[int] = None,
+        redis_mgr: AzureRedisManager | None = None,
+        ttl_seconds: int | None = None,
     ) -> None:
         """
         Schedule background persistence to Redis without blocking.
@@ -505,20 +499,16 @@ class MemoManager:
         )
 
     async def _background_persist_task(
-        self, redis_mgr: AzureRedisManager, ttl_seconds: Optional[int] = None
+        self, redis_mgr: AzureRedisManager, ttl_seconds: int | None = None
     ) -> None:
         """Internal background task for session persistence."""
         try:
             await self.persist_to_redis_async(redis_mgr, ttl_seconds)
         except asyncio.CancelledError:
             # Expected when superseded by a newer persist request
-            logger.debug(
-                f"[PERF] Background persist cancelled for session {self.session_id}"
-            )
+            logger.debug(f"[PERF] Background persist cancelled for session {self.session_id}")
         except Exception as e:
-            logger.error(
-                f"[PERF] Background persistence failed for session {self.session_id}: {e}"
-            )
+            logger.error(f"[PERF] Background persistence failed for session {self.session_id}: {e}")
 
     def cancel_pending_persist(self) -> bool:
         """
@@ -606,7 +596,7 @@ class MemoManager:
         self._is_tts_interrupted = value
 
     async def set_tts_interrupted_live(
-        self, redis_mgr: Optional[AzureRedisManager], session_id: str, value: bool
+        self, redis_mgr: AzureRedisManager | None, session_id: str, value: bool
     ) -> None:
         """
         Set TTS interruption state with Redis synchronization.
@@ -641,8 +631,8 @@ class MemoManager:
 
     async def is_tts_interrupted_live(
         self,
-        redis_mgr: Optional[AzureRedisManager] = None,
-        session_id: Optional[str] = None,
+        redis_mgr: AzureRedisManager | None = None,
+        session_id: str | None = None,
     ) -> bool:
         """
         Check TTS interruption state with optional Redis synchronization.
@@ -682,7 +672,7 @@ class MemoManager:
         return self.get_context("tts_interrupted", False)
 
     # --- SLOTS & TOOL OUTPUTS -----------------------------------------
-    def update_slots(self, slots: Dict[str, Any]) -> None:
+    def update_slots(self, slots: dict[str, Any]) -> None:
         """
         Update slot values in core memory for agent configuration.
 
@@ -752,7 +742,7 @@ class MemoManager:
         """
         return self.corememory.get("slots", {}).get(slot_name, default)
 
-    def persist_tool_output(self, tool_name: str, result: Dict[str, Any]) -> None:
+    def persist_tool_output(self, tool_name: str, result: dict[str, Any]) -> None:
         """
         Store the last execution result for a backend tool.
 
@@ -881,7 +871,7 @@ class MemoManager:
             order.append(run_id)
         self.corememory.set("latency", bucket)
 
-    def latency_summary(self) -> Dict[str, Dict[str, float]]:
+    def latency_summary(self) -> dict[str, dict[str, float]]:
         """
         Get comprehensive latency statistics for all measured stages.
 
@@ -958,7 +948,7 @@ class MemoManager:
         """
         self.history.append(role, content, agent)
 
-    def get_history(self, agent_name: str) -> List[Dict[str, str]]:
+    def get_history(self, agent_name: str) -> list[dict[str, str]]:
         """
         Retrieve the complete conversation history for a specific agent.
 
@@ -1002,7 +992,7 @@ class MemoManager:
         """
         return self.history.get_agent(agent_name)
 
-    def clear_history(self, agent_name: Optional[str] = None) -> None:
+    def clear_history(self, agent_name: str | None = None) -> None:
         """
         Clear conversation history for one agent or all agents.
 
@@ -1227,9 +1217,9 @@ class MemoManager:
         self,
         response_text: str,
         use_ssml: bool = False,
-        voice_name: Optional[str] = None,
+        voice_name: str | None = None,
         locale: str = "en-US",
-        participants: Optional[List[Any]] = None,
+        participants: list[Any] | None = None,
         max_retries: int = 5,
         initial_backoff: float = 0.5,
         transcription_resume_delay: float = 1.0,
@@ -1248,7 +1238,7 @@ class MemoManager:
         }
         await self.message_queue.enqueue(message_data)
 
-    async def get_next_message(self) -> Optional[Dict[str, Any]]:
+    async def get_next_message(self) -> dict[str, Any] | None:
         """Get the next message from the queue."""
         return await self.message_queue.dequeue()
 
@@ -1297,14 +1287,10 @@ class MemoManager:
             if "corememory" in data:
                 new_context = json.loads(data["corememory"])
                 self.context = new_context
-            logger.info(
-                f"Successfully refreshed live data for session {self.session_id}"
-            )
+            logger.info(f"Successfully refreshed live data for session {self.session_id}")
             return True
         except Exception as e:
-            logger.error(
-                f"Failed to refresh live data for session {self.session_id}: {e}"
-            )
+            logger.error(f"Failed to refresh live data for session {self.session_id}: {e}")
             return False
 
     def refresh_from_redis(self, redis_mgr: AzureRedisManager) -> bool:
@@ -1323,14 +1309,10 @@ class MemoManager:
             if "corememory" in data:
                 new_context = json.loads(data["corememory"])
                 self.context = new_context
-            logger.info(
-                f"Successfully refreshed live data for session {self.session_id}"
-            )
+            logger.info(f"Successfully refreshed live data for session {self.session_id}")
             return True
         except Exception as e:
-            logger.error(
-                f"Failed to refresh live data for session {self.session_id}: {e}"
-            )
+            logger.error(f"Failed to refresh live data for session {self.session_id}: {e}")
             return False
 
     async def get_live_context_value(
@@ -1357,9 +1339,7 @@ class MemoManager:
         try:
             self.context[key] = value
             await self.persist_to_redis_async(redis_mgr)
-            logger.debug(
-                f"Set live context value '{key}' = {value} for session {self.session_id}"
-            )
+            logger.debug(f"Set live context value '{key}' = {value} for session {self.session_id}")
             return True
         except Exception as e:
             logger.error(
@@ -1372,7 +1352,7 @@ class MemoManager:
     # If polling-based refresh is needed in the future, re-implement with proper
     # task lifecycle management (cancellation on session end, deduplication, etc.)
 
-    async def check_for_changes(self, redis_mgr: AzureRedisManager) -> Dict[str, bool]:
+    async def check_for_changes(self, redis_mgr: AzureRedisManager) -> dict[str, bool]:
         """Check what has changed in Redis compared to local state."""
         changes = {"corememory": False, "chat_history": False, "queue": False}
         try:
@@ -1397,9 +1377,7 @@ class MemoManager:
                 remote_histories = json.loads(data["chat_history"])
                 changes["chat_history"] = self.histories != remote_histories
         except Exception as e:
-            logger.error(
-                f"Error checking for changes in session {self.session_id}: {e}"
-            )
+            logger.error(f"Error checking for changes in session {self.session_id}: {e}")
         return changes
 
     async def selective_refresh(
@@ -1408,7 +1386,7 @@ class MemoManager:
         refresh_context: bool = True,
         refresh_histories: bool = True,
         refresh_queue: bool = False,
-    ) -> Dict[str, bool]:
+    ) -> dict[str, bool]:
         """Selectively refresh only specified parts of the session data."""
         updated = {"corememory": False, "chat_history": False, "queue": False}
         try:
@@ -1433,11 +1411,7 @@ class MemoManager:
                     async with self.message_queue.lock:
                         self.message_queue.queue = deque(context["message_queue"])
                         updated["queue"] = True
-                        logger.debug(
-                            f"Updated message queue for session {self.session_id}"
-                        )
+                        logger.debug(f"Updated message queue for session {self.session_id}")
         except Exception as e:
-            logger.error(
-                f"Error in selective refresh for session {self.session_id}: {e}"
-            )
+            logger.error(f"Error in selective refresh for session {self.session_id}: {e}")
         return updated

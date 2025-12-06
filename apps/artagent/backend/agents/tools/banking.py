@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
@@ -31,7 +31,7 @@ logger = get_logger("agents.tools.banking")
 # SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-get_user_profile_schema: Dict[str, Any] = {
+get_user_profile_schema: dict[str, Any] = {
     "name": "get_user_profile",
     "description": (
         "Retrieve customer profile including account info, preferences, and relationship tier. "
@@ -46,7 +46,7 @@ get_user_profile_schema: Dict[str, Any] = {
     },
 }
 
-get_account_summary_schema: Dict[str, Any] = {
+get_account_summary_schema: dict[str, Any] = {
     "name": "get_account_summary",
     "description": (
         "Get summary of customer's accounts including balances, account numbers, and routing info. "
@@ -61,7 +61,7 @@ get_account_summary_schema: Dict[str, Any] = {
     },
 }
 
-get_recent_transactions_schema: Dict[str, Any] = {
+get_recent_transactions_schema: dict[str, Any] = {
     "name": "get_recent_transactions",
     "description": (
         "Get recent transactions for customer's primary account. "
@@ -77,7 +77,7 @@ get_recent_transactions_schema: Dict[str, Any] = {
     },
 }
 
-search_card_products_schema: Dict[str, Any] = {
+search_card_products_schema: dict[str, Any] = {
     "name": "search_card_products",
     "description": (
         "Search available credit card products based on customer profile and preferences. "
@@ -86,8 +86,14 @@ search_card_products_schema: Dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "customer_profile": {"type": "string", "description": "Customer tier and spending info"},
-            "preferences": {"type": "string", "description": "What they want (travel, cash back, etc.)"},
+            "customer_profile": {
+                "type": "string",
+                "description": "Customer tier and spending info",
+            },
+            "preferences": {
+                "type": "string",
+                "description": "What they want (travel, cash back, etc.)",
+            },
             "spending_categories": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -98,7 +104,7 @@ search_card_products_schema: Dict[str, Any] = {
     },
 }
 
-get_card_details_schema: Dict[str, Any] = {
+get_card_details_schema: dict[str, Any] = {
     "name": "get_card_details",
     "description": "Get detailed information about a specific card product.",
     "parameters": {
@@ -111,7 +117,7 @@ get_card_details_schema: Dict[str, Any] = {
     },
 }
 
-refund_fee_schema: Dict[str, Any] = {
+refund_fee_schema: dict[str, Any] = {
     "name": "refund_fee",
     "description": (
         "Process a fee refund for the customer as a courtesy. "
@@ -129,7 +135,7 @@ refund_fee_schema: Dict[str, Any] = {
     },
 }
 
-send_card_agreement_schema: Dict[str, Any] = {
+send_card_agreement_schema: dict[str, Any] = {
     "name": "send_card_agreement",
     "description": "Send cardholder agreement email with verification code for e-signature.",
     "parameters": {
@@ -142,7 +148,7 @@ send_card_agreement_schema: Dict[str, Any] = {
     },
 }
 
-verify_esignature_schema: Dict[str, Any] = {
+verify_esignature_schema: dict[str, Any] = {
     "name": "verify_esignature",
     "description": "Verify the e-signature code provided by customer.",
     "parameters": {
@@ -155,7 +161,7 @@ verify_esignature_schema: Dict[str, Any] = {
     },
 }
 
-finalize_card_application_schema: Dict[str, Any] = {
+finalize_card_application_schema: dict[str, Any] = {
     "name": "finalize_card_application",
     "description": "Complete card application after e-signature verification.",
     "parameters": {
@@ -174,7 +180,7 @@ finalize_card_application_schema: Dict[str, Any] = {
 # COSMOS DB HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_COSMOS_USERS_MANAGER: Optional["CosmosDBMongoCoreManager"] = None
+_COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
 _DEFAULT_DEMO_DB = "financial_services_db"
 _DEFAULT_DEMO_USERS_COLLECTION = "users"
 
@@ -201,7 +207,7 @@ def _get_demo_users_collection_name() -> str:
 
 
 def _manager_targets_collection(
-    manager: "CosmosDBMongoCoreManager",
+    manager: CosmosDBMongoCoreManager,
     database_name: str,
     collection_name: str,
 ) -> bool:
@@ -214,7 +220,7 @@ def _manager_targets_collection(
     return db_name == database_name and coll_name == collection_name
 
 
-def _get_cosmos_manager() -> Optional["CosmosDBMongoCoreManager"]:
+def _get_cosmos_manager() -> CosmosDBMongoCoreManager | None:
     """Resolve the shared Cosmos DB client from FastAPI app state."""
     try:
         from apps.artagent.backend import main as backend_main
@@ -226,7 +232,7 @@ def _get_cosmos_manager() -> Optional["CosmosDBMongoCoreManager"]:
     return getattr(state, "cosmos", None)
 
 
-def _get_demo_users_manager() -> Optional["CosmosDBMongoCoreManager"]:
+def _get_demo_users_manager() -> CosmosDBMongoCoreManager | None:
     """Return a Cosmos DB manager pointed at the demo users collection."""
     global _COSMOS_USERS_MANAGER
     database_name = _get_demo_database_name()
@@ -268,7 +274,7 @@ def _get_demo_users_manager() -> Optional["CosmosDBMongoCoreManager"]:
 def _sanitize_for_json(obj: Any) -> Any:
     """
     Recursively sanitize a value to be JSON-serializable.
-    
+
     Handles:
     - BSON ObjectId → str
     - datetime → ISO string
@@ -277,7 +283,7 @@ def _sanitize_for_json(obj: Any) -> Any:
     """
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
-    
+
     if isinstance(obj, dict):
         # Handle MongoDB extended JSON date format
         if "$date" in obj and len(obj) == 1:
@@ -290,19 +296,20 @@ def _sanitize_for_json(obj: Any) -> Any:
             return str(obj["$oid"])
         # Recursively process dict
         return {k: _sanitize_for_json(v) for k, v in obj.items()}
-    
+
     if isinstance(obj, (list, tuple)):
         return [_sanitize_for_json(item) for item in obj]
-    
+
     # Handle datetime
     if hasattr(obj, "isoformat"):
         return obj.isoformat()
-    
+
     # Handle bytes
     if isinstance(obj, bytes):
         import base64
+
         return base64.b64encode(obj).decode("utf-8")
-    
+
     # Fallback: convert to string
     try:
         return str(obj)
@@ -310,7 +317,7 @@ def _sanitize_for_json(obj: Any) -> Any:
         return "<unserializable>"
 
 
-async def _lookup_user_by_client_id(client_id: str) -> Optional[Dict[str, Any]]:
+async def _lookup_user_by_client_id(client_id: str) -> dict[str, Any] | None:
     """Query Cosmos DB for user by client_id or _id."""
     cosmos = _get_demo_users_manager()
     if cosmos is None:
@@ -347,12 +354,19 @@ _MOCK_PROFILES = {
         "institution_name": "Contoso Bank",
         "contact_info": {"email": "john.smith@email.com", "phone_last_4": "5678"},
         "customer_intelligence": {
-            "relationship_context": {"relationship_tier": "Platinum", "relationship_duration_years": 8},
+            "relationship_context": {
+                "relationship_tier": "Platinum",
+                "relationship_duration_years": 8,
+            },
             "bank_profile": {
                 "current_balance": 45230.50,
                 "accountTenureYears": 8,
                 "cards": [{"productName": "Cash Rewards"}],
-                "behavior_summary": {"travelSpendShare": 0.25, "diningSpendShare": 0.15, "foreignTransactionCount": 4},
+                "behavior_summary": {
+                    "travelSpendShare": 0.25,
+                    "diningSpendShare": 0.15,
+                    "foreignTransactionCount": 4,
+                },
             },
             "spending_patterns": {"avg_monthly_spend": 4500},
             "preferences": {"preferredContactMethod": "mobile"},
@@ -369,7 +383,11 @@ _MOCK_PROFILES = {
                 "current_balance": 12500.00,
                 "accountTenureYears": 3,
                 "cards": [{"productName": "Travel Rewards"}],
-                "behavior_summary": {"travelSpendShare": 0.40, "diningSpendShare": 0.20, "foreignTransactionCount": 8},
+                "behavior_summary": {
+                    "travelSpendShare": 0.40,
+                    "diningSpendShare": 0.20,
+                    "foreignTransactionCount": 8,
+                },
             },
             "spending_patterns": {"avg_monthly_spend": 3200},
             "preferences": {"preferredContactMethod": "email"},
@@ -378,11 +396,42 @@ _MOCK_PROFILES = {
 }
 
 _MOCK_TRANSACTIONS = [
-    {"id": "TXN-001", "merchant": "Starbucks", "amount": 5.75, "date": "2024-12-01", "category": "dining"},
-    {"id": "TXN-002", "merchant": "ATM - Non-Network", "amount": 18.00, "date": "2024-11-30", "is_fee": True, "fee_breakdown": {"atm_fee": 10.00, "owner_surcharge": 8.00}},
-    {"id": "TXN-003", "merchant": "Amazon", "amount": 127.50, "date": "2024-11-29", "category": "shopping"},
-    {"id": "TXN-004", "merchant": "Whole Foods", "amount": 89.23, "date": "2024-11-28", "category": "groceries"},
-    {"id": "TXN-005", "merchant": "Uber", "amount": 24.50, "date": "2024-11-27", "category": "transport"},
+    {
+        "id": "TXN-001",
+        "merchant": "Starbucks",
+        "amount": 5.75,
+        "date": "2024-12-01",
+        "category": "dining",
+    },
+    {
+        "id": "TXN-002",
+        "merchant": "ATM - Non-Network",
+        "amount": 18.00,
+        "date": "2024-11-30",
+        "is_fee": True,
+        "fee_breakdown": {"atm_fee": 10.00, "owner_surcharge": 8.00},
+    },
+    {
+        "id": "TXN-003",
+        "merchant": "Amazon",
+        "amount": 127.50,
+        "date": "2024-11-29",
+        "category": "shopping",
+    },
+    {
+        "id": "TXN-004",
+        "merchant": "Whole Foods",
+        "amount": 89.23,
+        "date": "2024-11-28",
+        "category": "groceries",
+    },
+    {
+        "id": "TXN-005",
+        "merchant": "Uber",
+        "amount": 24.50,
+        "date": "2024-11-27",
+        "category": "transport",
+    },
 ]
 
 _CARD_PRODUCTS = {
@@ -400,7 +449,12 @@ _CARD_PRODUCTS = {
         "name": "Contoso Bank Premium Rewards Elite",
         "annual_fee": 550,
         "rewards": "3x on travel and dining, 1.5x on everything else",
-        "benefits": ["$300 travel credit", "TSA PreCheck credit", "Airport lounge access", "No foreign fees"],
+        "benefits": [
+            "$300 travel credit",
+            "TSA PreCheck credit",
+            "Airport lounge access",
+            "No foreign fees",
+        ],
         "intro_apr": "N/A",
         "regular_apr": "19.24% - 29.24%",
     },
@@ -415,50 +469,51 @@ _CARD_PRODUCTS = {
     },
 }
 
-_PENDING_ESIGN: Dict[str, Dict] = {}
+_PENDING_ESIGN: dict[str, dict] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTORS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def get_user_profile(args: Dict[str, Any]) -> Dict[str, Any]:
+
+async def get_user_profile(args: dict[str, Any]) -> dict[str, Any]:
     """Get customer profile from Cosmos DB, falling back to mock data."""
     client_id = (args.get("client_id") or "").strip()
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     # Try Cosmos DB first
     cosmos_profile = await _lookup_user_by_client_id(client_id)
     if cosmos_profile:
         return {"success": True, "profile": cosmos_profile, "data_source": "cosmos"}
-    
+
     # Fall back to mock profiles
     profile = _MOCK_PROFILES.get(client_id)
     if profile:
         logger.info("📋 Profile loaded from mock data: %s", client_id)
         return {"success": True, "profile": profile, "data_source": "mock"}
-    
+
     return {"success": False, "message": f"Profile not found for {client_id}"}
 
 
-async def get_account_summary(args: Dict[str, Any]) -> Dict[str, Any]:
+async def get_account_summary(args: dict[str, Any]) -> dict[str, Any]:
     """Get account summary with balances and routing info."""
     client_id = (args.get("client_id") or "").strip()
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     # Try Cosmos DB first
     profile = await _lookup_user_by_client_id(client_id)
     if not profile:
         # Fall back to mock profiles
         profile = _MOCK_PROFILES.get(client_id)
-    
+
     if not profile:
         return {"success": False, "message": f"Account not found for {client_id}"}
-    
+
     # Extract balance from customer_intelligence or account_status
     customer_intel = profile.get("customer_intelligence", {})
     balance = (
@@ -466,7 +521,7 @@ async def get_account_summary(args: Dict[str, Any]) -> Dict[str, Any]:
         or customer_intel.get("bank_profile", {}).get("current_balance")
         or 0
     )
-    
+
     return {
         "success": True,
         "accounts": [
@@ -486,25 +541,25 @@ async def get_account_summary(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def get_recent_transactions(args: Dict[str, Any]) -> Dict[str, Any]:
+async def get_recent_transactions(args: dict[str, Any]) -> dict[str, Any]:
     """Get recent transactions."""
     client_id = (args.get("client_id") or "").strip()
     limit = args.get("limit", 10)
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     return {
         "success": True,
         "transactions": _MOCK_TRANSACTIONS[:limit],
     }
 
 
-async def search_card_products(args: Dict[str, Any]) -> Dict[str, Any]:
+async def search_card_products(args: dict[str, Any]) -> dict[str, Any]:
     """Search for card products based on preferences."""
     preferences = (args.get("preferences") or "").strip().lower()
     categories = args.get("spending_categories", [])
-    
+
     results = []
     for card in _CARD_PRODUCTS.values():
         score = 0
@@ -516,10 +571,10 @@ async def search_card_products(args: Dict[str, Any]) -> Dict[str, Any]:
             score += 2
         if score > 0:
             results.append({**card, "_score": score})
-    
+
     # Sort by score
     results.sort(key=lambda x: x.get("_score", 0), reverse=True)
-    
+
     return {
         "success": True,
         "cards": results[:3],
@@ -527,29 +582,29 @@ async def search_card_products(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def get_card_details(args: Dict[str, Any]) -> Dict[str, Any]:
+async def get_card_details(args: dict[str, Any]) -> dict[str, Any]:
     """Get details for a specific card."""
     product_id = (args.get("product_id") or "").strip()
     query = (args.get("query") or "").strip()
-    
+
     card = _CARD_PRODUCTS.get(product_id)
     if not card:
         return {"success": False, "message": f"Card {product_id} not found"}
-    
+
     return {"success": True, "card": card}
 
 
-async def refund_fee(args: Dict[str, Any]) -> Dict[str, Any]:
+async def refund_fee(args: dict[str, Any]) -> dict[str, Any]:
     """Process fee refund."""
     client_id = (args.get("client_id") or "").strip()
     amount = args.get("amount", 0)
     reason = (args.get("reason") or "courtesy refund").strip()
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     logger.info("💰 Fee refund processed: %s - $%.2f", client_id, amount)
-    
+
     return {
         "success": True,
         "refunded": True,
@@ -558,29 +613,31 @@ async def refund_fee(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def send_card_agreement(args: Dict[str, Any]) -> Dict[str, Any]:
+async def send_card_agreement(args: dict[str, Any]) -> dict[str, Any]:
     """Send card agreement email."""
     client_id = (args.get("client_id") or "").strip()
     product_id = (args.get("card_product_id") or "").strip()
-    
+
     if not client_id or not product_id:
         return {"success": False, "message": "client_id and card_product_id required."}
-    
+
     card = _CARD_PRODUCTS.get(product_id)
     if not card:
         return {"success": False, "message": f"Card {product_id} not found"}
-    
+
     # Generate verification code
-    import random, string
+    import random
+    import string
+
     code = "".join(random.choices(string.digits, k=6))
-    
+
     _PENDING_ESIGN[client_id] = {"code": code, "card_product_id": product_id}
-    
+
     profile = _MOCK_PROFILES.get(client_id, {})
     email = profile.get("contact_info", {}).get("email", "customer@email.com")
-    
+
     logger.info("📧 Card agreement sent: %s - code: %s", client_id, code)
-    
+
     return {
         "success": True,
         "email_sent": True,
@@ -591,46 +648,46 @@ async def send_card_agreement(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def verify_esignature(args: Dict[str, Any]) -> Dict[str, Any]:
+async def verify_esignature(args: dict[str, Any]) -> dict[str, Any]:
     """Verify e-signature code."""
     client_id = (args.get("client_id") or "").strip()
     code = (args.get("verification_code") or "").strip()
-    
+
     if not client_id or not code:
         return {"success": False, "message": "client_id and code required."}
-    
+
     pending = _PENDING_ESIGN.get(client_id)
     if not pending:
         return {"success": False, "message": "No pending agreement found."}
-    
+
     if pending["code"] == code:
         return {
             "success": True,
             "verified": True,
-            "verified_at": datetime.now(timezone.utc).isoformat(),
+            "verified_at": datetime.now(UTC).isoformat(),
             "card_product_id": pending["card_product_id"],
             "next_step": "finalize_card_application",
         }
-    
+
     return {"success": False, "verified": False, "message": "Invalid code."}
 
 
-async def finalize_card_application(args: Dict[str, Any]) -> Dict[str, Any]:
+async def finalize_card_application(args: dict[str, Any]) -> dict[str, Any]:
     """Finalize card application."""
     client_id = (args.get("client_id") or "").strip()
     product_id = (args.get("card_product_id") or "").strip()
     card_name = (args.get("card_name") or "").strip()
-    
+
     if not client_id or not product_id:
         return {"success": False, "message": "client_id and card_product_id required."}
-    
+
     # Clean up pending
     _PENDING_ESIGN.pop(client_id, None)
-    
+
     card = _CARD_PRODUCTS.get(product_id, {})
-    
+
     logger.info("✅ Card application approved: %s - %s", client_id, card.get("name"))
-    
+
     return {
         "success": True,
         "approved": True,
@@ -646,12 +703,46 @@ async def finalize_card_application(args: Dict[str, Any]) -> Dict[str, Any]:
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-register_tool("get_user_profile", get_user_profile_schema, get_user_profile, tags={"banking", "profile"})
-register_tool("get_account_summary", get_account_summary_schema, get_account_summary, tags={"banking", "account"})
-register_tool("get_recent_transactions", get_recent_transactions_schema, get_recent_transactions, tags={"banking", "transactions"})
-register_tool("search_card_products", search_card_products_schema, search_card_products, tags={"banking", "cards"})
-register_tool("get_card_details", get_card_details_schema, get_card_details, tags={"banking", "cards"})
+register_tool(
+    "get_user_profile", get_user_profile_schema, get_user_profile, tags={"banking", "profile"}
+)
+register_tool(
+    "get_account_summary",
+    get_account_summary_schema,
+    get_account_summary,
+    tags={"banking", "account"},
+)
+register_tool(
+    "get_recent_transactions",
+    get_recent_transactions_schema,
+    get_recent_transactions,
+    tags={"banking", "transactions"},
+)
+register_tool(
+    "search_card_products",
+    search_card_products_schema,
+    search_card_products,
+    tags={"banking", "cards"},
+)
+register_tool(
+    "get_card_details", get_card_details_schema, get_card_details, tags={"banking", "cards"}
+)
 register_tool("refund_fee", refund_fee_schema, refund_fee, tags={"banking", "fees"})
-register_tool("send_card_agreement", send_card_agreement_schema, send_card_agreement, tags={"banking", "cards", "esign"})
-register_tool("verify_esignature", verify_esignature_schema, verify_esignature, tags={"banking", "cards", "esign"})
-register_tool("finalize_card_application", finalize_card_application_schema, finalize_card_application, tags={"banking", "cards", "esign"})
+register_tool(
+    "send_card_agreement",
+    send_card_agreement_schema,
+    send_card_agreement,
+    tags={"banking", "cards", "esign"},
+)
+register_tool(
+    "verify_esignature",
+    verify_esignature_schema,
+    verify_esignature,
+    tags={"banking", "cards", "esign"},
+)
+register_tool(
+    "finalize_card_application",
+    finalize_card_application_schema,
+    finalize_card_application,
+    tags={"banking", "cards", "esign"},
+)

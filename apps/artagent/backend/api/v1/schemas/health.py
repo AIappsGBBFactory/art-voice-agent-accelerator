@@ -4,8 +4,9 @@ Health check API schemas.
 Pydantic schemas for health and readiness API responses.
 """
 
-from typing import Dict, List, Optional, Any
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PoolMetrics(BaseModel):
@@ -16,33 +17,21 @@ class PoolMetrics(BaseModel):
     warm_pool_size: int = Field(
         ..., description="Current number of pre-warmed resources", example=3
     )
-    warm_pool_target: int = Field(
-        ..., description="Target warm pool size", example=3
-    )
+    warm_pool_target: int = Field(..., description="Target warm pool size", example=3)
     active_sessions: int = Field(
         ..., description="Number of active session-bound resources", example=2
     )
     session_awareness: bool = Field(
         ..., description="Whether session caching is enabled", example=True
     )
-    allocations_total: int = Field(
-        ..., description="Total allocations since startup", example=150
-    )
+    allocations_total: int = Field(..., description="Total allocations since startup", example=150)
     allocations_dedicated: int = Field(
         ..., description="Allocations from session cache (0ms)", example=95
     )
-    allocations_warm: int = Field(
-        ..., description="Allocations from warm pool (<50ms)", example=40
-    )
-    allocations_cold: int = Field(
-        ..., description="On-demand allocations (~200ms)", example=15
-    )
-    warmup_cycles: int = Field(
-        ..., description="Background warmup cycles completed", example=42
-    )
-    warmup_failures: int = Field(
-        ..., description="Warmup failures count", example=0
-    )
+    allocations_warm: int = Field(..., description="Allocations from warm pool (<50ms)", example=40)
+    allocations_cold: int = Field(..., description="On-demand allocations (~200ms)", example=15)
+    warmup_cycles: int = Field(..., description="Background warmup cycles completed", example=42)
+    warmup_failures: int = Field(..., description="Warmup failures count", example=0)
     background_warmup: bool = Field(
         ..., description="Whether background warmup is enabled", example=True
     )
@@ -73,10 +62,8 @@ class PoolsHealthResponse(BaseModel):
 
     status: str = Field(..., description="Overall pools status", example="healthy")
     timestamp: float = Field(..., description="Timestamp", example=1691668800.0)
-    pools: Dict[str, PoolMetrics] = Field(
-        ..., description="Pool metrics by name"
-    )
-    summary: Dict[str, Any] = Field(
+    pools: dict[str, PoolMetrics] = Field(..., description="Pool metrics by name")
+    summary: dict[str, Any] = Field(
         default_factory=dict,
         description="Aggregate metrics across all pools",
         json_schema_extra={
@@ -128,19 +115,17 @@ class HealthResponse(BaseModel):
         description="Human-readable status message",
         json_schema_extra={"example": "Real-Time Audio Agent API v1 is running"},
     )
-    details: Dict[str, Any] = Field(
+    details: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional health details",
-        json_schema_extra={
-            "example": {"api_version": "v1", "service": "artagent-backend"}
-        },
+        json_schema_extra={"example": {"api_version": "v1", "service": "artagent-backend"}},
     )
     active_sessions: int | None = Field(
         default=None,
         description="Current number of active realtime conversation sessions (None if unavailable)",
         json_schema_extra={"example": 3},
     )
-    session_metrics: Dict[str, Any] | None = Field(
+    session_metrics: dict[str, Any] | None = Field(
         default=None,
         description="Optional granular session metrics (connected/disconnected, etc.)",
         json_schema_extra={"example": {"connected": 5, "disconnected": 2, "active": 3}},
@@ -179,10 +164,10 @@ class ServiceCheck(BaseModel):
     check_time_ms: float = Field(
         ..., description="Time taken to perform the check in milliseconds", example=12.5
     )
-    error: Optional[str] = Field(
+    error: str | None = Field(
         None, description="Error message if check failed", example="Connection timeout"
     )
-    details: Optional[str] = Field(
+    details: str | None = Field(
         None,
         description="Additional details about the check",
         json_schema_extra={"example": "Connected to Redis successfully"},
@@ -216,10 +201,8 @@ class ReadinessResponse(BaseModel):
     response_time_ms: float = Field(
         ..., description="Total time taken for all checks in milliseconds", example=45.2
     )
-    checks: List[ServiceCheck] = Field(
-        ..., description="Individual component health checks"
-    )
-    event_system: Optional[Dict[str, Any]] = Field(
+    checks: list[ServiceCheck] = Field(..., description="Individual component health checks")
+    event_system: dict[str, Any] | None = Field(
         None,
         description="Event system status information",
         json_schema_extra={

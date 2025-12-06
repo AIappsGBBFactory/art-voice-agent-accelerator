@@ -6,8 +6,6 @@ Constants, defaults, and non-configurable values used throughout the application
 These are hard-coded values that don't come from environment variables.
 """
 
-from typing import List, Set
-
 # ==============================================================================
 # API ENDPOINTS AND PATHS
 # ==============================================================================
@@ -61,17 +59,19 @@ AVAILABLE_VOICES = {
 }
 
 # TTS streaming markers
-TTS_END: Set[str] = {";", ".", "?", "!"}
+TTS_END: set[str] = {";", ".", "?", "!"}
 
 # Stop words for conversation termination
-STOP_WORDS: List[str] = ["goodbye", "exit", "see you later", "bye"]
+STOP_WORDS: list[str] = ["goodbye", "exit", "see you later", "bye"]
 
 # ==============================================================================
 # DEFAULT MESSAGES
 # ==============================================================================
 
 # Default greeting message
-GREETING: str = """Hello from XYZ Finance corporation! This call might be recorded for quality control purposes. What can I help you with today?"""
+GREETING: str = (
+    """Hello from XYZ Finance corporation! This call might be recorded for quality control purposes. What can I help you with today?"""
+)
 
 # ==============================================================================
 # FEATURE FLAGS (Default Values)
@@ -87,7 +87,7 @@ DEFAULT_ENABLE_AUTH_VALIDATION: bool = False
 # SUPPORTED LANGUAGES
 # ==============================================================================
 
-SUPPORTED_LANGUAGES: List[str] = [
+SUPPORTED_LANGUAGES: list[str] = [
     "en-US",
     "es-ES",
     "fr-FR",

@@ -14,7 +14,7 @@ Usage:
     @trace_dependency(peer_service=PeerService.REDIS, operation="get")
     async def get_from_cache(...):
         ...
-    
+
     # Turn-level tracking
     async with ConversationTurnSpan(
         call_connection_id="abc123",
@@ -30,13 +30,12 @@ Usage:
 import functools
 import time
 import uuid
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-
 from src.enums.monitoring import GenAIOperation, GenAIProvider, PeerService, SpanAttr
 
 # Type variable for generic function typing
@@ -48,10 +47,10 @@ tracer = trace.get_tracer(__name__)
 
 def trace_dependency(
     peer_service: str,
-    operation: Optional[str] = None,
-    span_name: Optional[str] = None,
-    server_address: Optional[str] = None,
-    db_system: Optional[str] = None,
+    operation: str | None = None,
+    span_name: str | None = None,
+    server_address: str | None = None,
+    db_system: str | None = None,
 ) -> Callable[[F], F]:
     """
     Decorator for tracing external dependency calls.
@@ -77,9 +76,7 @@ def trace_dependency(
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             name = span_name or f"{peer_service}.{operation or func.__name__}"
-            with tracer.start_as_current_span(
-                name, kind=SpanKind.CLIENT
-            ) as span:
+            with tracer.start_as_current_span(name, kind=SpanKind.CLIENT) as span:
                 # Set Application Map attributes
                 span.set_attribute(SpanAttr.PEER_SERVICE.value, peer_service)
                 if operation:
@@ -107,9 +104,7 @@ def trace_dependency(
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             name = span_name or f"{peer_service}.{operation or func.__name__}"
-            with tracer.start_as_current_span(
-                name, kind=SpanKind.CLIENT
-            ) as span:
+            with tracer.start_as_current_span(name, kind=SpanKind.CLIENT) as span:
                 # Set Application Map attributes
                 span.set_attribute(SpanAttr.PEER_SERVICE.value, peer_service)
                 if operation:
@@ -136,6 +131,7 @@ def trace_dependency(
 
         # Return appropriate wrapper based on function type
         import asyncio
+
         if asyncio.iscoroutinefunction(func):
             return async_wrapper  # type: ignore
         return sync_wrapper  # type: ignore
@@ -145,9 +141,9 @@ def trace_dependency(
 
 def trace_llm_call(
     operation: str = GenAIOperation.CHAT,
-    model: Optional[str] = None,
+    model: str | None = None,
     provider: str = GenAIProvider.AZURE_OPENAI,
-    span_name: Optional[str] = None,
+    span_name: str | None = None,
 ) -> Callable[[F], F]:
     """
     Decorator for tracing LLM/GenAI calls with OpenTelemetry semantic conventions.
@@ -176,12 +172,10 @@ def trace_llm_call(
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             name = span_name or f"{provider}.{operation}"
-            with tracer.start_as_current_span(
-                name, kind=SpanKind.CLIENT
-            ) as span:
+            with tracer.start_as_current_span(name, kind=SpanKind.CLIENT) as span:
                 # Application Map attributes
                 span.set_attribute(SpanAttr.PEER_SERVICE.value, provider)
-                
+
                 # GenAI semantic convention attributes
                 span.set_attribute(SpanAttr.GENAI_PROVIDER_NAME.value, provider)
                 span.set_attribute(SpanAttr.GENAI_OPERATION_NAME.value, operation)
@@ -200,19 +194,15 @@ def trace_llm_call(
                     raise
                 finally:
                     duration_ms = (time.perf_counter() - start_time) * 1000
-                    span.set_attribute(
-                        SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, duration_ms
-                    )
+                    span.set_attribute(SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, duration_ms)
 
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             name = span_name or f"{provider}.{operation}"
-            with tracer.start_as_current_span(
-                name, kind=SpanKind.CLIENT
-            ) as span:
+            with tracer.start_as_current_span(name, kind=SpanKind.CLIENT) as span:
                 # Application Map attributes
                 span.set_attribute(SpanAttr.PEER_SERVICE.value, provider)
-                
+
                 # GenAI semantic convention attributes
                 span.set_attribute(SpanAttr.GENAI_PROVIDER_NAME.value, provider)
                 span.set_attribute(SpanAttr.GENAI_OPERATION_NAME.value, operation)
@@ -231,12 +221,11 @@ def trace_llm_call(
                     raise
                 finally:
                     duration_ms = (time.perf_counter() - start_time) * 1000
-                    span.set_attribute(
-                        SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, duration_ms
-                    )
+                    span.set_attribute(SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, duration_ms)
 
         # Return appropriate wrapper based on function type
         import asyncio
+
         if asyncio.iscoroutinefunction(func):
             return async_wrapper  # type: ignore
         return sync_wrapper  # type: ignore
@@ -247,7 +236,7 @@ def trace_llm_call(
 def trace_speech(
     operation: str,
     provider: str = GenAIProvider.AZURE_SPEECH,
-    span_name: Optional[str] = None,
+    span_name: str | None = None,
 ) -> Callable[[F], F]:
     """
     Decorator for tracing Azure Speech service calls.
@@ -276,9 +265,7 @@ def trace_speech(
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             name = span_name or f"{provider}.{operation}"
-            with tracer.start_as_current_span(
-                name, kind=SpanKind.CLIENT
-            ) as span:
+            with tracer.start_as_current_span(name, kind=SpanKind.CLIENT) as span:
                 # Application Map attributes
                 span.set_attribute(SpanAttr.PEER_SERVICE.value, PeerService.AZURE_SPEECH)
                 span.set_attribute(SpanAttr.OPERATION_NAME.value, operation)
@@ -307,9 +294,7 @@ def trace_speech(
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             name = span_name or f"{provider}.{operation}"
-            with tracer.start_as_current_span(
-                name, kind=SpanKind.CLIENT
-            ) as span:
+            with tracer.start_as_current_span(name, kind=SpanKind.CLIENT) as span:
                 # Application Map attributes
                 span.set_attribute(SpanAttr.PEER_SERVICE.value, PeerService.AZURE_SPEECH)
                 span.set_attribute(SpanAttr.OPERATION_NAME.value, operation)
@@ -337,6 +322,7 @@ def trace_speech(
 
         # Return appropriate wrapper based on function type
         import asyncio
+
         if asyncio.iscoroutinefunction(func):
             return async_wrapper  # type: ignore
         return sync_wrapper  # type: ignore
@@ -346,7 +332,7 @@ def trace_speech(
 
 def trace_acs(
     operation: str,
-    span_name: Optional[str] = None,
+    span_name: str | None = None,
 ) -> Callable[[F], F]:
     """
     Decorator for tracing Azure Communication Services calls.
@@ -367,9 +353,7 @@ def trace_acs(
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             name = span_name or f"azure.communication.{operation}"
-            with tracer.start_as_current_span(
-                name, kind=SpanKind.CLIENT
-            ) as span:
+            with tracer.start_as_current_span(name, kind=SpanKind.CLIENT) as span:
                 # Application Map attributes
                 span.set_attribute(SpanAttr.PEER_SERVICE.value, PeerService.AZURE_COMMUNICATION)
                 span.set_attribute(SpanAttr.ACS_OPERATION.value, operation)
@@ -391,9 +375,7 @@ def trace_acs(
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             name = span_name or f"azure.communication.{operation}"
-            with tracer.start_as_current_span(
-                name, kind=SpanKind.CLIENT
-            ) as span:
+            with tracer.start_as_current_span(name, kind=SpanKind.CLIENT) as span:
                 # Application Map attributes
                 span.set_attribute(SpanAttr.PEER_SERVICE.value, PeerService.AZURE_COMMUNICATION)
                 span.set_attribute(SpanAttr.ACS_OPERATION.value, operation)
@@ -414,6 +396,7 @@ def trace_acs(
 
         # Return appropriate wrapper based on function type
         import asyncio
+
         if asyncio.iscoroutinefunction(func):
             return async_wrapper  # type: ignore
         return sync_wrapper  # type: ignore
@@ -429,9 +412,9 @@ def trace_acs(
 def add_genai_usage(
     input_tokens: int,
     output_tokens: int,
-    response_model: Optional[str] = None,
-    response_id: Optional[str] = None,
-    finish_reasons: Optional[list[str]] = None,
+    response_model: str | None = None,
+    response_id: str | None = None,
+    finish_reasons: list[str] | None = None,
 ) -> None:
     """
     Add GenAI token usage to the current span.
@@ -469,12 +452,12 @@ def add_genai_usage(
 
 
 def add_speech_tts_metrics(
-    voice: Optional[str] = None,
-    audio_size_bytes: Optional[int] = None,
-    text_length: Optional[int] = None,
-    output_format: Optional[str] = None,
-    sample_rate: Optional[int] = None,
-    frame_count: Optional[int] = None,
+    voice: str | None = None,
+    audio_size_bytes: int | None = None,
+    text_length: int | None = None,
+    output_format: str | None = None,
+    sample_rate: int | None = None,
+    frame_count: int | None = None,
 ) -> None:
     """
     Add TTS-specific metrics to the current span.
@@ -505,10 +488,10 @@ def add_speech_tts_metrics(
 
 
 def add_speech_stt_metrics(
-    language: Optional[str] = None,
-    confidence: Optional[float] = None,
-    text_length: Optional[int] = None,
-    result_reason: Optional[str] = None,
+    language: str | None = None,
+    confidence: float | None = None,
+    text_length: int | None = None,
+    result_reason: str | None = None,
 ) -> None:
     """
     Add STT-specific metrics to the current span.
@@ -534,13 +517,13 @@ def add_speech_stt_metrics(
 
 def add_turn_metrics(
     turn_number: int,
-    stt_latency_ms: Optional[float] = None,
-    llm_ttfb_ms: Optional[float] = None,
-    llm_total_ms: Optional[float] = None,
-    tts_ttfb_ms: Optional[float] = None,
-    tts_total_ms: Optional[float] = None,
-    total_latency_ms: Optional[float] = None,
-    transport_type: Optional[str] = None,
+    stt_latency_ms: float | None = None,
+    llm_ttfb_ms: float | None = None,
+    llm_total_ms: float | None = None,
+    tts_ttfb_ms: float | None = None,
+    tts_total_ms: float | None = None,
+    total_latency_ms: float | None = None,
+    transport_type: str | None = None,
 ) -> None:
     """
     Add per-turn latency metrics to the current span.
@@ -583,41 +566,41 @@ def add_turn_metrics(
 @dataclass
 class TurnMetrics:
     """Collected metrics for a conversation turn."""
-    
+
     # Timing metrics (all in milliseconds)
-    stt_latency_ms: Optional[float] = None
-    llm_ttfb_ms: Optional[float] = None
-    llm_total_ms: Optional[float] = None
-    tts_ttfb_ms: Optional[float] = None
-    tts_total_ms: Optional[float] = None
-    total_latency_ms: Optional[float] = None
-    speech_cascade_ttfb_ms: Optional[float] = None
-    
+    stt_latency_ms: float | None = None
+    llm_ttfb_ms: float | None = None
+    llm_total_ms: float | None = None
+    tts_ttfb_ms: float | None = None
+    tts_total_ms: float | None = None
+    total_latency_ms: float | None = None
+    speech_cascade_ttfb_ms: float | None = None
+
     # Token metrics
-    llm_input_tokens: Optional[int] = None
-    llm_output_tokens: Optional[int] = None
-    
+    llm_input_tokens: int | None = None
+    llm_output_tokens: int | None = None
+
     # Content metrics
-    user_text_length: Optional[int] = None
-    assistant_text_length: Optional[int] = None
-    
+    user_text_length: int | None = None
+    assistant_text_length: int | None = None
+
     # Timestamps for computing deltas
     turn_start_time: float = field(default_factory=time.perf_counter)
-    stt_complete_time: Optional[float] = None
-    llm_first_token_time: Optional[float] = None
-    llm_complete_time: Optional[float] = None
-    tts_start_time: Optional[float] = None
-    tts_first_audio_time: Optional[float] = None
-    tts_complete_time: Optional[float] = None
+    stt_complete_time: float | None = None
+    llm_first_token_time: float | None = None
+    llm_complete_time: float | None = None
+    tts_start_time: float | None = None
+    tts_first_audio_time: float | None = None
+    tts_complete_time: float | None = None
 
 
 class ConversationTurnSpan:
     """
     Context manager for tracking a complete conversation turn with OpenTelemetry.
-    
+
     Creates an INTERNAL span that wraps an entire turn (user speech → LLM → TTS)
     and collects timing metrics at each stage.
-    
+
     Usage:
         async with ConversationTurnSpan(
             call_connection_id="abc123",
@@ -627,10 +610,10 @@ class ConversationTurnSpan:
         ) as turn:
             # After STT completes
             turn.record_stt_complete(text="Hello", latency_ms=150.0)
-            
+
             # After LLM first token
             turn.record_llm_first_token()
-            
+
             # After LLM completes
             turn.record_llm_complete(
                 total_ms=450.0,
@@ -638,32 +621,32 @@ class ConversationTurnSpan:
                 output_tokens=50,
                 response_text="Hi there!",
             )
-            
+
             # When TTS starts streaming
             turn.record_tts_start()
-            
+
             # When first audio chunk is ready
             turn.record_tts_first_audio()
-            
+
             # Turn ends when context exits - metrics auto-calculated
-    
+
     Attributes:
         turn_id: Unique identifier for this turn
         metrics: TurnMetrics dataclass with all collected metrics
         span: The underlying OpenTelemetry span
     """
-    
+
     def __init__(
         self,
-        call_connection_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        turn_number: Optional[int] = None,
-        transport_type: Optional[str] = None,
-        user_intent_preview: Optional[str] = None,
+        call_connection_id: str | None = None,
+        session_id: str | None = None,
+        turn_number: int | None = None,
+        transport_type: str | None = None,
+        user_intent_preview: str | None = None,
     ):
         """
         Initialize turn tracking.
-        
+
         Args:
             call_connection_id: ACS call connection ID for correlation.
             session_id: Session identifier for correlation.
@@ -677,18 +660,18 @@ class ConversationTurnSpan:
         self.turn_number = turn_number
         self.transport_type = transport_type
         self.user_intent_preview = user_intent_preview
-        
+
         self.metrics = TurnMetrics()
-        self.span: Optional[trace.Span] = None
+        self.span: trace.Span | None = None
         self._entered = False
-    
+
     async def __aenter__(self) -> "ConversationTurnSpan":
         """Enter the turn span context."""
         attrs = {
             SpanAttr.TURN_ID.value: self.turn_id,
             "conversation.turn.phase": "complete",
         }
-        
+
         if self.call_connection_id:
             attrs[SpanAttr.CALL_CONNECTION_ID.value] = self.call_connection_id
         if self.session_id:
@@ -699,7 +682,7 @@ class ConversationTurnSpan:
             attrs[SpanAttr.TURN_TRANSPORT_TYPE.value] = self.transport_type
         if self.user_intent_preview:
             attrs[SpanAttr.TURN_USER_INTENT_PREVIEW.value] = self.user_intent_preview[:50]
-        
+
         # Use descriptive span name: voice.turn.<N>.total for end-to-end tracking
         turn_label = self.turn_number if self.turn_number is not None else self.turn_id
         self.span = tracer.start_span(
@@ -709,31 +692,31 @@ class ConversationTurnSpan:
         )
         self.metrics.turn_start_time = time.perf_counter()
         self._entered = True
-        
+
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit the turn span context and finalize metrics."""
         if not self.span:
             return
-        
+
         try:
             # Calculate total latency
             end_time = time.perf_counter()
             self.metrics.total_latency_ms = (end_time - self.metrics.turn_start_time) * 1000
-            
+
             # Set all collected metrics on span
             self._set_final_metrics()
-            
+
             # Add turn completion event
             self.span.add_event(
                 "turn.complete",
                 attributes={
                     "turn.total_latency_ms": self.metrics.total_latency_ms,
                     "turn.success": exc_type is None,
-                }
+                },
             )
-            
+
             # Handle exceptions
             if exc_type is not None:
                 self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
@@ -741,15 +724,15 @@ class ConversationTurnSpan:
                 self.span.set_attribute(SpanAttr.ERROR_MESSAGE.value, str(exc_val))
             else:
                 self.span.set_status(Status(StatusCode.OK))
-                
+
         finally:
             self.span.end()
-    
+
     def _set_final_metrics(self) -> None:
         """Set all collected metrics on the span."""
         if not self.span:
             return
-        
+
         # Timing metrics - use descriptive attribute names with _MS suffix
         if self.metrics.stt_latency_ms is not None:
             self.span.set_attribute(SpanAttr.TURN_STT_LATENCY_MS.value, self.metrics.stt_latency_ms)
@@ -762,39 +745,57 @@ class ConversationTurnSpan:
         if self.metrics.tts_total_ms is not None:
             self.span.set_attribute(SpanAttr.TURN_TTS_TOTAL_MS.value, self.metrics.tts_total_ms)
         if self.metrics.total_latency_ms is not None:
-            self.span.set_attribute(SpanAttr.TURN_TOTAL_LATENCY_MS.value, self.metrics.total_latency_ms)
+            self.span.set_attribute(
+                SpanAttr.TURN_TOTAL_LATENCY_MS.value, self.metrics.total_latency_ms
+            )
         if self.metrics.speech_cascade_ttfb_ms is not None:
-            self.span.set_attribute("turn.speech_cascade_ttfb_ms", self.metrics.speech_cascade_ttfb_ms)
-        
+            self.span.set_attribute(
+                "turn.speech_cascade_ttfb_ms", self.metrics.speech_cascade_ttfb_ms
+            )
+
         # Token metrics - set on both GenAI standard and turn-specific attributes
         if self.metrics.llm_input_tokens is not None:
-            self.span.set_attribute(SpanAttr.GENAI_USAGE_INPUT_TOKENS.value, self.metrics.llm_input_tokens)
-            self.span.set_attribute(SpanAttr.TURN_LLM_INPUT_TOKENS.value, self.metrics.llm_input_tokens)
+            self.span.set_attribute(
+                SpanAttr.GENAI_USAGE_INPUT_TOKENS.value, self.metrics.llm_input_tokens
+            )
+            self.span.set_attribute(
+                SpanAttr.TURN_LLM_INPUT_TOKENS.value, self.metrics.llm_input_tokens
+            )
         if self.metrics.llm_output_tokens is not None:
-            self.span.set_attribute(SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value, self.metrics.llm_output_tokens)
-            self.span.set_attribute(SpanAttr.TURN_LLM_OUTPUT_TOKENS.value, self.metrics.llm_output_tokens)
-        
+            self.span.set_attribute(
+                SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value, self.metrics.llm_output_tokens
+            )
+            self.span.set_attribute(
+                SpanAttr.TURN_LLM_OUTPUT_TOKENS.value, self.metrics.llm_output_tokens
+            )
+
         # Calculate tokens per second if we have the data
-        if self.metrics.llm_output_tokens and self.metrics.llm_total_ms and self.metrics.llm_total_ms > 0:
+        if (
+            self.metrics.llm_output_tokens
+            and self.metrics.llm_total_ms
+            and self.metrics.llm_total_ms > 0
+        ):
             tokens_per_sec = (self.metrics.llm_output_tokens / self.metrics.llm_total_ms) * 1000
             self.span.set_attribute(SpanAttr.TURN_LLM_TOKENS_PER_SEC.value, tokens_per_sec)
-        
+
         # Content metrics
         if self.metrics.user_text_length is not None:
             self.span.set_attribute("turn.user_text_length", self.metrics.user_text_length)
         if self.metrics.assistant_text_length is not None:
-            self.span.set_attribute("turn.assistant_text_length", self.metrics.assistant_text_length)
-    
+            self.span.set_attribute(
+                "turn.assistant_text_length", self.metrics.assistant_text_length
+            )
+
     def record_stt_complete(
         self,
-        text: Optional[str] = None,
-        latency_ms: Optional[float] = None,
-        language: Optional[str] = None,
-        confidence: Optional[float] = None,
+        text: str | None = None,
+        latency_ms: float | None = None,
+        language: str | None = None,
+        confidence: float | None = None,
     ) -> None:
         """
         Record STT completion.
-        
+
         Args:
             text: Recognized user text.
             latency_ms: STT processing time. If None, computed from turn start.
@@ -803,19 +804,19 @@ class ConversationTurnSpan:
         """
         now = time.perf_counter()
         self.metrics.stt_complete_time = now
-        
+
         if latency_ms is not None:
             self.metrics.stt_latency_ms = latency_ms
         else:
             self.metrics.stt_latency_ms = (now - self.metrics.turn_start_time) * 1000
-        
+
         if text:
             self.metrics.user_text_length = len(text)
             # Update user intent preview if not already set
             if not self.user_intent_preview and self.span:
                 preview = text[:50] + "..." if len(text) > 50 else text
                 self.span.set_attribute(SpanAttr.TURN_USER_INTENT_PREVIEW.value, preview)
-        
+
         if self.span:
             self.span.add_event(
                 "stt.complete",
@@ -824,35 +825,34 @@ class ConversationTurnSpan:
                     **({"stt.language": language} if language else {}),
                     **({"stt.confidence": confidence} if confidence is not None else {}),
                     **({"stt.text_length": len(text)} if text else {}),
-                }
+                },
             )
-    
+
     def record_llm_first_token(self) -> None:
         """Record when the first LLM token is received."""
         now = time.perf_counter()
         self.metrics.llm_first_token_time = now
-        
+
         # TTFB from STT complete (or turn start if STT not recorded)
         reference_time = self.metrics.stt_complete_time or self.metrics.turn_start_time
         self.metrics.llm_ttfb_ms = (now - reference_time) * 1000
-        
+
         if self.span:
             self.span.add_event(
-                "llm.first_token",
-                attributes={"llm.ttfb_ms": self.metrics.llm_ttfb_ms}
+                "llm.first_token", attributes={"llm.ttfb_ms": self.metrics.llm_ttfb_ms}
             )
-    
+
     def record_llm_complete(
         self,
-        total_ms: Optional[float] = None,
-        input_tokens: Optional[int] = None,
-        output_tokens: Optional[int] = None,
-        response_text: Optional[str] = None,
-        model: Optional[str] = None,
+        total_ms: float | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        response_text: str | None = None,
+        model: str | None = None,
     ) -> None:
         """
         Record LLM completion.
-        
+
         Args:
             total_ms: Total LLM processing time. If None, computed from STT complete.
             input_tokens: Number of prompt tokens.
@@ -862,20 +862,20 @@ class ConversationTurnSpan:
         """
         now = time.perf_counter()
         self.metrics.llm_complete_time = now
-        
+
         if total_ms is not None:
             self.metrics.llm_total_ms = total_ms
         else:
             reference_time = self.metrics.stt_complete_time or self.metrics.turn_start_time
             self.metrics.llm_total_ms = (now - reference_time) * 1000
-        
+
         if input_tokens is not None:
             self.metrics.llm_input_tokens = input_tokens
         if output_tokens is not None:
             self.metrics.llm_output_tokens = output_tokens
         if response_text:
             self.metrics.assistant_text_length = len(response_text)
-        
+
         if self.span:
             event_attrs = {"llm.total_ms": self.metrics.llm_total_ms}
             if input_tokens is not None:
@@ -885,58 +885,58 @@ class ConversationTurnSpan:
             if model:
                 event_attrs["llm.model"] = model
             self.span.add_event("llm.complete", attributes=event_attrs)
-    
+
     def record_tts_start(self) -> None:
         """Record when TTS synthesis starts."""
         self.metrics.tts_start_time = time.perf_counter()
-        
+
         if self.span:
             self.span.add_event("tts.start")
-    
+
     def record_tts_first_audio(self) -> None:
         """Record when first TTS audio chunk is ready."""
         now = time.perf_counter()
         self.metrics.tts_first_audio_time = now
-        
+
         # TTFB from LLM complete (or TTS start)
-        reference_time = self.metrics.llm_complete_time or self.metrics.tts_start_time or self.metrics.turn_start_time
+        reference_time = (
+            self.metrics.llm_complete_time
+            or self.metrics.tts_start_time
+            or self.metrics.turn_start_time
+        )
         self.metrics.tts_ttfb_ms = (now - reference_time) * 1000
-        
+
         # Speech Cascade TTFB: STT Complete -> First Audio
         if self.metrics.stt_complete_time:
             self.metrics.speech_cascade_ttfb_ms = (now - self.metrics.stt_complete_time) * 1000
-        
+
         if self.span:
             attrs = {"tts.ttfb_ms": self.metrics.tts_ttfb_ms}
             if self.metrics.speech_cascade_ttfb_ms is not None:
                 attrs["turn.speech_cascade_ttfb_ms"] = self.metrics.speech_cascade_ttfb_ms
-            
-            self.span.add_event(
-                "tts.first_audio",
-                attributes=attrs
-            )
-    
-    def record_tts_complete(self, total_ms: Optional[float] = None) -> None:
+
+            self.span.add_event("tts.first_audio", attributes=attrs)
+
+    def record_tts_complete(self, total_ms: float | None = None) -> None:
         """
         Record TTS completion.
-        
+
         Args:
             total_ms: Total TTS synthesis time. If None, computed from TTS start.
         """
         now = time.perf_counter()
         self.metrics.tts_complete_time = now
-        
+
         if total_ms is not None:
             self.metrics.tts_total_ms = total_ms
         elif self.metrics.tts_start_time:
             self.metrics.tts_total_ms = (now - self.metrics.tts_start_time) * 1000
-        
+
         if self.span:
             self.span.add_event(
-                "tts.complete",
-                attributes={"tts.total_ms": self.metrics.tts_total_ms or 0}
+                "tts.complete", attributes={"tts.total_ms": self.metrics.tts_total_ms or 0}
             )
-    
+
     def add_metadata(self, key: str, value: Any) -> None:
         """Add custom metadata to the turn span."""
         if self.span:

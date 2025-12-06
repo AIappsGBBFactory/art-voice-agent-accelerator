@@ -9,7 +9,7 @@ Used by CascadeOrchestratorAdapter and LiveOrchestrator.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -18,30 +18,30 @@ if TYPE_CHECKING:
 @dataclass
 class OrchestratorContext:
     """Context passed to orchestrator for each turn."""
-    
+
     session_id: str
-    websocket: Optional["WebSocket"] = None
-    call_connection_id: Optional[str] = None
+    websocket: WebSocket | None = None
+    call_connection_id: str | None = None
     user_text: str = ""
-    turn_id: Optional[str] = None
-    conversation_history: List[Dict[str, Any]] = field(default_factory=list)
-    system_prompt: Optional[str] = None
-    tools: Optional[List[Dict[str, Any]]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    turn_id: str | None = None
+    conversation_history: list[dict[str, Any]] = field(default_factory=list)
+    system_prompt: str | None = None
+    tools: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class OrchestratorResult:
     """Result from an orchestrator turn."""
-    
+
     response_text: str = ""
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    agent_name: Optional[str] = None
-    latency_ms: Optional[float] = None
-    input_tokens: Optional[int] = None
-    output_tokens: Optional[int] = None
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    agent_name: str | None = None
+    latency_ms: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     interrupted: bool = False
-    error: Optional[str] = None
+    error: str | None = None
 
 
 __all__ = [

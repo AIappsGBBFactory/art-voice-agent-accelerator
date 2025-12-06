@@ -5,10 +5,11 @@ Minimal overhead health check endpoint for monitoring the dedicated TTS pool per
 Optimized for low latency and minimal resource usage.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from typing import Dict, Any
-import logging
 import asyncio
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
 from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ async def get_dedicated_tts_manager():
 @router.get("/tts/dedicated/health")
 async def get_dedicated_tts_health(
     manager=Depends(get_dedicated_tts_manager),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     🚀 PHASE 1: Lightweight health status of the dedicated TTS pool system.
 
@@ -67,7 +68,7 @@ async def get_dedicated_tts_health(
 
 
 @router.get("/tts/dedicated/metrics")
-async def get_tts_metrics(manager=Depends(get_dedicated_tts_manager)) -> Dict[str, Any]:
+async def get_tts_metrics(manager=Depends(get_dedicated_tts_manager)) -> dict[str, Any]:
     """
     Essential performance metrics for dedicated TTS pool.
 
@@ -96,20 +97,18 @@ async def get_tts_metrics(manager=Depends(get_dedicated_tts_manager)) -> Dict[st
 @router.get("/tts/dedicated/status")
 async def get_simple_status(
     manager=Depends(get_dedicated_tts_manager),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     🚀 PHASE 1: Ultra-fast status check for load balancer health checks.
 
     Minimal overhead endpoint for external monitoring systems.
     """
     try:
-        snapshot = await asyncio.wait_for(
-            asyncio.to_thread(manager.snapshot), timeout=1.0
-        )
+        snapshot = await asyncio.wait_for(asyncio.to_thread(manager.snapshot), timeout=1.0)
 
         return {"status": "ok", "timestamp": snapshot.get("metrics", {}).get("timestamp")}
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"status": "timeout"}
     except Exception:
         return {"status": "error"}

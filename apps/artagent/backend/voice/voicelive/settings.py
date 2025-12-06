@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,16 +32,18 @@ class VoiceLiveSettings(BaseSettings):
     # Azure VoiceLive Configuration
     azure_voicelive_endpoint: str = Field(..., description="Azure VoiceLive endpoint URL")
     azure_voicelive_model: str = Field(default="gpt-realtime", description="Model deployment name")
-    azure_voicelive_api_key: Optional[str] = Field(default=None, description="API key for authentication")
+    azure_voicelive_api_key: str | None = Field(
+        default=None, description="API key for authentication"
+    )
     use_default_credential: bool = Field(
         default=False,
         description="If true, prefer DefaultAzureCredential over API key",
     )
 
     # Azure AD Authentication (alternative to API key)
-    azure_client_id: Optional[str] = Field(default=None, description="Azure AD client ID")
-    azure_tenant_id: Optional[str] = Field(default=None, description="Azure AD tenant ID")
-    azure_client_secret: Optional[str] = Field(default=None, description="Azure AD client secret")
+    azure_client_id: str | None = Field(default=None, description="Azure AD client ID")
+    azure_tenant_id: str | None = Field(default=None, description="Azure AD tenant ID")
+    azure_client_secret: str | None = Field(default=None, description="Azure AD client secret")
 
     # Application Configuration
     start_agent: str = Field(default="Concierge", description="Initial agent to start with")
@@ -61,7 +62,9 @@ class VoiceLiveSettings(BaseSettings):
     ws_timeout: int = Field(default=20, description="WebSocket timeout (seconds)")
 
     # Logging Configuration
-    log_level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR)")
+    log_level: str = Field(
+        default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR)"
+    )
     log_format: str = Field(
         default="%(asctime)s %(levelname)s %(name)s: %(message)s",
         description="Log message format",

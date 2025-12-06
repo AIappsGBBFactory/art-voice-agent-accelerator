@@ -6,7 +6,7 @@ Models for tracking system events, event processing, and event history.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import UUID
 
 from pydantic import Field
@@ -46,70 +46,52 @@ class Event(TimestampedModel):
     """
 
     # Event identification
-    event_type: str = Field(
-        description="Type of event (e.g., CallConnected, MediaReceived)"
-    )
+    event_type: str = Field(description="Type of event (e.g., CallConnected, MediaReceived)")
 
     event_source: str = Field(description="Source system that generated the event")
 
-    correlation_id: str = Field(
-        description="Correlation ID for tracing across services"
-    )
+    correlation_id: str = Field(description="Correlation ID for tracing across services")
 
     # Relationships
-    call_id: Optional[UUID] = Field(
-        default=None, description="Associated call ID if applicable"
-    )
+    call_id: UUID | None = Field(default=None, description="Associated call ID if applicable")
 
-    participant_id: Optional[str] = Field(
+    participant_id: str | None = Field(
         default=None, description="Associated participant ID if applicable"
     )
 
     # Event data
-    event_data: Dict[str, Any] = Field(
-        default_factory=dict, description="Event payload data"
-    )
+    event_data: dict[str, Any] = Field(default_factory=dict, description="Event payload data")
 
     # Processing information
     status: EventStatus = Field(
         default=EventStatus.PENDING, description="Current processing status"
     )
 
-    severity: EventSeverity = Field(
-        default=EventSeverity.INFO, description="Event severity level"
-    )
+    severity: EventSeverity = Field(default=EventSeverity.INFO, description="Event severity level")
 
     # Timing
     occurred_at: datetime = Field(
         default_factory=datetime.utcnow, description="When the event occurred"
     )
 
-    processed_at: Optional[datetime] = Field(
-        default=None, description="When the event was processed"
-    )
+    processed_at: datetime | None = Field(default=None, description="When the event was processed")
 
     # Processing results
-    processing_duration_ms: Optional[int] = Field(
+    processing_duration_ms: int | None = Field(
         default=None, description="Time taken to process the event in milliseconds"
     )
 
-    retry_count: int = Field(
-        default=0, description="Number of processing retry attempts"
-    )
+    retry_count: int = Field(default=0, description="Number of processing retry attempts")
 
     # Error tracking
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None, description="Error message if processing failed"
     )
 
-    error_code: Optional[str] = Field(
-        default=None, description="Error code if processing failed"
-    )
+    error_code: str | None = Field(default=None, description="Error code if processing failed")
 
     # Metadata
-    metadata: Dict = Field(
-        default_factory=dict, description="Additional event metadata"
-    )
+    metadata: dict = Field(default_factory=dict, description="Additional event metadata")
 
 
 class EventHistory(TimestampedModel):
@@ -135,43 +117,31 @@ class EventHistory(TimestampedModel):
         default_factory=datetime.utcnow, description="When processing started"
     )
 
-    completed_at: Optional[datetime] = Field(
-        default=None, description="When processing completed"
-    )
+    completed_at: datetime | None = Field(default=None, description="When processing completed")
 
-    duration_ms: Optional[int] = Field(
-        default=None, description="Processing duration in milliseconds"
-    )
+    duration_ms: int | None = Field(default=None, description="Processing duration in milliseconds")
 
     # Results
-    result_data: Optional[Dict[str, Any]] = Field(
-        default=None, description="Processing result data"
-    )
+    result_data: dict[str, Any] | None = Field(default=None, description="Processing result data")
 
     # Error tracking
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None, description="Error message if processing failed"
     )
 
-    error_code: Optional[str] = Field(
-        default=None, description="Error code if processing failed"
-    )
+    error_code: str | None = Field(default=None, description="Error code if processing failed")
 
-    error_details: Optional[Dict] = Field(
+    error_details: dict | None = Field(
         default=None, description="Detailed error information for debugging"
     )
 
     # Context
-    handler_name: Optional[str] = Field(
+    handler_name: str | None = Field(
         default=None,
         description="Name of the event handler that processed this attempt",
     )
 
-    handler_version: Optional[str] = Field(
-        default=None, description="Version of the event handler"
-    )
+    handler_version: str | None = Field(default=None, description="Version of the event handler")
 
     # Metadata
-    metadata: Dict = Field(
-        default_factory=dict, description="Additional processing metadata"
-    )
+    metadata: dict = Field(default_factory=dict, description="Additional processing metadata")

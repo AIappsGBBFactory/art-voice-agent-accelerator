@@ -13,39 +13,32 @@ This handler provides call lifecycle operations with:
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import time
-from typing import Any, Dict, Optional, List
 from datetime import datetime
+from typing import Any
 
+from apps.artagent.backend.src.services.acs.call_transfer import (
+    transfer_call as transfer_call_service,
+)
 from azure.core.exceptions import HttpResponseError
 from azure.core.messaging import CloudEvent
+from config import (
+    ACS_STREAMING_MODE,
+    ENABLE_ACS_CALL_RECORDING,
+)
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-
-from config import (
-    ACS_STREAMING_MODE,
-    ENABLE_ACS_CALL_RECORDING,
-    GREETING,
-    GREETING_VOICE_TTS,
-)
-from apps.artagent.backend.src.ws_helpers.shared_ws import broadcast_message
-
 from src.enums.stream_modes import StreamMode
 from src.stateful.state_managment import MemoManager
-
 from utils.ml_logging import get_logger
+
+from ..events import get_call_event_processor
 
 # V1 API specific imports
 # Note: MediaHandler now supports both ACS and Browser via TransportType
-from .media_handler import MediaHandler, MediaHandlerConfig, TransportType, ACSMediaHandler
-from ..events import get_call_event_processor
-from apps.artagent.backend.src.services.acs.call_transfer import transfer_call as transfer_call_service
-
 
 logger = get_logger("v1.api.handlers.acs_lifecycle")
 tracer = trace.get_tracer(__name__)
@@ -74,7 +67,7 @@ def safe_set_span_attributes(span, attributes: dict) -> None:
         logger.debug(f"Failed to set span attributes: {e}")
 
 
-def _safe_get_event_data(event: CloudEvent) -> Dict[str, Any]:
+def _safe_get_event_data(event: CloudEvent) -> dict[str, Any]:
     """
     Safely extract data from CloudEvent object as a dictionary.
 
@@ -113,15 +106,11 @@ def _safe_get_event_data(event: CloudEvent) -> Dict[str, Any]:
             return data.__dict__
 
         # Last resort: return empty dict
-        logger.warning(
-            f"Unexpected CloudEvent data type: {type(data)}, returning empty dict"
-        )
+        logger.warning(f"Unexpected CloudEvent data type: {type(data)}, returning empty dict")
         return {}
 
     except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-        logger.error(
-            f"Error parsing CloudEvent data: {e}, data type: {type(event.data)}"
-        )
+        logger.error(f"Error parsing CloudEvent data: {e}, data type: {type(event.data)}")
         return {}
 
 
@@ -166,7 +155,7 @@ class ACSLifecycleHandler:
         self,
         event_type: str,
         call_connection_id: str,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         redis_mgr=None,
     ) -> None:
         """
@@ -188,6 +177,7 @@ class ACSLifecycleHandler:
         """
         try:
             from azure.core.messaging import CloudEvent
+
             from ..events import get_call_event_processor
 
             # Create mock request state for event processing
@@ -216,13 +206,13 @@ class ACSLifecycleHandler:
         call_connection_id: str,
         target: str,
         *,
-        operation_context: Optional[str] = None,
-        operation_callback_url: Optional[str] = None,
-        transferee: Optional[str] = None,
-        sip_headers: Optional[Dict[str, str]] = None,
-        voip_headers: Optional[Dict[str, str]] = None,
-        source_caller_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        operation_context: str | None = None,
+        operation_callback_url: str | None = None,
+        transferee: str | None = None,
+        sip_headers: dict[str, str] | None = None,
+        voip_headers: dict[str, str] | None = None,
+        source_caller_id: str | None = None,
+    ) -> dict[str, Any]:
         """Transfer the specified ACS call to a new participant."""
 
         result = await transfer_call_service(
@@ -257,8 +247,8 @@ class ACSLifecycleHandler:
         call_id: str = None,
         browser_session_id: str = None,  # NEW: Browser session ID for UI coordination
         stream_mode: StreamMode | None = None,
-        record_call: Optional[bool] = None,
-    ) -> Dict[str, Any]:
+        record_call: bool | None = None,
+    ) -> dict[str, Any]:
         """
         Initiate an outbound call with orchestrator support.
 
@@ -283,9 +273,7 @@ class ACSLifecycleHandler:
             raise HTTPException(503, "ACS Caller not initialised")
 
         effective_stream_mode = stream_mode or ACS_STREAMING_MODE
-        recording_enabled = (
-            record_call if record_call is not None else ENABLE_ACS_CALL_RECORDING
-        )
+        recording_enabled = record_call if record_call is not None else ENABLE_ACS_CALL_RECORDING
 
         with tracer.start_as_current_span(
             "v1.acs_lifecycle.start_outbound_call",
@@ -368,11 +356,9 @@ class ACSLifecycleHandler:
                         await redis_mgr.set_value_async(
                             f"call_session_map:{call_id}",
                             browser_session_id,
-                            ttl_seconds=3600*24,  # Expire after 24 hours
+                            ttl_seconds=3600 * 24,  # Expire after 24 hours
                         )
-                        logger.info(
-                            f"🔗 Stored session mapping: {call_id} -> {browser_session_id}"
-                        )
+                        logger.info(f"🔗 Stored session mapping: {call_id} -> {browser_session_id}")
                     except Exception as e:
                         logger.warning(f"Failed to store session mapping: {e}")
 
@@ -393,9 +379,7 @@ class ACSLifecycleHandler:
                 )
 
                 span.set_status(Status(StatusCode.OK))
-                logger.info(
-                    f"✅ Call initiated successfully: {call_id} (latency: {latency:.3f}s)"
-                )
+                logger.info(f"✅ Call initiated successfully: {call_id} (latency: {latency:.3f}s)")
 
                 return {
                     "status": "success",
@@ -448,10 +432,10 @@ class ACSLifecycleHandler:
 
     async def accept_inbound_call(
         self,
-        request_body: Dict[str, Any],
+        request_body: dict[str, Any],
         acs_caller,
         redis_mgr=None,
-        record_call: Optional[bool] = None,
+        record_call: bool | None = None,
     ) -> JSONResponse:
         """
         Accept and process inbound call events.
@@ -489,9 +473,7 @@ class ACSLifecycleHandler:
                     event_data = event.get("data", {})
 
                     if event_type == "Microsoft.EventGrid.SubscriptionValidationEvent":
-                        return await self._handle_subscription_validation(
-                            event_data, span
-                        )
+                        return await self._handle_subscription_validation(event_data, span)
                     elif event_type == "Microsoft.Communication.IncomingCall":
                         return await self._handle_incoming_call(
                             event_data,
@@ -504,9 +486,7 @@ class ACSLifecycleHandler:
                         logger.info(f"📝 Ignoring unhandled event type: {event_type}")
 
                 # If no events were processed, return success
-                safe_set_span_attributes(
-                    span, {"operation.result": "no_processable_events"}
-                )
+                safe_set_span_attributes(span, {"operation.result": "no_processable_events"})
                 span.set_status(Status(StatusCode.OK))
                 return JSONResponse({"status": "no events processed"}, status_code=200)
 
@@ -525,7 +505,7 @@ class ACSLifecycleHandler:
                 raise HTTPException(400, "Invalid request body") from exc
 
     async def _handle_subscription_validation(
-        self, event_data: Dict[str, Any], span
+        self, event_data: dict[str, Any], span
     ) -> JSONResponse:
         """
         Handle Event Grid subscription validation.
@@ -552,11 +532,11 @@ class ACSLifecycleHandler:
 
     async def _handle_incoming_call(
         self,
-        event_data: Dict[str, Any],
+        event_data: dict[str, Any],
         acs_caller,
         span,
         redis_mgr=None,
-        record_call: Optional[bool] = None,
+        record_call: bool | None = None,
     ) -> JSONResponse:
         """
         Handle incoming call event.
@@ -588,9 +568,7 @@ class ACSLifecycleHandler:
             },
         )
 
-        recording_enabled = (
-            record_call if record_call is not None else ENABLE_ACS_CALL_RECORDING
-        )
+        recording_enabled = record_call if record_call is not None else ENABLE_ACS_CALL_RECORDING
 
         logger.info(
             f"Answering incoming call from {caller_id} | recording_enabled={recording_enabled}"
@@ -653,7 +631,7 @@ class ACSLifecycleHandler:
             status_code=200,
         )
 
-    def _extract_caller_id(self, caller_info: Dict[str, Any]) -> str:
+    def _extract_caller_id(self, caller_info: dict[str, Any]) -> str:
         """
         Extract caller ID from caller information.
 
@@ -670,7 +648,7 @@ class ACSLifecycleHandler:
         self,
         events: list,
         request,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """
         Process runtime call events through the V1 event system.
 
@@ -683,8 +661,9 @@ class ACSLifecycleHandler:
         :return: Processing status and metadata
         :rtype: Dict[str, str]
         """
-        from ..events import get_call_event_processor, register_default_handlers
         from azure.core.messaging import CloudEvent
+
+        from ..events import register_default_handlers
 
         with tracer.start_as_current_span(
             "v1.acs_lifecycle.process_call_events",
@@ -726,9 +705,7 @@ class ACSLifecycleHandler:
                         cloud_events.append(cloud_event)
                     elif isinstance(event, dict):
                         # Convert dict to CloudEvent
-                        event_type = event.get("eventType") or event.get(
-                            "type", "Unknown"
-                        )
+                        event_type = event.get("eventType") or event.get("type", "Unknown")
                         cloud_event = CloudEvent(
                             source="azure.communication.callautomation",
                             type=event_type,
@@ -783,7 +760,7 @@ class ACSLifecycleHandler:
 
 
 # Utility functions for ACS operations
-def get_participant_phone(event: CloudEvent, cm: MemoManager) -> Optional[str]:
+def get_participant_phone(event: CloudEvent, cm: MemoManager) -> str | None:
     """
     Extract participant phone number from event.
 
@@ -795,7 +772,7 @@ def get_participant_phone(event: CloudEvent, cm: MemoManager) -> Optional[str]:
     :rtype: Optional[str]
     """
 
-    def digits_tail(s: Optional[str], n: int = 10) -> str:
+    def digits_tail(s: str | None, n: int = 10) -> str:
         return "".join(ch for ch in (s or "") if ch.isdigit())[-n:]
 
     participants = _get_event_field(event, "participants", []) or []
@@ -831,18 +808,18 @@ def create_enterprise_media_handler(
     websocket,
     orchestrator: callable,  # Deprecated - ignored
     call_connection_id: str,
-    recognizer,  # Deprecated - ignored  
+    recognizer,  # Deprecated - ignored
     cm: MemoManager,  # Deprecated - ignored
     session_id: str,
-    stream_mode: Optional[StreamMode] = None,
+    stream_mode: StreamMode | None = None,
 ) -> None:
     """
     Factory function for creating media handlers.
-    
+
     .. deprecated:: v1.5.0
         This function uses a legacy signature and is no longer functional.
         Use MediaHandler.create() instead:
-        
+
             config = MediaHandlerConfig(
                 websocket=websocket,
                 session_id=session_id,
@@ -862,6 +839,7 @@ def create_enterprise_media_handler(
     :return: None - this function no longer works
     """
     import warnings
+
     warnings.warn(
         "create_enterprise_media_handler is deprecated. "
         "Use MediaHandler.create() instead. See docstring for migration guide.",

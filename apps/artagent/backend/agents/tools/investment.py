@@ -8,8 +8,8 @@ Tools for retirement accounts, 401k rollovers, and investment guidance.
 from __future__ import annotations
 
 import random
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List
+from datetime import datetime
+from typing import Any
 
 from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
@@ -21,7 +21,7 @@ logger = get_logger("agents.tools.investment")
 # SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-get_retirement_accounts_schema: Dict[str, Any] = {
+get_retirement_accounts_schema: dict[str, Any] = {
     "name": "get_retirement_accounts",
     "description": (
         "Get summary of customer's retirement accounts including IRA, 401k, and other qualified accounts."
@@ -35,7 +35,7 @@ get_retirement_accounts_schema: Dict[str, Any] = {
     },
 }
 
-get_401k_details_schema: Dict[str, Any] = {
+get_401k_details_schema: dict[str, Any] = {
     "name": "get_401k_details",
     "description": (
         "Get detailed information about a specific 401k account including vesting, "
@@ -51,7 +51,7 @@ get_401k_details_schema: Dict[str, Any] = {
     },
 }
 
-get_rollover_options_schema: Dict[str, Any] = {
+get_rollover_options_schema: dict[str, Any] = {
     "name": "get_rollover_options",
     "description": (
         "Get available rollover options for 401k or other retirement accounts. "
@@ -72,7 +72,7 @@ get_rollover_options_schema: Dict[str, Any] = {
     },
 }
 
-calculate_tax_impact_schema: Dict[str, Any] = {
+calculate_tax_impact_schema: dict[str, Any] = {
     "name": "calculate_tax_impact",
     "description": (
         "Calculate potential tax implications of retirement account actions "
@@ -94,11 +94,9 @@ calculate_tax_impact_schema: Dict[str, Any] = {
     },
 }
 
-search_rollover_guidance_schema: Dict[str, Any] = {
+search_rollover_guidance_schema: dict[str, Any] = {
     "name": "search_rollover_guidance",
-    "description": (
-        "Search knowledge base for rollover guidance, rules, and best practices."
-    ),
+    "description": ("Search knowledge base for rollover guidance, rules, and best practices."),
     "parameters": {
         "type": "object",
         "properties": {
@@ -108,7 +106,7 @@ search_rollover_guidance_schema: Dict[str, Any] = {
     },
 }
 
-get_account_routing_info_schema: Dict[str, Any] = {
+get_account_routing_info_schema: dict[str, Any] = {
     "name": "get_account_routing_info",
     "description": (
         "Get routing and account information needed for direct rollovers or transfers."
@@ -127,7 +125,7 @@ get_account_routing_info_schema: Dict[str, Any] = {
     },
 }
 
-schedule_advisor_consultation_schema: Dict[str, Any] = {
+schedule_advisor_consultation_schema: dict[str, Any] = {
     "name": "schedule_advisor_consultation",
     "description": (
         "Schedule a consultation with a licensed financial advisor for complex investment decisions."
@@ -209,18 +207,19 @@ _ROLLOVER_KNOWLEDGE = {
 # EXECUTORS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def get_retirement_accounts(args: Dict[str, Any]) -> Dict[str, Any]:
+
+async def get_retirement_accounts(args: dict[str, Any]) -> dict[str, Any]:
     """Get retirement account summary."""
     client_id = (args.get("client_id") or "").strip()
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     accounts = _MOCK_RETIREMENT_ACCOUNTS.get(client_id, [])
     total_balance = sum(a.get("balance", 0) for a in accounts)
-    
+
     logger.info("💰 Retirement accounts retrieved: %s - %d accounts", client_id, len(accounts))
-    
+
     return {
         "success": True,
         "accounts": accounts,
@@ -229,14 +228,14 @@ async def get_retirement_accounts(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def get_401k_details(args: Dict[str, Any]) -> Dict[str, Any]:
+async def get_401k_details(args: dict[str, Any]) -> dict[str, Any]:
     """Get detailed 401k information."""
     client_id = (args.get("client_id") or "").strip()
     account_id = (args.get("account_id") or "").strip()
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     accounts = _MOCK_RETIREMENT_ACCOUNTS.get(client_id, [])
     for acct in accounts:
         if "401" in acct.get("type", "").lower():
@@ -251,19 +250,19 @@ async def get_401k_details(args: Dict[str, Any]) -> Dict[str, Any]:
                 "vesting_schedule": "100% vested",
                 "loan_outstanding": 0,
             }
-    
+
     return {"success": False, "message": "No 401k account found."}
 
 
-async def get_rollover_options(args: Dict[str, Any]) -> Dict[str, Any]:
+async def get_rollover_options(args: dict[str, Any]) -> dict[str, Any]:
     """Get available rollover options."""
     client_id = (args.get("client_id") or "").strip()
     source_type = (args.get("source_account_type") or "401k").strip()
     balance = args.get("balance", 0)
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     options = [
         {
             "option": "Direct Rollover to Traditional IRA",
@@ -273,7 +272,9 @@ async def get_rollover_options(args: Dict[str, Any]) -> Dict[str, Any]:
         },
         {
             "option": "Direct Rollover to Roth IRA",
-            "tax_impact": f"Income tax on ~${balance:,.0f}" if balance else "Income tax on full amount",
+            "tax_impact": (
+                f"Income tax on ~${balance:,.0f}" if balance else "Income tax on full amount"
+            ),
             "advantages": ["Tax-free growth", "No RMDs", "Tax-free withdrawals"],
             "considerations": ["Pay taxes now", "5-year rule for conversions"],
         },
@@ -290,7 +291,7 @@ async def get_rollover_options(args: Dict[str, Any]) -> Dict[str, Any]:
             "considerations": ["Only if new employer accepts rollovers"],
         },
     ]
-    
+
     return {
         "success": True,
         "source_type": source_type,
@@ -300,23 +301,23 @@ async def get_rollover_options(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def calculate_tax_impact(args: Dict[str, Any]) -> Dict[str, Any]:
+async def calculate_tax_impact(args: dict[str, Any]) -> dict[str, Any]:
     """Calculate tax implications."""
     action_type = (args.get("action_type") or "").strip()
     amount = args.get("amount", 0)
     age = args.get("age", 50)
-    
+
     if not action_type or not amount:
         return {"success": False, "message": "action_type and amount required."}
-    
+
     # Simplified tax calculation
     estimated_tax_rate = 0.24  # Assume 24% bracket
     penalty_rate = 0.10 if age < 59.5 and action_type == "withdrawal" else 0
-    
+
     federal_tax = amount * estimated_tax_rate
     penalty = amount * penalty_rate
     state_tax = amount * 0.05  # Assume 5% state
-    
+
     return {
         "success": True,
         "action": action_type,
@@ -330,35 +331,37 @@ async def calculate_tax_impact(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def search_rollover_guidance(args: Dict[str, Any]) -> Dict[str, Any]:
+async def search_rollover_guidance(args: dict[str, Any]) -> dict[str, Any]:
     """Search rollover knowledge base."""
     query = (args.get("query") or "").strip().lower()
-    
+
     if not query:
         return {"success": False, "message": "query is required."}
-    
+
     results = []
     for key, content in _ROLLOVER_KNOWLEDGE.items():
         if any(word in key or word in content.lower() for word in query.split()):
             results.append({"topic": key.replace("_", " ").title(), "content": content})
-    
+
     if not results:
-        results.append({
-            "topic": "General Rollover Info",
-            "content": "For specific rollover questions, I recommend scheduling a consultation with an advisor.",
-        })
-    
+        results.append(
+            {
+                "topic": "General Rollover Info",
+                "content": "For specific rollover questions, I recommend scheduling a consultation with an advisor.",
+            }
+        )
+
     return {"success": True, "results": results}
 
 
-async def get_account_routing_info(args: Dict[str, Any]) -> Dict[str, Any]:
+async def get_account_routing_info(args: dict[str, Any]) -> dict[str, Any]:
     """Get routing information for transfers."""
     account_type = (args.get("account_type") or "traditional_ira").strip()
     client_id = (args.get("client_id") or "").strip()
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     return {
         "success": True,
         "account_type": account_type,
@@ -373,20 +376,20 @@ async def get_account_routing_info(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def schedule_advisor_consultation(args: Dict[str, Any]) -> Dict[str, Any]:
+async def schedule_advisor_consultation(args: dict[str, Any]) -> dict[str, Any]:
     """Schedule advisor consultation."""
     client_id = (args.get("client_id") or "").strip()
     topic = (args.get("topic") or "").strip()
     preferred_time = (args.get("preferred_time") or "").strip()
     advisor_type = (args.get("advisor_type") or "general").strip()
-    
+
     if not client_id or not topic:
         return {"success": False, "message": "client_id and topic required."}
-    
+
     appointment_id = f"APT-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    
+
     logger.info("📅 Advisor consultation scheduled: %s - topic: %s", client_id, topic)
-    
+
     return {
         "success": True,
         "scheduled": True,
@@ -407,10 +410,45 @@ async def schedule_advisor_consultation(args: Dict[str, Any]) -> Dict[str, Any]:
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-register_tool("get_retirement_accounts", get_retirement_accounts_schema, get_retirement_accounts, tags={"investment", "retirement"})
-register_tool("get_401k_details", get_401k_details_schema, get_401k_details, tags={"investment", "retirement", "401k"})
-register_tool("get_rollover_options", get_rollover_options_schema, get_rollover_options, tags={"investment", "retirement", "rollover"})
-register_tool("calculate_tax_impact", calculate_tax_impact_schema, calculate_tax_impact, tags={"investment", "tax"})
-register_tool("search_rollover_guidance", search_rollover_guidance_schema, search_rollover_guidance, tags={"investment", "knowledge"})
-register_tool("get_account_routing_info", get_account_routing_info_schema, get_account_routing_info, tags={"investment", "transfer"})
-register_tool("schedule_advisor_consultation", schedule_advisor_consultation_schema, schedule_advisor_consultation, tags={"investment", "scheduling"})
+register_tool(
+    "get_retirement_accounts",
+    get_retirement_accounts_schema,
+    get_retirement_accounts,
+    tags={"investment", "retirement"},
+)
+register_tool(
+    "get_401k_details",
+    get_401k_details_schema,
+    get_401k_details,
+    tags={"investment", "retirement", "401k"},
+)
+register_tool(
+    "get_rollover_options",
+    get_rollover_options_schema,
+    get_rollover_options,
+    tags={"investment", "retirement", "rollover"},
+)
+register_tool(
+    "calculate_tax_impact",
+    calculate_tax_impact_schema,
+    calculate_tax_impact,
+    tags={"investment", "tax"},
+)
+register_tool(
+    "search_rollover_guidance",
+    search_rollover_guidance_schema,
+    search_rollover_guidance,
+    tags={"investment", "knowledge"},
+)
+register_tool(
+    "get_account_routing_info",
+    get_account_routing_info_schema,
+    get_account_routing_info,
+    tags={"investment", "transfer"},
+)
+register_tool(
+    "schedule_advisor_consultation",
+    schedule_advisor_consultation_schema,
+    schedule_advisor_consultation,
+    tags={"investment", "scheduling"},
+)

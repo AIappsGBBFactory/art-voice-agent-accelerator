@@ -1,7 +1,6 @@
 import types
 
 import pytest
-
 from apps.artagent.backend.api.v1.endpoints import demo_env
 from apps.artagent.backend.api.v1.endpoints.demo_env import DemoUserProfile
 

@@ -18,7 +18,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
@@ -30,35 +30,36 @@ logger = get_logger("agents.tools.customer_intelligence")
 # CUSTOMER INTELLIGENCE RETRIEVAL
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 async def get_customer_intelligence(
-    client_id: Optional[str] = None,
-    caller_phone: Optional[str] = None,
-    session_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    client_id: str | None = None,
+    caller_phone: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
     """
     Retrieve customer intelligence for personalized interactions.
-    
+
     In production, this would call the customer data platform or CRM.
     Currently returns mock data for development.
-    
+
     Args:
         client_id: Customer's unique identifier
         caller_phone: Caller's phone number for lookup
         session_id: Current session ID for context
-        
+
     Returns:
         Customer intelligence dictionary
     """
     # TODO: Integrate with actual customer data platform
     # For now, return mock data that demonstrates the structure
-    
+
     if not client_id and not caller_phone:
         return {
             "success": False,
             "error": "No customer identifier provided",
             "customer_intelligence": None,
         }
-    
+
     # Mock customer intelligence
     mock_intelligence = {
         "relationship_context": {
@@ -88,7 +89,7 @@ async def get_customer_intelligence(
         "active_alerts": [],
         "segment": "high_net_worth",
     }
-    
+
     return {
         "success": True,
         "customer_intelligence": mock_intelligence,
@@ -125,7 +126,7 @@ CUSTOMER_INTELLIGENCE_SCHEMA = {
 }
 
 
-async def _execute_customer_intelligence(args: Dict[str, Any]) -> Dict[str, Any]:
+async def _execute_customer_intelligence(args: dict[str, Any]) -> dict[str, Any]:
     """Tool executor wrapper."""
     return await get_customer_intelligence(
         client_id=args.get("client_id"),

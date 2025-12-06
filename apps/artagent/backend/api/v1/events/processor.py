@@ -9,15 +9,15 @@ Focuses on call correlation and handler registration without complex middleware.
 import asyncio
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set
-from azure.core.messaging import CloudEvent
+from typing import Any
 
+from azure.core.messaging import CloudEvent
+from config import AZURE_STORAGE_CONTAINER_URL, ENABLE_ACS_CALL_RECORDING
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
-
-from config import ENABLE_ACS_CALL_RECORDING, AZURE_STORAGE_CONTAINER_URL
 from utils.ml_logging import get_logger
-from .types import CallEventContext, CallEventHandler, ACSEventTypes, RecordingPreferences
+
+from .types import ACSEventTypes, CallEventContext, CallEventHandler, RecordingPreferences
 
 logger = get_logger("v1.events.processor")
 tracer = trace.get_tracer(__name__)
@@ -36,14 +36,14 @@ class CallEventProcessor:
 
     def __init__(self):
         # Event handlers by event type
-        self._handlers: Dict[str, List[CallEventHandler]] = defaultdict(list)
+        self._handlers: dict[str, list[CallEventHandler]] = defaultdict(list)
 
         # Active calls being tracked
-        self._active_calls: Set[str] = set()
+        self._active_calls: set[str] = set()
 
         # Recording state tracking
         self._recording_lock = asyncio.Lock()
-        self._recordings_started: Set[str] = set()
+        self._recordings_started: set[str] = set()
 
         # Simple metrics
         self._stats = {
@@ -71,8 +71,8 @@ class CallEventProcessor:
                 "event_type": event_type,
                 "handler_name": handler_name,
                 "total_handlers": len(self._handlers[event_type]),
-                "handler_count_by_type": {k: len(v) for k, v in self._handlers.items()}
-            }
+                "handler_count_by_type": {k: len(v) for k, v in self._handlers.items()},
+            },
         )
 
     def unregister_handler(self, event_type: str, handler: CallEventHandler) -> bool:
@@ -95,9 +95,7 @@ class CallEventProcessor:
                 pass
         return False
 
-    async def process_events(
-        self, events: List[CloudEvent], request_state: Any
-    ) -> Dict[str, Any]:
+    async def process_events(self, events: list[CloudEvent], request_state: Any) -> dict[str, Any]:
         """
         Process a list of CloudEvents from ACS webhook.
 
@@ -127,9 +125,7 @@ class CallEventProcessor:
             self._stats["events_processed"] += processed_count
             self._stats["events_failed"] += failed_count
 
-            logger.debug(
-                f"✅ Processed {processed_count}/{len(events)} events successfully"
-            )
+            logger.debug(f"✅ Processed {processed_count}/{len(events)} events successfully")
 
             return {
                 "status": "success" if failed_count == 0 else "partial_failure",
@@ -138,9 +134,7 @@ class CallEventProcessor:
                 "timestamp": time.time(),
             }
 
-    async def _process_single_event(
-        self, event: CloudEvent, request_state: Any
-    ) -> None:
+    async def _process_single_event(self, event: CloudEvent, request_state: Any) -> None:
         """
         Process a single CloudEvent.
 
@@ -175,7 +169,7 @@ class CallEventProcessor:
         # Execute all handlers for this event type
         await self._execute_handlers(handlers, context)
 
-    def _extract_call_connection_id(self, event: CloudEvent) -> Optional[str]:
+    def _extract_call_connection_id(self, event: CloudEvent) -> str | None:
         """
         Extract call connection ID from CloudEvent.
 
@@ -237,7 +231,7 @@ class CallEventProcessor:
         )
 
     async def _execute_handlers(
-        self, handlers: List[CallEventHandler], context: CallEventContext
+        self, handlers: list[CallEventHandler], context: CallEventContext
     ) -> None:
         """
         Execute all handlers for an event with error isolation.
@@ -265,13 +259,11 @@ class CallEventProcessor:
             except Exception as e:
                 failed += 1
                 handler_name = getattr(handler, "__name__", handler.__class__.__name__)
-                logger.error(
-                    f"❌ Handler {handler_name} failed for {context.event_type}: {e}"
-                )
+                logger.error(f"❌ Handler {handler_name} failed for {context.event_type}: {e}")
 
         logger.debug(f"Handler execution: {successful} successful, {failed} failed")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get processor statistics.
 
@@ -281,13 +273,11 @@ class CallEventProcessor:
         return {
             **self._stats,
             "active_calls": len(self._active_calls),
-            "registered_handlers": sum(
-                len(handlers) for handlers in self._handlers.values()
-            ),
+            "registered_handlers": sum(len(handlers) for handlers in self._handlers.values()),
             "event_types": list(self._handlers.keys()),
         }
 
-    def get_active_calls(self) -> Set[str]:
+    def get_active_calls(self) -> set[str]:
         """
         Get set of currently active call connection IDs.
 
@@ -302,7 +292,7 @@ class CallEventProcessor:
         """Start ACS call recording when enabled via feature toggle."""
 
         recording_preferences = getattr(request_state, "recording_preferences", None)
-        recording_requested: Optional[bool] = None
+        recording_requested: bool | None = None
         if isinstance(recording_preferences, RecordingPreferences):
             recording_requested = recording_preferences.enabled
         elif isinstance(recording_preferences, dict):
@@ -370,12 +360,10 @@ class CallEventProcessor:
                 call_connection = acs_caller.get_call_connection(call_connection_id)
                 if call_connection:
                     try:
-                        properties = await asyncio.to_thread(
-                            call_connection.get_call_properties
+                        properties = await asyncio.to_thread(call_connection.get_call_properties)
+                        server_call_id = getattr(properties, "server_call_id", None) or getattr(
+                            properties, "serverCallId", None
                         )
-                        server_call_id = getattr(
-                            properties, "server_call_id", None
-                        ) or getattr(properties, "serverCallId", None)
                     except Exception as exc:
                         logger.debug(
                             "Failed to fetch serverCallId from call properties",
@@ -430,7 +418,7 @@ class CallEventProcessor:
 
 
 # Global processor instance
-_global_processor: Optional[CallEventProcessor] = None
+_global_processor: CallEventProcessor | None = None
 
 
 def get_call_event_processor() -> CallEventProcessor:

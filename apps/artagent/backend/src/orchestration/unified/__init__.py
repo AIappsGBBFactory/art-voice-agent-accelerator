@@ -17,7 +17,7 @@ Key differences from legacy:
 Usage:
     # In media_handler.py, replace:
     from apps.artagent.backend.src.orchestration.artagent.orchestrator import route_turn
-    
+
     # With:
     from apps.artagent.backend.src.orchestration.unified.orchestrator import route_turn
 """
@@ -30,9 +30,13 @@ import uuid
 from collections import deque
 from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
-from fastapi import WebSocket
-from opentelemetry import trace
-
+from apps.artagent.backend.src.orchestration.session_agents import (
+    get_session_agent,
+    register_adapter_update_callback,
+)
+from apps.artagent.backend.src.utils.tracing import (
+    create_service_handler_attrs,
+)
 from apps.artagent.backend.voice import (
     CascadeOrchestratorAdapter,
     OrchestratorContext,
@@ -45,28 +49,23 @@ from apps.artagent.backend.voice.voicelive.tool_helpers import (
     push_tool_end,
     push_tool_start,
 )
-from apps.artagent.backend.src.utils.tracing import (
-    create_service_handler_attrs,
-)
-from apps.artagent.backend.src.orchestration.session_agents import (
-    get_session_agent,
-    register_adapter_update_callback,
-)
+from fastapi import WebSocket
+from opentelemetry import trace
 from utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
 if TYPE_CHECKING:
-    from src.stateful.state_managment import MemoManager
     from apps.artagent.backend.agents.base import UnifiedAgent
+    from src.stateful.state_managment import MemoManager
 
 
 # Module-level adapter cache (per session)
 _adapters: dict[str, CascadeOrchestratorAdapter] = {}
 _STREAM_CACHE_ATTR = "_assistant_stream_cache"
 
-_AGENT_LABELS: Dict[str, str] = {
+_AGENT_LABELS: dict[str, str] = {
     "FraudAgent": "Fraud Specialist",
     "ComplianceDesk": "Compliance Specialist",
     "AuthAgent": "Auth Agent",
@@ -79,7 +78,7 @@ _AGENT_LABELS: Dict[str, str] = {
 }
 
 
-def _resolve_agent_label(agent_name: Optional[str]) -> str:
+def _resolve_agent_label(agent_name: str | None) -> str:
     if not agent_name:
         return "Assistant"
     return _AGENT_LABELS.get(agent_name, agent_name)
@@ -109,16 +108,16 @@ def _parse_tool_arguments(raw: object) -> dict:
     return {"value": raw}
 
 
-def _get_correlation_context(ws: WebSocket, cm: "MemoManager") -> Tuple[str, str]:
+def _get_correlation_context(ws: WebSocket, cm: MemoManager) -> tuple[str, str]:
     """Extract call_connection_id and session_id from WebSocket and MemoManager."""
     call_connection_id = getattr(ws.state, "call_connection_id", None)
     if not call_connection_id:
         call_connection_id = getattr(cm, "call_connection_id", None) or ""
-    
+
     session_id = getattr(cm, "session_id", None)
     if not session_id:
         session_id = getattr(ws.state, "session_id", None) or ""
-    
+
     return call_connection_id, session_id
 
 
@@ -129,22 +128,22 @@ def _get_or_create_adapter(
 ) -> CascadeOrchestratorAdapter:
     """
     Get or create a CascadeOrchestratorAdapter for the session.
-    
+
     Uses app_state to get pre-loaded unified agents and scenario config.
     Also injects any pre-existing session agent from Agent Builder.
     """
     if session_id in _adapters:
         return _adapters[session_id]
-    
+
     # Create adapter using app.state config
     adapter = get_cascade_orchestrator(
         app_state=app_state,
         call_connection_id=call_connection_id,
         session_id=session_id,
     )
-    
+
     _adapters[session_id] = adapter
-    
+
     # Check for pre-existing session agent (created via Agent Builder before call started)
     session_agent = get_session_agent(session_id)
     if session_agent:
@@ -156,7 +155,7 @@ def _get_or_create_adapter(
             session_agent.name,
             session_agent.voice.name if session_agent.voice else None,
         )
-    
+
     logger.info(
         "Created CascadeOrchestratorAdapter",
         extra={
@@ -165,7 +164,7 @@ def _get_or_create_adapter(
             "agent_count": len(adapter.agents),
         },
     )
-    
+
     return adapter
 
 
@@ -176,18 +175,18 @@ def cleanup_adapter(session_id: str) -> None:
         logger.debug("Cleaned up adapter for session: %s", session_id)
 
 
-def update_session_agent(session_id: str, agent: "UnifiedAgent") -> bool:
+def update_session_agent(session_id: str, agent: UnifiedAgent) -> bool:
     """
     Update or inject a dynamic agent into the session's orchestrator adapter.
-    
+
     This is the single integration point for Agent Builder updates.
     When called, the agent is injected directly into the adapter's agents dict,
     ensuring all downstream voice/model/prompt lookups use the updated config.
-    
+
     Args:
         session_id: The session to update
         agent: The UnifiedAgent with updated configuration
-        
+
     Returns:
         True if adapter was found and updated, False if no active adapter exists
     """
@@ -197,16 +196,16 @@ def update_session_agent(session_id: str, agent: "UnifiedAgent") -> bool:
             session_id,
         )
         return False
-    
+
     adapter = _adapters[session_id]
-    
+
     # Inject/update the agent in the adapter's agents dict
     # Use a special key for the session agent so it doesn't conflict with base agents
     adapter.agents[agent.name] = agent
-    
+
     # If this is meant to be the active agent, update the adapter's active agent
     adapter._active_agent = agent.name
-    
+
     logger.info(
         "🔄 Session agent updated in adapter | session=%s agent=%s voice=%s model=%s",
         session_id,
@@ -214,7 +213,7 @@ def update_session_agent(session_id: str, agent: "UnifiedAgent") -> bool:
         agent.voice.name if agent.voice else None,
         agent.model.deployment_id if agent.model else None,
     )
-    
+
     return True
 
 
@@ -223,33 +222,33 @@ register_adapter_update_callback(update_session_agent)
 
 
 async def route_turn(
-    cm: "MemoManager",
+    cm: MemoManager,
     transcript: str,
     ws: WebSocket,
     *,
     is_acs: bool,
-) -> Optional[str]:
+) -> str | None:
     """
     Handle one user turn using unified agents.
-    
+
     This is a drop-in replacement for the legacy route_turn function.
-    
+
     Args:
         cm: MemoManager with conversation state
         transcript: User's speech transcript
         ws: WebSocket connection
         is_acs: Whether this is an ACS call
-        
+
     Returns:
         Response text (or None if streamed via callbacks)
     """
     if cm is None:
         logger.error("❌ MemoManager (cm) is None - cannot process orchestration")
         raise ValueError("MemoManager (cm) parameter cannot be None")
-    
+
     # Extract correlation context
     call_connection_id, session_id = _get_correlation_context(ws, cm)
-    
+
     # Generate run_id for latency tracking
     try:
         run_id = ws.state.lt.begin_run(label="turn")
@@ -257,17 +256,17 @@ async def route_turn(
             ws.state.lt.set_current_run(run_id)
     except Exception:
         run_id = uuid.uuid4().hex[:12]
-    
+
     # Store run_id in memory
     cm.set_corememory("current_run_id", run_id)
-    
+
     # Get or create orchestrator adapter
     app_state = ws.app.state
     adapter = _get_or_create_adapter(session_id, call_connection_id, app_state)
-    
+
     # Sync adapter state from MemoManager
     adapter.sync_from_memo_manager(cm)
-    
+
     # Create span attributes
     span_attrs = create_service_handler_attrs(
         service_name="unified_orchestrator",
@@ -279,13 +278,13 @@ async def route_turn(
         active_agent=adapter.current_agent or "unknown",
     )
     span_attrs["run.id"] = run_id
-    
+
     with tracer.start_as_current_span(
         "unified_orchestrator.route_turn",
         attributes=span_attrs,
     ) as span:
         redis_mgr = app_state.redis
-        
+
         try:
             # Build session context from MemoManager for prompt rendering
             active_agent = cm.get_value_from_corememory("active_agent") or adapter.current_agent
@@ -306,7 +305,7 @@ async def route_turn(
                 # Add agent_name for prompt templates - use current adapter agent
                 "agent_name": adapter.current_agent,
             }
-            
+
             # Build context for the orchestrator
             context = OrchestratorContext(
                 session_id=session_id,
@@ -316,21 +315,21 @@ async def route_turn(
                 conversation_history=_get_conversation_history(cm),
                 metadata=session_context,
             )
-            
+
             tool_invocations: dict[str, dict[str, float]] = {}
 
             # Define agent switch callback - emits agent_change envelope for UI cascade updates
             async def on_agent_switch(previous_agent: str, new_agent: str) -> None:
                 """Emit agent_change envelope and update voice configuration when handoff occurs."""
                 new_label = _resolve_agent_label(new_agent)
-                
+
                 # Update MemoManager with new agent
                 try:
                     cm.set_corememory("active_agent", new_agent)
                     cm.set_corememory("previous_agent", previous_agent)
                 except Exception:
                     pass
-                
+
                 # Get new agent's voice configuration for TTS updates
                 # Adapter.agents contains session agent overrides from Agent Builder
                 new_agent_config = adapter.agents.get(new_agent)
@@ -341,7 +340,7 @@ async def route_turn(
                     voice_name = new_agent_config.voice.name
                     voice_style = new_agent_config.voice.style
                     voice_rate = new_agent_config.voice.rate
-                
+
                 # Emit agent_change envelope for frontend UI (cascade updates)
                 envelope = make_envelope(
                     etype="event",
@@ -377,7 +376,7 @@ async def route_turn(
                     )
                 except Exception:
                     logger.debug("Failed to emit agent_change envelope", exc_info=True)
-            
+
             # Register agent switch callback on adapter
             adapter.set_on_agent_switch(on_agent_switch)
 
@@ -492,7 +491,7 @@ async def route_turn(
                     )
                 except Exception:
                     logger.debug("Failed to emit tool_end frame", exc_info=True)
-            
+
             # Process the turn
             result = await adapter.process_turn(
                 context,
@@ -500,17 +499,17 @@ async def route_turn(
                 on_tool_start=on_tool_start,
                 on_tool_end=on_tool_end,
             )
-            
+
             span.set_attribute("orchestrator.response_length", len(result.response_text or ""))
             span.set_attribute("orchestrator.agent", result.agent_name or "unknown")
-            
+
             if result.error:
                 span.set_attribute("orchestrator.error", result.error)
                 logger.warning(
                     "Orchestrator returned error",
                     extra={"error": result.error, "session_id": session_id},
                 )
-            
+
             # Sync adapter state back to MemoManager
             adapter.sync_to_memo_manager(cm)
 
@@ -522,7 +521,9 @@ async def route_turn(
                         memo_agent = cm_getter("active_agent", "Assistant")
                     except Exception:
                         memo_agent = None
-                final_agent = result.agent_name or adapter.current_agent or memo_agent or "Assistant"
+                final_agent = (
+                    result.agent_name or adapter.current_agent or memo_agent or "Assistant"
+                )
                 final_label = _resolve_agent_label(final_agent)
                 payload = {
                     "type": "assistant",
@@ -566,9 +567,9 @@ async def route_turn(
                     logger.debug("Failed to emit assistant_final envelope", exc_info=True)
             else:
                 logger.warning("No response_text to send as final envelope | turn_id=%s", run_id)
-            
+
             return result.response_text
-            
+
         except Exception as exc:
             logger.exception("💥 route_turn crash – session=%s", session_id)
             span.set_attribute("orchestrator.error", "exception")
@@ -592,17 +593,17 @@ async def route_turn(
                 )
 
 
-def _get_conversation_history(cm: "MemoManager") -> list[dict]:
+def _get_conversation_history(cm: MemoManager) -> list[dict]:
     """Extract conversation history from MemoManager."""
     history = []
-    
+
     # Get the active agent to retrieve its history
     active_agent = None
     try:
         active_agent = cm.get_value_from_corememory("active_agent")
     except Exception:
         pass
-    
+
     # Try to get history from the MemoManager's history for the active agent
     if active_agent and hasattr(cm, "get_history"):
         try:
@@ -611,17 +612,17 @@ def _get_conversation_history(cm: "MemoManager") -> list[dict]:
                 history.extend(agent_history)
         except Exception:
             pass
-    
+
     # Fallback: try working memory (legacy compatibility)
     if not history and hasattr(cm, "workingmemory") and cm.workingmemory:
         for item in cm.workingmemory:
             if isinstance(item, dict) and "role" in item:
                 history.append(item)
-    
+
     return history
 
 
-def _summarize_orchestrator_exception(exc: Exception) -> Tuple[str, str, str]:
+def _summarize_orchestrator_exception(exc: Exception) -> tuple[str, str, str]:
     """Return user-friendly message, caption, and tone for frontend display."""
     text = str(exc) or exc.__class__.__name__
     lowered = text.lower()
@@ -651,15 +652,17 @@ def _summarize_orchestrator_exception(exc: Exception) -> Tuple[str, str, str]:
 
 async def _emit_orchestrator_error_status(
     ws: WebSocket,
-    cm: "MemoManager",
+    cm: MemoManager,
     exc: Exception,
 ) -> None:
     """Send a structured status envelope to the frontend describing orchestrator failures."""
     message, caption, tone = _summarize_orchestrator_exception(exc)
 
     session_id = getattr(cm, "session_id", None) or getattr(ws.state, "session_id", None)
-    call_id = getattr(ws.state, "call_connection_id", None) or getattr(cm, "call_connection_id", None)
-    
+    call_id = getattr(ws.state, "call_connection_id", None) or getattr(
+        cm, "call_connection_id", None
+    )
+
     envelope = make_envelope(
         etype="status",
         sender="System",

@@ -11,26 +11,26 @@ impacting real-time audio processing.
 """
 
 import asyncio
+import os
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable, Iterable
-from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Request, Depends
-from fastapi.responses import JSONResponse
-
-import os
+from typing import Any
 
 from config import (
     get_provider_status,
     refresh_appconfig_cache,
 )
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 
 def _get_config_dynamic():
     """
     Read configuration values dynamically at runtime.
-    
+
     This is needed because App Configuration bootstrap sets environment variables
     AFTER the module is imported. Reading from os.getenv() ensures we get the
     latest values that were set by the bootstrap process.
@@ -46,22 +46,22 @@ def _get_config_dynamic():
         "BACKEND_AUTH_CLIENT_ID": os.getenv("BACKEND_AUTH_CLIENT_ID", ""),
         "AZURE_TENANT_ID": os.getenv("AZURE_TENANT_ID", ""),
         "ALLOWED_CLIENT_IDS": [
-            x.strip()
-            for x in os.getenv("ALLOWED_CLIENT_IDS", "").split(",")
-            if x.strip()
+            x.strip() for x in os.getenv("ALLOWED_CLIENT_IDS", "").split(",") if x.strip()
         ],
         "ENABLE_AUTH_VALIDATION": os.getenv("ENABLE_AUTH_VALIDATION", "false").lower()
         in ("true", "1", "yes"),
         "DEFAULT_TTS_VOICE": os.getenv("DEFAULT_TTS_VOICE", ""),
     }
+
+
+from apps.artagent.backend.agents.loader import build_agent_summaries
 from apps.artagent.backend.api.v1.schemas.health import (
     HealthResponse,
-    ServiceCheck,
-    ReadinessResponse,
     PoolMetrics,
     PoolsHealthResponse,
+    ReadinessResponse,
+    ServiceCheck,
 )
-from apps.artagent.backend.agents.loader import build_agent_summaries
 from utils.ml_logging import get_logger
 
 logger = get_logger("v1.health")
@@ -73,27 +73,29 @@ router = APIRouter()
 # AGENT REGISTRY - Dynamic Agent Discovery
 # ==============================================================================
 
+
 @dataclass
 class AgentDefinition:
     """Definition of an agent for discovery and health checks."""
+
     name: str  # Human-readable name (e.g., "auth", "fraud")
     state_attr: str  # Attribute name on app.state (e.g., "auth_agent")
     config_path: str = ""  # Legacy - agents now in backend/agents/<name>/agent.yaml
-    aliases: List[str] = field(default_factory=list)  # Alternative names for API lookup
+    aliases: list[str] = field(default_factory=list)  # Alternative names for API lookup
 
 
 class AgentRegistry:
     """
     Dynamic agent registry for health checks and API operations.
-    
+
     Provides a single source of truth for agent discovery, avoiding
     hardcoded agent names scattered throughout the codebase.
     """
-    
+
     def __init__(self) -> None:
-        self._definitions: Dict[str, AgentDefinition] = {}
-        self._alias_map: Dict[str, str] = {}  # alias -> canonical name
-    
+        self._definitions: dict[str, AgentDefinition] = {}
+        self._alias_map: dict[str, str] = {}  # alias -> canonical name
+
     def register(self, definition: AgentDefinition) -> None:
         """Register an agent definition."""
         self._definitions[definition.name] = definition
@@ -102,20 +104,20 @@ class AgentRegistry:
             self._alias_map[alias.lower()] = definition.name
         self._alias_map[definition.name.lower()] = definition.name
         self._alias_map[definition.state_attr.lower()] = definition.name
-    
-    def get_definition(self, name_or_alias: str) -> Optional[AgentDefinition]:
+
+    def get_definition(self, name_or_alias: str) -> AgentDefinition | None:
         """Get agent definition by name or alias."""
         canonical = self._alias_map.get(name_or_alias.lower())
         return self._definitions.get(canonical) if canonical else None
-    
+
     def list_definitions(self) -> Iterable[AgentDefinition]:
         """List all registered agent definitions."""
         return self._definitions.values()
-    
-    def discover_agents(self, app_state: Any) -> Dict[str, Any]:
+
+    def discover_agents(self, app_state: Any) -> dict[str, Any]:
         """
         Discover all agents from app.state based on registered definitions.
-        
+
         Returns dict of {name: agent_instance} for found agents.
         """
         discovered = {}
@@ -124,8 +126,8 @@ class AgentRegistry:
             if agent is not None:
                 discovered[defn.name] = agent
         return discovered
-    
-    def get_missing_agents(self, app_state: Any) -> List[str]:
+
+    def get_missing_agents(self, app_state: Any) -> list[str]:
         """Get list of expected but uninitialized agents."""
         missing = []
         for defn in self._definitions.values():
@@ -140,31 +142,41 @@ class AgentRegistry:
 _agent_registry = AgentRegistry()
 
 # Register known agent patterns for health check discovery
-_agent_registry.register(AgentDefinition(
-    name="auth",
-    state_attr="auth_agent",
-    aliases=["authagent", "auth_agent", "authentication"],
-))
-_agent_registry.register(AgentDefinition(
-    name="fraud",
-    state_attr="fraud_agent",
-    aliases=["fraudagent", "fraud_agent", "fraud_detection"],
-))
-_agent_registry.register(AgentDefinition(
-    name="agency",
-    state_attr="agency_agent",
-    aliases=["agencyagent", "agency_agent", "transfer_agency"],
-))
-_agent_registry.register(AgentDefinition(
-    name="compliance",
-    state_attr="compliance_agent",
-    aliases=["complianceagent", "compliance_agent"],
-))
-_agent_registry.register(AgentDefinition(
-    name="trading",
-    state_attr="trading_agent",
-    aliases=["tradingagent", "trading_agent"],
-))
+_agent_registry.register(
+    AgentDefinition(
+        name="auth",
+        state_attr="auth_agent",
+        aliases=["authagent", "auth_agent", "authentication"],
+    )
+)
+_agent_registry.register(
+    AgentDefinition(
+        name="fraud",
+        state_attr="fraud_agent",
+        aliases=["fraudagent", "fraud_agent", "fraud_detection"],
+    )
+)
+_agent_registry.register(
+    AgentDefinition(
+        name="agency",
+        state_attr="agency_agent",
+        aliases=["agencyagent", "agency_agent", "transfer_agency"],
+    )
+)
+_agent_registry.register(
+    AgentDefinition(
+        name="compliance",
+        state_attr="compliance_agent",
+        aliases=["complianceagent", "compliance_agent"],
+    )
+)
+_agent_registry.register(
+    AgentDefinition(
+        name="trading",
+        state_attr="trading_agent",
+        aliases=["tradingagent", "trading_agent"],
+    )
+)
 
 
 def _validate_phone_number(phone_number: str) -> tuple[bool, str]:
@@ -286,7 +298,7 @@ def _validate_auth_configuration() -> tuple[bool, str]:
         backend_client_id = cfg["BACKEND_AUTH_CLIENT_ID"]
         tenant_id = cfg["AZURE_TENANT_ID"]
         allowed_clients = cfg["ALLOWED_CLIENT_IDS"]
-        
+
         if not enable_auth:
             logger.debug("Authentication validation is disabled")
             return True, "Auth validation disabled"
@@ -311,9 +323,7 @@ def _validate_auth_configuration() -> tuple[bool, str]:
                 "ALLOWED_CLIENT_IDS is empty - at least one client ID required"
             )
         else:
-            invalid_client_ids = [
-                cid for cid in allowed_clients if not _validate_guid(cid)
-            ]
+            invalid_client_ids = [cid for cid in allowed_clients if not _validate_guid(cid)]
             if invalid_client_ids:
                 validation_errors.append(
                     f"Invalid GUID format in ALLOWED_CLIENT_IDS: {invalid_client_ids}"
@@ -321,17 +331,11 @@ def _validate_auth_configuration() -> tuple[bool, str]:
 
         if validation_errors:
             error_message = "; ".join(validation_errors)
-            logger.error(
-                f"Authentication configuration validation failed: {error_message}"
-            )
+            logger.error(f"Authentication configuration validation failed: {error_message}")
             return False, error_message
 
-        success_message = (
-            f"Auth validation enabled with {len(allowed_clients)} allowed client(s)"
-        )
-        logger.info(
-            f"Authentication configuration validation successful: {success_message}"
-        )
+        success_message = f"Auth validation enabled with {len(allowed_clients)} allowed client(s)"
+        logger.info(f"Authentication configuration validation successful: {success_message}")
         return True, success_message
 
     except Exception as e:
@@ -517,7 +521,7 @@ async def readiness_check(
     Returns 503 if any critical services are unhealthy.
     """
     start_time = time.time()
-    health_checks: List[ServiceCheck] = []
+    health_checks: list[ServiceCheck] = []
     overall_status = "ready"
     timeout = 1.0  # seconds per check
 
@@ -542,9 +546,7 @@ async def readiness_check(
         active_sessions = -1  # signal error fetching sessions
 
     # Check Redis connectivity (minimal – no verbose details)
-    redis_status = await fast_ping(
-        _check_redis_fast, request.app.state.redis, component="redis"
-    )
+    redis_status = await fast_ping(_check_redis_fast, request.app.state.redis, component="redis")
     health_checks.append(redis_status)
 
     # Check Azure OpenAI client
@@ -595,9 +597,7 @@ async def readiness_check(
     # Determine overall status
     failed_checks = [check for check in health_checks if check.status != "healthy"]
     if failed_checks:
-        overall_status = (
-            "degraded" if len(failed_checks) < len(health_checks) else "unhealthy"
-        )
+        overall_status = "degraded" if len(failed_checks) < len(health_checks) else "unhealthy"
 
     response_time = round((time.time() - start_time) * 1000, 2)
 
@@ -628,14 +628,14 @@ async def readiness_check(
 async def pools_health(request: Request) -> PoolsHealthResponse:
     """
     Get resource pool health and metrics.
-    
+
     Returns detailed metrics for each pool including:
     - Warm pool levels vs targets
     - Allocation tier breakdown (DEDICATED/WARM/COLD)
     - Session cache statistics
     - Background warmup status
     """
-    pools_data: Dict[str, PoolMetrics] = {}
+    pools_data: dict[str, PoolMetrics] = {}
     totals = {
         "warm": 0,
         "active_sessions": 0,
@@ -644,15 +644,15 @@ async def pools_health(request: Request) -> PoolsHealthResponse:
         "allocations_warm": 0,
         "allocations_cold": 0,
     }
-    
+
     for pool_attr in ("tts_pool", "stt_pool"):
         pool = getattr(request.app.state, pool_attr, None)
         if pool is None:
             continue
-            
+
         snapshot = pool.snapshot() if hasattr(pool, "snapshot") else {}
         metrics_raw = snapshot.get("metrics", {})
-        
+
         pool_metrics = PoolMetrics(
             name=snapshot.get("name", pool_attr),
             ready=snapshot.get("ready", False),
@@ -669,7 +669,7 @@ async def pools_health(request: Request) -> PoolsHealthResponse:
             background_warmup=snapshot.get("background_warmup", False),
         )
         pools_data[pool_metrics.name] = pool_metrics
-        
+
         # Accumulate totals
         totals["warm"] += pool_metrics.warm_pool_size
         totals["active_sessions"] += pool_metrics.active_sessions
@@ -677,16 +677,16 @@ async def pools_health(request: Request) -> PoolsHealthResponse:
         totals["allocations_dedicated"] += pool_metrics.allocations_dedicated
         totals["allocations_warm"] += pool_metrics.allocations_warm
         totals["allocations_cold"] += pool_metrics.allocations_cold
-    
+
     # Calculate hit rate (DEDICATED + WARM vs COLD)
     total_allocs = totals["allocations_total"]
     fast_allocs = totals["allocations_dedicated"] + totals["allocations_warm"]
     hit_rate = round((fast_allocs / total_allocs * 100), 1) if total_allocs > 0 else 0.0
-    
+
     # Determine overall status
     all_ready = all(p.ready for p in pools_data.values()) if pools_data else False
     status = "healthy" if all_ready else "degraded" if pools_data else "unhealthy"
-    
+
     return PoolsHealthResponse(
         status=status,
         timestamp=time.time(),
@@ -724,26 +724,26 @@ async def pools_health(request: Request) -> PoolsHealthResponse:
 async def appconfig_status(request: Request, refresh: bool = False):
     """
     Get Azure App Configuration provider status.
-    
+
     Args:
         request: FastAPI request object.
         refresh: If True, force refresh the cache before returning status.
-        
+
     Returns:
         JSON object with provider status, cache metrics, and configuration source info.
     """
     start_time = time.time()
-    
+
     try:
         # Optionally refresh cache
         if refresh:
             await asyncio.to_thread(refresh_appconfig_cache)
-        
+
         # Get provider status (thread-safe)
         status = await asyncio.to_thread(get_provider_status)
-        
+
         response_time = round((time.time() - start_time) * 1000, 2)
-        
+
         return {
             "status": "healthy" if status.get("enabled") else "disabled",
             "timestamp": time.time(),
@@ -784,21 +784,21 @@ async def appconfig_status(request: Request, refresh: bool = False):
 async def appconfig_refresh(request: Request):
     """
     Force refresh the App Configuration cache.
-    
+
     Returns:
         JSON object confirming the refresh operation.
     """
     start_time = time.time()
-    
+
     try:
         # Refresh cache
         await asyncio.to_thread(refresh_appconfig_cache)
-        
+
         # Get updated status
         status = await asyncio.to_thread(get_provider_status)
-        
+
         response_time = round((time.time() - start_time) * 1000, 2)
-        
+
         return {
             "status": "success",
             "timestamp": time.time(),
@@ -818,6 +818,7 @@ async def appconfig_refresh(request: Request):
             },
             status_code=500,
         )
+
 
 async def _check_redis_fast(redis_manager) -> ServiceCheck:
     """Fast Redis connectivity check."""
@@ -878,15 +879,14 @@ async def _check_azure_openai_fast(openai_client) -> ServiceCheck:
     )
 
 
-
 async def _check_speech_configuration_fast(stt_pool, tts_pool) -> ServiceCheck:
     """Validate speech configuration values and pool readiness without external calls."""
     start = time.time()
-    
+
     # Read config dynamically to get values set by App Configuration bootstrap
     cfg = _get_config_dynamic()
 
-    missing: List[str] = []
+    missing: list[str] = []
     config_summary = {
         "region": bool(cfg["AZURE_SPEECH_REGION"]),
         "endpoint": bool(cfg["AZURE_SPEECH_ENDPOINT"]),
@@ -903,7 +903,7 @@ async def _check_speech_configuration_fast(stt_pool, tts_pool) -> ServiceCheck:
     if not (config_summary["key_present"] or config_summary["resource_id_present"]):
         missing.append("AZURE_SPEECH_KEY or AZURE_SPEECH_RESOURCE_ID")
 
-    pool_snapshots: Dict[str, Dict[str, Any]] = {}
+    pool_snapshots: dict[str, dict[str, Any]] = {}
     for label, pool in (("stt_pool", stt_pool), ("tts_pool", tts_pool)):
         if pool is None:
             missing.append(f"{label} not initialized")
@@ -958,7 +958,7 @@ async def _check_speech_configuration_fast(stt_pool, tts_pool) -> ServiceCheck:
 async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
     """Fast ACS caller check with comprehensive phone number and config validation."""
     start = time.time()
-    
+
     # Read config dynamically to get values set by App Configuration bootstrap
     cfg = _get_config_dynamic()
     acs_phone = cfg["ACS_SOURCE_PHONE_NUMBER"]
@@ -1019,9 +1019,7 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
 
     # Obfuscate phone number, show only last 4 digits
     obfuscated_phone = (
-        "*" * (len(acs_phone) - 4) + acs_phone[-4:]
-        if len(acs_phone) > 4
-        else acs_phone
+        "*" * (len(acs_phone) - 4) + acs_phone[-4:] if len(acs_phone) > 4 else acs_phone
     )
     return ServiceCheck(
         component="acs_caller",
@@ -1034,13 +1032,13 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
 async def _check_rt_agents_fast(app_state: Any) -> ServiceCheck:
     """
     Fast RT Agents check using dynamic agent discovery.
-    
+
     Uses the AgentRegistry to discover agents from app.state rather than
     hardcoded parameter lists. This ensures health checks stay in sync
     with actual agent configuration.
     """
     start = time.time()
-    
+
     try:
         unified_agents = getattr(app_state, "unified_agents", {}) or {}
         start_agent = getattr(app_state, "start_agent", None)
@@ -1067,7 +1065,9 @@ async def _check_rt_agents_fast(app_state: Any) -> ServiceCheck:
         agent_count = len(summaries or [])
         if agent_count == 0:
             missing = _agent_registry.get_missing_agents(app_state)
-            detail = f"agents not initialized: {', '.join(missing)}" if missing else "no agents loaded"
+            detail = (
+                f"agents not initialized: {', '.join(missing)}" if missing else "no agents loaded"
+            )
             return ServiceCheck(
                 component="rt_agents",
                 status="unhealthy",
@@ -1138,7 +1138,7 @@ async def _check_appconfig_fast() -> ServiceCheck:
 
     try:
         status = get_provider_status()
-        
+
         if not status.get("enabled"):
             # App Config not configured - this is OK, not unhealthy
             return ServiceCheck(
@@ -1147,7 +1147,7 @@ async def _check_appconfig_fast() -> ServiceCheck:
                 check_time_ms=round((time.time() - start) * 1000, 2),
                 details="Not configured (using env vars)",
             )
-        
+
         # Check if config was loaded successfully (key is "loaded", not "available")
         if status.get("loaded"):
             key_count = status.get("key_count", 0)
@@ -1179,30 +1179,17 @@ async def _check_appconfig_fast() -> ServiceCheck:
         )
 
 
-@router.get("/agents")
-async def get_agents_info(request: Request, include_state: bool = False):
-    """
-    Get information about loaded RT agents including their configuration,
-    model settings, and voice settings that can be modified.
-    
-    Uses dynamic agent discovery via AgentRegistry for maintainability.
-    """
-    start_time = time.time()
-    agents_info = []
-    app_state = request.app.state
-    start_agent = getattr(app_state, "start_agent", None)
-    handoff_map = getattr(app_state, "handoff_map", {}) or {}
-    scenario = getattr(app_state, "scenario", None)
-    scenario_name = getattr(scenario, "name", None) if scenario else None
-
-def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
+def _normalize_tools(agent_obj: Any) -> dict[str, list[str]]:
     """Normalize tools and handoff tools for consistent payloads."""
-    def _to_name(item: Any) -> Optional[str]:
+
+    def _to_name(item: Any) -> str | None:
         if isinstance(item, str):
             return item
         if isinstance(item, dict):
             return item.get("name") or item.get("tool") or item.get("id")
-        return getattr(item, "name", None) or getattr(item, "tool", None) or getattr(item, "id", None)
+        return (
+            getattr(item, "name", None) or getattr(item, "tool", None) or getattr(item, "id", None)
+        )
 
     tools = (
         getattr(agent_obj, "tool_names", None)
@@ -1213,7 +1200,7 @@ def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
     if isinstance(tools, dict):
         tools = tools.values()
     tools_list_raw = tools if isinstance(tools, (list, tuple, set)) else []
-    tools_list: List[str] = []
+    tools_list: list[str] = []
     for t in tools_list_raw:
         name = _to_name(t)
         if name and name not in tools_list:
@@ -1223,7 +1210,7 @@ def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
     if isinstance(handoff_tools, dict):
         handoff_tools = handoff_tools.values()
     handoff_list_raw = handoff_tools if isinstance(handoff_tools, (list, tuple, set)) else []
-    handoff_list: List[str] = []
+    handoff_list: list[str] = []
     for h in handoff_list_raw:
         name = _to_name(h)
         if name and name not in handoff_list:
@@ -1235,60 +1222,78 @@ def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
 
     return {"tools": tools_list, "handoff_tools": handoff_list}
 
-    def extract_agent_info(agent: Any, defn: AgentDefinition) -> Optional[Dict[str, Any]]:
-        """Extract agent info using registry definition."""
-        if not agent:
-            return None
 
-        try:
-            # Get voice setting from agent configuration
-            agent_voice = getattr(agent, "voice_name", None)
-            agent_voice_style = getattr(agent, "voice_style", "chat")
+def _extract_agent_info(agent: Any, defn: AgentDefinition) -> dict[str, Any] | None:
+    """Extract agent info using registry definition."""
+    if not agent:
+        return None
 
-            # Fallback to DEFAULT_TTS_VOICE if agent doesn't have voice configured
-            # Read dynamically as config may have been set by App Configuration bootstrap
-            cfg = _get_config_dynamic()
-            current_voice = agent_voice or cfg["DEFAULT_TTS_VOICE"]
+    try:
+        # Get voice setting from agent configuration
+        agent_voice = getattr(agent, "voice_name", None)
+        agent_voice_style = getattr(agent, "voice_style", "chat")
 
-            tools_normalized = _normalize_tools(agent)
+        # Fallback to DEFAULT_TTS_VOICE if agent doesn't have voice configured
+        # Read dynamically as config may have been set by App Configuration bootstrap
+        cfg = _get_config_dynamic()
+        current_voice = agent_voice or cfg["DEFAULT_TTS_VOICE"]
 
-            return {
-                "name": getattr(agent, "name", defn.name),
-                "status": "loaded",
-                "creator": getattr(agent, "creator", "Unknown"),
-                "organization": getattr(agent, "organization", "Unknown"),
-                "description": getattr(agent, "description", ""),
-                "model": {
-                    "deployment_id": getattr(agent, "model_id", "Unknown"),
-                    "temperature": getattr(agent, "temperature", 0.7),
-                    "top_p": getattr(agent, "top_p", 1.0),
-                    "max_tokens": getattr(agent, "max_tokens", 4096),
-                },
-                "voice": {
-                    "current_voice": current_voice,
-                    "voice_style": agent_voice_style,
-                    "voice_configurable": True,
-                    "is_per_agent_voice": bool(agent_voice),
-                },
-                "config_path": defn.config_path,
-                "prompt_path": getattr(agent, "prompt_path", "Unknown"),
-                "tools": tools_normalized["tools"],
-                "handoff_tools": tools_normalized["handoff_tools"],
-                "modifiable_settings": {
-                    "model_deployment": True,
-                    "temperature": True,
-                    "voice_name": True,
-                    "voice_style": True,
-                    "max_tokens": True,
-                },
-            }
-        except Exception as e:
-            logger.warning(f"Error extracting agent info for {defn.name}: {e}")
-            return {
-                "name": defn.name,
-                "status": "error",
-                "error": str(e),
-            }
+        tools_normalized = _normalize_tools(agent)
+
+        return {
+            "name": getattr(agent, "name", defn.name),
+            "status": "loaded",
+            "creator": getattr(agent, "creator", "Unknown"),
+            "organization": getattr(agent, "organization", "Unknown"),
+            "description": getattr(agent, "description", ""),
+            "model": {
+                "deployment_id": getattr(agent, "model_id", "Unknown"),
+                "temperature": getattr(agent, "temperature", 0.7),
+                "top_p": getattr(agent, "top_p", 1.0),
+                "max_tokens": getattr(agent, "max_tokens", 4096),
+            },
+            "voice": {
+                "current_voice": current_voice,
+                "voice_style": agent_voice_style,
+                "voice_configurable": True,
+                "is_per_agent_voice": bool(agent_voice),
+            },
+            "config_path": defn.config_path,
+            "prompt_path": getattr(agent, "prompt_path", "Unknown"),
+            "tools": tools_normalized["tools"],
+            "handoff_tools": tools_normalized["handoff_tools"],
+            "modifiable_settings": {
+                "model_deployment": True,
+                "temperature": True,
+                "voice_name": True,
+                "voice_style": True,
+                "max_tokens": True,
+            },
+        }
+    except Exception as e:
+        logger.warning(f"Error extracting agent info for {defn.name}: {e}")
+        return {
+            "name": defn.name,
+            "status": "error",
+            "error": str(e),
+        }
+
+
+@router.get("/agents")
+async def get_agents_info(request: Request, include_state: bool = False):
+    """
+    Get information about loaded RT agents including their configuration,
+    model settings, and voice settings that can be modified.
+
+    Uses dynamic agent discovery via AgentRegistry for maintainability.
+    """
+    start_time = time.time()
+    agents_info = []
+    app_state = request.app.state
+    start_agent = getattr(app_state, "start_agent", None)
+    handoff_map = getattr(app_state, "handoff_map", {}) or {}
+    scenario = getattr(app_state, "scenario", None)
+    scenario_name = getattr(scenario, "name", None) if scenario else None
 
     try:
         unified_agents = getattr(app_state, "unified_agents", {}) or {}
@@ -1314,17 +1319,22 @@ def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
                             or getattr(agent, "model_id", None)
                         },
                         "voice": {
-                            "current_voice": getattr(voice_obj, "name", None) or getattr(agent, "voice_name", None),
-                            "voice_style": getattr(voice_obj, "style", None) or getattr(agent, "voice_style", "chat"),
+                            "current_voice": getattr(voice_obj, "name", None)
+                            or getattr(agent, "voice_name", None),
+                            "voice_style": getattr(voice_obj, "style", None)
+                            or getattr(agent, "voice_style", "chat"),
                             "voice_configurable": True,
                             "is_per_agent_voice": bool(
-                                getattr(voice_obj, "name", None) or getattr(agent, "voice_name", None)
+                                getattr(voice_obj, "name", None)
+                                or getattr(agent, "voice_name", None)
                             ),
                         },
                         "tool_count": len(tools_normalized["tools"]),
                         "tools": tools_normalized["tools"],
                         "handoff_tools": tools_normalized["handoff_tools"],
-                        "handoff_trigger": getattr(getattr(agent, "handoff", None), "trigger", None),
+                        "handoff_trigger": getattr(
+                            getattr(agent, "handoff", None), "trigger", None
+                        ),
                         "prompt_preview": (
                             getattr(agent, "prompt_template", None)[:320]
                             if getattr(agent, "prompt_template", None)
@@ -1337,13 +1347,15 @@ def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
             # Fallback to legacy registry if unified agents not available
             for defn in _agent_registry.list_definitions():
                 agent = getattr(app_state, defn.state_attr, None)
-                agent_info = extract_agent_info(agent, defn)
+                agent_info = _extract_agent_info(agent, defn)
                 if agent_info:
                     agent_info["source"] = "legacy"
                     agents_info.append(agent_info)
 
         response_time = round((time.time() - start_time) * 1000, 2)
-        connections = [{"tool": tool, "target": target} for tool, target in (handoff_map or {}).items()]
+        connections = [
+            {"tool": tool, "target": target} for tool, target in (handoff_map or {}).items()
+        ]
 
         payload = {
             "status": "success",
@@ -1396,7 +1408,7 @@ def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
 
 
 @router.get("/agents/{agent_name}")
-async def get_agent_detail(agent_name: str, request: Request, session_id: Optional[str] = None):
+async def get_agent_detail(agent_name: str, request: Request, session_id: str | None = None):
     """
     Get detailed info for a specific agent, including normalized tools/handoff tools.
     Optional session_id for future session-scoped context (non-blocking for hotpath).
@@ -1439,8 +1451,10 @@ async def get_agent_detail(agent_name: str, request: Request, session_id: Option
             or getattr(target_agent, "model_id", None)
         },
         "voice": {
-            "current_voice": getattr(voice_obj, "name", None) or getattr(target_agent, "voice_name", None),
-            "voice_style": getattr(voice_obj, "style", None) or getattr(target_agent, "voice_style", "chat"),
+            "current_voice": getattr(voice_obj, "name", None)
+            or getattr(target_agent, "voice_name", None),
+            "voice_style": getattr(voice_obj, "style", None)
+            or getattr(target_agent, "voice_style", "chat"),
         },
         "tools": tools_normalized["tools"],
         "handoff_tools": tools_normalized["handoff_tools"],
@@ -1461,30 +1475,28 @@ async def get_agent_detail(agent_name: str, request: Request, session_id: Option
 
 
 class AgentModelUpdate(BaseModel):
-    deployment_id: Optional[str] = None
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    max_tokens: Optional[int] = None
+    deployment_id: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
 
 
 class AgentVoiceUpdate(BaseModel):
-    voice_name: Optional[str] = None
-    voice_style: Optional[str] = None
+    voice_name: str | None = None
+    voice_style: str | None = None
 
 
 class AgentConfigUpdate(BaseModel):
-    model: Optional[AgentModelUpdate] = None
-    voice: Optional[AgentVoiceUpdate] = None
+    model: AgentModelUpdate | None = None
+    voice: AgentVoiceUpdate | None = None
 
 
 @router.put("/agents/{agent_name}")
-async def update_agent_config(
-    agent_name: str, config: AgentConfigUpdate, request: Request
-):
+async def update_agent_config(agent_name: str, config: AgentConfigUpdate, request: Request):
     """
     Update configuration for a specific agent (model settings, voice, etc.).
     Changes are applied to the runtime instance but not persisted to YAML files.
-    
+
     Uses AgentRegistry for dynamic agent lookup via name or alias.
     """
     start_time = time.time()
@@ -1498,7 +1510,7 @@ async def update_agent_config(
                 status_code=404,
                 detail=f"Agent '{agent_name}' not found. Available agents: {', '.join(available)}",
             )
-        
+
         agent = getattr(request.app.state, defn.state_attr, None)
         if not agent:
             raise HTTPException(
@@ -1529,9 +1541,7 @@ async def update_agent_config(
                     agent.top_p = config.model.top_p
                     updated_fields.append(f"top_p -> {config.model.top_p}")
                 else:
-                    raise HTTPException(
-                        status_code=400, detail="top_p must be between 0.0 and 1.0"
-                    )
+                    raise HTTPException(status_code=400, detail="top_p must be between 0.0 and 1.0")
 
             if config.model.max_tokens is not None:
                 if 1 <= config.model.max_tokens <= 16384:

@@ -1,15 +1,14 @@
 import asyncio
 import sys
 from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from apps.artagent.backend.api.v1.endpoints import browser
 from fastapi import FastAPI, WebSocketDisconnect
 from fastapi.testclient import TestClient
 from fastapi.websockets import WebSocketState
-
-from apps.artagent.backend.api.v1.endpoints import browser
-from src.pools.on_demand_pool import OnDemandResourcePool, AllocationTier
+from src.pools.on_demand_pool import AllocationTier
 
 GREETING = browser.GREETING
 
@@ -23,7 +22,9 @@ class DummySessionManager:
     async def get_session_count(self) -> int:
         return self.count
 
-    async def add_session(self, session_id: str, memo: object, websocket: object, metadata: object = None) -> None:
+    async def add_session(
+        self, session_id: str, memo: object, websocket: object, metadata: object = None
+    ) -> None:
         self.added.append((session_id, memo))
         self.count += 1
 
@@ -76,7 +77,9 @@ class DummyConnManager:
     async def broadcast_session(self, session_id: str, payload: object) -> None:
         self.broadcasts.append((session_id, payload))
 
-    async def publish_session_envelope(self, session_id: str, payload: object, *, event_label: str = "unspecified") -> bool:
+    async def publish_session_envelope(
+        self, session_id: str, payload: object, *, event_label: str = "unspecified"
+    ) -> bool:
         return False
 
 
@@ -94,16 +97,17 @@ class DummyMetrics:
 
 class MockTTSClient:
     """Mock TTS client for testing."""
+
     def __init__(self, voice_name: str = "default"):
         self.voice_name = voice_name
         self.id = id(self)
         self.stopped = False
         self.speaking = False
-    
+
     def stop_speaking(self):
         self.stopped = True
         self.speaking = False
-    
+
     async def synthesize(self, text: str) -> bytes:
         self.speaking = True
         await asyncio.sleep(0.001)  # Simulate synthesis
@@ -112,6 +116,7 @@ class MockTTSClient:
 
 class MockSTTClient:
     """Mock STT client for testing."""
+
     def __init__(self):
         self.id = id(self)
         self.partial_cb = None
@@ -120,31 +125,32 @@ class MockSTTClient:
         self.started = False
         self.call_connection_id = None
         self.bytes_written = []
-    
+
     def set_partial_result_callback(self, cb):
         self.partial_cb = cb
-    
+
     def set_final_result_callback(self, cb):
         self.final_cb = cb
-    
+
     def set_cancel_callback(self, cb):
         self.cancel_cb = cb
-    
+
     def set_call_connection_id(self, conn_id):
         self.call_connection_id = conn_id
-    
+
     def start(self):
         self.started = True
-    
+
     def stop(self):
         self.started = False
-    
+
     def write_bytes(self, data: bytes):
         self.bytes_written.append(data)
 
 
 class MockOnDemandPool:
     """Mock OnDemandResourcePool for testing."""
+
     def __init__(self, factory, session_awareness: bool = True, name: str = "mock-pool"):
         self._factory = factory
         self._session_awareness = session_awareness
@@ -153,39 +159,39 @@ class MockOnDemandPool:
         self._acquire_calls = []
         self._release_calls = []
         self._ready = False
-        
+
     @property
     def session_awareness_enabled(self) -> bool:
         return self._session_awareness
-    
+
     async def prepare(self):
         self._ready = True
-    
+
     async def shutdown(self):
         self._ready = False
         self._session_cache.clear()
-    
+
     async def acquire_for_session(self, session_id: str, timeout=None):
         self._acquire_calls.append((session_id, timeout))
-        
+
         if not self._session_awareness or not session_id:
             resource = await self._factory()
             return resource, AllocationTier.COLD
-        
+
         if session_id in self._session_cache:
             return self._session_cache[session_id], AllocationTier.DEDICATED
-        
+
         resource = await self._factory()
         self._session_cache[session_id] = resource
         return resource, AllocationTier.COLD
-    
+
     async def release_for_session(self, session_id: str, resource=None):
         self._release_calls.append((session_id, resource))
         if session_id in self._session_cache:
             del self._session_cache[session_id]
             return True
         return False
-    
+
     def snapshot(self):
         return {
             "name": self._name,
@@ -194,10 +200,12 @@ class MockOnDemandPool:
             "active_sessions": len(self._session_cache),
             "metrics": {
                 "allocations_total": len(self._acquire_calls),
-                "allocations_cached": sum(1 for call in self._acquire_calls if call[0] in self._session_cache),
+                "allocations_cached": sum(
+                    1 for call in self._acquire_calls if call[0] in self._session_cache
+                ),
                 "allocations_new": len(self._session_cache),
-                "active_sessions": len(self._session_cache)
-            }
+                "active_sessions": len(self._session_cache),
+            },
         }
 
 
@@ -207,17 +215,17 @@ def realtime_app():
     conn_manager = DummyConnManager()
     session_manager = DummySessionManager()
     metrics = DummyMetrics()
-    
+
     # Create mock pools
     async def tts_factory():
         return MockTTSClient()
-    
+
     async def stt_factory():
         return MockSTTClient()
-    
+
     tts_pool = MockOnDemandPool(tts_factory, session_awareness=True, name="tts-pool")
     stt_pool = MockOnDemandPool(stt_factory, session_awareness=True, name="stt-pool")
-    
+
     app.state.conn_manager = conn_manager
     app.state.session_manager = session_manager
     app.state.session_metrics = metrics
@@ -225,7 +233,7 @@ def realtime_app():
     app.state.stt_pool = stt_pool
     app.state.redis = MagicMock()
     app.state.auth_agent = SimpleNamespace(name="assistant")
-    
+
     app.include_router(browser.router, prefix="/api/v1/realtime")
     return app, conn_manager, session_manager, metrics, tts_pool, stt_pool
 
@@ -509,7 +517,7 @@ async def test_process_conversation_messages_handles_stopwords(monkeypatch):
                 orchestration_tasks=set(),
                 stt_client=conn_manager._conns[conn_id].meta.handler["stt_client"],
                 user_buffer="stop please",  # Add user_buffer to state for get_metadata
-                session_context=None
+                session_context=None,
             )
             self._messages = [
                 {"type": "websocket.receive", "bytes": b"\x00\x01"},
@@ -672,6 +680,7 @@ async def test_cleanup_conversation_session_releases_resources_with_aoai(monkeyp
 # OnDemandResourcePool Integration Tests with Realtime Endpoints
 # ============================================================================
 
+
 @pytest.mark.asyncio
 class TestRealtimePoolIntegration:
     """Test integration between realtime endpoints and OnDemandResourcePool."""
@@ -679,17 +688,17 @@ class TestRealtimePoolIntegration:
     async def test_pool_lifecycle_with_conversation_session(self, realtime_app):
         """Test pool resource allocation and cleanup during conversation lifecycle."""
         app, conn_manager, session_manager, metrics, tts_pool, stt_pool = realtime_app
-        
+
         # Prepare pools
         await tts_pool.prepare()
         await stt_pool.prepare()
-        
+
         session_id = "conversation-session-123"
-        
+
         # Simulate session initialization
         tts_client, tts_tier = await tts_pool.acquire_for_session(session_id)
         stt_client, stt_tier = await stt_pool.acquire_for_session(session_id)
-        
+
         # Verify initial allocation
         assert isinstance(tts_client, MockTTSClient)
         assert isinstance(stt_client, MockSTTClient)
@@ -697,13 +706,13 @@ class TestRealtimePoolIntegration:
         assert stt_tier == AllocationTier.COLD
         assert session_id in tts_pool._session_cache
         assert session_id in stt_pool._session_cache
-        
+
         # Verify pool metrics
         tts_snapshot = tts_pool.snapshot()
         stt_snapshot = stt_pool.snapshot()
         assert tts_snapshot["active_sessions"] == 1
         assert stt_snapshot["active_sessions"] == 1
-        
+
         # Simulate multiple accesses (should return cached)
         for i in range(3):
             cached_tts, tts_tier = await tts_pool.acquire_for_session(session_id)
@@ -712,20 +721,20 @@ class TestRealtimePoolIntegration:
             assert cached_stt == stt_client
             assert tts_tier == AllocationTier.DEDICATED
             assert stt_tier == AllocationTier.DEDICATED
-        
+
         # Verify metrics after caching
         assert len(tts_pool._acquire_calls) == 4  # 1 + 3 cached
         assert len(stt_pool._acquire_calls) == 4
-        
+
         # Simulate session cleanup
         tts_released = await tts_pool.release_for_session(session_id)
         stt_released = await stt_pool.release_for_session(session_id)
-        
+
         assert tts_released is True
         assert stt_released is True
         assert session_id not in tts_pool._session_cache
         assert session_id not in stt_pool._session_cache
-        
+
         # Verify final state
         final_tts_snapshot = tts_pool.snapshot()
         final_stt_snapshot = stt_pool.snapshot()
@@ -735,77 +744,74 @@ class TestRealtimePoolIntegration:
     async def test_multiple_concurrent_sessions(self, realtime_app):
         """Test pool behavior with multiple concurrent conversation sessions."""
         app, conn_manager, session_manager, metrics, tts_pool, stt_pool = realtime_app
-        
+
         # Prepare pools
         await tts_pool.prepare()
         await stt_pool.prepare()
-        
+
         session_ids = ["session-1", "session-2", "session-3"]
         allocated_resources = {}
-        
+
         # Simulate concurrent session setup
         for session_id in session_ids:
             tts_client, tts_tier = await tts_pool.acquire_for_session(session_id)
             stt_client, stt_tier = await stt_pool.acquire_for_session(session_id)
-            
-            allocated_resources[session_id] = {
-                "tts": tts_client,
-                "stt": stt_client
-            }
-            
+
+            allocated_resources[session_id] = {"tts": tts_client, "stt": stt_client}
+
             assert tts_tier == AllocationTier.COLD
             assert stt_tier == AllocationTier.COLD
-        
+
         # Verify each session has unique resources
         tts_clients = [res["tts"] for res in allocated_resources.values()]
         stt_clients = [res["stt"] for res in allocated_resources.values()]
-        
+
         assert len(set(tts_clients)) == 3  # All unique TTS clients
         assert len(set(stt_clients)) == 3  # All unique STT clients
-        
+
         # Verify pool state
         assert tts_pool.snapshot()["active_sessions"] == 3
         assert stt_pool.snapshot()["active_sessions"] == 3
-        
+
         # Test cached access for each session
         for session_id in session_ids:
             cached_tts, tts_tier = await tts_pool.acquire_for_session(session_id)
             cached_stt, stt_tier = await stt_pool.acquire_for_session(session_id)
-            
+
             assert cached_tts == allocated_resources[session_id]["tts"]
             assert cached_stt == allocated_resources[session_id]["stt"]
             assert tts_tier == AllocationTier.DEDICATED
             assert stt_tier == AllocationTier.DEDICATED
-        
+
         # Cleanup sessions
         for session_id in session_ids:
             await tts_pool.release_for_session(session_id)
             await stt_pool.release_for_session(session_id)
-        
+
         # Verify cleanup
         assert tts_pool.snapshot()["active_sessions"] == 0
         assert stt_pool.snapshot()["active_sessions"] == 0
 
     async def test_pool_error_handling_in_realtime_context(self):
         """Test pool error handling scenarios in realtime context."""
-        
+
         # Create failing factory
         async def failing_tts_factory():
             raise RuntimeError("TTS client creation failed")
-        
+
         async def failing_stt_factory():
             raise ValueError("STT client initialization failed")
-        
+
         tts_pool = MockOnDemandPool(failing_tts_factory, name="failing-tts-pool")
         stt_pool = MockOnDemandPool(failing_stt_factory, name="failing-stt-pool")
-        
+
         # Test error propagation
         with pytest.raises(RuntimeError, match="TTS client creation failed"):
             await tts_pool.acquire_for_session("session-error")
-        
+
         with pytest.raises(ValueError, match="STT client initialization failed"):
             await stt_pool.acquire_for_session("session-error")
-        
+
         # Verify error handling doesn't break pool state
         assert tts_pool.snapshot()["active_sessions"] == 0
         assert stt_pool.snapshot()["active_sessions"] == 0
@@ -813,52 +819,54 @@ class TestRealtimePoolIntegration:
     async def test_pool_timeout_behavior(self, realtime_app):
         """Test pool timeout parameter handling (should be ignored)."""
         app, conn_manager, session_manager, metrics, tts_pool, stt_pool = realtime_app
-        
+
         await tts_pool.prepare()
         await stt_pool.prepare()
-        
+
         # Test timeout parameters are accepted but ignored
         tts_client, tier = await tts_pool.acquire_for_session("timeout-session", timeout=5.0)
         stt_client, tier = await stt_pool.acquire_for_session("timeout-session", timeout=1.0)
-        
+
         assert isinstance(tts_client, MockTTSClient)
         assert isinstance(stt_client, MockSTTClient)
-        
+
         # Verify calls were recorded with timeout
         assert ("timeout-session", 5.0) in tts_pool._acquire_calls
         assert ("timeout-session", 1.0) in stt_pool._acquire_calls
 
     async def test_session_aware_vs_non_session_aware_pools(self):
         """Test difference between session-aware and non-session-aware pools."""
-        
+
         async def mock_factory():
             return MockTTSClient()
-        
+
         # Session-aware pool
         session_pool = MockOnDemandPool(mock_factory, session_awareness=True, name="session-pool")
-        
+
         # Non-session-aware pool
-        non_session_pool = MockOnDemandPool(mock_factory, session_awareness=False, name="non-session-pool")
-        
+        non_session_pool = MockOnDemandPool(
+            mock_factory, session_awareness=False, name="non-session-pool"
+        )
+
         await session_pool.prepare()
         await non_session_pool.prepare()
-        
+
         session_id = "test-session"
-        
+
         # Session-aware: should cache
         client1, tier1 = await session_pool.acquire_for_session(session_id)
         client2, tier2 = await session_pool.acquire_for_session(session_id)
         assert client1 == client2
         assert tier1 == AllocationTier.COLD
         assert tier2 == AllocationTier.DEDICATED
-        
+
         # Non-session-aware: should always create new
         client3, tier3 = await non_session_pool.acquire_for_session(session_id)
         client4, tier4 = await non_session_pool.acquire_for_session(session_id)
         assert client3 != client4
         assert tier3 == AllocationTier.COLD
         assert tier4 == AllocationTier.COLD
-        
+
         # Verify pool states
         assert session_pool.snapshot()["active_sessions"] == 1
         assert non_session_pool.snapshot()["active_sessions"] == 0
@@ -866,62 +874,62 @@ class TestRealtimePoolIntegration:
     async def test_realistic_conversation_flow_with_pools(self, realtime_app):
         """Test realistic conversation flow using pools."""
         app, conn_manager, session_manager, metrics, tts_pool, stt_pool = realtime_app
-        
+
         await tts_pool.prepare()
         await stt_pool.prepare()
-        
+
         session_id = "conversation-flow-session"
-        
+
         # Step 1: Initialize conversation (acquire resources)
         tts_client, _ = await tts_pool.acquire_for_session(session_id)
         stt_client, _ = await stt_pool.acquire_for_session(session_id)
-        
+
         # Step 2: Simulate conversation activity
         # Start STT
         stt_client.start()
         assert stt_client.started
-        
+
         # Simulate audio processing
         audio_data = b"\\x00\\x01\\x02\\x03"
         stt_client.write_bytes(audio_data)
         assert audio_data in stt_client.bytes_written
-        
+
         # Simulate TTS synthesis
         response_text = "Hello, how can I help you?"
         synthesized_audio = await tts_client.synthesize(response_text)
         assert synthesized_audio == f"synthesized-{response_text}".encode()
         assert tts_client.speaking
-        
+
         # Step 3: Test resource reuse (multiple turns)
         for turn in range(3):
             # Re-acquire clients (should be cached)
             cached_tts, tier = await tts_pool.acquire_for_session(session_id)
             cached_stt, tier = await stt_pool.acquire_for_session(session_id)
-            
+
             assert cached_tts == tts_client
             assert cached_stt == stt_client
             assert tier == AllocationTier.DEDICATED
-            
+
             # Simulate turn activity
             turn_audio = await cached_tts.synthesize(f"Turn {turn} response")
             assert turn_audio == f"synthesized-Turn {turn} response".encode()
-        
+
         # Step 4: End conversation (cleanup)
         tts_client.stop_speaking()
         stt_client.stop()
-        
+
         tts_released = await tts_pool.release_for_session(session_id)
         stt_released = await stt_pool.release_for_session(session_id)
-        
+
         assert tts_released
         assert stt_released
         assert tts_client.stopped
         assert not stt_client.started
-        
+
         # Verify final pool state
         assert tts_pool.snapshot()["active_sessions"] == 0
         assert stt_pool.snapshot()["active_sessions"] == 0
-        
+
         # Verify metrics
         assert len(tts_pool._acquire_calls) == 4  # 1 + 3 cached
         assert len(stt_pool._acquire_calls) == 4
@@ -931,24 +939,24 @@ class TestRealtimePoolIntegration:
     async def test_pool_shutdown_cleanup(self, realtime_app):
         """Test pool shutdown behavior with active sessions."""
         app, conn_manager, session_manager, metrics, tts_pool, stt_pool = realtime_app
-        
+
         await tts_pool.prepare()
         await stt_pool.prepare()
-        
+
         # Create multiple active sessions
         sessions = ["session-1", "session-2", "session-3"]
         for session_id in sessions:
             await tts_pool.acquire_for_session(session_id)
             await stt_pool.acquire_for_session(session_id)
-        
+
         # Verify active sessions
         assert tts_pool.snapshot()["active_sessions"] == 3
         assert stt_pool.snapshot()["active_sessions"] == 3
-        
+
         # Shutdown pools
         await tts_pool.shutdown()
         await stt_pool.shutdown()
-        
+
         # Verify cleanup
         assert tts_pool.snapshot()["active_sessions"] == 0
         assert stt_pool.snapshot()["active_sessions"] == 0

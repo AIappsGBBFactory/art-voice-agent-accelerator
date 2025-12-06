@@ -7,8 +7,8 @@ Tools for escalating calls to humans, emergencies, or call centers.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import UTC, datetime
+from typing import Any
 
 from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
@@ -20,7 +20,7 @@ logger = get_logger("agents.tools.escalation")
 # SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-escalate_human_schema: Dict[str, Any] = {
+escalate_human_schema: dict[str, Any] = {
     "name": "escalate_human",
     "description": (
         "Transfer call to a human agent. Use when customer explicitly requests to speak with a person, "
@@ -52,7 +52,7 @@ escalate_human_schema: Dict[str, Any] = {
     },
 }
 
-escalate_emergency_schema: Dict[str, Any] = {
+escalate_emergency_schema: dict[str, Any] = {
     "name": "escalate_emergency",
     "description": (
         "Emergency escalation for critical situations. Use for confirmed fraud in progress, "
@@ -63,7 +63,13 @@ escalate_emergency_schema: Dict[str, Any] = {
         "properties": {
             "emergency_type": {
                 "type": "string",
-                "enum": ["fraud_in_progress", "security_threat", "safety_concern", "elder_abuse", "other"],
+                "enum": [
+                    "fraud_in_progress",
+                    "security_threat",
+                    "safety_concern",
+                    "elder_abuse",
+                    "other",
+                ],
                 "description": "Type of emergency",
             },
             "description": {
@@ -79,7 +85,7 @@ escalate_emergency_schema: Dict[str, Any] = {
     },
 }
 
-transfer_call_to_call_center_schema: Dict[str, Any] = {
+transfer_call_to_call_center_schema: dict[str, Any] = {
     "name": "transfer_call_to_call_center",
     "description": (
         "Cold transfer to call center queue. Use when warm transfer not needed "
@@ -101,7 +107,7 @@ transfer_call_to_call_center_schema: Dict[str, Any] = {
     },
 }
 
-schedule_callback_schema: Dict[str, Any] = {
+schedule_callback_schema: dict[str, Any] = {
     "name": "schedule_callback",
     "description": (
         "Schedule a callback from a human agent at a specific time. "
@@ -124,7 +130,7 @@ schedule_callback_schema: Dict[str, Any] = {
     },
 }
 
-submit_complaint_schema: Dict[str, Any] = {
+submit_complaint_schema: dict[str, Any] = {
     "name": "submit_complaint",
     "description": (
         "Submit a formal complaint on behalf of the customer. "
@@ -140,7 +146,10 @@ submit_complaint_schema: Dict[str, Any] = {
                 "description": "Category of complaint",
             },
             "description": {"type": "string", "description": "Detailed complaint description"},
-            "desired_resolution": {"type": "string", "description": "What customer wants as resolution"},
+            "desired_resolution": {
+                "type": "string",
+                "description": "What customer wants as resolution",
+            },
         },
         "required": ["client_id", "complaint_type", "description"],
     },
@@ -160,32 +169,33 @@ _QUEUE_WAIT_TIMES = {
     "retention": "1-2 minutes",
 }
 
-_CALLBACKS: Dict[str, Dict] = {}
-_COMPLAINTS: Dict[str, Dict] = {}
+_CALLBACKS: dict[str, dict] = {}
+_COMPLAINTS: dict[str, dict] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTORS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def escalate_human(args: Dict[str, Any]) -> Dict[str, Any]:
+
+async def escalate_human(args: dict[str, Any]) -> dict[str, Any]:
     """Escalate to human agent."""
     reason = (args.get("reason") or "").strip()
     department = (args.get("department") or "general").strip()
     context = (args.get("context_summary") or "").strip()
     priority = (args.get("priority") or "normal").strip()
-    
+
     if not reason:
         return {"success": False, "message": "Reason is required for escalation."}
-    
+
     wait_time = _QUEUE_WAIT_TIMES.get(department, "5-10 minutes")
     if priority == "urgent":
         wait_time = "1-2 minutes"
     elif priority == "high":
         wait_time = "2-4 minutes"
-    
+
     logger.info("👤 Escalating to human: dept=%s priority=%s", department, priority)
-    
+
     return {
         "success": True,
         "escalation_initiated": True,
@@ -198,17 +208,17 @@ async def escalate_human(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def escalate_emergency(args: Dict[str, Any]) -> Dict[str, Any]:
+async def escalate_emergency(args: dict[str, Any]) -> dict[str, Any]:
     """Emergency escalation."""
     emergency_type = (args.get("emergency_type") or "other").strip()
     description = (args.get("description") or "").strip()
     client_id = (args.get("client_id") or "").strip()
-    
+
     if not description:
         return {"success": False, "message": "Description is required for emergency escalation."}
-    
+
     logger.critical("🚨 EMERGENCY ESCALATION: type=%s client=%s", emergency_type, client_id)
-    
+
     return {
         "success": True,
         "emergency_escalation": True,
@@ -225,38 +235,38 @@ async def escalate_emergency(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def transfer_call_to_call_center(args: Dict[str, Any]) -> Dict[str, Any]:
+async def transfer_call_to_call_center(args: dict[str, Any]) -> dict[str, Any]:
     """Cold transfer to call center."""
     queue_id = (args.get("queue_id") or "general").strip()
     reason = (args.get("reason") or "").strip()
-    
+
     if not reason:
         return {"success": False, "message": "Reason is required for transfer."}
-    
+
     logger.info("📞 Cold transfer: queue=%s", queue_id)
-    
+
     return {
         "success": True,
         "transfer_initiated": True,
         "queue_id": queue_id,
         "estimated_wait": _QUEUE_WAIT_TIMES.get(queue_id, "5-10 minutes"),
-        "message": f"Transferring you to our call center. Please hold.",
+        "message": "Transferring you to our call center. Please hold.",
     }
 
 
-async def schedule_callback(args: Dict[str, Any]) -> Dict[str, Any]:
+async def schedule_callback(args: dict[str, Any]) -> dict[str, Any]:
     """Schedule callback from human agent."""
     client_id = (args.get("client_id") or "").strip()
     phone = (args.get("phone_number") or "").strip()
     preferred_time = (args.get("preferred_time") or "").strip()
     reason = (args.get("reason") or "").strip()
     department = (args.get("department") or "general").strip()
-    
+
     if not client_id or not reason:
         return {"success": False, "message": "client_id and reason required."}
-    
+
     callback_id = f"CB-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    
+
     callback = {
         "callback_id": callback_id,
         "client_id": client_id,
@@ -264,13 +274,13 @@ async def schedule_callback(args: Dict[str, Any]) -> Dict[str, Any]:
         "preferred_time": preferred_time or "next available",
         "reason": reason,
         "department": department,
-        "scheduled_at": datetime.now(timezone.utc).isoformat(),
+        "scheduled_at": datetime.now(UTC).isoformat(),
     }
-    
+
     _CALLBACKS[callback_id] = callback
-    
+
     logger.info("📅 Callback scheduled: %s for %s", callback_id, client_id)
-    
+
     return {
         "success": True,
         "callback_scheduled": True,
@@ -282,18 +292,18 @@ async def schedule_callback(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def submit_complaint(args: Dict[str, Any]) -> Dict[str, Any]:
+async def submit_complaint(args: dict[str, Any]) -> dict[str, Any]:
     """Submit formal complaint."""
     client_id = (args.get("client_id") or "").strip()
     complaint_type = (args.get("complaint_type") or "other").strip()
     description = (args.get("description") or "").strip()
     desired_resolution = (args.get("desired_resolution") or "").strip()
-    
+
     if not client_id or not description:
         return {"success": False, "message": "client_id and description required."}
-    
+
     case_id = f"CMP-{datetime.now().strftime('%Y%m%d')}-{len(_COMPLAINTS) + 1:04d}"
-    
+
     complaint = {
         "case_id": case_id,
         "client_id": client_id,
@@ -301,13 +311,13 @@ async def submit_complaint(args: Dict[str, Any]) -> Dict[str, Any]:
         "description": description,
         "desired_resolution": desired_resolution,
         "status": "submitted",
-        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "submitted_at": datetime.now(UTC).isoformat(),
     }
-    
+
     _COMPLAINTS[case_id] = complaint
-    
+
     logger.info("📝 Complaint submitted: %s - type: %s", case_id, complaint_type)
-    
+
     return {
         "success": True,
         "complaint_submitted": True,
@@ -323,8 +333,27 @@ async def submit_complaint(args: Dict[str, Any]) -> Dict[str, Any]:
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-register_tool("escalate_human", escalate_human_schema, escalate_human, tags={"escalation", "transfer"})
-register_tool("escalate_emergency", escalate_emergency_schema, escalate_emergency, tags={"escalation", "emergency"})
-register_tool("transfer_call_to_call_center", transfer_call_to_call_center_schema, transfer_call_to_call_center, tags={"escalation", "transfer"})
-register_tool("schedule_callback", schedule_callback_schema, schedule_callback, tags={"escalation", "callback"})
-register_tool("submit_complaint", submit_complaint_schema, submit_complaint, tags={"escalation", "complaint"})
+register_tool(
+    "escalate_human", escalate_human_schema, escalate_human, tags={"escalation", "transfer"}
+)
+register_tool(
+    "escalate_emergency",
+    escalate_emergency_schema,
+    escalate_emergency,
+    tags={"escalation", "emergency"},
+)
+register_tool(
+    "transfer_call_to_call_center",
+    transfer_call_to_call_center_schema,
+    transfer_call_to_call_center,
+    tags={"escalation", "transfer"},
+)
+register_tool(
+    "schedule_callback",
+    schedule_callback_schema,
+    schedule_callback,
+    tags={"escalation", "callback"},
+)
+register_tool(
+    "submit_complaint", submit_complaint_schema, submit_complaint, tags={"escalation", "complaint"}
+)

@@ -5,37 +5,33 @@ Call Management Endpoints
 REST API endpoints for managing phone calls through Azure Communication Services.
 """
 
-from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
-from fastapi.responses import JSONResponse
-from opentelemetry import trace
-from opentelemetry.trace import SpanKind, Status, StatusCode
-import uuid
-from azure.core.messaging import CloudEvent
+import asyncio
+from typing import Any
 
-from apps.artagent.backend.src.utils.tracing import (
-    trace_acs_operation,
-    trace_acs_dependency,
-)
 from apps.artagent.backend.api.v1.schemas.call import (
+    CallHangupResponse,
     CallInitiateRequest,
     CallInitiateResponse,
-    CallStatusResponse,
-    CallHangupResponse,
     CallListResponse,
-    CallUpdateRequest,
+    CallStatusResponse,
     CallTerminateRequest,
 )
-from src.enums import SpanAttr
+from apps.artagent.backend.src.utils.tracing import (
+    trace_acs_dependency,
+    trace_acs_operation,
+)
+from azure.core.messaging import CloudEvent
+from config import ACS_STREAMING_MODE
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
+from opentelemetry import trace
+from src.enums.stream_modes import StreamMode
 from utils.ml_logging import get_logger
+
+from ..events import CallEventProcessor
 
 # V1 imports
 from ..handlers.acs_call_lifecycle import ACSLifecycleHandler
-from ..events import CallEventProcessor, ACSEventTypes
-from src.enums.stream_modes import StreamMode
-from config import ACS_STREAMING_MODE
-import asyncio
-import os
 
 logger = get_logger("api.v1.calls")
 tracer = trace.get_tracer(__name__)
@@ -45,7 +41,7 @@ _BOOL_TRUE = {"true", "1", "yes", "on"}
 _BOOL_FALSE = {"false", "0", "no", "off"}
 
 
-def _coerce_optional_bool(value: Any) -> Optional[bool]:
+def _coerce_optional_bool(value: Any) -> bool | None:
     """Normalize loosely-typed boolean inputs to strict Optional[bool]."""
 
     if isinstance(value, bool):
@@ -190,9 +186,7 @@ async def initiate_call(
             ) as dep_op:
                 # Extract browser session ID from request context for UI coordination
                 browser_session_id = (
-                    request.context.get("browser_session_id")
-                    if request.context
-                    else None
+                    request.context.get("browser_session_id") if request.context else None
                 )
 
                 # Log session correlation for debugging
@@ -238,13 +232,9 @@ async def initiate_call(
                             stream_mode=str(effective_stream_mode),
                         )
 
-                record_call_override: Optional[bool] = _coerce_optional_bool(
-                    request.record_call
-                )
+                record_call_override: bool | None = _coerce_optional_bool(request.record_call)
                 if record_call_override is None and request.context:
-                    record_call_override = _coerce_optional_bool(
-                        request.context.get("record_call")
-                    )
+                    record_call_override = _coerce_optional_bool(request.context.get("record_call"))
 
                 result = await acs_handler.start_outbound_call(
                     acs_caller=http_request.app.state.acs_caller,
@@ -272,9 +262,7 @@ async def initiate_call(
                             )
 
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to persist call context for {call_id}: {e}"
-                        )
+                        logger.warning(f"Failed to persist call context for {call_id}: {e}")
 
                     # Create V1 event processor instance and emit call initiation event
                     from ..events import get_call_event_processor
@@ -375,9 +363,7 @@ async def initiate_call(
         400: {
             "description": "Invalid pagination parameters",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Page number must be positive"}
-                }
+                "application/json": {"example": {"detail": "Page number must be positive"}}
             },
         },
     },
@@ -397,7 +383,7 @@ async def list_calls(
         description="Number of items per page (1-100)",
         examples={"default": {"summary": "items per page", "value": 10}},
     ),
-    status_filter: Optional[str] = Query(
+    status_filter: str | None = Query(
         None,
         description="Filter calls by status",
         enum=[
@@ -428,9 +414,7 @@ async def list_calls(
     """
     with trace_acs_operation(tracer, logger, "list_calls") as op:
         try:
-            op.log_info(
-                f"Listing calls: page {page}, limit {limit}, filter: {status_filter}"
-            )
+            op.log_info(f"Listing calls: page {page}, limit {limit}, filter: {status_filter}")
 
             # Get cosmos DB manager from app state
             cosmos_manager = request.app.state.cosmos
@@ -491,16 +475,14 @@ async def list_calls(
                     # Log but don't fail the main operation
                     op.log_info(f"Failed to emit list event: {e}")
 
-            return CallListResponse(
-                calls=calls, total=len(call_docs), page=page, limit=limit
-            )
+            return CallListResponse(calls=calls, total=len(call_docs), page=page, limit=limit)
 
         except Exception as e:
             op.set_error(str(e))
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=f"Failed to list calls: {str(e)}",
-    )
+                detail=f"Failed to list calls: {str(e)}",
+            )
 
 
 @router.post(
@@ -533,7 +515,7 @@ async def terminate_call(request: Request, payload: CallTerminateRequest) -> Cal
             call_conn.hang_up(is_for_everyone=True),
             timeout=5.0,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="Timed out waiting for ACS hangup",
@@ -597,16 +579,12 @@ async def terminate_call(request: Request, payload: CallTerminateRequest) -> Cal
         400: {
             "description": "Invalid request body",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Invalid Event Grid request format"}
-                }
+                "application/json": {"example": {"detail": "Invalid Event Grid request format"}}
             },
         },
         503: {
             "description": "Service dependencies not available",
-            "content": {
-                "application/json": {"example": {"detail": "ACS not initialised"}}
-            },
+            "content": {"application/json": {"example": {"detail": "ACS not initialised"}}},
         },
     },
 )
@@ -635,7 +613,7 @@ async def answer_inbound_call(
         try:
             request_body = await http_request.json()
 
-            def _extract_recording_override(payload: Any) -> Optional[bool]:
+            def _extract_recording_override(payload: Any) -> bool | None:
                 if isinstance(payload, dict):
                     candidates = [
                         payload.get("recordCall"),
@@ -661,10 +639,9 @@ async def answer_inbound_call(
                 return None
 
             record_call_override = None
-            query_value = (
-                http_request.query_params.get("recordCall")
-                or http_request.query_params.get("record_call")
-            )
+            query_value = http_request.query_params.get(
+                "recordCall"
+            ) or http_request.query_params.get("record_call")
             record_call_override = _coerce_optional_bool(query_value)
             if record_call_override is None:
                 record_call_override = _extract_recording_override(request_body)
@@ -675,7 +652,7 @@ async def answer_inbound_call(
             with trace_acs_dependency(
                 tracer, logger, "acs_lifecycle", "accept_inbound_call"
             ) as dep_op:
-                
+
                 # Sample Payload for D365 Transfer
                 # 'id' = '14bd8e31-bd47-4ae3-bbf6-21b103c21ba3_1fb971cadf0143cda27019ac20805d7c.8759326'
                 # 'topic' = '/subscriptions/46c8d580-4e4e-43b3-b3db-4a2daea037b1/resourcegroups/devops-shared/providers/microsoft.communication/communicationservices/acs-local-test'
@@ -731,16 +708,12 @@ async def answer_inbound_call(
         500: {
             "description": "Event processing failed",
             "content": {
-                "application/json": {
-                    "example": {"error": "Failed to process callback events"}
-                }
+                "application/json": {"example": {"error": "Failed to process callback events"}}
             },
         },
         503: {
             "description": "Service dependencies not available",
-            "content": {
-                "application/json": {"example": {"error": "ACS not initialised"}}
-            },
+            "content": {"application/json": {"example": {"error": "ACS not initialised"}}},
         },
     },
 )
@@ -791,8 +764,9 @@ async def handle_acs_callbacks(
             )
 
             # Import here to avoid circular imports
-            from ..events import get_call_event_processor, register_default_handlers
             from azure.core.messaging import CloudEvent
+
+            from ..events import get_call_event_processor, register_default_handlers
 
             # Ensure handlers are registered
             register_default_handlers()
@@ -812,9 +786,7 @@ async def handle_acs_callbacks(
                         )
                         cloud_events.append(cloud_event)
             elif isinstance(events_data, dict):
-                event_type = events_data.get("eventType") or events_data.get(
-                    "type", "Unknown"
-                )
+                event_type = events_data.get("eventType") or events_data.get("type", "Unknown")
                 cloud_event = CloudEvent(
                     source="azure.communication.callautomation",
                     type=event_type,
@@ -824,9 +796,7 @@ async def handle_acs_callbacks(
 
             # Process through V1 event system
             processor = get_call_event_processor()
-            result = await processor.process_events(
-                cloud_events, http_request.app.state
-            )
+            result = await processor.process_events(cloud_events, http_request.app.state)
 
             op.log_info(f"Processed {result.get('processed', 0)} events successfully")
 

@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from random import Random
-from typing import Any, Literal, Optional
-import secrets
-
 import asyncio
 import logging
 import os
+import secrets
+from datetime import UTC, datetime, timedelta
+from random import Random
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from pymongo.errors import NetworkTimeout, PyMongoError
-
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
 from src.stateful.state_managment import MemoManager
 
@@ -211,7 +209,7 @@ SPENDING_RANGES = ("$500 - $8,000", "$1,000 - $15,000", "$1,000 - $25,000")
 
 def _rng_dependency() -> Random:
     """Provide a per-request random generator without storing global state."""
-    return Random(datetime.now(tz=timezone.utc).timestamp())
+    return Random(datetime.now(tz=UTC).timestamp())
 
 
 def _slugify_name(full_name: str) -> str:
@@ -268,7 +266,7 @@ def _build_profile(
     # Calculate TTL-dependent values
     ttl_hours = DEMOS_TTL_SECONDS // 3600
     ttl_days = max(1, ttl_hours // 24)
-    
+
     customer_intelligence = {
         "relationship_context": {
             "relationship_tier": template["relationship_tier"],
@@ -282,7 +280,9 @@ def _build_profile(
             "current_balance": rng.randint(*template["balance_range"]),
             "ytd_transaction_volume": rng.randint(*template["volume_range"]),
             "account_health_score": rng.randint(88, 99),
-            "last_login": (anchor - timedelta(days=rng.randint(0, min(6, ttl_days)))).date().isoformat(),
+            "last_login": (anchor - timedelta(days=rng.randint(0, min(6, ttl_days))))
+            .date()
+            .isoformat(),
             "login_frequency": rng.choice(("daily", "weekly", "3x per week")),
         },
         "spending_patterns": {
@@ -409,7 +409,7 @@ logger = logging.getLogger(__name__)
 
 def _format_iso_z(value: datetime | str) -> str:
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if isinstance(value, str):
         return value.replace("+00:00", "Z")
     return str(value)
@@ -424,7 +424,7 @@ def _parse_iso8601(value: datetime | str | None) -> datetime:
             return datetime.fromisoformat(normalized)
         except ValueError:
             pass
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _serialize_demo_user(response: DemoUserResponse) -> dict:
@@ -451,7 +451,7 @@ def _serialize_demo_user(response: DemoUserResponse) -> dict:
             "customer_intelligence",
         )
     }
-    created_at = _format_iso_z(profile_payload.get("created_at") or datetime.now(tz=timezone.utc))
+    created_at = _format_iso_z(profile_payload.get("created_at") or datetime.now(tz=UTC))
     document = {
         "_id": base_fields["client_id"],
         **base_fields,
@@ -509,9 +509,7 @@ async def _append_phrase_bias_entries(profile: DemoUserProfile, request: Request
         return
 
     try:
-        added = await manager.add_phrases(
-            [profile.full_name, profile.institution_name]
-        )
+        added = await manager.add_phrases([profile.full_name, profile.institution_name])
         if added:
             total = len(await manager.snapshot())
             logger.info(
@@ -530,14 +528,14 @@ async def _append_phrase_bias_entries(profile: DemoUserProfile, request: Request
 async def _persist_profile_to_session(
     request: Request,
     profile: DemoUserProfile,
-    session_id: Optional[str],
+    session_id: str | None,
 ) -> None:
     """
     Persist demo profile to Redis MemoManager for media handler discovery.
-    
+
     This enables the media_handler to access the demo profile data (caller_name,
     customer_intelligence, institution_name, etc.) when the voice session starts.
-    
+
     Args:
         request: FastAPI request with app.state.redis
         profile: The demo user profile to persist
@@ -546,21 +544,21 @@ async def _persist_profile_to_session(
     if not session_id:
         logger.debug("No session_id provided, skipping session profile persistence")
         return
-    
+
     redis_mgr = getattr(request.app.state, "redis", None)
     if not redis_mgr:
         logger.warning("Redis manager not available, skipping session profile persistence")
         return
-    
+
     try:
         # Load or create MemoManager for this session
         mm = MemoManager.from_redis(session_id, redis_mgr)
         if mm is None:
             mm = MemoManager(session_id=session_id)
-        
+
         # Build full session profile dict for comprehensive context
         profile_dict = profile.model_dump(mode="json")
-        
+
         # Set core memory values that media_handler._derive_default_greeting expects
         mm.set_corememory("session_profile", profile_dict)
         mm.set_corememory("caller_name", profile.full_name)
@@ -569,10 +567,10 @@ async def _persist_profile_to_session(
         mm.set_corememory("customer_intelligence", profile.customer_intelligence)
         mm.set_corememory("relationship_tier", profile.relationship_tier)
         mm.set_corememory("user_email", str(profile.email))
-        
+
         # Persist to Redis with TTL matching demo expiration
         await mm.persist_to_redis_async(redis_mgr, ttl_seconds=DEMOS_TTL_SECONDS)
-        
+
         logger.info(
             "Persisted demo profile to session",
             extra={
@@ -612,7 +610,7 @@ async def create_temporary_user(
     Latency:
         Pure CPU work; expected response within ~25 ms under typical load.
     """
-    anchor = datetime.now(tz=timezone.utc)
+    anchor = datetime.now(tz=UTC)
     expires_at = anchor + timedelta(hours=24)
     profile = _build_profile(payload, rng, anchor)
     transactions = _build_transactions(profile.client_id, rng, anchor)
@@ -655,9 +653,7 @@ async def lookup_demo_user(
         )
         try:
             # Retrieve profile by email (no sort needed for banking profiles)
-            return manager.collection.find_one(
-                {"contact_info.email": str(email)}
-            )
+            return manager.collection.find_one({"contact_info.email": str(email)})
         finally:
             manager.close_connection()
 
@@ -684,17 +680,13 @@ async def lookup_demo_user(
 
     contact_info = profile_payload.get("contact_info") or {}
     profile_payload["email"] = (
-        profile_payload.get("email")
-        or contact_info.get("email")
-        or "demo@example.com"
+        profile_payload.get("email") or contact_info.get("email") or "demo@example.com"
     )
-    profile_payload["phone_number"] = (
-        profile_payload.get("phone_number")
-        or contact_info.get("phone")
+    profile_payload["phone_number"] = profile_payload.get("phone_number") or contact_info.get(
+        "phone"
     )
-    relationship_context = (
-        profile_payload.get("customer_intelligence", {})
-        .get("relationship_context", {})
+    relationship_context = profile_payload.get("customer_intelligence", {}).get(
+        "relationship_context", {}
     )
     profile_payload["relationship_tier"] = (
         profile_payload.get("relationship_tier")
@@ -703,36 +695,38 @@ async def lookup_demo_user(
     )
 
     profile_model = DemoUserProfile.model_validate(profile_payload)
-    
+
     # Support both demo_metadata.transactions and document.transactions (for banking profiles)
     transactions_payload = demo_metadata.get("transactions") or document.get("transactions") or []
-    
+
     # Create default interaction_plan if not present (for banking profiles)
     interaction_payload = demo_metadata.get("interaction_plan") or {
         "primary_channel": "voice",
         "fallback_channel": "sms",
         "mfa_required": False,
-        "notification_message": "Banking profile loaded successfully"
+        "notification_message": "Banking profile loaded successfully",
     }
 
     # Determine effective session_id
     effective_session_id = session_id or demo_metadata.get("session_id")
 
     response = DemoUserLookupResponse(
-        entry_id=demo_metadata.get("entry_id") or document.get("_id") or document.get("client_id") or "",
-        expires_at=_parse_iso8601(
-            demo_metadata.get("expires_at") or document.get("expires_at")
-        ),
+        entry_id=demo_metadata.get("entry_id")
+        or document.get("_id")
+        or document.get("client_id")
+        or "",
+        expires_at=_parse_iso8601(demo_metadata.get("expires_at") or document.get("expires_at")),
         profile=profile_model,
         transactions=[DemoTransaction.model_validate(txn) for txn in transactions_payload],
         interaction_plan=DemoInteractionPlan.model_validate(interaction_payload),
         session_id=effective_session_id,
         safety_notice=demo_metadata.get(
-            "safety_notice", "Demo data only. Never enter real customer or personal information in this sandbox."
+            "safety_notice",
+            "Demo data only. Never enter real customer or personal information in this sandbox.",
         ),
     )
-    
+
     # Persist profile to Redis session so media_handler can discover it
     await _persist_profile_to_session(request, profile_model, effective_session_id)
-    
+
     return response

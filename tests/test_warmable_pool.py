@@ -13,13 +13,10 @@ Tests cover:
 """
 
 import asyncio
-import pytest
-import time
-from unittest.mock import AsyncMock, patch
-from typing import Any
 
-from src.pools.warmable_pool import WarmableResourcePool, WarmablePoolMetrics
+import pytest
 from src.pools.on_demand_pool import AllocationTier
+from src.pools.warmable_pool import WarmableResourcePool
 
 
 class MockResource:
@@ -646,9 +643,7 @@ async def test_concurrent_session_acquires():
     r1, _ = await pool.acquire_for_session("session-1")
 
     # Subsequent concurrent acquires should all get the cached resource
-    results = await asyncio.gather(*[
-        pool.acquire_for_session("session-1") for _ in range(5)
-    ])
+    results = await asyncio.gather(*[pool.acquire_for_session("session-1") for _ in range(5)])
 
     # All should get the same cached resource
     resource_ids = {r.id for r, _ in results}

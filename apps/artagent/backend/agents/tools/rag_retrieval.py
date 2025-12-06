@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import List, Optional
 
 from utils.ml_logging import get_logger
 
@@ -22,10 +21,10 @@ logger = get_logger("agents.shared.rag_retrieval")
 @dataclass
 class RetrievalResult:
     content: str
-    snippet: Optional[str] = None
-    url: Optional[str] = None
+    snippet: str | None = None
+    url: str | None = None
     score: float = 0.0
-    doc_type: Optional[str] = None
+    doc_type: str | None = None
 
 
 class CosmosVectorRetriever:
@@ -50,11 +49,11 @@ class CosmosVectorRetriever:
             )
 
     @classmethod
-    def from_env(cls, *, collection: str, appname: str = "unified-agents") -> "CosmosVectorRetriever":
+    def from_env(cls, *, collection: str, appname: str = "unified-agents") -> CosmosVectorRetriever:
         """Create retriever using environment configuration."""
         return cls(collection=collection, appname=appname)
 
-    def search(self, query: str, *, top_k: int = 5) -> List[RetrievalResult]:
+    def search(self, query: str, *, top_k: int = 5) -> list[RetrievalResult]:
         """
         Execute a vector search. Returns an empty list if not configured.
 

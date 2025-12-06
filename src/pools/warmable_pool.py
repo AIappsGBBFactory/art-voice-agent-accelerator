@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import Any, Awaitable, Callable, Dict, Generic, Optional, Tuple, TypeVar
+from typing import Any, Generic, TypeVar
 
 from utils.ml_logging import get_logger
 
@@ -71,7 +72,7 @@ class WarmableResourcePool(Generic[T]):
         warmup_interval_sec: float = 30.0,
         session_awareness: bool = False,
         session_max_age_sec: float = 1800.0,
-        warm_fn: Optional[Callable[[T], Awaitable[bool]]] = None,
+        warm_fn: Callable[[T], Awaitable[bool]] | None = None,
     ) -> None:
         self._factory = factory
         self._name = name
@@ -86,10 +87,10 @@ class WarmableResourcePool(Generic[T]):
         self._ready = asyncio.Event()
         self._shutdown_event = asyncio.Event()
         self._warm_queue: asyncio.Queue[T] = asyncio.Queue(maxsize=max(1, warm_pool_size))
-        self._session_cache: Dict[str, Tuple[T, float]] = {}  # session_id -> (resource, last_used)
+        self._session_cache: dict[str, tuple[T, float]] = {}  # session_id -> (resource, last_used)
         self._lock = asyncio.Lock()
         self._metrics = WarmablePoolMetrics()
-        self._background_task: Optional[asyncio.Task[None]] = None
+        self._background_task: asyncio.Task[None] | None = None
 
     async def prepare(self) -> None:
         """
@@ -99,9 +100,7 @@ class WarmableResourcePool(Generic[T]):
         If enable_background_warmup, starts background maintenance task.
         """
         if self._warm_pool_size > 0:
-            logger.info(
-                f"[{self._name}] Pre-warming {self._warm_pool_size} resources..."
-            )
+            logger.info(f"[{self._name}] Pre-warming {self._warm_pool_size} resources...")
             await self._fill_warm_pool()
 
         if self._enable_background_warmup and self._warm_pool_size > 0:
@@ -127,7 +126,7 @@ class WarmableResourcePool(Generic[T]):
             self._background_task.cancel()
             try:
                 await asyncio.wait_for(self._background_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
 
         async with self._lock:
@@ -146,7 +145,7 @@ class WarmableResourcePool(Generic[T]):
         self._ready.clear()
         logger.info(f"[{self._name}] Pool shutdown complete")
 
-    async def acquire(self, timeout: Optional[float] = None) -> T:
+    async def acquire(self, timeout: float | None = None) -> T:
         """
         Acquire a resource from the pool.
 
@@ -170,7 +169,7 @@ class WarmableResourcePool(Generic[T]):
         logger.debug(f"[{self._name}] Acquired COLD resource")
         return resource
 
-    async def release(self, resource: Optional[T]) -> None:
+    async def release(self, resource: T | None) -> None:
         """
         Release a resource back to the pool.
 
@@ -199,8 +198,8 @@ class WarmableResourcePool(Generic[T]):
         # Otherwise discard (resource will be garbage collected)
 
     async def acquire_for_session(
-        self, session_id: Optional[str], timeout: Optional[float] = None
-    ) -> Tuple[T, AllocationTier]:
+        self, session_id: str | None, timeout: float | None = None
+    ) -> tuple[T, AllocationTier]:
         """
         Acquire a resource for a specific session.
 
@@ -243,12 +242,14 @@ class WarmableResourcePool(Generic[T]):
 
         # Determine tier based on where resource came from
         # (acquire() already updated warm/cold metrics)
-        tier = AllocationTier.WARM if self._warm_queue.qsize() < self._warm_pool_size else AllocationTier.COLD
+        tier = (
+            AllocationTier.WARM
+            if self._warm_queue.qsize() < self._warm_pool_size
+            else AllocationTier.COLD
+        )
         return resource, tier
 
-    async def release_for_session(
-        self, session_id: Optional[str], resource: Optional[T] = None
-    ) -> bool:
+    async def release_for_session(self, session_id: str | None, resource: T | None = None) -> bool:
         """
         Release session-bound resource and remove from cache.
 
@@ -279,14 +280,12 @@ class WarmableResourcePool(Generic[T]):
                         cached_resource.clear_session_state()
                     except Exception as e:
                         logger.warning(f"[{self._name}] Failed to clear session state: {e}")
-                logger.debug(
-                    f"[{self._name}] Released session resource for {session_id[:8]}..."
-                )
+                logger.debug(f"[{self._name}] Released session resource for {session_id[:8]}...")
                 # Don't return session resources to warm pool - they may have state
                 return True
             return False
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         """Return current pool status for diagnostics."""
         metrics = asdict(self._metrics)
         metrics["timestamp"] = time.time()

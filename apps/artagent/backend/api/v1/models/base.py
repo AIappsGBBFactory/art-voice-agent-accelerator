@@ -8,10 +8,10 @@ Provides common functionality for all database models including:
 """
 
 from datetime import datetime
-from typing import Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel as PydanticBaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import Field
 
 
 class BaseModel(PydanticBaseModel):
@@ -55,7 +55,7 @@ class TimestampedModel(BaseModel):
         description="Timestamp when the record was created",
     )
 
-    updated_at: Optional[datetime] = Field(
+    updated_at: datetime | None = Field(
         default=None, description="Timestamp when the record was last updated"
     )
 

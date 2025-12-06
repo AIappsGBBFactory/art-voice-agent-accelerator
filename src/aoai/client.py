@@ -6,24 +6,24 @@ to talk to the Chat Completion API; it will be created once at
 import-time with proper JWT token handling for APIM policy evaluation.
 """
 
+import argparse
+import json
 import os
+import sys
 
 from azure.identity import (
     DefaultAzureCredential,
     ManagedIdentityCredential,
     get_bearer_token_provider,
 )
-from openai import AzureOpenAI
-
-from utils.ml_logging import logging
-from utils.azure_auth import get_credential
 from dotenv import load_dotenv
-import argparse
-import json
-import sys
+from openai import AzureOpenAI
+from utils.azure_auth import get_credential
+from utils.ml_logging import logging
 
 logger = logging.getLogger(__name__)
 load_dotenv()
+
 
 def create_azure_openai_client(
     *,
@@ -87,6 +87,7 @@ def create_azure_openai_client(
             azure_endpoint=azure_endpoint,
             azure_ad_token_provider=azure_ad_token_provider,
         )
+
 
 def main() -> None:
     """
@@ -158,20 +159,22 @@ def main() -> None:
         )
         raise
 
+
 # Lazy client initialization to allow OpenTelemetry instrumentation to be set up first.
 # The instrumentor must monkey-patch the openai module BEFORE any clients are created.
 _client_instance = None
 
+
 def get_client():
     """
     Get the shared Azure OpenAI client (lazy initialization).
-    
+
     This function creates the client on first access, allowing telemetry
     instrumentation to be configured before the openai module is patched.
-    
+
     Returns:
         AzureOpenAI: Configured Azure OpenAI client instance.
-        
+
     Raises:
         ValueError: If AZURE_OPENAI_ENDPOINT is not configured.
     """
@@ -180,12 +183,12 @@ def get_client():
         endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
         if not endpoint:
             # Log all env vars that start with AZURE_ for debugging
-            azure_vars = {k: v[:50] + "..." if len(v) > 50 else v 
-                         for k, v in os.environ.items() if k.startswith("AZURE_")}
-            logger.error(
-                "AZURE_OPENAI_ENDPOINT not available. Azure env vars: %s",
-                azure_vars
-            )
+            azure_vars = {
+                k: v[:50] + "..." if len(v) > 50 else v
+                for k, v in os.environ.items()
+                if k.startswith("AZURE_")
+            }
+            logger.error("AZURE_OPENAI_ENDPOINT not available. Azure env vars: %s", azure_vars)
             raise ValueError(
                 "AZURE_OPENAI_ENDPOINT must be provided via environment variable. "
                 "Ensure Azure App Configuration has loaded or set the variable directly."
@@ -193,15 +196,17 @@ def get_client():
         _client_instance = create_azure_openai_client()
     return _client_instance
 
+
 # For backwards compatibility, provide 'client' as a property-like access
 # Note: Direct access to 'client' will create the client immediately.
 # Prefer using get_client() in new code.
 client = None  # Will be set on first import of this module in app startup
 
+
 def _init_client():
     """
     Initialize the client. Called after telemetry setup.
-    
+
     This function is resilient - if AZURE_OPENAI_ENDPOINT is not yet available
     (e.g., App Configuration hasn't loaded), it will skip initialization.
     The client will be created lazily on first use via get_client().
@@ -223,29 +228,33 @@ async def warm_openai_connection(
 ) -> bool:
     """
     Warm the OpenAI connection with a minimal request.
-    
+
     Establishes HTTP/2 connection and token acquisition before first real request,
     eliminating 200-500ms cold-start latency on first LLM call.
-    
+
     Args:
         deployment: Azure OpenAI deployment name. Defaults to AZURE_OPENAI_DEPLOYMENT.
         timeout_sec: Maximum time to wait for warmup request.
-        
+
     Returns:
         True if warmup succeeded, False otherwise.
-        
+
     Latency:
         Expected ~300-500ms for first connection, near-instant on subsequent calls.
     """
     import asyncio
-    
-    deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID")
+
+    deployment = (
+        deployment
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        or os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_ID")
+    )
     if not deployment:
         logger.warning("OpenAI warmup skipped: no deployment configured")
         return False
-    
+
     aoai_client = get_client()
-    
+
     try:
         # Use a tiny prompt that exercises the connection with minimal tokens
         response = await asyncio.wait_for(
@@ -263,7 +272,7 @@ async def warm_openai_connection(
             extra={"deployment": deployment, "tokens_used": 1},
         )
         return True
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "OpenAI warmup timed out after %.1fs",
             timeout_sec,
@@ -279,4 +288,10 @@ async def warm_openai_connection(
         return False
 
 
-__all__ = ["client", "get_client", "create_azure_openai_client", "_init_client", "warm_openai_connection"]
+__all__ = [
+    "client",
+    "get_client",
+    "create_azure_openai_client",
+    "_init_client",
+    "warm_openai_connection",
+]

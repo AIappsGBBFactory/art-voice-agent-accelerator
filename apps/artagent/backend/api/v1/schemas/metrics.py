@@ -6,8 +6,9 @@ Pydantic schemas for session telemetry and latency metrics.
 These schemas support Phase 3 Dashboard Integration for the telemetry plan.
 """
 
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LatencyStats(BaseModel):
@@ -16,9 +17,9 @@ class LatencyStats(BaseModel):
     avg_ms: float = Field(..., description="Average latency in milliseconds")
     min_ms: float = Field(..., description="Minimum latency in milliseconds")
     max_ms: float = Field(..., description="Maximum latency in milliseconds")
-    p50_ms: Optional[float] = Field(None, description="50th percentile (median)")
-    p95_ms: Optional[float] = Field(None, description="95th percentile")
-    p99_ms: Optional[float] = Field(None, description="99th percentile")
+    p50_ms: float | None = Field(None, description="50th percentile (median)")
+    p95_ms: float | None = Field(None, description="95th percentile")
+    p99_ms: float | None = Field(None, description="99th percentile")
     count: int = Field(..., description="Number of samples")
 
     model_config = ConfigDict(
@@ -40,27 +41,17 @@ class TurnMetrics(BaseModel):
     """Metrics for a single conversation turn."""
 
     turn_number: int = Field(..., description="Turn number in the conversation")
-    stt_latency_ms: Optional[float] = Field(
-        None, description="Speech-to-text latency in milliseconds"
-    )
-    llm_ttfb_ms: Optional[float] = Field(
-        None, description="LLM time-to-first-byte in milliseconds"
-    )
-    llm_total_ms: Optional[float] = Field(
-        None, description="Total LLM response time in milliseconds"
-    )
-    tts_ttfb_ms: Optional[float] = Field(
-        None, description="TTS time-to-first-audio in milliseconds"
-    )
-    tts_total_ms: Optional[float] = Field(
-        None, description="Total TTS synthesis time in milliseconds"
-    )
-    total_latency_ms: Optional[float] = Field(
+    stt_latency_ms: float | None = Field(None, description="Speech-to-text latency in milliseconds")
+    llm_ttfb_ms: float | None = Field(None, description="LLM time-to-first-byte in milliseconds")
+    llm_total_ms: float | None = Field(None, description="Total LLM response time in milliseconds")
+    tts_ttfb_ms: float | None = Field(None, description="TTS time-to-first-audio in milliseconds")
+    tts_total_ms: float | None = Field(None, description="Total TTS synthesis time in milliseconds")
+    total_latency_ms: float | None = Field(
         None, description="End-to-end turn latency in milliseconds"
     )
-    input_tokens: Optional[int] = Field(None, description="LLM input token count")
-    output_tokens: Optional[int] = Field(None, description="LLM output token count")
-    timestamp: Optional[float] = Field(None, description="Unix timestamp of the turn")
+    input_tokens: int | None = Field(None, description="LLM input token count")
+    output_tokens: int | None = Field(None, description="LLM output token count")
+    timestamp: float | None = Field(None, description="Unix timestamp of the turn")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -84,9 +75,7 @@ class TokenUsage(BaseModel):
     """Token usage summary for a session."""
 
     total_input_tokens: int = Field(0, description="Total input tokens across all turns")
-    total_output_tokens: int = Field(
-        0, description="Total output tokens across all turns"
-    )
+    total_output_tokens: int = Field(0, description="Total output tokens across all turns")
     total_tokens: int = Field(0, description="Combined total tokens")
     avg_input_per_turn: float = Field(0.0, description="Average input tokens per turn")
     avg_output_per_turn: float = Field(0.0, description="Average output tokens per turn")
@@ -108,42 +97,34 @@ class SessionMetricsResponse(BaseModel):
     """Complete session metrics response."""
 
     session_id: str = Field(..., description="The session identifier")
-    call_connection_id: Optional[str] = Field(
-        None, description="ACS call connection ID if applicable"
-    )
-    transport_type: Optional[str] = Field(
-        None, description="Transport type: 'ACS' or 'BROWSER'"
-    )
+    call_connection_id: str | None = Field(None, description="ACS call connection ID if applicable")
+    transport_type: str | None = Field(None, description="Transport type: 'ACS' or 'BROWSER'")
     turn_count: int = Field(0, description="Total number of conversation turns")
-    session_duration_ms: Optional[float] = Field(
+    session_duration_ms: float | None = Field(
         None, description="Total session duration in milliseconds"
     )
-    
+
     # Latency summaries
-    latency_summary: Dict[str, LatencyStats] = Field(
+    latency_summary: dict[str, LatencyStats] = Field(
         default_factory=dict,
         description="Latency statistics by stage (stt, llm_ttfb, llm_total, tts_ttfb, tts_total, total)",
     )
-    
+
     # Token usage
-    token_usage: Optional[TokenUsage] = Field(
-        None, description="Token usage summary for the session"
-    )
-    
+    token_usage: TokenUsage | None = Field(None, description="Token usage summary for the session")
+
     # Per-turn breakdown (optional, can be large)
-    turns: Optional[List[TurnMetrics]] = Field(
+    turns: list[TurnMetrics] | None = Field(
         None, description="Detailed metrics per conversation turn"
     )
-    
+
     # Status
-    status: str = Field(
-        "active", description="Session status: 'active', 'completed', 'error'"
-    )
+    status: str = Field("active", description="Session status: 'active', 'completed', 'error'")
     error_count: int = Field(0, description="Number of errors during the session")
-    
+
     # Timestamps
-    start_time: Optional[float] = Field(None, description="Session start Unix timestamp")
-    end_time: Optional[float] = Field(None, description="Session end Unix timestamp")
+    start_time: float | None = Field(None, description="Session start Unix timestamp")
+    end_time: float | None = Field(None, description="Session end Unix timestamp")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -195,7 +176,7 @@ class ActiveSessionsResponse(BaseModel):
     media_sessions: int = Field(0, description="Active ACS media sessions")
     browser_sessions: int = Field(0, description="Active browser sessions")
     total_disconnected: int = Field(0, description="Total disconnected sessions")
-    sessions: List[Dict[str, Any]] = Field(
+    sessions: list[dict[str, Any]] = Field(
         default_factory=list, description="List of active session summaries"
     )
 

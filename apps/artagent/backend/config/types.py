@@ -7,70 +7,63 @@ These wrap the flat settings from settings.py into organized objects.
 
 Usage:
     from config import AppConfig
-    
+
     config = AppConfig()
     print(config.speech_pools.tts_pool_size)
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, List
+from typing import Any
 
-from .settings import (
-    # Speech pools
-    POOL_SIZE_TTS,
-    POOL_SIZE_STT,
-    POOL_LOW_WATER_MARK,
-    POOL_HIGH_WATER_MARK,
+from .settings import (  # AI; Security; Voice; Connections; Monitoring; Speech pools; Sessions; Warm pool
+    ALLOWED_ORIGINS,
+    AOAI_REQUEST_TIMEOUT,
+    CONNECTION_CRITICAL_THRESHOLD,
+    CONNECTION_QUEUE_SIZE,
+    CONNECTION_TIMEOUT_SECONDS,
+    CONNECTION_WARNING_THRESHOLD,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_VOICE_RATE,
+    DEFAULT_VOICE_STYLE,
+    DTMF_VALIDATION_ENABLED,
+    ENABLE_AUTH_VALIDATION,
+    ENABLE_CONNECTION_LIMITS,
+    ENABLE_PERFORMANCE_LOGGING,
+    ENABLE_SESSION_PERSISTENCE,
+    ENABLE_TRACING,
+    ENTRA_EXEMPT_PATHS,
+    GREETING_VOICE_TTS,
+    MAX_CONCURRENT_SESSIONS,
+    MAX_WEBSOCKET_CONNECTIONS,
+    METRICS_COLLECTION_INTERVAL,
     POOL_ACQUIRE_TIMEOUT,
+    POOL_HIGH_WATER_MARK,
+    POOL_LOW_WATER_MARK,
+    POOL_METRICS_INTERVAL,
+    POOL_SIZE_STT,
+    POOL_SIZE_TTS,
+    SESSION_CLEANUP_INTERVAL,
+    SESSION_STATE_TTL,
+    SESSION_TTL_SECONDS,
     STT_PROCESSING_TIMEOUT,
+    TTS_CHUNK_SIZE,
     TTS_PROCESSING_TIMEOUT,
-    # Warm pool
-    WARM_POOL_ENABLED,
-    WARM_POOL_TTS_SIZE,
-    WARM_POOL_STT_SIZE,
+    TTS_SAMPLE_RATE_ACS,
+    TTS_SAMPLE_RATE_UI,
     WARM_POOL_BACKGROUND_REFRESH,
+    WARM_POOL_ENABLED,
     WARM_POOL_REFRESH_INTERVAL,
     WARM_POOL_SESSION_MAX_AGE,
-    # Connections
-    MAX_WEBSOCKET_CONNECTIONS,
-    CONNECTION_QUEUE_SIZE,
-    ENABLE_CONNECTION_LIMITS,
-    CONNECTION_WARNING_THRESHOLD,
-    CONNECTION_CRITICAL_THRESHOLD,
-    CONNECTION_TIMEOUT_SECONDS,
-    # Sessions
-    SESSION_TTL_SECONDS,
-    SESSION_CLEANUP_INTERVAL,
-    MAX_CONCURRENT_SESSIONS,
-    ENABLE_SESSION_PERSISTENCE,
-    SESSION_STATE_TTL,
-    # Voice
-    GREETING_VOICE_TTS,
-    DEFAULT_VOICE_STYLE,
-    DEFAULT_VOICE_RATE,
-    TTS_SAMPLE_RATE_UI,
-    TTS_SAMPLE_RATE_ACS,
-    TTS_CHUNK_SIZE,
-    # AI
-    AOAI_REQUEST_TIMEOUT,
-    DEFAULT_TEMPERATURE,
-    DEFAULT_MAX_TOKENS,
-    # Monitoring
-    METRICS_COLLECTION_INTERVAL,
-    POOL_METRICS_INTERVAL,
-    ENABLE_PERFORMANCE_LOGGING,
-    ENABLE_TRACING,
-    # Security
-    ENABLE_AUTH_VALIDATION,
-    DTMF_VALIDATION_ENABLED,
-    ALLOWED_ORIGINS,
-    ENTRA_EXEMPT_PATHS,
+    WARM_POOL_STT_SIZE,
+    WARM_POOL_TTS_SIZE,
 )
 
 
 @dataclass
 class SpeechPoolConfig:
     """Speech service pool configuration."""
+
     tts_pool_size: int = POOL_SIZE_TTS
     stt_pool_size: int = POOL_SIZE_STT
     low_water_mark: int = POOL_LOW_WATER_MARK
@@ -86,13 +79,14 @@ class SpeechPoolConfig:
     warm_pool_refresh_interval: float = WARM_POOL_REFRESH_INTERVAL
     warm_pool_session_max_age: float = WARM_POOL_SESSION_MAX_AGE
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
 
 @dataclass
 class ConnectionConfig:
     """WebSocket connection management configuration."""
+
     max_connections: int = MAX_WEBSOCKET_CONNECTIONS
     queue_size: int = CONNECTION_QUEUE_SIZE
     enable_limits: bool = ENABLE_CONNECTION_LIMITS
@@ -100,26 +94,28 @@ class ConnectionConfig:
     critical_threshold: int = CONNECTION_CRITICAL_THRESHOLD
     timeout_seconds: float = CONNECTION_TIMEOUT_SECONDS
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
 
 @dataclass
 class SessionConfig:
     """Session management configuration."""
+
     ttl_seconds: int = SESSION_TTL_SECONDS
     cleanup_interval: int = SESSION_CLEANUP_INTERVAL
     max_concurrent_sessions: int = MAX_CONCURRENT_SESSIONS
     enable_persistence: bool = ENABLE_SESSION_PERSISTENCE
     state_ttl: int = SESSION_STATE_TTL
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
 
 @dataclass
 class VoiceConfig:
     """Voice and TTS configuration."""
+
     default_voice: str = GREETING_VOICE_TTS
     default_style: str = DEFAULT_VOICE_STYLE
     default_rate: str = DEFAULT_VOICE_RATE
@@ -128,42 +124,45 @@ class VoiceConfig:
     chunk_size: int = TTS_CHUNK_SIZE
     processing_timeout: float = TTS_PROCESSING_TIMEOUT
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
 
 @dataclass
 class AIConfig:
     """AI/LLM processing configuration."""
+
     request_timeout: float = AOAI_REQUEST_TIMEOUT
     default_temperature: float = DEFAULT_TEMPERATURE
     default_max_tokens: int = DEFAULT_MAX_TOKENS
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
 
 @dataclass
 class MonitoringConfig:
     """Monitoring and observability configuration."""
+
     metrics_interval: int = METRICS_COLLECTION_INTERVAL
     pool_metrics_interval: int = POOL_METRICS_INTERVAL
     enable_performance_logging: bool = ENABLE_PERFORMANCE_LOGGING
     enable_tracing: bool = ENABLE_TRACING
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
 
 @dataclass
 class SecurityConfig:
     """Security and authentication configuration."""
+
     enable_auth_validation: bool = ENABLE_AUTH_VALIDATION
     enable_dtmf_validation: bool = DTMF_VALIDATION_ENABLED
-    allowed_origins: List[str] = field(default_factory=lambda: list(ALLOWED_ORIGINS))
-    exempt_paths: List[str] = field(default_factory=lambda: list(ENTRA_EXEMPT_PATHS))
+    allowed_origins: list[str] = field(default_factory=lambda: list(ALLOWED_ORIGINS))
+    exempt_paths: list[str] = field(default_factory=lambda: list(ENTRA_EXEMPT_PATHS))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
 
@@ -171,9 +170,10 @@ class SecurityConfig:
 class AppConfig:
     """
     Complete application configuration.
-    
+
     Provides structured access to all configuration sections with validation.
     """
+
     speech_pools: SpeechPoolConfig = field(default_factory=SpeechPoolConfig)
     connections: ConnectionConfig = field(default_factory=ConnectionConfig)
     sessions: SessionConfig = field(default_factory=SessionConfig)
@@ -182,7 +182,7 @@ class AppConfig:
     monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize configuration to dictionary."""
         return {
             "speech_pools": self.speech_pools.to_dict(),
@@ -194,7 +194,7 @@ class AppConfig:
             "security": self.security.to_dict(),
         }
 
-    def validate(self) -> Dict[str, Any]:
+    def validate(self) -> dict[str, Any]:
         """Validate configuration and return results."""
         issues = []
         warnings = []
@@ -235,7 +235,7 @@ class AppConfig:
             },
         }
 
-    def get_capacity_info(self) -> Dict[str, Any]:
+    def get_capacity_info(self) -> dict[str, Any]:
         """Get capacity planning information."""
         effective = min(self.speech_pools.tts_pool_size, self.speech_pools.stt_pool_size)
         return {
@@ -243,5 +243,9 @@ class AppConfig:
             "tts_capacity": self.speech_pools.tts_pool_size,
             "stt_capacity": self.speech_pools.stt_pool_size,
             "max_connections": self.connections.max_connections,
-            "bottleneck": "TTS" if self.speech_pools.tts_pool_size < self.speech_pools.stt_pool_size else "STT",
+            "bottleneck": (
+                "TTS"
+                if self.speech_pools.tts_pool_size < self.speech_pools.stt_pool_size
+                else "STT"
+            ),
         }

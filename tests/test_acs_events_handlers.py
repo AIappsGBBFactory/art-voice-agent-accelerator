@@ -5,19 +5,17 @@ Test ACS Events Handler Functionality
 Focused tests for the refactored ACS events handling.
 """
 
-import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
-from azure.core.messaging import CloudEvent
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import apps.artagent.backend.api.v1.events.handlers as events_handlers
+import pytest
 from apps.artagent.backend.api.v1.events.handlers import CallEventHandlers
 from apps.artagent.backend.api.v1.events.types import (
-    CallEventContext,
     ACSEventTypes,
+    CallEventContext,
     V1EventTypes,
 )
+from azure.core.messaging import CloudEvent
 
 
 class TestCallEventHandlers:
@@ -44,13 +42,9 @@ class TestCallEventHandlers:
         call_conn = MagicMock()
         call_conn.list_participants.return_value = [
             SimpleNamespace(
-                identifier=SimpleNamespace(
-                    kind="phone_number", properties={"value": "+1234567890"}
-                )
+                identifier=SimpleNamespace(kind="phone_number", properties={"value": "+1234567890"})
             ),
-            SimpleNamespace(
-                identifier=SimpleNamespace(kind="communicationUser", properties={})
-            ),
+            SimpleNamespace(identifier=SimpleNamespace(kind="communicationUser", properties={})),
         ]
 
         acs_caller = MagicMock()
@@ -176,7 +170,10 @@ class TestCallEventHandlers:
         caller_id = CallEventHandlers._extract_caller_id(caller_info)
         assert caller_id == "unknown"
 
-    @patch("apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope", new_callable=AsyncMock)
+    @patch(
+        "apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope",
+        new_callable=AsyncMock,
+    )
     async def test_call_transfer_accepted_envelope(self, mock_broadcast, mock_context):
         mock_context.event_type = ACSEventTypes.CALL_TRANSFER_ACCEPTED
         mock_context.event.data = {
@@ -198,12 +195,12 @@ class TestCallEventHandlers:
         assert "Call transfer accepted" in status_envelope["payload"]["message"]
 
         mock_event.assert_awaited()
-        assert (
-            mock_event.await_args.kwargs["event_type"]
-            == "call_transfer_accepted"
-        )
+        assert mock_event.await_args.kwargs["event_type"] == "call_transfer_accepted"
 
-    @patch("apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope", new_callable=AsyncMock)
+    @patch(
+        "apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope",
+        new_callable=AsyncMock,
+    )
     async def test_call_transfer_failed_envelope(self, mock_broadcast, mock_context):
         mock_context.event_type = ACSEventTypes.CALL_TRANSFER_FAILED
         mock_context.event.data = {
@@ -227,10 +224,7 @@ class TestCallEventHandlers:
         assert "Busy" in status_envelope["payload"]["message"]
 
         mock_event.assert_awaited()
-        assert (
-            mock_event.await_args.kwargs["event_type"]
-            == "call_transfer_failed"
-        )
+        assert mock_event.await_args.kwargs["event_type"] == "call_transfer_failed"
 
 
 class TestEventProcessingFlow:

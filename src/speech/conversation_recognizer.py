@@ -1,40 +1,41 @@
-from azure.cognitiveservices.speech import (
-    SpeechConfig,
-    AutoDetectSourceLanguageConfig,
-    PropertyId,
-    AudioConfig,
-)
-from azure.cognitiveservices.speech.transcription import ConversationTranscriber
-from azure.cognitiveservices.speech.audio import (
-    AudioStreamFormat,
-    PushAudioInputStream,
-    AudioStreamContainerFormat,
-)
 import json
 import os
-from typing import Callable, List, Optional, Final
+from collections.abc import Callable
+from typing import Final
 
-from utils.azure_auth import get_credential
+from azure.cognitiveservices.speech import (
+    AudioConfig,
+    AutoDetectSourceLanguageConfig,
+    PropertyId,
+    SpeechConfig,
+)
+from azure.cognitiveservices.speech.audio import (
+    AudioStreamContainerFormat,
+    AudioStreamFormat,
+    PushAudioInputStream,
+)
+from azure.cognitiveservices.speech.transcription import ConversationTranscriber
 from dotenv import load_dotenv
-
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-from src.enums.monitoring import SpanAttr
+from utils.azure_auth import get_credential
 from utils.ml_logging import get_logger
+
+from src.enums.monitoring import SpanAttr
 
 logger = get_logger(__name__)
 load_dotenv()
 
 
 class StreamingConversationTranscriberFromBytes:
-    _DEFAULT_LANGS: Final[List[str]] = ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"]
+    _DEFAULT_LANGS: Final[list[str]] = ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"]
 
     def __init__(
         self,
         *,
-        key: Optional[str] = None,
-        region: Optional[str] = None,
-        candidate_languages: List[str] | None = None,
+        key: str | None = None,
+        region: str | None = None,
+        candidate_languages: list[str] | None = None,
         vad_silence_timeout_ms: int = 800,
         audio_format: str = "pcm",
         enable_neural_fe: bool = False,
@@ -51,9 +52,9 @@ class StreamingConversationTranscriberFromBytes:
         self.call_connection_id = call_connection_id or "unknown"
         self.enable_tracing = enable_tracing
 
-        self.partial_callback: Optional[Callable[[str, str, str | None], None]] = None
-        self.final_callback: Optional[Callable[[str, str, str | None], None]] = None
-        self.cancel_callback: Optional[Callable[[any], None]] = None
+        self.partial_callback: Callable[[str, str, str | None], None] | None = None
+        self.final_callback: Callable[[str, str, str | None], None] | None = None
+        self.cancel_callback: Callable[[any], None] | None = None
 
         self._enable_neural_fe = enable_neural_fe
         self._enable_diarisation = enable_diarisation
@@ -71,21 +72,15 @@ class StreamingConversationTranscriberFromBytes:
         if self.key:
             return SpeechConfig(subscription=self.key, region=self.region)
         credential = get_credential()
-        token_result = credential.get_token(
-            "https://cognitiveservices.azure.com/.default"
-        )
+        token_result = credential.get_token("https://cognitiveservices.azure.com/.default")
         speech_config = SpeechConfig(region=self.region)
         speech_config.authorization_token = token_result.token
         return speech_config
 
-    def set_partial_result_callback(
-        self, callback: Callable[[str, str, str | None], None]
-    ) -> None:
+    def set_partial_result_callback(self, callback: Callable[[str, str, str | None], None]) -> None:
         self.partial_callback = callback
 
-    def set_final_result_callback(
-        self, callback: Callable[[str, str, str | None], None]
-    ) -> None:
+    def set_final_result_callback(self, callback: Callable[[str, str, str | None], None]) -> None:
         self.final_callback = callback
 
     def set_cancel_callback(self, callback: Callable[[any], None]) -> None:
@@ -216,10 +211,8 @@ class StreamingConversationTranscriberFromBytes:
             self._session_span.add_event("canceled", {"reason": str(evt)})
 
     @staticmethod
-    def _extract_speaker_id(evt) -> Optional[str]:
-        blob = evt.result.properties.get(
-            PropertyId.SpeechServiceResponse_JsonResult, ""
-        )
+    def _extract_speaker_id(evt) -> str | None:
+        blob = evt.result.properties.get(PropertyId.SpeechServiceResponse_JsonResult, "")
         if blob:
             try:
                 return str(json.loads(blob).get("SpeakerId"))

@@ -15,10 +15,10 @@ Features:
 
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Any
+
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
-
 from utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
@@ -35,15 +35,15 @@ class SessionStatisticsManager:
     - Thread-safe operations
     """
 
-    def __init__(self, cosmos_manager: Optional[Any] = None):
+    def __init__(self, cosmos_manager: Any | None = None):
         """
         Initialize session statistics manager.
 
         :param cosmos_manager: CosmosDB manager for persistence
         """
         self._lock = asyncio.Lock()
-        self._active_media_sessions: Dict[str, Dict[str, Any]] = {}
-        self._active_realtime_sessions: Dict[str, Dict[str, Any]] = {}
+        self._active_media_sessions: dict[str, dict[str, Any]] = {}
+        self._active_realtime_sessions: dict[str, dict[str, Any]] = {}
         self._total_disconnected_count = 0
         self._cosmos_manager = cosmos_manager
         self._stats_collection_name = "session_statistics"
@@ -52,9 +52,7 @@ class SessionStatisticsManager:
         """
         Initialize statistics manager and load persistent counters.
         """
-        with tracer.start_span(
-            "session_stats_initialize", kind=SpanKind.INTERNAL
-        ) as span:
+        with tracer.start_span("session_stats_initialize", kind=SpanKind.INTERNAL) as span:
             try:
                 await self._load_persistent_counters()
                 span.set_attribute("session_stats.initialization", "success")
@@ -87,7 +85,7 @@ class SessionStatisticsManager:
             logger.error(f"Failed to load persistent counters: {e}")
             # Continue with in-memory only
 
-    async def _get_stats_document(self) -> Optional[Dict[str, Any]]:
+    async def _get_stats_document(self) -> dict[str, Any] | None:
         """
         Get the global statistics document from storage.
         """
@@ -222,7 +220,7 @@ class SessionStatisticsManager:
                 return True
             return False
 
-    async def get_statistics(self) -> Dict[str, Any]:
+    async def get_statistics(self) -> dict[str, Any]:
         """
         Get comprehensive session statistics.
 
@@ -233,8 +231,7 @@ class SessionStatisticsManager:
                 "active_sessions": {
                     "media": len(self._active_media_sessions),
                     "realtime": len(self._active_realtime_sessions),
-                    "total": len(self._active_media_sessions)
-                    + len(self._active_realtime_sessions),
+                    "total": len(self._active_media_sessions) + len(self._active_realtime_sessions),
                 },
                 "total_disconnected": self._total_disconnected_count,
                 "session_details": {
@@ -256,9 +253,7 @@ class SessionStatisticsManager:
     async def get_total_active_count(self) -> int:
         """Get total count of all active sessions."""
         async with self._lock:
-            return len(self._active_media_sessions) + len(
-                self._active_realtime_sessions
-            )
+            return len(self._active_media_sessions) + len(self._active_realtime_sessions)
 
     async def get_total_disconnected_count(self) -> int:
         """Get total disconnection count."""

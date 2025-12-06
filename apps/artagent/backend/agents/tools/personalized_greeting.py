@@ -26,7 +26,7 @@ Example tool call:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
@@ -40,7 +40,7 @@ logger = get_logger("agents.tools.personalized_greeting")
 
 AGENT_DISPLAY_NAMES = {
     "AuthAgent": "Authentication",
-    "FraudAgent": "Fraud Detection", 
+    "FraudAgent": "Fraud Detection",
     "Fraud": "Fraud Detection",
     "Concierge": "Concierge",
     "ComplianceDesk": "Compliance",
@@ -58,7 +58,7 @@ def _get_display_name(agent_name: str) -> str:
     return AGENT_DISPLAY_NAMES.get(agent_name, agent_name)
 
 
-def _extract_first_name(full_name: Optional[str]) -> str:
+def _extract_first_name(full_name: str | None) -> str:
     """Extract first name from full name."""
     if not full_name:
         return "there"
@@ -68,14 +68,14 @@ def _extract_first_name(full_name: Optional[str]) -> str:
 
 def generate_personalized_greeting(
     agent_name: str,
-    caller_name: Optional[str] = None,
-    institution_name: Optional[str] = None,
-    customer_intelligence: Optional[Dict[str, Any]] = None,
+    caller_name: str | None = None,
+    institution_name: str | None = None,
+    customer_intelligence: dict[str, Any] | None = None,
     is_return_visit: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Generate a personalized greeting based on customer intelligence.
-    
+
     Args:
         agent_name: Name of the agent generating the greeting
         caller_name: Customer's name
@@ -83,7 +83,7 @@ def generate_personalized_greeting(
         customer_intelligence: Customer data including relationship tier,
             communication style, account health, alerts, etc.
         is_return_visit: Whether this is a return visit to this agent
-            
+
     Returns:
         Dictionary with greeting text and metadata
     """
@@ -93,19 +93,19 @@ def generate_personalized_greeting(
         relationship = ci.get("relationship_context", {})
         account_status = ci.get("account_status", {})
         memory_score = ci.get("memory_score", {})
-        
+
         # Core fields
         first_name = _extract_first_name(caller_name)
         institution = institution_name or "our firm"
         display_name = _get_display_name(agent_name)
-        
+
         # Relationship data
         tier = (relationship.get("relationship_tier") or "valued").lower()
         years = relationship.get("relationship_duration_years") or 0
         style = memory_score.get("communication_style") or "Direct/Business-focused"
         health = account_status.get("account_health_score") or 95
         alerts = ci.get("active_alerts") or []
-        
+
         # ───────────────────────────────────────────────────────────────────
         # Return visit greeting (simpler)
         # ───────────────────────────────────────────────────────────────────
@@ -122,11 +122,11 @@ def generate_personalized_greeting(
                 "is_personalized": True,
                 "is_return": True,
             }
-        
+
         # ───────────────────────────────────────────────────────────────────
         # First visit - full personalized greeting
         # ───────────────────────────────────────────────────────────────────
-        
+
         # Base greeting based on communication style
         if "Direct" in style or "Business" in style:
             base_greeting = (
@@ -143,7 +143,7 @@ def generate_personalized_greeting(
                 f"Good morning {first_name}. I'm your {display_name} specialist, "
                 f"and I have your complete account profile ready"
             )
-        
+
         # Loyalty recognition
         if years >= 3:
             loyalty_note = f"I see you've been with us for {int(years)} years as a {tier} client"
@@ -151,20 +151,22 @@ def generate_personalized_greeting(
             loyalty_note = f"As our {tier} client, you have priority access to our specialist team"
         else:
             loyalty_note = f"I have your complete {tier} account profile here"
-        
+
         # Service context based on account status
         if alerts:
             alert_count = len(alerts)
             service_note = f"I see you have {alert_count} account update{'s' if alert_count > 1 else ''} I can address"
         elif health >= 95:
-            service_note = "Your account is in excellent standing, and I'm here to ensure it stays that way"
+            service_note = (
+                "Your account is in excellent standing, and I'm here to ensure it stays that way"
+            )
         elif health >= 80:
             service_note = "I'm here to help optimize your account experience"
         else:
             service_note = "I'm here to help with any concerns about your account"
-        
+
         greeting = f"{base_greeting}. {loyalty_note}. {service_note}. How can I assist you today?"
-        
+
         return {
             "success": True,
             "greeting": greeting,
@@ -175,13 +177,13 @@ def generate_personalized_greeting(
             "is_personalized": True,
             "is_return": False,
         }
-        
+
     except Exception as e:
         logger.warning("Error generating personalized greeting: %s", e)
         # Fallback to simple greeting
         first_name = _extract_first_name(caller_name)
         display_name = _get_display_name(agent_name)
-        
+
         return {
             "success": True,
             "greeting": f"Hello {first_name}. I'm your {display_name} specialist. How can I help you today?",
@@ -227,7 +229,7 @@ PERSONALIZED_GREETING_SCHEMA = {
 }
 
 
-def _execute_personalized_greeting(args: Dict[str, Any]) -> Dict[str, Any]:
+def _execute_personalized_greeting(args: dict[str, Any]) -> dict[str, Any]:
     """Tool executor wrapper."""
     return generate_personalized_greeting(
         agent_name=args.get("agent_name", "Agent"),

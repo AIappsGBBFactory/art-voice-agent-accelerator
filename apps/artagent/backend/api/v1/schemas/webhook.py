@@ -4,8 +4,9 @@ Webhook-related API schemas.
 Pydantic schemas for webhook payloads and responses.
 """
 
-from typing import List, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class WebhookEvent(BaseModel):
@@ -31,24 +32,24 @@ class WebhookEvent(BaseModel):
         description="Unique event identifier",
         json_schema_extra={"example": "event-123-abc"},
     )
-    time: Optional[str] = Field(
+    time: str | None = Field(
         None,
         description="Event timestamp in ISO 8601 format",
         json_schema_extra={"example": "2025-08-10T13:45:00Z"},
     )
-    datacontenttype: Optional[str] = Field(
+    datacontenttype: str | None = Field(
         default="application/json",
         description="Content type of the event data",
         json_schema_extra={"example": "application/json"},
     )
-    data: Dict[str, Any] = Field(
+    data: dict[str, Any] = Field(
         default_factory=dict,
         description="Event payload data",
         json_schema_extra={
             "example": {"callConnectionId": "abc123", "serverCallId": "server-abc123"}
         },
     )
-    subject: Optional[str] = Field(
+    subject: str | None = Field(
         None,
         description="Subject of the event within the context of the source",
         json_schema_extra={"example": "call/abc123"},
@@ -97,7 +98,7 @@ class ACSWebhookEvent(WebhookEvent):
         pattern=r"^/acs/calls/[a-zA-Z0-9\-_]+$",
         json_schema_extra={"example": "/acs/calls/abc123"},
     )
-    data: Dict[str, Any] = Field(
+    data: dict[str, Any] = Field(
         ...,
         description="ACS event data containing callConnectionId and other ACS-specific fields",
         json_schema_extra={
@@ -151,7 +152,7 @@ class MediaWebhookEvent(WebhookEvent):
         pattern=r"^/media/sessions/[a-zA-Z0-9\-_]+$",
         json_schema_extra={"example": "/media/sessions/session123"},
     )
-    data: Dict[str, Any] = Field(
+    data: dict[str, Any] = Field(
         ...,
         description="Media event data",
         json_schema_extra={
@@ -204,12 +205,12 @@ class WebhookResponse(BaseModel):
         description="ID of the processed event",
         json_schema_extra={"example": "event-123-abc"},
     )
-    processing_time_ms: Optional[int] = Field(
+    processing_time_ms: int | None = Field(
         None,
         description="Time taken to process the event in milliseconds",
         json_schema_extra={"example": 25},
     )
-    details: Optional[Dict[str, Any]] = Field(
+    details: dict[str, Any] | None = Field(
         None,
         description="Additional processing details",
         json_schema_extra={
@@ -239,18 +240,18 @@ class WebhookResponse(BaseModel):
 class WebhookBatchRequest(BaseModel):
     """Request model for batch webhook processing."""
 
-    events: List[Union[WebhookEvent, ACSWebhookEvent, MediaWebhookEvent]] = Field(
+    events: list[WebhookEvent | ACSWebhookEvent | MediaWebhookEvent] = Field(
         ...,
         description="List of webhook events to process",
         min_length=1,
         max_length=100,
     )
-    batch_id: Optional[str] = Field(
+    batch_id: str | None = Field(
         None,
         description="Optional batch identifier for tracking",
         json_schema_extra={"example": "batch-123"},
     )
-    processing_options: Optional[Dict[str, Any]] = Field(
+    processing_options: dict[str, Any] | None = Field(
         default_factory=dict,
         description="Options for batch processing",
         json_schema_extra={
@@ -285,7 +286,7 @@ class WebhookBatchRequest(BaseModel):
 class WebhookBatchResponse(BaseModel):
     """Response model for batch webhook processing."""
 
-    batch_id: Optional[str] = Field(
+    batch_id: str | None = Field(
         None, description="Batch identifier", json_schema_extra={"example": "batch-123"}
     )
     total_events: int = Field(
@@ -306,9 +307,7 @@ class WebhookBatchResponse(BaseModel):
         description="Total processing time in milliseconds",
         json_schema_extra={"example": 150},
     )
-    results: List[WebhookResponse] = Field(
-        ..., description="Individual event processing results"
-    )
+    results: list[WebhookResponse] = Field(..., description="Individual event processing results")
     model_config = ConfigDict(
         json_schema_extra={
             "example": {

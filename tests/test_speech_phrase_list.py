@@ -1,5 +1,4 @@
 import pytest
-
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 
 
@@ -22,9 +21,7 @@ class StubPhraseList:
 
 @pytest.fixture
 def recognizer_stub():
-    recognizer = StreamingSpeechRecognizerFromBytes.__new__(
-        StreamingSpeechRecognizerFromBytes
-    )
+    recognizer = StreamingSpeechRecognizerFromBytes.__new__(StreamingSpeechRecognizerFromBytes)
     recognizer.speech_recognizer = object()
     recognizer._phrase_list_phrases = set()
     recognizer._phrase_list_weight = None

@@ -32,6 +32,6 @@ Key Files:
 - agent_builder.py: REST API for creating dynamic agents at runtime
 """
 
-from . import health, calls, media, browser, agent_builder
+from . import agent_builder, browser, calls, health, media
 
 __all__ = ["health", "calls", "media", "browser", "agent_builder"]
