@@ -57,9 +57,21 @@ class AzureRedisManager:
         self.logger = get_logger(__name__)
         self.host = host or os.getenv("REDIS_HOST")
         self.access_key = access_key or os.getenv("REDIS_ACCESS_KEY")
-        self.port = (
-            port if isinstance(port, int) else int(os.getenv("REDIS_PORT", port))
-        )
+        
+        # Handle port with better error message
+        if port is not None and isinstance(port, int):
+            self.port = port
+        else:
+            port_env = os.getenv("REDIS_PORT")
+            if port_env:
+                self.port = int(port_env)
+            elif port is not None:
+                self.port = int(port)
+            else:
+                # Default to 10000 for Azure Redis Enterprise
+                self.port = 10000
+                self.logger.warning("REDIS_PORT not set, defaulting to 10000")
+        
         self.db = db
         self.ssl = ssl
         self.tracer = trace.get_tracer(__name__)

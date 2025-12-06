@@ -302,12 +302,35 @@ Configure an Azure Communication Services phone number for voice calls:
 #### Automatic via azd (Recommended)
 The `azd up` command automatically handles phone number provisioning through post-provision hooks.
 
-#### Manual Configuration
-```bash
-# Purchase a phone number using the helper script
-make purchase_acs_phone_number
+#### Manual Configuration via App Config (Preferred)
 
-# Or set an existing number
+📄 **See the complete guide: [Phone Number Setup](phone-number-setup.md)**
+
+1. Navigate to your ACS resource in the Azure Portal
+2. Go to **Telephony and SMS** → **Phone numbers** → **+ Get**
+3. Purchase a toll-free or local number
+4. Update App Configuration with your number:
+
+```bash
+az appconfig kv set \
+  --endpoint "https://appconfig-<env>-<token>.azconfig.io" \
+  --key "azure/acs/source-phone-number" \
+  --value "+1YOUR_PHONE" \
+  --label "<environment>" \
+  --yes
+
+# Trigger config refresh
+az appconfig kv set \
+  --endpoint "https://appconfig-<env>-<token>.azconfig.io" \
+  --key "app/sentinel" \
+  --value "v$(date +%s)" \
+  --label "<environment>" \
+  --yes
+```
+
+#### Legacy: Via azd env (Deprecated)
+```bash
+# Set an existing number (legacy - prefer App Config)
 azd env set ACS_SOURCE_PHONE_NUMBER "+1234567890"
 ```
 
@@ -316,10 +339,10 @@ azd env set ACS_SOURCE_PHONE_NUMBER "+1234567890"
 2. Go to **Phone numbers** → **Get** in the left navigation menu
 3. Select your country/region, number type (Geographic or Toll-free), and required features
 4. Complete the purchase process and wait for number provisioning
-5. Update your environment configuration with the purchased number
+5. Update App Configuration with the purchased number (see above)
 6. Configure webhook endpoints for incoming call handling
 
-> **Detailed Guide**: [Get a phone number for Azure Communication Services](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/telephony/get-phone-number)
+> **Detailed Guide**: [Phone Number Setup](phone-number-setup.md) | [Get a phone number for Azure Communication Services](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/telephony/get-phone-number)
 
 
 #### Configure Inbound Call Webhook

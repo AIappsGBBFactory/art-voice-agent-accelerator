@@ -162,7 +162,7 @@ variable "model_deployments" {
     },
   ]
 }
-  
+
 variable "mongo_database_name" {
   description = "Name of the MongoDB database"
   type        = string

@@ -30,10 +30,10 @@ resource "azapi_resource" "ai_foundry_account" {
       type = "SystemAssigned"
     }
     properties = {
-      allowProjectManagement = true
-      disableLocalAuth       = var.disable_local_auth
-      customSubDomainName    = local.custom_subdomain_name_raw
-      publicNetworkAccess    = var.public_network_access
+      allowProjectManagement        = true
+      disableLocalAuth              = var.disable_local_auth
+      customSubDomainName           = local.custom_subdomain_name_raw
+      publicNetworkAccess           = var.public_network_access
       restrictOutboundNetworkAccess = false
     }
   }
