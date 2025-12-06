@@ -6,11 +6,11 @@ Simple type definitions for V1 event processing inspired by Azure's Event Proces
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Protocol, runtime_checkable
-from azure.core.messaging import CloudEvent
-from enum import Enum
 from datetime import datetime
+from enum import Enum
+from typing import Any, Protocol, runtime_checkable
 
+from azure.core.messaging import CloudEvent
 from src.stateful.state_managment import MemoManager
 
 
@@ -19,7 +19,7 @@ class RecordingPreferences:
     """Call-scoped recording preferences supplied by upstream handlers."""
 
     enabled: bool
-    server_call_id: Optional[str] = None
+    server_call_id: str | None = None
 
 
 @dataclass
@@ -34,14 +34,14 @@ class CallEventContext:
     event: CloudEvent
     call_connection_id: str
     event_type: str
-    memo_manager: Optional[MemoManager] = None
-    redis_mgr: Optional[Any] = None
-    acs_caller: Optional[Any] = None
-    clients: Optional[list] = None
-    app_state: Optional[Any] = None  # For accessing ConnectionManager
-    recording_preferences: Optional[RecordingPreferences] = None
+    memo_manager: MemoManager | None = None
+    redis_mgr: Any | None = None
+    acs_caller: Any | None = None
+    clients: list | None = None
+    app_state: Any | None = None  # For accessing ConnectionManager
+    recording_preferences: RecordingPreferences | None = None
 
-    def get_event_data(self) -> Dict[str, Any]:
+    def get_event_data(self) -> dict[str, Any]:
         """
         Safely extract event data as dictionary.
 
@@ -114,23 +114,23 @@ class VoiceLiveEventContext(CallEventContext):
     """
 
     # Live Voice specific identifiers
-    session_id: Optional[str] = None
-    timestamp: Optional[datetime] = None
+    session_id: str | None = None
+    timestamp: datetime | None = None
     priority: VoiceLiveEventPriority = VoiceLiveEventPriority.NORMAL
 
     # Live Voice specific resources
-    voice_live_session: Optional[Any] = None
-    connection_state: Optional[Any] = None
-    websocket: Optional[Any] = None
-    azure_speech_client: Optional[Any] = None
+    voice_live_session: Any | None = None
+    connection_state: Any | None = None
+    websocket: Any | None = None
+    azure_speech_client: Any | None = None
 
     # Event data specific to Live Voice
-    voice_live_event_data: Optional[Dict[str, Any]] = None
-    error_details: Optional[Dict[str, Any]] = None
-    metrics_data: Optional[Dict[str, Any]] = None
+    voice_live_event_data: dict[str, Any] | None = None
+    error_details: dict[str, Any] | None = None
+    metrics_data: dict[str, Any] | None = None
 
     # Additional dependencies for Live Voice
-    orchestrator: Optional[Any] = None
+    orchestrator: Any | None = None
 
     def __post_init__(self):
         """Initialize Live Voice event data if not provided."""
@@ -270,7 +270,5 @@ class V1EventTypes:
 
     # Performance Monitoring
     LIVE_VOICE_METRICS_UPDATED = "V1.VoiceLive.Metrics.Updated"
-    LIVE_VOICE_PERFORMANCE_THRESHOLD_EXCEEDED = (
-        "V1.VoiceLive.Performance.ThresholdExceeded"
-    )
+    LIVE_VOICE_PERFORMANCE_THRESHOLD_EXCEEDED = "V1.VoiceLive.Performance.ThresholdExceeded"
     LIVE_VOICE_QUALITY_DEGRADED = "V1.VoiceLive.Quality.Degraded"

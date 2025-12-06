@@ -5,9 +5,6 @@ Dynamic Documentation System
 Simple documentation generator for the Real-Time Voice Agent API.
 """
 
-import time
-from typing import Dict, List, Any
-
 from utils.ml_logging import get_logger
 
 logger = get_logger("dynamic_docs")
@@ -19,7 +16,7 @@ class DynamicDocsManager:
     def __init__(self):
         pass
 
-    def generate_tags(self) -> List[Dict[str, str]]:
+    def generate_tags(self) -> list[dict[str, str]]:
         """Generate OpenAPI tags."""
         return [
             # V1 API Tags
@@ -75,7 +72,7 @@ class DynamicDocsManager:
 dynamic_docs_manager = DynamicDocsManager()
 
 
-def get_tags() -> List[Dict[str, str]]:
+def get_tags() -> list[dict[str, str]]:
     """Get OpenAPI tags."""
     return dynamic_docs_manager.generate_tags()
 

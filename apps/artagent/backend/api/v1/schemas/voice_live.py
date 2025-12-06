@@ -19,9 +19,9 @@ support for the V1 Live Voice API endpoints.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union
-from pydantic import BaseModel, Field, ConfigDict
-from enum import Enum
+from typing import Any, Union
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class VoiceLiveStatusResponse(BaseModel):
@@ -50,7 +50,7 @@ class VoiceLiveStatusResponse(BaseModel):
         },
     )
 
-    websocket_endpoints: Dict[str, str] = Field(
+    websocket_endpoints: dict[str, str] = Field(
         ...,
         description="Available WebSocket endpoints for Live Voice",
         json_schema_extra={
@@ -60,7 +60,7 @@ class VoiceLiveStatusResponse(BaseModel):
         },
     )
 
-    features: Dict[str, bool] = Field(
+    features: dict[str, bool] = Field(
         ...,
         description="Supported Live Voice features and capabilities",
         json_schema_extra={
@@ -75,13 +75,13 @@ class VoiceLiveStatusResponse(BaseModel):
         },
     )
 
-    active_connections: Dict[str, int] = Field(
+    active_connections: dict[str, int] = Field(
         ...,
         description="Current active Live Voice connection counts",
         json_schema_extra={"example": {"voice_live_sessions": 0}},
     )
 
-    protocols_supported: List[str] = Field(
+    protocols_supported: list[str] = Field(
         default=["WebSocket"],
         description="Supported communication protocols",
         json_schema_extra={"example": ["WebSocket"]},
@@ -137,7 +137,7 @@ class VoiceLiveSessionResponse(BaseModel):
         json_schema_extra={"example": True},
     )
 
-    audio_config: Dict[str, Any] = Field(
+    audio_config: dict[str, Any] = Field(
         ...,
         description="Audio processing configuration for the session",
         json_schema_extra={
@@ -152,7 +152,7 @@ class VoiceLiveSessionResponse(BaseModel):
         },
     )
 
-    model_configuration: Dict[str, Any] = Field(
+    model_configuration: dict[str, Any] = Field(
         ...,
         description="AI model configuration for the session",
         json_schema_extra={
@@ -165,7 +165,7 @@ class VoiceLiveSessionResponse(BaseModel):
         },
     )
 
-    session_metrics: Optional[Dict[str, Any]] = Field(
+    session_metrics: dict[str, Any] | None = Field(
         None,
         description="Session performance metrics",
         json_schema_extra={
@@ -188,7 +188,7 @@ class VoiceLiveConfigRequest(BaseModel):
     """
 
     # Audio Configuration
-    audio_config: Optional[Dict[str, Any]] = Field(
+    audio_config: dict[str, Any] | None = Field(
         None,
         description="Audio processing configuration",
         json_schema_extra={
@@ -206,7 +206,7 @@ class VoiceLiveConfigRequest(BaseModel):
     )
 
     # Model Configuration
-    model_configuration: Optional[Dict[str, Any]] = Field(
+    model_configuration: dict[str, Any] | None = Field(
         None,
         description="AI model configuration",
         json_schema_extra={
@@ -223,7 +223,7 @@ class VoiceLiveConfigRequest(BaseModel):
     )
 
     # Session Configuration
-    session_config: Optional[Dict[str, Any]] = Field(
+    session_config: dict[str, Any] | None = Field(
         None,
         description="Session-specific configuration",
         json_schema_extra={
@@ -251,13 +251,13 @@ class VoiceLiveMessage(BaseModel):
         json_schema_extra={"example": "audio"},
     )
 
-    timestamp: Optional[datetime] = Field(
+    timestamp: datetime | None = Field(
         None,
         description="Message timestamp",
         json_schema_extra={"example": "2024-01-01T12:00:00Z"},
     )
 
-    session_id: Optional[str] = Field(
+    session_id: str | None = Field(
         None,
         description="Associated session identifier",
         json_schema_extra={"example": "lv_abc123def"},
@@ -299,7 +299,7 @@ class VoiceLiveAudioMessage(VoiceLiveMessage):
         le=2,
     )
 
-    chunk_size: Optional[int] = Field(
+    chunk_size: int | None = Field(
         None,
         description="Size of audio chunk in bytes",
         json_schema_extra={"example": 1024},
@@ -312,7 +312,7 @@ class VoiceLiveAudioMessage(VoiceLiveMessage):
         json_schema_extra={"example": False},
     )
 
-    language: Optional[str] = Field(
+    language: str | None = Field(
         None, description="Audio language code", json_schema_extra={"example": "en-US"}
     )
 
@@ -352,7 +352,7 @@ class VoiceLiveTextMessage(VoiceLiveMessage):
         json_schema_extra={"example": False},
     )
 
-    confidence: Optional[float] = Field(
+    confidence: float | None = Field(
         None,
         description="Confidence score for transcribed text (0.0 to 1.0)",
         json_schema_extra={"example": 0.95},
@@ -360,7 +360,7 @@ class VoiceLiveTextMessage(VoiceLiveMessage):
         le=1.0,
     )
 
-    language: Optional[str] = Field(
+    language: str | None = Field(
         None,
         description="Detected language code",
         json_schema_extra={"example": "en-US"},
@@ -390,12 +390,10 @@ class VoiceLiveControlMessage(VoiceLiveMessage):
         },
     )
 
-    parameters: Optional[Dict[str, Any]] = Field(
+    parameters: dict[str, Any] | None = Field(
         None,
         description="Command parameters",
-        json_schema_extra={
-            "example": {"audio_enabled": True, "voice_activity_detection": True}
-        },
+        json_schema_extra={"example": {"audio_enabled": True, "voice_activity_detection": True}},
     )
 
 
@@ -437,12 +435,10 @@ class VoiceLiveStatusMessage(VoiceLiveMessage):
         },
     )
 
-    details: Optional[Dict[str, Any]] = Field(
+    details: dict[str, Any] | None = Field(
         None,
         description="Additional status details",
-        json_schema_extra={
-            "example": {"azure_speech_connected": True, "model_loaded": True}
-        },
+        json_schema_extra={"example": {"azure_speech_connected": True, "model_loaded": True}},
     )
 
 
@@ -469,9 +465,7 @@ class VoiceLiveErrorMessage(VoiceLiveMessage):
     error_message: str = Field(
         ...,
         description="Human-readable error message",
-        json_schema_extra={
-            "example": "Azure AI Speech service temporarily unavailable"
-        },
+        json_schema_extra={"example": "Azure AI Speech service temporarily unavailable"},
     )
 
     error_type: str = Field(
@@ -492,7 +486,7 @@ class VoiceLiveErrorMessage(VoiceLiveMessage):
         },
     )
 
-    error_details: Optional[Dict[str, Any]] = Field(
+    error_details: dict[str, Any] | None = Field(
         None,
         description="Additional error details",
         json_schema_extra={
@@ -504,12 +498,10 @@ class VoiceLiveErrorMessage(VoiceLiveMessage):
         },
     )
 
-    recovery_suggestion: Optional[str] = Field(
+    recovery_suggestion: str | None = Field(
         None,
         description="Suggested recovery action",
-        json_schema_extra={
-            "example": "Please check your internet connection and try again"
-        },
+        json_schema_extra={"example": "Please check your internet connection and try again"},
     )
 
     is_recoverable: bool = Field(
@@ -533,7 +525,7 @@ class VoiceLiveMetricsMessage(VoiceLiveMessage):
         json_schema_extra={"example": "metrics"},
     )
 
-    latency_metrics: Optional[Dict[str, float]] = Field(
+    latency_metrics: dict[str, float] | None = Field(
         None,
         description="Latency measurements in milliseconds",
         json_schema_extra={
@@ -546,7 +538,7 @@ class VoiceLiveMetricsMessage(VoiceLiveMessage):
         },
     )
 
-    quality_metrics: Optional[Dict[str, float]] = Field(
+    quality_metrics: dict[str, float] | None = Field(
         None,
         description="Quality measurements",
         json_schema_extra={
@@ -558,7 +550,7 @@ class VoiceLiveMetricsMessage(VoiceLiveMessage):
         },
     )
 
-    resource_metrics: Optional[Dict[str, float]] = Field(
+    resource_metrics: dict[str, float] | None = Field(
         None,
         description="Resource utilization metrics",
         json_schema_extra={
@@ -570,7 +562,7 @@ class VoiceLiveMetricsMessage(VoiceLiveMessage):
         },
     )
 
-    session_stats: Optional[Dict[str, Any]] = Field(
+    session_stats: dict[str, Any] | None = Field(
         None,
         description="Session statistics",
         json_schema_extra={
@@ -607,7 +599,7 @@ class VoiceLiveConfigurationMessage(VoiceLiveMessage):
         },
     )
 
-    configuration_data: Dict[str, Any] = Field(
+    configuration_data: dict[str, Any] = Field(
         ...,
         description="Configuration data",
         json_schema_extra={

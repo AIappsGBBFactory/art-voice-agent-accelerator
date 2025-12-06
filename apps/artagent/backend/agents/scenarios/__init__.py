@@ -12,22 +12,22 @@ Example Scenarios:
 
 Usage:
     from apps.artagent.backend.agents.scenarios import load_scenario, get_scenario_agents
-    
+
     # Load a scenario configuration
     scenario = load_scenario("banking")
-    
+
     # Get agents with scenario overrides applied
     agents = get_scenario_agents("banking")
 """
 
 from .loader import (
-    load_scenario,
+    AgentOverride,
+    ScenarioConfig,
     get_scenario_agents,
     get_scenario_start_agent,
     get_scenario_template_vars,
     list_scenarios,
-    ScenarioConfig,
-    AgentOverride,
+    load_scenario,
 )
 
 __all__ = [

@@ -11,7 +11,7 @@ Features:
 
 Usage:
     from apps.artagent.backend.agents.scenarios import load_scenario
-    
+
     scenario = load_scenario("banking")
     agents = get_scenario_agents("banking")
 """

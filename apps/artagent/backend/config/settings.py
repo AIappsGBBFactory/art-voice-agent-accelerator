@@ -13,7 +13,6 @@ Usage:
 import os
 import sys
 from pathlib import Path
-from typing import List
 
 # Add root directory to path for imports
 root_dir = Path(__file__).parent.parent.parent.parent
@@ -23,9 +22,11 @@ sys.path.insert(0, str(root_dir))
 try:
     from src.enums.stream_modes import StreamMode
 except ImportError:
+
     class StreamMode:
         def __init__(self, value):
             self.value = value
+
         def __str__(self):
             return self.value
 
@@ -33,6 +34,7 @@ except ImportError:
 # ==============================================================================
 # HELPER FUNCTIONS
 # ==============================================================================
+
 
 def _env_bool(key: str, default: bool = False) -> bool:
     """Parse boolean from environment variable."""
@@ -49,7 +51,7 @@ def _env_float(key: str, default: float) -> float:
     return float(os.getenv(key, str(default)))
 
 
-def _env_list(key: str, default: str = "", sep: str = ",") -> List[str]:
+def _env_list(key: str, default: str = "", sep: str = ",") -> list[str]:
     """Parse list from comma-separated environment variable."""
     raw = os.getenv(key, default)
     return [item.strip() for item in raw.split(sep) if item.strip()]
@@ -64,7 +66,7 @@ AZURE_TENANT_ID: str = os.getenv("AZURE_TENANT_ID", "")
 BACKEND_AUTH_CLIENT_ID: str = os.getenv("BACKEND_AUTH_CLIENT_ID", "")
 
 # Allowed client IDs (GUIDs) from environment variable
-ALLOWED_CLIENT_IDS: List[str] = _env_list("ALLOWED_CLIENT_IDS")
+ALLOWED_CLIENT_IDS: list[str] = _env_list("ALLOWED_CLIENT_IDS")
 
 # Entra ID URLs (derived from tenant)
 ENTRA_JWKS_URL = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/discovery/v2.0/keys"
@@ -91,21 +93,25 @@ AOAI_REQUEST_TIMEOUT: float = _env_float("AOAI_REQUEST_TIMEOUT", 30.0)
 # ==============================================================================
 
 AZURE_SPEECH_REGION: str = os.getenv("AZURE_SPEECH_REGION", "")
-AZURE_SPEECH_ENDPOINT: str = (
-    os.getenv("AZURE_SPEECH_ENDPOINT") or 
-    os.environ.get("AZURE_OPENAI_STT_TTS_ENDPOINT", "")
+AZURE_SPEECH_ENDPOINT: str = os.getenv("AZURE_SPEECH_ENDPOINT") or os.environ.get(
+    "AZURE_OPENAI_STT_TTS_ENDPOINT", ""
 )
-AZURE_SPEECH_KEY: str = (
-    os.getenv("AZURE_SPEECH_KEY") or 
-    os.environ.get("AZURE_OPENAI_STT_TTS_KEY", "")
+AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY") or os.environ.get(
+    "AZURE_OPENAI_STT_TTS_KEY", ""
 )
 AZURE_SPEECH_RESOURCE_ID: str = os.getenv("AZURE_SPEECH_RESOURCE_ID", "")
 
 # Azure Voice Live (preview)
 # Note: Uses AZURE_VOICELIVE_* format to match VoiceLiveSettings pydantic model
-AZURE_VOICE_LIVE_ENDPOINT: str = os.getenv("AZURE_VOICELIVE_ENDPOINT", "") or os.getenv("AZURE_VOICE_LIVE_ENDPOINT", "")
-AZURE_VOICE_API_KEY: str = os.getenv("AZURE_VOICELIVE_API_KEY", "") or os.getenv("AZURE_VOICE_API_KEY", "")
-AZURE_VOICE_LIVE_MODEL: str = os.getenv("AZURE_VOICELIVE_MODEL", "") or os.getenv("AZURE_VOICE_LIVE_MODEL", "gpt-4o")
+AZURE_VOICE_LIVE_ENDPOINT: str = os.getenv("AZURE_VOICELIVE_ENDPOINT", "") or os.getenv(
+    "AZURE_VOICE_LIVE_ENDPOINT", ""
+)
+AZURE_VOICE_API_KEY: str = os.getenv("AZURE_VOICELIVE_API_KEY", "") or os.getenv(
+    "AZURE_VOICE_API_KEY", ""
+)
+AZURE_VOICE_LIVE_MODEL: str = os.getenv("AZURE_VOICELIVE_MODEL", "") or os.getenv(
+    "AZURE_VOICE_LIVE_MODEL", "gpt-4o"
+)
 
 
 # ==============================================================================
@@ -166,7 +172,7 @@ VAD_SEMANTIC_SEGMENTATION: bool = _env_bool("VAD_SEMANTIC_SEGMENTATION", False)
 SILENCE_DURATION_MS: int = _env_int("SILENCE_DURATION_MS", 1300)
 AUDIO_FORMAT: str = os.getenv("AUDIO_FORMAT", "pcm")
 STT_PROCESSING_TIMEOUT: float = _env_float("STT_PROCESSING_TIMEOUT", 10.0)
-RECOGNIZED_LANGUAGE: List[str] = _env_list(
+RECOGNIZED_LANGUAGE: list[str] = _env_list(
     "RECOGNIZED_LANGUAGE", "en-US,es-ES,fr-FR,ko-KR,it-IT,pt-PT,pt-BR"
 )
 
@@ -244,12 +250,12 @@ POOL_METRICS_INTERVAL: int = _env_int("POOL_METRICS_INTERVAL", 30)
 # SECURITY & CORS
 # ==============================================================================
 
-ALLOWED_ORIGINS: List[str] = _env_list("ALLOWED_ORIGINS", "*")
+ALLOWED_ORIGINS: list[str] = _env_list("ALLOWED_ORIGINS", "*")
 
 # Import constants for paths (avoid circular import by importing here)
 from .constants import ACS_CALL_CALLBACK_PATH, ACS_WEBSOCKET_PATH
 
-ENTRA_EXEMPT_PATHS: List[str] = [
+ENTRA_EXEMPT_PATHS: list[str] = [
     ACS_CALL_CALLBACK_PATH,
     ACS_WEBSOCKET_PATH,
     "/health",
@@ -266,10 +272,11 @@ ENTRA_EXEMPT_PATHS: List[str] = [
 # VALIDATION
 # ==============================================================================
 
+
 def validate_settings() -> dict:
     """
     Validate current settings and return validation results.
-    
+
     Returns:
         Dict with 'valid' (bool), 'issues' (list), 'warnings' (list), 'settings_count' (int)
     """
@@ -303,11 +310,11 @@ def validate_settings() -> dict:
 
     # Count settings
     import sys
+
     current_module = sys.modules[__name__]
-    settings_count = len([
-        name for name in dir(current_module)
-        if name.isupper() and not name.startswith("_")
-    ])
+    settings_count = len(
+        [name for name in dir(current_module) if name.isupper() and not name.startswith("_")]
+    )
 
     return {
         "valid": len(issues) == 0,

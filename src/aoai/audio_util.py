@@ -4,7 +4,7 @@ import asyncio
 import base64
 import io
 import threading
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import numpy as np
 import pyaudio
@@ -28,10 +28,7 @@ def audio_to_pcm16_base64(audio_bytes: bytes) -> bytes:
     )
     # resample to 24kHz mono pcm16
     pcm_audio = (
-        audio.set_frame_rate(SAMPLE_RATE)
-        .set_channels(CHANNELS)
-        .set_sample_width(2)
-        .raw_data
+        audio.set_frame_rate(SAMPLE_RATE).set_channels(CHANNELS).set_sample_width(2).raw_data
     )
     return pcm_audio
 
@@ -66,9 +63,7 @@ class AudioPlayerAsync:
 
             # fill the rest of the frames with zeros if there is no more data
             if len(data) < frames:
-                data = np.concatenate(
-                    (data, np.zeros(frames - len(data), dtype=np.int16))
-                )
+                data = np.concatenate((data, np.zeros(frames - len(data), dtype=np.int16)))
 
         outdata[:] = data.reshape(-1, 1)
 
@@ -199,17 +194,13 @@ def choose_audio_device(predefined_index: int = None) -> int:
             print(f"  [{idx}]: {info['name']}")
         while True:
             try:
-                selection = input(
-                    f"Select audio input device index [{mic_indices[0]}]: "
-                ).strip()
+                selection = input(f"Select audio input device index [{mic_indices[0]}]: ").strip()
                 if selection == "":
                     return mic_indices[0]
                 selected_index = int(selection)
                 if selected_index in mic_indices:
                     return selected_index
-                print(
-                    f"Index {selected_index} is not valid. Please choose from {mic_indices}."
-                )
+                print(f"Index {selected_index} is not valid. Please choose from {mic_indices}.")
             except ValueError:
                 print("Invalid input. Please enter a valid integer index.")
 

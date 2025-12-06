@@ -11,7 +11,7 @@ The helpers also prefer semantic attributes for edges (e.g., `peer.service`,
 """
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from utils.ml_logging import get_logger
@@ -46,7 +46,7 @@ def create_span_attrs(
     component: str = "unknown",
     service: str = "unknown",
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create generic span attributes with common fields.
 
     NOTE: We intentionally DO NOT set `service.name` or `span.kind` here.
@@ -65,12 +65,12 @@ def create_span_attrs(
 def create_service_dependency_attrs(
     source_service: str,
     target_service: str,
-    call_connection_id: Optional[str] = None,
-    session_id: Optional[str] = None,
+    call_connection_id: str | None = None,
+    session_id: str | None = None,
     *,
     ws: bool | None = None,
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create attributes for CLIENT spans that represent dependencies.
 
     Uses semantic keys to help App Map draw edges correctly.
@@ -80,7 +80,7 @@ def create_service_dependency_attrs(
     """
     target_name = SERVICE_NAMES.get(target_service, target_service)
 
-    attrs: Dict[str, Any] = {
+    attrs: dict[str, Any] = {
         "component": source_service,
         "peer.service": target_name,
         "net.peer.name": target_name,
@@ -99,15 +99,15 @@ def create_service_dependency_attrs(
 
 def create_service_handler_attrs(
     service_name: str,
-    call_connection_id: Optional[str] = None,
-    session_id: Optional[str] = None,
+    call_connection_id: str | None = None,
+    session_id: str | None = None,
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create attributes for SERVER spans that represent handlers.
 
     These identify the component and include stable correlation keys.
     """
-    attrs: Dict[str, Any] = {
+    attrs: dict[str, Any] = {
         "component": service_name,
     }
     if call_connection_id:
@@ -123,7 +123,7 @@ def log_with_context(
     logger,
     level: str,
     message: str,
-    operation: Optional[str] = None,
+    operation: str | None = None,
     **kwargs,
 ) -> None:
     """Structured logging with consistent context.
@@ -136,9 +136,7 @@ def log_with_context(
     try:
         getattr(logger, level)(message, extra=extra)
     except AttributeError:
-        _default_logger.warning(
-            f"Invalid log level '{level}' for message: {message}", extra=extra
-        )
+        _default_logger.warning(f"Invalid log level '{level}' for message: {message}", extra=extra)
 
 
 # ============================================================================
@@ -157,8 +155,8 @@ class TracedOperation:
         service_name: str,
         operation: str,
         span_kind: Any = SpanKind.INTERNAL,
-        call_connection_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        call_connection_id: str | None = None,
+        session_id: str | None = None,
         **extra_attrs,
     ):
         self.tracer = tracer
@@ -181,9 +179,7 @@ class TracedOperation:
             **self.extra_attrs,
         )
 
-        self.span = self.tracer.start_span(
-            self.span_name, kind=self.span_kind, attributes=attrs
-        )
+        self.span = self.tracer.start_span(self.span_name, kind=self.span_kind, attributes=attrs)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -255,8 +251,8 @@ def trace_acs_operation(
     tracer,
     logger,
     operation: str,
-    call_connection_id: Optional[str] = None,
-    session_id: Optional[str] = None,
+    call_connection_id: str | None = None,
+    session_id: str | None = None,
     span_kind: Any = SpanKind.INTERNAL,
     **extra_attrs,
 ) -> TracedOperation:
@@ -286,8 +282,8 @@ def trace_acs_dependency(
     logger,
     target_service: str,
     operation: str,
-    call_connection_id: Optional[str] = None,
-    session_id: Optional[str] = None,
+    call_connection_id: str | None = None,
+    session_id: str | None = None,
     **extra_attrs,
 ) -> TracedOperation:
     """
@@ -319,7 +315,7 @@ def trace_acs_dependency(
     )
 
 
-def get_acs_context_keys(event_context) -> Dict[str, Optional[str]]:
+def get_acs_context_keys(event_context) -> dict[str, str | None]:
     """
     Extract consistent context keys from an ACS event context.
 
@@ -328,10 +324,12 @@ def get_acs_context_keys(event_context) -> Dict[str, Optional[str]]:
     """
     return {
         "call_connection_id": getattr(event_context, "call_connection_id", None),
-        "session_id": getattr(event_context.memo_manager, "session_id", None)
-        if hasattr(event_context, "memo_manager") and event_context.memo_manager
-        else None,
-        "event_type": getattr(event_context.event, "type", None)
-        if hasattr(event_context, "event")
-        else None,
+        "session_id": (
+            getattr(event_context.memo_manager, "session_id", None)
+            if hasattr(event_context, "memo_manager") and event_context.memo_manager
+            else None
+        ),
+        "event_type": (
+            getattr(event_context.event, "type", None) if hasattr(event_context, "event") else None
+        ),
     }

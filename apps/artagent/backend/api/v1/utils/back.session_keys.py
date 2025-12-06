@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from utils.ml_logging import get_logger
 
@@ -19,7 +18,7 @@ def _call_phone_key(call_connection_id: str) -> str:
     return f"{_CALL_PHONE_IDENTIFIER_PREFIX}:{call_connection_id}"
 
 
-def normalize_phone_identifier(raw_identifier: Optional[str]) -> Optional[str]:
+def normalize_phone_identifier(raw_identifier: str | None) -> str | None:
     """Return a sanitized, E.164-like phone identifier for Redis keys."""
     if not raw_identifier:
         return None
@@ -44,11 +43,11 @@ def build_phone_session_id(normalized_phone: str) -> str:
 
 async def persist_call_phone_identifier(
     redis_mgr,
-    call_connection_id: Optional[str],
-    raw_phone: Optional[str],
+    call_connection_id: str | None,
+    raw_phone: str | None,
     *,
     ttl_seconds: int = _SESSION_KEY_TTL_SECONDS,
-) -> Optional[str]:
+) -> str | None:
     """Persist the normalized phone identifier for a call connection."""
     normalized = normalize_phone_identifier(raw_phone)
     if not normalized or not call_connection_id or redis_mgr is None:
@@ -65,7 +64,7 @@ async def persist_call_phone_identifier(
     return normalized
 
 
-async def fetch_call_phone_identifier(redis_mgr, call_connection_id: Optional[str]) -> Optional[str]:
+async def fetch_call_phone_identifier(redis_mgr, call_connection_id: str | None) -> str | None:
     if redis_mgr is None or not call_connection_id:
         return None
     try:
@@ -85,9 +84,9 @@ async def fetch_call_phone_identifier(redis_mgr, call_connection_id: Optional[st
 
 async def resolve_memo_session_id(
     redis_mgr,
-    call_connection_id: Optional[str],
-    fallback_session_id: Optional[str] = None,
-) -> Optional[str]:
+    call_connection_id: str | None,
+    fallback_session_id: str | None = None,
+) -> str | None:
     """Resolve the memo session identifier using stored phone mappings when available."""
     if redis_mgr and call_connection_id:
         try:

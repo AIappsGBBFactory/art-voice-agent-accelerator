@@ -1,5 +1,5 @@
 """
-V1 Call Event Handlers 
+V1 Call Event Handlers
 ===================================
 
 Event handlers with DTMF logic moved to DTMFValidationLifecycle.
@@ -12,29 +12,25 @@ Key Features:
 - Proper OpenTelemetry tracing and error handling
 """
 
-import asyncio
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-from azure.core.messaging import CloudEvent
-from azure.communication.callautomation import PhoneNumberIdentifier
-
-from opentelemetry import trace
-from opentelemetry.trace import SpanKind
-
-from apps.artagent.backend.src.ws_helpers.shared_ws import broadcast_session_envelope
-from apps.artagent.backend.src.ws_helpers.envelopes import (
-    make_event_envelope,
-    make_status_envelope,
-)
-
-from utils.ml_logging import get_logger
-from .types import CallEventContext, ACSEventTypes
+from typing import Any
 
 from apps.artagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
     DTMFValidationLifecycle,
 )
+from apps.artagent.backend.src.ws_helpers.envelopes import (
+    make_event_envelope,
+    make_status_envelope,
+)
+from apps.artagent.backend.src.ws_helpers.shared_ws import broadcast_session_envelope
+from azure.core.messaging import CloudEvent
 from config import DTMF_VALIDATION_ENABLED
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
+from utils.ml_logging import get_logger
+
+from .types import ACSEventTypes, CallEventContext
 
 logger = get_logger("v1.events.handlers")
 tracer = trace.get_tracer(__name__)
@@ -82,13 +78,9 @@ class CallEventHandlers:
                     context.memo_manager.update_context("api_version", api_version)
                     context.memo_manager.update_context("call_direction", "outbound")
                     if target_number:
-                        context.memo_manager.update_context(
-                            "target_number", target_number
-                        )
+                        context.memo_manager.update_context("target_number", target_number)
                     if context.redis_mgr:
-                        await context.memo_manager.persist_to_redis_async(
-                            context.redis_mgr
-                        )
+                        await context.memo_manager.persist_to_redis_async(context.redis_mgr)
                 except Exception as e:
                     logger.error(f"Failed to update call state: {e}")
 
@@ -122,9 +114,7 @@ class CallEventHandlers:
                     context.memo_manager.update_context("caller_info", caller_info)
                     context.memo_manager.update_context("api_version", "v1")
                     if context.redis_mgr:
-                        await context.memo_manager.persist_to_redis_async(
-                            context.redis_mgr
-                        )
+                        await context.memo_manager.persist_to_redis_async(context.redis_mgr)
                 except Exception as e:
                     logger.error(f"Failed to initialize inbound call state: {e}")
 
@@ -154,9 +144,7 @@ class CallEventHandlers:
                         "answered_at", datetime.utcnow().isoformat() + "Z"
                     )
                     if context.redis_mgr:
-                        await context.memo_manager.persist_to_redis_async(
-                            context.redis_mgr
-                        )
+                        await context.memo_manager.persist_to_redis_async(context.redis_mgr)
                 except Exception as e:
                     logger.error(f"Failed to update call answer state: {e}")
 
@@ -180,9 +168,7 @@ class CallEventHandlers:
                 "event.source": "acs_webhook",
             },
         ):
-            logger.info(
-                f"🌐 Webhook event: {context.event_type} for {context.call_connection_id}"
-            )
+            logger.info(f"🌐 Webhook event: {context.event_type} for {context.call_connection_id}")
 
             # Route to specific handlers
             if context.event_type == ACSEventTypes.CALL_CONNECTED:
@@ -210,20 +196,14 @@ class CallEventHandlers:
             elif context.event_type == ACSEventTypes.RECOGNIZE_FAILED:
                 await CallEventHandlers.handle_recognize_failed(context)
             else:
-                logger.warning(
-                    f"⚠️  Unhandled webhook event type: {context.event_type}"
-                )
+                logger.warning(f"⚠️  Unhandled webhook event type: {context.event_type}")
 
             # Update webhook statistics
             try:
                 if context.memo_manager:
-                    context.memo_manager.update_context(
-                        "last_webhook_event", context.event_type
-                    )
+                    context.memo_manager.update_context("last_webhook_event", context.event_type)
                     if context.redis_mgr:
-                        await context.memo_manager.persist_to_redis_async(
-                            context.redis_mgr
-                        )
+                        await context.memo_manager.persist_to_redis_async(context.redis_mgr)
             except Exception as e:
                 logger.error(f"Failed to update webhook stats: {e}")
 
@@ -246,9 +226,7 @@ class CallEventHandlers:
             logger.info(f"📞 Call connected: {context.call_connection_id}")
 
             # Extract target phone from call connected event
-            call_conn = context.acs_caller.get_call_connection(
-                context.call_connection_id
-            )
+            call_conn = context.acs_caller.get_call_connection(context.call_connection_id)
             participants = call_conn.list_participants()
 
             caller_participant = None
@@ -268,9 +246,7 @@ class CallEventHandlers:
             if not acs_participant:
                 logger.warning("ACS participant not found in participants list.")
 
-            logger.info(
-                f"   Caller phone number: {caller_id if caller_id else 'unknown'}"
-            )
+            logger.info(f"   Caller phone number: {caller_id if caller_id else 'unknown'}")
 
             if DTMF_VALIDATION_ENABLED:
                 try:
@@ -285,9 +261,7 @@ class CallEventHandlers:
             # Broadcast connection status to WebSocket clients
             try:
                 if context.app_state:
-                    browser_session_id = await CallEventHandlers._lookup_browser_session_id(
-                        context
-                    )
+                    browser_session_id = await CallEventHandlers._lookup_browser_session_id(context)
 
                     # Use browser session_id if available, fallback to call_connection_id
                     session_id = browser_session_id or context.call_connection_id
@@ -357,7 +331,7 @@ class CallEventHandlers:
             session_id = await CallEventHandlers._resolve_session_id(context)
             if session_id and context.app_state:
                 try:
-                    reason_label: Optional[str] = None
+                    reason_label: str | None = None
                     if isinstance(disconnect_reason, str) and disconnect_reason:
                         reason_label = disconnect_reason.replace("_", " ").strip().title()
                     message_lines = ["📞 Call disconnected"]
@@ -529,14 +503,12 @@ class CallEventHandlers:
             logger.error("Failed to broadcast call transfer failure: %s", exc)
 
     @staticmethod
-    async def _resolve_session_id(context: CallEventContext) -> Optional[str]:
+    async def _resolve_session_id(context: CallEventContext) -> str | None:
         """Resolve the session identifier tied to a call connection."""
         if not context.app_state:
             return None
 
-        browser_session_id: Optional[str] = await CallEventHandlers._lookup_browser_session_id(
-            context
-        )
+        browser_session_id: str | None = await CallEventHandlers._lookup_browser_session_id(context)
 
         return browser_session_id or context.call_connection_id
 
@@ -544,9 +516,9 @@ class CallEventHandlers:
     async def _broadcast_session_event_envelope(
         *,
         context: CallEventContext,
-        session_id: Optional[str],
+        session_id: str | None,
         event_type: str,
-        event_data: Dict[str, Any],
+        event_data: dict[str, Any],
         event_label: str,
     ) -> None:
         """Broadcast a structured event envelope to the UI session if available."""
@@ -585,7 +557,7 @@ class CallEventHandlers:
     @staticmethod
     async def _lookup_browser_session_id(
         context: CallEventContext,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Retrieve the browser session ID mapped to a call connection."""
         key_suffix = context.call_connection_id
         if not key_suffix:
@@ -632,7 +604,7 @@ class CallEventHandlers:
         return None
 
     @staticmethod
-    def _describe_transfer_target(event_data: Dict[str, Any]) -> Optional[str]:
+    def _describe_transfer_target(event_data: dict[str, Any]) -> str | None:
         """Best-effort extraction of the transfer destination label."""
         candidate = (
             event_data.get("targetParticipant")
@@ -751,9 +723,7 @@ class CallEventHandlers:
             # Normalize and process tone
             normalized_tone = CallEventHandlers._normalize_tone(tone)
             if normalized_tone and context.memo_manager:
-                CallEventHandlers._update_dtmf_sequence(
-                    context, normalized_tone, sequence_id
-                )
+                CallEventHandlers._update_dtmf_sequence(context, normalized_tone, sequence_id)
 
     @staticmethod
     async def handle_play_completed(context: CallEventContext) -> None:
@@ -774,9 +744,7 @@ class CallEventHandlers:
         :type context: CallEventContext
         """
         result_info = context.get_event_field("resultInformation", {})
-        logger.error(
-            f"🎵 Play failed: {context.call_connection_id}, reason: {result_info}"
-        )
+        logger.error(f"🎵 Play failed: {context.call_connection_id}, reason: {result_info}")
 
     @staticmethod
     async def handle_recognize_completed(context: CallEventContext) -> None:
@@ -797,16 +765,14 @@ class CallEventHandlers:
         :type context: CallEventContext
         """
         result_info = context.get_event_field("resultInformation", {})
-        logger.error(
-            f"🎤 Recognize failed: {context.call_connection_id}, reason: {result_info}"
-        )
+        logger.error(f"🎤 Recognize failed: {context.call_connection_id}, reason: {result_info}")
 
     # ============================================================================
     # Helper Methods
     # ============================================================================
 
     @staticmethod
-    def _extract_caller_id(caller_info: Dict[str, Any]) -> str:
+    def _extract_caller_id(caller_info: dict[str, Any]) -> str:
         """
         Extract caller ID from caller information.
 
@@ -831,8 +797,8 @@ class CallEventHandlers:
             if not context.acs_caller or not context.memo_manager:
                 return
 
-            from config import GREETING, GREETING_VOICE_TTS
             from azure.communication.callautomation import TextSource
+            from config import GREETING, GREETING_VOICE_TTS
 
             # Create greeting source
             text_source = TextSource(
@@ -842,9 +808,7 @@ class CallEventHandlers:
             )
 
             # Play greeting
-            await context.acs_caller.play_to_all(
-                context.call_connection_id, text_source
-            )
+            await context.acs_caller.play_to_all(context.call_connection_id, text_source)
 
             logger.info(f"🎵 Greeting played to call {context.call_connection_id}")
 
@@ -876,9 +840,7 @@ class CallEventHandlers:
             logger.error(f"Failed to cleanup call state: {e}")
 
     @staticmethod
-    def _get_participant_phone(
-        event: CloudEvent, memo_manager: Optional[Any]
-    ) -> Optional[str]:
+    def _get_participant_phone(event: CloudEvent, memo_manager: Any | None) -> str | None:
         """
         Extract participant phone number from event.
 
@@ -893,7 +855,7 @@ class CallEventHandlers:
             event_data = CallEventHandlers._safe_get_event_data(event)
             participants = event_data.get("participants", [])
 
-            def digits_tail(s: Optional[str], n: int = 10) -> str:
+            def digits_tail(s: str | None, n: int = 10) -> str:
                 return "".join(ch for ch in (s or "") if ch.isdigit())[-n:]
 
             # Get target number from context
@@ -936,9 +898,7 @@ class CallEventHandlers:
             return None
 
     @staticmethod
-    async def _start_dtmf_recognition(
-        context: CallEventContext, target_phone: str
-    ) -> None:
+    async def _start_dtmf_recognition(context: CallEventContext, target_phone: str) -> None:
         """
         Start DTMF recognition for participant.
 
@@ -949,13 +909,9 @@ class CallEventHandlers:
         """
         try:
             if context.acs_caller:
-                call_conn = context.acs_caller.get_call_connection(
-                    context.call_connection_id
-                )
+                call_conn = context.acs_caller.get_call_connection(context.call_connection_id)
                 if not call_conn:
-                    logger.error(
-                        "Call connection not found for %s", context.call_connection_id
-                    )
+                    logger.error("Call connection not found for %s", context.call_connection_id)
                     return
 
                 await call_conn.start_continuous_dtmf_recognition(
@@ -966,7 +922,7 @@ class CallEventHandlers:
             logger.error(f"Failed to start DTMF recognition: {e}")
 
     @staticmethod
-    def _normalize_tone(tone: str) -> Optional[str]:
+    def _normalize_tone(tone: str) -> str | None:
         """
         Normalize DTMF tone to standard format.
 
@@ -1012,14 +968,13 @@ class CallEventHandlers:
         normalized = tone_map.get(tone_str)
         return (
             normalized
-            if normalized
-            in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#"}
+            if normalized in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#"}
             else None
         )
 
     @staticmethod
     def _update_dtmf_sequence(
-        context: CallEventContext, tone: str, sequence_id: Optional[int]
+        context: CallEventContext, tone: str, sequence_id: int | None
     ) -> None:
         """
         Update DTMF sequence in memory.
@@ -1091,19 +1046,15 @@ class CallEventHandlers:
         # Update context
         context.memo_manager.update_context("dtmf_sequence", "")
         context.memo_manager.update_context("dtmf_validated", is_valid)
-        context.memo_manager.update_context(
-            "entered_pin", sequence if is_valid else None
-        )
+        context.memo_manager.update_context("entered_pin", sequence if is_valid else None)
 
         if context.redis_mgr:
             context.memo_manager.persist_to_redis(context.redis_mgr)
 
-        logger.info(
-            f"🔢 DTMF sequence {'validated' if is_valid else 'rejected'}: {sequence}"
-        )
+        logger.info(f"🔢 DTMF sequence {'validated' if is_valid else 'rejected'}: {sequence}")
 
     @staticmethod
-    def _safe_get_event_data(event: CloudEvent) -> Dict[str, Any]:
+    def _safe_get_event_data(event: CloudEvent) -> dict[str, Any]:
         """
         Safely extract event data as dictionary.
 

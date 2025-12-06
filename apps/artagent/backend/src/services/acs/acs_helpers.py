@@ -13,8 +13,6 @@ This module provides helper functions and utilities for integrating with Azure C
 
 import asyncio
 import json
-from base64 import b64encode
-from typing import List, Optional
 
 
 class MediaCancelledException(Exception):
@@ -25,10 +23,6 @@ class MediaCancelledException(Exception):
 
 from azure.communication.callautomation import SsmlSource, TextSource
 from azure.core.exceptions import HttpResponseError
-from fastapi import WebSocket
-from fastapi.websockets import WebSocketDisconnect, WebSocketState
-from websockets.exceptions import ConnectionClosedError
-
 from config import (
     ACS_CALL_CALLBACK_PATH,
     ACS_CONNECTION_STRING,
@@ -39,23 +33,24 @@ from config import (
     BASE_URL,
     GREETING_VOICE_TTS,
 )
+from fastapi import WebSocket
+from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from src.acs.acs_helper import AcsCaller
 from utils.ml_logging import get_logger
+from websockets.exceptions import ConnectionClosedError
 
 # --- Init Logger ---
 logger = get_logger()
 
 
 # --- Helper Functions for Initialization ---
-def construct_websocket_url(base_url: str, path: str) -> Optional[str]:
+def construct_websocket_url(base_url: str, path: str) -> str | None:
     """Constructs a WebSocket URL from a base URL and path."""
     if not base_url:
         logger.error("BASE_URL is empty or not provided.")
         return None
     if "<your" in base_url:
-        logger.warning(
-            "BASE_URL contains placeholder. Please update environment variable."
-        )
+        logger.warning("BASE_URL contains placeholder. Please update environment variable.")
         return None
 
     base_url_clean = base_url.strip("/")
@@ -67,35 +62,27 @@ def construct_websocket_url(base_url: str, path: str) -> Optional[str]:
         logger.info(f"Constructed WebSocket URL: {ws_url}")
         return ws_url
     elif base_url.startswith("http://"):
-        logger.warning(
-            "BASE_URL starts with http://. ACS Media Streaming usually requires wss://."
-        )
+        logger.warning("BASE_URL starts with http://. ACS Media Streaming usually requires wss://.")
         base_url_clean = base_url.replace("http://", "").strip("/")
         ws_url = f"ws://{base_url_clean}/{path_clean}"
         logger.info(f"Constructed WebSocket URL: {ws_url}")
         return ws_url
     else:
-        logger.error(
-            f"Cannot determine WebSocket protocol (wss/ws) from BASE_URL: {base_url}"
-        )
+        logger.error(f"Cannot determine WebSocket protocol (wss/ws) from BASE_URL: {base_url}")
         return None
 
 
-def initialize_acs_caller_instance() -> Optional[AcsCaller]:
+def initialize_acs_caller_instance() -> AcsCaller | None:
     """Initializes and returns the ACS Caller instance if configured, otherwise None."""
     if not all([ACS_CONNECTION_STRING, ACS_SOURCE_PHONE_NUMBER, BASE_URL]):
-        logger.warning(
-            "ACS environment variables not fully configured. ACS calling disabled."
-        )
+        logger.warning("ACS environment variables not fully configured. ACS calling disabled.")
         return None
 
     acs_callback_url = f"{BASE_URL.strip('/')}{ACS_CALL_CALLBACK_PATH}"
     acs_websocket_url = construct_websocket_url(BASE_URL, ACS_WEBSOCKET_PATH)
 
     if not acs_websocket_url:
-        logger.error(
-            "Could not construct valid ACS WebSocket URL. ACS calling disabled."
-        )
+        logger.error("Could not construct valid ACS WebSocket URL. ACS calling disabled.")
         return None
 
     logger.info("Attempting to initialize AcsCaller...")
@@ -120,7 +107,7 @@ def initialize_acs_caller_instance() -> Optional[AcsCaller]:
 
 # --- Helper Functions for WebSocket and Media Operations ---
 async def broadcast_message(
-    connected_clients: List[WebSocket], message: str, sender: str = "system"
+    connected_clients: list[WebSocket], message: str, sender: str = "system"
 ):
     """
     DEPRECATED: This function bypasses session isolation and is unsafe for production.
@@ -153,7 +140,6 @@ async def send_pcm_frames(
     b64_frames: list[str],
 ):
     try:
-        import sys
 
         for b64 in b64_frames:
             payload = {
@@ -239,9 +225,7 @@ async def play_response(
         target_participant = getattr(ws.state, "target_participant", None)
         if target_participant:
             participants = [target_participant]
-            logger.info(
-                f"Using target_participant from ws.state for call {call_connection_id}."
-            )
+            logger.info(f"Using target_participant from ws.state for call {call_connection_id}.")
         else:
             logger.error(
                 f"No target_participant found in ws.state for call {call_connection_id}. Cannot play media."
@@ -264,20 +248,14 @@ async def play_response(
         sanitized_text = response_text.strip().replace("\n", " ").replace("\r", " ")
         sanitized_text = " ".join(sanitized_text.split())
 
-        text_preview = (
-            sanitized_text[:100] + "..."
-            if len(sanitized_text) > 100
-            else sanitized_text
-        )
+        text_preview = sanitized_text[:100] + "..." if len(sanitized_text) > 100 else sanitized_text
         logger.info(f"Playing text: '{text_preview}'")
 
         if use_ssml:
             source = SsmlSource(ssml_text=sanitized_text)
             logger.debug(f"Created SsmlSource for call {call_connection_id}")
         else:
-            source = TextSource(
-                text=sanitized_text, voice_name=voice_name, source_locale=locale
-            )
+            source = TextSource(text=sanitized_text, voice_name=voice_name, source_locale=locale)
             logger.debug(
                 f"Created TextSource for call {call_connection_id} with voice {voice_name}"
             )
@@ -310,9 +288,7 @@ async def play_response(
                 ]
 
                 error_message = str(e).lower()
-                if any(
-                    indicator in error_message for indicator in cancellation_indicators
-                ):
+                if any(indicator in error_message for indicator in cancellation_indicators):
                     logger.warning(
                         f"🚫 Media cancellation detected for call {call_connection_id}: {e}"
                     )
@@ -477,9 +453,7 @@ async def process_message_queue(ws: WebSocket):
                     participants=message_data["participants"],
                     max_retries=message_data["max_retries"],
                     initial_backoff=message_data["initial_backoff"],
-                    transcription_resume_delay=message_data.get(
-                        "transcription_resume_delay", 1.0
-                    ),
+                    transcription_resume_delay=message_data.get("transcription_resume_delay", 1.0),
                 )
             except MediaCancelledException:
                 logger.info(
@@ -563,20 +537,14 @@ async def _play_response_direct(
         sanitized_text = response_text.strip().replace("\n", " ").replace("\r", " ")
         sanitized_text = " ".join(sanitized_text.split())
 
-        text_preview = (
-            sanitized_text[:100] + "..."
-            if len(sanitized_text) > 100
-            else sanitized_text
-        )
+        text_preview = sanitized_text[:100] + "..." if len(sanitized_text) > 100 else sanitized_text
         logger.info(f"Playing text: '{text_preview}'")
 
         if use_ssml:
             source = SsmlSource(ssml_text=sanitized_text)
             logger.debug(f"Created SsmlSource for call {call_connection_id}")
         else:
-            source = TextSource(
-                text=sanitized_text, voice_name=voice_name, source_locale=locale
-            )
+            source = TextSource(text=sanitized_text, voice_name=voice_name, source_locale=locale)
             logger.debug(
                 f"Created TextSource for call {call_connection_id} with voice {voice_name}"
             )
@@ -615,9 +583,7 @@ async def _play_response_direct(
                 ]
 
                 error_message = str(e).lower()
-                if any(
-                    indicator in error_message for indicator in cancellation_indicators
-                ):
+                if any(indicator in error_message for indicator in cancellation_indicators):
                     logger.warning(
                         f"🚫 Media cancellation detected for call {call_connection_id}: {e}"
                     )
@@ -664,9 +630,7 @@ async def _play_response_direct(
         )
 
     except Exception as e:
-        logger.error(
-            f"Error in _play_response_direct for call {call_connection_id}: {e}"
-        )
+        logger.error(f"Error in _play_response_direct for call {call_connection_id}: {e}")
         raise
     finally:
         if cm:

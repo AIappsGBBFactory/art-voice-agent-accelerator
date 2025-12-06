@@ -40,15 +40,14 @@ import asyncio
 import threading
 import time
 import weakref
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Awaitable, Callable, Dict, Optional, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
-
-from config import STT_PROCESSING_TIMEOUT
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.stateful.state_managment import MemoManager
 from src.tools.latency_tool import LatencyTool
@@ -56,15 +55,13 @@ from utils.ml_logging import get_logger
 from utils.telemetry_decorators import ConversationTurnSpan
 
 if TYPE_CHECKING:
-    from fastapi import WebSocket
+    pass
 
 logger = get_logger("v1.handlers.speech_cascade_handler")
 tracer = trace.get_tracer(__name__)
 
 # Thread pool for cleanup operations
-_handlers_cleanup_executor = ThreadPoolExecutor(
-    max_workers=1, thread_name_prefix="handler-cleanup"
-)
+_handlers_cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="handler-cleanup")
 
 
 class SpeechEventType(Enum):
@@ -86,14 +83,14 @@ class SpeechEvent:
 
     event_type: SpeechEventType
     text: str
-    language: Optional[str] = None
-    speaker_id: Optional[str] = None
-    confidence: Optional[float] = None
-    timestamp: Optional[float] = field(default_factory=time.time)
+    language: str | None = None
+    speaker_id: str | None = None
+    confidence: float | None = None
+    timestamp: float | None = field(default_factory=time.time)
     # Voice configuration for TTS events
-    voice_name: Optional[str] = None
-    voice_style: Optional[str] = None
-    voice_rate: Optional[str] = None
+    voice_name: str | None = None
+    voice_style: str | None = None
+    voice_rate: str | None = None
     is_greeting: bool = False
 
 
@@ -104,9 +101,9 @@ class ResponseSender(Protocol):
         self,
         text: str,
         *,
-        voice_name: Optional[str] = None,
-        voice_style: Optional[str] = None,
-        rate: Optional[str] = None,
+        voice_name: str | None = None,
+        voice_style: str | None = None,
+        rate: str | None = None,
     ) -> None:
         """Send a text response via TTS."""
         ...
@@ -116,14 +113,12 @@ class TranscriptEmitter(Protocol):
     """Protocol for emitting transcripts to UI/dashboard."""
 
     async def emit_user_transcript(
-        self, text: str, *, partial: bool = False, turn_id: Optional[str] = None
+        self, text: str, *, partial: bool = False, turn_id: str | None = None
     ) -> None:
         """Emit user transcript to connected clients."""
         ...
 
-    async def emit_assistant_transcript(
-        self, text: str, *, sender: Optional[str] = None
-    ) -> None:
+    async def emit_assistant_transcript(self, text: str, *, sender: str | None = None) -> None:
         """Emit assistant transcript to connected clients."""
         ...
 
@@ -138,15 +133,13 @@ class ThreadBridge:
 
     def __init__(self):
         """Initialize cross-thread communication bridge."""
-        self.main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.main_loop: asyncio.AbstractEventLoop | None = None
         self.connection_id = "unknown"
-        self._route_turn_thread_ref: Optional[weakref.ReferenceType] = None
+        self._route_turn_thread_ref: weakref.ReferenceType | None = None
         # Thread-safe flag to suppress barge-in during agent transitions/greetings
         self._suppress_barge_in = threading.Event()
 
-    def set_main_loop(
-        self, loop: asyncio.AbstractEventLoop, connection_id: str = None
-    ) -> None:
+    def set_main_loop(self, loop: asyncio.AbstractEventLoop, connection_id: str = None) -> None:
         """
         Set the main event loop reference for cross-thread communication.
 
@@ -158,7 +151,7 @@ class ThreadBridge:
         if connection_id:
             self.connection_id = connection_id
 
-    def set_route_turn_thread(self, route_turn_thread: "RouteTurnThread") -> None:
+    def set_route_turn_thread(self, route_turn_thread: RouteTurnThread) -> None:
         """Store a weak reference to the RouteTurnThread for coordinated cancellation."""
         try:
             self._route_turn_thread_ref = weakref.ref(route_turn_thread)
@@ -168,7 +161,7 @@ class ThreadBridge:
     def suppress_barge_in(self) -> None:
         """
         Suppress barge-in detection during agent transitions/greetings.
-        
+
         Call this before playing handoff/greeting audio to prevent
         audio echo from triggering false barge-in events.
         """
@@ -202,15 +195,11 @@ class ThreadBridge:
             return
 
         if not self.main_loop or self.main_loop.is_closed():
-            logger.warning(
-                f"[{self.connection_id}] No main loop for barge-in scheduling"
-            )
+            logger.warning(f"[{self.connection_id}] No main loop for barge-in scheduling")
             return
 
         route_turn_thread = (
-            self._route_turn_thread_ref()
-            if self._route_turn_thread_ref is not None
-            else None
+            self._route_turn_thread_ref() if self._route_turn_thread_ref is not None else None
         )
 
         if route_turn_thread:
@@ -228,9 +217,7 @@ class ThreadBridge:
         except Exception as e:
             logger.error(f"[{self.connection_id}] Failed to schedule barge-in: {e}")
 
-    def queue_speech_result(
-        self, speech_queue: asyncio.Queue, event: SpeechEvent
-    ) -> None:
+    def queue_speech_result(self, speech_queue: asyncio.Queue, event: SpeechEvent) -> None:
         """
         Queue speech recognition result for Route Turn Thread processing.
 
@@ -239,9 +226,7 @@ class ThreadBridge:
             event: Speech recognition event containing transcription results.
         """
         if not isinstance(event, SpeechEvent):
-            logger.error(
-                f"[{self.connection_id}] Non-SpeechEvent enqueued: {type(event).__name__}"
-            )
+            logger.error(f"[{self.connection_id}] Non-SpeechEvent enqueued: {type(event).__name__}")
             return
 
         try:
@@ -251,9 +236,7 @@ class ThreadBridge:
                     f"[{self.connection_id}] Enqueued speech event type={event.event_type.value} qsize={speech_queue.qsize()}"
                 )
         except asyncio.QueueFull:
-            logger.warning(
-                f"[{self.connection_id}] Speech queue full, evicting oldest event"
-            )
+            logger.warning(f"[{self.connection_id}] Speech queue full, evicting oldest event")
             try:
                 evicted = speech_queue.get_nowait()
                 logger.info(
@@ -277,9 +260,7 @@ class ThreadBridge:
                     )
                     future.result(timeout=0.1)
                 except Exception as e:
-                    logger.error(
-                        f"[{self.connection_id}] Failed to queue speech: {e}"
-                    )
+                    logger.error(f"[{self.connection_id}] Failed to queue speech: {e}")
 
 
 class SpeechSDKThread:
@@ -301,9 +282,9 @@ class SpeechSDKThread:
         barge_in_handler: Callable,
         speech_queue: asyncio.Queue,
         *,
-        on_partial_transcript: Optional[Callable[[str, str, Optional[str]], None]] = None,
-        latency_tool: Optional[LatencyTool] = None,
-        redis_mgr: Optional[Any] = None,
+        on_partial_transcript: Callable[[str, str, str | None], None] | None = None,
+        latency_tool: LatencyTool | None = None,
+        redis_mgr: Any | None = None,
     ):
         """
         Initialize Speech SDK Thread.
@@ -328,12 +309,12 @@ class SpeechSDKThread:
         self._latency_tool = latency_tool
         self._redis_mgr = redis_mgr
 
-        self.thread_obj: Optional[threading.Thread] = None
+        self.thread_obj: threading.Thread | None = None
         self.thread_running = False
         self.recognizer_started = False
         self.stop_event = threading.Event()
         self._stopped = False
-        
+
         # Track if STT recognition timer is running for current utterance
         self._stt_timer_started = False
 
@@ -343,13 +324,8 @@ class SpeechSDKThread:
     def _pre_initialize_recognizer(self) -> None:
         """Pre-initialize push_stream to prevent audio data loss."""
         try:
-            if (
-                hasattr(self.recognizer, "push_stream")
-                and self.recognizer.push_stream is not None
-            ):
-                logger.debug(
-                    f"[{self._conn_short}] Push_stream already exists, skipping pre-init"
-                )
+            if hasattr(self.recognizer, "push_stream") and self.recognizer.push_stream is not None:
+                logger.debug(f"[{self._conn_short}] Push_stream already exists, skipping pre-init")
                 return
 
             if hasattr(self.recognizer, "create_push_stream"):
@@ -359,9 +335,7 @@ class SpeechSDKThread:
                 self.recognizer.prepare_stream()
                 logger.info(f"[{self._conn_short}] Pre-initialized via prepare_stream")
             else:
-                logger.warning(
-                    f"[{self._conn_short}] No direct push_stream method found"
-                )
+                logger.warning(f"[{self._conn_short}] No direct push_stream method found")
                 self.recognizer.prepare_start()
 
         except Exception as e:
@@ -370,7 +344,7 @@ class SpeechSDKThread:
     def _setup_callbacks(self) -> None:
         """Configure speech recognition callbacks."""
 
-        def on_partial(text: str, lang: str, speaker_id: Optional[str] = None):
+        def on_partial(text: str, lang: str, speaker_id: str | None = None):
             logger.info(
                 f"[{self._conn_short}] Partial speech: '{text}' ({lang}) len={len(text.strip())}"
             )
@@ -383,7 +357,7 @@ class SpeechSDKThread:
                         logger.debug(f"[{self._conn_short}] STT recognition timer started")
                     except Exception as e:
                         logger.debug(f"[{self._conn_short}] Failed to start STT timer: {e}")
-                
+
                 try:
                     self.thread_bridge.schedule_barge_in(self.barge_in_handler)
                 except Exception as e:
@@ -393,17 +367,15 @@ class SpeechSDKThread:
                     try:
                         self.on_partial_transcript(text.strip(), lang, speaker_id)
                     except Exception as e:
-                        logger.debug(
-                            f"[{self._conn_short}] Partial transcript callback error: {e}"
-                        )
+                        logger.debug(f"[{self._conn_short}] Partial transcript callback error: {e}")
 
-        def on_final(text: str, lang: str, speaker_id: Optional[str] = None):
+        def on_final(text: str, lang: str, speaker_id: str | None = None):
             logger.debug(
                 f"[{self._conn_short}] Final speech: '{text}' ({lang}) len={len(text.strip())}"
             )
             # Stop STT recognition timer on final result
             self._stop_stt_timer(reason="final")
-            
+
             if len(text.strip()) > 1:
                 logger.info(f"[{self._conn_short}] Speech: '{text}' ({lang})")
                 event = SpeechEvent(
@@ -435,7 +407,9 @@ class SpeechSDKThread:
         if self._stt_timer_started and self._latency_tool:
             try:
                 self._latency_tool.stop("stt:recognition", self._redis_mgr, meta={"reason": reason})
-                logger.debug(f"[{self._conn_short}] STT recognition timer stopped (reason={reason})")
+                logger.debug(
+                    f"[{self._conn_short}] STT recognition timer stopped (reason={reason})"
+                )
             except Exception as e:
                 logger.debug(f"[{self._conn_short}] Failed to stop STT timer: {e}")
             finally:
@@ -550,19 +524,14 @@ class RouteTurnThread:
         connection_id: str,
         speech_queue: asyncio.Queue,
         orchestrator_func: Callable,
-        memory_manager: Optional[MemoManager],
+        memory_manager: MemoManager | None,
         *,
-        response_sender: Optional[ResponseSender] = None,
-        transcript_emitter: Optional[TranscriptEmitter] = None,
-        on_greeting: Optional[Callable[[SpeechEvent], Awaitable[None]]] = None,
-        on_announcement: Optional[Callable[[SpeechEvent], Awaitable[None]]] = None,
-        on_user_transcript: Optional[Callable[[str], Awaitable[None]]] = None,
-        on_tts_request: Optional[
-            Callable[
-                [str, SpeechEventType],
-                Awaitable[None],
-            ]
-        ] = None,
+        response_sender: ResponseSender | None = None,
+        transcript_emitter: TranscriptEmitter | None = None,
+        on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
+        on_announcement: Callable[[SpeechEvent], Awaitable[None]] | None = None,
+        on_user_transcript: Callable[[str], Awaitable[None]] | None = None,
+        on_tts_request: Callable[[str, SpeechEventType], Awaitable[None]] | None = None,
     ):
         """
         Initialize Route Turn Thread.
@@ -592,14 +561,14 @@ class RouteTurnThread:
         self.on_user_transcript = on_user_transcript
         self.on_tts_request = on_tts_request
 
-        self.processing_task: Optional[asyncio.Task] = None
-        self.current_response_task: Optional[asyncio.Task] = None
+        self.processing_task: asyncio.Task | None = None
+        self.current_response_task: asyncio.Task | None = None
         self.running = False
         self._stopped = False
-        
+
         # Turn tracking for telemetry
         self._turn_number: int = 0
-        self._active_turn_span: Optional[ConversationTurnSpan] = None
+        self._active_turn_span: ConversationTurnSpan | None = None
 
     async def start(self) -> None:
         """Start the route turn processing loop."""
@@ -613,9 +582,7 @@ class RouteTurnThread:
         """Main processing loop."""
         while self.running:
             try:
-                speech_event = await asyncio.wait_for(
-                    self.speech_queue.get(), timeout=1.0
-                )
+                speech_event = await asyncio.wait_for(self.speech_queue.get(), timeout=1.0)
 
                 try:
                     logger.debug(
@@ -669,12 +636,10 @@ class RouteTurnThread:
                                 voice_rate=speech_event.voice_rate,
                             )
                     elif speech_event.event_type == SpeechEventType.ERROR:
-                        logger.error(
-                            f"[{self._conn_short}] Speech error: {speech_event.text}"
-                        )
+                        logger.error(f"[{self._conn_short}] Speech error: {speech_event.text}")
                 except asyncio.CancelledError:
                     continue  # Barge-in cancellation
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception as e:
                 logger.error(f"[{self._conn_short}] Processing loop error: {e}")
@@ -693,7 +658,7 @@ class RouteTurnThread:
     async def _process_final_speech(self, event: SpeechEvent) -> None:
         """
         Process final speech through orchestrator with turn-level telemetry.
-        
+
         Creates a ConversationTurnSpan that tracks the full turn lifecycle:
         - STT completion (when this method is called)
         - LLM processing (during orchestrator execution)
@@ -701,10 +666,12 @@ class RouteTurnThread:
         """
         # Increment turn counter
         self._turn_number += 1
-        
+
         # Get session_id from memory manager for correlation
-        session_id = getattr(self.memory_manager, "session_id", None) if self.memory_manager else None
-        
+        session_id = (
+            getattr(self.memory_manager, "session_id", None) if self.memory_manager else None
+        )
+
         # Create ConversationTurnSpan for end-to-end turn tracking
         # Manually manage span lifecycle to cover async TTS events
         turn = ConversationTurnSpan(
@@ -716,13 +683,13 @@ class RouteTurnThread:
         )
         await turn.__aenter__()
         self._active_turn_span = turn
-        
+
         # Record STT complete (we just received the final transcript)
         turn.record_stt_complete(
             text=event.text,
             language=event.language,
         )
-        
+
         with tracer.start_as_current_span(
             "route_turn_thread.process_speech",
             kind=SpanKind.INTERNAL,  # INTERNAL for in-process orchestration (not external call)
@@ -751,15 +718,13 @@ class RouteTurnThread:
                     try:
                         await self.transcript_emitter.emit_user_transcript(event.text)
                     except Exception as e:
-                        logger.warning(
-                            f"[{self._conn_short}] Failed to emit user transcript: {e}"
-                        )
+                        logger.warning(f"[{self._conn_short}] Failed to emit user transcript: {e}")
 
                 # Call orchestrator (LLM processing happens here)
                 if self.orchestrator_func:
                     # Record LLM start (approximation - actual first token comes from agent)
                     turn.record_tts_start()  # TTS will start streaming during orchestrator
-                    
+
                     coro = self.orchestrator_func(
                         cm=self.memory_manager,
                         transcript=event.text,
@@ -769,12 +734,12 @@ class RouteTurnThread:
                         await self.current_response_task
 
             except asyncio.CancelledError:
-                logger.info(f"[{self._conn_short}] Orchestrator processing cancelled (turn {self._turn_number})")
+                logger.info(
+                    f"[{self._conn_short}] Orchestrator processing cancelled (turn {self._turn_number})"
+                )
                 raise
             except Exception as e:
-                logger.error(
-                    f"[{self._conn_short}] Error processing speech with orchestrator: {e}"
-                )
+                logger.error(f"[{self._conn_short}] Error processing speech with orchestrator: {e}")
             finally:
                 if self.current_response_task and not self.current_response_task.done():
                     self.current_response_task.cancel()
@@ -788,10 +753,10 @@ class RouteTurnThread:
 
     def record_llm_complete(
         self,
-        total_ms: Optional[float] = None,
-        input_tokens: Optional[int] = None,
-        output_tokens: Optional[int] = None,
-        response_text: Optional[str] = None,
+        total_ms: float | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        response_text: str | None = None,
     ) -> None:
         """Record LLM completion timing on the active turn span."""
         if self._active_turn_span:
@@ -807,7 +772,7 @@ class RouteTurnThread:
         if self._active_turn_span:
             self._active_turn_span.record_tts_first_audio()
 
-    def record_tts_complete(self, total_ms: Optional[float] = None) -> None:
+    def record_tts_complete(self, total_ms: float | None = None) -> None:
         """Record TTS completion on the active turn span."""
         if self._active_turn_span:
             self._active_turn_span.record_tts_complete(total_ms=total_ms)
@@ -833,9 +798,7 @@ class RouteTurnThread:
                     break
 
             if cleared_count > 0:
-                logger.debug(
-                    f"[{self._conn_short}] Cleared {cleared_count} events during barge-in"
-                )
+                logger.debug(f"[{self._conn_short}] Cleared {cleared_count} events during barge-in")
 
             # Cancel current response task
             if self.current_response_task and not self.current_response_task.done():
@@ -899,7 +862,7 @@ class BargeInController:
         self,
         connection_id: str,
         *,
-        on_barge_in: Optional[Callable[[], Awaitable[None]]] = None,
+        on_barge_in: Callable[[], Awaitable[None]] | None = None,
     ):
         """
         Initialize barge-in controller.
@@ -912,7 +875,7 @@ class BargeInController:
         self._conn_short = connection_id[-8:] if connection_id else "unknown"
         self.on_barge_in = on_barge_in
         self.barge_in_active = threading.Event()
-        self.current_playback_task: Optional[asyncio.Task] = None
+        self.current_playback_task: asyncio.Task | None = None
 
     async def handle_barge_in(self) -> None:
         """Handle barge-in interruption."""
@@ -970,19 +933,19 @@ class SpeechCascadeHandler:
         self,
         connection_id: str,
         orchestrator_func: Callable,
-        recognizer: Optional[StreamingSpeechRecognizerFromBytes] = None,
-        memory_manager: Optional[MemoManager] = None,
+        recognizer: StreamingSpeechRecognizerFromBytes | None = None,
+        memory_manager: MemoManager | None = None,
         *,
-        on_barge_in: Optional[Callable[[], Awaitable[None]]] = None,
-        on_greeting: Optional[Callable[[SpeechEvent], Awaitable[None]]] = None,
-        on_announcement: Optional[Callable[[SpeechEvent], Awaitable[None]]] = None,
-        on_partial_transcript: Optional[Callable[[str, str, Optional[str]], None]] = None,
-        on_user_transcript: Optional[Callable[[str], Awaitable[None]]] = None,
-        on_tts_request: Optional[Callable[[str, SpeechEventType], Awaitable[None]]] = None,
-        transcript_emitter: Optional[TranscriptEmitter] = None,
-        response_sender: Optional[ResponseSender] = None,
-        latency_tool: Optional[LatencyTool] = None,
-        redis_mgr: Optional[Any] = None,
+        on_barge_in: Callable[[], Awaitable[None]] | None = None,
+        on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
+        on_announcement: Callable[[SpeechEvent], Awaitable[None]] | None = None,
+        on_partial_transcript: Callable[[str, str, str | None], None] | None = None,
+        on_user_transcript: Callable[[str], Awaitable[None]] | None = None,
+        on_tts_request: Callable[[str, SpeechEventType], Awaitable[None]] | None = None,
+        transcript_emitter: TranscriptEmitter | None = None,
+        response_sender: ResponseSender | None = None,
+        latency_tool: LatencyTool | None = None,
+        redis_mgr: Any | None = None,
     ):
         """
         Initialize the speech cascade handler.
@@ -1028,9 +991,7 @@ class SpeechCascadeHandler:
         self.thread_bridge = ThreadBridge()
 
         # Barge-in controller
-        self.barge_in_controller = BargeInController(
-            connection_id, on_barge_in=on_barge_in
-        )
+        self.barge_in_controller = BargeInController(connection_id, on_barge_in=on_barge_in)
 
         # Route Turn Thread
         self.route_turn_thread = RouteTurnThread(
@@ -1145,9 +1106,9 @@ class SpeechCascadeHandler:
         text: str,
         language: str = "en-US",
         *,
-        voice_name: Optional[str] = None,
-        voice_style: Optional[str] = None,
-        voice_rate: Optional[str] = None,
+        voice_name: str | None = None,
+        voice_style: str | None = None,
+        voice_rate: str | None = None,
     ) -> bool:
         """Queue a greeting for playback with optional voice configuration."""
         return self.queue_event(
@@ -1167,9 +1128,9 @@ class SpeechCascadeHandler:
         text: str,
         language: str = "en-US",
         *,
-        voice_name: Optional[str] = None,
-        voice_style: Optional[str] = None,
-        voice_rate: Optional[str] = None,
+        voice_name: str | None = None,
+        voice_style: str | None = None,
+        voice_rate: str | None = None,
     ) -> bool:
         """Queue an announcement for playback with optional voice configuration."""
         return self.queue_event(
@@ -1187,9 +1148,9 @@ class SpeechCascadeHandler:
         self,
         text: str,
         *,
-        voice_name: Optional[str] = None,
-        voice_style: Optional[str] = None,
-        voice_rate: Optional[str] = None,
+        voice_name: str | None = None,
+        voice_style: str | None = None,
+        voice_rate: str | None = None,
         language: str = "en-US",
     ) -> bool:
         """
@@ -1246,9 +1207,7 @@ class SpeechCascadeHandler:
         if self._stopped:
             return
 
-        with tracer.start_as_current_span(
-            "speech_cascade_handler.stop", kind=SpanKind.INTERNAL
-        ):
+        with tracer.start_as_current_span("speech_cascade_handler.stop", kind=SpanKind.INTERNAL):
             try:
                 logger.info(f"[{self._conn_short}] Stopping speech cascade handler")
                 self._stopped = True
@@ -1318,10 +1277,10 @@ class SpeechCascadeHandler:
 
     def record_llm_complete(
         self,
-        total_ms: Optional[float] = None,
-        input_tokens: Optional[int] = None,
-        output_tokens: Optional[int] = None,
-        response_text: Optional[str] = None,
+        total_ms: float | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        response_text: str | None = None,
     ) -> None:
         """Record LLM completion timing on the active turn span."""
         self.route_turn_thread.record_llm_complete(
@@ -1335,7 +1294,7 @@ class SpeechCascadeHandler:
         """Record TTS first audio timing on the active turn span."""
         self.route_turn_thread.record_tts_first_audio()
 
-    def record_tts_complete(self, total_ms: Optional[float] = None) -> None:
+    def record_tts_complete(self, total_ms: float | None = None) -> None:
         """Record TTS completion on the active turn span."""
         self.route_turn_thread.record_tts_complete(total_ms=total_ms)
 
@@ -1343,6 +1302,7 @@ class SpeechCascadeHandler:
     def turn_number(self) -> int:
         """Current turn number for external reference."""
         return self.route_turn_thread.turn_number
+
 
 __all__ = [
     "SpeechCascadeHandler",

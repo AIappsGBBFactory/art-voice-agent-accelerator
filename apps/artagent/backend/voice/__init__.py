@@ -46,59 +46,6 @@ docs/architecture/handoff-inventory.md for the full handoff architecture.
 """
 
 # Speech Cascade (STT→LLM→TTS three-thread architecture)
-from .speech_cascade import (
-    SpeechCascadeHandler,
-    SpeechEvent,
-    SpeechEventType,
-    ThreadBridge,
-    RouteTurnThread,
-    SpeechSDKThread,
-    BargeInController,
-    ResponseSender,
-    TranscriptEmitter,
-    record_stt_recognition,
-    record_turn_processing,
-    record_barge_in,
-    # Orchestrator (co-located with handler)
-    CascadeOrchestratorAdapter,
-    # Unified TTS Playback (preferred)
-    TTSPlayback,
-    SAMPLE_RATE_BROWSER,
-    SAMPLE_RATE_ACS,
-    # Legacy TTS Sender (deprecated - use TTSPlayback)
-    send_tts_to_browser,
-    send_tts_to_acs,
-)
-
-# VoiceLive SDK (Azure VoiceLive + multi-agent)
-from .voicelive import (
-    VoiceLiveSDKHandler,
-    record_llm_ttft,
-    record_tts_ttfb,
-    record_stt_latency,
-    record_turn_complete,
-    # Orchestrator (co-located with handler)
-    LiveOrchestrator,
-    TRANSFER_TOOL_NAMES,
-    CALL_CENTER_TRIGGER_PHRASES,
-)
-
-# Shared orchestrator data classes and config resolution
-from .shared import (
-    OrchestratorContext,
-    OrchestratorResult,
-    DEFAULT_START_AGENT,
-    resolve_orchestrator_config,
-    resolve_from_app_state,
-)
-
-# Cascade orchestrator factory functions (re-exported from speech_cascade)
-from .speech_cascade.orchestrator import (
-    CascadeConfig,
-    get_cascade_orchestrator,
-    create_cascade_orchestrator_func,
-)
-
 # Handoff context dataclasses (strategies removed - see handoff-inventory.md)
 from .handoffs import (
     HandoffContext,
@@ -107,18 +54,66 @@ from .handoffs import (
 
 # Messaging (WebSocket helpers for voice transports)
 from .messaging import (
-    send_tts_audio,
-    send_response_to_acs,
-    send_user_transcript,
-    send_user_partial_transcript,
-    send_session_envelope,
+    BrowserBargeInController,
     broadcast_session_envelope,
-    make_envelope,
-    make_status_envelope,
     make_assistant_envelope,
     make_assistant_streaming_envelope,
+    make_envelope,
     make_event_envelope,
-    BrowserBargeInController,
+    make_status_envelope,
+    send_response_to_acs,
+    send_session_envelope,
+    send_tts_audio,
+    send_user_partial_transcript,
+    send_user_transcript,
+)
+
+# Shared orchestrator data classes and config resolution
+from .shared import (
+    DEFAULT_START_AGENT,
+    OrchestratorContext,
+    OrchestratorResult,
+    resolve_from_app_state,
+    resolve_orchestrator_config,
+)
+from .speech_cascade import (  # Orchestrator (co-located with handler); Unified TTS Playback (preferred); Legacy TTS Sender (deprecated - use TTSPlayback)
+    SAMPLE_RATE_ACS,
+    SAMPLE_RATE_BROWSER,
+    BargeInController,
+    CascadeOrchestratorAdapter,
+    ResponseSender,
+    RouteTurnThread,
+    SpeechCascadeHandler,
+    SpeechEvent,
+    SpeechEventType,
+    SpeechSDKThread,
+    ThreadBridge,
+    TranscriptEmitter,
+    TTSPlayback,
+    record_barge_in,
+    record_stt_recognition,
+    record_turn_processing,
+    send_tts_to_acs,
+    send_tts_to_browser,
+)
+
+# Cascade orchestrator factory functions (re-exported from speech_cascade)
+from .speech_cascade.orchestrator import (
+    CascadeConfig,
+    create_cascade_orchestrator_func,
+    get_cascade_orchestrator,
+)
+
+# VoiceLive SDK (Azure VoiceLive + multi-agent)
+from .voicelive import (  # Orchestrator (co-located with handler)
+    CALL_CENTER_TRIGGER_PHRASES,
+    TRANSFER_TOOL_NAMES,
+    LiveOrchestrator,
+    VoiceLiveSDKHandler,
+    record_llm_ttft,
+    record_stt_latency,
+    record_tts_ttfb,
+    record_turn_complete,
 )
 
 __all__ = [

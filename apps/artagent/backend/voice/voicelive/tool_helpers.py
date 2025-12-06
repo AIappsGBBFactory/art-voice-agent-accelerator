@@ -10,31 +10,24 @@ for UI display during agent tool calls.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import WebSocket
-
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.tool_helpers")
 
 
 async def _emit(
-    ws: WebSocket, 
-    payload: dict, 
-    *, 
-    is_acs: bool, 
-    session_id: Optional[str] = None
+    ws: WebSocket, payload: dict, *, is_acs: bool, session_id: str | None = None
 ) -> None:
     """
     Emit tool status to connected clients.
-    
+
     - browser `/realtime` → send JSON directly to specific session
     - phone `/call/*` → broadcast to dashboards only for that session
-    
+
     IMPORTANT: Tool frames are now session-aware to prevent cross-session leakage.
     """
     if is_acs:
@@ -65,14 +58,14 @@ async def push_tool_start(
     ws: WebSocket,
     tool_name: str,
     call_id: str,
-    arguments: Dict[str, Any],
+    arguments: dict[str, Any],
     *,
     is_acs: bool = False,
-    session_id: Optional[str] = None,
+    session_id: str | None = None,
 ) -> None:
     """
     Emit tool_start event when a tool begins execution.
-    
+
     Args:
         ws: WebSocket connection
         tool_name: Name of the tool being called
@@ -95,7 +88,7 @@ async def push_tool_start(
 def _derive_tool_status(result: Any) -> str:
     """
     Derive success/error status from tool result.
-    
+
     Convention: A tool result dict with `success: False` or `error` key
     is considered a failure. Everything else is success.
     """
@@ -116,12 +109,12 @@ async def push_tool_end(
     result: Any,
     *,
     is_acs: bool = False,
-    session_id: Optional[str] = None,
-    duration_ms: Optional[float] = None,
+    session_id: str | None = None,
+    duration_ms: float | None = None,
 ) -> None:
     """
     Emit tool_end event when a tool completes execution.
-    
+
     Args:
         ws: WebSocket connection
         tool_name: Name of the tool that completed
@@ -133,12 +126,12 @@ async def push_tool_end(
     """
     status = _derive_tool_status(result)
     serialized_result = _safe_serialize(result)
-    
+
     # Extract error message for failed tools
     error_msg = None
     if status == "error" and isinstance(result, dict):
         error_msg = result.get("error") or result.get("message") or "Tool execution failed"
-    
+
     payload = {
         "type": "tool_end",
         "tool": tool_name,
@@ -152,7 +145,7 @@ async def push_tool_end(
         payload["error"] = error_msg
     if duration_ms is not None:
         payload["duration_ms"] = duration_ms
-    
+
     await _emit(ws, payload, is_acs=is_acs, session_id=session_id)
 
 
@@ -163,11 +156,11 @@ async def push_tool_progress(
     message: str,
     *,
     is_acs: bool = False,
-    session_id: Optional[str] = None,
+    session_id: str | None = None,
 ) -> None:
     """
     Emit tool_progress event for long-running tools.
-    
+
     Args:
         ws: WebSocket connection
         tool_name: Name of the tool

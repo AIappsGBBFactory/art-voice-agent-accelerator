@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Awaitable, Callable, Dict, Generic, Optional, Tuple, TypeVar
-
+from typing import Any, Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -44,7 +44,7 @@ class OnDemandResourcePool(Generic[T]):
         self._session_awareness = session_awareness
         self._name = name
         self._ready = asyncio.Event()
-        self._session_cache: Dict[str, T] = {}
+        self._session_cache: dict[str, T] = {}
         self._lock = asyncio.Lock()
         self._metrics = _ProviderMetrics()
 
@@ -59,19 +59,19 @@ class OnDemandResourcePool(Generic[T]):
             self._metrics.active_sessions = 0
         self._ready.clear()
 
-    async def acquire(self, timeout: Optional[float] = None) -> T:  # noqa: ARG002
+    async def acquire(self, timeout: float | None = None) -> T:  # noqa: ARG002
         """Return a fresh resource instance."""
         self._metrics.allocations_total += 1
         self._metrics.allocations_new += 1
         return await self._factory()
 
-    async def release(self, resource: Optional[T]) -> None:  # noqa: ARG002
+    async def release(self, resource: T | None) -> None:  # noqa: ARG002
         """Release is a no-op for on-demand resources."""
         return None
 
     async def acquire_for_session(
-        self, session_id: Optional[str], timeout: Optional[float] = None  # noqa: ARG002
-    ) -> Tuple[T, AllocationTier]:
+        self, session_id: str | None, timeout: float | None = None  # noqa: ARG002
+    ) -> tuple[T, AllocationTier]:
         """Return a cached resource for the session or create a new one."""
         if not self._session_awareness or not session_id:
             resource = await self.acquire()
@@ -97,10 +97,10 @@ class OnDemandResourcePool(Generic[T]):
             return resource, AllocationTier.COLD
 
     async def release_for_session(
-        self, session_id: Optional[str], resource: Optional[T] = None  # noqa: ARG002
+        self, session_id: str | None, resource: T | None = None  # noqa: ARG002
     ) -> bool:
         """Remove the cached resource for the given session if present.
-        
+
         Clears any session-specific state on the resource before discarding.
         """
         if not self._session_awareness or not session_id:
@@ -124,7 +124,7 @@ class OnDemandResourcePool(Generic[T]):
                         pass
             return removed is not None
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         """Return a lightweight status map for logging/diagnostics."""
         metrics = asdict(self._metrics)
         metrics["timestamp"] = time.time()
@@ -143,4 +143,3 @@ class OnDemandResourcePool(Generic[T]):
     @property
     def active_sessions(self) -> int:
         return len(self._session_cache)
-

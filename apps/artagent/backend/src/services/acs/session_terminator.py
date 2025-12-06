@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum, auto
-from typing import Optional, Dict, Any
 
+from azure.communication.callautomation import CallAutomationClient
 from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
-from azure.communication.callautomation import CallAutomationClient
-
 from utils.ml_logging import get_logger
 
 logger = get_logger("services.acs.session_terminator")
@@ -60,15 +58,11 @@ async def _hangup_acs_call(
     """
     for i in range(1, attempts + 1):
         try:
-            logger.debug(
-                f"Attempting ACS hangup for call {call_connection_id}, attempt {i}"
-            )
+            logger.debug(f"Attempting ACS hangup for call {call_connection_id}, attempt {i}")
 
             # Try to hangup the call with timeout
             await asyncio.wait_for(
-                acs_client.get_call_connection(call_connection_id).hang_up(
-                    is_for_everyone=True
-                ),
+                acs_client.get_call_connection(call_connection_id).hang_up(is_for_everyone=True),
                 timeout=timeout_s,
             )
             logger.info(
@@ -77,7 +71,7 @@ async def _hangup_acs_call(
             )
             return True
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "ACS hangup timed out",
                 extra={
@@ -113,15 +107,11 @@ async def _hangup_acs_call(
             backoff_time = base_backoff_s * (2 ** (i - 1))
             await asyncio.sleep(backoff_time)
 
-    logger.error(
-        f"ACS hangup failed after {attempts} attempts for call {call_connection_id}"
-    )
+    logger.error(f"ACS hangup failed after {attempts} attempts for call {call_connection_id}")
     return False
 
 
-def _get_disconnect_event(
-    ws: WebSocket, call_connection_id: Optional[str]
-) -> Optional[asyncio.Event]:
+def _get_disconnect_event(ws: WebSocket, call_connection_id: str | None) -> asyncio.Event | None:
     """
     Retrieve (or create) an asyncio.Event that will be set when ACS disconnects.
     Your ACS webhook should set this event on 'CallDisconnected'.
@@ -129,7 +119,7 @@ def _get_disconnect_event(
     if not call_connection_id:
         return None
     try:
-        store: Dict[str, asyncio.Event] = getattr(ws.app.state, "acs_disconnect_events", None)  # type: ignore[attr-defined]
+        store: dict[str, asyncio.Event] = getattr(ws.app.state, "acs_disconnect_events", None)  # type: ignore[attr-defined]
         if store is None:
             store = {}
             ws.app.state.acs_disconnect_events = store  # type: ignore[attr-defined]
@@ -140,18 +130,16 @@ def _get_disconnect_event(
 
         return store[call_connection_id]
     except Exception as exc:
-        logger.debug(
-            "Failed to access acs_disconnect_events store", extra={"error": repr(exc)}
-        )
+        logger.debug("Failed to access acs_disconnect_events store", extra={"error": repr(exc)})
         return None
 
 
-def _cleanup_disconnect_event(ws: WebSocket, call_connection_id: Optional[str]) -> None:
+def _cleanup_disconnect_event(ws: WebSocket, call_connection_id: str | None) -> None:
     """Clean up the disconnect event after use to prevent memory leaks."""
     if not call_connection_id:
         return
     try:
-        store: Dict[str, asyncio.Event] = getattr(ws.app.state, "acs_disconnect_events", None)  # type: ignore[attr-defined]
+        store: dict[str, asyncio.Event] = getattr(ws.app.state, "acs_disconnect_events", None)  # type: ignore[attr-defined]
         if store and call_connection_id in store:
             del store[call_connection_id]
             logger.debug(f"Cleaned up disconnect event for call {call_connection_id}")
@@ -162,8 +150,8 @@ def _cleanup_disconnect_event(ws: WebSocket, call_connection_id: Optional[str]) 
 async def _wait_for_acs_disconnect(
     *,
     ws: WebSocket,
-    acs_client: Optional[CallAutomationClient],
-    call_connection_id: Optional[str],
+    acs_client: CallAutomationClient | None,
+    call_connection_id: str | None,
     max_wait_s: float = 5.0,  # Reduced from 10.0
     poll_interval_s: float = 0.5,
 ) -> bool:
@@ -192,7 +180,7 @@ async def _wait_for_acs_disconnect(
                 extra={"call_connection_id": call_connection_id},
             )
             disconnected = True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Timeout waiting for ACS disconnect event",
                 extra={"call_connection_id": call_connection_id},
@@ -212,12 +200,7 @@ async def _wait_for_acs_disconnect(
             except Exception as exc:
                 # Heuristic: treat not found/404 as "disconnected"
                 msg = str(exc).lower()
-                if (
-                    "not found" in msg
-                    or "404" in msg
-                    or "gone" in msg
-                    or "disconnected" in msg
-                ):
+                if "not found" in msg or "404" in msg or "gone" in msg or "disconnected" in msg:
                     logger.info(
                         "ACS disconnect inferred by polling",
                         extra={"call_connection_id": call_connection_id},
@@ -247,14 +230,14 @@ async def _send_session_end(ws: WebSocket, reason: TerminationReason) -> None:
                 {
                     "type": "session_end",
                     "reason": reason.name,
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                 }
             )
     except Exception as exc:
         logger.debug("Failed to send session_end", extra={"error": repr(exc)})
 
 
-def _get_goodbye_message(reason: TerminationReason) -> Optional[str]:
+def _get_goodbye_message(reason: TerminationReason) -> str | None:
     """Generate appropriate goodbye message based on termination reason."""
     goodbye_messages = {
         TerminationReason.HUMAN_HANDOFF: "Thank you for calling. I'm now transferring you to a live agent who will assist you further. Please hold while I connect you.",
@@ -270,9 +253,9 @@ async def terminate_session(
     ws: WebSocket,
     *,
     is_acs: bool,
-    call_connection_id: Optional[str],
+    call_connection_id: str | None,
     reason: TerminationReason = TerminationReason.NORMAL,
-    acs_client: Optional[CallAutomationClient] = None,
+    acs_client: CallAutomationClient | None = None,
     wait_for_disconnect_s: float = 5.0,  # Reduced from 10s
 ) -> TerminationResult:
     """
@@ -300,12 +283,12 @@ async def terminate_session(
     )
     try:
         if hasattr(ws, "state"):
-            setattr(ws.state, "acs_session_terminated", True)
+            ws.state.acs_session_terminated = True
     except Exception:
         pass
 
     # Resolve ACS client from app state if not passed
-    resolved_acs_client: Optional[CallAutomationClient] = acs_client
+    resolved_acs_client: CallAutomationClient | None = acs_client
     if is_acs and call_connection_id and resolved_acs_client is None:
         try:
             resolved_acs_client = ws.app.state.acs_caller.client  # type: ignore[attr-defined]

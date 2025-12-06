@@ -4,7 +4,7 @@ shared_ws.py
 WebSocket helpers for both realtime and ACS routers:
 
     • send_tts_audio        – browser TTS
-    • send_response_to_acs  – phone-call TTS  
+    • send_response_to_acs  – phone-call TTS
     • push_final            – "close bubble" helper
     • broadcast_message     – relay to /relay dashboards
 """
@@ -12,16 +12,21 @@ WebSocket helpers for both realtime and ACS routers:
 from __future__ import annotations
 
 import asyncio
-from functools import partial
-import json
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
-from typing import Any, Callable, Dict, Optional, List
+from functools import partial
+from typing import Any
 
-from fastapi import WebSocket, WebSocketDisconnect
-from fastapi.websockets import WebSocketState
-
+from apps.artagent.backend.agents.loader import build_agent_summaries
+from apps.artagent.backend.src.services.acs.acs_helpers import play_response_with_queue
+from apps.artagent.backend.src.services.speech_services import SpeechSynthesizer
+from apps.artagent.backend.src.ws_helpers.envelopes import (
+    make_envelope,
+    make_event_envelope,
+    make_status_envelope,
+)
 from config import (
     ACS_STREAMING_MODE,
     DEFAULT_VOICE_RATE,
@@ -30,19 +35,14 @@ from config import (
     TTS_SAMPLE_RATE_ACS,
     TTS_SAMPLE_RATE_UI,
 )
-from src.tools.latency_tool import LatencyTool
-from apps.artagent.backend.src.services.acs.acs_helpers import play_response_with_queue
-from apps.artagent.backend.src.ws_helpers.envelopes import (
-    make_envelope,
-    make_event_envelope,
-    make_status_envelope,
-)
-from apps.artagent.backend.agents.loader import build_agent_summaries
-from apps.artagent.backend.src.services.speech_services import SpeechSynthesizer
+from fastapi import WebSocket, WebSocketDisconnect
+from fastapi.websockets import WebSocketState
 from src.enums.stream_modes import StreamMode
+from src.tools.latency_tool import LatencyTool
 from utils.ml_logging import get_logger
 
 logger = get_logger("shared_ws")
+
 
 def _mirror_ws_state(ws: WebSocket, key: str, value) -> None:
     """Store a copy of connection metadata on websocket.state for barge-in fallbacks."""
@@ -93,15 +93,12 @@ def _set_connection_metadata(ws: WebSocket, key: str, value) -> bool:
     return updated
 
 
-def _lt_stop(latency_tool: Optional[LatencyTool], stage: str, ws: WebSocket, meta=None):
+def _lt_stop(latency_tool: LatencyTool | None, stage: str, ws: WebSocket, meta=None):
     """Stop latency tracking with error handling and duplicate protection."""
     if latency_tool:
         try:
             #  Check if timer is actually running before stopping
-            if (
-                hasattr(latency_tool, "_active_timers")
-                and stage in latency_tool._active_timers
-            ):
+            if hasattr(latency_tool, "_active_timers") and stage in latency_tool._active_timers:
                 latency_tool.stop(stage, ws.app.state.redis, meta=meta)
             else:
                 # Timer not running - this is the source of the warning messages
@@ -124,12 +121,12 @@ async def send_user_transcript(
     ws: WebSocket,
     text: str,
     *,
-    session_id: Optional[str] = None,
-    conn_id: Optional[str] = None,
+    session_id: str | None = None,
+    conn_id: str | None = None,
     broadcast_only: bool = False,
-    turn_id: Optional[str] = None,
-    active_agent: Optional[str] = None,
-    active_agent_label: Optional[str] = None,
+    turn_id: str | None = None,
+    active_agent: str | None = None,
+    active_agent_label: str | None = None,
 ) -> None:
     """Emit a user transcript using the standard session envelope.
 
@@ -175,9 +172,9 @@ async def send_user_partial_transcript(
     ws: WebSocket,
     text: str,
     *,
-    language: Optional[str] = None,
-    speaker_id: Optional[str] = None,
-    session_id: Optional[str] = None,
+    language: str | None = None,
+    speaker_id: str | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Emit partial user speech updates for ACS parity with realtime."""
     payload_session_id = session_id or getattr(ws.state, "session_id", None)
@@ -214,7 +211,7 @@ async def send_agent_inventory(
     app_state,
     *,
     session_id: str,
-    call_id: Optional[str] = None,
+    call_id: str | None = None,
 ) -> bool:
     """Send a lightweight agent/tool snapshot to dashboards for a session."""
     if not app_state or not hasattr(app_state, "conn_manager"):
@@ -265,10 +262,10 @@ async def send_agent_inventory(
 
 async def send_session_envelope(
     ws: WebSocket,
-    envelope: Dict[str, Any],
+    envelope: dict[str, Any],
     *,
-    session_id: Optional[str] = None,
-    conn_id: Optional[str] = None,
+    session_id: str | None = None,
+    conn_id: str | None = None,
     event_label: str = "unspecified",
     broadcast_only: bool = False,
 ) -> bool:
@@ -409,11 +406,11 @@ async def send_session_envelope(
 async def send_tts_audio(
     text: str,
     ws: WebSocket,
-    latency_tool: Optional[LatencyTool] = None,
-    voice_name: Optional[str] = None,
-    voice_style: Optional[str] = None,
-    rate: Optional[str] = None,
-    on_first_audio: Optional[Callable[[], None]] = None,
+    latency_tool: LatencyTool | None = None,
+    voice_name: str | None = None,
+    voice_style: str | None = None,
+    rate: str | None = None,
+    on_first_audio: Callable[[], None] | None = None,
 ) -> None:
     """Send TTS audio to browser WebSocket client with optimized pool management."""
     run_id = str(uuid.uuid4())[:8]
@@ -439,9 +436,7 @@ async def send_tts_audio(
     client_tier = None
     temp_synth = False
     session_id = getattr(ws.state, "session_id", None)
-    cancel_event: Optional[asyncio.Event] = _get_connection_metadata(
-        ws, "tts_cancel_event"
-    )
+    cancel_event: asyncio.Event | None = _get_connection_metadata(ws, "tts_cancel_event")
 
     voice_to_use = voice_name or GREETING_VOICE_TTS
     style = voice_style or "conversational"
@@ -451,16 +446,12 @@ async def send_tts_audio(
         (
             synth,
             client_tier,
-        ) = await ws.app.state.tts_pool.acquire_for_session(
-            session_id
-        )
+        ) = await ws.app.state.tts_pool.acquire_for_session(session_id)
         logger.debug(
             f"[PERF] Using dedicated TTS client for session {session_id} (tier={client_tier.value}, run={run_id})"
         )
     except Exception as e:
-        logger.error(
-            f"[PERF] Failed to get dedicated TTS client (run={run_id}): {e}"
-        )
+        logger.error(f"[PERF] Failed to get dedicated TTS client (run={run_id}): {e}")
 
     # Fallback to legacy pool if dedicated system unavailable
     if not synth:
@@ -502,12 +493,10 @@ async def send_tts_audio(
 
         # One-time voice warm-up to avoid first-response decoder stalls
         warm_signature = (voice_to_use, style, eff_rate)
-        prepared_voices: set[tuple[str, str, str]] = getattr(
-            synth, "_prepared_voices", None
-        )
+        prepared_voices: set[tuple[str, str, str]] = getattr(synth, "_prepared_voices", None)
         if prepared_voices is None:
             prepared_voices = set()
-            setattr(synth, "_prepared_voices", prepared_voices)
+            synth._prepared_voices = prepared_voices
 
         if warm_signature not in prepared_voices:
             warm_partial = partial(
@@ -526,9 +515,7 @@ async def send_tts_audio(
                         loop.run_in_executor(executor, warm_partial), timeout=4.0
                     )
                 else:
-                    await asyncio.wait_for(
-                        loop.run_in_executor(None, warm_partial), timeout=4.0
-                    )
+                    await asyncio.wait_for(loop.run_in_executor(None, warm_partial), timeout=4.0)
                 prepared_voices.add(warm_signature)
                 logger.debug(
                     "[%s] Warmed TTS voice=%s style=%s rate=%s (run=%s)",
@@ -538,7 +525,7 @@ async def send_tts_audio(
                     eff_rate,
                     run_id,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[%s] TTS warm-up timed out for voice=%s style=%s (run=%s)",
                     session_id,
@@ -576,7 +563,7 @@ async def send_tts_audio(
             return await loop.run_in_executor(None, synth_partial)
 
         synthesis_task = asyncio.create_task(_synthesize())
-        cancel_wait: Optional[asyncio.Task[None]] = None
+        cancel_wait: asyncio.Task[None] | None = None
 
         try:
             if cancel_event:
@@ -648,9 +635,7 @@ async def send_tts_audio(
         for i, frame in enumerate(frames):
             # Barge-in: stop sending frames immediately if a cancel is requested
             try:
-                cancel_triggered = _get_connection_metadata(
-                    ws, "tts_cancel_requested", False
-                )
+                cancel_triggered = _get_connection_metadata(ws, "tts_cancel_requested", False)
                 if cancel_event and cancel_event.is_set():
                     cancel_triggered = True
                 if cancel_triggered:
@@ -662,9 +647,7 @@ async def send_tts_audio(
                 # If metadata isn't available, proceed safely
                 pass
             if not _ws_is_connected(ws):
-                logger.debug(
-                    "WebSocket closing during browser frame send (run=%s)", run_id
-                )
+                logger.debug("WebSocket closing during browser frame send (run=%s)", run_id)
                 break
             try:
                 await ws.send_json(
@@ -694,9 +677,7 @@ async def send_tts_audio(
                     )
                 break
             except Exception as e:
-                logger.error(
-                    f"Failed to send audio frame {i} (run={run_id}): {e}"
-                )
+                logger.error(f"Failed to send audio frame {i} (run={run_id}): {e}")
                 break
 
         #  Safe stop with timer cleanup
@@ -764,13 +745,9 @@ async def send_tts_audio(
             try:
                 # Use release_for_session with None to clear state before discard
                 await ws.app.state.tts_pool.release_for_session(None, synth)
-                logger.debug(
-                    f"[PERF] Released temporary TTS client back to pool (run={run_id})"
-                )
+                logger.debug(f"[PERF] Released temporary TTS client back to pool (run={run_id})")
             except Exception as e:
-                logger.error(
-                    f"Error releasing temporary TTS synthesizer (run={run_id}): {e}"
-                )
+                logger.error(f"Error releasing temporary TTS synthesizer (run={run_id}): {e}")
 
 
 async def send_response_to_acs(
@@ -778,13 +755,13 @@ async def send_response_to_acs(
     text: str,
     *,
     blocking: bool = False,
-    latency_tool: Optional[LatencyTool] = None,
+    latency_tool: LatencyTool | None = None,
     stream_mode: StreamMode = ACS_STREAMING_MODE,
-    voice_name: Optional[str] = None,
-    voice_style: Optional[str] = None,
-    rate: Optional[str] = None,
-    on_first_audio: Optional[Callable[[], None]] = None,
-) -> Optional[asyncio.Task]:
+    voice_name: str | None = None,
+    voice_style: str | None = None,
+    rate: str | None = None,
+    on_first_audio: Callable[[], None] | None = None,
+) -> asyncio.Task | None:
     """Send TTS response to ACS phone call."""
 
     def _record_status(status: str) -> None:
@@ -798,6 +775,7 @@ async def send_response_to_acs(
                 getattr(ws, "callConnectionId", None),
                 exc,
             )
+
     _record_status("pending")
     playback_status = "pending"
     run_id = str(uuid.uuid4())[:8]
@@ -829,7 +807,7 @@ async def send_response_to_acs(
     synth = None
     temp_synth = False
     main_event_loop = None
-    playback_task: Optional[asyncio.Task] = None
+    playback_task: asyncio.Task | None = None
 
     acs_handler = getattr(ws, "_acs_media_handler", None)
     if acs_handler:
@@ -950,14 +928,13 @@ async def send_response_to_acs(
                         f"Error releasing temporary ACS TTS synthesizer (run={run_id}): {release_exc}"
                     )
             return None
-# Signal first audio available (frames prepared)
+        # Signal first audio available (frames prepared)
         if on_first_audio:
             try:
                 on_first_audio()
             except Exception as e:
                 logger.warning(f"on_first_audio callback failed: {e}")
 
-        
         frame_count = len(frames)
         estimated_duration = frame_count * 0.02
         total_bytes = len(pcm_bytes)
@@ -1230,9 +1207,9 @@ async def broadcast_message(
 
 async def broadcast_session_envelope(
     app_state,
-    envelope: Dict[str, Any],
+    envelope: dict[str, Any],
     *,
-    session_id: Optional[str] = None,
+    session_id: str | None = None,
     event_label: str = "unspecified",
 ) -> int:
     """
@@ -1292,43 +1269,44 @@ async def broadcast_session_envelope(
 # Unified ACS TTS Queue
 # =============================================================================
 
+
 def queue_acs_tts(
     ws: WebSocket,
     text: str,
     *,
-    voice_name: Optional[str] = None,
-    voice_style: Optional[str] = None,
-    rate: Optional[str] = None,
-    latency_tool: Optional[LatencyTool] = None,
-    stream_mode: Optional[StreamMode] = None,
+    voice_name: str | None = None,
+    voice_style: str | None = None,
+    rate: str | None = None,
+    latency_tool: LatencyTool | None = None,
+    stream_mode: StreamMode | None = None,
     is_greeting: bool = False,
 ) -> asyncio.Task:
     """
     Queue TTS playback for ACS with proper serialization.
-    
+
     ALL ACS TTS should go through this function to ensure sequential playback.
     Uses the acs_playback_tail task chain to prevent overlapping audio.
-    
+
     Args:
         ws: WebSocket connection
         text: Text to synthesize and play
         voice_name: Optional voice override
-        voice_style: Optional style override  
+        voice_style: Optional style override
         rate: Optional rate override
         latency_tool: Optional latency tracking
         stream_mode: Optional stream mode override
         is_greeting: Whether this is a greeting (for logging)
-        
+
     Returns:
         The queued task (for optional awaiting)
     """
-    previous_task: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
+    previous_task: asyncio.Task | None = getattr(ws.state, "acs_playback_tail", None)
     effective_stream_mode = stream_mode or getattr(ws.state, "stream_mode", ACS_STREAMING_MODE)
     label = "greeting" if is_greeting else "response"
 
-    async def _runner(prior: Optional[asyncio.Task]) -> None:
+    async def _runner(prior: asyncio.Task | None) -> None:
         current_task = asyncio.current_task()
-        
+
         # Wait for previous chunk to fully complete (synthesis + streaming)
         if prior:
             try:
@@ -1339,13 +1317,13 @@ def queue_acs_tts(
                 return
             except Exception as prior_exc:
                 logger.warning("ACS TTS queue: prior task failed: %s", prior_exc)
-        
+
         # Check if cancelled before starting
         cancel_requested = getattr(ws.state, "tts_cancel_requested", False)
         if cancel_requested:
             logger.debug("ACS TTS queue: skipping %s (cancel requested)", label)
             return
-            
+
         try:
             logger.debug("ACS TTS queue: playing %s (len=%d)", label, len(text))
             # Use blocking=True: waits for synthesis AND all frames to stream.
@@ -1365,12 +1343,12 @@ def queue_acs_tts(
         except Exception as playback_exc:
             logger.exception("ACS TTS queue: %s failed", label, exc_info=playback_exc)
         finally:
-            tail_now: Optional[asyncio.Task] = getattr(ws.state, "acs_playback_tail", None)
+            tail_now: asyncio.Task | None = getattr(ws.state, "acs_playback_tail", None)
             if tail_now is current_task:
-                setattr(ws.state, "acs_playback_tail", None)
+                ws.state.acs_playback_tail = None
 
     next_task = asyncio.create_task(_runner(previous_task), name=f"acs_tts_{label}")
-    setattr(ws.state, "acs_playback_tail", next_task)
+    ws.state.acs_playback_tail = next_task
     return next_task
 
 
@@ -1378,16 +1356,16 @@ async def queue_acs_tts_blocking(
     ws: WebSocket,
     text: str,
     *,
-    voice_name: Optional[str] = None,
-    voice_style: Optional[str] = None,
-    rate: Optional[str] = None,
-    latency_tool: Optional[LatencyTool] = None,
-    stream_mode: Optional[StreamMode] = None,
+    voice_name: str | None = None,
+    voice_style: str | None = None,
+    rate: str | None = None,
+    latency_tool: LatencyTool | None = None,
+    stream_mode: StreamMode | None = None,
     is_greeting: bool = False,
 ) -> None:
     """
     Queue TTS playback for ACS and wait for it to complete.
-    
+
     Same as queue_acs_tts but awaits the task.
     Use this for greetings where you need to wait for completion.
     """

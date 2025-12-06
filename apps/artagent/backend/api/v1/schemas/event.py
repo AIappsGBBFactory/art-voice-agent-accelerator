@@ -4,8 +4,9 @@ Event-related API schemas.
 Pydantic schemas for event management API requests and responses.
 """
 
-from typing import List, Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 
 class EventMetricsResponse(BaseModel):
@@ -16,7 +17,7 @@ class EventMetricsResponse(BaseModel):
         description="Total number of events processed",
         json_schema_extra={"example": 1500},
     )
-    events_by_type: Dict[str, int] = Field(
+    events_by_type: dict[str, int] = Field(
         ...,
         description="Event count by type",
         json_schema_extra={
@@ -64,7 +65,7 @@ class EventHandlerInfo(BaseModel):
         description="Handler function/class name",
         json_schema_extra={"example": "handle_call_connected"},
     )
-    event_types: List[str] = Field(
+    event_types: list[str] = Field(
         ...,
         description="Event types handled",
         json_schema_extra={"example": ["Microsoft.Communication.CallConnected"]},
@@ -101,11 +102,11 @@ class EventSystemStatus(BaseModel):
     is_healthy: bool = Field(
         ..., description="Overall system health", json_schema_extra={"example": True}
     )
-    registered_handlers: List[EventHandlerInfo] = Field(
+    registered_handlers: list[EventHandlerInfo] = Field(
         ..., description="List of registered handlers"
     )
     metrics: EventMetricsResponse = Field(..., description="Event processing metrics")
-    domains: List[str] = Field(
+    domains: list[str] = Field(
         ...,
         description="Active event domains",
         json_schema_extra={"example": ["call_events", "media_events"]},
@@ -139,7 +140,7 @@ class EventSystemStatus(BaseModel):
 class ProcessEventRequest(BaseModel):
     """Request model for processing events."""
 
-    events: List[Dict[str, Any]] = Field(
+    events: list[dict[str, Any]] = Field(
         ...,
         description="CloudEvent data as dictionaries following CloudEvents spec",
         json_schema_extra={
@@ -192,7 +193,7 @@ class ProcessEventResponse(BaseModel):
     failed_count: int = Field(
         ..., description="Number of failed events", json_schema_extra={"example": 0}
     )
-    results: List[Dict[str, Any]] = Field(
+    results: list[dict[str, Any]] = Field(
         ...,
         description="Detailed results for each event",
         json_schema_extra={
@@ -225,27 +226,25 @@ class ProcessEventResponse(BaseModel):
 class EventListRequest(BaseModel):
     """Request model for listing events with filters."""
 
-    event_type: Optional[str] = Field(
+    event_type: str | None = Field(
         None,
         description="Filter by event type",
         json_schema_extra={"example": "Microsoft.Communication.CallConnected"},
     )
-    start_time: Optional[str] = Field(
+    start_time: str | None = Field(
         None,
         description="Filter events after this timestamp (ISO 8601)",
         json_schema_extra={"example": "2025-08-10T00:00:00Z"},
     )
-    end_time: Optional[str] = Field(
+    end_time: str | None = Field(
         None,
         description="Filter events before this timestamp (ISO 8601)",
         json_schema_extra={"example": "2025-08-10T23:59:59Z"},
     )
-    status: Optional[Literal["pending", "processing", "completed", "failed"]] = Field(
+    status: Literal["pending", "processing", "completed", "failed"] | None = Field(
         None, description="Filter by processing status"
     )
-    limit: int = Field(
-        100, ge=1, le=1000, description="Maximum number of events to return"
-    )
+    limit: int = Field(100, ge=1, le=1000, description="Maximum number of events to return")
 
 
 class EventDetail(BaseModel):
@@ -256,17 +255,15 @@ class EventDetail(BaseModel):
     source: str = Field(..., description="Event source")
     timestamp: str = Field(..., description="Event timestamp")
     status: str = Field(..., description="Processing status")
-    data: Dict[str, Any] = Field(..., description="Event data")
-    processing_duration_ms: Optional[int] = Field(
-        None, description="Processing time in milliseconds"
-    )
-    error_message: Optional[str] = Field(None, description="Error message if failed")
+    data: dict[str, Any] = Field(..., description="Event data")
+    processing_duration_ms: int | None = Field(None, description="Processing time in milliseconds")
+    error_message: str | None = Field(None, description="Error message if failed")
 
 
 class EventListResponse(BaseModel):
     """Response model for listing events."""
 
-    events: List[EventDetail] = Field(..., description="List of events")
+    events: list[EventDetail] = Field(..., description="List of events")
     total: int = Field(..., description="Total number of events matching criteria")
     has_more: bool = Field(..., description="Whether there are more events available")
 

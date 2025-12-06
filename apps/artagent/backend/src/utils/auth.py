@@ -6,22 +6,22 @@ Unified authentication for Azure Communication Services (ACS) and Entra ID.
 
 import base64
 import json
-import jwt
-import httpx
+from functools import cache
 
+import httpx
+import jwt
+from config import (
+    ACS_AUDIENCE,
+    ACS_ISSUER,
+    ACS_JWKS_URL,
+    ALLOWED_CLIENT_IDS,
+    ENTRA_AUDIENCE,
+    ENTRA_ISSUER,
+    ENTRA_JWKS_URL,
+)
 from fastapi import HTTPException, Request, WebSocket
 from fastapi.websockets import WebSocketState
-from functools import cache
 from utils.ml_logging import get_logger
-from config import (
-    ACS_JWKS_URL,
-    ACS_ISSUER,
-    ACS_AUDIENCE,
-    ENTRA_JWKS_URL,
-    ENTRA_ISSUER,
-    ENTRA_AUDIENCE,
-    ALLOWED_CLIENT_IDS,
-)
 
 logger = get_logger("orchestration.acs_auth")
 
@@ -58,9 +58,7 @@ def validate_jwt_token(token: str, jwks_url: str, issuer: str, audience: str) ->
 
 def extract_bearer_token(authorization_header: str) -> str:
     if not authorization_header or not authorization_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401, detail="Missing or malformed Authorization header"
-        )
+        raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
     return authorization_header.split(" ")[1]
 
 

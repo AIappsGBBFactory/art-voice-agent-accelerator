@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
+from apps.artagent.backend.src.services.acs.acs_caller import initialize_acs_caller_instance
 from azure.communication.callautomation import (
     CallAutomationClient,
     CallConnectionClient,
@@ -15,8 +17,6 @@ from azure.communication.callautomation import (
 from azure.core.exceptions import HttpResponseError
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-
-from apps.artagent.backend.src.services.acs.acs_caller import initialize_acs_caller_instance
 from src.acs.acs_helper import AcsCaller
 from utils.ml_logging import get_logger
 
@@ -35,13 +35,13 @@ class TransferRequest:
 
     call_connection_id: str
     target_address: str
-    operation_context: Optional[str] = None
-    operation_callback_url: Optional[str] = None
-    transferee: Optional[str] = None
-    transferee_identifier: Optional[CommunicationIdentifier] = None
-    sip_headers: Optional[Mapping[str, str]] = None
-    voip_headers: Optional[Mapping[str, str]] = None
-    source_caller_id: Optional[str] = None
+    operation_context: str | None = None
+    operation_callback_url: str | None = None
+    transferee: str | None = None
+    transferee_identifier: CommunicationIdentifier | None = None
+    sip_headers: Mapping[str, str] | None = None
+    voip_headers: Mapping[str, str] | None = None
+    source_caller_id: str | None = None
 
 
 def _build_target_identifier(target: str) -> CommunicationIdentifier:
@@ -55,26 +55,28 @@ def _build_target_identifier(target: str) -> CommunicationIdentifier:
     return PhoneNumberIdentifier(normalized)
 
 
-def _build_optional_phone(number: Optional[str]) -> Optional[PhoneNumberIdentifier]:
+def _build_optional_phone(number: str | None) -> PhoneNumberIdentifier | None:
     if not number:
         return None
     return PhoneNumberIdentifier(number)
 
 
-def _build_optional_target(target: Optional[str]) -> Optional[CommunicationIdentifier]:
+def _build_optional_target(target: str | None) -> CommunicationIdentifier | None:
     if not target:
         return None
     return _build_target_identifier(target)
 
 
-def _prepare_transfer_args(request: TransferRequest) -> Tuple[str, Dict[str, Any]]:
+def _prepare_transfer_args(request: TransferRequest) -> tuple[str, dict[str, Any]]:
     identifier = _build_target_identifier(request.target_address)
-    kwargs: Dict[str, Any] = {}
+    kwargs: dict[str, Any] = {}
     if request.operation_context:
         kwargs["operation_context"] = request.operation_context
     if request.operation_callback_url:
         kwargs["operation_callback_url"] = request.operation_callback_url
-    transferee_identifier = request.transferee_identifier or _build_optional_target(request.transferee)
+    transferee_identifier = request.transferee_identifier or _build_optional_target(
+        request.transferee
+    )
     if transferee_identifier:
         kwargs["transferee"] = transferee_identifier
     if request.sip_headers:
@@ -91,7 +93,7 @@ async def _invoke_transfer(
     *,
     call_conn: CallConnectionClient,
     identifier: CommunicationIdentifier,
-    kwargs: Dict[str, Any],
+    kwargs: dict[str, Any],
 ) -> Any:
     return await asyncio.to_thread(call_conn.transfer_call_to_participant, identifier, **kwargs)
 
@@ -100,18 +102,18 @@ async def transfer_call(
     *,
     call_connection_id: str,
     target_address: str,
-    operation_context: Optional[str] = None,
-    operation_callback_url: Optional[str] = None,
-    transferee: Optional[str] = None,
-    sip_headers: Optional[Mapping[str, str]] = None,
-    voip_headers: Optional[Mapping[str, str]] = None,
-    source_caller_id: Optional[str] = None,
-    acs_caller: Optional[AcsCaller] = None,
-    acs_client: Optional[CallAutomationClient] = None,
-    call_connection: Optional[CallConnectionClient] = None,
-    transferee_identifier: Optional[CommunicationIdentifier] = None,
+    operation_context: str | None = None,
+    operation_callback_url: str | None = None,
+    transferee: str | None = None,
+    sip_headers: Mapping[str, str] | None = None,
+    voip_headers: Mapping[str, str] | None = None,
+    source_caller_id: str | None = None,
+    acs_caller: AcsCaller | None = None,
+    acs_client: CallAutomationClient | None = None,
+    call_connection: CallConnectionClient | None = None,
+    transferee_identifier: CommunicationIdentifier | None = None,
     auto_detect_transferee: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Transfer the active ACS call to the specified target participant."""
 
     if not call_connection_id:
@@ -126,7 +128,10 @@ async def transfer_call(
 
     conn = call_connection or client.get_call_connection(call_connection_id)
     if conn is None:
-        return {"success": False, "message": f"Call connection '{call_connection_id}' is not available."}
+        return {
+            "success": False,
+            "message": f"Call connection '{call_connection_id}' is not available.",
+        }
 
     if auto_detect_transferee and not transferee_identifier and not transferee:
         transferee_identifier = await _discover_transferee(conn)
@@ -156,7 +161,9 @@ async def transfer_call(
     if request.transferee:
         attributes["transfer.transferee"] = request.transferee
     if request.transferee_identifier:
-        attributes["transfer.transferee_raw_id"] = getattr(request.transferee_identifier, "raw_id", str(request.transferee_identifier))
+        attributes["transfer.transferee_raw_id"] = getattr(
+            request.transferee_identifier, "raw_id", str(request.transferee_identifier)
+        )
 
     with tracer.start_as_current_span(
         "acs.transfer_call",
@@ -213,14 +220,17 @@ async def transfer_call(
                 "status": str(status_value),
                 "operation_context": operation_context_value,
                 "target": target_address,
-                "transferee": transferee or getattr(transferee_identifier, "raw_id", transferee_identifier),
+                "transferee": transferee
+                or getattr(transferee_identifier, "raw_id", transferee_identifier),
             },
             "should_interrupt_playback": True,
             "terminate_session": True,
         }
 
 
-async def _discover_transferee(call_conn: CallConnectionClient) -> Optional[CommunicationIdentifier]:
+async def _discover_transferee(
+    call_conn: CallConnectionClient,
+) -> CommunicationIdentifier | None:
     """Best-effort discovery of the active caller participant for transfer operations."""
 
     participants = await _list_participants(call_conn)
@@ -230,7 +240,9 @@ async def _discover_transferee(call_conn: CallConnectionClient) -> Optional[Comm
 
     identifier = _select_transferee_identifier(participants)
     if identifier:
-        logger.debug("Auto-detected transferee identifier: %s", getattr(identifier, "raw_id", identifier))
+        logger.debug(
+            "Auto-detected transferee identifier: %s", getattr(identifier, "raw_id", identifier)
+        )
     else:
         logger.warning("Unable to auto-detect transferee identifier from participants list.")
     return identifier
@@ -248,13 +260,18 @@ async def _list_participants(call_conn: CallConnectionClient) -> Iterable[CallPa
 
     try:
         participants = await asyncio.to_thread(_sync_list)
-        return getattr(participants, "value", getattr(participants, "participants", participants)) or []
+        return (
+            getattr(participants, "value", getattr(participants, "participants", participants))
+            or []
+        )
     except Exception as exc:  # pragma: no cover - defensive logging only
         logger.warning("Failed to list participants for transfer auto-detect: %s", exc)
         return []
 
 
-def _select_transferee_identifier(participants: Iterable[CallParticipant]) -> Optional[CommunicationIdentifier]:
+def _select_transferee_identifier(
+    participants: Iterable[CallParticipant],
+) -> CommunicationIdentifier | None:
     """Pick the most appropriate candidate to transfer away (the active caller)."""
 
     phone_candidates: list[CommunicationIdentifier] = []

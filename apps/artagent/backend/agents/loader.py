@@ -15,16 +15,15 @@ Usage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
-
 from apps.artagent.backend.agents.base import (
-    UnifiedAgent,
     HandoffConfig,
-    VoiceConfig,
     ModelConfig,
     SpeechConfig,
+    UnifiedAgent,
+    VoiceConfig,
 )
 from utils.ml_logging import get_logger
 
@@ -41,7 +40,7 @@ AgentConfig = UnifiedAgent
 AgentConfig = UnifiedAgent
 
 
-def _deep_merge(base: Dict, override: Dict) -> Dict:
+def _deep_merge(base: dict, override: dict) -> dict:
     """Deep merge override into base dict."""
     result = base.copy()
     for key, value in override.items():
@@ -52,11 +51,11 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
     return result
 
 
-def load_defaults(agents_dir: Path = AGENTS_DIR) -> Dict[str, Any]:
+def load_defaults(agents_dir: Path = AGENTS_DIR) -> dict[str, Any]:
     """Load default configuration from _defaults.yaml."""
     defaults_file = agents_dir / "_defaults.yaml"
     if defaults_file.exists():
-        with open(defaults_file, "r") as f:
+        with open(defaults_file) as f:
             return yaml.safe_load(f) or {}
     return {}
 
@@ -70,7 +69,7 @@ def load_prompt(agent_dir: Path, prompt_value: str) -> str:
     """
     if not prompt_value:
         return ""
-    
+
     if prompt_value.endswith((".jinja", ".md", ".txt")):
         prompt_file = agent_dir / prompt_value
         if prompt_file.exists():
@@ -80,11 +79,11 @@ def load_prompt(agent_dir: Path, prompt_value: str) -> str:
     return prompt_value
 
 
-def _extract_agent_identity(raw: Dict[str, Any], agent_dir: Path) -> Dict[str, Any]:
+def _extract_agent_identity(raw: dict[str, Any], agent_dir: Path) -> dict[str, Any]:
     """Extract agent identity fields from raw YAML, handling nested 'agent:' key."""
     # Support both flat and nested 'agent:' key
     agent_block = raw.get("agent", {})
-    
+
     return {
         "name": agent_block.get("name") or raw.get("name") or agent_dir.name,
         "description": agent_block.get("description") or raw.get("description", ""),
@@ -93,7 +92,7 @@ def _extract_agent_identity(raw: Dict[str, Any], agent_dir: Path) -> Dict[str, A
     }
 
 
-def _extract_prompt(raw: Dict[str, Any], agent_dir: Path) -> str:
+def _extract_prompt(raw: dict[str, Any], agent_dir: Path) -> str:
     """Extract prompt from raw YAML, handling multiple formats."""
     # Check 'prompts:' block first
     prompts_block = raw.get("prompts", {})
@@ -104,37 +103,37 @@ def _extract_prompt(raw: Dict[str, Any], agent_dir: Path) -> str:
         # Check for 'path' (file reference)
         if prompts_block.get("path"):
             return load_prompt(agent_dir, prompts_block["path"])
-    
+
     # Check top-level 'prompt:' key
     if raw.get("prompt"):
         return load_prompt(agent_dir, raw["prompt"])
-    
+
     return ""
 
 
-def _extract_handoff_config(raw: Dict[str, Any]) -> HandoffConfig:
+def _extract_handoff_config(raw: dict[str, Any]) -> HandoffConfig:
     """Extract handoff configuration from raw YAML."""
     # New-style: handoff: block
     if "handoff" in raw:
         return HandoffConfig.from_dict(raw["handoff"])
-    
+
     # Legacy: handoff_trigger at top level
     if "handoff_trigger" in raw:
         return HandoffConfig(trigger=raw["handoff_trigger"])
-    
+
     return HandoffConfig()
 
 
 def load_agent(
     agent_file: Path,
-    defaults: Dict[str, Any],
+    defaults: dict[str, Any],
 ) -> UnifiedAgent:
     """Load a single agent from its agent.yaml file."""
-    with open(agent_file, "r") as f:
+    with open(agent_file) as f:
         raw = yaml.safe_load(f) or {}
 
     agent_dir = agent_file.parent
-    
+
     # Extract identity (handles nested 'agent:' block)
     identity = _extract_agent_identity(raw, agent_dir)
 
@@ -144,14 +143,14 @@ def load_agent(
     speech_raw = _deep_merge(defaults.get("speech", {}), raw.get("speech", {}))
     session_raw = _deep_merge(defaults.get("session", {}), raw.get("session", {}))
     template_vars = _deep_merge(defaults.get("template_vars", {}), raw.get("template_vars", {}))
-    
+
     # Handle voice inside session block (VoiceLive style)
     if "voice" in session_raw:
         voice_raw = _deep_merge(voice_raw, session_raw.pop("voice"))
 
     # Load prompt (handles multiple formats)
     prompt_template = _extract_prompt(raw, agent_dir)
-    
+
     # Extract handoff config
     handoff = _extract_handoff_config(raw)
 
@@ -173,7 +172,7 @@ def load_agent(
     )
 
 
-def discover_agents(agents_dir: Path = AGENTS_DIR) -> Dict[str, UnifiedAgent]:
+def discover_agents(agents_dir: Path = AGENTS_DIR) -> dict[str, UnifiedAgent]:
     """
     Auto-discover agents by scanning for agent.yaml files.
 
@@ -186,7 +185,7 @@ def discover_agents(agents_dir: Path = AGENTS_DIR) -> Dict[str, UnifiedAgent]:
     Returns:
         Dict of agent_name → UnifiedAgent
     """
-    agents: Dict[str, UnifiedAgent] = {}
+    agents: dict[str, UnifiedAgent] = {}
 
     # Load shared config
     defaults = load_defaults(agents_dir)
@@ -213,7 +212,7 @@ def discover_agents(agents_dir: Path = AGENTS_DIR) -> Dict[str, UnifiedAgent]:
     return agents
 
 
-def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
+def build_handoff_map(agents: dict[str, UnifiedAgent]) -> dict[str, str]:
     """
     Build handoff map from agent declarations.
 
@@ -223,7 +222,7 @@ def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
     Returns:
         Dict of tool_name → agent_name
     """
-    handoff_map: Dict[str, str] = {}
+    handoff_map: dict[str, str] = {}
 
     for agent in agents.values():
         if agent.handoff.trigger:
@@ -233,13 +232,13 @@ def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
     return handoff_map
 
 
-def build_agent_summaries(agents: Dict[str, UnifiedAgent]) -> List[Dict[str, Any]]:
+def build_agent_summaries(agents: dict[str, UnifiedAgent]) -> list[dict[str, Any]]:
     """
     Build lightweight summaries for telemetry/UI without dumping full configs.
 
     Fields are intentionally small to avoid token bloat when shipped to clients.
     """
-    summaries: List[Dict[str, Any]] = []
+    summaries: list[dict[str, Any]] = []
     for name, agent in agents.items():
         tools = list(agent.tool_names or [])
         summaries.append(
@@ -258,13 +257,13 @@ def build_agent_summaries(agents: Dict[str, UnifiedAgent]) -> List[Dict[str, Any
     return summaries
 
 
-def get_agent(name: str, agents_dir: Path = AGENTS_DIR) -> Optional[UnifiedAgent]:
+def get_agent(name: str, agents_dir: Path = AGENTS_DIR) -> UnifiedAgent | None:
     """Load a single agent by name."""
     agents = discover_agents(agents_dir)
     return agents.get(name)
 
 
-def list_agent_names(agents_dir: Path = AGENTS_DIR) -> List[str]:
+def list_agent_names(agents_dir: Path = AGENTS_DIR) -> list[str]:
     """List all discovered agent names."""
     agents = discover_agents(agents_dir)
     return list(agents.keys())
@@ -275,7 +274,7 @@ def list_agent_names(agents_dir: Path = AGENTS_DIR) -> List[str]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def render_prompt(config: UnifiedAgent, context: Dict[str, Any]) -> str:
+def render_prompt(config: UnifiedAgent, context: dict[str, Any]) -> str:
     """
     Render an agent's prompt template with context.
 

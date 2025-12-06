@@ -31,7 +31,7 @@ from azure.ai.voicelive.models import (
     RequestSession,
     ServerEventType,
     ServerVad,
-    AudioInputTranscriptionOptions
+    AudioInputTranscriptionOptions,
 )
 from dotenv import load_dotenv
 import pyaudio
@@ -44,18 +44,18 @@ if TYPE_CHECKING:
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Environment variable loading
-load_dotenv('./.env', override=True)
+load_dotenv("./.env", override=True)
 
 # Set up logging
 ## Add folder for logging
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+if not os.path.exists("logs"):
+    os.makedirs("logs")
 
 ## Add timestamp for logfiles
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 ## Set up logging
-log_filename = f'logs/{timestamp}_voicelive.log'
+log_filename = f"logs/{timestamp}_voicelive.log"
 
 logger = logging.getLogger("voicelive_multiagent")
 logger.setLevel(logging.INFO)
@@ -66,7 +66,7 @@ if logger.handlers:
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
 
-log_format = logging.Formatter('%(asctime)s:%(name)s:%(levelname)s:%(message)s')
+log_format = logging.Formatter("%(asctime)s:%(name)s:%(levelname)s:%(message)s")
 
 file_handler = logging.FileHandler(log_filename, mode="w")
 file_handler.setFormatter(log_format)
@@ -78,6 +78,7 @@ stream_handler.setLevel(logging.INFO)
 
 logger.addHandler(file_handler)
 logger.addHandler(stream_handler)
+
 
 class AudioProcessor:
     """
@@ -94,6 +95,7 @@ class AudioProcessor:
 
     class AudioPlaybackPacket:
         """Represents a packet that can be sent to the audio playback queue."""
+
         def __init__(self, seq_num: int, data: Optional[bytes]):
             self.seq_num = seq_num
             self.data = data
@@ -106,7 +108,7 @@ class AudioProcessor:
         self.format = pyaudio.paInt16
         self.channels = 1
         self.rate = 24000
-        self.chunk_size = 1200 # 50ms
+        self.chunk_size = 1200  # 50ms
 
         # Capture and playback state
         self.input_stream = None
@@ -120,11 +122,13 @@ class AudioProcessor:
 
     def start_capture(self):
         """Start capturing audio from microphone."""
+
         def _capture_callback(
-            in_data,      # data
+            in_data,  # data
             _frame_count,  # number of frames
-            _time_info,    # dictionary
-            _status_flags):
+            _time_info,  # dictionary
+            _status_flags,
+        ):
             """Audio capture thread - runs in background."""
             audio_base64 = base64.b64encode(in_data).decode("utf-8")
             asyncio.run_coroutine_threadsafe(
@@ -159,11 +163,10 @@ class AudioProcessor:
             return
 
         remaining = bytes()
+
         def _playback_callback(
-            _in_data,
-            frame_count,  # number of frames
-            _time_info,
-            _status_flags):
+            _in_data, frame_count, _time_info, _status_flags  # number of frames
+        ):
 
             nonlocal remaining
             frame_count *= pyaudio.get_sample_size(pyaudio.paInt16)
@@ -209,7 +212,7 @@ class AudioProcessor:
                 rate=self.rate,
                 output=True,
                 frames_per_buffer=self.chunk_size,
-                stream_callback=_playback_callback
+                stream_callback=_playback_callback,
             )
             logger.info("Audio playback system ready")
         except Exception:
@@ -225,8 +228,9 @@ class AudioProcessor:
         """Queue audio data for playback."""
         self.playback_queue.put(
             AudioProcessor.AudioPlaybackPacket(
-                seq_num=self._get_and_increase_seq_num(),
-                data=audio_data))
+                seq_num=self._get_and_increase_seq_num(), data=audio_data
+            )
+        )
 
     def skip_pending_audio(self):
         """Skip current audio in playback queue."""
@@ -255,6 +259,7 @@ class AudioProcessor:
             self.audio.terminate()
 
         logger.info("Audio processor cleaned up")
+
 
 class BasicVoiceAssistant:
     """Basic voice assistant implementing the VoiceLive SDK patterns."""
@@ -347,7 +352,6 @@ class BasicVoiceAssistant:
         assert ap is not None, "AudioProcessor must be initialized"
         assert conn is not None, "Connection must be established"
 
-
         event_type_str = str(event.type)
         if "conversation" in event_type_str:
             logger.info("Conversation event: %s", event_type_str)
@@ -358,13 +362,13 @@ class BasicVoiceAssistant:
 
             # Start audio capture once session is ready
             ap.start_capture()
-        elif event.type == 'conversation.item.input_audio_transcription.completed':
+        elif event.type == "conversation.item.input_audio_transcription.completed":
             logger.info("User spoken input transcription completed")
             logger.info(event)
-        elif event.type == 'conversation.item.input_audio_transcription.delta':
+        elif event.type == "conversation.item.input_audio_transcription.delta":
             logger.info("User spoken input transcription delta received")
             logger.info(event)
-        elif event.type == 'conversation.item.input_audio_transcription.failed':
+        elif event.type == "conversation.item.input_audio_transcription.failed":
             logger.warning("User spoken input transcription failed")
             logger.info(event)
 
@@ -387,7 +391,7 @@ class BasicVoiceAssistant:
         elif event.type == ServerEventType.SESSION_UPDATED:
             logger.info("Session updated: %s", event.session.id)
             logger.info("Session details: %s", event)
-        
+
         elif event.type == ServerEventType.SESSION_CREATED:
             logger.info("Session created: %s", event.session.id)
             logger.info("Session details: %s", event)
@@ -436,7 +440,11 @@ class BasicVoiceAssistant:
         """Create a session configuration for the specified voice."""
         selected_voice = voice_name or self.voice
         voice_config: Union[AzureStandardVoice, str]
-        if selected_voice.startswith("en-US-") or selected_voice.startswith("en-CA-") or "-" in selected_voice:
+        if (
+            selected_voice.startswith("en-US-")
+            or selected_voice.startswith("en-CA-")
+            or "-" in selected_voice
+        ):
             voice_config = AzureStandardVoice(name=selected_voice)
         else:
             voice_config = selected_voice
@@ -468,6 +476,7 @@ class BasicVoiceAssistant:
             pretty_session = json.dumps(session_config.as_dict(), indent=2, default=str)
         except AttributeError:
             from pprint import pformat
+
             pretty_session = pformat(session_config)
         logger.info("Session configuration:\n%s", pretty_session)
 
@@ -512,7 +521,9 @@ def parse_arguments():
         "--endpoint",
         help="Azure VoiceLive endpoint",
         type=str,
-        default=os.environ.get("AZURE_VOICELIVE_ENDPOINT", "https://your-resource-name.services.ai.azure.com/"),
+        default=os.environ.get(
+            "AZURE_VOICELIVE_ENDPOINT", "https://your-resource-name.services.ai.azure.com/"
+        ),
     )
 
     parser.add_argument(
@@ -541,7 +552,10 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        "--use-token-credential", help="Use Azure token credential instead of API key", action="store_true", default=False
+        "--use-token-credential",
+        help="Use Azure token credential instead of API key",
+        action="store_true",
+        default=False,
     )
 
     parser.add_argument("--verbose", help="Enable verbose logging", action="store_true")
@@ -560,7 +574,9 @@ def main():
     # Validate credentials
     if not args.api_key and not args.use_token_credential:
         print("❌ Error: No authentication provided")
-        print("Please provide an API key using --api-key or set AZURE_VOICELIVE_API_KEY environment variable,")
+        print(
+            "Please provide an API key using --api-key or set AZURE_VOICELIVE_API_KEY environment variable,"
+        )
         print("or use --use-token-credential for Azure authentication.")
         sys.exit(1)
 
@@ -598,6 +614,7 @@ def main():
     except Exception as e:
         print("Fatal Error: ", e)
 
+
 if __name__ == "__main__":
     # Check audio system
     try:
@@ -606,13 +623,19 @@ if __name__ == "__main__":
         input_devices = [
             i
             for i in range(p.get_device_count())
-            if cast(Union[int, float], p.get_device_info_by_index(i).get("maxInputChannels", 0) or 0) > 0
+            if cast(
+                Union[int, float], p.get_device_info_by_index(i).get("maxInputChannels", 0) or 0
+            )
+            > 0
         ]
         # Check for output devices
         output_devices = [
             i
             for i in range(p.get_device_count())
-            if cast(Union[int, float], p.get_device_info_by_index(i).get("maxOutputChannels", 0) or 0) > 0
+            if cast(
+                Union[int, float], p.get_device_info_by_index(i).get("maxOutputChannels", 0) or 0
+            )
+            > 0
         ]
         p.terminate()
 

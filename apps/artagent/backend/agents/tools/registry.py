@@ -18,47 +18,47 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, TypeAlias, Union
+from typing import Any, TypeAlias
 
 from pydantic import BaseModel
-
 from utils.ml_logging import get_logger
 
 logger = get_logger("agents.tools.registry")
 
 # Type aliases
 ToolExecutor: TypeAlias = Callable[..., Any]
-AsyncToolExecutor: TypeAlias = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
+AsyncToolExecutor: TypeAlias = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 @dataclass
 class ToolDefinition:
     """Complete tool definition with schema and executor."""
-    
+
     name: str
-    schema: Dict[str, Any]
+    schema: dict[str, Any]
     executor: ToolExecutor
     is_handoff: bool = False
     description: str = ""
-    tags: Set[str] = field(default_factory=set)
+    tags: set[str] = field(default_factory=set)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # REGISTRY STATE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {}
+_TOOL_DEFINITIONS: dict[str, ToolDefinition] = {}
 _INITIALIZED: bool = False
 
 
 def register_tool(
     name: str,
-    schema: Dict[str, Any],
+    schema: dict[str, Any],
     executor: ToolExecutor,
     *,
     is_handoff: bool = False,
-    tags: Optional[Set[str]] = None,
+    tags: set[str] | None = None,
     override: bool = False,
 ) -> None:
     """
@@ -86,19 +86,19 @@ def register_tool(
     logger.debug("Registered tool: %s (handoff=%s)", name, is_handoff)
 
 
-def get_tool_schema(name: str) -> Optional[Dict[str, Any]]:
+def get_tool_schema(name: str) -> dict[str, Any] | None:
     """Get the schema for a registered tool."""
     defn = _TOOL_DEFINITIONS.get(name)
     return defn.schema if defn else None
 
 
-def get_tool_executor(name: str) -> Optional[ToolExecutor]:
+def get_tool_executor(name: str) -> ToolExecutor | None:
     """Get the executor for a registered tool."""
     defn = _TOOL_DEFINITIONS.get(name)
     return defn.executor if defn else None
 
 
-def get_tool_definition(name: str) -> Optional[ToolDefinition]:
+def get_tool_definition(name: str) -> ToolDefinition | None:
     """Get the complete definition for a tool."""
     return _TOOL_DEFINITIONS.get(name)
 
@@ -109,7 +109,7 @@ def is_handoff_tool(name: str) -> bool:
     return defn.is_handoff if defn else False
 
 
-def list_tools(*, tags: Optional[Set[str]] = None, handoffs_only: bool = False) -> List[str]:
+def list_tools(*, tags: set[str] | None = None, handoffs_only: bool = False) -> list[str]:
     """
     List registered tool names with optional filtering.
 
@@ -126,7 +126,7 @@ def list_tools(*, tags: Optional[Set[str]] = None, handoffs_only: bool = False) 
     return result
 
 
-def get_tools_for_agent(tool_names: List[str]) -> List[Dict[str, Any]]:
+def get_tools_for_agent(tool_names: list[str]) -> list[dict[str, Any]]:
     """
     Build OpenAI-compatible tool list for specified tools.
 
@@ -147,9 +147,10 @@ def get_tools_for_agent(tool_names: List[str]) -> List[Dict[str, Any]]:
 # EXECUTION HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _prepare_args(
-    fn: Callable[..., Any], raw_args: Dict[str, Any]
-) -> Tuple[List[Any], Dict[str, Any]]:
+    fn: Callable[..., Any], raw_args: dict[str, Any]
+) -> tuple[list[Any], dict[str, Any]]:
     """Coerce dict arguments into the tool's declared signature."""
     signature = inspect.signature(fn)
     params = list(signature.parameters.values())
@@ -171,7 +172,7 @@ def _prepare_args(
     return [], raw_args
 
 
-async def execute_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+async def execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """
     Execute a registered tool with the given arguments.
 
@@ -212,6 +213,7 @@ async def execute_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 # INITIALIZATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def initialize_tools() -> int:
     """
     Load and register all tools.
@@ -225,19 +227,6 @@ def initialize_tools() -> int:
         return len(_TOOL_DEFINITIONS)
 
     # Import tool modules - this triggers their registration
-    from apps.artagent.backend.agents.tools import handoffs
-    from apps.artagent.backend.agents.tools import auth
-    from apps.artagent.backend.agents.tools import banking
-    from apps.artagent.backend.agents.tools import fraud
-    from apps.artagent.backend.agents.tools import escalation
-    from apps.artagent.backend.agents.tools import investment
-    from apps.artagent.backend.agents.tools import compliance
-    from apps.artagent.backend.agents.tools import voicemail
-    from apps.artagent.backend.agents.tools import call_transfer
-    from apps.artagent.backend.agents.tools import transfer_agency
-    from apps.artagent.backend.agents.tools import knowledge_base
-    from apps.artagent.backend.agents.tools import personalized_greeting
-    from apps.artagent.backend.agents.tools import customer_intelligence
 
     _INITIALIZED = True
     logger.info("Tool registry initialized with %d tools", len(_TOOL_DEFINITIONS))

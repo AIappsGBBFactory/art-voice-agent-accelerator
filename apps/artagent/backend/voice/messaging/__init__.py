@@ -29,32 +29,6 @@ Migration Note:
 # ─────────────────────────────────────────────────────────────────────────────
 # TTS and Audio Playback
 # ─────────────────────────────────────────────────────────────────────────────
-from apps.artagent.backend.src.ws_helpers.shared_ws import (
-    send_tts_audio,
-    send_response_to_acs,
-)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Transcript Broadcasting
-# ─────────────────────────────────────────────────────────────────────────────
-from apps.artagent.backend.src.ws_helpers.shared_ws import (
-    send_user_transcript,
-    send_user_partial_transcript,
-    send_session_envelope,
-    broadcast_session_envelope,
-)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Envelope Builders
-# ─────────────────────────────────────────────────────────────────────────────
-from apps.artagent.backend.src.ws_helpers.envelopes import (
-    make_envelope,
-    make_status_envelope,
-    make_assistant_envelope,
-    make_assistant_streaming_envelope,
-    make_event_envelope,
-)
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Browser Barge-In Controller
 # Distinct from speech_cascade.BargeInController - this one manages
@@ -62,6 +36,29 @@ from apps.artagent.backend.src.ws_helpers.envelopes import (
 # ─────────────────────────────────────────────────────────────────────────────
 from apps.artagent.backend.src.ws_helpers.barge_in import (
     BargeInController as BrowserBargeInController,
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Envelope Builders
+# ─────────────────────────────────────────────────────────────────────────────
+from apps.artagent.backend.src.ws_helpers.envelopes import (
+    make_assistant_envelope,
+    make_assistant_streaming_envelope,
+    make_envelope,
+    make_event_envelope,
+    make_status_envelope,
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Transcript Broadcasting
+# ─────────────────────────────────────────────────────────────────────────────
+from apps.artagent.backend.src.ws_helpers.shared_ws import (
+    broadcast_session_envelope,
+    send_response_to_acs,
+    send_session_envelope,
+    send_tts_audio,
+    send_user_partial_transcript,
+    send_user_transcript,
 )
 
 __all__ = [

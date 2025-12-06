@@ -12,16 +12,16 @@ WebSocket Flow:
 5. Clean up resources on disconnect (handler releases pools)
 """
 
-from typing import Optional
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.websockets import WebSocketState
 import asyncio
 import uuid
 
+from apps.artagent.backend.src.ws_helpers.shared_ws import send_agent_inventory
+from apps.artagent.backend.voice import VoiceLiveSDKHandler
+from config import ACS_STREAMING_MODE
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.websockets import WebSocketState
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-
-from config import ACS_STREAMING_MODE
 from src.enums.stream_modes import StreamMode
 from src.pools.session_manager import SessionContext
 from src.stateful.state_managment import MemoManager
@@ -29,8 +29,6 @@ from utils.ml_logging import get_logger
 from utils.session_context import session_context
 
 from ..handlers.media_handler import MediaHandler, MediaHandlerConfig, TransportType
-from apps.artagent.backend.voice import VoiceLiveSDKHandler
-from apps.artagent.backend.src.ws_helpers.shared_ws import send_agent_inventory
 
 logger = get_logger("api.v1.endpoints.media")
 tracer = trace.get_tracer(__name__)
@@ -42,21 +40,23 @@ router = APIRouter()
 # ============================================================================
 
 
-async def _resolve_stream_mode(redis_mgr, call_connection_id: Optional[str]) -> StreamMode:
+async def _resolve_stream_mode(redis_mgr, call_connection_id: str | None) -> StreamMode:
     """Resolve the effective streaming mode for a call."""
     if not call_connection_id or redis_mgr is None:
         return ACS_STREAMING_MODE
     try:
         stored = await redis_mgr.get_value_async(f"call_stream_mode:{call_connection_id}")
         if stored:
-            return StreamMode.from_string(stored.decode() if isinstance(stored, bytes) else str(stored))
+            return StreamMode.from_string(
+                stored.decode() if isinstance(stored, bytes) else str(stored)
+            )
     except Exception:
         pass
     return ACS_STREAMING_MODE
 
 
 async def _resolve_session_id(
-    app_state, call_connection_id: Optional[str], query_params: dict, headers: dict
+    app_state, call_connection_id: str | None, query_params: dict, headers: dict
 ) -> str:
     """Resolve session ID: query params > headers > Redis > generate new."""
     session_id = query_params.get("session_id") or headers.get("x-session-id")
@@ -66,7 +66,10 @@ async def _resolve_session_id(
     if call_connection_id and app_state:
         redis_mgr = getattr(app_state, "redis", None)
         if redis_mgr:
-            for key in [f"call_session_map:{call_connection_id}", f"call_session_mapping:{call_connection_id}"]:
+            for key in [
+                f"call_session_map:{call_connection_id}",
+                f"call_session_mapping:{call_connection_id}",
+            ]:
                 try:
                     value = await redis_mgr.get_value_async(key)
                     if value:
@@ -138,7 +141,9 @@ async def acs_media_stream(websocket: WebSocket) -> None:
     # Extract call_connection_id from query params or headers early
     query_params = dict(websocket.query_params)
     headers_dict = dict(websocket.headers)
-    call_connection_id = query_params.get("call_connection_id") or headers_dict.get("x-ms-call-connection-id")
+    call_connection_id = query_params.get("call_connection_id") or headers_dict.get(
+        "x-ms-call-connection-id"
+    )
 
     # Resolve session ID early for context
     session_id = await _resolve_session_id(
@@ -187,7 +192,9 @@ async def acs_media_stream(websocket: WebSocket) -> None:
 
             # Emit agent inventory to dashboards for this session
             try:
-                await send_agent_inventory(websocket.app.state, session_id=session_id, call_id=call_connection_id)
+                await send_agent_inventory(
+                    websocket.app.state, session_id=session_id, call_id=call_connection_id
+                )
             except Exception:
                 logger.debug("Failed to emit agent inventory", exc_info=True)
 
@@ -228,9 +235,7 @@ async def acs_media_stream(websocket: WebSocket) -> None:
             if not isinstance(e, WebSocketDisconnect):
                 raise
         finally:
-            await _cleanup_websocket_resources(
-                websocket, handler, call_connection_id, session_id
-            )
+            await _cleanup_websocket_resources(websocket, handler, call_connection_id, session_id)
 
 
 # ============================================================================
@@ -258,8 +263,12 @@ async def _create_media_handler(
         # Initialize MemoManager with session context for VoiceLive
         # This ensures greeting can access caller_name, session_profile, etc.
         redis_mgr = getattr(websocket.app.state, "redis", None)
-        memory_manager = MemoManager.from_redis(session_id, redis_mgr) if redis_mgr else MemoManager(session_id=session_id)
-        
+        memory_manager = (
+            MemoManager.from_redis(session_id, redis_mgr)
+            if redis_mgr
+            else MemoManager(session_id=session_id)
+        )
+
         # Set up session context on websocket.state (consistent with browser.py)
         websocket.state.cm = memory_manager
         websocket.state.session_context = SessionContext(
@@ -268,13 +277,13 @@ async def _create_media_handler(
             websocket=websocket,
         )
         websocket.state.session_id = session_id
-        
+
         logger.debug(
             "[%s] VoiceLive session context initialized | caller_name=%s",
             session_id[:8],
             memory_manager.get_value_from_corememory("caller_name", None),
         )
-        
+
         return VoiceLiveSDKHandler(
             websocket=websocket,
             session_id=session_id,
@@ -322,9 +331,7 @@ async def _process_media_stream(
             "stream.mode": str(stream_mode),
         },
     ) as span:
-        logger.info(
-            f"[{call_connection_id}]🚀 Starting media stream processing for call"
-        )
+        logger.info(f"[{call_connection_id}]🚀 Starting media stream processing for call")
 
         try:
             # Main message processing loop
@@ -390,17 +397,13 @@ async def _process_media_stream(
                     f"📞 Call disconnected abnormally for {call_connection_id} (WebSocket code {e.code}): {e.reason}"
                 )
                 span.set_status(
-                    Status(
-                        StatusCode.ERROR, f"Abnormal disconnect: {e.code} - {e.reason}"
-                    )
+                    Status(StatusCode.ERROR, f"Abnormal disconnect: {e.code} - {e.reason}")
                 )
                 # Re-raise abnormal disconnects so outer layers can handle/log them
                 raise
         except Exception as e:
             span.set_status(Status(StatusCode.ERROR, f"Stream processing error: {e}"))
-            logger.exception(
-                f"[{call_connection_id}]❌ Error in media stream processing"
-            )
+            logger.exception(f"[{call_connection_id}]❌ Error in media stream processing")
             raise
 
 
@@ -410,31 +413,26 @@ async def _process_media_stream(
 
 
 def _log_websocket_disconnect(
-    e: WebSocketDisconnect, session_id: str, call_connection_id: Optional[str]
+    e: WebSocketDisconnect, session_id: str, call_connection_id: str | None
 ) -> None:
     """Log WebSocket disconnection with appropriate level."""
     if e.code in (1000, 1001):
-        logger.info(
-            "Call ended normally (code=%s) for %s", e.code, call_connection_id
-        )
+        logger.info("Call ended normally (code=%s) for %s", e.code, call_connection_id)
     else:
         logger.warning(
             "Call disconnected abnormally (code=%s, reason=%s) for %s",
-            e.code, e.reason, call_connection_id
+            e.code,
+            e.reason,
+            call_connection_id,
         )
 
 
-def _log_websocket_error(
-    e: Exception, session_id: str, call_connection_id: Optional[str]
-) -> None:
+def _log_websocket_error(e: Exception, session_id: str, call_connection_id: str | None) -> None:
     """Log WebSocket errors."""
     if isinstance(e, asyncio.CancelledError):
         logger.info("WebSocket cancelled for %s", call_connection_id)
     else:
-        logger.error(
-            "WebSocket error for %s: %s (%s)",
-            call_connection_id, e, type(e).__name__
-        )
+        logger.error("WebSocket error for %s: %s (%s)", call_connection_id, e, type(e).__name__)
 
 
 # ============================================================================
@@ -443,7 +441,7 @@ def _log_websocket_error(
 
 
 async def _cleanup_websocket_resources(
-    websocket: WebSocket, handler, call_connection_id: Optional[str], session_id: str
+    websocket: WebSocket, handler, call_connection_id: str | None, session_id: str
 ) -> None:
     """Clean up WebSocket resources: handler and connection manager."""
     with tracer.start_as_current_span(

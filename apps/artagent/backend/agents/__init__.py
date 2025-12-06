@@ -19,41 +19,39 @@ Usage:
 
     # Get single agent
     fraud_agent = agents["FraudAgent"]
-    
+
     # Get tools for agent (from shared registry)
     tools = fraud_agent.get_tools()
-    
+
     # Execute a tool
     result = await fraud_agent.execute_tool("analyze_recent_transactions", {...})
-    
+
     # Check handoff configuration
     print(fraud_agent.handoff.trigger)    # "handoff_fraud_agent"
 """
 
 from apps.artagent.backend.agents.base import (
-    UnifiedAgent,
     HandoffConfig,
-    VoiceConfig,
     ModelConfig,
+    UnifiedAgent,
+    VoiceConfig,
     build_handoff_map,
 )
-
 from apps.artagent.backend.agents.loader import (
+    AGENTS_DIR,
     AgentConfig,
     discover_agents,
     get_agent,
     list_agent_names,
     load_defaults,
     render_prompt,
-    AGENTS_DIR,
 )
-
 from apps.artagent.backend.agents.session_manager import (
-    SessionAgentConfig,
-    SessionAgentRegistry,
-    SessionAgentManager,
     AgentProvider,
     HandoffProvider,
+    SessionAgentConfig,
+    SessionAgentManager,
+    SessionAgentRegistry,
     create_session_agent_manager,
 )
 

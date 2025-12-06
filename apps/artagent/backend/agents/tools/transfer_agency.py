@@ -8,9 +8,7 @@ and compliance checks for institutional clients.
 
 from __future__ import annotations
 
-import random
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
@@ -22,7 +20,7 @@ logger = get_logger("agents.tools.transfer_agency")
 # SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-get_drip_positions_schema: Dict[str, Any] = {
+get_drip_positions_schema: dict[str, Any] = {
     "name": "get_drip_positions",
     "description": (
         "Get dividend reinvestment plan (DRIP) positions for an institutional client. "
@@ -40,7 +38,7 @@ get_drip_positions_schema: Dict[str, Any] = {
     },
 }
 
-calculate_liquidation_proceeds_schema: Dict[str, Any] = {
+calculate_liquidation_proceeds_schema: dict[str, Any] = {
     "name": "calculate_liquidation_proceeds",
     "description": (
         "Calculate estimated proceeds from liquidating DRIP positions. "
@@ -67,7 +65,7 @@ calculate_liquidation_proceeds_schema: Dict[str, Any] = {
     },
 }
 
-verify_institutional_identity_schema: Dict[str, Any] = {
+verify_institutional_identity_schema: dict[str, Any] = {
     "name": "verify_institutional_identity",
     "description": (
         "Verify institutional client identity using client code and authorization. "
@@ -146,25 +144,26 @@ _MOCK_DRIP_POSITIONS = {
 # EXECUTORS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def get_drip_positions(args: Dict[str, Any]) -> Dict[str, Any]:
+
+async def get_drip_positions(args: dict[str, Any]) -> dict[str, Any]:
     """Get DRIP positions for institutional client."""
     client_code = (args.get("client_code") or "").strip().upper()
-    
+
     if not client_code:
         return {"success": False, "message": "client_code is required."}
-    
+
     positions = _MOCK_DRIP_POSITIONS.get(client_code)
     if not positions:
         return {
             "success": False,
             "message": f"No positions found for client code {client_code}",
         }
-    
+
     total_value = sum(p["market_value"] for p in positions)
     total_cost = sum(p["cost_basis"] for p in positions)
-    
+
     logger.info("📊 DRIP positions retrieved: %s - %d positions", client_code, len(positions))
-    
+
     return {
         "success": True,
         "client_code": client_code,
@@ -175,50 +174,52 @@ async def get_drip_positions(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def calculate_liquidation_proceeds(args: Dict[str, Any]) -> Dict[str, Any]:
+async def calculate_liquidation_proceeds(args: dict[str, Any]) -> dict[str, Any]:
     """Calculate liquidation proceeds for DRIP positions."""
     client_code = (args.get("client_code") or "").strip().upper()
     symbols = args.get("symbols", [])
     shares_dict = args.get("shares", {})
-    
+
     if not client_code:
         return {"success": False, "message": "client_code is required."}
     if not symbols:
         return {"success": False, "message": "symbols list is required."}
-    
+
     positions = _MOCK_DRIP_POSITIONS.get(client_code, [])
     if not positions:
         return {"success": False, "message": f"No positions for {client_code}"}
-    
+
     # Calculate proceeds for each symbol
     liquidation_details = []
     total_proceeds = 0.0
     total_gain = 0.0
-    
+
     for pos in positions:
         if pos["symbol"] in [s.upper() for s in symbols]:
             shares_to_sell = shares_dict.get(pos["symbol"], pos["shares"])
             proceeds = shares_to_sell * pos["current_price"]
             cost = shares_to_sell * (pos["cost_basis"] / pos["shares"])
             gain = proceeds - cost
-            
-            liquidation_details.append({
-                "symbol": pos["symbol"],
-                "shares": shares_to_sell,
-                "price": pos["current_price"],
-                "gross_proceeds": proceeds,
-                "cost_basis": cost,
-                "estimated_gain": gain,
-                "estimated_tax": gain * 0.15 if gain > 0 else 0,  # Simplified LTCG
-            })
-            
+
+            liquidation_details.append(
+                {
+                    "symbol": pos["symbol"],
+                    "shares": shares_to_sell,
+                    "price": pos["current_price"],
+                    "gross_proceeds": proceeds,
+                    "cost_basis": cost,
+                    "estimated_gain": gain,
+                    "estimated_tax": gain * 0.15 if gain > 0 else 0,  # Simplified LTCG
+                }
+            )
+
             total_proceeds += proceeds
             total_gain += gain
-    
+
     estimated_tax = total_gain * 0.15 if total_gain > 0 else 0
-    
+
     logger.info("💰 Liquidation calculated: %s - $%.2f gross", client_code, total_proceeds)
-    
+
     return {
         "success": True,
         "client_code": client_code,
@@ -233,18 +234,18 @@ async def calculate_liquidation_proceeds(args: Dict[str, Any]) -> Dict[str, Any]
     }
 
 
-async def verify_institutional_identity(args: Dict[str, Any]) -> Dict[str, Any]:
+async def verify_institutional_identity(args: dict[str, Any]) -> dict[str, Any]:
     """Verify institutional client identity."""
     client_code = (args.get("client_code") or "").strip().upper()
     auth_code = (args.get("authorization_code") or "").strip()
     caller_name = (args.get("caller_name") or "").strip()
-    
+
     if not client_code:
         return {"success": False, "message": "client_code is required."}
-    
+
     # Simulate verification
     is_valid = client_code in _MOCK_DRIP_POSITIONS
-    
+
     if is_valid:
         logger.info("✓ Institutional identity verified: %s", client_code)
         return {
@@ -255,7 +256,7 @@ async def verify_institutional_identity(args: Dict[str, Any]) -> Dict[str, Any]:
             "caller_name": caller_name or "Authorized Representative",
             "authorization_level": "full",
         }
-    
+
     logger.warning("✗ Institutional verification failed: %s", client_code)
     return {
         "success": False,

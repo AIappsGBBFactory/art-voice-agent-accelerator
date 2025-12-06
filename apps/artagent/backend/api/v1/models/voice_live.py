@@ -13,12 +13,10 @@ This module provides data models for:
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List
 from enum import Enum
-from uuid import UUID
-import uuid
+from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class VoiceLiveSessionStatus(str, Enum):
@@ -67,9 +65,7 @@ class VoiceLiveAudioConfig(BaseModel):
     language: str = Field(default="en-US", description="Audio language code")
 
     # Voice Activity Detection (Azure Voice Live API specific)
-    vad_enabled: bool = Field(
-        default=True, description="Enable voice activity detection"
-    )
+    vad_enabled: bool = Field(default=True, description="Enable voice activity detection")
     vad_mode: VoiceActivityDetectionMode = Field(
         default=VoiceActivityDetectionMode.AUTO, description="VAD mode"
     )
@@ -78,15 +74,11 @@ class VoiceLiveAudioConfig(BaseModel):
     )
 
     # Azure AI Speech Enhancement Features
-    noise_reduction: bool = Field(
-        default=True, description="Enable Azure deep noise suppression"
-    )
+    noise_reduction: bool = Field(default=True, description="Enable Azure deep noise suppression")
     echo_cancellation: bool = Field(
         default=True, description="Enable server-side echo cancellation"
     )
-    automatic_gain_control: bool = Field(
-        default=False, description="Enable automatic gain control"
-    )
+    automatic_gain_control: bool = Field(default=False, description="Enable automatic gain control")
 
     # Azure Voice Live API specific audio settings
     input_audio_noise_reduction_type: str = Field(
@@ -103,35 +95,27 @@ class VoiceLiveModelConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     model_name: str = Field(default="gpt-4o", description="AI model name")
-    deployment_name: Optional[str] = Field(None, description="Azure deployment name")
-    temperature: float = Field(
-        default=0.7, description="Model temperature", ge=0.0, le=2.0
-    )
-    max_tokens: int = Field(
-        default=2000, description="Maximum tokens per response", ge=1, le=4000
-    )
+    deployment_name: str | None = Field(None, description="Azure deployment name")
+    temperature: float = Field(default=0.7, description="Model temperature", ge=0.0, le=2.0)
+    max_tokens: int = Field(default=2000, description="Maximum tokens per response", ge=1, le=4000)
 
     # Voice Settings (Updated for Azure Voice Live API)
     voice_name: str = Field(
         default="en-US-Ava:DragonHDLatestNeural", description="Azure neural voice name"
     )
     voice_type: str = Field(default="azure-standard", description="Azure voice type")
-    voice_style: Optional[str] = Field(None, description="Voice style")
-    speaking_rate: float = Field(
-        default=1.0, description="Speaking rate", ge=0.5, le=2.0
-    )
+    voice_style: str | None = Field(None, description="Voice style")
+    speaking_rate: float = Field(default=1.0, description="Speaking rate", ge=0.5, le=2.0)
     voice_temperature: float = Field(
         default=0.8, description="Voice temperature for HD voices", ge=0.0, le=1.0
     )
 
     # System Configuration
-    system_instructions: Optional[str] = Field(
+    system_instructions: str | None = Field(
         default="You are a helpful AI assistant responding in natural, engaging language.",
         description="System instructions for the AI",
     )
-    context_window: int = Field(
-        default=4000, description="Context window size", ge=1000, le=8000
-    )
+    context_window: int = Field(default=4000, description="Context window size", ge=1000, le=8000)
 
     # Azure Voice Live API specific settings
     api_version: str = Field(
@@ -140,12 +124,8 @@ class VoiceLiveModelConfig(BaseModel):
     turn_detection_type: str = Field(
         default="azure_semantic_vad", description="Turn detection type"
     )
-    vad_threshold: float = Field(
-        default=0.3, description="VAD threshold", ge=0.0, le=1.0
-    )
-    prefix_padding_ms: int = Field(
-        default=200, description="Prefix padding in milliseconds", ge=0
-    )
+    vad_threshold: float = Field(default=0.3, description="VAD threshold", ge=0.0, le=1.0)
+    prefix_padding_ms: int = Field(default=200, description="Prefix padding in milliseconds", ge=0)
     silence_duration_ms: int = Field(
         default=200, description="Silence duration in milliseconds", ge=0
     )
@@ -182,16 +162,12 @@ class VoiceLiveConnectionState(BaseModel):
 
     # Connection Statistics
     messages_sent: int = Field(default=0, description="Number of messages sent", ge=0)
-    messages_received: int = Field(
-        default=0, description="Number of messages received", ge=0
-    )
+    messages_received: int = Field(default=0, description="Number of messages received", ge=0)
     bytes_sent: int = Field(default=0, description="Total bytes sent", ge=0)
     bytes_received: int = Field(default=0, description="Total bytes received", ge=0)
 
     # Error Tracking
-    connection_errors: int = Field(
-        default=0, description="Connection error count", ge=0
-    )
+    connection_errors: int = Field(default=0, description="Connection error count", ge=0)
     protocol_errors: int = Field(default=0, description="Protocol error count", ge=0)
 
     def record_message_sent(self, byte_count: int = 0) -> None:
@@ -231,38 +207,30 @@ class VoiceLiveMetrics(BaseModel):
     )
 
     # Latency Metrics (in milliseconds)
-    audio_to_text_latency: Optional[float] = Field(
-        None, description="Audio to text latency", ge=0.0
-    )
-    text_to_response_latency: Optional[float] = Field(
+    audio_to_text_latency: float | None = Field(None, description="Audio to text latency", ge=0.0)
+    text_to_response_latency: float | None = Field(
         None, description="Text to response latency", ge=0.0
     )
-    response_to_audio_latency: Optional[float] = Field(
+    response_to_audio_latency: float | None = Field(
         None, description="Response to audio latency", ge=0.0
     )
-    end_to_end_latency: Optional[float] = Field(
-        None, description="End-to-end latency", ge=0.0
-    )
+    end_to_end_latency: float | None = Field(None, description="End-to-end latency", ge=0.0)
 
     # Quality Metrics
-    speech_recognition_confidence: Optional[float] = Field(
+    speech_recognition_confidence: float | None = Field(
         None, description="Speech recognition confidence", ge=0.0, le=1.0
     )
-    audio_quality_score: Optional[float] = Field(
+    audio_quality_score: float | None = Field(
         None, description="Audio quality score", ge=0.0, le=1.0
     )
-    voice_activity_accuracy: Optional[float] = Field(
-        None, description="VAD accuracy", ge=0.0, le=1.0
-    )
+    voice_activity_accuracy: float | None = Field(None, description="VAD accuracy", ge=0.0, le=1.0)
 
     # Resource Metrics
-    cpu_usage_percent: Optional[float] = Field(
+    cpu_usage_percent: float | None = Field(
         None, description="CPU usage percentage", ge=0.0, le=100.0
     )
-    memory_usage_mb: Optional[float] = Field(
-        None, description="Memory usage in MB", ge=0.0
-    )
-    network_throughput_kbps: Optional[float] = Field(
+    memory_usage_mb: float | None = Field(None, description="Memory usage in MB", ge=0.0)
+    network_throughput_kbps: float | None = Field(
         None, description="Network throughput in kbps", ge=0.0
     )
 
@@ -288,19 +256,19 @@ class VoiceLiveSession(BaseModel):
     status: VoiceLiveSessionStatus = Field(
         default=VoiceLiveSessionStatus.INITIALIZING, description="Session status"
     )
-    status_message: Optional[str] = Field(None, description="Status message")
+    status_message: str | None = Field(None, description="Status message")
 
     # Timestamps
     created_at: datetime = Field(
         default_factory=datetime.utcnow, description="Session creation time"
     )
-    connection_established_at: Optional[datetime] = Field(
+    connection_established_at: datetime | None = Field(
         None, description="Connection establishment time"
     )
     last_activity_at: datetime = Field(
         default_factory=datetime.utcnow, description="Last activity time"
     )
-    disconnected_at: Optional[datetime] = Field(None, description="Disconnection time")
+    disconnected_at: datetime | None = Field(None, description="Disconnection time")
 
     # Configuration
     audio_config: VoiceLiveAudioConfig = Field(
@@ -311,26 +279,22 @@ class VoiceLiveSession(BaseModel):
     )
 
     # Connection State
-    websocket_connected: bool = Field(
-        default=False, description="WebSocket connection status"
-    )
+    websocket_connected: bool = Field(default=False, description="WebSocket connection status")
     azure_speech_connected: bool = Field(
         default=False, description="Azure Speech connection status"
     )
 
     # Session Statistics
     total_messages: int = Field(default=0, description="Total messages processed", ge=0)
-    audio_bytes_processed: int = Field(
-        default=0, description="Total audio bytes processed", ge=0
-    )
-    conversation_history: List[Dict[str, Any]] = Field(
+    audio_bytes_processed: int = Field(default=0, description="Total audio bytes processed", ge=0)
+    conversation_history: list[dict[str, Any]] = Field(
         default_factory=list, description="Conversation history"
     )
 
     # Error Tracking
     error_count: int = Field(default=0, description="Total error count", ge=0)
-    last_error: Optional[str] = Field(None, description="Last error message")
-    last_error_at: Optional[datetime] = Field(None, description="Last error timestamp")
+    last_error: str | None = Field(None, description="Last error message")
+    last_error_at: datetime | None = Field(None, description="Last error timestamp")
 
     # Performance Metrics
     average_response_time_ms: float = Field(
@@ -342,7 +306,7 @@ class VoiceLiveSession(BaseModel):
         self.last_activity_at = datetime.utcnow()
 
     def add_conversation_message(
-        self, role: str, content: str, metadata: Optional[Dict[str, Any]] = None
+        self, role: str, content: str, metadata: dict[str, Any] | None = None
     ) -> None:
         """Add a message to the conversation history."""
         message = {
@@ -369,9 +333,7 @@ class VoiceLiveSession(BaseModel):
         self.status_message = error_message
         self.update_activity()
 
-    def set_status(
-        self, status: VoiceLiveSessionStatus, message: Optional[str] = None
-    ) -> None:
+    def set_status(self, status: VoiceLiveSessionStatus, message: str | None = None) -> None:
         """Update session status."""
         self.status = status
         if message:
@@ -385,11 +347,9 @@ class VoiceLiveSession(BaseModel):
             return (end_time - self.connection_established_at).total_seconds()
         return 0.0
 
-    def get_conversation_summary(self) -> Dict[str, Any]:
+    def get_conversation_summary(self) -> dict[str, Any]:
         """Get a summary of the conversation."""
-        user_messages = [
-            msg for msg in self.conversation_history if msg["role"] == "user"
-        ]
+        user_messages = [msg for msg in self.conversation_history if msg["role"] == "user"]
         assistant_messages = [
             msg for msg in self.conversation_history if msg["role"] == "assistant"
         ]

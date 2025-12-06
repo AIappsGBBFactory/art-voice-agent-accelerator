@@ -18,8 +18,9 @@ support for the V1 realtime API endpoints.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional, Any
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class RealtimeStatusResponse(BaseModel):
@@ -39,7 +40,7 @@ class RealtimeStatusResponse(BaseModel):
         },
     )
 
-    websocket_endpoints: Dict[str, str] = Field(
+    websocket_endpoints: dict[str, str] = Field(
         ...,
         description="Available WebSocket endpoints",
         json_schema_extra={
@@ -50,7 +51,7 @@ class RealtimeStatusResponse(BaseModel):
         },
     )
 
-    features: Dict[str, bool] = Field(
+    features: dict[str, bool] = Field(
         ...,
         description="Supported features and capabilities",
         json_schema_extra={
@@ -63,15 +64,13 @@ class RealtimeStatusResponse(BaseModel):
         },
     )
 
-    active_connections: Dict[str, int] = Field(
+    active_connections: dict[str, int] = Field(
         ...,
         description="Current active connection counts",
-        json_schema_extra={
-            "example": {"dashboard_clients": 0, "conversation_sessions": 0}
-        },
+        json_schema_extra={"example": {"dashboard_clients": 0, "conversation_sessions": 0}},
     )
 
-    protocols_supported: List[str] = Field(
+    protocols_supported: list[str] = Field(
         default=["WebSocket"],
         description="Supported communication protocols",
         json_schema_extra={"example": ["WebSocket"]},
@@ -115,7 +114,7 @@ class DashboardConnectionResponse(BaseModel):
         json_schema_extra={"example": "dashboard_relay"},
     )
 
-    features_enabled: List[str] = Field(
+    features_enabled: list[str] = Field(
         default=["broadcasting", "monitoring"],
         description="Features enabled for this dashboard connection",
         json_schema_extra={"example": ["broadcasting", "monitoring", "tracing"]},
@@ -142,7 +141,7 @@ class ConversationSessionResponse(BaseModel):
         json_schema_extra={"example": "2024-01-01T12:00:00Z"},
     )
 
-    orchestrator_name: Optional[str] = Field(
+    orchestrator_name: str | None = Field(
         None,
         description="Name of the orchestrator handling this session",
         json_schema_extra={"example": "gpt-4-orchestrator"},
@@ -155,7 +154,7 @@ class ConversationSessionResponse(BaseModel):
         ge=0,
     )
 
-    features_enabled: List[str] = Field(
+    features_enabled: list[str] = Field(
         default=["stt", "tts", "conversation_memory"],
         description="Features enabled for this conversation session",
         json_schema_extra={
@@ -163,7 +162,7 @@ class ConversationSessionResponse(BaseModel):
         },
     )
 
-    audio_config: Optional[Dict[str, Any]] = Field(
+    audio_config: dict[str, Any] | None = Field(
         None,
         description="Audio processing configuration for the session",
         json_schema_extra={
@@ -175,12 +174,10 @@ class ConversationSessionResponse(BaseModel):
         },
     )
 
-    memory_status: Optional[Dict[str, Any]] = Field(
+    memory_status: dict[str, Any] | None = Field(
         None,
         description="Conversation memory status and configuration",
-        json_schema_extra={
-            "example": {"enabled": True, "turn_count": 0, "context_length": 0}
-        },
+        json_schema_extra={"example": {"enabled": True, "turn_count": 0, "context_length": 0}},
     )
 
 
@@ -198,13 +195,13 @@ class WebSocketMessageBase(BaseModel):
         json_schema_extra={"example": "status"},
     )
 
-    timestamp: Optional[datetime] = Field(
+    timestamp: datetime | None = Field(
         None,
         description="Message timestamp",
         json_schema_extra={"example": "2024-01-01T12:00:00Z"},
     )
 
-    session_id: Optional[str] = Field(
+    session_id: str | None = Field(
         None,
         description="Associated session identifier",
         json_schema_extra={"example": "conv_abc123def"},
@@ -264,7 +261,7 @@ class ConversationMessage(WebSocketMessageBase):
         json_schema_extra={"example": "Hello, how can I help you today?"},
     )
 
-    language: Optional[str] = Field(
+    language: str | None = Field(
         None,
         description="Detected or specified language code",
         json_schema_extra={"example": "en-US"},
@@ -353,7 +350,7 @@ class ErrorMessage(WebSocketMessageBase):
         },
     )
 
-    recovery_suggestion: Optional[str] = Field(
+    recovery_suggestion: str | None = Field(
         None,
         description="Suggested recovery action",
         json_schema_extra={"example": "Please try again in a few moments"},
@@ -401,7 +398,7 @@ class AudioMetadata(BaseModel):
         json_schema_extra={"example": "pcm", "enum": ["pcm", "opus", "mp3"]},
     )
 
-    language: Optional[str] = Field(
+    language: str | None = Field(
         None, description="Audio language code", json_schema_extra={"example": "en-US"}
     )
 
@@ -441,7 +438,7 @@ class SessionMetrics(BaseModel):
         ge=0,
     )
 
-    stt_accuracy: Optional[float] = Field(
+    stt_accuracy: float | None = Field(
         None,
         description="Speech-to-text accuracy percentage",
         json_schema_extra={"example": 95.2},
@@ -449,7 +446,7 @@ class SessionMetrics(BaseModel):
         le=100,
     )
 
-    tts_synthesis_time_ms: Optional[float] = Field(
+    tts_synthesis_time_ms: float | None = Field(
         None,
         description="Average TTS synthesis time in milliseconds",
         json_schema_extra={"example": 180.3},

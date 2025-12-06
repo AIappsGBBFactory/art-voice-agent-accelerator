@@ -19,14 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import struct
 import time
 import uuid
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable, Optional
+from typing import Any
 
 from fastapi import WebSocket
-
 from src.tools.latency_tool import LatencyTool
 from utils.ml_logging import get_logger
 
@@ -55,18 +54,18 @@ async def send_tts_to_browser(
     text: str,
     ws: WebSocket,
     voice_name: str,
-    voice_style: Optional[str] = None,
-    voice_rate: Optional[str] = None,
-    latency_tool: Optional[LatencyTool] = None,
-    on_first_audio: Optional[Callable[[], None]] = None,
-    cancel_event: Optional[asyncio.Event] = None,
+    voice_style: str | None = None,
+    voice_rate: str | None = None,
+    latency_tool: LatencyTool | None = None,
+    on_first_audio: Callable[[], None] | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> None:
     """
     Send TTS audio to browser WebSocket client.
-    
+
     Voice configuration MUST be provided - no fallback to environment variables.
     This ensures voice always comes from agent YAML configuration.
-    
+
     Args:
         text: Text to synthesize
         ws: WebSocket connection
@@ -79,7 +78,7 @@ async def send_tts_to_browser(
     """
     run_id = str(uuid.uuid4())[:8]
     session_id = getattr(ws.state, "session_id", None)
-    
+
     if not voice_name:
         logger.error(
             "[%s] TTS called without voice_name - agent config missing? (run=%s)",
@@ -87,14 +86,14 @@ async def send_tts_to_browser(
             run_id,
         )
         return
-    
+
     # Use provided cancel_event or get from websocket state
     if cancel_event is None:
         cancel_event = _get_connection_metadata(ws, "tts_cancel_event")
-    
+
     style = voice_style or "conversational"
     eff_rate = voice_rate or "medium"
-    
+
     logger.debug(
         "[%s] TTS synthesis: voice=%s style=%s rate=%s (run=%s)",
         session_id,
@@ -103,7 +102,7 @@ async def send_tts_to_browser(
         eff_rate,
         run_id,
     )
-    
+
     # Start latency tracking
     if latency_tool:
         try:
@@ -117,12 +116,12 @@ async def send_tts_to_browser(
                 latency_tool._active_timers.add("tts:synthesis")
         except Exception as e:
             logger.debug("Latency start error (run=%s): %s", run_id, e)
-    
+
     # Acquire TTS synthesizer
     synth = None
     client_tier = None
     temp_synth = False
-    
+
     try:
         synth, client_tier = await ws.app.state.tts_pool.acquire_for_session(session_id)
         logger.debug(
@@ -133,7 +132,7 @@ async def send_tts_to_browser(
         )
     except Exception as e:
         logger.error("[%s] Failed to get TTS client (run=%s): %s", session_id, run_id, e)
-    
+
     # Fallback to legacy pool
     if not synth:
         synth = _get_connection_metadata(ws, "tts_client")
@@ -145,25 +144,25 @@ async def send_tts_to_browser(
             except Exception as e:
                 logger.error("[%s] TTS pool exhausted (run=%s): %s", session_id, run_id, e)
                 return
-    
+
     try:
         if cancel_event and cancel_event.is_set():
             logger.info("[%s] Skipping TTS (cancelled) (run=%s)", session_id, run_id)
             cancel_event.clear()
             return
-        
+
         now = time.monotonic()
         _set_connection_metadata(ws, "is_synthesizing", True)
         _set_connection_metadata(ws, "audio_playing", True)
         _set_connection_metadata(ws, "last_tts_start_ts", now)
-        
+
         # Voice warm-up (one-time per voice signature)
         warm_signature = (voice_name, style, eff_rate)
         prepared_voices: set = getattr(synth, "_prepared_voices", None)
         if prepared_voices is None:
             prepared_voices = set()
-            setattr(synth, "_prepared_voices", prepared_voices)
-        
+            synth._prepared_voices = prepared_voices
+
         if warm_signature not in prepared_voices:
             warm_partial = partial(
                 synth.synthesize_to_pcm,
@@ -181,9 +180,7 @@ async def send_tts_to_browser(
                         loop.run_in_executor(executor, warm_partial), timeout=4.0
                     )
                 else:
-                    await asyncio.wait_for(
-                        loop.run_in_executor(None, warm_partial), timeout=4.0
-                    )
+                    await asyncio.wait_for(loop.run_in_executor(None, warm_partial), timeout=4.0)
                 prepared_voices.add(warm_signature)
                 logger.debug(
                     "[%s] Warmed TTS voice=%s (run=%s)",
@@ -191,7 +188,7 @@ async def send_tts_to_browser(
                     voice_name,
                     run_id,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[%s] TTS warm-up timed out for voice=%s (run=%s)",
                     session_id,
@@ -206,7 +203,7 @@ async def send_tts_to_browser(
                     warm_exc,
                     run_id,
                 )
-        
+
         # Synthesize audio
         async def _synthesize() -> bytes:
             loop = asyncio.get_running_loop()
@@ -222,10 +219,10 @@ async def send_tts_to_browser(
             if executor:
                 return await loop.run_in_executor(executor, synth_partial)
             return await loop.run_in_executor(None, synth_partial)
-        
+
         synthesis_task = asyncio.create_task(_synthesize())
-        cancel_wait: Optional[asyncio.Task] = None
-        
+        cancel_wait: asyncio.Task | None = None
+
         try:
             if cancel_event:
                 cancel_wait = asyncio.create_task(cancel_event.wait())
@@ -233,23 +230,23 @@ async def send_tts_to_browser(
                     {synthesis_task, cancel_wait},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
-                
+
                 if cancel_wait in done and cancel_event.is_set():
                     synthesis_task.cancel()
                     logger.info("[%s] TTS synthesis cancelled (run=%s)", session_id, run_id)
                     cancel_event.clear()
                     return
-            
+
             pcm_bytes = await synthesis_task
-            
+
         finally:
             if cancel_wait and not cancel_wait.done():
                 cancel_wait.cancel()
-        
+
         if not pcm_bytes:
             logger.warning("[%s] TTS returned empty audio (run=%s)", session_id, run_id)
             return
-        
+
         # Record synthesis latency
         if latency_tool:
             try:
@@ -258,27 +255,29 @@ async def send_tts_to_browser(
                     latency_tool._active_timers.discard("tts:synthesis")
             except Exception:
                 pass
-        
+
         # Stream audio chunks to browser
         chunk_size = 4800  # 100ms at 48kHz mono 16-bit
         first_chunk_sent = False
-        
+
         for i in range(0, len(pcm_bytes), chunk_size):
             if cancel_event and cancel_event.is_set():
                 logger.info("[%s] TTS streaming cancelled (run=%s)", session_id, run_id)
                 cancel_event.clear()
                 break
-            
-            chunk = pcm_bytes[i:i + chunk_size]
+
+            chunk = pcm_bytes[i : i + chunk_size]
             b64_chunk = base64.b64encode(chunk).decode("utf-8")
-            
-            await ws.send_json({
-                "type": "audio",
-                "data": b64_chunk,
-                "sampleRate": TTS_SAMPLE_RATE_UI,
-                "format": "pcm16",
-            })
-            
+
+            await ws.send_json(
+                {
+                    "type": "audio",
+                    "data": b64_chunk,
+                    "sampleRate": TTS_SAMPLE_RATE_UI,
+                    "format": "pcm16",
+                }
+            )
+
             if not first_chunk_sent:
                 first_chunk_sent = True
                 if on_first_audio:
@@ -286,10 +285,10 @@ async def send_tts_to_browser(
                         on_first_audio()
                     except Exception:
                         pass
-            
+
             # Small yield to allow cancel checks
             await asyncio.sleep(0)
-        
+
         # Record total TTS latency
         if latency_tool:
             try:
@@ -298,7 +297,7 @@ async def send_tts_to_browser(
                     latency_tool._active_timers.discard("tts")
             except Exception:
                 pass
-        
+
         logger.debug(
             "[%s] TTS complete: %d bytes, voice=%s (run=%s)",
             session_id,
@@ -306,7 +305,7 @@ async def send_tts_to_browser(
             voice_name,
             run_id,
         )
-        
+
     except asyncio.CancelledError:
         logger.debug("[%s] TTS task cancelled (run=%s)", session_id, run_id)
         raise
@@ -315,7 +314,7 @@ async def send_tts_to_browser(
     finally:
         _set_connection_metadata(ws, "is_synthesizing", False)
         _set_connection_metadata(ws, "audio_playing", False)
-        
+
         if temp_synth and synth:
             try:
                 # Use release_for_session with None to avoid returning to warm pool
@@ -329,18 +328,18 @@ async def send_tts_to_acs(
     text: str,
     ws: WebSocket,
     voice_name: str,
-    voice_style: Optional[str] = None,
-    voice_rate: Optional[str] = None,
+    voice_style: str | None = None,
+    voice_rate: str | None = None,
     stream_mode: Any = None,
     blocking: bool = True,
-    latency_tool: Optional[LatencyTool] = None,
-    on_first_audio: Optional[Callable[[], None]] = None,
+    latency_tool: LatencyTool | None = None,
+    on_first_audio: Callable[[], None] | None = None,
 ) -> None:
     """
     Send TTS audio to ACS WebSocket.
-    
+
     Voice configuration MUST be provided - no fallback to environment variables.
-    
+
     Args:
         text: Text to synthesize
         ws: WebSocket connection
@@ -354,7 +353,7 @@ async def send_tts_to_acs(
     """
     run_id = str(uuid.uuid4())[:8]
     session_id = getattr(ws.state, "session_id", None)
-    
+
     if not voice_name:
         logger.error(
             "[%s] ACS TTS called without voice_name - agent config missing? (run=%s)",
@@ -362,10 +361,10 @@ async def send_tts_to_acs(
             run_id,
         )
         return
-    
+
     style = voice_style or "conversational"
     eff_rate = voice_rate or "medium"
-    
+
     logger.debug(
         "[%s] ACS TTS: voice=%s style=%s rate=%s (run=%s)",
         session_id,
@@ -374,17 +373,17 @@ async def send_tts_to_acs(
         eff_rate,
         run_id,
     )
-    
+
     # Acquire TTS synthesizer
     synth = None
     client_tier = None
     temp_synth = None  # Track if we acquired a temp synth that needs releasing
-    
+
     try:
         synth, client_tier = await ws.app.state.tts_pool.acquire_for_session(session_id)
     except Exception as e:
         logger.error("[%s] Failed to get TTS client for ACS (run=%s): %s", session_id, run_id, e)
-    
+
     if not synth:
         synth = _get_connection_metadata(ws, "tts_client")
         if not synth:
@@ -394,12 +393,12 @@ async def send_tts_to_acs(
             except Exception as e:
                 logger.error("[%s] TTS pool exhausted for ACS (run=%s): %s", session_id, run_id, e)
                 return
-    
+
     try:
         # Synthesize audio
         loop = asyncio.get_running_loop()
         executor = getattr(ws.app.state, "speech_executor", None)
-        
+
         synth_partial = partial(
             synth.synthesize_to_pcm,
             text=text,
@@ -408,34 +407,36 @@ async def send_tts_to_acs(
             style=style,
             rate=eff_rate,
         )
-        
+
         if executor:
             pcm_bytes = await loop.run_in_executor(executor, synth_partial)
         else:
             pcm_bytes = await loop.run_in_executor(None, synth_partial)
-        
+
         if not pcm_bytes:
             logger.warning("[%s] ACS TTS returned empty audio (run=%s)", session_id, run_id)
             return
-        
+
         # Stream to ACS
         chunk_size = 640  # 40ms at 16kHz mono 16-bit
         first_chunk_sent = False
-        
+
         for i in range(0, len(pcm_bytes), chunk_size):
-            chunk = pcm_bytes[i:i + chunk_size]
+            chunk = pcm_bytes[i : i + chunk_size]
             b64_chunk = base64.b64encode(chunk).decode("utf-8")
-            
-            await ws.send_json({
-                "kind": "AudioData",
-                "audioData": {
-                    "data": b64_chunk,
-                    "timestamp": None,
-                    "participantRawID": None,
-                    "silent": False,
-                },
-            })
-            
+
+            await ws.send_json(
+                {
+                    "kind": "AudioData",
+                    "audioData": {
+                        "data": b64_chunk,
+                        "timestamp": None,
+                        "participantRawID": None,
+                        "silent": False,
+                    },
+                }
+            )
+
             if not first_chunk_sent:
                 first_chunk_sent = True
                 if on_first_audio:
@@ -443,13 +444,13 @@ async def send_tts_to_acs(
                         on_first_audio()
                     except Exception:
                         pass
-            
+
             if blocking:
                 # Pace audio to match playback rate
                 await asyncio.sleep(0.04)  # 40ms per chunk
             else:
                 await asyncio.sleep(0)
-        
+
         logger.debug(
             "[%s] ACS TTS complete: %d bytes, voice=%s (run=%s)",
             session_id,
@@ -457,7 +458,7 @@ async def send_tts_to_acs(
             voice_name,
             run_id,
         )
-        
+
     except Exception as e:
         logger.error("[%s] ACS TTS failed (run=%s): %s", session_id, run_id, e)
     finally:
@@ -466,7 +467,9 @@ async def send_tts_to_acs(
             try:
                 await ws.app.state.tts_pool.release_for_session(None, temp_synth)
             except Exception as e:
-                logger.warning("[%s] Failed to release temp TTS synth (run=%s): %s", session_id, run_id, e)
+                logger.warning(
+                    "[%s] Failed to release temp TTS synth (run=%s): %s", session_id, run_id, e
+                )
 
 
 __all__ = [

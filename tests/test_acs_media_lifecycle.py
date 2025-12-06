@@ -4,16 +4,14 @@ import gc
 import importlib.util
 import json
 import sys
-import time
 import weakref
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi.websockets import WebSocketState
-
 from src.enums.stream_modes import StreamMode
 
 openai_stub = ModuleType("apps.artagent.backend.src.services.openai_services")
@@ -21,35 +19,45 @@ openai_stub.client = Mock()
 sys.modules.setdefault("apps.artagent.backend.src.services.openai_services", openai_stub)
 
 acs_helpers_stub = ModuleType("apps.artagent.backend.src.services.acs.acs_helpers")
+
+
 async def _play_response_with_queue(*_args, **_kwargs):
     return None
+
+
 acs_helpers_stub.play_response_with_queue = _play_response_with_queue
 sys.modules.setdefault("apps.artagent.backend.src.services.acs.acs_helpers", acs_helpers_stub)
 
 speech_services_stub = ModuleType("apps.artagent.backend.src.services.speech_services")
+
+
 class _SpeechSynthesizerStub:
     @staticmethod
     def split_pcm_to_base64_frames(pcm_bytes: bytes, sample_rate: int) -> list[str]:
         return [base64.b64encode(pcm_bytes).decode("ascii")] if pcm_bytes else []
+
+
 speech_services_stub.SpeechSynthesizer = _SpeechSynthesizerStub
+
 
 # Mock StreamingSpeechRecognizerFromBytes to avoid Azure Speech SDK dependencies
 class _MockStreamingSpeechRecognizer:
     def __init__(self, *args, **kwargs):
         self.is_recognizing = False
         self.recognition_result = None
-    
+
     async def start_continuous_recognition_async(self):
         self.is_recognizing = True
-    
+
     async def stop_continuous_recognition_async(self):
         self.is_recognizing = False
-        
+
     def __enter__(self):
         return self
-        
+
     def __exit__(self, *args):
         pass
+
 
 speech_services_stub.StreamingSpeechRecognizerFromBytes = _MockStreamingSpeechRecognizer
 sys.modules.setdefault("apps.artagent.backend.src.services.speech_services", speech_services_stub)
@@ -97,6 +105,7 @@ SpeechSDKThread = acs_media.SpeechSDKThread
 RouteTurnThread = acs_media.RouteTurnThread
 MainEventLoop = acs_media.MainEventLoop
 
+
 @pytest.fixture(autouse=True)
 def disable_tracer_autouse():
     with patch("opentelemetry.trace.get_tracer") as mock_tracer:
@@ -107,6 +116,7 @@ def disable_tracer_autouse():
         mock_tracer.return_value.start_as_current_span.return_value.__enter__ = lambda self: None  # type: ignore[assignment]
         mock_tracer.return_value.start_as_current_span.return_value.__exit__ = lambda *args: None
         yield
+
 
 @pytest.mark.asyncio
 async def test_queue_speech_result_evicts_oldest_when_queue_full():
@@ -119,6 +129,7 @@ async def test_queue_speech_result_evicts_oldest_when_queue_full():
 
     assert queue.qsize() == 1
     assert queue.get_nowait() is incoming
+
 
 class DummyRecognizer:
     def __init__(self):
@@ -156,6 +167,7 @@ class DummyRecognizer:
 
     def trigger_error(self, error_text):
         self.callbacks.get("cancel", lambda *_: None)(error_text)
+
 
 class _TrackedAsyncCallable:
     def __init__(self, return_value=None):
@@ -209,6 +221,7 @@ class _DummySTTPool:
     def snapshot(self):
         return {}
 
+
 class DummyWebSocket:
     def __init__(self):
         self.sent_messages = []
@@ -234,13 +247,16 @@ class DummyWebSocket:
     async def send_json(self, payload: Any):
         self.sent_messages.append(payload)
 
+
 @pytest.fixture
 def dummy_websocket():
     return DummyWebSocket()
 
+
 @pytest.fixture
 def dummy_recognizer():
     return DummyRecognizer()
+
 
 @pytest.fixture
 def dummy_memory_manager():
@@ -250,6 +266,7 @@ def dummy_memory_manager():
     manager.get_value_from_corememory.side_effect = lambda key, default=None: default
     return manager
 
+
 class _RecordingOrchestrator:
     def __init__(self):
         self.calls = []
@@ -258,11 +275,13 @@ class _RecordingOrchestrator:
         self.calls.append({"args": args, "kwargs": kwargs})
         return "assistant-response"
 
+
 @pytest.fixture
 def dummy_orchestrator(monkeypatch):
     recorder = _RecordingOrchestrator()
     monkeypatch.setattr(acs_media, "route_turn", recorder.handler)
     return recorder
+
 
 @pytest.mark.asyncio
 async def test_thread_bridge_puts_event(dummy_recognizer):
@@ -273,8 +292,11 @@ async def test_thread_bridge_puts_event(dummy_recognizer):
     stored = await queue.get()
     assert stored.text == "hi"
 
+
 @pytest.mark.asyncio
-async def test_route_turn_processes_final_speech(dummy_websocket, dummy_recognizer, dummy_memory_manager, dummy_orchestrator):
+async def test_route_turn_processes_final_speech(
+    dummy_websocket, dummy_recognizer, dummy_memory_manager, dummy_orchestrator
+):
     queue = asyncio.Queue()
     route_thread = RouteTurnThread(
         call_connection_id="call-1",
@@ -287,8 +309,11 @@ async def test_route_turn_processes_final_speech(dummy_websocket, dummy_recogniz
     await route_thread._process_final_speech(event)
     assert len(dummy_orchestrator.calls) == 1
 
+
 @pytest.fixture
-async def media_handler(dummy_websocket, dummy_recognizer, dummy_orchestrator, dummy_memory_manager):
+async def media_handler(
+    dummy_websocket, dummy_recognizer, dummy_orchestrator, dummy_memory_manager
+):
     handler = ACSMediaHandler(
         websocket=dummy_websocket,
         orchestrator_func=dummy_orchestrator.handler,
@@ -302,6 +327,7 @@ async def media_handler(dummy_websocket, dummy_recognizer, dummy_orchestrator, d
     yield handler
     await handler.stop()
 
+
 @pytest.mark.asyncio
 async def test_media_handler_lifecycle(media_handler, dummy_recognizer):
     assert media_handler.running
@@ -309,11 +335,13 @@ async def test_media_handler_lifecycle(media_handler, dummy_recognizer):
     await media_handler.stop()
     assert not media_handler.running
 
+
 @pytest.mark.asyncio
 async def test_media_handler_audio_metadata(media_handler, dummy_recognizer):
     payload = json.dumps({"kind": "AudioMetadata", "audioMetadata": {"subscriptionId": "sub"}})
     await media_handler.handle_media_message(payload)
     assert dummy_recognizer.started
+
 
 @pytest.mark.asyncio
 async def test_media_handler_audio_data(media_handler, dummy_recognizer):
@@ -323,6 +351,7 @@ async def test_media_handler_audio_data(media_handler, dummy_recognizer):
     await asyncio.sleep(0.05)  # let background task run
     dummy_recognizer.write_bytes(b"\0")  # should not raise
 
+
 @pytest.mark.asyncio
 async def test_barge_in_flow(media_handler, dummy_recognizer):
     metadata = json.dumps({"kind": "AudioMetadata", "audioMetadata": {"subscriptionId": "sub"}})
@@ -330,10 +359,13 @@ async def test_barge_in_flow(media_handler, dummy_recognizer):
     dummy_recognizer.trigger_partial("hello there")
     await asyncio.sleep(0.05)
     stop_messages = [
-        msg for msg in media_handler.websocket.sent_messages if (isinstance(msg, str) and "StopAudio" in msg)
+        msg
+        for msg in media_handler.websocket.sent_messages
+        if (isinstance(msg, str) and "StopAudio" in msg)
         or (isinstance(msg, dict) and msg.get("kind") == "StopAudio")
     ]
     assert stop_messages
+
 
 @pytest.mark.asyncio
 async def test_speech_error_handling(media_handler, dummy_recognizer):
@@ -342,6 +374,7 @@ async def test_speech_error_handling(media_handler, dummy_recognizer):
     dummy_recognizer.trigger_error("failure")
     await asyncio.sleep(0.05)
     assert media_handler.running
+
 
 @pytest.mark.asyncio
 async def test_queue_cleanup_and_gc(media_handler):
@@ -354,8 +387,11 @@ async def test_queue_cleanup_and_gc(media_handler):
     assert ref() is None
     assert media_handler.speech_queue.qsize() == 0
 
+
 @pytest.mark.asyncio
-async def test_route_turn_cancel_current_processing_clears_queue(dummy_websocket, dummy_recognizer, dummy_memory_manager, dummy_orchestrator):
+async def test_route_turn_cancel_current_processing_clears_queue(
+    dummy_websocket, dummy_recognizer, dummy_memory_manager, dummy_orchestrator
+):
     queue = asyncio.Queue()
     route_thread = RouteTurnThread(
         call_connection_id="call-2",
@@ -374,20 +410,21 @@ async def test_route_turn_cancel_current_processing_clears_queue(dummy_websocket
     assert pending_task.cancelled()
     assert route_thread.current_response_task is None
 
+
 @pytest.mark.asyncio
 async def test_queue_direct_text_playback_success(media_handler):
-    queued = media_handler.queue_direct_text_playback(
-        "System notice", SpeechEventType.ANNOUNCEMENT
-    )
+    queued = media_handler.queue_direct_text_playback("System notice", SpeechEventType.ANNOUNCEMENT)
     assert queued
     event = await asyncio.wait_for(media_handler.speech_queue.get(), timeout=0.1)
     assert event.text == "System notice"
     assert event.event_type == SpeechEventType.ANNOUNCEMENT
 
+
 @pytest.mark.asyncio
 async def test_queue_direct_text_playback_returns_false_when_stopped(media_handler):
     await media_handler.stop()
     assert not media_handler.queue_direct_text_playback("Should not enqueue")
+
 
 @pytest.mark.asyncio
 async def test_thread_bridge_schedule_barge_in_with_loop():
@@ -420,7 +457,9 @@ def test_thread_bridge_schedule_barge_in_without_loop():
 
 
 @pytest.mark.asyncio
-async def test_process_direct_text_playback_skips_empty_text(dummy_websocket, dummy_recognizer, dummy_memory_manager, dummy_orchestrator):
+async def test_process_direct_text_playback_skips_empty_text(
+    dummy_websocket, dummy_recognizer, dummy_memory_manager, dummy_orchestrator
+):
     queue = asyncio.Queue()
     route_thread = RouteTurnThread(
         call_connection_id="call-3",
@@ -441,11 +480,17 @@ async def test_process_direct_text_playback_skips_empty_text(dummy_websocket, du
 @pytest.mark.asyncio
 async def test_main_event_loop_handles_metadata_and_dtmf(media_handler, dummy_recognizer):
     meta_payload = json.dumps({"kind": "AudioMetadata", "audioMetadata": {"subscriptionId": "sub"}})
-    await media_handler.main_event_loop.handle_media_message(meta_payload, dummy_recognizer, media_handler)
-    await media_handler.main_event_loop.handle_media_message(meta_payload, dummy_recognizer, media_handler)
+    await media_handler.main_event_loop.handle_media_message(
+        meta_payload, dummy_recognizer, media_handler
+    )
+    await media_handler.main_event_loop.handle_media_message(
+        meta_payload, dummy_recognizer, media_handler
+    )
 
     dtmf_payload = json.dumps({"kind": "DtmfData", "dtmfData": {"data": "*"}})
-    await media_handler.main_event_loop.handle_media_message(dtmf_payload, dummy_recognizer, media_handler)
+    await media_handler.main_event_loop.handle_media_message(
+        dtmf_payload, dummy_recognizer, media_handler
+    )
 
     greeting_events = []
     while not media_handler.speech_queue.empty():
@@ -455,9 +500,13 @@ async def test_main_event_loop_handles_metadata_and_dtmf(media_handler, dummy_re
 
 @pytest.mark.asyncio
 async def test_main_event_loop_handles_silent_and_invalid_audio(media_handler, dummy_recognizer):
-    await media_handler.main_event_loop.handle_media_message("not-json", dummy_recognizer, media_handler)
+    await media_handler.main_event_loop.handle_media_message(
+        "not-json", dummy_recognizer, media_handler
+    )
     silent_payload = json.dumps({"kind": "AudioData", "audioData": {"data": "", "silent": True}})
-    await media_handler.main_event_loop.handle_media_message(silent_payload, dummy_recognizer, media_handler)
+    await media_handler.main_event_loop.handle_media_message(
+        silent_payload, dummy_recognizer, media_handler
+    )
     assert not media_handler.main_event_loop.active_audio_tasks
 
 

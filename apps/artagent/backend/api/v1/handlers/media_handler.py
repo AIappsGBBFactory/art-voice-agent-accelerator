@@ -41,58 +41,53 @@ import base64
 import json
 import struct
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Literal, Optional
+from typing import Any
 
-from fastapi import WebSocket, WebSocketDisconnect
-from fastapi.websockets import WebSocketState
-from opentelemetry import trace
-from opentelemetry.trace import SpanKind, Status, StatusCode
-
-from config import ACS_STREAMING_MODE, GREETING, STOP_WORDS
-from src.enums.stream_modes import StreamMode
-from src.pools.session_manager import SessionContext
-from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
-from src.stateful.state_managment import MemoManager
-from src.tools.latency_tool import LatencyTool
+# Personalized greeting generation
+from apps.artagent.backend.agents.tools.personalized_greeting import (
+    generate_personalized_greeting,
+)
+from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
 
 # Use unified orchestrator (new modular agent structure)
 from apps.artagent.backend.src.orchestration.unified import route_turn
-from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
 
 # ACS call control services
 from apps.artagent.backend.src.services.acs.call_transfer import (
     transfer_call as transfer_call_service,
 )
 
-# Personalized greeting generation
-from apps.artagent.backend.agents.tools.personalized_greeting import (
-    generate_personalized_greeting,
-)
-from utils.ml_logging import get_logger
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Module Imports (self-contained speech orchestration layer)
 # ─────────────────────────────────────────────────────────────────────────────
-from apps.artagent.backend.voice import (
-    # Speech Cascade Handler
+from apps.artagent.backend.voice import (  # Browser barge-in controller; Speech Cascade Handler; Messaging (transcript/envelope helpers)
+    BrowserBargeInController,
     SpeechCascadeHandler,
     SpeechEvent,
     SpeechEventType,
-    # Messaging (transcript/envelope helpers)
-    send_user_transcript,
-    send_user_partial_transcript,
-    send_session_envelope,
-    make_envelope,
     make_assistant_envelope,
     make_assistant_streaming_envelope,
-    # Browser barge-in controller
-    BrowserBargeInController,
+    make_envelope,
+    send_session_envelope,
+    send_user_partial_transcript,
+    send_user_transcript,
 )
 
 # Unified TTS Playback - single source of truth for voice synthesis
 from apps.artagent.backend.voice.speech_cascade.tts import TTSPlayback
+from config import ACS_STREAMING_MODE, GREETING, STOP_WORDS
+from fastapi import WebSocket, WebSocketDisconnect
+from fastapi.websockets import WebSocketState
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
+from src.enums.stream_modes import StreamMode
+from src.pools.session_manager import SessionContext
+from src.stateful.state_managment import MemoManager
+from src.tools.latency_tool import LatencyTool
+from utils.ml_logging import get_logger
 
 logger = get_logger("api.v1.handlers.media_handler")
 tracer = trace.get_tracer(__name__)
@@ -115,12 +110,14 @@ VOICE_LIVE_SILENCE_GAP_SECONDS = BROWSER_SILENCE_GAP_SECONDS
 
 class TransportType(str, Enum):
     """Media transport types."""
+
     BROWSER = "browser"
     ACS = "acs"
 
 
 class ACSMessageKind:
     """ACS WebSocket message types."""
+
     AUDIO_METADATA = "AudioMetadata"
     AUDIO_DATA = "AudioData"
     DTMF_DATA = "DtmfData"
@@ -145,13 +142,14 @@ def pcm16le_rms(pcm_bytes: bytes) -> float:
 @dataclass
 class MediaHandlerConfig:
     """Configuration for MediaHandler creation."""
+
     websocket: WebSocket
     session_id: str
     transport: TransportType = TransportType.BROWSER
-    conn_id: Optional[str] = None  # Browser only
-    call_connection_id: Optional[str] = None  # ACS only
+    conn_id: str | None = None  # Browser only
+    call_connection_id: str | None = None  # ACS only
     stream_mode: StreamMode = field(default_factory=lambda: ACS_STREAMING_MODE)
-    user_email: Optional[str] = None
+    user_email: str | None = None
 
 
 # ============================================================================
@@ -225,25 +223,25 @@ class MediaHandler:
         # Resources
         self._tts_client: Any = None
         self._stt_client: Any = None
-        self._latency_tool: Optional[LatencyTool] = None
+        self._latency_tool: LatencyTool | None = None
         self._tts_tier = None
         self._stt_tier = None
 
         # Speech cascade
-        self.speech_cascade: Optional[SpeechCascadeHandler] = None
+        self.speech_cascade: SpeechCascadeHandler | None = None
         self._greeting_text: str = ""
         self._greeting_queued = False
 
         # TTS Playback - unified handler for both transports
         self._tts_cancel_event: asyncio.Event = asyncio.Event()
-        self._tts_playback: Optional[TTSPlayback] = None  # Created in factory
-        self._current_tts_task: Optional[asyncio.Task] = None
+        self._tts_playback: TTSPlayback | None = None  # Created in factory
+        self._current_tts_task: asyncio.Task | None = None
         self._orchestration_tasks: set = set()
 
         # Barge-in state (for browser BrowserBargeInController compatibility)
         self._barge_in_active: bool = False
         self._last_barge_in_ts: float = 0.0
-        self._barge_in_controller: Optional[BrowserBargeInController] = None
+        self._barge_in_controller: BrowserBargeInController | None = None
 
         # State
         self._running = False
@@ -259,7 +257,7 @@ class MediaHandler:
         cls,
         config: MediaHandlerConfig,
         app_state: Any,
-    ) -> "MediaHandler":
+    ) -> MediaHandler:
         """
         Create MediaHandler for either transport.
 
@@ -323,7 +321,7 @@ class MediaHandler:
             start_agent_name = getattr(app_state, "start_agent", "Concierge")
             unified_agents = getattr(app_state, "unified_agents", {})
             start_agent = unified_agents.get(start_agent_name)
-            
+
             if start_agent:
                 logger.info(
                     "[%s] Session initialized with start agent: %s",
@@ -337,7 +335,7 @@ class MediaHandler:
                     start_agent_name,
                     len(unified_agents),
                 )
-        
+
         if start_agent:
             memory_manager.update_corememory("active_agent", start_agent_name)
 
@@ -375,7 +373,9 @@ class MediaHandler:
         # Persist
         await memory_manager.persist_to_redis_async(redis_mgr)
 
-        logger.info("[%s] MediaHandler created (%s)", handler._session_short, config.transport.value)
+        logger.info(
+            "[%s] MediaHandler created (%s)", handler._session_short, config.transport.value
+        )
         return handler
 
     @staticmethod
@@ -394,19 +394,19 @@ class MediaHandler:
     async def _derive_greeting(self) -> str:
         """Generate contextual greeting with agent assistance when possible."""
         return self._derive_default_greeting(
-            self.memory_manager, 
+            self.memory_manager,
             self._app_state,
             session_id=self._session_id,
         )
 
     @staticmethod
     def _derive_default_greeting(
-        memory_manager: Optional[MemoManager], 
+        memory_manager: MemoManager | None,
         app_state: Any,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
     ) -> str:
         """Derive greeting from session agent, unified agent config, or memory context.
-        
+
         Priority:
         1. Session agent (from Agent Builder)
         2. Unified agents (from disk/YAML)
@@ -414,7 +414,7 @@ class MediaHandler:
         # First, check for session agent (Agent Builder override)
         start_agent = None
         start_agent_name = None
-        
+
         if session_id:
             session_agent = get_session_agent(session_id)
             if session_agent:
@@ -424,13 +424,13 @@ class MediaHandler:
                     "Using session agent for greeting: %s",
                     session_agent.name,
                 )
-        
+
         # Fall back to unified agents if no session agent
         if not start_agent:
             unified_agents = getattr(app_state, "unified_agents", {})
             start_agent_name = getattr(app_state, "start_agent", "Concierge")
             start_agent = unified_agents.get(start_agent_name)
-        
+
         # Fall back to legacy auth_agent if unified not available
         if not start_agent:
             start_agent = getattr(app_state, "auth_agent", None)
@@ -445,8 +445,12 @@ class MediaHandler:
                 "session_profile": session_profile,
                 "caller_name": memory_manager.get_value_from_corememory("caller_name", None),
                 "client_id": memory_manager.get_value_from_corememory("client_id", None),
-                "customer_intelligence": memory_manager.get_value_from_corememory("customer_intelligence", None),
-                "institution_name": memory_manager.get_value_from_corememory("institution_name", None),
+                "customer_intelligence": memory_manager.get_value_from_corememory(
+                    "customer_intelligence", None
+                ),
+                "institution_name": memory_manager.get_value_from_corememory(
+                    "institution_name", None
+                ),
                 "active_agent": active_agent,
                 "previous_agent": memory_manager.get_value_from_corememory("previous_agent", None),
                 # Add agent_name for greeting template (use active_agent or start_agent name)
@@ -493,18 +497,28 @@ class MediaHandler:
         # Try personalized greeting from customer intel
         if memory_manager:
             try:
-                customer_intel = memory_manager.get_value_from_corememory("customer_intelligence", None)
+                customer_intel = memory_manager.get_value_from_corememory(
+                    "customer_intelligence", None
+                )
                 if customer_intel:
-                    caller = (memory_manager.get_value_from_corememory("caller_name", "") or "").strip()
-                    agent = (memory_manager.get_value_from_corememory("active_agent", "") or "").strip() or "Support"
-                    inst = (memory_manager.get_value_from_corememory("institution_name", "") or "").strip()
+                    caller = (
+                        memory_manager.get_value_from_corememory("caller_name", "") or ""
+                    ).strip()
+                    agent = (
+                        memory_manager.get_value_from_corememory("active_agent", "") or ""
+                    ).strip() or "Support"
+                    inst = (
+                        memory_manager.get_value_from_corememory("institution_name", "") or ""
+                    ).strip()
                     topic = (memory_manager.get_value_from_corememory("topic", "") or "").strip()
                     personalized = generate_personalized_greeting(
                         agent_name=agent,
                         caller_name=caller or None,
                         institution_name=inst or "our team",
                         customer_intelligence=customer_intel,
-                        is_return_visit=memory_manager.get_value_from_corememory("greeting_sent", False),
+                        is_return_visit=memory_manager.get_value_from_corememory(
+                            "greeting_sent", False
+                        ),
                     )
                     if personalized and personalized.get("greeting"):
                         return personalized["greeting"]
@@ -541,7 +555,7 @@ class MediaHandler:
                 ws.state._loop = None
 
             if self._call_connection_id:
-                setattr(ws, "_call_connection_id", self._call_connection_id)
+                ws._call_connection_id = self._call_connection_id
 
             # Set up barge-in controller for browser transport
             if self._transport == TransportType.BROWSER:
@@ -670,9 +684,9 @@ class MediaHandler:
                 playback_tail.cancel()
                 try:
                     await asyncio.wait_for(asyncio.shield(playback_tail), timeout=0.2)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
+                except (TimeoutError, asyncio.CancelledError):
                     pass
-                setattr(ws.state, "acs_playback_tail", None)
+                ws.state.acs_playback_tail = None
                 logger.debug("[%s] ACS playback tail cancelled", self._session_short)
 
             # Also cancel the current streaming task (frame streaming)
@@ -681,9 +695,9 @@ class MediaHandler:
                 streaming_task.cancel()
                 try:
                     await asyncio.wait_for(asyncio.shield(streaming_task), timeout=0.2)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
+                except (TimeoutError, asyncio.CancelledError):
                     pass
-                setattr(ws.state, "current_streaming_task", None)
+                ws.state.current_streaming_task = None
                 logger.debug("[%s] ACS streaming task cancelled", self._session_short)
 
         # Cancel handler's TTS task
@@ -691,7 +705,7 @@ class MediaHandler:
             self._current_tts_task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(self._current_tts_task), timeout=0.2)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
             self._current_tts_task = None
 
@@ -783,10 +797,10 @@ class MediaHandler:
             voice_rate=event.voice_rate,
         )
 
-    def _on_partial_transcript(self, text: str, language: str, speaker_id: Optional[str]) -> None:
+    def _on_partial_transcript(self, text: str, language: str, speaker_id: str | None) -> None:
         """
         Handle partial (interim) STT transcript.
-        
+
         Called from STT thread, so we schedule the async work on the main loop.
         Uses send_user_partial_transcript which broadcasts to all session connections.
         """
@@ -796,9 +810,9 @@ class MediaHandler:
 
         # Broadcast partial to session (works for both transports)
         coro = send_user_partial_transcript(
-            self._websocket, 
-            text, 
-            language=language, 
+            self._websocket,
+            text,
+            language=language,
             speaker_id=speaker_id,
             session_id=self._session_id,
         )
@@ -829,9 +843,9 @@ class MediaHandler:
         text: str,
         event_type: SpeechEventType,
         *,
-        voice_name: Optional[str] = None,
-        voice_style: Optional[str] = None,
-        voice_rate: Optional[str] = None,
+        voice_name: str | None = None,
+        voice_style: str | None = None,
+        voice_rate: str | None = None,
     ) -> None:
         """Handle TTS request with optional voice configuration."""
         await self._send_tts(
@@ -851,13 +865,13 @@ class MediaHandler:
         text: str,
         *,
         is_greeting: bool = False,
-        voice_name: Optional[str] = None,
-        voice_style: Optional[str] = None,
-        voice_rate: Optional[str] = None,
+        voice_name: str | None = None,
+        voice_style: str | None = None,
+        voice_rate: str | None = None,
     ) -> None:
         """
         Send TTS via appropriate transport.
-        
+
         Voice is resolved from agent config by TTSPlayback if not provided.
         """
         if not text or not text.strip() or not self._is_connected():
@@ -921,7 +935,9 @@ class MediaHandler:
         try:
             auth_agent = getattr(self._app_state, "auth_agent", None)
             agent_name = getattr(auth_agent, "name", None) if auth_agent else None
-            agent_name = agent_name or self.memory_manager.get_value_from_corememory("active_agent", "System")
+            agent_name = agent_name or self.memory_manager.get_value_from_corememory(
+                "active_agent", "System"
+            )
             self.memory_manager.append_to_history(agent_name, "assistant", text)
             self.memory_manager.update_corememory("greeting_sent", True)
         except Exception as e:
@@ -929,14 +945,14 @@ class MediaHandler:
 
     async def _emit_to_ui(self, text: str, *, is_greeting: bool = False) -> None:
         """Emit message to UI with proper agent labeling.
-        
+
         Args:
             text: Message text to emit
             is_greeting: If True, use non-streaming envelope and don't dedupe
         """
         try:
             normalized = (text or "").strip()
-            
+
             # For greetings, always emit (don't check stream cache)
             # For streaming responses, skip if already broadcast
             if not is_greeting:
@@ -952,8 +968,11 @@ class MediaHandler:
             # Get active agent name from memory manager
             agent_name = "Assistant"
             if self.memory_manager:
-                agent_name = self.memory_manager.get_value_from_corememory("active_agent", "Assistant") or "Assistant"
-            
+                agent_name = (
+                    self.memory_manager.get_value_from_corememory("active_agent", "Assistant")
+                    or "Assistant"
+                )
+
             # Use non-streaming envelope for greetings, streaming for other messages
             if is_greeting:
                 envelope = make_assistant_envelope(
@@ -969,11 +988,15 @@ class MediaHandler:
                 )
             envelope["speaker"] = agent_name
             envelope["message"] = text  # Legacy compatibility
-            
+
             if self._transport == TransportType.ACS:
                 await send_session_envelope(
-                    self._websocket, envelope, session_id=self._session_id,
-                    conn_id=None, event_label="assistant_streaming", broadcast_only=True
+                    self._websocket,
+                    envelope,
+                    session_id=self._session_id,
+                    conn_id=None,
+                    event_label="assistant_streaming",
+                    broadcast_only=True,
                 )
             else:
                 await self._app_state.conn_manager.send_to_connection(self._conn_id, envelope)
@@ -1092,7 +1115,7 @@ class MediaHandler:
             )
             self._greeting_queued = True
 
-    def _handle_audio_data(self, data: Dict[str, Any]) -> None:
+    def _handle_audio_data(self, data: dict[str, Any]) -> None:
         """Handle ACS AudioData."""
         section = data.get("audioData") or data.get("AudioData") or {}
         if section.get("silent", True):
@@ -1107,7 +1130,7 @@ class MediaHandler:
         except Exception as e:
             logger.error("[%s] Audio decode error: %s", self._session_short, e)
 
-    def _handle_dtmf(self, data: Dict[str, Any]) -> None:
+    def _handle_dtmf(self, data: dict[str, Any]) -> None:
         """Handle ACS DTMF."""
         section = data.get("dtmfData") or data.get("DtmfData") or {}
         tone = section.get("data")
@@ -1118,12 +1141,14 @@ class MediaHandler:
         """Handle goodbye/exit."""
         goodbye = "Thank you for using our service. Goodbye."
         envelope = make_envelope(
-            etype="exit", sender="System",
+            etype="exit",
+            sender="System",
             payload={"type": "exit", "message": goodbye},
-            topic="session", session_id=self._session_id
+            topic="session",
+            session_id=self._session_id,
         )
         await self._app_state.conn_manager.broadcast_session(self._session_id, envelope)
-        
+
         # Use TTSPlayback for goodbye (gets voice from agent)
         await self._tts_playback.play_to_browser(goodbye)
 
@@ -1225,18 +1250,17 @@ class MediaHandler:
         }
 
     # ACS-specific operations
-    async def transfer_call(self, target: str, **kwargs) -> Dict[str, Any]:
+    async def transfer_call(self, target: str, **kwargs) -> dict[str, Any]:
         """Transfer ACS call."""
         return await transfer_call_service(
-            call_connection_id=self._call_connection_id,
-            target_address=target,
-            **kwargs
+            call_connection_id=self._call_connection_id, target_address=target, **kwargs
         )
 
     def queue_direct_text_playback(
-        self, text: str,
+        self,
+        text: str,
         playback_type: SpeechEventType = SpeechEventType.ANNOUNCEMENT,
-        language: str = "en-US"
+        language: str = "en-US",
     ) -> bool:
         """Queue text for TTS playback."""
         if not self._running:

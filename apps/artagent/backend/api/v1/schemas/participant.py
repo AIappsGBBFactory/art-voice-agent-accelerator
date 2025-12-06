@@ -4,8 +4,9 @@ Participant-related API schemas.
 Pydantic schemas for participant management API requests and responses.
 """
 
-from typing import List, Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ParticipantResponse(BaseModel):
@@ -16,17 +17,17 @@ class ParticipantResponse(BaseModel):
         description="Unique participant identifier",
         json_schema_extra={"example": "participant_abc123"},
     )
-    display_name: Optional[str] = Field(
+    display_name: str | None = Field(
         None,
         description="Display name of the participant",
         json_schema_extra={"example": "John Doe"},
     )
-    phone_number: Optional[str] = Field(
+    phone_number: str | None = Field(
         None,
         description="Phone number of the participant",
         json_schema_extra={"example": "+1234567890"},
     )
-    email: Optional[str] = Field(
+    email: str | None = Field(
         None,
         description="Email address of the participant",
         json_schema_extra={"example": "john.doe@example.com"},
@@ -36,26 +37,22 @@ class ParticipantResponse(BaseModel):
         description="Role of the participant in the call",
         json_schema_extra={"example": "caller"},
     )
-    status: Literal[
-        "invited", "joining", "connected", "muted", "on_hold", "disconnected"
-    ] = Field(
+    status: Literal["invited", "joining", "connected", "muted", "on_hold", "disconnected"] = Field(
         ...,
         description="Current status of the participant",
         json_schema_extra={"example": "connected"},
     )
-    capabilities: Dict[str, bool] = Field(
+    capabilities: dict[str, bool] = Field(
         default_factory=dict,
         description="Participant capabilities and permissions",
         json_schema_extra={"example": {"can_speak": True, "can_listen": True}},
     )
-    quality_metrics: Optional[Dict[str, float]] = Field(
+    quality_metrics: dict[str, float] | None = Field(
         None,
         description="Audio and network quality metrics",
-        json_schema_extra={
-            "example": {"audio_quality_score": 0.85, "network_quality_score": 0.92}
-        },
+        json_schema_extra={"example": {"audio_quality_score": 0.85, "network_quality_score": 0.92}},
     )
-    interaction_stats: Optional[Dict[str, int]] = Field(
+    interaction_stats: dict[str, int] | None = Field(
         None,
         description="Interaction statistics",
         json_schema_extra={
@@ -66,7 +63,7 @@ class ParticipantResponse(BaseModel):
             }
         },
     )
-    timestamps: Dict[str, Optional[str]] = Field(
+    timestamps: dict[str, str | None] = Field(
         default_factory=dict,
         description="Relevant timestamps for the participant",
         json_schema_extra={
@@ -77,7 +74,7 @@ class ParticipantResponse(BaseModel):
             }
         },
     )
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional participant metadata",
         json_schema_extra={
@@ -126,27 +123,27 @@ class ParticipantResponse(BaseModel):
 class ParticipantUpdateRequest(BaseModel):
     """Request model for updating participant properties."""
 
-    display_name: Optional[str] = Field(
+    display_name: str | None = Field(
         None,
         description="Updated display name",
         json_schema_extra={"example": "John Smith"},
     )
-    role: Optional[Literal["caller", "agent", "moderator", "observer"]] = Field(
+    role: Literal["caller", "agent", "moderator", "observer"] | None = Field(
         None,
         description="Updated participant role",
         json_schema_extra={"example": "moderator"},
     )
-    status: Optional[Literal["connected", "muted", "on_hold", "disconnected"]] = Field(
+    status: Literal["connected", "muted", "on_hold", "disconnected"] | None = Field(
         None,
         description="Updated participant status",
         json_schema_extra={"example": "muted"},
     )
-    capabilities: Optional[Dict[str, bool]] = Field(
+    capabilities: dict[str, bool] | None = Field(
         None,
         description="Updated capabilities",
         json_schema_extra={"example": {"can_speak": False, "can_listen": True}},
     )
-    metadata: Optional[Dict[str, Any]] = Field(
+    metadata: dict[str, Any] | None = Field(
         None,
         description="Updated metadata",
         json_schema_extra={
@@ -174,18 +171,18 @@ class ParticipantUpdateRequest(BaseModel):
 class ParticipantInviteRequest(BaseModel):
     """Request model for inviting participants to a call."""
 
-    phone_number: Optional[str] = Field(
+    phone_number: str | None = Field(
         None,
         description="Phone number to invite (E.164 format)",
         pattern=r"^\+[1-9]\d{1,14}$",
         json_schema_extra={"example": "+1234567890"},
     )
-    email: Optional[str] = Field(
+    email: str | None = Field(
         None,
         description="Email address to invite",
         json_schema_extra={"example": "participant@example.com"},
     )
-    display_name: Optional[str] = Field(
+    display_name: str | None = Field(
         None,
         description="Display name for the participant",
         json_schema_extra={"example": "Jane Doe"},
@@ -195,14 +192,14 @@ class ParticipantInviteRequest(BaseModel):
         description="Role to assign to the participant",
         json_schema_extra={"example": "caller"},
     )
-    capabilities: Optional[Dict[str, bool]] = Field(
+    capabilities: dict[str, bool] | None = Field(
         default_factory=lambda: {
             "can_speak": True,
             "can_listen": True,
         },
         description="Initial capabilities for the participant",
     )
-    context: Optional[Dict[str, Any]] = Field(
+    context: dict[str, Any] | None = Field(
         default_factory=dict,
         description="Additional context for the invitation",
         json_schema_extra={
@@ -244,7 +241,7 @@ class ParticipantInviteResponse(BaseModel):
         description="Human-readable status message",
         json_schema_extra={"example": "Invitation sent successfully"},
     )
-    invitation_details: Dict[str, Any] = Field(
+    invitation_details: dict[str, Any] = Field(
         default_factory=dict,
         description="Details about the invitation",
         json_schema_extra={
@@ -275,9 +272,7 @@ class ParticipantInviteResponse(BaseModel):
 class ParticipantListResponse(BaseModel):
     """Response model for listing participants."""
 
-    participants: List[ParticipantResponse] = Field(
-        ..., description="List of participants"
-    )
+    participants: list[ParticipantResponse] = Field(..., description="List of participants")
     total: int = Field(
         ...,
         description="Total number of participants",
@@ -288,7 +283,7 @@ class ParticipantListResponse(BaseModel):
         description="Number of active participants",
         json_schema_extra={"example": 2},
     )
-    call_id: Optional[str] = Field(
+    call_id: str | None = Field(
         None,
         description="Associated call ID if filtered by call",
         json_schema_extra={"example": "call_abc123"},

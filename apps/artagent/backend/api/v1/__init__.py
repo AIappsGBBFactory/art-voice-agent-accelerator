@@ -6,7 +6,7 @@ V1 REST API endpoints for the Real-Time Audio Agent.
 
 This package provides enterprise-grade REST API endpoints including:
 - Health checks and readiness probes
-- Call management and lifecycle operations  
+- Call management and lifecycle operations
 - Event system monitoring and processing
 - Media streaming and transcription services
 

@@ -19,43 +19,35 @@ Endpoints:
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-
-from apps.artagent.backend.agents.tools.registry import (
-    initialize_tools,
-    list_tools,
-    get_tool_definition,
-    _TOOL_DEFINITIONS,
-)
-from apps.artagent.backend.agents.loader import (
-    load_defaults,
-    load_prompt,
-    AGENTS_DIR,
-)
+import yaml
 from apps.artagent.backend.agents.base import (
+    HandoffConfig,
+    ModelConfig,
+    SpeechConfig,
     UnifiedAgent,
     VoiceConfig,
-    ModelConfig,
-    HandoffConfig,
-    SpeechConfig,
 )
-from apps.artagent.backend.agents.session_manager import (
-    SessionAgentManager,
-    SessionAgentConfig,
+from apps.artagent.backend.agents.loader import (
+    AGENTS_DIR,
+    load_defaults,
+    load_prompt,
+)
+from apps.artagent.backend.agents.tools.registry import (
+    _TOOL_DEFINITIONS,
+    initialize_tools,
 )
 from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
-    set_session_agent,
-    remove_session_agent,
     list_session_agents,
+    remove_session_agent,
+    set_session_agent,
 )
 from config import DEFAULT_TTS_VOICE
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 from utils.ml_logging import get_logger
-import yaml
 
 logger = get_logger("v1.agent_builder")
 
@@ -69,15 +61,17 @@ router = APIRouter()
 
 class ToolInfo(BaseModel):
     """Tool information for frontend display."""
+
     name: str
     description: str
     is_handoff: bool = False
-    tags: List[str] = []
-    parameters: Optional[Dict[str, Any]] = None
+    tags: list[str] = []
+    parameters: dict[str, Any] | None = None
 
 
 class VoiceInfo(BaseModel):
     """Voice information for frontend selection."""
+
     name: str
     display_name: str
     category: str  # turbo, standard, hd
@@ -86,6 +80,7 @@ class VoiceInfo(BaseModel):
 
 class ModelConfigSchema(BaseModel):
     """Model configuration schema."""
+
     deployment_id: str = "gpt-4o"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     top_p: float = Field(default=0.9, ge=0.0, le=1.0)
@@ -94,6 +89,7 @@ class ModelConfigSchema(BaseModel):
 
 class VoiceConfigSchema(BaseModel):
     """Voice configuration schema."""
+
     name: str = "en-US-AvaMultilingualNeural"
     type: str = "azure-standard"
     style: str = "chat"
@@ -102,67 +98,66 @@ class VoiceConfigSchema(BaseModel):
 
 class SpeechConfigSchema(BaseModel):
     """Speech recognition (STT) configuration schema."""
+
     vad_silence_timeout_ms: int = Field(
-        default=800, 
-        ge=100, 
-        le=5000, 
-        description="Silence duration (ms) before finalizing recognition"
+        default=800,
+        ge=100,
+        le=5000,
+        description="Silence duration (ms) before finalizing recognition",
     )
     use_semantic_segmentation: bool = Field(
-        default=False, 
-        description="Enable semantic sentence boundary detection"
+        default=False, description="Enable semantic sentence boundary detection"
     )
-    candidate_languages: List[str] = Field(
+    candidate_languages: list[str] = Field(
         default_factory=lambda: ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"],
-        description="Languages for automatic detection"
+        description="Languages for automatic detection",
     )
-    enable_diarization: bool = Field(
-        default=False, 
-        description="Enable speaker diarization"
-    )
+    enable_diarization: bool = Field(default=False, description="Enable speaker diarization")
     speaker_count_hint: int = Field(
-        default=2, 
-        ge=1, 
-        le=10, 
-        description="Hint for number of speakers"
+        default=2, ge=1, le=10, description="Hint for number of speakers"
     )
 
 
 class DynamicAgentConfig(BaseModel):
     """Configuration for creating a dynamic agent."""
+
     name: str = Field(..., min_length=1, max_length=64, description="Agent display name")
     description: str = Field(default="", max_length=512, description="Agent description")
     greeting: str = Field(default="", max_length=1024, description="Initial greeting message")
-    return_greeting: str = Field(default="", max_length=1024, description="Return greeting when caller comes back")
+    return_greeting: str = Field(
+        default="", max_length=1024, description="Return greeting when caller comes back"
+    )
     prompt: str = Field(..., min_length=10, description="System prompt for the agent")
-    tools: List[str] = Field(default_factory=list, description="List of tool names to enable")
-    model: Optional[ModelConfigSchema] = None
-    voice: Optional[VoiceConfigSchema] = None
-    speech: Optional[SpeechConfigSchema] = None
-    template_vars: Optional[Dict[str, Any]] = None
+    tools: list[str] = Field(default_factory=list, description="List of tool names to enable")
+    model: ModelConfigSchema | None = None
+    voice: VoiceConfigSchema | None = None
+    speech: SpeechConfigSchema | None = None
+    template_vars: dict[str, Any] | None = None
 
 
 class SessionAgentResponse(BaseModel):
     """Response for session agent operations."""
+
     session_id: str
     agent_name: str
     status: str
-    config: Dict[str, Any]
-    created_at: Optional[float] = None
-    modified_at: Optional[float] = None
+    config: dict[str, Any]
+    created_at: float | None = None
+    modified_at: float | None = None
 
 
 class AgentTemplateInfo(BaseModel):
     """Agent template information for frontend display."""
+
     id: str
     name: str
     description: str
     greeting: str
     prompt_preview: str
     prompt_full: str
-    tools: List[str]
-    voice: Optional[Dict[str, Any]] = None
-    model: Optional[Dict[str, Any]] = None
+    tools: list[str]
+    voice: dict[str, Any] | None = None
+    model: dict[str, Any] | None = None
     is_entry_point: bool = False
 
 
@@ -172,12 +167,26 @@ class AgentTemplateInfo(BaseModel):
 
 AVAILABLE_VOICES = [
     # Turbo voices - lowest latency
-    VoiceInfo(name="en-US-AlloyTurboMultilingualNeural", display_name="Alloy (Turbo)", category="turbo"),
-    VoiceInfo(name="en-US-EchoTurboMultilingualNeural", display_name="Echo (Turbo)", category="turbo"),
-    VoiceInfo(name="en-US-FableTurboMultilingualNeural", display_name="Fable (Turbo)", category="turbo"),
-    VoiceInfo(name="en-US-OnyxTurboMultilingualNeural", display_name="Onyx (Turbo)", category="turbo"),
-    VoiceInfo(name="en-US-NovaTurboMultilingualNeural", display_name="Nova (Turbo)", category="turbo"),
-    VoiceInfo(name="en-US-ShimmerTurboMultilingualNeural", display_name="Shimmer (Turbo)", category="turbo"),
+    VoiceInfo(
+        name="en-US-AlloyTurboMultilingualNeural", display_name="Alloy (Turbo)", category="turbo"
+    ),
+    VoiceInfo(
+        name="en-US-EchoTurboMultilingualNeural", display_name="Echo (Turbo)", category="turbo"
+    ),
+    VoiceInfo(
+        name="en-US-FableTurboMultilingualNeural", display_name="Fable (Turbo)", category="turbo"
+    ),
+    VoiceInfo(
+        name="en-US-OnyxTurboMultilingualNeural", display_name="Onyx (Turbo)", category="turbo"
+    ),
+    VoiceInfo(
+        name="en-US-NovaTurboMultilingualNeural", display_name="Nova (Turbo)", category="turbo"
+    ),
+    VoiceInfo(
+        name="en-US-ShimmerTurboMultilingualNeural",
+        display_name="Shimmer (Turbo)",
+        category="turbo",
+    ),
     # Standard voices
     VoiceInfo(name="en-US-AvaMultilingualNeural", display_name="Ava", category="standard"),
     VoiceInfo(name="en-US-AndrewMultilingualNeural", display_name="Andrew", category="standard"),
@@ -206,44 +215,44 @@ AVAILABLE_VOICES = [
 
 @router.get(
     "/tools",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="List Available Tools",
     description="Get list of all registered tools that can be assigned to dynamic agents.",
     tags=["Agent Builder"],
 )
 async def list_available_tools(
-    category: Optional[str] = None,
+    category: str | None = None,
     include_handoffs: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List all available tools for agent configuration.
-    
+
     Args:
         category: Filter by category (banking, auth, fraud, etc.)
         include_handoffs: Whether to include handoff tools
     """
     start = time.time()
-    
+
     # Ensure tools are initialized
     initialize_tools()
-    
-    tools_list: List[ToolInfo] = []
-    categories: Dict[str, int] = {}
-    
+
+    tools_list: list[ToolInfo] = []
+    categories: dict[str, int] = {}
+
     for name, defn in _TOOL_DEFINITIONS.items():
         # Skip handoffs if not requested
         if defn.is_handoff and not include_handoffs:
             continue
-        
+
         # Filter by category if specified
         if category and category not in defn.tags:
             continue
-        
+
         # Extract parameter info from schema
         params = None
         if defn.schema and "parameters" in defn.schema:
             params = defn.schema["parameters"]
-        
+
         tool_info = ToolInfo(
             name=name,
             description=defn.description or defn.schema.get("description", ""),
@@ -252,14 +261,14 @@ async def list_available_tools(
             parameters=params,
         )
         tools_list.append(tool_info)
-        
+
         # Count categories
         for tag in defn.tags:
             categories[tag] = categories.get(tag, 0) + 1
-    
+
     # Sort by name for consistent display
     tools_list.sort(key=lambda t: (t.is_handoff, t.name))
-    
+
     return {
         "status": "success",
         "total": len(tools_list),
@@ -271,32 +280,32 @@ async def list_available_tools(
 
 @router.get(
     "/voices",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="List Available Voices",
     description="Get list of all available TTS voices for agent configuration.",
     tags=["Agent Builder"],
 )
 async def list_available_voices(
-    category: Optional[str] = None,
-) -> Dict[str, Any]:
+    category: str | None = None,
+) -> dict[str, Any]:
     """
     List all available TTS voices.
-    
+
     Args:
         category: Filter by category (turbo, standard, hd)
     """
     voices = AVAILABLE_VOICES
-    
+
     if category:
         voices = [v for v in voices if v.category == category]
-    
+
     # Group by category
-    by_category: Dict[str, List[Dict[str, Any]]] = {}
+    by_category: dict[str, list[dict[str, Any]]] = {}
     for voice in voices:
         if voice.category not in by_category:
             by_category[voice.category] = []
         by_category[voice.category].append(voice.model_dump())
-    
+
     return {
         "status": "success",
         "total": len(voices),
@@ -308,35 +317,44 @@ async def list_available_voices(
 
 @router.get(
     "/defaults",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get Default Agent Configuration",
     description="Get the default configuration template for creating new agents.",
     tags=["Agent Builder"],
 )
-async def get_default_config() -> Dict[str, Any]:
+async def get_default_config() -> dict[str, Any]:
     """Get default agent configuration from _defaults.yaml."""
     defaults = load_defaults(AGENTS_DIR)
-    
+
     return {
         "status": "success",
         "defaults": {
-            "model": defaults.get("model", {
-                "deployment_id": "gpt-4o",
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "max_tokens": 4096,
-            }),
-            "voice": defaults.get("voice", {
-                "name": "en-US-AvaMultilingualNeural",
-                "type": "azure-standard",
-                "style": "chat",
-                "rate": "+0%",
-            }),
+            "model": defaults.get(
+                "model",
+                {
+                    "deployment_id": "gpt-4o",
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                    "max_tokens": 4096,
+                },
+            ),
+            "voice": defaults.get(
+                "voice",
+                {
+                    "name": "en-US-AvaMultilingualNeural",
+                    "type": "azure-standard",
+                    "style": "chat",
+                    "rate": "+0%",
+                },
+            ),
             "session": defaults.get("session", {}),
-            "template_vars": defaults.get("template_vars", {
-                "institution_name": "Contoso Financial",
-                "agent_name": "Assistant",
-            }),
+            "template_vars": defaults.get(
+                "template_vars",
+                {
+                    "institution_name": "Contoso Financial",
+                    "agent_name": "Assistant",
+                },
+            ),
         },
         "prompt_template": """You are {{ agent_name }}, a helpful assistant for {{ institution_name }}.
 
@@ -353,83 +371,87 @@ Assist customers with their inquiries in a friendly, professional manner.
 
 @router.get(
     "/templates",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="List Available Agent Templates",
     description="Get list of all existing agent configurations that can be used as templates.",
     tags=["Agent Builder"],
 )
-async def list_agent_templates() -> Dict[str, Any]:
+async def list_agent_templates() -> dict[str, Any]:
     """
     List all available agent templates from the agents directory.
-    
+
     Returns agent configurations that can be used as starting points
     for creating new dynamic agents.
     """
     start = time.time()
-    templates: List[AgentTemplateInfo] = []
+    templates: list[AgentTemplateInfo] = []
     defaults = load_defaults(AGENTS_DIR)
-    
+
     # Scan for agent directories
     for agent_dir in AGENTS_DIR.iterdir():
         if not agent_dir.is_dir():
             continue
         if agent_dir.name.startswith("_") or agent_dir.name.startswith("."):
             continue
-        
+
         agent_file = agent_dir / "agent.yaml"
         if not agent_file.exists():
             continue
-        
+
         try:
-            with open(agent_file, "r") as f:
+            with open(agent_file) as f:
                 raw = yaml.safe_load(f) or {}
-            
+
             # Extract name and description
             name = raw.get("name") or agent_dir.name.replace("_", " ").title()
             description = raw.get("description", "")
             greeting = raw.get("greeting", "")
-            
+
             # Load prompt from file or inline
             prompt_full = ""
             if "prompts" in raw and raw["prompts"].get("path"):
                 prompt_full = load_prompt(agent_dir, raw["prompts"]["path"])
             elif raw.get("prompt"):
                 prompt_full = load_prompt(agent_dir, raw["prompt"])
-            
+
             # Get tools list
             tools = raw.get("tools", [])
-            
+
             # Get voice and model configs
             voice = raw.get("voice")
             model = raw.get("model")
-            
+
             # Check if entry point
             handoff_config = raw.get("handoff", {})
             is_entry_point = handoff_config.get("is_entry_point", False)
-            
+
             # Create preview (first 300 chars)
             prompt_preview = prompt_full[:300] + "..." if len(prompt_full) > 300 else prompt_full
-            
-            templates.append(AgentTemplateInfo(
-                id=agent_dir.name,
-                name=name,
-                description=description if isinstance(description, str) else str(description)[:200],
-                greeting=greeting if isinstance(greeting, str) else str(greeting),
-                prompt_preview=prompt_preview,
-                prompt_full=prompt_full,
-                tools=tools,
-                voice=voice,
-                model=model,
-                is_entry_point=is_entry_point,
-            ))
-            
+
+            templates.append(
+                AgentTemplateInfo(
+                    id=agent_dir.name,
+                    name=name,
+                    description=(
+                        description if isinstance(description, str) else str(description)[:200]
+                    ),
+                    greeting=greeting if isinstance(greeting, str) else str(greeting),
+                    prompt_preview=prompt_preview,
+                    prompt_full=prompt_full,
+                    tools=tools,
+                    voice=voice,
+                    model=model,
+                    is_entry_point=is_entry_point,
+                )
+            )
+
         except Exception as e:
             logger.warning("Failed to load agent template %s: %s", agent_dir.name, e)
             continue
-    
+
     # Sort by name, with entry point first
     templates.sort(key=lambda t: (not t.is_entry_point, t.name))
-    
+
     return {
         "status": "success",
         "total": len(templates),
@@ -440,52 +462,52 @@ async def list_agent_templates() -> Dict[str, Any]:
 
 @router.get(
     "/templates/{template_id}",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get Agent Template Details",
     description="Get full details of a specific agent template.",
     tags=["Agent Builder"],
 )
-async def get_agent_template(template_id: str) -> Dict[str, Any]:
+async def get_agent_template(template_id: str) -> dict[str, Any]:
     """
     Get the full configuration of a specific agent template.
-    
+
     Args:
         template_id: The agent directory name (e.g., 'concierge', 'fraud_agent')
     """
     agent_dir = AGENTS_DIR / template_id
     agent_file = agent_dir / "agent.yaml"
-    
+
     if not agent_file.exists():
         raise HTTPException(
             status_code=404,
             detail=f"Agent template '{template_id}' not found. Use GET /templates to see available templates.",
         )
-    
+
     defaults = load_defaults(AGENTS_DIR)
-    
+
     try:
-        with open(agent_file, "r") as f:
+        with open(agent_file) as f:
             raw = yaml.safe_load(f) or {}
-        
+
         # Extract all fields
         name = raw.get("name") or template_id.replace("_", " ").title()
         description = raw.get("description", "")
         greeting = raw.get("greeting", "")
         return_greeting = raw.get("return_greeting", "")
-        
+
         # Load full prompt
         prompt_full = ""
         if "prompts" in raw and raw["prompts"].get("path"):
             prompt_full = load_prompt(agent_dir, raw["prompts"]["path"])
         elif raw.get("prompt"):
             prompt_full = load_prompt(agent_dir, raw["prompt"])
-        
+
         # Get tools, voice, model
         tools = raw.get("tools", [])
         voice = raw.get("voice") or defaults.get("voice", {})
         model = raw.get("model") or defaults.get("model", {})
         template_vars = raw.get("template_vars") or defaults.get("template_vars", {})
-        
+
         return {
             "status": "success",
             "template": {
@@ -502,7 +524,7 @@ async def get_agent_template(template_id: str) -> Dict[str, Any]:
                 "handoff": raw.get("handoff", {}),
             },
         }
-        
+
     except Exception as e:
         logger.error("Failed to load agent template %s: %s", template_id, e)
         raise HTTPException(
@@ -525,12 +547,12 @@ async def create_dynamic_agent(
 ) -> SessionAgentResponse:
     """
     Create a dynamic agent for a specific session.
-    
+
     This agent will be used instead of the default agent for this session.
     The configuration is stored in memory and can be modified at runtime.
     """
     start = time.time()
-    
+
     # Validate tools exist
     initialize_tools()
     invalid_tools = [t for t in config.tools if t not in _TOOL_DEFINITIONS]
@@ -539,7 +561,7 @@ async def create_dynamic_agent(
             status_code=400,
             detail=f"Invalid tools: {', '.join(invalid_tools)}. Use GET /tools to see available tools.",
         )
-    
+
     # Build model config
     model_config = ModelConfig(
         deployment_id=config.model.deployment_id if config.model else "gpt-4o",
@@ -547,7 +569,7 @@ async def create_dynamic_agent(
         top_p=config.model.top_p if config.model else 0.9,
         max_tokens=config.model.max_tokens if config.model else 4096,
     )
-    
+
     # Build voice config
     voice_config = VoiceConfig(
         name=config.voice.name if config.voice else "en-US-AvaMultilingualNeural",
@@ -555,16 +577,18 @@ async def create_dynamic_agent(
         style=config.voice.style if config.voice else "chat",
         rate=config.voice.rate if config.voice else "+0%",
     )
-    
+
     # Build speech config (STT / VAD settings)
     speech_config = SpeechConfig(
         vad_silence_timeout_ms=config.speech.vad_silence_timeout_ms if config.speech else 800,
-        use_semantic_segmentation=config.speech.use_semantic_segmentation if config.speech else False,
+        use_semantic_segmentation=(
+            config.speech.use_semantic_segmentation if config.speech else False
+        ),
         candidate_languages=config.speech.candidate_languages if config.speech else ["en-US"],
         enable_diarization=config.speech.enable_diarization if config.speech else False,
         speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
     )
-    
+
     # Create the agent
     agent = UnifiedAgent(
         name=config.name,
@@ -584,17 +608,17 @@ async def create_dynamic_agent(
             "created_at": time.time(),
         },
     )
-    
+
     # Store in session
     set_session_agent(session_id, agent)
-    
+
     logger.info(
         "Dynamic agent created | session=%s name=%s tools=%d",
         session_id,
         config.name,
         len(config.tools),
     )
-    
+
     return SessionAgentResponse(
         session_id=session_id,
         agent_name=config.name,
@@ -604,7 +628,9 @@ async def create_dynamic_agent(
             "description": config.description,
             "greeting": config.greeting,
             "return_greeting": config.return_greeting,
-            "prompt_preview": config.prompt[:200] + "..." if len(config.prompt) > 200 else config.prompt,
+            "prompt_preview": (
+                config.prompt[:200] + "..." if len(config.prompt) > 200 else config.prompt
+            ),
             "tools": config.tools,
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
@@ -627,13 +653,13 @@ async def get_session_agent_config(
 ) -> SessionAgentResponse:
     """Get the dynamic agent for a session."""
     agent = get_session_agent(session_id)
-    
+
     if not agent:
         raise HTTPException(
             status_code=404,
             detail=f"No dynamic agent configured for session {session_id}. Using default agent.",
         )
-    
+
     return SessionAgentResponse(
         session_id=session_id,
         agent_name=agent.name,
@@ -643,7 +669,11 @@ async def get_session_agent_config(
             "description": agent.description,
             "greeting": agent.greeting,
             "return_greeting": agent.return_greeting,
-            "prompt_preview": agent.prompt_template[:200] + "..." if len(agent.prompt_template) > 200 else agent.prompt_template,
+            "prompt_preview": (
+                agent.prompt_template[:200] + "..."
+                if len(agent.prompt_template) > 200
+                else agent.prompt_template
+            ),
             "prompt_full": agent.prompt_template,
             "tools": agent.tool_names,
             "model": agent.model.to_dict(),
@@ -669,7 +699,7 @@ async def update_session_agent(
 ) -> SessionAgentResponse:
     """
     Update the dynamic agent for a session.
-    
+
     Creates a new agent if one doesn't exist.
     """
     # Validate tools exist
@@ -680,10 +710,10 @@ async def update_session_agent(
             status_code=400,
             detail=f"Invalid tools: {', '.join(invalid_tools)}",
         )
-    
+
     existing = get_session_agent(session_id)
     created_at = existing.metadata.get("created_at") if existing else time.time()
-    
+
     # Build configs
     model_config = ModelConfig(
         deployment_id=config.model.deployment_id if config.model else "gpt-4o",
@@ -691,23 +721,25 @@ async def update_session_agent(
         top_p=config.model.top_p if config.model else 0.9,
         max_tokens=config.model.max_tokens if config.model else 4096,
     )
-    
+
     voice_config = VoiceConfig(
         name=config.voice.name if config.voice else "en-US-AvaMultilingualNeural",
         type=config.voice.type if config.voice else "azure-standard",
         style=config.voice.style if config.voice else "chat",
         rate=config.voice.rate if config.voice else "+0%",
     )
-    
+
     # Build speech config (STT / VAD settings)
     speech_config = SpeechConfig(
         vad_silence_timeout_ms=config.speech.vad_silence_timeout_ms if config.speech else 800,
-        use_semantic_segmentation=config.speech.use_semantic_segmentation if config.speech else False,
+        use_semantic_segmentation=(
+            config.speech.use_semantic_segmentation if config.speech else False
+        ),
         candidate_languages=config.speech.candidate_languages if config.speech else ["en-US"],
         enable_diarization=config.speech.enable_diarization if config.speech else False,
         speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
     )
-    
+
     # Create updated agent
     agent = UnifiedAgent(
         name=config.name,
@@ -728,15 +760,15 @@ async def update_session_agent(
             "modified_at": time.time(),
         },
     )
-    
+
     set_session_agent(session_id, agent)
-    
+
     logger.info(
         "Dynamic agent updated | session=%s name=%s",
         session_id,
         config.name,
     )
-    
+
     return SessionAgentResponse(
         session_id=session_id,
         agent_name=config.name,
@@ -766,17 +798,17 @@ async def update_session_agent(
 async def reset_session_agent(
     session_id: str,
     request: Request,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Remove the dynamic agent for a session."""
     removed = remove_session_agent(session_id)
-    
+
     if not removed:
         return {
             "status": "not_found",
             "message": f"No dynamic agent configured for session {session_id}",
             "session_id": session_id,
         }
-    
+
     return {
         "status": "removed",
         "message": f"Dynamic agent removed for session {session_id}. Using default agent.",
@@ -790,19 +822,21 @@ async def reset_session_agent(
     description="List all sessions with dynamic agents configured.",
     tags=["Agent Builder"],
 )
-async def list_session_agents_endpoint() -> Dict[str, Any]:
+async def list_session_agents_endpoint() -> dict[str, Any]:
     """List all sessions with dynamic agents."""
     all_agents = list_session_agents()
     sessions = []
     for session_id, agent in all_agents.items():
-        sessions.append({
-            "session_id": session_id,
-            "agent_name": agent.name,
-            "tools_count": len(agent.tool_names),
-            "created_at": agent.metadata.get("created_at"),
-            "modified_at": agent.metadata.get("modified_at"),
-        })
-    
+        sessions.append(
+            {
+                "session_id": session_id,
+                "agent_name": agent.name,
+                "tools_count": len(agent.tool_names),
+                "created_at": agent.metadata.get("created_at"),
+                "modified_at": agent.metadata.get("modified_at"),
+            }
+        )
+
     return {
         "status": "success",
         "total": len(sessions),
@@ -816,34 +850,34 @@ async def list_session_agents_endpoint() -> Dict[str, Any]:
     description="Re-discover and reload all agent templates from disk into the running application.",
     tags=["Agent Builder"],
 )
-async def reload_agent_templates(request: Request) -> Dict[str, Any]:
+async def reload_agent_templates(request: Request) -> dict[str, Any]:
     """
     Reload agent templates from disk.
-    
+
     This endpoint re-runs discover_agents() and updates app.state.unified_agents,
     making newly created or modified agents available without restarting the server.
     """
     from apps.artagent.backend.agents.loader import (
-        discover_agents,
-        build_handoff_map,
         build_agent_summaries,
+        build_handoff_map,
+        discover_agents,
     )
-    
+
     start = time.time()
-    
+
     try:
         # Re-discover agents from disk
         unified_agents = discover_agents()
-        
+
         # Rebuild handoff map and summaries
         handoff_map = build_handoff_map(unified_agents)
         agent_summaries = build_agent_summaries(unified_agents)
-        
+
         # Update app state
         request.app.state.unified_agents = unified_agents
         request.app.state.handoff_map = handoff_map
         request.app.state.agent_summaries = agent_summaries
-        
+
         logger.info(
             "Agent templates reloaded",
             extra={
@@ -851,7 +885,7 @@ async def reload_agent_templates(request: Request) -> Dict[str, Any]:
                 "agents": list(unified_agents.keys()),
             },
         )
-        
+
         return {
             "status": "success",
             "message": f"Reloaded {len(unified_agents)} agent templates",
@@ -859,7 +893,7 @@ async def reload_agent_templates(request: Request) -> Dict[str, Any]:
             "agent_count": len(unified_agents),
             "response_time_ms": round((time.time() - start) * 1000, 2),
         }
-        
+
     except Exception as e:
         logger.error("Failed to reload agent templates: %s", e)
         raise HTTPException(

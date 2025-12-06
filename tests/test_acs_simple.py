@@ -6,20 +6,17 @@ Simplified tests that avoid OpenTelemetry logging conflicts.
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-import pytest
 import asyncio
 import json
-import base64
-import threading
-import time
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 
 # Test the basic functionality without complex logging
@@ -44,9 +41,7 @@ def test_speech_event_creation():
         SpeechEventType,
     )
 
-    event = SpeechEvent(
-        event_type=SpeechEventType.FINAL, text="Hello world", language="en-US"
-    )
+    event = SpeechEvent(event_type=SpeechEventType.FINAL, text="Hello world", language="en-US")
 
     assert event.event_type == SpeechEventType.FINAL
     assert event.text == "Hello world"
@@ -171,9 +166,7 @@ async def test_simple_media_processing():
     mock_acs_handler.speech_sdk_thread.start_recognizer = Mock()
 
     with patch("apps.artagent.backend.api.v1.handlers.acs_media_lifecycle.logger"):
-        await main_loop.handle_media_message(
-            metadata_json, mock_recognizer, mock_acs_handler
-        )
+        await main_loop.handle_media_message(metadata_json, mock_recognizer, mock_acs_handler)
 
     # Verify recognizer was started
     mock_acs_handler.speech_sdk_thread.start_recognizer.assert_called_once()

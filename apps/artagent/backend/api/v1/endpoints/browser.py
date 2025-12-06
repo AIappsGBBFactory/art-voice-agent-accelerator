@@ -27,8 +27,21 @@ import asyncio
 import json
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
+from apps.artagent.backend.src.services.acs.session_terminator import (
+    TerminationReason,
+    terminate_session,
+)
+from apps.artagent.backend.src.utils.tracing import log_with_context
+from apps.artagent.backend.src.ws_helpers.barge_in import BargeInController
+from apps.artagent.backend.src.ws_helpers.envelopes import make_status_envelope
+from apps.artagent.backend.src.ws_helpers.shared_ws import (
+    _get_connection_metadata,
+    _set_connection_metadata,
+    send_agent_inventory,
+)
+from apps.artagent.backend.voice import VoiceLiveSDKHandler
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -41,36 +54,22 @@ from fastapi import (
 from fastapi.websockets import WebSocketState
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-
-from apps.artagent.backend.src.services.acs.session_terminator import (
-    TerminationReason,
-    terminate_session,
-)
-from apps.artagent.backend.src.utils.tracing import log_with_context
-from apps.artagent.backend.src.ws_helpers.barge_in import BargeInController
-from utils.session_context import session_context
-from apps.artagent.backend.src.ws_helpers.envelopes import make_status_envelope
-from apps.artagent.backend.src.ws_helpers.shared_ws import (
-    _get_connection_metadata,
-    _set_connection_metadata,
-    send_agent_inventory,
-)
 from src.enums.stream_modes import StreamMode
 from src.pools.session_manager import SessionContext
 from src.postcall.push import build_and_flush
 from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
+from utils.session_context import session_context
 
 from ..handlers.media_handler import (
+    VOICE_LIVE_PCM_SAMPLE_RATE,
+    VOICE_LIVE_SILENCE_GAP_SECONDS,
+    VOICE_LIVE_SPEECH_RMS_THRESHOLD,
     MediaHandler,
     MediaHandlerConfig,
     TransportType,
     pcm16le_rms,
-    VOICE_LIVE_PCM_SAMPLE_RATE,
-    VOICE_LIVE_SPEECH_RMS_THRESHOLD,
-    VOICE_LIVE_SILENCE_GAP_SECONDS,
 )
-from apps.artagent.backend.voice import VoiceLiveSDKHandler
 from ..schemas.realtime import RealtimeStatusResponse
 
 logger = get_logger("api.v1.endpoints.browser")
@@ -129,7 +128,7 @@ async def get_browser_status(request: Request) -> RealtimeStatusResponse:
 @router.websocket("/dashboard/relay")
 async def dashboard_relay_endpoint(
     websocket: WebSocket,
-    session_id: Optional[str] = Query(None),
+    session_id: str | None = Query(None),
 ) -> None:
     """WebSocket endpoint for dashboard clients to receive real-time updates."""
     client_id = str(uuid.uuid4())[:8]
@@ -187,9 +186,9 @@ async def dashboard_relay_endpoint(
 @router.websocket("/conversation")
 async def browser_conversation_endpoint(
     websocket: WebSocket,
-    session_id: Optional[str] = Query(None),
-    streaming_mode: Optional[str] = Query(None),
-    user_email: Optional[str] = Query(None),
+    session_id: str | None = Query(None),
+    streaming_mode: str | None = Query(None),
+    user_email: str | None = Query(None),
 ) -> None:
     """
     WebSocket endpoint for browser-based voice conversations.
@@ -199,8 +198,8 @@ async def browser_conversation_endpoint(
     - Speech Cascade: MediaHandler.create() factory
     """
     handler: Any = None  # MediaHandler or VoiceLiveSDKHandler
-    memory_manager: Optional[MemoManager] = None
-    conn_id: Optional[str] = None
+    memory_manager: MemoManager | None = None
+    conn_id: str | None = None
 
     # Parse streaming mode
     stream_mode = _parse_stream_mode(streaming_mode)
@@ -283,9 +282,7 @@ async def browser_conversation_endpoint(
 
             # Process messages based on mode
             if stream_mode == StreamMode.VOICE_LIVE:
-                await _process_voice_live_messages(
-                    websocket, handler, session_id, conn_id
-                )
+                await _process_voice_live_messages(websocket, handler, session_id, conn_id)
             else:
                 # Start speech cascade and run message loop
                 await handler.start()
@@ -311,7 +308,7 @@ async def _create_voice_live_handler(
     websocket: WebSocket,
     session_id: str,
     conn_id: str,
-    user_email: Optional[str],
+    user_email: str | None,
 ) -> tuple[VoiceLiveSDKHandler, MemoManager]:
     """
     Create VoiceLiveSDKHandler with barge-in infrastructure.
@@ -425,7 +422,7 @@ async def _process_voice_live_messages(
     Matches media.py processing pattern.
     """
     speech_active = False
-    silence_started_at: Optional[float] = None
+    silence_started_at: float | None = None
 
     with tracer.start_as_current_span(
         "api.v1.browser.process_voice_live",
@@ -450,9 +447,7 @@ async def _process_voice_live_messages(
                     topic="session",
                     session_id=session_id,
                 )
-                await websocket.app.state.conn_manager.send_to_connection(
-                    conn_id, ready_envelope
-                )
+                await websocket.app.state.conn_manager.send_to_connection(conn_id, ready_envelope)
             except Exception:
                 logger.debug("[%s] Unable to send Voice Live readiness status", session_id)
 
@@ -528,7 +523,7 @@ async def _process_voice_live_messages(
 # =============================================================================
 
 
-def _parse_stream_mode(streaming_mode: Optional[str]) -> StreamMode:
+def _parse_stream_mode(streaming_mode: str | None) -> StreamMode:
     """Parse streaming mode from query parameter."""
     if not streaming_mode:
         return StreamMode.REALTIME
@@ -538,7 +533,7 @@ def _parse_stream_mode(streaming_mode: Optional[str]) -> StreamMode:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-def _resolve_session_id(websocket: WebSocket, session_id: Optional[str]) -> str:
+def _resolve_session_id(websocket: WebSocket, session_id: str | None) -> str:
     """Resolve session ID from query param, headers, or generate new UUID."""
     header_call_id = websocket.headers.get("x-ms-call-connection-id")
 
@@ -566,9 +561,7 @@ async def _register_connection(websocket: WebSocket, session_id: str) -> str:
     )
 
     if header_call_id:
-        await _bind_call_session(
-            websocket.app.state, header_call_id, session_id, conn_id
-        )
+        await _bind_call_session(websocket.app.state, header_call_id, session_id, conn_id)
 
     return conn_id
 
@@ -589,9 +582,7 @@ async def _bind_call_session(
             f"call_session_mapping:{call_connection_id}",
         ):
             try:
-                await redis_mgr.set_value_async(
-                    redis_key, session_id, ttl_seconds=ttl_seconds
-                )
+                await redis_mgr.set_value_async(redis_key, session_id, ttl_seconds=ttl_seconds)
             except Exception:
                 pass
 
@@ -599,11 +590,13 @@ async def _bind_call_session(
     if conn_manager:
         try:
             context = await conn_manager.get_call_context(call_connection_id) or {}
-            context.update({
-                "session_id": session_id,
-                "browser_session_id": session_id,
-                "connection_id": conn_id,
-            })
+            context.update(
+                {
+                    "session_id": session_id,
+                    "browser_session_id": session_id,
+                    "connection_id": conn_id,
+                }
+            )
             await conn_manager.set_call_context(call_connection_id, context)
         except Exception:
             pass
@@ -622,7 +615,7 @@ def _is_connected(websocket: WebSocket) -> bool:
 # =============================================================================
 
 
-def _log_disconnect(endpoint: str, identifier: Optional[str], e: WebSocketDisconnect) -> None:
+def _log_disconnect(endpoint: str, identifier: str | None, e: WebSocketDisconnect) -> None:
     """Log WebSocket disconnect."""
     level = "info" if e.code == 1000 else "warning"
     log_with_context(
@@ -635,7 +628,7 @@ def _log_disconnect(endpoint: str, identifier: Optional[str], e: WebSocketDiscon
     )
 
 
-def _log_error(endpoint: str, identifier: Optional[str], e: Exception) -> None:
+def _log_error(endpoint: str, identifier: str | None, e: Exception) -> None:
     """Log WebSocket error."""
     log_with_context(
         logger,
@@ -655,8 +648,8 @@ def _log_error(endpoint: str, identifier: Optional[str], e: Exception) -> None:
 
 async def _cleanup_dashboard(
     websocket: WebSocket,
-    client_id: Optional[str],
-    conn_id: Optional[str],
+    client_id: str | None,
+    conn_id: str | None,
 ) -> None:
     """Clean up dashboard connection resources."""
     with tracer.start_as_current_span(
@@ -681,10 +674,10 @@ async def _cleanup_dashboard(
 
 async def _cleanup_conversation(
     websocket: WebSocket,
-    session_id: Optional[str],
+    session_id: str | None,
     handler: Any,  # MediaHandler or VoiceLiveSDKHandler
-    memory_manager: Optional[MemoManager],
-    conn_id: Optional[str],
+    memory_manager: MemoManager | None,
+    conn_id: str | None,
     stream_mode: StreamMode,
 ) -> None:
     """Clean up conversation session resources."""
@@ -735,7 +728,7 @@ async def _cleanup_conversation(
 
 async def _terminate_voice_live_if_needed(
     websocket: WebSocket,
-    session_id: Optional[str],
+    session_id: str | None,
 ) -> None:
     """Terminate ACS Voice Live call if browser disconnects."""
     try:

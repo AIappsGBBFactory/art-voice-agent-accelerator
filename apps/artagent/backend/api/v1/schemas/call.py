@@ -4,8 +4,9 @@ Call-related API schemas.
 Pydantic schemas for call management API requests and responses.
 """
 
-from typing import List, Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 from src.enums.stream_modes import StreamMode
 
 
@@ -18,12 +19,12 @@ class CallInitiateRequest(BaseModel):
         json_schema_extra={"example": "+1234567890"},
         pattern=r"^\+[1-9]\d{1,14}$",
     )
-    caller_id: Optional[str] = Field(
+    caller_id: str | None = Field(
         None,
         description="Caller ID to display (optional, uses system default if not provided)",
         json_schema_extra={"example": "+1987654321"},
     )
-    context: Optional[Dict[str, Any]] = Field(
+    context: dict[str, Any] | None = Field(
         default_factory=dict,
         description="Additional call context metadata",
         json_schema_extra={
@@ -35,7 +36,7 @@ class CallInitiateRequest(BaseModel):
             }
         },
     )
-    streaming_mode: Optional[StreamMode] = Field(
+    streaming_mode: StreamMode | None = Field(
         default=None,
         description=(
             "Optional streaming mode override for Azure Communication Services media "
@@ -44,7 +45,7 @@ class CallInitiateRequest(BaseModel):
         ),
         json_schema_extra={"example": "voice_live"},
     )
-    record_call: Optional[bool] = Field(
+    record_call: bool | None = Field(
         default=None,
         description=(
             "Optional flag indicating whether this call should be recorded."
@@ -88,17 +89,17 @@ class CallInitiateResponse(BaseModel):
         description="Human-readable status message",
         json_schema_extra={"example": "Call initiation requested"},
     )
-    streaming_mode: Optional[StreamMode] = Field(
+    streaming_mode: StreamMode | None = Field(
         default=None,
         description="Effective streaming mode used for media handling.",
         json_schema_extra={"example": "voice_live"},
     )
-    initiated_at: Optional[str] = Field(
+    initiated_at: str | None = Field(
         default=None,
         description="Timestamp indicating when call initiation completed.",
         json_schema_extra={"example": "2025-07-18T22:45:30Z"},
     )
-    details: Optional[Dict[str, Any]] = Field(
+    details: dict[str, Any] | None = Field(
         default=None,
         description="Backend metadata useful for debugging call initiation.",
     )
@@ -138,12 +139,12 @@ class CallStatusResponse(BaseModel):
         description="Current call status",
         json_schema_extra={"example": "connected"},
     )
-    duration: Optional[int] = Field(
+    duration: int | None = Field(
         None,
         description="Call duration in seconds (null if not connected)",
         json_schema_extra={"example": 120},
     )
-    participants: List[Dict[str, Any]] = Field(
+    participants: list[dict[str, Any]] = Field(
         default_factory=list,
         description="List of call participants",
         json_schema_extra={
@@ -157,7 +158,7 @@ class CallStatusResponse(BaseModel):
             ]
         },
     )
-    events: List[Dict[str, Any]] = Field(
+    events: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Recent call events",
         json_schema_extra={
@@ -200,12 +201,10 @@ class CallStatusResponse(BaseModel):
 class CallUpdateRequest(BaseModel):
     """Request model for updating call properties."""
 
-    status: Optional[Literal["on_hold", "connected", "muted", "unmuted"]] = Field(
+    status: Literal["on_hold", "connected", "muted", "unmuted"] | None = Field(
         None, description="New call status"
     )
-    metadata: Optional[Dict[str, Any]] = Field(
-        None, description="Updated metadata for the call"
-    )
+    metadata: dict[str, Any] | None = Field(None, description="Updated metadata for the call")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -256,11 +255,11 @@ class CallTerminateRequest(BaseModel):
     """Request model for terminating an ACS call."""
 
     call_id: str = Field(..., description="Call connection ID to terminate")
-    session_id: Optional[str] = Field(
+    session_id: str | None = Field(
         None,
         description="Browser session ID associated with the ACS call (optional)",
     )
-    reason: Optional[str] = Field(
+    reason: str | None = Field(
         "normal",
         description="Termination reason label (defaults to 'normal')",
     )
@@ -269,7 +268,7 @@ class CallTerminateRequest(BaseModel):
 class CallListResponse(BaseModel):
     """Response model for listing calls."""
 
-    calls: List[CallStatusResponse] = Field(..., description="List of calls")
+    calls: list[CallStatusResponse] = Field(..., description="List of calls")
     total: int = Field(
         ...,
         description="Total number of calls matching criteria",

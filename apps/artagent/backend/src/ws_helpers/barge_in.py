@@ -3,11 +3,10 @@ from __future__ import annotations
 import asyncio
 import time
 from asyncio import run_coroutine_threadsafe
-from typing import Callable, Optional
-
-from fastapi import WebSocket
+from collections.abc import Callable
 
 from apps.artagent.backend.src.ws_helpers.shared_ws import send_session_envelope
+from fastapi import WebSocket
 from utils.ml_logging import get_logger
 
 logger = get_logger("ws_helpers.barge_in")
@@ -22,7 +21,7 @@ class BargeInController:
         websocket: WebSocket,
         session_id: str,
         conn_id: str,
-        get_metadata: Callable[[str, Optional[object]], object],
+        get_metadata: Callable[[str, object | None], object],
         set_metadata: Callable[[str, object], None],
         signal_tts_cancel: Callable[[], None],
         logger=logger,
@@ -55,7 +54,6 @@ class BargeInController:
 
         self.set_metadata("barge_in_inflight", True)
         now = time.monotonic()
-
 
         try:
             last_trigger = self.get_metadata("last_barge_in_trigger", None)
@@ -105,7 +103,7 @@ class BargeInController:
                 for task in active_tasks:
                     try:
                         await asyncio.wait_for(task, timeout=0.3)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                    except (TimeoutError, asyncio.CancelledError):
                         pass
                     except Exception as cancel_exc:  # noqa: BLE001
                         self.logger.debug(

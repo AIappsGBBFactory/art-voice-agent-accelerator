@@ -12,8 +12,7 @@ import os
 import random
 import re
 import string
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from apps.artagent.backend.agents.tools.registry import register_tool
 from utils.ml_logging import get_logger
@@ -33,7 +32,7 @@ logger = get_logger("agents.tools.auth")
 # SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-verify_client_identity_schema: Dict[str, Any] = {
+verify_client_identity_schema: dict[str, Any] = {
     "name": "verify_client_identity",
     "description": (
         "Verify caller's identity using name and last 4 digits of SSN. "
@@ -49,7 +48,7 @@ verify_client_identity_schema: Dict[str, Any] = {
     },
 }
 
-send_mfa_code_schema: Dict[str, Any] = {
+send_mfa_code_schema: dict[str, Any] = {
     "name": "send_mfa_code",
     "description": (
         "Send MFA verification code to customer's registered phone. "
@@ -69,7 +68,7 @@ send_mfa_code_schema: Dict[str, Any] = {
     },
 }
 
-verify_mfa_code_schema: Dict[str, Any] = {
+verify_mfa_code_schema: dict[str, Any] = {
     "name": "verify_mfa_code",
     "description": (
         "Verify the MFA code provided by customer. "
@@ -85,7 +84,7 @@ verify_mfa_code_schema: Dict[str, Any] = {
     },
 }
 
-resend_mfa_code_schema: Dict[str, Any] = {
+resend_mfa_code_schema: dict[str, Any] = {
     "name": "resend_mfa_code",
     "description": "Resend MFA code to customer if they didn't receive it.",
     "parameters": {
@@ -128,9 +127,9 @@ _MOCK_USERS = {
     },
 }
 
-_PENDING_MFA: Dict[str, str] = {}  # client_id -> code
-_COSMOS_MANAGER: Optional["CosmosDBMongoCoreManager"] = None
-_COSMOS_USERS_MANAGER: Optional["CosmosDBMongoCoreManager"] = None
+_PENDING_MFA: dict[str, str] = {}  # client_id -> code
+_COSMOS_MANAGER: CosmosDBMongoCoreManager | None = None
+_COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
 
 _DEFAULT_DEMO_DB = "financial_services_db"
 _DEFAULT_DEMO_USERS_COLLECTION = "users"
@@ -156,7 +155,7 @@ def _get_demo_users_collection_name() -> str:
 
 
 def _manager_targets_collection(
-    manager: "CosmosDBMongoCoreManager",
+    manager: CosmosDBMongoCoreManager,
     database_name: str,
     collection_name: str,
 ) -> bool:
@@ -170,7 +169,7 @@ def _manager_targets_collection(
     return db_name == database_name and coll_name == collection_name
 
 
-def _describe_manager_target(manager: "CosmosDBMongoCoreManager") -> Dict[str, Optional[str]]:
+def _describe_manager_target(manager: CosmosDBMongoCoreManager) -> dict[str, str | None]:
     """Provide db/collection names for logging."""
     db_name = getattr(getattr(manager, "database", None), "name", None)
     coll_name = getattr(getattr(manager, "collection", None), "name", None)
@@ -180,7 +179,7 @@ def _describe_manager_target(manager: "CosmosDBMongoCoreManager") -> Dict[str, O
     }
 
 
-def _get_cosmos_manager() -> Optional["CosmosDBMongoCoreManager"]:
+def _get_cosmos_manager() -> CosmosDBMongoCoreManager | None:
     """Resolve the shared Cosmos DB client from FastAPI app state."""
     global _COSMOS_MANAGER
     if _COSMOS_MANAGER is not None:
@@ -199,7 +198,7 @@ def _get_cosmos_manager() -> Optional["CosmosDBMongoCoreManager"]:
     return cosmos
 
 
-def _get_demo_users_manager() -> Optional["CosmosDBMongoCoreManager"]:
+def _get_demo_users_manager() -> CosmosDBMongoCoreManager | None:
     """Return a Cosmos DB manager pointed at the demo users collection."""
     global _COSMOS_USERS_MANAGER
     database_name = _get_demo_database_name()
@@ -225,7 +224,9 @@ def _get_demo_users_manager() -> Optional["CosmosDBMongoCoreManager"]:
         )
 
     if _CosmosManagerImpl is None:
-        logger.warning("Cosmos manager implementation unavailable; cannot query demo users collection")
+        logger.warning(
+            "Cosmos manager implementation unavailable; cannot query demo users collection"
+        )
         return None
 
     try:
@@ -246,14 +247,16 @@ def _get_demo_users_manager() -> Optional["CosmosDBMongoCoreManager"]:
         return None
 
 
-async def _lookup_user_in_cosmos(full_name: str, ssn_last_4: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+async def _lookup_user_in_cosmos(
+    full_name: str, ssn_last_4: str
+) -> tuple[dict[str, Any] | None, str | None]:
     """Query Cosmos DB for the caller. Returns (record, failure_reason)."""
     cosmos = _get_demo_users_manager()
     if cosmos is None:
         return None, "unavailable"
 
     name_pattern = f"^{re.escape(full_name)}$"
-    query: Dict[str, Any] = {
+    query: dict[str, Any] = {
         "verification_codes.ssn4": ssn_last_4,
         "full_name": {"$regex": name_pattern, "$options": "i"},
     }
@@ -265,13 +268,15 @@ async def _lookup_user_in_cosmos(full_name: str, ssn_last_4: str) -> Tuple[Optio
         return None, "error"
 
     if document:
-        logger.info("✓ Identity verified via Cosmos: %s", document.get("client_id") or document.get("_id"))
+        logger.info(
+            "✓ Identity verified via Cosmos: %s", document.get("client_id") or document.get("_id")
+        )
         return document, None
 
     return None, "not_found"
 
 
-def _format_identity_success(user: Dict[str, Any], *, source: str) -> Dict[str, Any]:
+def _format_identity_success(user: dict[str, Any], *, source: str) -> dict[str, Any]:
     """Normalize successful identity responses."""
     client_id = user.get("client_id") or user.get("_id") or "unknown"
     caller_name = user.get("full_name") or user.get("caller_name") or user.get("name") or "caller"
@@ -286,7 +291,7 @@ def _format_identity_success(user: Dict[str, Any], *, source: str) -> Dict[str, 
     }
 
 
-def _log_mock_usage(full_name: str, ssn_last_4: str, reason: Optional[str]) -> None:
+def _log_mock_usage(full_name: str, ssn_last_4: str, reason: str | None) -> None:
     reason_text = f"reason={reason}" if reason else "no cosmos access"
     logger.warning(
         "⚠️ verify_client_identity using mock dataset (%s) for %s / %s",
@@ -300,7 +305,8 @@ def _log_mock_usage(full_name: str, ssn_last_4: str, reason: Optional[str]) -> N
 # EXECUTORS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def verify_client_identity(args: Dict[str, Any]) -> Dict[str, Any]:
+
+async def verify_client_identity(args: dict[str, Any]) -> dict[str, Any]:
     """Verify caller identity using Cosmos DB first, then fall back to mock data."""
     raw_full_name = (args.get("full_name") or "").strip()
     normalized_full_name = raw_full_name.lower()
@@ -336,20 +342,20 @@ async def verify_client_identity(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def send_mfa_code(args: Dict[str, Any]) -> Dict[str, Any]:
+async def send_mfa_code(args: dict[str, Any]) -> dict[str, Any]:
     """Send MFA code to customer."""
     client_id = (args.get("client_id") or "").strip()
     method = (args.get("method") or "sms").strip()
-    
+
     if not client_id:
         return {"success": False, "message": "client_id is required."}
-    
+
     # Generate 6-digit code
     code = "".join(random.choices(string.digits, k=6))
     _PENDING_MFA[client_id] = code
-    
+
     logger.info("📱 MFA code sent to %s via %s: %s", client_id, method, code)
-    
+
     return {
         "success": True,
         "code_sent": True,
@@ -360,16 +366,16 @@ async def send_mfa_code(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def verify_mfa_code(args: Dict[str, Any]) -> Dict[str, Any]:
+async def verify_mfa_code(args: dict[str, Any]) -> dict[str, Any]:
     """Verify MFA code provided by customer."""
     client_id = (args.get("client_id") or "").strip()
     code = (args.get("code") or "").strip()
-    
+
     if not client_id or not code:
         return {"success": False, "message": "client_id and code are required."}
-    
+
     expected = _PENDING_MFA.get(client_id)
-    
+
     if expected and code == expected:
         del _PENDING_MFA[client_id]
         logger.info("✓ MFA verified for %s", client_id)
@@ -378,7 +384,7 @@ async def verify_mfa_code(args: Dict[str, Any]) -> Dict[str, Any]:
             "verified": True,
             "message": "Verification successful. You're now authenticated.",
         }
-    
+
     logger.warning("✗ MFA verification failed for %s", client_id)
     return {
         "success": False,
@@ -387,7 +393,7 @@ async def verify_mfa_code(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def resend_mfa_code(args: Dict[str, Any]) -> Dict[str, Any]:
+async def resend_mfa_code(args: dict[str, Any]) -> dict[str, Any]:
     """Resend MFA code."""
     return await send_mfa_code(args)
 
@@ -396,7 +402,9 @@ async def resend_mfa_code(args: Dict[str, Any]) -> Dict[str, Any]:
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-register_tool("verify_client_identity", verify_client_identity_schema, verify_client_identity, tags={"auth"})
+register_tool(
+    "verify_client_identity", verify_client_identity_schema, verify_client_identity, tags={"auth"}
+)
 register_tool("send_mfa_code", send_mfa_code_schema, send_mfa_code, tags={"auth", "mfa"})
 register_tool("verify_mfa_code", verify_mfa_code_schema, verify_mfa_code, tags={"auth", "mfa"})
 register_tool("resend_mfa_code", resend_mfa_code_schema, resend_mfa_code, tags={"auth", "mfa"})

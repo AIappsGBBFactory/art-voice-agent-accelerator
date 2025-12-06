@@ -6,12 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-envelopes = importlib.import_module(
-    "apps.artagent.backend.src.ws_helpers.envelopes"
-)
-shared_ws = importlib.import_module(
-    "apps.artagent.backend.src.ws_helpers.shared_ws"
-)
+envelopes = importlib.import_module("apps.artagent.backend.src.ws_helpers.envelopes")
+shared_ws = importlib.import_module("apps.artagent.backend.src.ws_helpers.shared_ws")
 orchestrator = importlib.import_module(
     "apps.artagent.backend.src.orchestration.artagent.orchestrator"
 )
@@ -30,9 +26,7 @@ def test_make_envelope_family_shapes_payloads():
     status = envelopes.make_status_envelope(
         "ready", sender="System", topic="session", session_id=session_id
     )
-    stream = envelopes.make_assistant_streaming_envelope(
-        "hello", session_id=session_id
-    )
+    stream = envelopes.make_assistant_streaming_envelope("hello", session_id=session_id)
     event = envelopes.make_event_envelope(
         "custom", {"foo": "bar"}, topic="session", session_id=session_id
     )
@@ -93,23 +87,55 @@ async def test_route_turn_completes_with_stubbed_dependencies(monkeypatch):
         ),
     )
 
-    monkeypatch.setattr(orchestrator, "_build_turn_context", AsyncMock(return_value=SimpleNamespace()), raising=False)
-    monkeypatch.setattr(orchestrator, "_execute_turn", AsyncMock(return_value={"assistant": "hi"}), raising=False)
+    monkeypatch.setattr(
+        orchestrator,
+        "_build_turn_context",
+        AsyncMock(return_value=SimpleNamespace()),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        orchestrator, "_execute_turn", AsyncMock(return_value={"assistant": "hi"}), raising=False
+    )
     monkeypatch.setattr(orchestrator, "_finalize_turn", AsyncMock(), raising=False)
     monkeypatch.setattr(orchestrator, "send_tts_audio", AsyncMock(), raising=False)
-    monkeypatch.setattr(orchestrator, "make_assistant_streaming_envelope", lambda *a, **k: {"payload": {"message": "hi"}}, raising=False)
-    monkeypatch.setattr(orchestrator, "make_status_envelope", lambda *a, **k: {"payload": {"message": "ok"}}, raising=False)
-    monkeypatch.setattr(orchestrator, "cm_get", lambda cm, key, default=None: cm.store.get(key, default), raising=False)
-    monkeypatch.setattr(orchestrator, "cm_set", lambda cm, **kwargs: cm.store.update(kwargs), raising=False)
-    monkeypatch.setattr(orchestrator, "maybe_terminate_if_escalated", AsyncMock(return_value=False), raising=False)
+    monkeypatch.setattr(
+        orchestrator,
+        "make_assistant_streaming_envelope",
+        lambda *a, **k: {"payload": {"message": "hi"}},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "make_status_envelope",
+        lambda *a, **k: {"payload": {"message": "ok"}},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "cm_get",
+        lambda cm, key, default=None: cm.store.get(key, default),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        orchestrator, "cm_set", lambda cm, **kwargs: cm.store.update(kwargs), raising=False
+    )
+    monkeypatch.setattr(
+        orchestrator, "maybe_terminate_if_escalated", AsyncMock(return_value=False), raising=False
+    )
 
     async def specialist_handler(cm, transcript, ws, is_acs=False):
         cm.store["last_transcript"] = transcript
 
-    monkeypatch.setattr(orchestrator, "get_specialist", lambda _name: specialist_handler, raising=False)
+    monkeypatch.setattr(
+        orchestrator, "get_specialist", lambda _name: specialist_handler, raising=False
+    )
     monkeypatch.setattr(orchestrator, "create_service_handler_attrs", lambda **_: {}, raising=False)
-    monkeypatch.setattr(orchestrator, "create_service_dependency_attrs", lambda **_: {}, raising=False)
-    monkeypatch.setattr(orchestrator, "get_correlation_context", lambda ws, cm: (None, cm.session_id), raising=False)
+    monkeypatch.setattr(
+        orchestrator, "create_service_dependency_attrs", lambda **_: {}, raising=False
+    )
+    monkeypatch.setattr(
+        orchestrator, "get_correlation_context", lambda ws, cm: (None, cm.session_id), raising=False
+    )
 
     await orchestrator.route_turn(memo, "hello", websocket, is_acs=False)
     assert memo.persist_calls == 1

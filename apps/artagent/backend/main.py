@@ -10,22 +10,26 @@ Entrypoint that stitches everything together:
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 # Force unbuffered output for container logs
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
+
 # Use stderr for startup diagnostics (Azure logs often only show stderr)
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
+
 
 log("=" * 60)
 log("🚀 Backend Startup - App Config Integration v4")
 log(f"   AZURE_APPCONFIG_ENDPOINT: {os.getenv('AZURE_APPCONFIG_ENDPOINT', '<not set>')}")
 log(f"   AZURE_APPCONFIG_LABEL: {os.getenv('AZURE_APPCONFIG_LABEL', '<not set>')}")
-log(f"   AZURE_CLIENT_ID: {(os.getenv('AZURE_CLIENT_ID', '')[:20] + '...') if os.getenv('AZURE_CLIENT_ID') else '<not set>'}")
+log(
+    f"   AZURE_CLIENT_ID: {(os.getenv('AZURE_CLIENT_ID', '')[:20] + '...') if os.getenv('AZURE_CLIENT_ID') else '<not set>'}"
+)
 log("=" * 60)
 
 # Add parent directories to sys.path for imports
@@ -40,6 +44,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 log("🔄 Starting App Configuration bootstrap...")
 try:
     from config.appconfig_provider import bootstrap_appconfig
+
     log("   Imported bootstrap_appconfig successfully")
     result = bootstrap_appconfig()
     log(f"   Bootstrap returned: {result}")
@@ -47,19 +52,28 @@ except Exception as e:
     log(f"❌ CRITICAL: App Configuration bootstrap failed: {e}")
     log("   Continuing with environment variables only...")
     import traceback
+
     traceback.print_exc(file=sys.stderr)
 
 # Log critical env vars after bootstrap
 log("📋 Critical environment variables after bootstrap:")
-log(f"   AZURE_OPENAI_ENDPOINT: {os.getenv('AZURE_OPENAI_ENDPOINT', '<NOT SET>')[:60] if os.getenv('AZURE_OPENAI_ENDPOINT') else '<NOT SET>'}")
-log(f"   AZURE_SPEECH_ENDPOINT: {os.getenv('AZURE_SPEECH_ENDPOINT', '<NOT SET>')[:60] if os.getenv('AZURE_SPEECH_ENDPOINT') else '<NOT SET>'}")
-log(f"   ACS_ENDPOINT: {os.getenv('ACS_ENDPOINT', '<NOT SET>')[:60] if os.getenv('ACS_ENDPOINT') else '<NOT SET>'}")
+log(
+    f"   AZURE_OPENAI_ENDPOINT: {os.getenv('AZURE_OPENAI_ENDPOINT', '<NOT SET>')[:60] if os.getenv('AZURE_OPENAI_ENDPOINT') else '<NOT SET>'}"
+)
+log(
+    f"   AZURE_SPEECH_ENDPOINT: {os.getenv('AZURE_SPEECH_ENDPOINT', '<NOT SET>')[:60] if os.getenv('AZURE_SPEECH_ENDPOINT') else '<NOT SET>'}"
+)
+log(
+    f"   ACS_ENDPOINT: {os.getenv('ACS_ENDPOINT', '<NOT SET>')[:60] if os.getenv('ACS_ENDPOINT') else '<NOT SET>'}"
+)
 
 # ============================================================================
 # Now safe to import modules that depend on environment variables
 # ============================================================================
-
+log("📦 Importing WarmableResourcePool...")
 from src.pools.warmable_pool import WarmableResourcePool
+
+log("📦 Importing setup_azure_monitor...")
 from utils.telemetry_config import setup_azure_monitor
 
 # ---------------- Monitoring ------------------------------------------------
@@ -67,69 +81,60 @@ from utils.telemetry_config import setup_azure_monitor
 # OpenAI spans are created manually in aoai/manager.py
 # NOTE: Use empty string for logger_name to capture ALL loggers, not just a specific hierarchy
 # Our loggers use various names (voicelive.*, agents.*, api.*, etc.) that aren't children of any single root
+log("🔧 Setting up Azure Monitor...")
 setup_azure_monitor(logger_name="")
+log("✅ Azure Monitor setup complete")
 
 # Initialize OpenAI client AFTER telemetry is configured
+log("🔧 Initializing OpenAI client...")
 from src.aoai.client import _init_client as _init_aoai_client
+
 _init_aoai_client()
+log("✅ OpenAI client initialized")
 
 from utils.ml_logging import get_logger
 
 logger = get_logger("main")
 
-import time
 import asyncio
-from typing import Awaitable, Callable, List, Optional, Tuple
+import time
+from collections.abc import Awaitable, Callable
 
 StepCallable = Callable[[], Awaitable[None]]
-LifecycleStep = Tuple[str, StepCallable, Optional[StepCallable]]
+LifecycleStep = tuple[str, StepCallable, StepCallable | None]
 
 import uvicorn
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
-from src.pools.connection_manager import ThreadSafeConnectionManager
-from src.pools.session_metrics import ThreadSafeSessionMetrics
-from src.speech.phrase_list_manager import (
-    PhraseListManager,
-    load_default_phrases_from_env,
-    set_global_phrase_manager,
-)
-from apps.artagent.backend.src.services import AzureOpenAIClient, CosmosDBMongoCoreManager, AzureRedisManager, SpeechSynthesizer, StreamingSpeechRecognizerFromBytes
-from src.aoai.client_manager import AoaiClientManager
-from apps.artagent.backend.config import (
-    AppConfig,
-    ALLOWED_ORIGINS,
-    ACS_CONNECTION_STRING,
-    ACS_ENDPOINT,
-    ACS_SOURCE_PHONE_NUMBER,
-    AZURE_COSMOS_COLLECTION_NAME,
-    AZURE_COSMOS_CONNECTION_STRING,
-    AZURE_COSMOS_DATABASE_NAME,
-    ENTRA_EXEMPT_PATHS,
-    ENABLE_AUTH_VALIDATION,
-    ENABLE_DOCS,
-    DOCS_URL,
-    REDOC_URL,
-    OPENAPI_URL,
-    SECURE_DOCS_URL,
-    ENVIRONMENT,
-    DEBUG_MODE,
-    BASE_URL,
-)
+from api.v1.endpoints import demo_env
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Unified Agents (new modular structure)
 # ─────────────────────────────────────────────────────────────────────────────
-from apps.artagent.backend.agents.loader import discover_agents, build_handoff_map
+from apps.artagent.backend.agents.loader import build_handoff_map, discover_agents
 from apps.artagent.backend.agents.tools.registry import initialize_tools as initialize_unified_tools
-
-from apps.artagent.backend.src.utils.auth import validate_entraid_token
-
+from apps.artagent.backend.api.v1.events.registration import register_default_handlers
 from apps.artagent.backend.api.v1.router import v1_router
+from apps.artagent.backend.config import (
+    ACS_CONNECTION_STRING,
+    ACS_ENDPOINT,
+    ACS_SOURCE_PHONE_NUMBER,
+    ALLOWED_ORIGINS,
+    AZURE_COSMOS_COLLECTION_NAME,
+    AZURE_COSMOS_CONNECTION_STRING,
+    AZURE_COSMOS_DATABASE_NAME,
+    BASE_URL,
+    DEBUG_MODE,
+    DOCS_URL,
+    ENABLE_AUTH_VALIDATION,
+    ENABLE_DOCS,
+    ENTRA_EXEMPT_PATHS,
+    ENVIRONMENT,
+    OPENAPI_URL,
+    REDOC_URL,
+    SECURE_DOCS_URL,
+    AppConfig,
+)
 from apps.artagent.backend.src.services import (
+    AzureOpenAIClient,
     AzureRedisManager,
     CosmosDBMongoCoreManager,
     SpeechSynthesizer,
@@ -138,10 +143,20 @@ from apps.artagent.backend.src.services import (
 from apps.artagent.backend.src.services.acs.acs_caller import (
     initialize_acs_caller_instance,
 )
-
-from apps.artagent.backend.api.v1.events.registration import register_default_handlers
-
-from api.v1.endpoints import demo_env
+from apps.artagent.backend.src.utils.auth import validate_entraid_token
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from src.aoai.client_manager import AoaiClientManager
+from src.pools.connection_manager import ThreadSafeConnectionManager
+from src.pools.session_metrics import ThreadSafeSessionMetrics
+from src.speech.phrase_list_manager import (
+    PhraseListManager,
+    load_default_phrases_from_env,
+    set_global_phrase_manager,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -150,11 +165,11 @@ from api.v1.endpoints import demo_env
 def get_unified_agent(app: FastAPI, name: str):
     """
     Get a unified agent by name from app.state.
-    
+
     Args:
         app: FastAPI application instance
         name: Agent name (e.g., "AuthAgent", "FraudAgent")
-        
+
     Returns:
         UnifiedAgent or None
     """
@@ -179,7 +194,7 @@ def get_handoff_map(app: FastAPI):
 def _build_startup_dashboard(
     app_config: AppConfig,
     app: FastAPI,
-    startup_results: List[Tuple[str, float]],
+    startup_results: list[tuple[str, float]],
 ) -> str:
     """Construct a concise ASCII dashboard for developers."""
 
@@ -228,7 +243,7 @@ def _build_startup_dashboard(
         f" ACS         : {acs_line}",
         " Speech Mode : on-demand resource factories",
     ]
-    
+
     # Show scenario if loaded
     scenario = getattr(app.state, "scenario", None)
     if scenario:
@@ -255,7 +270,7 @@ def _build_startup_dashboard(
         lines.append(f"   {stage_name:<13}{stage_duration:.2f}")
 
     lines.append("")
-    
+
     # Display unified agents (new modular structure)
     unified_agents = getattr(app.state, "unified_agents", {})
     if unified_agents:
@@ -266,14 +281,14 @@ def _build_startup_dashboard(
             lines.append(f"   {name:<18}{desc}")
     else:
         lines.append(" Unified Agents: (none loaded)")
-    
+
     # Display legacy agents if present
     legacy_agents = []
     for attr in ["auth_agent", "fraud_agent", "agency_agent", "compliance_agent", "trading_agent"]:
         agent = getattr(app.state, attr, None)
         if agent is not None:
             legacy_agents.append(attr)
-    
+
     if legacy_agents:
         lines.append("")
         lines.append(" Legacy Agents (to be migrated):")
@@ -308,14 +323,14 @@ async def lifespan(app: FastAPI):
     """
     tracer = trace.get_tracer(__name__)
 
-    startup_steps: List[LifecycleStep] = []
-    executed_steps: List[LifecycleStep] = []
-    startup_results: List[Tuple[str, float]] = []
+    startup_steps: list[LifecycleStep] = []
+    executed_steps: list[LifecycleStep] = []
+    startup_results: list[tuple[str, float]] = []
 
-    def add_step(name: str, start: StepCallable, shutdown: Optional[StepCallable] = None) -> None:
+    def add_step(name: str, start: StepCallable, shutdown: StepCallable | None = None) -> None:
         startup_steps.append((name, start, shutdown))
 
-    async def run_steps(steps: List[LifecycleStep], phase: str) -> None:
+    async def run_steps(steps: list[LifecycleStep], phase: str) -> None:
         for name, start_fn, shutdown_fn in steps:
             stage_span_name = f"{phase}.{name}"
             with tracer.start_as_current_span(stage_span_name) as step_span:
@@ -331,11 +346,13 @@ async def lifespan(app: FastAPI):
                 step_duration = time.perf_counter() - step_start
                 step_span.set_attribute("duration_sec", step_duration)
                 rounded = round(step_duration, 2)
-                logger.info(f"{phase} stage completed", extra={"stage": name, "duration_sec": rounded})
+                logger.info(
+                    f"{phase} stage completed", extra={"stage": name, "duration_sec": rounded}
+                )
                 executed_steps.append((name, start_fn, shutdown_fn))
                 startup_results.append((name, rounded))
 
-    async def run_shutdown(steps: List[LifecycleStep]) -> None:
+    async def run_shutdown(steps: list[LifecycleStep]) -> None:
         for name, _, shutdown_fn in reversed(steps):
             if shutdown_fn is None:
                 continue
@@ -352,7 +369,10 @@ async def lifespan(app: FastAPI):
                     continue
                 step_duration = time.perf_counter() - step_start
                 step_span.set_attribute("duration_sec", step_duration)
-                logger.info("shutdown stage completed", extra={"stage": name, "duration_sec": round(step_duration, 2)})
+                logger.info(
+                    "shutdown stage completed",
+                    extra={"stage": name, "duration_sec": round(step_duration, 2)},
+                )
 
     app_config = AppConfig()
     logger.info(
@@ -403,6 +423,7 @@ async def lifespan(app: FastAPI):
     async def start_speech_pools() -> None:
         async def make_tts() -> SpeechSynthesizer:
             import os
+
             key = os.getenv("AZURE_SPEECH_KEY")
             region = os.getenv("AZURE_SPEECH_REGION")
             logger.info(
@@ -422,10 +443,10 @@ async def lifespan(app: FastAPI):
 
         async def make_stt() -> StreamingSpeechRecognizerFromBytes:
             from config import (
-                VAD_SEMANTIC_SEGMENTATION,
-                SILENCE_DURATION_MS,
-                RECOGNIZED_LANGUAGE,
                 AUDIO_FORMAT,
+                RECOGNIZED_LANGUAGE,
+                SILENCE_DURATION_MS,
+                VAD_SEMANTIC_SEGMENTATION,
             )
 
             phrase_manager = getattr(app.state, "speech_phrase_manager", None)
@@ -440,17 +461,17 @@ async def lifespan(app: FastAPI):
                 audio_format=AUDIO_FORMAT,
                 initial_phrases=initial_bias,
             )
-        
+
         # Import warm pool configuration
         from config import (
-            WARM_POOL_ENABLED,
-            WARM_POOL_TTS_SIZE,
-            WARM_POOL_STT_SIZE,
             WARM_POOL_BACKGROUND_REFRESH,
+            WARM_POOL_ENABLED,
             WARM_POOL_REFRESH_INTERVAL,
             WARM_POOL_SESSION_MAX_AGE,
+            WARM_POOL_STT_SIZE,
+            WARM_POOL_TTS_SIZE,
         )
-        
+
         # Define warm_fn callbacks that use Phase 2 warmup methods
         async def warm_tts_connection(tts: SpeechSynthesizer) -> bool:
             """Warm TTS connection by synthesizing minimal audio."""
@@ -459,7 +480,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("TTS warm_fn failed: %s", e)
                 return False
-        
+
         async def warm_stt_connection(stt: StreamingSpeechRecognizerFromBytes) -> bool:
             """Warm STT connection by calling prepare_start()."""
             try:
@@ -467,11 +488,13 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("STT warm_fn failed: %s", e)
                 return False
-        
+
         if WARM_POOL_ENABLED:
             logger.info(
                 "Initializing warm speech pools (TTS=%d, STT=%d, background=%s)",
-                WARM_POOL_TTS_SIZE, WARM_POOL_STT_SIZE, WARM_POOL_BACKGROUND_REFRESH
+                WARM_POOL_TTS_SIZE,
+                WARM_POOL_STT_SIZE,
+                WARM_POOL_BACKGROUND_REFRESH,
             )
         else:
             logger.info("Initializing speech pools (warm pool disabled, on-demand mode)")
@@ -500,7 +523,7 @@ async def lifespan(app: FastAPI):
         )
 
         await asyncio.gather(app.state.tts_pool.prepare(), app.state.stt_pool.prepare())
-        
+
         # Log pool status
         tts_snapshot = app.state.tts_pool.snapshot()
         stt_snapshot = app.state.stt_pool.snapshot()
@@ -538,72 +561,75 @@ async def lifespan(app: FastAPI):
     async def start_connection_warmup() -> None:
         """
         Pre-warm Azure connections to eliminate cold-start latency.
-        
+
         Phase 1 warmup (this step):
         1. Azure AD token pre-fetch for Speech services (if using managed identity)
         2. Azure OpenAI HTTP/2 connection establishment
-        
+
         Phase 2 warmup is now handled by WarmableResourcePool:
         - TTS/STT pools pre-warm resources during prepare() with warm_fn callbacks
         - Background warmup maintains pool levels automatically
-        
+
         All warmup tasks run in parallel and are non-blocking — failures are logged
         but do not prevent application startup.
         """
         warmup_tasks = []
-        
+
         # ── Phase 1: Token + OpenAI Connection ─────────────────────────────
-        
+
         # 1. Speech token pre-fetch (if using Azure AD auth, not API key)
         speech_key = os.getenv("AZURE_SPEECH_KEY")
         speech_resource_id = os.getenv("AZURE_SPEECH_RESOURCE_ID")
-        
+
         if not speech_key and speech_resource_id:
+
             async def warm_speech_token():
                 try:
                     from src.speech.auth_manager import get_speech_token_manager
+
                     token_mgr = get_speech_token_manager()
                     success = await asyncio.to_thread(token_mgr.warm_token)
                     return ("speech_token", success)
                 except Exception as e:
                     logger.warning("Speech token warmup setup failed: %s", e)
                     return ("speech_token", False)
-            
+
             warmup_tasks.append(warm_speech_token())
         else:
             if speech_key:
                 logger.debug("Speech token warmup skipped: using API key auth")
             else:
                 logger.debug("Speech token warmup skipped: AZURE_SPEECH_RESOURCE_ID not set")
-        
+
         # 2. OpenAI connection warm
         async def warm_openai():
             try:
                 from src.aoai.client import warm_openai_connection
+
                 success = await warm_openai_connection(timeout_sec=10.0)
                 return ("openai_connection", success)
             except Exception as e:
                 logger.warning("OpenAI warmup setup failed: %s", e)
                 return ("openai_connection", False)
-        
+
         warmup_tasks.append(warm_openai())
-        
+
         # ── Phase 2: Now handled by WarmableResourcePool ───────────────────
         # TTS/STT warming is done automatically during pool.prepare() via warm_fn
         # and maintained by background warmup task. Report pool warmup status here.
-        
+
         tts_pool = getattr(app.state, "tts_pool", None)
         stt_pool = getattr(app.state, "stt_pool", None)
-        
+
         pool_warmup_status = {
             "tts_pool_warmed": tts_pool.snapshot().get("warm_pool_size", 0) if tts_pool else 0,
             "stt_pool_warmed": stt_pool.snapshot().get("warm_pool_size", 0) if stt_pool else 0,
         }
-        
+
         # Run all warmup tasks in parallel
         if warmup_tasks:
             results = await asyncio.gather(*warmup_tasks, return_exceptions=True)
-            
+
             # Log warmup results
             warmup_results_dict = {}
             for result in results:
@@ -616,10 +642,10 @@ async def lifespan(app: FastAPI):
                         logger.info("Warmup completed: %s", name)
                     else:
                         logger.warning("Warmup failed (non-blocking): %s", name)
-            
+
             # Include pool warmup status
             warmup_results_dict.update(pool_warmup_status)
-            
+
             # Store warmup status for health checks
             app.state.warmup_completed = True
             app.state.warmup_results = warmup_results_dict
@@ -697,18 +723,18 @@ async def lifespan(app: FastAPI):
         # ─────────────────────────────────────────────────────────────────────
         # Initialize Unified Agents (new modular structure)
         # ─────────────────────────────────────────────────────────────────────
-        
+
         # Check for scenario-based configuration
         scenario_name = os.getenv("AGENT_SCENARIO", "").strip()
-        
+
         if scenario_name:
             # Load agents with scenario overrides
             from apps.artagent.backend.agents.scenarios import (
-                load_scenario,
                 get_scenario_agents,
                 get_scenario_start_agent,
+                load_scenario,
             )
-            
+
             scenario = load_scenario(scenario_name)
             if scenario:
                 unified_agents = get_scenario_agents(scenario_name)
@@ -729,15 +755,16 @@ async def lifespan(app: FastAPI):
         else:
             # Standard agent loading
             unified_agents = discover_agents()
-        
+
         handoff_map = build_handoff_map(unified_agents)
         from apps.artagent.backend.agents.loader import build_agent_summaries
+
         agent_summaries = build_agent_summaries(unified_agents)
-        
+
         app.state.unified_agents = unified_agents
         app.state.handoff_map = handoff_map
         app.state.agent_summaries = agent_summaries
-        
+
         logger.info(
             "Unified agents loaded",
             extra={
@@ -748,7 +775,7 @@ async def lifespan(app: FastAPI):
                 "scenario": scenario_name or "(none)",
             },
         )
-        
+
         # Set default start_agent if not set by scenario
         if not hasattr(app.state, "start_agent"):
             app.state.start_agent = "Concierge"
@@ -764,10 +791,10 @@ async def lifespan(app: FastAPI):
             "Unified tool registry initialized",
             extra={"tool_count": unified_tool_count},
         )
-        
+
         # Register ACS webhook event handlers
         register_default_handlers()
-        
+
         orchestrator_preset = os.getenv("ORCHESTRATOR_PRESET", "production")
         logger.info("event handlers registered", extra={"orchestrator_preset": orchestrator_preset})
 
@@ -794,7 +821,7 @@ async def lifespan(app: FastAPI):
         duration_rounded = round(startup_duration, 2)
         logger.info("startup complete", extra={"duration_sec": duration_rounded})
         logger.info(f"startup duration: {duration_rounded}s")
-        
+
     logger.info(_build_startup_dashboard(app_config, app, startup_results))
 
     # ---- Run app ----
@@ -817,7 +844,7 @@ def create_app() -> FastAPI:
 
     # Conditionally get documentation based on settings
     if ENABLE_DOCS:
-        from apps.artagent.backend.api.swagger_docs import get_tags, get_description
+        from apps.artagent.backend.api.swagger_docs import get_description, get_tags
 
         tags = get_tags()
         description = get_description()
@@ -846,7 +873,6 @@ def create_app() -> FastAPI:
     # Add secure docs endpoint if configured and docs are enabled
     if SECURE_DOCS_URL and ENABLE_DOCS:
         from fastapi.openapi.docs import get_swagger_ui_html
-        from fastapi.responses import HTMLResponse
 
         @app.get(SECURE_DOCS_URL, include_in_schema=False)
         async def secure_docs():
@@ -907,9 +933,7 @@ def setup_app_middleware_and_routes(app: FastAPI):
             try:
                 await validate_entraid_token(request)
             except HTTPException as e:
-                return JSONResponse(
-                    content={"error": e.detail}, status_code=e.status_code
-                )
+                return JSONResponse(content={"error": e.detail}, status_code=e.status_code)
             return await call_next(request)
 
     # app.include_router(api_router)  # legacy, if needed

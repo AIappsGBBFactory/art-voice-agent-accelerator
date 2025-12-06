@@ -5,9 +5,9 @@ Media API Schemas
 Pydantic schemas for media streaming, transcription, and audio processing endpoints.
 """
 
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
-from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MediaSessionRequest(BaseModel):
@@ -18,30 +18,30 @@ class MediaSessionRequest(BaseModel):
         description="ACS call connection identifier",
         json_schema_extra={"example": "call_12345"},
     )
-    sample_rate: Optional[int] = Field(
+    sample_rate: int | None = Field(
         16000,
         description="Audio sample rate in Hz",
         json_schema_extra={"example": 16000},
     )
-    channels: Optional[int] = Field(
+    channels: int | None = Field(
         1, description="Number of audio channels", json_schema_extra={"example": 1}
     )
-    audio_format: Optional[str] = Field(
+    audio_format: str | None = Field(
         "pcm_16",
         description="Audio format (pcm_16, pcm_24, opus, etc.)",
         json_schema_extra={"example": "pcm_16"},
     )
-    chunk_size: Optional[int] = Field(
+    chunk_size: int | None = Field(
         1024,
         description="Audio chunk size in bytes",
         json_schema_extra={"example": 1024},
     )
-    enable_transcription: Optional[bool] = Field(
+    enable_transcription: bool | None = Field(
         True,
         description="Enable real-time transcription",
         json_schema_extra={"example": True},
     )
-    enable_vad: Optional[bool] = Field(
+    enable_vad: bool | None = Field(
         True,
         description="Enable voice activity detection",
         json_schema_extra={"example": True},
@@ -73,19 +73,15 @@ class MediaSessionResponse(BaseModel):
     websocket_url: str = Field(
         ...,
         description="WebSocket URL for audio streaming",
-        json_schema_extra={
-            "example": "wss://api.example.com/v1/media/stream/media_session_123456"
-        },
+        json_schema_extra={"example": "wss://api.example.com/v1/media/stream/media_session_123456"},
     )
-    status: str = Field(
-        ..., description="Session status", json_schema_extra={"example": "active"}
-    )
+    status: str = Field(..., description="Session status", json_schema_extra={"example": "active"})
     created_at: str = Field(
         ...,
         description="Session creation timestamp",
         json_schema_extra={"example": "2025-08-10T13:45:00Z"},
     )
-    configuration: Dict[str, Any] = Field(
+    configuration: dict[str, Any] = Field(
         ...,
         description="Session configuration settings",
         json_schema_extra={
@@ -124,24 +120,24 @@ class TranscriptionRequest(BaseModel):
         description="Media session identifier",
         json_schema_extra={"example": "media_session_123456"},
     )
-    language: Optional[str] = Field(
+    language: str | None = Field(
         "en-US",
         description="Transcription language code",
         json_schema_extra={"example": "en-US"},
     )
-    confidence_threshold: Optional[float] = Field(
+    confidence_threshold: float | None = Field(
         0.5,
         description="Minimum confidence threshold for results",
         json_schema_extra={"example": 0.5},
         ge=0.0,
         le=1.0,
     )
-    enable_interim_results: Optional[bool] = Field(
+    enable_interim_results: bool | None = Field(
         True,
         description="Enable interim (partial) transcription results",
         json_schema_extra={"example": True},
     )
-    enable_speaker_diarization: Optional[bool] = Field(
+    enable_speaker_diarization: bool | None = Field(
         False,
         description="Enable speaker identification",
         json_schema_extra={"example": False},
@@ -258,7 +254,7 @@ class AudioStreamStatus(BaseModel):
         description="Whether transcription is enabled",
         json_schema_extra={"example": True},
     )
-    last_transcription: Optional[str] = Field(
+    last_transcription: str | None = Field(
         None,
         description="Last transcription result",
         json_schema_extra={"example": "Hello, how can I help you today?"},
@@ -302,17 +298,17 @@ class VoiceActivityResponse(BaseModel):
         ge=0.0,
         le=1.0,
     )
-    last_speech_detected: Optional[str] = Field(
+    last_speech_detected: str | None = Field(
         None,
         description="Timestamp of last speech detection",
         json_schema_extra={"example": "2025-08-10T13:47:25Z"},
     )
-    speech_duration_seconds: Optional[float] = Field(
+    speech_duration_seconds: float | None = Field(
         None,
         description="Duration of last speech segment",
         json_schema_extra={"example": 2.3},
     )
-    silence_duration_seconds: Optional[float] = Field(
+    silence_duration_seconds: float | None = Field(
         None,
         description="Duration of current silence",
         json_schema_extra={"example": 5.2},
@@ -355,14 +351,14 @@ class MediaMetricsResponse(BaseModel):
         description="Average processing latency in milliseconds",
         json_schema_extra={"example": 45.2},
     )
-    transcription_accuracy: Optional[float] = Field(
+    transcription_accuracy: float | None = Field(
         None,
         description="Transcription accuracy score",
         json_schema_extra={"example": 0.94},
         ge=0.0,
         le=1.0,
     )
-    voice_activity_percentage: Optional[float] = Field(
+    voice_activity_percentage: float | None = Field(
         None,
         description="Percentage of time with voice activity",
         json_schema_extra={"example": 45.6},
@@ -402,26 +398,26 @@ class AudioConfigRequest(BaseModel):
         description="Media session identifier",
         json_schema_extra={"example": "media_session_123456"},
     )
-    sample_rate: Optional[int] = Field(
+    sample_rate: int | None = Field(
         None,
         description="Audio sample rate in Hz",
         json_schema_extra={"example": 16000},
     )
-    channels: Optional[int] = Field(
+    channels: int | None = Field(
         None, description="Number of audio channels", json_schema_extra={"example": 1}
     )
-    format: Optional[str] = Field(
+    format: str | None = Field(
         None, description="Audio format", json_schema_extra={"example": "pcm_16"}
     )
-    noise_reduction_enabled: Optional[bool] = Field(
+    noise_reduction_enabled: bool | None = Field(
         None, description="Enable noise reduction", json_schema_extra={"example": True}
     )
-    echo_cancellation_enabled: Optional[bool] = Field(
+    echo_cancellation_enabled: bool | None = Field(
         None,
         description="Enable echo cancellation",
         json_schema_extra={"example": True},
     )
-    auto_gain_control_enabled: Optional[bool] = Field(
+    auto_gain_control_enabled: bool | None = Field(
         None,
         description="Enable automatic gain control",
         json_schema_extra={"example": False},

@@ -6,7 +6,6 @@ Models for tracking call sessions, participants, and call state.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
 from uuid import UUID
 
 from pydantic import Field
@@ -47,64 +46,44 @@ class Call(TimestampedModel):
     """
 
     # Core identifiers
-    call_connection_id: str = Field(
-        description="Azure Communication Services call connection ID"
-    )
+    call_connection_id: str = Field(description="Azure Communication Services call connection ID")
 
-    correlation_id: str = Field(
-        description="Correlation ID for tracing across services"
-    )
+    correlation_id: str = Field(description="Correlation ID for tracing across services")
 
     # Call configuration
-    call_type: CallType = Field(
-        description="Type of call (inbound, outbound, transfer)"
-    )
+    call_type: CallType = Field(description="Type of call (inbound, outbound, transfer)")
 
     status: CallStatus = Field(
         default=CallStatus.INITIATED, description="Current status of the call"
     )
 
     # Participant information
-    caller_number: Optional[str] = Field(
-        default=None, description="Phone number of the caller"
-    )
+    caller_number: str | None = Field(default=None, description="Phone number of the caller")
 
-    target_number: Optional[str] = Field(
-        default=None, description="Phone number being called"
-    )
+    target_number: str | None = Field(default=None, description="Phone number being called")
 
     # Timing information
     initiated_at: datetime = Field(
         default_factory=datetime.utcnow, description="When the call was initiated"
     )
 
-    connected_at: Optional[datetime] = Field(
-        default=None, description="When the call was connected"
-    )
+    connected_at: datetime | None = Field(default=None, description="When the call was connected")
 
-    ended_at: Optional[datetime] = Field(
-        default=None, description="When the call ended"
-    )
+    ended_at: datetime | None = Field(default=None, description="When the call ended")
 
-    duration_seconds: Optional[int] = Field(
-        default=None, description="Total call duration in seconds"
-    )
+    duration_seconds: int | None = Field(default=None, description="Total call duration in seconds")
 
     # Configuration and metadata
-    agent_config: Dict = Field(
+    agent_config: dict = Field(
         default_factory=dict, description="Agent configuration used for this call"
     )
 
-    metadata: Dict = Field(default_factory=dict, description="Additional call metadata")
+    metadata: dict = Field(default_factory=dict, description="Additional call metadata")
 
     # Error tracking
-    error_message: Optional[str] = Field(
-        default=None, description="Error message if call failed"
-    )
+    error_message: str | None = Field(default=None, description="Error message if call failed")
 
-    error_code: Optional[str] = Field(
-        default=None, description="Error code if call failed"
-    )
+    error_code: str | None = Field(default=None, description="Error code if call failed")
 
 
 class CallParticipant(TimestampedModel):
@@ -121,17 +100,11 @@ class CallParticipant(TimestampedModel):
     call_id: UUID = Field(description="ID of the associated call")
 
     # Participant identification
-    participant_id: str = Field(
-        description="Azure Communication Services participant ID"
-    )
+    participant_id: str = Field(description="Azure Communication Services participant ID")
 
-    display_name: Optional[str] = Field(
-        default=None, description="Display name of the participant"
-    )
+    display_name: str | None = Field(default=None, description="Display name of the participant")
 
-    phone_number: Optional[str] = Field(
-        default=None, description="Phone number of the participant"
-    )
+    phone_number: str | None = Field(default=None, description="Phone number of the participant")
 
     # Timing
     joined_at: datetime = Field(
@@ -139,9 +112,7 @@ class CallParticipant(TimestampedModel):
         description="When the participant joined the call",
     )
 
-    left_at: Optional[datetime] = Field(
-        default=None, description="When the participant left the call"
-    )
+    left_at: datetime | None = Field(default=None, description="When the participant left the call")
 
     # Media capabilities
     audio_enabled: bool = Field(
@@ -153,11 +124,7 @@ class CallParticipant(TimestampedModel):
     )
 
     # Status
-    is_active: bool = Field(
-        default=True, description="Whether the participant is currently active"
-    )
+    is_active: bool = Field(default=True, description="Whether the participant is currently active")
 
     # Metadata
-    metadata: Dict = Field(
-        default_factory=dict, description="Additional participant metadata"
-    )
+    metadata: dict = Field(default_factory=dict, description="Additional participant metadata")

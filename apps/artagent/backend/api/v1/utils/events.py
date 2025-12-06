@@ -7,14 +7,15 @@ Replaces the complex event system with event, direct patterns.
 """
 
 import time
-from typing import Dict, Any, Optional
+from typing import Any
+
 from utils.ml_logging import get_logger
 
 logger = get_logger("v1.events")
 
 
 async def emit_call_lifecycle_event(
-    event_type: str, call_id: str, data: Optional[Dict[str, Any]] = None
+    event_type: str, call_id: str, data: dict[str, Any] | None = None
 ) -> None:
     """
     event call lifecycle event emission for REST API tracking.
@@ -37,7 +38,7 @@ async def emit_call_lifecycle_event(
     )
 
 
-def get_event_health_status() -> Dict[str, Any]:
+def get_event_health_status() -> dict[str, Any]:
     """
     event health status without complex event registry overhead.
 
@@ -52,7 +53,7 @@ def get_event_health_status() -> Dict[str, Any]:
     }
 
 
-def get_system_metrics() -> Dict[str, Any]:
+def get_system_metrics() -> dict[str, Any]:
     """
     event system metrics without event registry complexity.
 

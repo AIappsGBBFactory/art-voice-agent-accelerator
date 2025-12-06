@@ -1,7 +1,5 @@
 import pytest
-
 from redis.exceptions import MovedError, RedisClusterException
-
 from src.redis import manager as redis_manager
 from src.redis.manager import AzureRedisManager
 
@@ -67,9 +65,7 @@ def test_get_session_data_raises_without_cluster_support(monkeypatch):
     monkeypatch.setattr(
         redis_manager,
         "RedisCluster",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            RedisClusterException("cluster unavailable")
-        ),
+        lambda *args, **kwargs: (_ for _ in ()).throw(RedisClusterException("cluster unavailable")),
     )
 
     mgr = AzureRedisManager(
@@ -94,9 +90,7 @@ def test_cluster_initialization_falls_back_to_standalone(monkeypatch):
     monkeypatch.setattr(
         redis_manager,
         "RedisCluster",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            RedisClusterException("cluster unavailable")
-        ),
+        lambda *args, **kwargs: (_ for _ in ()).throw(RedisClusterException("cluster unavailable")),
     )
 
     mgr = AzureRedisManager(

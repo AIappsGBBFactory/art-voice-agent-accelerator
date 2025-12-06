@@ -22,7 +22,7 @@ Usage:
 
     # In any nested function (no extra params needed):
     logger.info("Processing speech")  # Automatically includes session_id, call_connection_id
-    
+
     with tracer.start_as_current_span("my_operation"):
         pass  # Span automatically gets session attributes
 """
@@ -32,7 +32,7 @@ from __future__ import annotations
 import contextvars
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from opentelemetry import trace
 
@@ -40,11 +40,12 @@ from opentelemetry import trace
 # CONTEXT VARIABLE - Thread-safe, async-safe session state
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class SessionCorrelation:
     """
     Immutable correlation data for a session.
-    
+
     Attributes:
         call_connection_id: ACS call connection ID or browser session key
         session_id: User/conversation session identifier
@@ -52,12 +53,13 @@ class SessionCorrelation:
         agent_name: Current agent handling the session
         extra: Additional custom attributes
     """
-    call_connection_id: Optional[str] = None
-    session_id: Optional[str] = None
-    transport_type: Optional[str] = None
-    agent_name: Optional[str] = None
+
+    call_connection_id: str | None = None
+    session_id: str | None = None
+    transport_type: str | None = None
+    agent_name: str | None = None
     extra: dict = field(default_factory=dict)
-    
+
     @property
     def short_id(self) -> str:
         """Short identifier for logging prefixes."""
@@ -66,7 +68,7 @@ class SessionCorrelation:
         if self.session_id:
             return self.session_id[-8:]
         return "unknown"
-    
+
     def to_span_attributes(self) -> dict[str, Any]:
         """Convert to OpenTelemetry span attributes."""
         attrs = {}
@@ -85,7 +87,7 @@ class SessionCorrelation:
             if isinstance(value, (str, int, float, bool)):
                 attrs[key] = value
         return attrs
-    
+
     def to_log_record(self) -> dict[str, Any]:
         """Convert to log record extras for structured logging."""
         return {
@@ -93,12 +95,12 @@ class SessionCorrelation:
             "session_id": self.session_id or "-",
             "transport_type": self.transport_type or "-",
             "agent_name": self.agent_name or "-",
-            **{k: v for k, v in self.extra.items() if isinstance(v, (str, int, float, bool))}
+            **{k: v for k, v in self.extra.items() if isinstance(v, (str, int, float, bool))},
         }
 
 
 # The context variable - async-safe and thread-local
-_session_context: contextvars.ContextVar[Optional[SessionCorrelation]] = contextvars.ContextVar(
+_session_context: contextvars.ContextVar[SessionCorrelation | None] = contextvars.ContextVar(
     "session_correlation", default=None
 )
 
@@ -107,27 +109,28 @@ _session_context: contextvars.ContextVar[Optional[SessionCorrelation]] = context
 # PUBLIC API - Context Managers
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @asynccontextmanager
 async def session_context(
-    call_connection_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-    transport_type: Optional[str] = None,
-    agent_name: Optional[str] = None,
+    call_connection_id: str | None = None,
+    session_id: str | None = None,
+    transport_type: str | None = None,
+    agent_name: str | None = None,
     **extra: Any,
 ):
     """
     Async context manager that establishes session correlation for all nested operations.
-    
+
     Use this at the top-level connection handler (WebSocket accept, HTTP request).
     All spans and logs within this context automatically inherit correlation IDs.
-    
+
     Args:
         call_connection_id: ACS call connection ID or unique connection identifier
         session_id: User/conversation session identifier
         transport_type: "ACS" or "BROWSER"
         agent_name: Name of the agent handling this session
         **extra: Additional custom attributes to include in all spans/logs
-    
+
     Example:
         async with session_context(
             call_connection_id=config.call_connection_id,
@@ -143,13 +146,13 @@ async def session_context(
         agent_name=agent_name,
         extra=extra,
     )
-    
+
     token = _session_context.set(correlation)
-    
+
     # Create a root span for this session with all correlation attributes
     tracer = trace.get_tracer(__name__)
     span_name = f"session[{transport_type or 'unknown'}]"
-    
+
     with tracer.start_as_current_span(
         span_name,
         kind=trace.SpanKind.SERVER,
@@ -163,15 +166,15 @@ async def session_context(
 
 @contextmanager
 def session_context_sync(
-    call_connection_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-    transport_type: Optional[str] = None,
-    agent_name: Optional[str] = None,
+    call_connection_id: str | None = None,
+    session_id: str | None = None,
+    transport_type: str | None = None,
+    agent_name: str | None = None,
     **extra: Any,
 ):
     """
     Sync version of session_context for thread-bridge callbacks.
-    
+
     Use this when crossing from async to sync contexts (e.g., STT callbacks).
     """
     correlation = SessionCorrelation(
@@ -181,12 +184,12 @@ def session_context_sync(
         agent_name=agent_name,
         extra=extra,
     )
-    
+
     token = _session_context.set(correlation)
-    
+
     tracer = trace.get_tracer(__name__)
     span_name = f"session_sync[{transport_type or 'unknown'}]"
-    
+
     with tracer.start_as_current_span(
         span_name,
         kind=trace.SpanKind.INTERNAL,
@@ -199,17 +202,17 @@ def session_context_sync(
 
 
 def set_session_context(
-    call_connection_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-    transport_type: Optional[str] = None,
-    agent_name: Optional[str] = None,
+    call_connection_id: str | None = None,
+    session_id: str | None = None,
+    transport_type: str | None = None,
+    agent_name: str | None = None,
     **extra: Any,
 ) -> contextvars.Token:
     """
     Set session context without creating a span (for thread bridges).
-    
+
     Returns a token that MUST be used to reset the context.
-    
+
     Example:
         token = set_session_context(call_connection_id="abc")
         try:
@@ -236,10 +239,11 @@ def reset_session_context(token: contextvars.Token) -> None:
 # PUBLIC API - Accessors
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def get_session_correlation() -> Optional[SessionCorrelation]:
+
+def get_session_correlation() -> SessionCorrelation | None:
     """
     Get current session correlation data.
-    
+
     Returns None if not within a session_context.
     """
     return _session_context.get()
@@ -262,9 +266,9 @@ def get_short_id() -> str:
 def get_span_attributes() -> dict[str, Any]:
     """
     Get span attributes from current session context.
-    
+
     Use this to add session correlation to manually created spans:
-    
+
         with tracer.start_as_current_span("my_span") as span:
             for k, v in get_span_attributes().items():
                 span.set_attribute(k, v)
@@ -276,39 +280,44 @@ def get_span_attributes() -> dict[str, Any]:
 def get_log_extras() -> dict[str, Any]:
     """
     Get log record extras from current session context.
-    
+
     Use this for explicit logging with correlation:
-    
+
         logger.info("Message", extra=get_log_extras())
     """
     ctx = _session_context.get()
-    return ctx.to_log_record() if ctx else {
-        "call_connection_id": "-",
-        "session_id": "-",
-        "transport_type": "-",
-        "agent_name": "-",
-    }
+    return (
+        ctx.to_log_record()
+        if ctx
+        else {
+            "call_connection_id": "-",
+            "session_id": "-",
+            "transport_type": "-",
+            "agent_name": "-",
+        }
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SPAN HELPER - Auto-inject session attributes
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def inject_session_attributes(span: Optional[trace.Span] = None) -> None:
+
+def inject_session_attributes(span: trace.Span | None = None) -> None:
     """
     Inject session correlation attributes into the current or provided span.
-    
+
     This is automatically called by the SpanProcessor, but can be called
     manually for spans created outside the normal flow.
     """
     target_span = span or trace.get_current_span()
     if not target_span or not target_span.is_recording():
         return
-    
+
     ctx = _session_context.get()
     if not ctx:
         return
-    
+
     for key, value in ctx.to_span_attributes().items():
         target_span.set_attribute(key, value)
 
@@ -317,32 +326,33 @@ def inject_session_attributes(span: Optional[trace.Span] = None) -> None:
 # SPAN PROCESSOR - Auto-inject attributes on span start
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class SessionContextSpanProcessor:
     """
     OpenTelemetry SpanProcessor that automatically injects session attributes.
-    
+
     Add this processor to your TracerProvider to ensure all spans get
     session correlation attributes without manual intervention.
-    
+
     Usage in telemetry_config.py:
         from utils.session_context import SessionContextSpanProcessor
-        
+
         provider = TracerProvider(...)
         provider.add_span_processor(SessionContextSpanProcessor())
     """
-    
-    def on_start(self, span: trace.Span, parent_context: Optional[Any] = None) -> None:
+
+    def on_start(self, span: trace.Span, parent_context: Any | None = None) -> None:
         """Called when a span starts - inject session attributes."""
         inject_session_attributes(span)
-    
+
     def on_end(self, span: trace.Span) -> None:
         """Called when a span ends - no action needed."""
         pass
-    
+
     def shutdown(self) -> None:
         """Shutdown the processor."""
         pass
-    
+
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         """Force flush - returns True immediately as no buffering."""
         return True

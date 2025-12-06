@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Iterable, List, Optional, Set
+from collections.abc import Iterable
 
 from utils.ml_logging import get_logger
 
@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 DEFAULT_PHRASE_LIST_ENV = "SPEECH_RECOGNIZER_DEFAULT_PHRASES"
 
 
-def parse_phrase_entries(source: Iterable[str] | str) -> Set[str]:
+def parse_phrase_entries(source: Iterable[str] | str) -> set[str]:
     """Normalize phrases into a trimmed, de-duplicated set."""
 
     if isinstance(source, str):
@@ -22,26 +22,22 @@ def parse_phrase_entries(source: Iterable[str] | str) -> Set[str]:
         candidates = list(source)
 
     normalized = {
-        (candidate or "").strip()
-        for candidate in candidates
-        if candidate and candidate.strip()
+        (candidate or "").strip() for candidate in candidates if candidate and candidate.strip()
     }
     return normalized
 
 
-def load_default_phrases_from_env() -> Set[str]:
+def load_default_phrases_from_env() -> set[str]:
     """Load and normalize phrase entries from the default environment variable."""
 
     raw_values = os.getenv(DEFAULT_PHRASE_LIST_ENV, "")
     phrases = parse_phrase_entries(raw_values)
     if phrases:
-        logger.debug(
-            "Loaded %s phrases from %s", len(phrases), DEFAULT_PHRASE_LIST_ENV
-        )
+        logger.debug("Loaded %s phrases from %s", len(phrases), DEFAULT_PHRASE_LIST_ENV)
     return phrases
 
 
-_GLOBAL_MANAGER: Optional["PhraseListManager"] = None
+_GLOBAL_MANAGER: PhraseListManager | None = None
 
 
 class PhraseListManager:
@@ -49,7 +45,7 @@ class PhraseListManager:
 
     def __init__(self, *, initial_phrases: Iterable[str] | None = None) -> None:
         self._lock = asyncio.Lock()
-        self._phrases: Set[str] = set()
+        self._phrases: set[str] = set()
         if initial_phrases:
             self._phrases.update(parse_phrase_entries(initial_phrases))
 
@@ -82,7 +78,7 @@ class PhraseListManager:
                 logger.debug("Added %s phrase bias entries", added)
             return added
 
-    async def snapshot(self) -> List[str]:
+    async def snapshot(self) -> list[str]:
         """Return a sorted snapshot of current phrases."""
 
         async with self._lock:
@@ -110,13 +106,11 @@ def get_global_phrase_manager() -> PhraseListManager:
 
     global _GLOBAL_MANAGER
     if _GLOBAL_MANAGER is None:
-        _GLOBAL_MANAGER = PhraseListManager(
-            initial_phrases=load_default_phrases_from_env()
-        )
+        _GLOBAL_MANAGER = PhraseListManager(initial_phrases=load_default_phrases_from_env())
     return _GLOBAL_MANAGER
 
 
-async def get_global_phrase_snapshot() -> List[str]:
+async def get_global_phrase_snapshot() -> list[str]:
     """Convenience helper to return the current global phrase snapshot."""
 
     manager = get_global_phrase_manager()
