@@ -46,19 +46,33 @@ cd art-voice-agent-accelerator
 
 ## 4. Python Environment (Choose One)
 
-### Option A: venv
+### Option A: uv (Recommended)
+[uv](https://docs.astral.sh/uv/) is an extremely fast Python package manager (10-100x faster than pip).
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Sync dependencies (creates .venv automatically)
+uv sync
+
+# Run commands in the environment
+uv run uvicorn apps.artagent.backend.main:app --reload --port 8010
+```
+
+### Option B: venv + pip
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -e .[dev]
 ```
 
-### Option B: Conda
+### Option C: Conda
 ```bash
 conda env create -f environment.yaml
 conda activate audioagent
-pip install -r requirements.txt   # sync with lock
+uv sync  # or: pip install -e .[dev]
 ```
 
 ---
@@ -304,7 +318,7 @@ docker-compose down
 | WS closes fast | Wrong `VITE_BACKEND_BASE_URL` | Use exact backend/tunnel URL |
 | Slow first reply | Cold pool warm-up | Keep process running |
 | Phone call no events | ACS callback not updated to tunnel | Reconfigure Event Grid subscription |
-| Import errors | Missing dependencies | Re-run `pip install -r requirements.txt` |
+| Import errors | Missing dependencies | Re-run `uv sync` (or `pip install -e .[dev]`) |
 
 ---
 
@@ -315,13 +329,13 @@ Validate your local setup with the comprehensive test suite:
 
 ```bash
 # Run core component tests
-python -m pytest tests/test_acs_media_lifecycle.py -v
+uv run pytest tests/test_acs_media_lifecycle.py -v
 
 # Test event handling and WebSocket integration
-python -m pytest tests/test_acs_events_handlers.py -v
+uv run pytest tests/test_acs_events_handlers.py -v
 
 # Validate DTMF processing (if using phone features)
-python -m pytest tests/test_dtmf_validation.py -v
+uv run pytest tests/test_dtmf_validation.py -v
 ```
 
 ### Load Testing (Advanced)
