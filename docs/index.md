@@ -176,6 +176,14 @@ graph TB
     3. **[Healthcare Solutions](industry/healthcare.md)** - Domain-specific implementations
     4. **[Speech Services](reference/speech-synthesis.md)** - Advanced voice capabilities
 
+=== "🏆 Get Certified"
+    **Become an ARTis practitioner:**
+    
+    1. **[ARTis Certification Program](community/artis-certification.md)** - Levels, badges & Hall of Fame
+    2. Complete onboarding for **Level 1**
+    3. Build custom agents for **Level 2**
+    4. Lead production deployments for **Level 3**
+
 !!! info "Microsoft Learn Learning Paths"
     Complement this documentation with official Microsoft learning resources:
     
