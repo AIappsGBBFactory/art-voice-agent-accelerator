@@ -18,8 +18,8 @@ resource "azurerm_email_communication_service_domain" "managed" {
 
 resource "azurerm_email_communication_service_domain_sender_username" "default" {
   email_service_domain_id = azurerm_email_communication_service_domain.managed.id
-  name                              = local.email_sender_username
-  display_name                          = local.email_sender_display_name
+  name                    = local.email_sender_username
+  display_name            = local.email_sender_display_name
 }
 
 
@@ -39,16 +39,16 @@ resource "azapi_resource" "acs" {
   location = "global"
   tags     = local.tags
 
-  ignore_missing_property   = true
+  ignore_missing_property = true
 
   identity {
     type = "SystemAssigned"
   }
   lifecycle {
-      ignore_changes = [
-        # Ignore changes to identity to prevent recreation
-        identity,
-      ]
+    ignore_changes = [
+      # Ignore changes to identity to prevent recreation
+      identity,
+    ]
   }
   body = {
     properties = {

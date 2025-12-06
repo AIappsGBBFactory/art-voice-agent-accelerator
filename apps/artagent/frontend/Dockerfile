@@ -20,6 +20,9 @@ RUN npm run build
 FROM node:22-alpine
 WORKDIR /app
 
+# Install curl and jq for App Configuration REST API calls
+RUN apk add --no-cache curl jq bash
+
 # Copy built files and package.json
 COPY --from=builder /app/dist ./dist
 COPY package.json package-lock.json ./
