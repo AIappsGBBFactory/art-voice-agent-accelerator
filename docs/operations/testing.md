@@ -379,8 +379,11 @@ make create_conda_env
 # Activate environment
 make activate_conda_env
 
-# Install test dependencies
-pip install -r requirements-test.txt
+# Install test dependencies (using uv - recommended)
+uv sync --extra dev
+
+# Or with pip:
+# pip install -e .[dev]
 ```
 
 ## Best Practices

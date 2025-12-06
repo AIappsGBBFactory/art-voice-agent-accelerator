@@ -213,16 +213,19 @@ For Azure Container Apps deployment, ensure proper configuration:
 # Dockerfile example
 FROM python:3.11-slim
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # Set environment for headless operation
 ENV TTS_ENABLE_LOCAL_PLAYBACK=false
 ENV AZURE_SPEECH_REGION=eastus
 
 # Install dependencies
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY src/ ./src/
+RUN uv sync --locked --no-dev
 
 # Copy application
-COPY src/ ./src/
 CMD ["python", "-m", "your_app"]
 ```
 

@@ -80,15 +80,15 @@ apps/artagent/
 
 ### **Prerequisites**
 - Python 3.11+, Node.js 18+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - Azure services provisioned (see Infrastructure section)
 
 ### **Backend Setup**
 ```bash
-cd apps/artagent/backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+# From project root (recommended)
+uv sync
 cp .env.sample .env  # Configure Azure credentials
-python main.py  # Starts on localhost:8010
+uv run uvicorn apps.artagent.backend.main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
 ### **Frontend Setup**  
