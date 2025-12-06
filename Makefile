@@ -177,9 +177,16 @@ run_load_test_realtime_conversation:
 
 # Purchase ACS phone number and store in environment file
 # Usage: make purchase_acs_phone_number [ENV_FILE=custom.env] [COUNTRY_CODE=US] [AREA_CODE=833] [PHONE_TYPE=TOLL_FREE]
+# ⚠️  WARNING: Repeated phone number purchase attempts may flag your subscription as potential fraud.
+#    If flagged, you will need to open an Azure support ticket to restore phone purchasing capabilities.
+#    Consider using Azure Portal for manual purchases to avoid this issue.
 purchase_acs_phone_number:
 	@echo "📞 Azure Communication Services - Phone Number Purchase"
 	@echo "======================================================"
+	@echo ""
+	@echo "⚠️  WARNING: Repeated purchase attempts may flag your subscription as potential fraud!"
+	@echo "   If flagged, you'll need an Azure support ticket to restore purchasing capabilities."
+	@echo "   Consider using Azure Portal for manual purchases to avoid this issue."
 	@echo ""
 	# Set default parameters
 	$(eval ENV_FILE ?= .env.$(AZURE_ENV_NAME))
@@ -201,9 +208,16 @@ purchase_acs_phone_number:
 
 # Purchase ACS phone number using PowerShell (Windows)	
 # Usage: make purchase_acs_phone_number_ps [ENV_FILE=custom.env] [COUNTRY_CODE=US] [AREA_CODE=833] [PHONE_TYPE=TOLL_FREE]
+# ⚠️  WARNING: Repeated phone number purchase attempts may flag your subscription as potential fraud.
+#    If flagged, you will need to open an Azure support ticket to restore phone purchasing capabilities.
+#    Consider using Azure Portal for manual purchases to avoid this issue.
 purchase_acs_phone_number_ps:
 	@echo "📞 Azure Communication Services - Phone Number Purchase (PowerShell)"
 	@echo "=================================================================="
+	@echo ""
+	@echo "⚠️  WARNING: Repeated purchase attempts may flag your subscription as potential fraud!"
+	@echo "   If flagged, you'll need an Azure support ticket to restore purchasing capabilities."
+	@echo "   Consider using Azure Portal for manual purchases to avoid this issue."
 	@echo ""
 	
 	# Set default parameters
@@ -221,8 +235,125 @@ purchase_acs_phone_number_ps:
 		-PhoneType "$(PHONE_TYPE)" \
 		-TerraformDir "$(TF_DIR)"
 
+.PHONY: purchase_acs_phone_number purchase_acs_phone_number_ps
 
 ############################################################
+# Azure App Configuration
+# Purpose: Manage configuration settings in Azure App Config
+############################################################
+
+# Default App Config settings (can be overridden)
+APPCONFIG_ENDPOINT ?= $(shell grep '^AZURE_APPCONFIG_ENDPOINT=' .env.local 2>/dev/null | cut -d'=' -f2 | sed 's|https://||')
+APPCONFIG_LABEL ?= $(shell grep '^AZURE_APPCONFIG_LABEL=' .env.local 2>/dev/null | cut -d'=' -f2)
+
+# Set ACS phone number in App Configuration
+# Usage: make set_phone_number PHONE=+18001234567
+# Usage: make set_phone_number PHONE=+18001234567 APPCONFIG_ENDPOINT=appconfig-xxx.azconfig.io APPCONFIG_LABEL=dev
+set_phone_number:
+	@echo "📞 Setting ACS Phone Number in App Configuration"
+	@echo "================================================"
+	@echo ""
+	@if [ -z "$(PHONE)" ]; then \
+		echo "❌ Error: PHONE parameter is required"; \
+		echo ""; \
+		echo "Usage: make set_phone_number PHONE=+18001234567"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@if [ -z "$(APPCONFIG_ENDPOINT)" ]; then \
+		echo "❌ Error: APPCONFIG_ENDPOINT not found"; \
+		echo "   Set it in .env.local or pass it as parameter"; \
+		echo ""; \
+		echo "Usage: make set_phone_number PHONE=+18001234567 APPCONFIG_ENDPOINT=appconfig-xxx.azconfig.io"; \
+		exit 1; \
+	fi
+	@if [ -z "$(APPCONFIG_LABEL)" ]; then \
+		echo "⚠️  Warning: APPCONFIG_LABEL not set, using empty label"; \
+	fi
+	@echo "📋 Configuration:"
+	@echo "   Endpoint: $(APPCONFIG_ENDPOINT)"
+	@echo "   Label: $(APPCONFIG_LABEL)"
+	@echo "   Phone: $(PHONE)"
+	@echo ""
+	@echo "🔧 Setting phone number..."
+	@az appconfig kv set \
+		--endpoint "https://$(APPCONFIG_ENDPOINT)" \
+		--key "azure/acs/source-phone-number" \
+		--value "$(PHONE)" \
+		--label "$(APPCONFIG_LABEL)" \
+		--auth-mode login \
+		--yes \
+		&& echo "" \
+		&& echo "✅ Phone number set successfully!" \
+		&& echo "" \
+		&& echo "🔄 Triggering config refresh..." \
+		&& az appconfig kv set \
+			--endpoint "https://$(APPCONFIG_ENDPOINT)" \
+			--key "app/sentinel" \
+			--value "v$$(date +%s)" \
+			--label "$(APPCONFIG_LABEL)" \
+			--auth-mode login \
+			--yes \
+			--output none \
+		&& echo "✅ Config refresh triggered - running apps will pick up the change"
+
+# Show current App Configuration values
+# Usage: make show_appconfig
+show_appconfig:
+	@echo "📋 Azure App Configuration Values"
+	@echo "================================="
+	@echo ""
+	@if [ -z "$(APPCONFIG_ENDPOINT)" ]; then \
+		echo "❌ Error: APPCONFIG_ENDPOINT not found in .env.local"; \
+		exit 1; \
+	fi
+	@echo "Endpoint: $(APPCONFIG_ENDPOINT)"
+	@echo "Label: $(APPCONFIG_LABEL)"
+	@echo ""
+	@az appconfig kv list \
+		--endpoint "https://$(APPCONFIG_ENDPOINT)" \
+		--label "$(APPCONFIG_LABEL)" \
+		--auth-mode login \
+		--output table
+
+# Show ACS-related App Configuration values
+# Usage: make show_appconfig_acs
+show_appconfig_acs:
+	@echo "📞 ACS Configuration in App Config"
+	@echo "==================================="
+	@echo ""
+	@if [ -z "$(APPCONFIG_ENDPOINT)" ]; then \
+		echo "❌ Error: APPCONFIG_ENDPOINT not found in .env.local"; \
+		exit 1; \
+	fi
+	@az appconfig kv list \
+		--endpoint "https://$(APPCONFIG_ENDPOINT)" \
+		--label "$(APPCONFIG_LABEL)" \
+		--key "azure/acs/*" \
+		--auth-mode login \
+		--output table
+
+# Trigger App Configuration refresh (updates sentinel key)
+# Usage: make refresh_appconfig
+refresh_appconfig:
+	@echo "🔄 Triggering App Configuration Refresh"
+	@echo "========================================"
+	@echo ""
+	@if [ -z "$(APPCONFIG_ENDPOINT)" ]; then \
+		echo "❌ Error: APPCONFIG_ENDPOINT not found in .env.local"; \
+		exit 1; \
+	fi
+	@az appconfig kv set \
+		--endpoint "https://$(APPCONFIG_ENDPOINT)" \
+		--key "app/sentinel" \
+		--value "v$$(date +%s)" \
+		--label "$(APPCONFIG_LABEL)" \
+		--auth-mode login \
+		--yes \
+		--output none \
+		&& echo "✅ Sentinel updated - running apps will refresh their configuration"
+
+.PHONY: set_phone_number show_appconfig show_appconfig_acs refresh_appconfig
 # Azure Redis Management
 # Purpose: Connect to Azure Redis using Azure AD authentication
 ############################################################
@@ -410,6 +541,12 @@ help:
 	@echo "📞 Azure Communication Services:"
 	@echo "  purchase_acs_phone_number        Purchase ACS phone number and store in env file"
 	@echo "  purchase_acs_phone_number_ps     Purchase ACS phone number (PowerShell version)"
+	@echo ""
+	@echo "⚙️  Azure App Configuration:"
+	@echo "  set_phone_number                 Set ACS phone number in App Config (PHONE=+18001234567)"
+	@echo "  show_appconfig                   Show all App Configuration values"
+	@echo "  show_appconfig_acs               Show ACS-related App Configuration values"
+	@echo "  refresh_appconfig                Trigger config refresh for running apps"
 	@echo ""
 	@echo "🔴 Azure Redis Management:"
 	@echo "  connect_redis                    Connect to Azure Redis using Azure AD authentication"

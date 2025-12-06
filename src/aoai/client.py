@@ -171,9 +171,25 @@ def get_client():
     
     Returns:
         AzureOpenAI: Configured Azure OpenAI client instance.
+        
+    Raises:
+        ValueError: If AZURE_OPENAI_ENDPOINT is not configured.
     """
     global _client_instance
     if _client_instance is None:
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+        if not endpoint:
+            # Log all env vars that start with AZURE_ for debugging
+            azure_vars = {k: v[:50] + "..." if len(v) > 50 else v 
+                         for k, v in os.environ.items() if k.startswith("AZURE_")}
+            logger.error(
+                "AZURE_OPENAI_ENDPOINT not available. Azure env vars: %s",
+                azure_vars
+            )
+            raise ValueError(
+                "AZURE_OPENAI_ENDPOINT must be provided via environment variable. "
+                "Ensure Azure App Configuration has loaded or set the variable directly."
+            )
         _client_instance = create_azure_openai_client()
     return _client_instance
 
@@ -183,8 +199,21 @@ def get_client():
 client = None  # Will be set on first import of this module in app startup
 
 def _init_client():
-    """Initialize the client. Called after telemetry setup."""
+    """
+    Initialize the client. Called after telemetry setup.
+    
+    This function is resilient - if AZURE_OPENAI_ENDPOINT is not yet available
+    (e.g., App Configuration hasn't loaded), it will skip initialization.
+    The client will be created lazily on first use via get_client().
+    """
     global client
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+    if not endpoint:
+        logger.warning(
+            "AZURE_OPENAI_ENDPOINT not set during _init_client(); "
+            "client will be initialized lazily on first use"
+        )
+        return
     client = get_client()
 
 
