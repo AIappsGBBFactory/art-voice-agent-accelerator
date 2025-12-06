@@ -242,3 +242,21 @@ output "AZURE_VOICELIVE_MODEL" {
   value       = var.enable_voice_live ? local.voice_live_model_name : ""
 }
 
+# ============================================================================
+# APP CONFIGURATION
+# ============================================================================
+
+output "AZURE_APPCONFIG_ENDPOINT" {
+  description = "Azure App Configuration endpoint for centralized config management"
+  value       = module.appconfig.endpoint
+}
+
+output "AZURE_APPCONFIG_NAME" {
+  description = "Azure App Configuration resource name"
+  value       = module.appconfig.name
+}
+
+output "AZURE_APPCONFIG_LABEL" {
+  description = "Environment label used in App Configuration"
+  value       = module.appconfig.label
+}

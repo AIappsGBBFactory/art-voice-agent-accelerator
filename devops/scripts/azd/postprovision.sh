@@ -1,597 +1,508 @@
 #!/bin/bash
-# ========================================================================
-# 🎯 Azure Developer CLI Post-Provisioning Script
-# ========================================================================
-# This script runs after Azure resources are provisioned by azd.
-# It handles:
-# 1. ACS phone number setup (interactive or existing)
-# 2. Environment file generation
-# 3. Backend service configuration updates
+# ============================================================================
+# 🎯 Azure Developer CLI Post-Provisioning Script (v2 - App Config First)
+# ============================================================================
+#
+# This script runs after Terraform provisioning and handles tasks that CANNOT
+# be done by Terraform:
+#
+# 1. Cosmos DB initialization (seeding data - one-time operation)
+# 2. ACS phone number provisioning (interactive or CI/CD purchase)
+# 3. App Config URL updates (backend/frontend URLs known only after deploy)
+#
+# REMOVED in v2 (now handled by App Configuration):
+# - Container App environment variable patching (apps read from App Config)
+# - Environment file generation (use local-dev-setup.sh for local dev)
+# - All scattered azd env var lookups for configuration values
 #
 # CI/CD Mode: Set AZD_SKIP_INTERACTIVE=true to bypass all prompts
-# ========================================================================
+# ============================================================================
 
-set -e  # Exit on error (we'll handle specific failures with || true)
+set -euo pipefail
 
-# ========================================================================
-# 🔧 Configuration & Setup
-# ========================================================================
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HELPERS_DIR="$SCRIPT_DIR/helpers"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly HELPERS_DIR="$SCRIPT_DIR/helpers"
 
-# Check for CI/CD mode
-SKIP_INTERACTIVE="${AZD_SKIP_INTERACTIVE:-false}"
-CI_MODE="${CI:-false}"
-GITHUB_ACTIONS_MODE="${GITHUB_ACTIONS:-false}"
+# ============================================================================
+# Configuration Detection
+# ============================================================================
 
-# Auto-detect CI/CD environments
-if [ "$CI_MODE" = "true" ] || [ "$GITHUB_ACTIONS_MODE" = "true" ] || [ "$SKIP_INTERACTIVE" = "true" ]; then
-    INTERACTIVE_MODE=false
+detect_execution_mode() {
+    if [[ "${CI:-false}" == "true" ]] || \
+       [[ "${GITHUB_ACTIONS:-false}" == "true" ]] || \
+       [[ "${AZD_SKIP_INTERACTIVE:-false}" == "true" ]]; then
+        echo "ci"
+    else
+        echo "interactive"
+    fi
+}
+
+readonly EXEC_MODE=$(detect_execution_mode)
+
+# Color codes (disabled in CI)
+if [[ "$EXEC_MODE" == "interactive" ]] && [[ -t 1 ]]; then
+    readonly RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m' BLUE='\033[0;34m' NC='\033[0m'
 else
-    INTERACTIVE_MODE=true
+    readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''
 fi
 
-# Color codes for better readability (disabled in CI/CD)
-if [ "$INTERACTIVE_MODE" = "true" ] && [ -t 1 ]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    NC='\033[0m' # No Color
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    BLUE=''
-    NC=''
-fi
+# ============================================================================
+# Logging
+# ============================================================================
 
-# ========================================================================
-# 🛠️ Helper Functions
-# ========================================================================
+log()      { echo -e "${BLUE}ℹ️  $*${NC}"; }
+success()  { echo -e "${GREEN}✅ $*${NC}"; }
+warn()     { echo -e "${YELLOW}⚠️  $*${NC}"; }
+error()    { echo -e "${RED}❌ $*${NC}" >&2; }
+section()  { echo -e "\n${BLUE}$1${NC}\n$(printf '═%.0s' {1..60})"; }
 
-log_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
-}
+# ============================================================================
+# AZD Environment Helpers
+# ============================================================================
 
-log_success() {
-    echo -e "${GREEN}✅ $1${NC}"
-}
-
-log_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
-}
-
-log_error() {
-    echo -e "${RED}❌ $1${NC}"
-}
-
-log_section() {
-    echo ""
-    echo -e "${BLUE}$1${NC}"
-    echo "$(printf '=%.0s' {1..50})"
-    echo ""
-}
-
-derive_ws_url() {
-    local input="$1"
-    if [ -z "$input" ]; then
-        echo ""
-        return 0
-    fi
-
-    case "$input" in
-        https://*) echo "${input/https:\/\//wss://}" ;;
-        http://*) echo "${input/http:\/\//ws://}" ;;
-        wss://*|ws://*) echo "$input" ;;
-        *) echo "$input" ;;
-    esac
-}
-
-# Log CI/CD mode status
-log_ci_mode() {
-    if [ "$INTERACTIVE_MODE" = "false" ]; then
-        log_info "Running in CI/CD mode (non-interactive)"
-        [ "$CI_MODE" = "true" ] && log_info "  - CI environment detected"
-        [ "$GITHUB_ACTIONS_MODE" = "true" ] && log_info "  - GitHub Actions detected"
-        [ "$SKIP_INTERACTIVE" = "true" ] && log_info "  - AZD_SKIP_INTERACTIVE is set"
+# Get azd environment value with optional fallback
+azd_get() {
+    local key="$1" fallback="${2:-}"
+    local val
+    val=$(azd env get-value "$key" 2>/dev/null || echo "")
+    if [[ -z "$val" || "$val" == "null" || "$val" == ERROR* ]]; then
+        echo "$fallback"
     else
-        log_info "Running in interactive mode"
+        echo "$val"
     fi
 }
 
-# Safely get azd environment values
-get_azd_env_value() {
-    local var_name="$1"
-    local default_value="${2:-}"
-    local value
+# Set azd environment value
+azd_set() {
+    local key="$1" val="$2"
+    azd env set "$key" "$val" 2>/dev/null || warn "Failed to set $key in azd env"
+}
+
+# ============================================================================
+# App Configuration Helpers
+# ============================================================================
+
+# Get the App Configuration endpoint from azd outputs
+get_appconfig_endpoint() {
+    azd_get "AZURE_APPCONFIG_ENDPOINT"
+}
+
+# Update a key in App Configuration
+appconfig_set() {
+    local endpoint="$1" key="$2" value="$3" label="${4:-}"
     
-    value=$(azd env get-value "$var_name" 2>&1 || echo "")
-    
-    if [[ "$value" == *ERROR* ]] || [ -z "$value" ]; then
-        echo "$default_value"
-    else
-        echo "$value"
+    if [[ -z "$endpoint" ]]; then
+        warn "App Config endpoint not available, skipping key update: $key"
+        return 1
     fi
-}
-
-# Check if running in interactive mode
-is_interactive() {
-    [ "$INTERACTIVE_MODE" = "true" ] && [ -t 0 ]
-}
-
-# Validate E.164 phone number format
-is_valid_phone_number() {
-    [[ "$1" =~ ^\+[0-9]{10,15}$ ]]
-}
-
-# ========================================================================
-# 🔍 Phone Number Management Functions
-# ========================================================================
-
-check_existing_phone_number() {
-    local existing_number
-    existing_number=$(get_azd_env_value "ACS_SOURCE_PHONE_NUMBER")
     
-    if [ -n "$existing_number" ]; then
-        log_success "ACS_SOURCE_PHONE_NUMBER is already set: $existing_number"
+    local label_arg=""
+    [[ -n "$label" ]] && label_arg="--label $label"
+    
+    # Use az appconfig kv set with managed identity auth
+    if az appconfig kv set \
+        --endpoint "$endpoint" \
+        --key "$key" \
+        --value "$value" \
+        $label_arg \
+        --yes \
+        --output none 2>/dev/null; then
         return 0
     else
+        warn "Failed to update App Config key: $key"
         return 1
     fi
 }
 
-handle_phone_number_cicd() {
-    log_info "CI/CD mode: Checking for predefined phone number..."
+# Update sentinel to trigger config refresh in running apps
+trigger_config_refresh() {
+    local endpoint="$1"
+    local label="${2:-}"
+    local timestamp
+    timestamp=$(date +%s)
     
-    # Check environment variable first
-    if [ -n "${ACS_SOURCE_PHONE_NUMBER:-}" ]; then
-        log_info "Found ACS_SOURCE_PHONE_NUMBER in environment"
-        if is_valid_phone_number "$ACS_SOURCE_PHONE_NUMBER"; then
-            azd env set ACS_SOURCE_PHONE_NUMBER "$ACS_SOURCE_PHONE_NUMBER"
-            log_success "Set ACS_SOURCE_PHONE_NUMBER from environment variable"
+    log "Triggering config refresh (sentinel update)..."
+    if appconfig_set "$endpoint" "app/sentinel" "v${timestamp}" "$label"; then
+        success "Config refresh triggered"
+    fi
+}
+
+# ============================================================================
+# Task 1: Cosmos DB Initialization
+# ============================================================================
+
+task_cosmos_init() {
+    section "🗄️ Task 1: Cosmos DB Initialization"
+    
+    local db_init
+    db_init=$(azd_get "DB_INITIALIZED" "false")
+    
+    if [[ "$db_init" == "true" ]]; then
+        log "Cosmos DB already initialized, skipping"
+        return 0
+    fi
+    
+    local conn_string
+    conn_string=$(azd_get "AZURE_COSMOS_CONNECTION_STRING")
+    
+    if [[ -z "$conn_string" ]]; then
+        warn "AZURE_COSMOS_CONNECTION_STRING not set, skipping Cosmos init"
+        return 1
+    fi
+    
+    # Export required environment variables for the Python script
+    export AZURE_COSMOS_CONNECTION_STRING="$conn_string"
+    export AZURE_COSMOS_DATABASE_NAME="$(azd_get "AZURE_COSMOS_DATABASE_NAME" "audioagentdb")"
+    export AZURE_COSMOS_COLLECTION_NAME="$(azd_get "AZURE_COSMOS_COLLECTION_NAME" "audioagentcollection")"
+    
+    # Install dependencies if requirements file exists
+    if [[ -f "$HELPERS_DIR/requirements-cosmos.txt" ]]; then
+        log "Installing Cosmos DB Python dependencies..."
+        pip3 install -q -r "$HELPERS_DIR/requirements-cosmos.txt" || warn "Dependency install had issues"
+    fi
+    
+    log "Running Cosmos DB initialization..."
+    if python3 "$HELPERS_DIR/cosmos_init.py"; then
+        success "Cosmos DB initialized"
+        azd_set "DB_INITIALIZED" "true"
+        return 0
+    else
+        error "Cosmos DB initialization failed"
+        return 1
+    fi
+}
+
+# ============================================================================
+# Task 2: ACS Phone Number Configuration
+# ============================================================================
+
+task_phone_number() {
+    section "📞 Task 2: ACS Phone Number Configuration"
+    
+    local endpoint label
+    endpoint=$(get_appconfig_endpoint)
+    label=$(azd_get "AZURE_ENV_NAME")
+    
+    # Check if phone already configured in App Config (primary source)
+    if [[ -n "$endpoint" ]]; then
+        local appconfig_phone
+        appconfig_phone=$(az appconfig kv show \
+            --endpoint "$endpoint" \
+            --key "azure/acs/source-phone-number" \
+            --label "$label" \
+            --query "value" -o tsv 2>/dev/null || echo "")
+        
+        if [[ -n "$appconfig_phone" && "$appconfig_phone" =~ ^\+[0-9]{10,15}$ ]]; then
+            success "Phone number already in App Config: $appconfig_phone"
+            # Sync to azd env for reference
+            azd_set "ACS_SOURCE_PHONE_NUMBER" "$appconfig_phone"
             return 0
-        else
-            log_warning "Invalid phone number format in environment variable: $ACS_SOURCE_PHONE_NUMBER"
         fi
     fi
     
-    # Check if auto-provisioning is enabled
-    local auto_provision
-    auto_provision=$(get_azd_env_value "ACS_AUTO_PROVISION_PHONE" "false")
+    # Fallback: check azd env (legacy)
+    local existing
+    existing=$(azd_get "ACS_SOURCE_PHONE_NUMBER")
     
-    if [ "$auto_provision" = "true" ]; then
-        log_info "Auto-provisioning phone number (ACS_AUTO_PROVISION_PHONE=true)"
-        provision_new_phone_number
-        return $?
-    else
-        log_warning "No phone number configured in CI/CD mode"
-        log_info "To configure phone number in CI/CD:"
-        log_info "  - Set ACS_SOURCE_PHONE_NUMBER environment variable"
-        log_info "  - Or set ACS_AUTO_PROVISION_PHONE=true in azd environment"
-        return 1
-    fi
-}
-
-prompt_for_phone_number() {
-    if ! is_interactive; then
-        # In CI/CD mode, try alternative methods
-        handle_phone_number_cicd
-        return $?
+    if [[ -n "$existing" && "$existing" =~ ^\+[0-9]{10,15}$ ]]; then
+        log "Found phone in azd env, migrating to App Config..."
+        update_phone_in_appconfig "$existing"
+        success "Phone number migrated to App Config: $existing"
+        return 0
     fi
     
-    log_info "ACS_SOURCE_PHONE_NUMBER is not defined."
-    echo "Options:"
-    echo "  1) Enter an existing phone number"
-    echo "  2) Provision a new phone number from Azure"
-    echo "  3) Skip (configure later)"
+    if [[ "$EXEC_MODE" == "ci" ]]; then
+        # CI mode: check environment variable or auto-provision flag
+        if [[ -n "${ACS_SOURCE_PHONE_NUMBER:-}" ]]; then
+            if [[ "$ACS_SOURCE_PHONE_NUMBER" =~ ^\+[0-9]{10,15}$ ]]; then
+                update_phone_in_appconfig "$ACS_SOURCE_PHONE_NUMBER"
+                azd_set "ACS_SOURCE_PHONE_NUMBER" "$ACS_SOURCE_PHONE_NUMBER"
+                success "Phone number set from environment"
+                return 0
+            else
+                warn "Invalid phone format in environment: $ACS_SOURCE_PHONE_NUMBER"
+            fi
+        fi
+        
+        if [[ "$(azd_get "ACS_AUTO_PROVISION_PHONE" "false")" == "true" ]]; then
+            log "Auto-provisioning phone number..."
+            provision_phone_number
+            return $?
+        fi
+        
+        log "No phone configured (set ACS_SOURCE_PHONE_NUMBER or ACS_AUTO_PROVISION_PHONE=true)"
+        show_manual_phone_instructions
+        return 0
+    fi
+    
+    # Interactive mode
     echo ""
-    
-    read -p "Your choice (1-3): " choice
+    echo "📞 Phone Number Configuration"
+    echo ""
+    echo "A phone number is required for voice calls. Options:"
+    echo ""
+    echo "  1) Enter an existing phone number (if you already have one)"
+    echo "  2) Provision a new number from Azure (requires payment method)"
+    echo "  3) Skip for now (configure later via Azure Portal)"
+    echo ""
+    read -rp "Choice (1-3): " choice
     
     case "$choice" in
         1)
-            read -p "Enter phone number in E.164 format (e.g., +1234567890): " user_phone
-            if is_valid_phone_number "$user_phone"; then
-                azd env set ACS_SOURCE_PHONE_NUMBER "$user_phone"
-                log_success "Set ACS_SOURCE_PHONE_NUMBER to $user_phone"
-                return 0
+            read -rp "Enter phone number (E.164 format, e.g., +18001234567): " phone
+            if [[ "$phone" =~ ^\+[0-9]{10,15}$ ]]; then
+                update_phone_in_appconfig "$phone"
+                azd_set "ACS_SOURCE_PHONE_NUMBER" "$phone"
+                success "Phone number saved to App Config"
             else
-                log_error "Invalid phone number format"
+                error "Invalid format. Use E.164 format: +[country code][number]"
                 return 1
             fi
             ;;
-        2)
-            # User wants to provision new number
-            provision_new_phone_number || {
-                log_warning "Phone number provisioning failed, continuing with other tasks..."
-                return 1
-            }
-            ;;
+        2) provision_phone_number ;;
         3)
-            log_info "Skipping phone number configuration"
-            return 3  # Return 3 for user-initiated skip
+            log "Skipping phone configuration"
+            show_manual_phone_instructions
             ;;
-        *)
-            log_error "Invalid choice"
-            return 1
-            ;;
+        *) error "Invalid choice" ;;
     esac
 }
 
-provision_new_phone_number() {
-    log_section "📞 Provisioning New ACS Phone Number"
+show_manual_phone_instructions() {
+    local endpoint label
+    endpoint=$(get_appconfig_endpoint)
+    label=$(azd_get "AZURE_ENV_NAME")
     
-    local acs_endpoint
-    acs_endpoint=$(get_azd_env_value "ACS_ENDPOINT")
-    
-    if [ -z "$acs_endpoint" ]; then
-        log_error "ACS_ENDPOINT is not set. Cannot provision phone number."
-        return 1
-    fi
-    
-    # Ensure Azure CLI communication extension is installed
-    log_info "Checking Azure CLI communication extension..."
-    if ! az extension list --query "[?name=='communication']" -o tsv | grep -q communication; then
-        log_info "Installing Azure CLI communication extension..."
-        az extension add --name communication || {
-            log_error "Failed to install communication extension"
-            return 1
-        }
-    fi
-    
-    # Install required Python packages
-    log_info "Installing required Python packages..."
-    pip3 install -q azure-identity azure-communication-phonenumbers || {
-        log_error "Failed to install required Python packages"
-        return 1
-    }
-    
-    # Run the provisioning script
-    log_info "Creating new phone number..."
-    local phone_number
-    phone_number=$(python3 "$HELPERS_DIR/acs_phone_number_manager.py" \
-        --endpoint "$acs_endpoint" purchase 2>/dev/null) || {
-        log_error "Failed to provision phone number"
-        return 1
-    }
-    
-    # Extract clean phone number
-    local clean_number
-    clean_number=$(echo "$phone_number" | grep -o '+[0-9]\+' | head -1)
-    
-    if [ -z "$clean_number" ]; then
-        log_error "Failed to extract phone number from provisioning output"
-        return 1
-    fi
-    
-    # Save to azd environment
-    azd env set ACS_SOURCE_PHONE_NUMBER "$clean_number"
-    log_success "Successfully provisioned phone number: $clean_number"
-    
-    # Update backend service
-    update_backend_phone_number "$clean_number" || {
-        log_warning "Failed to update backend service, but phone number was provisioned"
-    }
-    
-    return 0
-}
-
-update_backend_phone_number() {
-    local phone_number="$1"
-    local resource_group
-    local backend_name
-    local backend_type=""
-    
-    resource_group=$(get_azd_env_value "AZURE_RESOURCE_GROUP")
-    
-    if [ -z "$resource_group" ]; then
-        log_warning "AZURE_RESOURCE_GROUP not set. Cannot update backend."
-        return 1
-    fi
-    
-    # Check for container app
-    backend_name=$(get_azd_env_value "BACKEND_CONTAINER_APP_NAME")
-    if [ -n "$backend_name" ]; then
-        backend_type="containerapp"
-    else
-        # Check for app service
-        backend_name=$(get_azd_env_value "BACKEND_APP_SERVICE_NAME")
-        if [ -n "$backend_name" ]; then
-            backend_type="appservice"
-        fi
-    fi
-    
-    if [ -z "$backend_type" ]; then
-        log_warning "No backend service found to update"
-        return 1
-    fi
-    
-    log_info "Updating $backend_type: $backend_name"
-    
-    case "$backend_type" in
-        "containerapp")
-            az containerapp update \
-                --name "$backend_name" \
-                --resource-group "$resource_group" \
-                --set-env-vars "ACS_SOURCE_PHONE_NUMBER=$phone_number" \
-                --output none || return 1
-            ;;
-        "appservice")
-            az webapp config appsettings set \
-                --name "$backend_name" \
-                --resource-group "$resource_group" \
-                --settings "ACS_SOURCE_PHONE_NUMBER=$phone_number" \
-                --output none || return 1
-            ;;
-    esac
-    
-    log_success "Updated backend service with phone number"
-    return 0
-}
-
-# ========================================================================
-# 🌐 Frontend BACKEND_URL configuration
-# ========================================================================
-
-get_best_backend_url() {
-    # Preference order: BACKEND_API_URL (explicit) -> BACKEND_CONTAINER_APP_URL (derived) -> build from FQDN
-    local backend_api_url
-    local backend_container_url
-    local backend_fqdn
-
-    backend_api_url=$(get_azd_env_value "BACKEND_API_URL")
-    backend_container_url=$(get_azd_env_value "BACKEND_CONTAINER_APP_URL")
-    backend_fqdn=$(get_azd_env_value "BACKEND_CONTAINER_APP_FQDN")
-
-    if [ -n "$backend_api_url" ]; then
-        echo "$backend_api_url"
-        return 0
-    fi
-
-    if [ -n "$backend_container_url" ]; then
-        echo "$backend_container_url"
-        return 0
-    fi
-
-    if [ -n "$backend_fqdn" ]; then
-        echo "https://${backend_fqdn}"
-        return 0
-    fi
-
     echo ""
-    return 1
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📞 Manual Phone Number Setup"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "To configure a phone number later:"
+    echo ""
+    echo "1. Go to Azure Portal → Azure Communication Services resource"
+    echo "2. Select 'Telephony and SMS' → 'Phone numbers'"
+    echo "3. Click '+ Get' to purchase a toll-free or local number"
+    echo "4. Update App Configuration with your phone number:"
+    echo ""
+    if [[ -n "$endpoint" ]]; then
+        echo "   az appconfig kv set \\"
+        echo "     --endpoint \"$endpoint\" \\"
+        echo "     --key \"azure/acs/source-phone-number\" \\"
+        echo "     --value \"+1YOUR_PHONE_NUMBER\" \\"
+        echo "     --label \"$label\" \\"
+        echo "     --yes"
+        echo ""
+        echo "5. Trigger config refresh:"
+        echo ""
+        echo "   az appconfig kv set \\"
+        echo "     --endpoint \"$endpoint\" \\"
+        echo "     --key \"app/sentinel\" \\"
+        echo "     --value \"v\$(date +%s)\" \\"
+        echo "     --label \"$label\" \\"
+        echo "     --yes"
+    else
+        echo "   (App Config endpoint not available - check deployment)"
+    fi
+    echo ""
+    echo "📄 Full guide: docs/deployment/phone-number-setup.md"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
 }
 
-update_frontend_backend_url() {
-    log_section "🌐 Configuring Frontend BACKEND_URL"
-
-    local resource_group
-    local frontend_name
-    local chosen_url
-    local ws_url
-
-    resource_group=$(get_azd_env_value "AZURE_RESOURCE_GROUP")
-    frontend_name=$(get_azd_env_value "FRONTEND_CONTAINER_APP_NAME")
-    chosen_url=$(get_best_backend_url)
-
-    if [ -z "$frontend_name" ] || [ -z "$resource_group" ]; then
-        log_warning "Frontend Container App name or resource group not found in azd environment. Skipping BACKEND_URL configuration."
+provision_phone_number() {
+    local acs_endpoint
+    acs_endpoint=$(azd_get "ACS_ENDPOINT")
+    
+    if [[ -z "$acs_endpoint" ]]; then
+        error "ACS_ENDPOINT not set"
         return 1
     fi
-
-    if [ -z "$chosen_url" ]; then
-        log_warning "Could not resolve backend URL from azd outputs. Skipping BACKEND_URL configuration."
-        return 1
-    fi
-
-    ws_url=$(derive_ws_url "$chosen_url")
-    if [ -z "$ws_url" ]; then
-        log_warning "Unable to derive WS_URL from $chosen_url; websocket placeholder will remain unchanged."
+    
+    # Ensure dependencies
+    az extension add --name communication 2>/dev/null || true
+    pip3 install -q azure-identity azure-communication-phonenumbers 2>/dev/null || true
+    
+    log "Purchasing phone number from Azure..."
+    local phone
+    phone=$(python3 "$HELPERS_DIR/acs_phone_number_manager.py" \
+        --endpoint "$acs_endpoint" purchase 2>/dev/null | grep -o '+[0-9]\+' | head -1)
+    
+    if [[ -n "$phone" ]]; then
+        # Store in App Config (primary) and azd env (reference)
+        update_phone_in_appconfig "$phone"
+        azd_set "ACS_SOURCE_PHONE_NUMBER" "$phone"
+        success "Provisioned and saved to App Config: $phone"
+        return 0
     else
-        log_info "Derived WS_URL for frontend: $ws_url"
+        error "Phone provisioning failed"
+        echo ""
+        warn "You can manually purchase a phone number via Azure Portal."
+        show_manual_phone_instructions
+        return 1
     fi
+}
 
-    log_info "Setting BACKEND_URL on frontend: $chosen_url"
-    local env_args=(--set-env-vars "BACKEND_URL=$chosen_url")
-    if [ -n "$ws_url" ]; then
-        env_args+=(--set-env-vars "WS_URL=$ws_url")
-    fi
-
-    az containerapp update \
-        --name "$frontend_name" \
-        --resource-group "$resource_group" \
-        "${env_args[@]}" \
-        --output none || {
-            log_error "Failed to set BACKEND_URL on frontend container app"
+update_phone_in_appconfig() {
+    local phone="$1"
+    local endpoint label
+    endpoint=$(get_appconfig_endpoint)
+    label=$(azd_get "AZURE_ENV_NAME")
+    
+    if [[ -n "$endpoint" ]]; then
+        log "Saving phone number to App Configuration..."
+        if appconfig_set "$endpoint" "azure/acs/source-phone-number" "$phone" "$label"; then
+            # Trigger refresh so apps pick up the new number
+            trigger_config_refresh "$endpoint" "$label"
+            return 0
+        else
+            warn "Failed to save phone to App Config (update manually)"
             return 1
-        }
-
-    log_success "Frontend BACKEND_URL updated"
-    return 0
-}
-
-update_backend_base_url() {
-    log_section "🧩 Configuring Backend BASE_URL"
-
-    local resource_group
-    local backend_name
-    local backend_type=""
-    local chosen_url
-
-    resource_group=$(get_azd_env_value "AZURE_RESOURCE_GROUP")
-    backend_name=$(get_azd_env_value "BACKEND_CONTAINER_APP_NAME")
-    if [ -n "$backend_name" ]; then
-        backend_type="containerapp"
-    else
-        backend_name=$(get_azd_env_value "BACKEND_APP_SERVICE_NAME")
-        if [ -n "$backend_name" ]; then
-            backend_type="appservice"
         fi
-    fi
-
-    if [ -z "$backend_type" ] || [ -z "$backend_name" ] || [ -z "$resource_group" ]; then
-        log_warning "Backend service not found in azd environment. Skipping BASE_URL configuration."
+    else
+        warn "App Config not available, phone number only in azd env"
         return 1
     fi
-
-    chosen_url=$(get_best_backend_url)
-    if [ -z "$chosen_url" ]; then
-        log_warning "Could not resolve backend URL from azd outputs. Skipping BASE_URL configuration."
-        return 1
-    fi
-
-    log_info "Setting BASE_URL on backend ($backend_type: $backend_name) to: $chosen_url"
-    case "$backend_type" in
-        "containerapp")
-            az containerapp update \
-                --name "$backend_name" \
-                --resource-group "$resource_group" \
-                --set-env-vars "BASE_URL=$chosen_url" \
-                --output none || {
-                    log_error "Failed to set BASE_URL on backend container app"
-                    return 1
-                }
-            ;;
-        "appservice")
-            az webapp config appsettings set \
-                --name "$backend_name" \
-                --resource-group "$resource_group" \
-                --settings "BASE_URL=$chosen_url" \
-                --output none || {
-                    log_error "Failed to set BASE_URL on backend app service"
-                    return 1
-                }
-            ;;
-    esac
-
-    log_success "Backend BASE_URL updated"
-    return 0
 }
 
-# =================================================================
-# 🚀 Main Execution
-# ========================================================================
+# ============================================================================
+# Task 3: App Configuration URL Updates
+# ============================================================================
+
+task_update_urls() {
+    section "🌐 Task 3: App Configuration URL Updates"
+    
+    local endpoint label backend_url
+    endpoint=$(get_appconfig_endpoint)
+    label=$(azd_get "AZURE_ENV_NAME")
+    
+    if [[ -z "$endpoint" ]]; then
+        warn "App Config endpoint not available, skipping URL updates"
+        return 1
+    fi
+    
+    # Determine backend URL (try multiple sources)
+    backend_url=$(azd_get "BACKEND_API_URL")
+    [[ -z "$backend_url" ]] && backend_url=$(azd_get "BACKEND_CONTAINER_APP_URL")
+    if [[ -z "$backend_url" ]]; then
+        local fqdn
+        fqdn=$(azd_get "BACKEND_CONTAINER_APP_FQDN")
+        [[ -n "$fqdn" ]] && backend_url="https://${fqdn}"
+    fi
+    
+    if [[ -z "$backend_url" ]]; then
+        warn "Could not determine backend URL from azd outputs"
+        return 1
+    fi
+    
+    # Derive WebSocket URL
+    local ws_url="${backend_url/https:\/\//wss://}"
+    ws_url="${ws_url/http:\/\//ws://}"
+    
+    log "Setting backend URL: $backend_url"
+    log "Setting WebSocket URL: $ws_url"
+    
+    # Update App Configuration keys
+    local success_count=0
+    appconfig_set "$endpoint" "app/backend/base-url" "$backend_url" "$label" && ((success_count++))
+    appconfig_set "$endpoint" "app/frontend/backend-url" "$backend_url" "$label" && ((success_count++))
+    appconfig_set "$endpoint" "app/frontend/ws-url" "$ws_url" "$label" && ((success_count++))
+    
+    if [[ $success_count -eq 3 ]]; then
+        success "All URL keys updated in App Config"
+        
+        # Trigger refresh so running apps pick up new URLs
+        trigger_config_refresh "$endpoint" "$label"
+        return 0
+    else
+        warn "Some URL updates failed ($success_count/3 succeeded)"
+        return 1
+    fi
+}
+
+# ============================================================================
+# Summary
+# ============================================================================
+
+show_summary() {
+    section "🎯 Post-Provisioning Summary"
+    
+    local endpoint label
+    endpoint=$(get_appconfig_endpoint)
+    label=$(azd_get "AZURE_ENV_NAME")
+    
+    echo ""
+    echo "📊 Configuration Source:"
+    if [[ -n "$endpoint" ]]; then
+        echo "   ✅ Azure App Configuration: $endpoint"
+        echo "   ✅ Environment label: $label"
+        echo "   All settings are managed centrally in App Config"
+    else
+        echo "   ⚠️  App Configuration not deployed"
+    fi
+    
+    echo ""
+    echo "🔧 Task Results:"
+    
+    local db_init phone
+    db_init=$(azd_get "DB_INITIALIZED" "false")
+    phone=$(azd_get "ACS_SOURCE_PHONE_NUMBER")
+    
+    [[ "$db_init" == "true" ]] && echo "   ✅ Cosmos DB: initialized" || echo "   ⏳ Cosmos DB: pending"
+    
+    if [[ -n "$phone" ]]; then
+        echo "   ✅ Phone: $phone (stored in App Config)"
+    else
+        echo "   ⏳ Phone: not configured"
+        echo "      → See: docs/deployment/phone-number-setup.md"
+    fi
+    
+    [[ -n "$endpoint" ]] && echo "   ✅ URLs: stored in App Config" || echo "   ⏳ URLs: pending"
+    
+    echo ""
+    
+    if [[ "$EXEC_MODE" == "interactive" ]]; then
+        echo "🚀 Next Steps:"
+        echo "   1. Verify deployment: azd show"
+        echo "   2. Test health: curl \$(azd env get-value BACKEND_CONTAINER_APP_URL)/health"
+        
+        if [[ -z "$phone" ]]; then
+            echo "   3. Configure phone number (required for voice calls):"
+            echo "      → Azure Portal: ACS resource → Telephony and SMS → Phone numbers → + Get"
+            echo "      → Then update App Config: azure/acs/source-phone-number"
+        fi
+        
+        if [[ -n "$endpoint" ]]; then
+            echo ""
+            echo "📋 View App Configuration:"
+            echo "   az appconfig kv list --endpoint $endpoint --label $label -o table"
+        fi
+        
+        echo ""
+        echo "📄 Documentation:"
+        echo "   • Phone setup: docs/deployment/phone-number-setup.md"
+        echo "   • Local dev: devops/scripts/azd/helpers/local-dev-setup.sh"
+        echo ""
+    fi
+    
+    success "Post-provisioning complete!"
+}
+
+# ============================================================================
+# Main
+# ============================================================================
 
 main() {
-    log_section "🚀 Starting Post-Provisioning Script"
-    log_ci_mode
-
-    log_section "🗄️ Initializing Cosmos DB (if needed)"
-
-    local db_initialized
-    db_initialized=$(get_azd_env_value "DB_INITIALIZED" "false")
-
-    if [ "$db_initialized" != "true" ]; then
-        log_info "DB_INITIALIZED != true; preparing Cosmos DB bootstrap"
-
-        export AZURE_COSMOS_CONNECTION_STRING="$(get_azd_env_value "AZURE_COSMOS_CONNECTION_STRING")"
-        export AZURE_COSMOS_DATABASE_NAME="$(get_azd_env_value "AZURE_COSMOS_DATABASE_NAME")"
-        export AZURE_COSMOS_COLLECTION_NAME="$(get_azd_env_value "AZURE_COSMOS_COLLECTION_NAME")"
-        export AZURE_COSMOS_CLUSTER_NAME="$(get_azd_env_value "AZURE_COSMOS_CLUSTER_NAME")"
-
-        # Install Python requirements for Cosmos DB initialization
-        if [ -f "$HELPERS_DIR/requirements-cosmos.txt" ]; then
-            log_info "Installing Cosmos DB specific Python requirements..."
-            pip3 install -q -r "$HELPERS_DIR/requirements-cosmos.txt" || {
-                log_warning "Failed to install requirements-cosmos.txt; Cosmos DB init may fail"
-            }
-        else
-            log_warning "No requirements-cosmos.txt found in helpers directory; proceeding with Cosmos DB init"
-        fi
-        
-        if python3 "$HELPERS_DIR/cosmos_init.py"; then
-            log_success "Cosmos DB initialization completed"
-            azd env set DB_INITIALIZED true || log_warning "Failed to persist DB_INITIALIZED flag"
-        else
-            log_warning "Cosmos DB initialization script failed; review logs and retry"
-        fi
-    else
-        log_info "Cosmos DB already initialized; skipping bootstrap"
-    fi
-
-    # Step 1b: Configure frontend BACKEND_URL for Vite runtime replacement
-    update_frontend_backend_url || {
-        log_warning "Frontend BACKEND_URL configuration did not complete; continue."
-    }
-
-    # Step 1c: Configure backend BASE_URL for FastAPI public URL
-    update_backend_base_url || {
-        log_warning "Backend BASE_URL configuration did not complete; continue."
-    }
-
-    # Step 2: Generate environment files (always runs)
-    log_section "📄 Generating Environment Configuration Files"
+    section "🚀 Post-Provisioning v2 (App Config First)"
     
-    local env_name
-    local env_file
-    env_name=$(get_azd_env_value "AZURE_ENV_NAME" "dev")
-    env_file=".env.${env_name}"
-
-    # Step 3: Handle phone number configuration
-    log_section "📱 Configuring ACS Phone Number"    
-    if ! check_existing_phone_number; then
-        # Store the result but don't fail the script
-        if prompt_for_phone_number; then
-            log_success "Phone number configured"
-        else
-            if [ "$INTERACTIVE_MODE" = "false" ]; then
-                log_info "Phone number configuration skipped in CI/CD mode"
-            else
-                log_warning "Phone number configuration failed, continuing..."
-            fi
-        fi
-    fi
+    log "Execution mode: $EXEC_MODE"
     
-    if [ -f "$HELPERS_DIR/generate-env.sh" ]; then
-        log_info "Generating environment file: $env_file"
-        "$HELPERS_DIR/generate-env.sh" "$env_name" "$env_file" || {
-            log_error "Environment file generation failed"
-            # Don't exit - this is critical but we want to show summary
-        }
-        
-        if [ -f "$env_file" ]; then
-            local var_count
-            var_count=$(grep -c '^[A-Z]' "$env_file" 2>/dev/null || echo "0")
-            log_success "Generated environment file with $var_count variables"
-        fi
-    else
-        log_error "generate-env.sh not found at: $HELPERS_DIR/generate-env.sh"
-    fi
+    # Run tasks (individual failures don't stop execution)
+    task_cosmos_init || true
+    task_phone_number || true
+    task_update_urls || true
     
-    # Step 3: Summary
-    log_section "🎯 Post-Provisioning Summary"
-    
-    echo "📋 Generated Files:"
-    [ -f "$env_file" ] && echo "  ✓ ${env_file} (Backend environment configuration)"
-    echo ""
-    
-    if [ "$INTERACTIVE_MODE" = "true" ]; then
-        echo "🔧 Next Steps:"
-        echo "  1. Review the environment file: cat ${env_file}"
-        echo "  2. Source the environment: source ${env_file}"
-        echo "  3. Test your application"
-    fi
-    
-    local phone_status
-    phone_status=$(get_azd_env_value "ACS_SOURCE_PHONE_NUMBER")
-    if [ -z "$phone_status" ]; then
-        echo ""
-        echo "⚠️  Note: No phone number configured. To add one later:"
-        if [ "$INTERACTIVE_MODE" = "true" ]; then
-            echo "     azd env set ACS_SOURCE_PHONE_NUMBER '+1234567890'"
-        else
-            echo "     Set ACS_SOURCE_PHONE_NUMBER environment variable"
-            echo "     Or set ACS_AUTO_PROVISION_PHONE=true in azd environment"
-        fi
-    fi
-    
-    echo ""
-    log_success "Post-provisioning complete!"
-    
-    # Always exit successfully - phone number is optional
-    exit 0
+    show_summary
 }
 
-# Run main function
 main "$@"

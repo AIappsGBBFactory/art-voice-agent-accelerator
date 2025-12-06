@@ -1,9 +1,9 @@
 module "ai_foundry" {
   source = "./modules/ai"
 
-  resource_group_id   = azurerm_resource_group.main.id
-  location            = azurerm_resource_group.main.location
-  tags                = local.tags
+  resource_group_id = azurerm_resource_group.main.id
+  location          = azurerm_resource_group.main.location
+  tags              = local.tags
 
   disable_local_auth            = var.disable_local_auth
   foundry_account_name          = local.resource_names.foundry_account
@@ -18,14 +18,14 @@ module "ai_foundry" {
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 }
 
-resource "azurerm_role_assignment" "ai_foundry_account_role_for_backend_container" {  
+resource "azurerm_role_assignment" "ai_foundry_account_role_for_backend_container" {
   scope                = module.ai_foundry.account_id
   role_definition_name = "Cognitive Services User"
   principal_id         = azurerm_user_assigned_identity.backend.principal_id
 
 }
 
-resource "azurerm_role_assignment" "ai_foundry_account_role_for_deployment_principal" {  
+resource "azurerm_role_assignment" "ai_foundry_account_role_for_deployment_principal" {
   scope                = module.ai_foundry.account_id
   role_definition_name = "Cognitive Services User"
   principal_id         = local.principal_id
