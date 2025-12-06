@@ -78,6 +78,8 @@ env:
 # Minimal permissions - OIDC handled conditionally per job
 permissions:
   contents: read    # Required to checkout repository
+  id-token: write   # Required for OIDC authentication
+  pull-requests: read # Required to access PR details
 
 jobs:
   # ============================================================================
