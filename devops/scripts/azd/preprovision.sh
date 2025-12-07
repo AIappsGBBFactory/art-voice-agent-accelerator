@@ -94,8 +94,21 @@ provider_terraform() {
         exit 1
     fi
     
+    # If AZURE_LOCATION is not set, try to extract it from the environment-specific tfvars file
     if [[ -z "${AZURE_LOCATION:-}" ]]; then
-        fail "AZURE_LOCATION is not set"
+        local tfvars_file="$SCRIPT_DIR/../../../infra/terraform/params/main.tfvars.${AZURE_ENV_NAME}.json"
+        if [[ -f "$tfvars_file" ]]; then
+            AZURE_LOCATION=$(jq -r '.location // empty' "$tfvars_file" 2>/dev/null || true)
+            if [[ -n "$AZURE_LOCATION" ]]; then
+                info "Extracted location from tfvars: $AZURE_LOCATION"
+                export AZURE_LOCATION
+            fi
+        fi
+    fi
+    
+    # Final validation
+    if [[ -z "${AZURE_LOCATION:-}" ]]; then
+        fail "AZURE_LOCATION is not set and could not be extracted from tfvars"
         footer
         exit 1
     fi
@@ -115,8 +128,15 @@ provider_terraform() {
     fi
     
     log ""
-    log "Writing Terraform variables..."
-    write_tfvars
+    
+    # In CI mode, the workflow already creates main.tfvars.json with all parameters
+    # Only write tfvars in local/interactive mode
+    if is_ci && [[ -f "$SCRIPT_DIR/../../../infra/terraform/main.tfvars.json" ]]; then
+        info "CI mode: main.tfvars.json already exists (created by workflow), skipping write"
+    else
+        log "Writing Terraform variables..."
+        write_tfvars
+    fi
     
     footer
 }
