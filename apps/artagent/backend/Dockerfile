@@ -45,8 +45,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # =============================================================================
 FROM python:3.11-slim-bookworm
 
-# Update packages to mitigate vulnerabilities
-RUN apt-get update && apt-get upgrade -y && \
+# Install runtime dependencies only (skip full upgrade for faster builds)
+RUN apt-get update && \
     apt-get install -y --no-install-recommends portaudio19-dev && \
     rm -rf /var/lib/apt/lists/*
 
