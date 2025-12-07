@@ -63,6 +63,51 @@ get_deployer_identity() {
     echo "${name:-unknown}"
 }
 
+# Resolve location with fallback chain: env var → env-specific tfvars → default tfvars → prompt
+resolve_location() {
+    local params_dir="$SCRIPT_DIR/../../../infra/terraform/params"
+    
+    # 1. Already set via environment
+    if [[ -n "${AZURE_LOCATION:-}" ]]; then
+        info "Using AZURE_LOCATION from environment: $AZURE_LOCATION"
+        return 0
+    fi
+    
+    # 2. Try environment-specific tfvars (e.g., main.tfvars.staging.json)
+    local env_tfvars="$params_dir/main.tfvars.${AZURE_ENV_NAME}.json"
+    if [[ -f "$env_tfvars" ]]; then
+        AZURE_LOCATION=$(jq -r '.location // empty' "$env_tfvars" 2>/dev/null || true)
+        if [[ -n "$AZURE_LOCATION" ]]; then
+            info "Resolved location from $env_tfvars: $AZURE_LOCATION"
+            export AZURE_LOCATION
+            return 0
+        fi
+    fi
+    
+    # 3. Try default tfvars
+    local default_tfvars="$params_dir/main.tfvars.default.json"
+    if [[ -f "$default_tfvars" ]]; then
+        AZURE_LOCATION=$(jq -r '.location // empty' "$default_tfvars" 2>/dev/null || true)
+        if [[ -n "$AZURE_LOCATION" ]]; then
+            info "Resolved location from default tfvars: $AZURE_LOCATION"
+            export AZURE_LOCATION
+            return 0
+        fi
+    fi
+    
+    # 4. Interactive prompt (local dev only)
+    if ! is_ci; then
+        log "No location found in tfvars files."
+        read -rp "│ Enter Azure location (e.g., eastus, westus2): " AZURE_LOCATION
+        if [[ -n "$AZURE_LOCATION" ]]; then
+            export AZURE_LOCATION
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
 write_tfvars() {
     local tfvars_file="$SCRIPT_DIR/../../../infra/terraform/main.tfvars.json"
     local deployer
@@ -94,21 +139,9 @@ provider_terraform() {
         exit 1
     fi
     
-    # If AZURE_LOCATION is not set, try to extract it from the environment-specific tfvars file
-    if [[ -z "${AZURE_LOCATION:-}" ]]; then
-        local tfvars_file="$SCRIPT_DIR/../../../infra/terraform/params/main.tfvars.${AZURE_ENV_NAME}.json"
-        if [[ -f "$tfvars_file" ]]; then
-            AZURE_LOCATION=$(jq -r '.location // empty' "$tfvars_file" 2>/dev/null || true)
-            if [[ -n "$AZURE_LOCATION" ]]; then
-                info "Extracted location from tfvars: $AZURE_LOCATION"
-                export AZURE_LOCATION
-            fi
-        fi
-    fi
-    
-    # Final validation
-    if [[ -z "${AZURE_LOCATION:-}" ]]; then
-        fail "AZURE_LOCATION is not set and could not be extracted from tfvars"
+    # Resolve location using fallback chain
+    if ! resolve_location; then
+        fail "Could not resolve AZURE_LOCATION. Set it via 'azd env set AZURE_LOCATION <region>' or add to tfvars."
         footer
         exit 1
     fi
