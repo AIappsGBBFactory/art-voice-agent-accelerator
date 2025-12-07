@@ -53,7 +53,6 @@ dependencies = [
     "azure-appconfiguration>=1.7.0",
     "azure-appconfiguration-provider>=1.0.0",
     "azure-ai-agents==1.2.0b5",
-    "azure-ai-ml==1.28.1",
     "azure-ai-projects==1.0.0",
     "azure-ai-voicelive==1.0.0",
     # Azure monitoring and telemetry

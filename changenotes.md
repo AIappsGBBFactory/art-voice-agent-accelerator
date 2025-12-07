@@ -4,6 +4,40 @@
 
 ---
 
+## 🚀 Deployment & Tooling Improvements (December 2025)
+
+### Package Management Migration to `uv`
+- **Consolidated all dependencies** into `pyproject.toml` (removed `requirements.txt`, `requirements-codequality.txt`, `requirements-docs.txt`)
+- Migrated from pip to **uv** for faster, reproducible builds
+- Added `.python-version` file pinning Python 3.11
+- Generated `uv.lock` with 221 packages for deterministic installs
+- Removed unused `azure-ai-ml` dependency (saved ~500MB, 12 packages)
+
+### Devcontainer Improvements
+- Rewrote `.devcontainer/` for **ARM64/x86 multi-architecture support**
+- Uses uv installer with `--extra dev --extra docs`
+- Multi-arch Bicep CLI download via GitHub releases API
+- Streamlined `post_create.sh` for faster container startup
+
+### Terraform Deployment Fixes
+- **Fixed deprecated property**: `enable_rbac_authorization` → `rbac_authorization_enabled` in Key Vault
+- **Fixed count dependency issue**: Added `enable_voice_live` boolean variable to appconfig module for plan-time count evaluation
+- **Fixed outputs.tf**: Added `length()` checks for conditional module references
+- Preprovision script now writes `main.tfvars.json` dynamically with `environment_name`, `location`, `deployed_by`
+
+### azd Remote State Setup
+- Simplified interactive prompts: `[Y]es / [n]o / [c]ustom` for remote state configuration
+- Auto-generates storage account, container, and resource group names
+- Custom option allows overriding individual values
+- Clear warnings for local state usage in non-production
+
+### Documentation Updates
+- Completely rewrote `docs/guides/repository-structure.md` to reflect actual codebase
+- Updated notebooks and docs with uv commands
+- Updated GitHub Actions workflow for uv
+
+---
+
 ## 🎯 Major Features
 
 ### 1. Azure VoiceLive SDK Integration

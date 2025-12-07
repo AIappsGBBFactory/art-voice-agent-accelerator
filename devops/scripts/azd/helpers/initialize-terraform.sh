@@ -216,52 +216,6 @@ is_dev_sandbox() {
     return 1
 }
 
-# Check if JSON file has meaningful content
-has_json_content() {
-    local file="$1"
-    
-    # If file doesn't exist or is empty, return false
-    [[ ! -f "$file" ]] || [[ ! -s "$file" ]] && return 1
-    
-    # Remove whitespace and check if it's just empty braces
-    local content=$(tr -d '[:space:]' < "$file")
-    [[ "$content" == "{}" ]] && return 1
-    
-    # Check if file has any JSON keys
-    if python3 -c "import json; data=json.load(open('$file')); exit(0 if data else 1)" 2>/dev/null; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Update tfvars file only if empty or non-existent
-update_tfvars() {
-    local tfvars_file="./infra/terraform/main.tfvars.json"
-    local env_name="${1}"
-    local location="${2}"
-    
-    # Ensure directory exists
-    mkdir -p "$(dirname "$tfvars_file")"
-    
-    # Check if file has actual content
-    if has_json_content "$tfvars_file"; then
-        log_info "tfvars file already contains values, skipping update"
-        return 0
-    fi
-    
-    log_info "Creating/updating tfvars file: $tfvars_file"
-    
-    # Write the tfvars content
-    cat > "$tfvars_file" << EOF
-{
-  "environment_name": "$env_name",
-  "location": "$location"
-}
-EOF
-    log_success "Updated $tfvars_file"
-}
-
 # Main execution
 main() {
     echo "========================================================================="
@@ -284,82 +238,75 @@ main() {
         exit 1
     fi
 
-    # Update tfvars file (only if empty or doesn't exist)
-    update_tfvars "$env_name" "$location"
+    log_info "Using environment: $env_name, location: $location"
+    log_info "Terraform variables will be provided via TF_VAR_* environment variables from preprovision.sh"
 
     # Check existing configuration
     local storage_account=$(get_azd_env "RS_STORAGE_ACCOUNT")
     local container=$(get_azd_env "RS_CONTAINER_NAME")
     local resource_group=$(get_azd_env "RS_RESOURCE_GROUP")
     
-    # Only create new storage if variables are missing OR if storage doesn't actually exist
-    if [[ -z "$storage_account" ]] || [[ -z "$container" ]] || [[ -z "$resource_group" ]] || ! storage_exists "$storage_account" "$resource_group"; then
+    # If all remote state config exists AND storage account exists, use it
+    if [[ -n "$storage_account" ]] && [[ -n "$container" ]] && [[ -n "$resource_group" ]] && storage_exists "$storage_account" "$resource_group"; then
+        log_success "Using existing remote state configuration"
+        log_info "Storage Account: $storage_account"
+        log_info "Container: $container" 
+        log_info "Resource Group: $resource_group"
+    else
+        # Fresh setup or storage doesn't exist - need to create
+        log_info "Setting up Terraform remote state storage..."
         
-        # Handle resource group selection
-        if [[ -z "$resource_group" ]]; then
-            echo ""
-            read -p "Do you want to create a new resource group or use an existing one? [(n)ew/(e)xisting)]: " rg_choice
-            if [[ "$rg_choice" =~ ^(existing|e)$ ]]; then
-                while true; do
-                    read -p "Enter the name of the existing resource group: " existing_rg
-                    if [[ -n "$existing_rg" ]] && az group show --name "$existing_rg" &> /dev/null; then
-                        resource_group="$existing_rg"
-                        log_success "Using existing resource group: $resource_group"
-                        break
-                    else
-                        log_error "Resource group '$existing_rg' not found or invalid. Please try again."
-                    fi
-                done
-            else
-                # Generate new resource group name
-                read storage_account container resource_group <<< $(generate_names "$env_name" "$sub_id")
-                log_info "Will create new resource group: $resource_group"
-            fi
-        fi
-
-        # Handle container name selection
-        if [[ -z "$container" ]]; then
-            echo ""
-            read -p "Enter container name for Terraform state [default: tfstate]: " user_container
-            container="${user_container:-tfstate}"
-            log_info "Using container: $container"
-        fi
-
-        if [[ -n "$storage_account" ]] && [[ -n "$container" ]] && [[ -n "$resource_group" ]]; then
-            log_warning "Storage configuration exists but storage account '$storage_account' not found."
-            read -p "Do you want to create a new storage account for Terraform remote state? [y/N]: " confirm
-            if [[ "$confirm" =~ ^[Yy]$ ]]; then
-                log_info "Proceeding to create new storage account..."
-            else
+        # Generate default names
+        read gen_storage gen_container gen_resource_group <<< $(generate_names "$env_name" "$sub_id")
+        
+        # Use existing values if set, otherwise use generated
+        storage_account="${storage_account:-$gen_storage}"
+        container="${container:-$gen_container}"
+        resource_group="${resource_group:-$gen_resource_group}"
+        
+        echo ""
+        echo "📋 Proposed remote state configuration:"
+        echo "   Resource Group:  $resource_group"
+        echo "   Storage Account: $storage_account"
+        echo "   Container:       $container"
+        echo ""
+        
+        read -p "Use these values? [Y]es / [n]o / [c]ustom: " choice
+        case "$choice" in
+            [Nn]*)
                 echo ""
                 log_warning "⚠️  USING LOCAL TERRAFORM STATE - NOT RECOMMENDED FOR PRODUCTION!"
                 log_warning "⚠️  Your Terraform state will be stored locally and NOT shared with your team."
-                log_warning "⚠️  Consider creating remote state storage for collaboration and safety."
-                
-
                 echo ""
-                log_info "Required environment variables for Azure Remote State:"
-                log_info "  RS_RESOURCE_GROUP  - Azure resource group containing the storage account"
-                log_info "  RS_CONTAINER_NAME  - Blob container name for storing Terraform state files"
-                log_info "  RS_STORAGE_ACCOUNT - Azure storage account name for remote state backend"
-                log_info ""
-                log_info "Example usage:"
-                log_info "  azd env set RS_RESOURCE_GROUP \"my-terraform-rg\""
-                log_info "  azd env set RS_CONTAINER_NAME \"tfstate\""
-                log_info "  azd env set RS_STORAGE_ACCOUNT \"mystorageaccount\""
-                log_info "  azd provision" 
+                log_info "To configure remote state manually, set these environment variables:"
+                log_info "  azd env set RS_RESOURCE_GROUP \"<resource-group-name>\""
+                log_info "  azd env set RS_STORAGE_ACCOUNT \"<storage-account-name>\""
+                log_info "  azd env set RS_CONTAINER_NAME \"<container-name>\""
                 echo ""
                 return 0
-            fi
-        else
-            log_info "Setting up new Terraform remote state storage..."
-        fi
+                ;;
+            [Cc]*)
+                echo ""
+                log_info "Enter custom values (press Enter to keep default):"
+                echo ""
+                read -p "   Resource Group [$resource_group]: " custom_rg
+                resource_group="${custom_rg:-$resource_group}"
+                
+                read -p "   Storage Account [$storage_account]: " custom_sa
+                storage_account="${custom_sa:-$storage_account}"
+                
+                read -p "   Container [$container]: " custom_container
+                container="${custom_container:-$container}"
+                
+                echo ""
+                log_info "Using custom configuration:"
+                log_info "   Resource Group:  $resource_group"
+                log_info "   Storage Account: $storage_account"
+                log_info "   Container:       $container"
+                ;;
+        esac
         
-        # Generate storage account name if not already set
-        if [[ -z "$storage_account" ]]; then
-            read new_storage_account new_container new_resource_group <<< $(generate_names "$env_name" "$sub_id")
-            storage_account="$new_storage_account"
-        fi
+        # Create the storage resources
         create_storage "$storage_account" "$container" "$resource_group" "$location"
         
         # Set azd environment variables
@@ -367,11 +314,6 @@ main() {
         azd env set RS_CONTAINER_NAME "$container"
         azd env set RS_RESOURCE_GROUP "$resource_group"
         azd env set RS_STATE_KEY "$env_name.tfstate"
-    else
-        log_success "Using existing remote state configuration"
-        log_info "Storage Account: $storage_account"
-        log_info "Container: $container" 
-        log_info "Resource Group: $resource_group"
     fi
 
     
@@ -384,7 +326,9 @@ main() {
     echo ""
     echo "📁 Files created/updated:"
     echo "   - infra/terraform/provider.conf.json"
-    echo "   - infra/terraform/main.tfvars.json (only if empty/new)"
+    echo ""
+    echo "💡 Terraform variables (environment_name, location) are provided via"
+    echo "   TF_VAR_* environment variables from preprovision.sh"
 }
 
 # Handle script interruption

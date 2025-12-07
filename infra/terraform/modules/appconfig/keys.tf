@@ -185,7 +185,7 @@ resource "azurerm_app_configuration_key" "storage_container_url" {
 # ============================================================================
 
 resource "azurerm_app_configuration_key" "voice_live_endpoint" {
-  count                  = var.voice_live_endpoint != "" ? 1 : 0
+  count                  = var.enable_voice_live ? 1 : 0
   configuration_store_id = azurerm_app_configuration.main.id
   key                    = "azure/voicelive/endpoint"
   label                  = local.label
@@ -196,7 +196,7 @@ resource "azurerm_app_configuration_key" "voice_live_endpoint" {
 }
 
 resource "azurerm_app_configuration_key" "voice_live_model" {
-  count                  = var.voice_live_model != "" ? 1 : 0
+  count                  = var.enable_voice_live ? 1 : 0
   configuration_store_id = azurerm_app_configuration.main.id
   key                    = "azure/voicelive/model"
   label                  = local.label
