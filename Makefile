@@ -4,15 +4,13 @@
 # Each target is documented for clarity and maintainability
 ############################################################
 
-# Python interpreter to use
-PYTHON_INTERPRETER = python
-# Conda environment name (default: audioagent)
-CONDA_ENV ?= audioagent
+# Python interpreter to use (via uv)
+PYTHON_INTERPRETER = uv run python
 # Ensure current directory is in PYTHONPATH
 export PYTHONPATH=$(PWD):$PYTHONPATH;
 SCRIPTS_DIR = apps/artagent/scripts
 SCRIPTS_LOAD_DIR = tests/load
-PHONE = +18165019907
+PHONE = 
 
 
 # Install pre-commit and pre-push git hooks
@@ -84,25 +82,26 @@ define log_section
 endef
 
 
-# Create the conda environment from environment.yaml
-create_conda_env:
-	@echo "Creating conda environment"
-	conda env create -f environment.yaml
+# Create the virtual environment using uv
+create_venv:
+	@echo "Creating virtual environment with uv..."
+	uv sync
 
 
-# Activate the conda environment
-activate_conda_env:
-	@echo "Creating conda environment"
-	conda activate $(CONDA_ENV)
+# Recreate the virtual environment (clean install)
+recreate_venv:
+	@echo "Removing existing .venv and recreating..."
+	rm -rf .venv
+	uv sync
 
 
-# Remove the conda environment
-remove_conda_env:
-	@echo "Removing conda environment"
-	conda env remove --name $(CONDA_ENV)
+# Update dependencies to latest compatible versions
+update_deps:
+	@echo "Updating dependencies..."
+	uv sync --upgrade
 
 start_backend:
-	python $(SCRIPTS_DIR)/start_backend.py
+	uv run python $(SCRIPTS_DIR)/start_backend.py
 
 start_frontend:
 	bash $(SCRIPTS_DIR)/start_frontend.sh
@@ -111,7 +110,7 @@ start_tunnel:
 	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
 
 generate_audio:
-	python $(SCRIPTS_LOAD_DIR)/utils/audio_generator.py --max-turns 5
+	uv run python $(SCRIPTS_LOAD_DIR)/utils/audio_generator.py --max-turns 5
 
 # WebSocket endpoint load testing (current approach)
 # DEPLOYED_URL = 
@@ -204,7 +203,7 @@ purchase_acs_phone_number:
 	fi
 
 	@echo "📞 Creating a new ACS phone number using Python script..."
-	python3 devops/scripts/azd/helpers/acs_phone_number_manager.py --endpoint $(ACS_ENDPOINT) purchase --country $(COUNTRY_CODE) --area $(AREA_CODE)  --phone-number-type $(PHONE_TYPE)
+	uv run python devops/scripts/azd/helpers/acs_phone_number_manager.py --endpoint $(ACS_ENDPOINT) purchase --country $(COUNTRY_CODE) --area $(AREA_CODE)  --phone-number-type $(PHONE_TYPE)
 
 # Purchase ACS phone number using PowerShell (Windows)	
 # Usage: make purchase_acs_phone_number_ps [ENV_FILE=custom.env] [COUNTRY_CODE=US] [AREA_CODE=833] [PHONE_TYPE=TOLL_FREE]
@@ -524,9 +523,9 @@ help:
 	@echo "  set_up_precommit_and_prepush     Install git hooks"
 	@echo ""
 	@echo "🐍 Environment Management:"
-	@echo "  create_conda_env                 Create conda environment from environment.yaml"
-	@echo "  activate_conda_env               Activate conda environment"
-	@echo "  remove_conda_env                 Remove conda environment"
+	@echo "  create_venv                      Create virtual environment with uv sync"
+	@echo "  recreate_venv                    Remove and recreate virtual environment"
+	@echo "  update_deps                      Update dependencies to latest compatible versions"
 	@echo ""
 	@echo "🚀 Application:"
 	@echo "  start_backend                    Start backend via script"
