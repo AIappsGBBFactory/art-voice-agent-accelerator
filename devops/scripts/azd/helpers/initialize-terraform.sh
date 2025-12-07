@@ -69,7 +69,7 @@ storage_exists() {
     fi
 }
 
-# Generate unique resource names
+# Generate unique resource names (returns space-separated: storage container rg)
 generate_names() {
     local env_name="${1:-tfdev}"
     local sub_id="$2"
@@ -80,9 +80,9 @@ generate_names() {
     # Calculate remaining space: 24 (max) - 7 (tfstate) - 8 (suffix) = 9 chars for env name
     local max_env_length=9
     local short_env="${clean_env:0:$max_env_length}"
-    echo "tfstate${short_env}${suffix}" # storage account
-    echo "tfstate" # container
-    echo "rg-tfstate-${short_env}-${suffix}" # resource group
+    
+    # Output space-separated for proper read parsing
+    echo "tfstate${short_env}${suffix} tfstate rg-tfstate-${short_env}-${suffix}"
 }
 
 # Create storage resources
@@ -266,22 +266,31 @@ main() {
         
         echo ""
         echo "📋 Proposed remote state configuration:"
-        echo "   Resource Group:  $resource_group"
-        echo "   Storage Account: $storage_account"
-        echo "   Container:       $container"
+        echo "   Resource Group:   $resource_group"
+        echo "   Storage Account:  $storage_account"
+        echo "   Container:        $container"
+        echo "   Location:         $location"
         echo ""
         
-        read -p "Use these values? [Y]es / [n]o / [c]ustom: " choice
+        read -p "Use these values? [Y]es / [n]o (use local state) / [c]ustom: " choice
         case "$choice" in
             [Nn]*)
                 echo ""
-                log_warning "⚠️  USING LOCAL TERRAFORM STATE - NOT RECOMMENDED FOR PRODUCTION!"
-                log_warning "⚠️  Your Terraform state will be stored locally and NOT shared with your team."
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                log_warning "USING LOCAL TERRAFORM STATE"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 echo ""
-                log_info "To configure remote state manually, set these environment variables:"
+                log_warning "Your Terraform state will be stored locally in the project directory."
+                log_warning "This means:"
+                log_warning "  • State is NOT shared with your team"
+                log_warning "  • State may be lost if .terraform/ is deleted"
+                log_warning "  • NOT recommended for production or shared environments"
+                echo ""
+                log_info "To configure remote state later, run:"
                 log_info "  azd env set RS_RESOURCE_GROUP \"<resource-group-name>\""
                 log_info "  azd env set RS_STORAGE_ACCOUNT \"<storage-account-name>\""
                 log_info "  azd env set RS_CONTAINER_NAME \"<container-name>\""
+                log_info "  azd hooks run preprovision"
                 echo ""
                 return 0
                 ;;
