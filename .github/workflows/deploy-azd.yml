@@ -199,6 +199,16 @@ jobs:
           azd env set RS_CONTAINER_NAME "${{ env.RS_CONTAINER_NAME }}"
           azd env set DB_INITIALIZED "${{env.DB_INITIALIZED }}"
           
+          # Extract location from tfvars and set in azd environment
+          TFVARS_FILE="infra/terraform/params/main.tfvars.${{ env.AZURE_ENV_NAME }}.json"
+          if [ -f "$TFVARS_FILE" ]; then
+            LOCATION=$(jq -r '.location // empty' "$TFVARS_FILE")
+            if [ -n "$LOCATION" ]; then
+              echo "🔧 Setting AZURE_LOCATION from tfvars: $LOCATION"
+              azd env set AZURE_LOCATION "$LOCATION"
+            fi
+          fi
+          
           echo "✅ AZD environment configured"
 
       - name: ⚙️ Setup Terraform Parameters
