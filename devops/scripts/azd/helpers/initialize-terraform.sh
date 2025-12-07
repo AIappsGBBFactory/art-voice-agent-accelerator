@@ -90,7 +90,7 @@ create_storage() {
     local storage_account="$1"
     local container="$2"
     local resource_group="$3"
-    local location="${4:-eastus2}"
+    local location="$4"
     
     # Create resource group
     if ! az group show --name "$resource_group" &> /dev/null; then
