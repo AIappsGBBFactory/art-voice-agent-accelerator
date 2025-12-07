@@ -53,8 +53,9 @@ module "appconfig" {
   storage_container_url = "${azurerm_storage_account.main.primary_blob_endpoint}${azurerm_storage_container.audioagent.name}"
 
   # Voice Live (conditional)
-  voice_live_endpoint = var.enable_voice_live ? (local.should_create_voice_live_account ? module.ai_foundry_voice_live[0].endpoint : module.ai_foundry.endpoint) : ""
-  voice_live_model    = var.enable_voice_live ? local.voice_live_model_name : ""
+  enable_voice_live   = var.enable_voice_live
+  voice_live_endpoint = var.enable_voice_live ? (local.should_create_voice_live_account ? module.ai_foundry_voice_live[0].endpoint : module.ai_foundry.endpoint) : null
+  voice_live_model    = var.enable_voice_live ? local.voice_live_model_name : null
 
   # Pool settings
   pool_size_tts        = var.tts_pool_size
@@ -98,8 +99,8 @@ module "appconfig" {
   aoai_request_timeout     = 30
 
   # Warm pool settings
-  warm_pool_tts_size        = 3
-  warm_pool_stt_size        = 2
+  warm_pool_tts_size         = 3
+  warm_pool_stt_size         = 2
   warm_pool_refresh_interval = 30
   warm_pool_session_max_age  = 1800
 

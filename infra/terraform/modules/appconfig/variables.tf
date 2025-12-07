@@ -175,16 +175,22 @@ variable "storage_container_url" {
 # VOICE LIVE (OPTIONAL)
 # ============================================================================
 
+variable "enable_voice_live" {
+  description = "Whether Voice Live feature is enabled"
+  type        = bool
+  default     = false
+}
+
 variable "voice_live_endpoint" {
   description = "Azure Voice Live endpoint (if enabled)"
   type        = string
-  default     = ""
+  default     = null
 }
 
 variable "voice_live_model" {
   description = "Azure Voice Live model name"
   type        = string
-  default     = ""
+  default     = null
 }
 
 # ============================================================================
