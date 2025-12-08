@@ -33,11 +33,11 @@ The Application Map shows **components** (your code) and **dependencies** (exter
                       │                        │                        │
                       ▼                        ▼                        ▼
         ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
-        │   artagent-api       │  │   artagent-api       │  │   artagent-api       │
+        │   artagent-api      │  │   artagent-api      |  │   artagent-api      │
         │  (voice-handler)    │  │  (acs-handler)      │  │  (events-webhook)   │
         │                     │  │                     │  │                     │
         │  cloud.role.name=   │  │  cloud.role.name=   │  │  cloud.role.name=   │
-        │  "artagent-api"      │  │  "artagent-api"      │  │  "artagent-api"      │
+        │  "artagent-api"     │  │  "artagent-api"     │  │  "artagent-api"     │
         └──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘
                    │                        │                        │
                    └────────────────────────┼────────────────────────┘
@@ -103,45 +103,45 @@ resource = Resource.create({
                                │ WebSocket
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │                    API LAYER (FastAPI Endpoints)                    │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐                │
-│  │ /ws/voice   │  │ /media/acs  │  │ /api/events  │                │
-│  │  (Browser)  │  │ (ACS calls) │  │  (webhooks)  │                │
-│  │  SERVER ⬇   │  │  SERVER ⬇   │  │  SERVER ⬇    │                │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬───────┘                │
+│  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐                 │
+│  │ /ws/voice   │  │ /media/acs  │  │ /api/events  │                 │
+│  │  (Browser)  │  │ (ACS calls) │  │  (webhooks)  │                 │
+│  │  SERVER ⬇   │  │  SERVER ⬇   │  │  SERVER ⬇    │                 │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬───────┘                 │
 └─────────┼────────────────┼────────────────┼─────────────────────────┘
           │                │                │
 ┌─────────▼────────────────▼────────────────▼─────────────────────────┐
 │                    HANDLERS (MediaHandler)                          │
-│  ┌───────────────────────────────────────────────────────────────┐ │
-│  │ SpeechCascadeHandler                      INTERNAL spans       │ │
-│  │  ├─ _on_user_transcript()    ─────────────────────┐           │ │
-│  │  ├─ _on_partial_transcript() ─────────────────────┤           │ │
-│  │  └─ _on_vad_event()          ─────────────────────┘           │ │
-│  └───────────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │ SpeechCascadeHandler                      INTERNAL spans      │  │
+│  │  ├─ _on_user_transcript()    ─────────────────────┐           │  │
+│  │  ├─ _on_partial_transcript() ─────────────────────┤           │  │
+│  │  └─ _on_vad_event()          ─────────────────────┘           │  │
+│  └───────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────┬───────────────────────────────────┘
                                   │
 ┌─────────────────────────────────▼───────────────────────────────────┐
 │                      ORCHESTRATION LAYER                            │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────────┐  │
-│  │  ArtAgentFlow   │  │  ToolExecution  │  │ ResponseOrchestrat │  │
-│  │   INTERNAL      │  │   INTERNAL      │  │   INTERNAL         │  │
-│  └────────┬────────┘  └────────┬────────┘  └─────────┬──────────┘  │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────────┐   │
+│  │  ArtAgentFlow   │  │  ToolExecution  │  │ ResponseOrchestrat │   │
+│  │   INTERNAL      │  │   INTERNAL      │  │   INTERNAL         │   │
+│  └────────┬────────┘  └────────┬────────┘  └─────────┬──────────┘   │
 └───────────┼────────────────────┼─────────────────────┼──────────────┘
             │                    │                     │
 ┌───────────▼────────────────────▼─────────────────────▼──────────────┐
 │                     EXTERNAL SERVICES (CLIENT spans)                │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────┐│
-│  │ Azure OpenAI   │  │  Azure Speech  │  │  Azure Communication   ││
-│  │ peer.service=  │  │  peer.service= │  │    Services (ACS)      ││
-│  │ azure.ai.openai│  │  azure.speech  │  │  peer.service=         ││
-│  │  CLIENT ⬇      │  │  CLIENT ⬇      │  │  azure.communication   ││
-│  └────────────────┘  └────────────────┘  └────────────────────────┘│
-│  ┌────────────────┐  ┌────────────────┐                            │
-│  │  Azure Redis   │  │ Azure CosmosDB │                            │
-│  │  peer.service= │  │  peer.service= │                            │
-│  │  redis         │  │  cosmosdb      │                            │
-│  │  CLIENT ⬇      │  │  CLIENT ⬇      │                            │
-│  └────────────────┘  └────────────────┘                            │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────┐ │
+│  │ Azure OpenAI   │  │  Azure Speech  │  │  Azure Communication   │ │
+│  │ peer.service=  │  │  peer.service= │  │    Services (ACS)      │ │
+│  │ azure.ai.openai│  │  azure.speech  │  │  peer.service=         │ │
+│  │  CLIENT ⬇      │  │  CLIENT ⬇      │  │  azure.communication   │ │
+│  └────────────────┘  └────────────────┘  └────────────────────────┘ │
+│  ┌────────────────┐  ┌────────────────┐                             │
+│  │  Azure Redis   │  │ Azure CosmosDB │                             │
+│  │  peer.service= │  │  peer.service= │                             │
+│  │  redis         │  │  cosmosdb      │                             │
+│  │  CLIENT ⬇      │  │  CLIENT ⬇      │                             │
+│  └────────────────┘  └────────────────┘                             │
 └─────────────────────────────────────────────────────────────────────┘
 
 Legend:
@@ -441,7 +441,7 @@ with tracer.start_as_current_span("my_operation"):
 │  WebSocket Endpoint (browser.py / media.py)                     │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │ async with session_context(call_id, session_id, ...):     │  │
-│  │   ├─► MediaHandler                                         │  │
+│  │   ├─► MediaHandler                                        │  │
 │  │   │   ├─► SpeechCascadeHandler (logs auto-correlated)     │  │
 │  │   │   ├─► STT callbacks (logs auto-correlated)            │  │
 │  │   │   └─► Orchestrator (spans auto-correlated)            │  │
@@ -531,42 +531,6 @@ session_summary = latency_tool.session_summary()
 
 ---
 
-## 🛠️ Implementation Tasks
-
-### Phase 1: Foundation - Application Map Setup ✅ COMPLETED
-- [x] **Resource Configuration** - Set `service.name`, `service.namespace`, `service.instance.id` in `telemetry_config.py`
-- [x] **Update SpanAttr enum** - Add `PEER_SERVICE`, `SERVER_ADDRESS`, `DB_SYSTEM`, `GenAI*` attributes
-- [x] **Create telemetry decorators** - `@trace_llm_call`, `@trace_dependency`, `@trace_speech`, `@trace_acs`
-- [x] **LLM Spans** - Add `gen_ai.*` attributes + `peer.service="azure.ai.openai"` + `SpanKind.CLIENT`
-- [x] **Speech Spans** - Add `speech.*` attributes + `peer.service="azure.speech"` + `SpanKind.CLIENT`
-- [x] **Configure log level filters** for noisy sources (websockets, aiohttp, azure.identity, etc.)
-
-### Phase 2: Turn-Level Metrics ✅ COMPLETED
-- [x] Create `ConversationTurnSpan` context manager with proper hierarchy
-- [x] Track `turn.total_latency` from STT complete → TTS complete
-- [x] Record `turn.number` for sequence tracking
-- [x] Add turn summary event at turn completion (`turn.complete` event)
-- [x] **Redis Spans** - `peer.service="azure-managed-redis"` + `db.system="redis"` on all Redis calls
-- [x] **Session Context** - Auto-correlation via `session_context()` async context manager
-- [x] **Integration** - `ConversationTurnSpan` integrated in `RouteTurnThread._process_final_speech()`
-- [x] **TTS Tracking** - `record_tts_first_audio()` / `record_tts_complete()` called from MediaHandler
-
-### Phase 3: Dashboard Integration ✅ COMPLETED
-- [x] Expose latency summaries via `/api/v1/metrics/session/{id}` endpoint
-- [x] Add session metrics schemas (`LatencyStats`, `TurnMetrics`, `TokenUsage`, `SessionMetricsResponse`)
-- [x] Active sessions list endpoint at `/api/v1/metrics/sessions`
-- [x] Aggregated summary endpoint at `/api/v1/metrics/summary`
-- [ ] Add real-time latency charts to frontend dashboard (future: requires frontend work)
-- [ ] Create Application Insights workbook for GenAI analysis (see KQL queries below)
-- [x] **Verify Application Map** shows all expected nodes and edges
-
-### Phase 4: Alerts & SLOs ✅ COMPLETED
-- [x] Define latency SLOs (see SLO definitions below)
-- [x] Configure App Insights alerts for latency anomalies (see alert rules below)
-- [x] Add health checks for external service connectivity (`/api/v1/readiness`)
-- [x] Enable **Intelligent View** for anomaly detection (documentation below)
-
----
 
 ## 🎯 Service Level Objectives (SLOs)
 
@@ -1127,38 +1091,3 @@ The instrumentor follows OpenTelemetry GenAI semantic conventions:
 - [Project Latency Tool: src/tools/latency_tool.py](../../../src/tools/latency_tool.py)
 
 ---
-
-## ✅ Checklist Before Merging Changes
-
-### Application Map Requirements
-- [ ] `service.name` set in Resource attributes → creates Cloud Role Name
-- [ ] `service.instance.id` set → enables instance-level drill-down
-- [ ] All external calls use `SpanKind.CLIENT`
-- [ ] All external calls have `peer.service` attribute set
-- [ ] All external calls have `server.address` attribute set
-
-### GenAI Conventions
-- [ ] LLM spans use `gen_ai.*` attribute naming
-- [ ] LLM spans include `gen_ai.provider.name="azure.ai.openai"`
-- [ ] Token usage captured in `gen_ai.usage.input_tokens` / `output_tokens`
-- [ ] Model info in `gen_ai.request.model` / `gen_ai.response.model`
-
-### Performance & Noise
-- [ ] No spans created per audio frame
-- [ ] No spans created per WebSocket message
-- [ ] Partial transcript logging sampled (10%)
-- [ ] Noisy Azure SDK loggers suppressed to WARNING
-
-### Correlation
-- [ ] `call.connection_id` propagates through all spans
-- [ ] `session.id` propagates through all spans
-- [ ] W3C traceparent header propagated on HTTP calls
-
-### Verification
-- [ ] Application Map shows `artagent-api` node
-- [ ] Application Map shows edges to `azure.ai.openai`
-- [ ] Application Map shows edges to `azure.speech`
-- [ ] Application Map shows edges to `redis`
-- [ ] Intelligent View highlights anomalies correctly
-- [ ] Unit tests cover new instrumentation paths
-- [ ] Documentation updated in `/docs/architecture/`

@@ -64,7 +64,7 @@ Before you can have a personalized conversation with the AI agents, you need to 
     | **Preferred Channel** | MFA delivery preference | `email` or `sms` |
 
 !!! warning "Important: Use Your Real Email for MFA Testing"
-    If you want to test tools that involve multi-factor authentication (like transaction verification), you **must provide your actual email address**. The system will send real 6-digit verification codes to this email that you'll need to read back to the agent during the conversation.
+    If you want to test tools that involve multi-factor authentication (like transaction verification), you **must provide your actual email address**. The system will send real 6-digit verification codes to this email that you'll need to read back to the agent during the conversation. This is enabled through Email Communication Services integrated through Azure Communication Services.
 
 5. **Click "Create Profile"** — The system generates:
     - A unique `client_id` for your session
@@ -413,16 +413,18 @@ BASE_URL=https://<tunnel-url>       # From devtunnel host
     
     1. Microphone permissions granted in browser
     2. `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` are set
+        1. if using RBAC, `AZURE_SPEECH_REGION` and `AZURE_SPEECH_RESOURCE_ID` are required
     3. Backend is running and healthy (`curl http://localhost:8010/health`)
     4. WebSocket connection is established (check browser console)
 
 !!! question "Profile not loading in conversation"
     **Check:**
     
-    1. Redis is running and accessible
+    1. Redis & CosmosDB are running and accessible
     2. Demo profile was created successfully (check for success message)
     3. Session ID matches between frontend and backend
     4. Try creating a new profile
+    
 
 !!! question "Handoffs not working"
     **Check:**
