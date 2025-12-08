@@ -30,7 +30,6 @@ from apps.artagent.backend.src.agents.artagent.tool_store.tools_helper import (
     push_tool_end,
     push_tool_start,
 )
-from apps.artagent.backend.src.helpers import add_space
 from src.aoai.client import client as az_openai_client
 from apps.artagent.backend.src.ws_helpers.shared_ws import (
     broadcast_message,
@@ -146,6 +145,30 @@ def _get_agent_sender_name(cm: "MemoManager", *, include_autoauth: bool = True) 
 # ---------------------------------------------------------------------------
 # Emission helpers
 # ---------------------------------------------------------------------------
+def add_space(text: str) -> str:
+    """
+    Ensure the text chunk ends with appropriate whitespace for proper concatenation.
+
+    This function prevents text fragments from being incorrectly joined together
+    during streaming operations. It adds a single space if the text doesn't end
+    with whitespace, preventing issues like "assistance.Could" appearing in output.
+
+    :param text: The text string to process for proper spacing.
+    :return: The text with guaranteed trailing space or the original text if already spaced.
+    :raises TypeError: If text is not a string.
+    """
+    if not isinstance(text, str):
+        logger.error(f"Expected string text, got {type(text)}")
+        raise TypeError("Text must be a string")
+
+    try:
+        if text and text[-1] not in [" ", "\n"]:
+            return text + " "
+        return text
+    except Exception as e:
+        logger.error(f"Error adding space to text: {e}")
+        raise
+
 
 
 async def _emit_streaming_text(
