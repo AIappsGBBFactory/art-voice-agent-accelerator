@@ -26,48 +26,41 @@ Both orchestrators:
 ## Architecture Diagram
 
 ```mermaid
-graph TD
-    subgraph "ACS Media Stream"
-        WS[WebSocket Connection]
+flowchart LR
+    subgraph Input
+        WS[WebSocket]
     end
-    
-    WS --> Mode{ACS_STREAMING_MODE}
-    
-    Mode -->|MEDIA / TRANSCRIPTION| Cascade[CascadeOrchestratorAdapter]
-    Mode -->|VOICE_LIVE| Live[LiveOrchestrator]
-    
-    subgraph "Shared Components"
-        Agents[Unified Agent Registry]
-        Tools[Tool Registry]
-        Memo[MemoManager]
-        Handoffs[Handoff Map]
+
+    subgraph Orchestration
+        WS --> Mode{Streaming Mode}
+        Mode -->|MEDIA / TRANSCRIPTION| Cascade[SpeechCascade]
+        Mode -->|VOICE_LIVE| Live[VoiceLive]
     end
-    
-    Cascade --> Agents
-    Live --> Agents
-    Cascade --> Tools
-    Live --> Tools
-    Cascade --> Memo
-    Live --> Memo
-    Cascade --> Handoffs
-    Live --> Handoffs
-    
-    subgraph "SpeechCascade Path"
-        STT[Azure Speech STT]
-        LLM1[Azure OpenAI Chat]
-        TTS[Azure Speech TTS]
+
+    subgraph Cascade Path
+        Cascade --> STT[Azure Speech STT]
+        STT --> LLM[Azure OpenAI]
+        LLM --> TTS[Azure Speech TTS]
     end
-    
-    subgraph "VoiceLive Path"
-        RT[OpenAI Realtime API]
+
+    subgraph VoiceLive Path
+        Live --> RT[OpenAI Realtime API]
     end
-    
-    Cascade --> STT
-    Cascade --> LLM1
-    Cascade --> TTS
-    
-    Live --> RT
+
+    subgraph Shared
+        Agents[(Agents)]
+        Tools[(Tools)]
+        State[(State)]
+    end
+
+    Cascade -.-> Shared
+    Live -.-> Shared
 ```
+
+Both orchestrators share:
+- **Agents** — Unified agent registry from `apps/artagent/backend/agents/`
+- **Tools** — Centralized tool registry with handoff support
+- **State** — `MemoManager` for session persistence
 
 ---
 
