@@ -77,62 +77,83 @@ uv sync  # or: pip install -e .[dev]
 
 ---
 
-## 5. Root `.env` (Create in repo root)
+## 5. Environment Configuration
+
+This project uses **Azure App Configuration** as the primary configuration source. For local development, you only need a minimal `.env.local` file that points to App Configuration.
+
+### Option A: Recommended — Use App Configuration (after `azd up`)
+
+If you deployed infrastructure using `azd up`, a minimal `.env.local` file was generated automatically:
+
+```bash
+# The file should already exist at repo root
+cat .env.local
+```
+
+**Contents of `.env.local`** (minimal bootstrap):
+```bash
+# Azure App Configuration (PRIMARY CONFIG SOURCE)
+AZURE_APPCONFIG_ENDPOINT=https://<your-appconfig>.azconfig.io
+AZURE_APPCONFIG_LABEL=dev
+
+# Azure Identity (for DefaultAzureCredential)
+AZURE_TENANT_ID=<your-tenant-id>
+```
+
+**How it works:**
+1. Backend starts and reads `AZURE_APPCONFIG_ENDPOINT` from `.env.local`
+2. Connects to Azure App Configuration using your Azure CLI credentials
+3. Fetches all settings (OpenAI, Speech, ACS, Redis, Cosmos, etc.)
+4. Loads them into environment variables before the app initializes
+
+!!! success "This is the recommended approach"
+    App Configuration provides centralized management, versioning, and feature flags. Local `.env.local` contains only the connection—all actual config lives in Azure.
+
+### Option B: Legacy — Full `.env` file (manual setup)
+
+If you **don't have infrastructure deployed** or need to work offline, create a full `.env` file:
 
 !!! tip "Sample Configuration"
-    Use [`.env.sample`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/.env.sample) as a starting template and customize with your Azure resource values.
+    Use [`.env.sample`](https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/.env.sample) as a starting template.
 
-!!! info "Using Azure Developer CLI (azd)"
-    If you provisioned infrastructure using `azd provision`, an environment file will be automatically generated for you in the format `.env.<azd-env-name>`. 
-    
-    **To use the azd-generated configuration:**
-    ```bash
-    # Copy the azd-generated environment file
-    cp .env.<your-azd-env-name> .env
-    
-    # Example: if your azd environment is named "dev"
-    cp .env.dev .env
-    ```
-    
-    The azd-generated file contains all the Azure resource endpoints and configuration needed for local development.
-
-**Manual Configuration Template** (edit placeholders; DO NOT commit real values):
-
+```bash
+# Copy the sample file
+cp .env.sample .env
+# Edit with your values
 ```
-# ===== Azure OpenAI =====
+
+**Required variables for basic functionality:**
+
+```bash
+# ===== Azure OpenAI (Required) =====
 AZURE_OPENAI_ENDPOINT=https://<your-aoai>.openai.azure.com
 AZURE_OPENAI_KEY=<aoai-key>
-AZURE_OPENAI_DEPLOYMENT=gpt-4-1-mini
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
-AZURE_OPENAI_CHAT_DEPLOYMENT_ID=gpt-4-1-mini
-AZURE_OPENAI_CHAT_DEPLOYMENT_VERSION=2024-11-20
+AZURE_OPENAI_CHAT_DEPLOYMENT_ID=gpt-4o
 
-# ===== Speech =====
+# ===== Speech (Required) =====
 AZURE_SPEECH_REGION=<speech-region>
 AZURE_SPEECH_KEY=<speech-key>
 
-# ===== ACS (optional unless using phone/PSTN) =====
+# ===== ACS (Optional — only for phone/PSTN) =====
 ACS_CONNECTION_STRING=endpoint=https://<your-acs>.communication.azure.com/;accesskey=<acs-key>
 ACS_SOURCE_PHONE_NUMBER=+1XXXXXXXXXX
 ACS_ENDPOINT=https://<your-acs>.communication.azure.com
 
-# ===== Optional Data Stores =====
-REDIS_HOST=<redis-host>
-REDIS_PORT=6380
-REDIS_PASSWORD=<redis-password>
-AZURE_COSMOS_CONNECTION_STRING=<cosmos-conn-string>
-AZURE_COSMOS_DATABASE_NAME=audioagentdb
-AZURE_COSMOS_COLLECTION_NAME=audioagentcollection
-
 # ===== Runtime =====
 ENVIRONMENT=dev
-ACS_STREAMING_MODE=media
-
-# ===== Filled after dev tunnel starts =====
 BASE_URL=https://<tunnel-url>
 ```
 
-Ensure `.env` is in `.gitignore`.
+!!! warning "Legacy Approach"
+    Managing a full `.env` file manually is error-prone and harder to keep in sync. Use Option A whenever possible.
+
+### Configuration Precedence
+
+The backend loads configuration in this order (first found wins):
+
+1. **Azure App Configuration** (if `AZURE_APPCONFIG_ENDPOINT` is set)
+2. **Environment variables** (from `.env.local`, `.env`, or system)
+3. **Default values** (hardcoded in `settings.py`)
 
 ---
 

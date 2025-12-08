@@ -8,7 +8,7 @@
 PYTHON_INTERPRETER = uv run python
 # Ensure current directory is in PYTHONPATH
 export PYTHONPATH=$(PWD):$PYTHONPATH;
-SCRIPTS_DIR = apps/artagent/scripts
+SCRIPTS_DIR = devops/scripts/local-dev
 SCRIPTS_LOAD_DIR = tests/load
 PHONE = 
 
@@ -576,3 +576,21 @@ help:
 	@echo ""
 
 .PHONY: help
+
+############################################################
+# Documentation
+############################################################
+
+# Serve documentation locally with live reload
+docs-serve:
+	uv run mkdocs serve -f docs/mkdocs.yml
+
+# Build documentation for production
+docs-build:
+	uv run mkdocs build -f docs/mkdocs.yml
+
+# Deploy documentation to GitHub Pages
+docs-deploy:
+	uv run mkdocs gh-deploy -f docs/mkdocs.yml
+
+.PHONY: docs-serve docs-build docs-deploy

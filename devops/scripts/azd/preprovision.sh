@@ -108,21 +108,22 @@ resolve_location() {
     return 1
 }
 
-write_tfvars() {
-    local tfvars_file="$SCRIPT_DIR/../../../infra/terraform/main.tfvars.json"
+# Set Terraform variables using azd env (stored in .azure/<env>/.env as TF_VAR_*)
+# This is the azd best practice - azd automatically exports TF_VAR_* to Terraform
+set_terraform_env_vars() {
     local deployer
     deployer=$(get_deployer_identity)
     
-    cat > "$tfvars_file" << EOF
-{
-  "environment_name": "$AZURE_ENV_NAME",
-  "location": "$AZURE_LOCATION",
-  "deployed_by": "$deployer"
-}
-EOF
+    log "Setting Terraform variables via azd env..."
+    
+    # Set TF_VAR_* variables - azd stores these in .azure/<env>/.env
+    # and automatically exports them when running terraform
+    azd env set TF_VAR_environment_name "$AZURE_ENV_NAME"
+    azd env set TF_VAR_location "$AZURE_LOCATION"
+    azd env set TF_VAR_deployed_by "$deployer"
     
     info "Deployer: $deployer"
-    success "Written main.tfvars.json"
+    success "Set TF_VAR_* in azd environment"
 }
 
 # ============================================================================
@@ -162,13 +163,20 @@ provider_terraform() {
     
     log ""
     
-    # In CI mode, the workflow already creates main.tfvars.json with all parameters
-    # Only write tfvars in local/interactive mode
-    if is_ci && [[ -f "$SCRIPT_DIR/../../../infra/terraform/main.tfvars.json" ]]; then
-        info "CI mode: main.tfvars.json already exists (created by workflow), skipping write"
+    # Set Terraform variables via azd env
+    # In CI, the workflow may pre-set TF_VAR_* - check before overwriting
+    if is_ci; then
+        # CI: Only set if not already configured by workflow
+        if [[ -z "${TF_VAR_environment_name:-}" ]]; then
+            log "Setting Terraform variables..."
+            set_terraform_env_vars
+        else
+            info "CI mode: TF_VAR_* already set by workflow, skipping"
+        fi
     else
-        log "Writing Terraform variables..."
-        write_tfvars
+        # Local: Always set to ensure consistency
+        log "Setting Terraform variables..."
+        set_terraform_env_vars
     fi
     
     footer

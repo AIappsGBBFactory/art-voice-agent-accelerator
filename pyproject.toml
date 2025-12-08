@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [
     { name = "Pablo Salvador", email = "pablosalvador11@gmail.com" },
-    { name = "Jin Lee" }
+    { name = "Jin Lee", email = "jinle@microsoft.com" }
 ]
 keywords = ["azure", "speech", "voice", "tts", "stt", "real-time", "audio", "ai", "communication-services"]
 classifiers = [

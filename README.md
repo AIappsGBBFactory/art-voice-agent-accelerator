@@ -112,49 +112,58 @@ Pick one of three ways to run the voice inference layer—the rest of the framew
 
 </details>
 
-## **Getting started**
+## **Getting Started**
 
-> [!TIP]
-> Not an Infrastructure-as-Code person? Start by skimming the [deployment guide](docs/deployment/README.md). You've got two easy deployment paths—azd (one-command) or Terraform + Makefile—but you could also deploy the infrastructure from the Azure Portal UI or reuse your current infrastructure if it matches the requirements. Once your cloud resources are up, follow [`docs/getting-started/local-development.md`](docs/getting-started/local-development.md) for a step-by-step local run.
+### ⚡ Fastest Path (15 minutes)
 
-### **Understand the Repository map (high‑level)**
+```bash
+# 1. Clone the repository
+git clone https://github.com/Azure-Samples/art-voice-agent-accelerator.git
+cd art-voice-agent-accelerator
+
+# 2. Login to Azure
+azd auth login
+
+# 3. Deploy everything
+azd up   # ~15 min for complete infra and code deployment
+```
+
+**Done!** Your voice agent is running. Open the frontend URL shown in the output.
+
+### 📋 Prerequisites
+
+| Requirement | Quick Check |
+|------------|-------------|
+| Azure CLI | `az --version` |
+| Azure Developer CLI | `azd version` |
+| Docker | `docker --version` |
+| Azure Subscription | `az account show` |
+| Contributor Access | Required for resource creation |
+
+### 🗺️ Repository Structure
 
 ```
 📁 apps/artagent/           # Main application
   ├── 🔧 backend/          # FastAPI + WebSockets voice pipeline
   ├── 🌐 frontend/         # Vite + React demo client
-  └── 📜 scripts/          # Helper launchers (backend, frontend, tunnel)
-📁 src/                    # Core libraries (ACS, Speech, AOAI, Redis, Cosmos, VAD, tools, prompts)
-📁 samples/                # Hands-on tutorials and examples (hello_world, labs)
-📁 infra/                  # Infrastructure as Code
-  ├── 🔷 bicep/            # Azure Bicep modules
-  └── 🏗️ terraform/        # Terraform modules
-📁 docs/                   # Guides and references (architecture, getting started, troubleshooting)
-📁 tests/                  # Pytest suite and load testing framework
-📁 utils/                  # Logging/telemetry helpers and images
+  └── 📜 scripts/          # Helper launchers
+📁 src/                    # Core libraries (ACS, Speech, AOAI, Redis, Cosmos, VAD, tools)
+📁 samples/                # Tutorials and examples (hello_world, labs)
+📁 infra/                  # Infrastructure as Code (Terraform)
+📁 docs/                   # Guides and references
+📁 tests/                  # Pytest suite and load testing
+📁 utils/                  # Logging/telemetry helpers
 ```
 
-> [!NOTE]
-> Need a deeper map (up to 5 levels) and exact local run steps? See [`docs/guides/repository-structure.md`](docs/guides/repository-structure.md).
+### 📚 Documentation Guides
 
-### **Deploy and Customize the Demo App Using the ARTAgent Framework**
-
-Already have infra deployed? You can skip azd and run locally using the Quickstart — see [`docs/getting-started/local-development.md`](docs/getting-started/local-development.md).
-
-> [!IMPORTANT]
-> Prerequisites for azd deployment:
-> - Azure Developer CLI installed and logged in (`azd auth login`)
-> - Active subscription selected in Azure CLI (`az account show`)
-> - Sufficient permissions to create resource groups and resources
-
-Provision the complete Azure stack—including **App Gateway**, **Container Apps**, **Cosmos DB**, **Redis Cache**, **Azure OpenAI**, **Speech Services**, **Key Vault**, **Application Insights**, **Log Analytics**, **Azure Communication Services**, **Event Grid**, and **Storage Account**—with a single command:
-
-```bash
-azd auth login
-azd up   # ~15 min for complete infra and code deployment
-```
-
-For a detailed deployment walkthrough, see [`docs/deployment/README.md`](docs/deployment/README.md).
+| Goal | Guide |
+|------|-------|
+| **Deploy infrastructure** | [`infra/README.md`](infra/README.md) |
+| **Local development setup** | [`docs/getting-started/local-development.md`](docs/getting-started/local-development.md) |
+| **Try the demo** | [`docs/getting-started/demo-guide.md`](docs/getting-started/demo-guide.md) |
+| **Understand architecture** | [`docs/architecture/README.md`](docs/architecture/README.md) |
+| **Production deployment** | [`docs/deployment/README.md`](docs/deployment/README.md) |
 
 ## **Contributing**
 PRs & issues welcome—see [`CONTRIBUTING.md`](CONTRIBUTING.md) before pushing.

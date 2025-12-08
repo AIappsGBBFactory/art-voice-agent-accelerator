@@ -64,7 +64,7 @@ git checkout -b bugfix/issue-description
 - Follow the FastAPI and Python 3.11 patterns established in the codebase
 - Ensure compatibility with Azure services (ACS, Speech, OpenAI)
 
-### 6. Quality Checks
+### 6. Quality Checks (WIP)
 ```bash
 # Run all quality checks
 make run_code_quality_checks
