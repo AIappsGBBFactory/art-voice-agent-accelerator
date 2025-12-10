@@ -257,14 +257,16 @@ task_update_urls() {
 show_summary() {
     header "📋 Summary"
     
-    local db_init phone endpoint
+    local db_init phone endpoint env_file
     db_init=$(azd_get "DB_INITIALIZED" "false")
-    phone=$(azd_get "ACS_SOURCE_PHONE_NUMBER")
-    endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT")
+    phone=$(azd_get "ACS_SOURCE_PHONE_NUMBER" "")
+    endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT" "")
+    env_file=".env.local"
     
     [[ "$db_init" == "true" ]] && log "  ✅ Cosmos DB: initialized" || log "  ⏳ Cosmos DB: pending"
     [[ -n "$phone" ]] && log "  ✅ Phone: $phone" || log "  ⏳ Phone: not configured"
     [[ -n "$endpoint" ]] && log "  ✅ App Config: $endpoint" || log "  ⏳ App Config: pending"
+    [[ -f "$env_file" ]] && log "  ✅ Local env: $env_file" || log "  ⏳ Local env: not generated"
     
     if ! is_ci; then
         log ""
@@ -279,6 +281,85 @@ show_summary() {
 }
 
 # ============================================================================
+# Task 4: Sync App Configuration Settings
+# ============================================================================
+
+task_sync_appconfig() {
+    header "📦 Task 4: App Configuration Settings"
+    
+    local sync_script="$HELPERS_DIR/sync-appconfig.sh"
+    local config_file="$SCRIPT_DIR/../../../config/appconfig.json"
+    
+    if [[ ! -f "$sync_script" ]]; then
+        warn "sync-appconfig.sh not found, skipping"
+        footer
+        return 0
+    fi
+    
+    if [[ ! -f "$config_file" ]]; then
+        warn "config/appconfig.json not found, skipping"
+        footer
+        return 0
+    fi
+    
+    local endpoint label
+    endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT")
+    label=$(azd_get "AZURE_ENV_NAME")
+    
+    if [[ -z "$endpoint" ]]; then
+        warn "App Config endpoint not available yet"
+        footer
+        return 1
+    fi
+    
+    log "Syncing app settings from config/appconfig.json..."
+    if bash "$sync_script" --endpoint "$endpoint" --label "$label" --config "$config_file"; then
+        success "App settings synced"
+    else
+        warn "Some settings may have failed"
+    fi
+    
+    footer
+}
+
+# ============================================================================
+# Task 5: Generate Local Development Environment File
+# ============================================================================
+
+task_generate_env_local() {
+    header "🧑‍💻 Task 5: Local Development Environment"
+    
+    local setup_script="$HELPERS_DIR/local-dev-setup.sh"
+    
+    if [[ ! -f "$setup_script" ]]; then
+        warn "local-dev-setup.sh not found, skipping"
+        footer
+        return 0
+    fi
+    
+    # Source the helper to use its functions
+    source "$setup_script"
+    
+    local appconfig_endpoint
+    appconfig_endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT")
+    
+    if [[ -z "$appconfig_endpoint" ]]; then
+        warn "App Config endpoint not available, cannot generate .env.local"
+        footer
+        return 1
+    fi
+    
+    log "Generating .env.local for local development..."
+    if generate_minimal_env ".env.local"; then
+        success ".env.local created"
+    else
+        warn "Failed to generate .env.local"
+    fi
+    
+    footer
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -290,6 +371,8 @@ main() {
     task_cosmos_init || true
     task_phone_number || true
     task_update_urls || true
+    task_sync_appconfig || true
+    task_generate_env_local || true
     show_summary
 }
 

@@ -1,157 +1,93 @@
 # :material-rocket: Getting Started
 
-!!! success "Real-Time Voice AI Accelerator"
-    Get your voice agent running with Azure Communication Services, Speech Services, and AI in just a few steps.
+!!! success "Welcome to ARTVoice Accelerator"
+    Build real-time voice agents on Azure—from your first deployment to production.
 
 ---
 
-## :material-check-circle: Prerequisites
+## :material-map-marker-path: Choose Your Path
 
-### Required Tools
-
-| Tool | Purpose | Install |
-|------|---------|---------|
-| **Azure CLI** | Resource management | [Install](https://docs.microsoft.com/cli/azure/install-azure-cli) |
-| **Azure Developer CLI** | One-command deployment | [Install](https://aka.ms/azd-install) |
-| **Python 3.11+** | Backend runtime | [Install](https://www.python.org/downloads/) |
-| **Node.js 22+** | Frontend build | [Install](https://nodejs.org/) |
-| **Docker** | Container builds | [Install](https://docs.docker.com/get-docker/) |
-
-### Azure Requirements
-
-- **Azure Subscription**: [Create free](https://azure.microsoft.com/free/)
-- **Permissions**: Contributor access (ask your admin if unsure)
-
----
-
-## 🎯 Fastest Path to Running Code
-
-```bash
-# 1. Clone & enter the repo
-git clone https://github.com/Azure-Samples/art-voice-agent-accelerator.git
-cd art-voice-agent-accelerator
-
-# 2. Login to Azure
-azd auth login
-
-# 3. Deploy everything (~15 min)
-azd up
-
-# 4. Open the frontend URL shown in the output
+```mermaid
+flowchart TD
+    START([New to the project?]) --> Q1{Have Azure resources?}
+    
+    Q1 -->|No| QUICK[📦 Quickstart<br/>Deploy everything with azd up]
+    Q1 -->|Yes| LOCAL[💻 Local Development<br/>Run backend/frontend locally]
+    
+    QUICK --> DEMO[🎮 Demo Guide<br/>Try the voice agent]
+    LOCAL --> DEMO
+    
+    DEMO --> NEXT{What's next?}
+    NEXT --> ARCH[📐 Architecture<br/>Understand the system]
+    NEXT --> CUSTOM[🔧 Customize<br/>Build your own agents]
+    
+    style START fill:#e8f5e9
+    style QUICK fill:#e3f2fd
+    style LOCAL fill:#fff3e0
+    style DEMO fill:#f3e5f5
 ```
 
-**That's it!** Your voice agent is now running in Azure.
+---
 
-📚 **Detailed guide**: [`infra/README.md`](../../infra/README.md)
+## :material-format-list-numbered: Step-by-Step Guides
+
+| Step | Guide | Time | Description |
+|:----:|-------|:----:|-------------|
+| 0️⃣ | [**Prerequisites**](prerequisites.md) | 5 min | Install required tools (one-time setup) |
+| 1️⃣ | [**Quickstart**](quickstart.md) | 15 min | Deploy to Azure with `azd up` |
+| 2️⃣ | [**Local Development**](local-development.md) | 10 min | Run backend/frontend on your machine |
+| 3️⃣ | [**Demo Guide**](demo-guide.md) | 10 min | Create profiles, test agents, explore features |
 
 ---
 
-## 📍 Setup Steps
-
-### Step 1: Infrastructure Deployment
-> **Time**: ~15 minutes | **Goal**: Azure resources running
-
-```
-azd up
-   │
-   ├──► Terraform provisions Azure resources
-   ├──► Builds & deploys container apps
-   └──► Generates .env.local with App Configuration connection
- 
-OUTPUT: Frontend URL + Backend API + All Azure services
-```
-
-[`infra/README.md`](../../infra/README.md) 
-
----
-
-### Step 2: Local Development Setup
-> **Time**: ~5 minutes | **Goal**: Run backend/frontend locally
-
-```
-.env.local (auto-generated)
-   │
-   └──► Points to Azure App Configuration
-            │
-            └──► Backend fetches all settings at startup
-                    • OpenAI endpoints
-                    • Speech service config
-                    • ACS, Redis, Cosmos settings
-```
-
-[Local Development](local-development.md) 
-
----
-
-### Step 3: Try the Demo
-> **Time**: ~5 minutes | **Goal**: Talk to the AI agent
-
-```
-Browser Demo                      Phone Demo (optional)
-   │                                   │
-   └──► Open frontend URL              └──► Call ACS phone number
-   └──► Allow microphone               └──► Speak to AI agent
-   └──► Start talking
-```
-
- [Demo Guide](demo-guide.md) 
-
----
-
-### Step 4: Customize & Extend
-> **Time**: Ongoing | **Goal**: Build your own voice agent
-
-| Task | Resource |
-|------|----------|
-| Understand the architecture | [Architecture Overview](../architecture/README.md) |
-| Modify agent behavior | [LLM Orchestration](../architecture/llm-orchestration.md) |
-| Add custom tools | [`src/tools/`](../../src/tools/) |
-| Configure agents | [`apps/artagent/backend/src/agents/`](../../apps/artagent/backend/src/agents/) |
-
----
-
-## :material-microsoft-azure: What Gets Deployed
-
-| Category | Services | Purpose |
-|----------|----------|---------|
-| **AI & Voice** | OpenAI (Foundry + Foudnry Project), Speech, VoiceLive, ACS | Voice processing pipeline |
-| **Data** | Cosmos DB Mongo vCore, Azure Managed Redis, Blob Storage | State & caching |
-| **Compute** | Container Apps, App Configuration | Hosting & config |
-| **Monitoring** | App Insights, Log Analytics | Observability |
-
----
-
-## ❓ Common Questions
+## :material-frequently-asked-questions: Quick Answers
 
 ??? question "How long does deployment take?"
     **~15 minutes** for complete infrastructure + application deployment via `azd up`.
 
-??? question "What if I already have Azure resources?"
-    Skip `azd up` and configure your `.env` file manually. See [Local Development](local-development.md).
-
 ??? question "Do I need a phone number?"
-    **Only for telephony**. Browser-based voice works without it.
+    **No** — browser-based voice works without a phone number.
+    
+    Phone numbers are only needed for PSTN (telephone) integration. See [Phone Number Setup](../deployment/phone-number-setup.md).
 
-??? question "What regions are supported?"
-    East US, West US 2, and most Azure regions with OpenAI availability.
-    ??? question "What regions are supported?"
-        East US, West US 2, and most Azure regions with OpenAI availability.
-        
-        **Special considerations:**
-        
-        - **Cosmos DB for MongoDB (vCore)**: Limited to specific regions. Check [region availability](https://learn.microsoft.com/azure/cosmos-db/mongodb/vcore/introduction#supported-regions).
-        - **Azure Managed Redis**: Available in most regions, but verify [Redis region support](https://azure.microsoft.com/explore/global-infrastructure/products-by-region/?products=redis-cache).
-        - **VoiceLive API**: Currently in preview with limited regional availability. Confirm service availability in your target region.
-        [Speech Services region availability](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions?tabs=voice-live).
-        
-        **Best practice**: Deploy all resources in the same region to minimize latency for real-time voice applications.
+??? question "What Azure resources are created?"
+    | Category | Services |
+    |----------|----------|
+    | **AI** | Azure OpenAI, Speech Services, VoiceLive |
+    | **Communication** | Azure Communication Services |
+    | **Data** | Cosmos DB, Redis, Blob Storage |
+    | **Compute** | Container Apps, App Configuration |
+    | **Monitoring** | Application Insights, Log Analytics |
+
+??? question "Which Azure regions are supported?"
+    Most Azure regions with OpenAI availability work. Recommended: **East US**, **West US 2**, **Sweden Central**.
+    
+    !!! note "VoiceLive API"
+        Currently in preview with limited regions. Check [Speech Services regions](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions).
+
+??? question "Can I use existing Azure resources?"
+    Yes! Skip `azd up` and configure `.env` manually. See [Local Development - Legacy Setup](local-development.md#option-b-legacy-full-env-file-manual-setup).
 
 ---
 
-## :material-help: Getting Help
+## :material-help-circle: Getting Help
 
-| Resource | Use For |
-|----------|---------|
-| **[Troubleshooting Guide](../operations/troubleshooting.md)** | Common issues & solutions |
-| **[GitHub Issues](https://github.com/Azure-Samples/art-voice-agent-accelerator/issues)** | Bug reports |
-| **[GitHub Discussions](https://github.com/Azure-Samples/art-voice-agent-accelerator/discussions)** | Questions & community |
+| Resource | When to Use |
+|----------|-------------|
+| [Troubleshooting](../operations/troubleshooting.md) | Common issues and solutions |
+| [GitHub Issues](https://github.com/Azure-Samples/art-voice-agent-accelerator/issues) | Bug reports |
+| [GitHub Discussions](https://github.com/Azure-Samples/art-voice-agent-accelerator/discussions) | Questions and community help |
+
+---
+
+## :material-book-open-variant: Continue Learning
+
+After getting started, explore these areas:
+
+| Topic | Guide |
+|-------|-------|
+| **Understand the architecture** | [Architecture Overview](../architecture/README.md) |
+| **Customize agents** | [Agent Framework](../architecture/agents/README.md) |
+| **Production deployment** | [Deployment Guide](../deployment/README.md) |
+| **Add phone support** | [Phone Number Setup](../deployment/phone-number-setup.md) |
+

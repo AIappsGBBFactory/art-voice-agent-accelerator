@@ -159,11 +159,13 @@ azd up   # ~15 min for complete infra and code deployment
 
 | Goal | Guide |
 |------|-------|
-| **Deploy infrastructure** | [`infra/README.md`](infra/README.md) |
-| **Local development setup** | [`docs/getting-started/local-development.md`](docs/getting-started/local-development.md) |
-| **Try the demo** | [`docs/getting-started/demo-guide.md`](docs/getting-started/demo-guide.md) |
-| **Understand architecture** | [`docs/architecture/README.md`](docs/architecture/README.md) |
+| **Prerequisites & Setup** | [`docs/getting-started/prerequisites.md`](docs/getting-started/prerequisites.md) |
+| **Quick Start (15 min)** | [`docs/getting-started/quickstart.md`](docs/getting-started/quickstart.md) |
+| **Local development** | [`docs/getting-started/local-development.md`](docs/getting-started/local-development.md) |
+| **Infrastructure details** | [`infra/README.md`](infra/README.md) |
 | **Production deployment** | [`docs/deployment/README.md`](docs/deployment/README.md) |
+| **Architecture** | [`docs/architecture/README.md`](docs/architecture/README.md) |
+| **Try the demo** | [`docs/getting-started/demo-guide.md`](docs/getting-started/demo-guide.md) |
 
 ## **Contributing**
 PRs & issues welcome—see [`CONTRIBUTING.md`](CONTRIBUTING.md) before pushing.

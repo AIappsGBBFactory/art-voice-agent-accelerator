@@ -79,31 +79,30 @@ Before you can have a personalized conversation with the AI agents, you need to 
 
 Your demo profile includes rich context that agents use for personalized interactions:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Demo Profile: john_smith_cfs                               │
-├─────────────────────────────────────────────────────────────┤
-│  Institution: Contoso Financial Services                    │
-│  Relationship Tier: Platinum                                │
-│  Client Since: 2019                                         │
-│                                                             │
-│  Financial Context:                                         │
-│  ├─ Current Balance: $542,000                               │
-│  ├─ YTD Transaction Volume: $8.2M                           │
-│  ├─ Risk Tolerance: Moderate                                │
-│  └─ Account Health Score: 94                                │
-│                                                             │
-│  Customer Intelligence:                                     │
-│  ├─ Communication Style: Direct/Business-focused            │
-│  ├─ Preferred Resolution: Fast, efficient solutions         │
-│  └─ Known Preferences: Quick summaries over detail          │
-│                                                             │
-│  Verification Codes (for demo MFA):                         │
-│  ├─ SSN Last 4: 7823                                        │
-│  ├─ Phone Last 4: 1234                                      │
-│  └─ Employee ID: 4521                                       │
-└─────────────────────────────────────────────────────────────┘
-```
+!!! example "Sample Demo Profile: john_smith_cfs"
+    
+    **Institution:** Contoso Financial Services  
+    **Relationship Tier:** Platinum  
+    **Client Since:** 2019
+    
+    | Category | Data |
+    |----------|------|
+    | **Current Balance** | $542,000 |
+    | **YTD Transaction Volume** | $8.2M |
+    | **Risk Tolerance** | Moderate |
+    | **Account Health Score** | 94 |
+    
+    **Customer Intelligence:**
+    
+    - Communication Style: Direct/Business-focused
+    - Preferred Resolution: Fast, efficient solutions
+    - Known Preferences: Quick summaries over detail
+    
+    **Verification Codes (for demo MFA):**
+    
+    - SSN Last 4: `7823`
+    - Phone Last 4: `1234`  
+    - Employee ID: `4521`
 
 ---
 
@@ -149,15 +148,18 @@ Handoffs enable multi-agent conversations. When you add a handoff tool:
 3. **Context is preserved** — the new agent knows why the customer was transferred
 
 Example handoff configuration:
-```
-Agent: CustomerConcierge
-├─ Tools:
-│   ├─ handoff_fraud_agent → Routes to FraudAgent
-│   ├─ handoff_trading_desk → Routes to TradingAgent
-│   └─ get_account_summary
-└─ Handoff triggers:
-    ├─ "I think my card was stolen" → FraudAgent
-    └─ "I want to trade stocks" → TradingAgent
+
+```mermaid
+flowchart LR
+    subgraph CustomerConcierge["🎧 CustomerConcierge"]
+        direction TB
+        T1["handoff_fraud_agent"]
+        T2["handoff_trading_desk"]
+        T3["get_account_summary"]
+    end
+    
+    CustomerConcierge -->|"Card stolen?"| FA["🔒 FraudAgent"]
+    CustomerConcierge -->|"Trade stocks?"| TA["📈 TradingAgent"]
 ```
 
 ### Configure VAD (Voice Activity Detection)
@@ -204,8 +206,10 @@ Popular voice options:
     
     **How it works:** Audio streams directly to OpenAI's Realtime API
     
-    ```
-    Your Voice → OpenAI Realtime API → AI Response → Audio
+    ```mermaid
+    flowchart LR
+        A["🎤 Your Voice"] --> B["OpenAI Realtime API"]
+        B --> C["🔊 Audio Response"]
     ```
     
     **Characteristics:**
@@ -227,8 +231,12 @@ Popular voice options:
     
     **How it works:** Audio flows through Azure Speech services with separate STT and TTS
     
-    ```
-    Your Voice → Azure STT → LLM → Azure TTS → Audio
+    ```mermaid
+    flowchart LR
+        A["🎤 Your Voice"] --> B["Azure STT"]
+        B --> C["LLM"]
+        C --> D["Azure TTS"]
+        D --> E["🔊 Audio"]
     ```
     
     **Characteristics:**
@@ -259,29 +267,30 @@ Popular voice options:
 
 ### What to Observe During Conversations
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Conversation Flow Visualization                  │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   You speak           System processing            Agent responds   │
-│   ──────────►         ─────────────────            ◄──────────────  │
-│                                                                     │
-│   ┌─────────┐         ┌─────────────────┐         ┌─────────────┐   │
-│   │  VAD    │────────►│  Speech-to-Text │────────►│   LLM       │   │
-│   │Detection│         │  (Transcription)│         │ Inference   │   │
-│   └─────────┘         └─────────────────┘         └──────┬──────┘   │
-│       │                                                  │          │
-│       │               Latency Metrics                    │          │
-│       │               ───────────────                    │          │
-│       │                                                  ▼          │
-│       │                                           ┌─────────────┐   │
-│       │                                           │ Text-to-    │   │
-│       │                                           │ Speech      │   │
-│       └───────── Barge-in Detection ──────────────┤             │   │
-│                  (if you interrupt)               └─────────────┘   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Input["🎤 You Speak"]
+        MIC["Microphone"]
+    end
+    
+    subgraph Processing["⚙️ System Processing"]
+        VAD["VAD\nDetection"]
+        STT["Speech-to-Text\n(Transcription)"]
+        LLM["LLM\nInference"]
+        TTS["Text-to-Speech"]
+    end
+    
+    subgraph Output["🔊 Agent Responds"]
+        AUDIO["Audio Output"]
+    end
+    
+    MIC --> VAD
+    VAD --> STT
+    STT --> LLM
+    LLM --> TTS
+    TTS --> AUDIO
+    
+    VAD -.->|"Barge-in\nDetection"| TTS
 ```
 
 ### Key Metrics to Watch
@@ -303,16 +312,18 @@ When an agent hands off to another agent:
 3. **Seamless Continuation** — Conversation continues without repeating information
 
 **Example handoff flow:**
-```
-You: "I think someone stole my credit card"
 
-Concierge: "I'm connecting you with our fraud specialist right away."
-
-[Handoff to FraudAgent]
-
-FraudAgent: "I'm the fraud specialist. I understand you're concerned 
-about potential unauthorized activity on your card. Let me help you 
-secure your account immediately."
+```mermaid
+sequenceDiagram
+    participant U as 👤 You
+    participant C as 🎧 Concierge
+    participant F as 🔒 FraudAgent
+    
+    U->>C: "I think someone stole my credit card"
+    C->>C: Detects fraud concern
+    C->>U: "I'm connecting you with our fraud specialist right away."
+    C-->>F: Handoff with context
+    F->>U: "I'm the fraud specialist. I understand you're concerned about potential unauthorized activity. Let me help you secure your account immediately."
 ```
 
 ### Watch for Anomalies
