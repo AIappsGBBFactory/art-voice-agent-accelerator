@@ -6,12 +6,18 @@ Entrypoint that stitches everything together:
 • config / CORS
 • shared objects on `app.state`  (Speech pools, Redis, ACS, dashboard-clients)
 • route registration (routers package)
+
+Configuration Loading Order:
+    1. .env.local (local development overrides) - loaded FIRST
+    2. Environment variables (container/cloud deployments)
+    3. Azure App Configuration (if AZURE_APPCONFIG_ENDPOINT is set)
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 # Force unbuffered output for container logs
 sys.stdout.reconfigure(line_buffering=True)
@@ -23,8 +29,41 @@ def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
+# ============================================================================
+# LOAD .env.local FIRST (BEFORE ANY OTHER CONFIG)
+# ============================================================================
+# This MUST happen before any os.getenv() calls or module imports that depend
+# on environment variables. .env.local provides local dev overrides.
+def _load_dotenv_local():
+    """Load .env.local if it exists. Does NOT override existing env vars."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        log("⚠️  python-dotenv not installed, skipping .env.local")
+        return None
+
+    backend_dir = Path(__file__).parent
+    project_root = backend_dir.parent.parent.parent
+
+    env_files = [
+        backend_dir / ".env.local",
+        project_root / ".env.local",
+        project_root / ".env",
+    ]
+
+    for env_file in env_files:
+        if env_file.exists():
+            load_dotenv(env_file, override=False)
+            return env_file
+    return None
+
+
+loaded_env_file = _load_dotenv_local()
+
 log("=" * 60)
 log("🚀 Backend Startup - App Config Integration v4")
+if loaded_env_file:
+    log(f"📁 Loaded .env from: {loaded_env_file}")
 log(f"   AZURE_APPCONFIG_ENDPOINT: {os.getenv('AZURE_APPCONFIG_ENDPOINT', '<not set>')}")
 log(f"   AZURE_APPCONFIG_LABEL: {os.getenv('AZURE_APPCONFIG_LABEL', '<not set>')}")
 log(
