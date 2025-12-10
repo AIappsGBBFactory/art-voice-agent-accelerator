@@ -16,6 +16,7 @@ services:
       path: ./Dockerfile
       context: .
       platform: linux/amd64
+      remoteBuild: true
       
   rtaudio-server:
     project: .
@@ -25,6 +26,7 @@ services:
       path: ./apps/artagent/backend/Dockerfile
       context: .
       platform: linux/amd64
+      remoteBuild: true
 
 
 hooks:

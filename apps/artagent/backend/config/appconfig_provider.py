@@ -88,6 +88,8 @@ APPCONFIG_KEY_MAP: dict[str, str] = {
     # Voice Live (note: VoiceLiveSettings expects AZURE_VOICELIVE_* format)
     "azure/voicelive/endpoint": "AZURE_VOICELIVE_ENDPOINT",
     "azure/voicelive/model": "AZURE_VOICELIVE_MODEL",
+    "azure/voicelive/resource-id": "AZURE_VOICELIVE_RESOURCE_ID",
+    
     # Application Insights
     "azure/appinsights/connection-string": "APPLICATIONINSIGHTS_CONNECTION_STRING",
     # Pool Settings
