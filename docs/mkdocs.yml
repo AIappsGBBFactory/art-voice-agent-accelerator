@@ -3,6 +3,7 @@ site_description: Azure-powered real-time voice agent with text-to-speech and sp
 # site_url: https://github.com/Azure-Samples/art-voice-agent-accelerator/
 repo_url: https://github.com/Azure-Samples/art-voice-agent-accelerator/
 repo_name: Azure-Samples/art-voice-agent-accelerator
+docs_dir: .
 
 theme:
   name: material
@@ -53,9 +54,11 @@ plugins:
 nav:
   - Home: index.md
   - Getting Started:
-    - Quick Start Guide: getting-started/README.md
+    - Overview: getting-started/README.md
+    - Prerequisites: getting-started/prerequisites.md
+    - Quick Start: getting-started/quickstart.md
     - Local Development: getting-started/local-development.md
-    - Configuration Guide: getting-started/configuration.md
+    - Demo Guide: getting-started/demo-guide.md
   - Architecture:
     - Overview: architecture/README.md
     - Agents:
@@ -79,6 +82,7 @@ nav:
     - Archive: architecture/archive/README.md
   - Deployment:
     - Deployment Guide: deployment/README.md
+    - Phone Number Setup: deployment/phone-number-setup.md
     - Production: deployment/production.md
     - CI/CD: deployment/cicd.md
   - Security:

@@ -13,42 +13,54 @@ The VoiceLive Orchestrator is designed for scenarios requiring:
 - **Simplified architecture** — No separate STT/TTS services
 - **Native function calling** — Built-in tool execution
 
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│                      VoiceLive Architecture                         │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   Audio In/Out ◄─────► Azure VoiceLive Connection                   │
-│                              │                                      │
-│                              ▼                                      │
-│                    ┌─────────────────────┐                          │
-│                    │   LiveOrchestrator  │                          │
-│                    │                     │                          │
-│                    │  ├─ VoiceLiveAgents │                          │
-│                    │  ├─ Tool Registry   │                          │
-│                    │  ├─ Handoff Map     │                          │
-│                    │  └─ MemoManager     │                          │
-│                    └──────────┬──────────┘                          │
-│                               │                                     │
-│               Event Loop (handle_event)                             │
-│                               │                                     │
-│    ┌──────────────────────────┼──────────────────────────┐          │
-│    │                          │                          │          │
-│    ▼                          ▼                          ▼          │
-│ SESSION_UPDATED    FUNCTION_CALL_DONE    RESPONSE_AUDIO_DELTA       │
-│    │                          │                          │          │
-│    ▼                          ▼                          ▼          │
-│ Apply Session        Tool Execution         Audio Playback          │
-│                               │                                     │
-│                        ┌──────┴──────┐                              │
-│                        │             │                              │
-│                        ▼             ▼                              │
-│                  Business Tool  Handoff Tool                        │
-│                        │             │                              │
-│                        ▼             ▼                              │
-│               Return Result   Agent Switch                          │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Transport["Bidirectional Transport"]
+        IO[Audio In/Out]
+        VL[Azure VoiceLive Connection]
+    end
+    
+    subgraph Orchestrator["LiveOrchestrator"]
+        VA[VoiceLiveAgents]
+        TR[Tool Registry]
+        HM[Handoff Map]
+        MM[MemoManager]
+    end
+    
+    subgraph Events["Event Loop"]
+        HE["handle_event()"]
+    end
+    
+    subgraph Handlers["Event Handlers"]
+        SU[SESSION_UPDATED]
+        FC[FUNCTION_CALL_DONE]
+        AD[RESPONSE_AUDIO_DELTA]
+    end
+    
+    subgraph Actions["Actions"]
+        AS[Apply Session]
+        TE[Tool Execution]
+        AP[Audio Playback]
+    end
+    
+    subgraph Tools["Tool Types"]
+        BT[Business Tool]
+        HT[Handoff Tool]
+    end
+    
+    subgraph Results["Results"]
+        RR[Return Result]
+        SW[Agent Switch]
+    end
+    
+    IO <--> VL
+    VL --> Orchestrator
+    Orchestrator --> HE
+    HE --> SU --> AS
+    HE --> FC --> TE
+    HE --> AD --> AP
+    TE --> BT --> RR
+    TE --> HT --> SW
 ```
 
 ---

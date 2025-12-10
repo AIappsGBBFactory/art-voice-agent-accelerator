@@ -306,19 +306,19 @@ def _validate_auth_configuration() -> tuple[bool, str]:
         validation_errors = []
 
         # Check BACKEND_AUTH_CLIENT_ID is a valid GUID
-        if not backend_client_id:
+        if not BACKEND_AUTH_CLIENT_ID:
             validation_errors.append("BACKEND_AUTH_CLIENT_ID is not set")
-        elif not _validate_guid(backend_client_id):
+        elif not _validate_guid(BACKEND_AUTH_CLIENT_ID):
             validation_errors.append("BACKEND_AUTH_CLIENT_ID is not a valid GUID")
 
         # Check AZURE_TENANT_ID is a valid GUID
-        if not tenant_id:
+        if not AZURE_TENANT_ID:
             validation_errors.append("AZURE_TENANT_ID is not set")
-        elif not _validate_guid(tenant_id):
+        elif not _validate_guid(AZURE_TENANT_ID):
             validation_errors.append("AZURE_TENANT_ID is not a valid GUID")
 
         # Check ALLOWED_CLIENT_IDS has at least one valid client ID
-        if not allowed_clients:
+        if not ALLOWED_CLIENT_IDS:
             validation_errors.append(
                 "ALLOWED_CLIENT_IDS is empty - at least one client ID required"
             )
@@ -586,13 +586,6 @@ async def readiness_check(
         component="auth_configuration",
     )
     health_checks.append(auth_config_status)
-
-    # Check App Configuration (non-critical - degraded if unavailable)
-    appconfig_status = await fast_ping(
-        _check_appconfig_fast,
-        component="app_configuration",
-    )
-    health_checks.append(appconfig_status)
 
     # Determine overall status
     failed_checks = [check for check in health_checks if check.status != "healthy"]
@@ -888,18 +881,15 @@ async def _check_speech_configuration_fast(stt_pool, tts_pool) -> ServiceCheck:
 
     missing: list[str] = []
     config_summary = {
-        "region": bool(cfg["AZURE_SPEECH_REGION"]),
-        "endpoint": bool(cfg["AZURE_SPEECH_ENDPOINT"]),
-        "key_present": bool(cfg["AZURE_SPEECH_KEY"]),
-        "resource_id_present": bool(cfg["AZURE_SPEECH_RESOURCE_ID"]),
+        "region": bool(AZURE_SPEECH_REGION),
+        "endpoint": bool(AZURE_SPEECH_ENDPOINT),
+        "key_present": bool(AZURE_SPEECH_KEY),
+        "resource_id_present": bool(AZURE_SPEECH_RESOURCE_ID),
     }
 
-    # Region is always required
     if not config_summary["region"]:
         missing.append("AZURE_SPEECH_REGION")
 
-    # Either key OR resource_id (managed identity) is required for authentication
-    # Key is optional when using managed identity with resource_id
     if not (config_summary["key_present"] or config_summary["resource_id_present"]):
         missing.append("AZURE_SPEECH_KEY or AZURE_SPEECH_RESOURCE_ID")
 
@@ -966,7 +956,7 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
     acs_endpoint = cfg["ACS_ENDPOINT"]
 
     # Check if ACS phone number is provided
-    if not acs_phone or acs_phone == "null":
+    if not ACS_SOURCE_PHONE_NUMBER or ACS_SOURCE_PHONE_NUMBER == "null":
         return ServiceCheck(
             component="acs_caller",
             status="unhealthy",
@@ -975,7 +965,7 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         )
 
     # Validate phone number format
-    is_valid, error_msg = _validate_phone_number(acs_phone)
+    is_valid, error_msg = _validate_phone_number(ACS_SOURCE_PHONE_NUMBER)
     if not is_valid:
         return ServiceCheck(
             component="acs_caller",
@@ -985,8 +975,8 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         )
 
     # Check ACS connection string or endpoint
-    acs_conn_missing = not acs_conn_string
-    acs_endpoint_missing = not acs_endpoint
+    acs_conn_missing = not ACS_CONNECTION_STRING
+    acs_endpoint_missing = not ACS_ENDPOINT
     if acs_conn_missing and acs_endpoint_missing:
         return ServiceCheck(
             component="acs_caller",
@@ -1000,9 +990,9 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         missing = []
         if not is_valid:
             missing.append(f"ACS_SOURCE_PHONE_NUMBER ({error_msg})")
-        if not acs_conn_string:
+        if not ACS_CONNECTION_STRING:
             missing.append("ACS_CONNECTION_STRING")
-        if not acs_endpoint:
+        if not ACS_ENDPOINT:
             missing.append("ACS_ENDPOINT")
         details = (
             f"ACS caller not configured. Missing: {', '.join(missing)}"

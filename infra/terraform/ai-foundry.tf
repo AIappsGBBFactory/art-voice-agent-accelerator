@@ -22,7 +22,6 @@ resource "azurerm_role_assignment" "ai_foundry_account_role_for_backend_containe
   scope                = module.ai_foundry.account_id
   role_definition_name = "Cognitive Services User"
   principal_id         = azurerm_user_assigned_identity.backend.principal_id
-
 }
 
 resource "azurerm_role_assignment" "ai_foundry_account_role_for_deployment_principal" {
