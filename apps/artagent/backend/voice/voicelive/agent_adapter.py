@@ -31,7 +31,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
-    from apps.artagent.backend.agents.base import UnifiedAgent
+    from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 
 logger = get_logger("voicelive.agent_adapter")
 tracer = trace.get_tracer(__name__)

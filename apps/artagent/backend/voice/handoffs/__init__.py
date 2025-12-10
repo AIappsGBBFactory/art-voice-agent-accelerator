@@ -18,7 +18,7 @@ Usage:
         HandoffResult,
         build_handoff_system_vars,
     )
-    from apps.artagent.backend.agents.loader import build_handoff_map, discover_agents
+    from apps.artagent.backend.registries.agentstore.loader import build_handoff_map, discover_agents
 
     # Build handoff_map from agent declarations
     agents = discover_agents()

@@ -3,7 +3,7 @@ import BackendHelpButton from './BackendHelpButton.jsx';
 import { styles } from '../styles/voiceAppStyles.js';
 import { useBackendHealth } from '../hooks/useBackendHealth.js';
 
-const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect }) => {
+const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect, compact = false }) => {
   const [displayUrl, setDisplayUrl] = useState(url);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isClickedOpen, setIsClickedOpen] = useState(false);
@@ -17,7 +17,9 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect
   const [showAcsHover, setShowAcsHover] = useState(false);
   const [acsTooltipPos, setAcsTooltipPos] = useState(null);
   const [revealApiUrl, setRevealApiUrl] = useState(false);
+  const [showPanel, setShowPanel] = useState(false);
   const summaryRef = useRef(null);
+  const buttonRef = useRef(null);
 
   const { readinessData, agentsData, healthData, error, overallStatus, acsOnlyIssue } =
     useBackendHealth(url);
@@ -239,6 +241,329 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect
   const maskToggleStyle = revealApiUrl
     ? { ...styles.maskToggleButton, ...styles.maskToggleButtonActive }
     : styles.maskToggleButton;
+
+  // Compact sidebar button mode
+  if (compact) {
+    const statusColor = overallStatus === "healthy" ? '#10b981' : 
+                       overallStatus === "degraded" ? '#f59e0b' : '#ef4444';
+    const statusBgColor = overallStatus === "healthy" ? 'rgba(16,185,129,0.08)' : 
+                         overallStatus === "degraded" ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)';
+    const statusIcon = overallStatus === "healthy" ? '✓' : 
+                      overallStatus === "degraded" ? '⚠' : '✕';
+    
+    return (
+      <>
+        <button
+          ref={buttonRef}
+          onClick={() => setShowPanel((prev) => !prev)}
+          title="Backend Status"
+          style={{
+            width: '44px',
+            height: '44px',
+            borderRadius: '12px',
+            border: '1px solid rgba(226,232,240,0.6)',
+            background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
+            color: statusColor,
+            fontSize: '16px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+            boxShadow: '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = `0 4px 16px ${statusColor}20, inset 0 1px 0 rgba(255,255,255,0.8)`;
+            e.currentTarget.style.background = `linear-gradient(135deg, ${statusBgColor}, ${statusBgColor})`;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)';
+            e.currentTarget.style.background = 'linear-gradient(145deg, #ffffff, #fafbfc)';
+          }}
+        >
+          {statusIcon}
+        </button>
+
+        {/* Status Panel */}
+        {showPanel && (
+          <div
+            data-backend-panel
+            style={{
+              position: 'fixed',
+              left: '84px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              background: 'linear-gradient(145deg, rgba(255,255,255,0.98), rgba(248,250,252,0.95))',
+              borderRadius: '14px',
+              padding: '16px',
+              boxShadow: '0 8px 32px rgba(15,23,42,0.12), 0 0 0 1px rgba(226,232,240,0.4), inset 0 1px 0 rgba(255,255,255,0.8)',
+              backdropFilter: 'blur(24px)',
+              WebkitBackdropFilter: 'blur(24px)',
+              width: '340px',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              zIndex: 1400,
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              fontSize: '14px',
+              fontWeight: '600',
+              color: '#1e293b',
+              marginBottom: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}>
+              <span style={{ fontSize: '18px' }}>⚙️</span>
+              Backend Status
+            </div>
+
+            {/* API Endpoint */}
+            <div style={{
+              padding: '10px',
+              background: '#f8fafc',
+              borderRadius: '8px',
+              marginBottom: '12px',
+              border: '1px solid #e2e8f0',
+            }}>
+              <div style={{
+                fontSize: '11px',
+                fontWeight: '600',
+                color: '#475569',
+                marginBottom: '6px',
+              }}>
+                🌐 API Endpoint
+              </div>
+              <div style={{
+                fontSize: '10px',
+                fontFamily: 'monospace',
+                color: '#64748b',
+                wordBreak: 'break-all',
+              }}>
+                {displayUrl}
+              </div>
+            </div>
+
+            {/* Overall Status */}
+            <div style={{
+              padding: '10px',
+              background: overallStatus === "healthy" ? '#f0fdf4' : 
+                         overallStatus === "degraded" ? '#fffbeb' : '#fef2f2',
+              borderRadius: '8px',
+              marginBottom: '12px',
+              border: `1px solid ${overallStatus === "healthy" ? '#bbf7d0' : 
+                                  overallStatus === "degraded" ? '#fed7aa' : '#fecaca'}`,
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '600',
+                color: overallStatus === "healthy" ? '#166534' : 
+                      overallStatus === "degraded" ? '#92400e' : '#dc2626',
+                marginBottom: '4px',
+              }}>
+                {statusIcon} {overallStatus.charAt(0).toUpperCase() + overallStatus.slice(1)}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: '#64748b',
+              }}>
+                {overallStatus === "healthy" && "All systems operational"}
+                {overallStatus === "degraded" && "Some services degraded"}
+                {overallStatus === "unhealthy" && "System experiencing issues"}
+              </div>
+            </div>
+
+            {/* Components with Details */}
+            {readinessData?.checks && (
+              <div>
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  color: '#475569',
+                  marginBottom: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}>
+                  <span>🔧</span>
+                  Components
+                </div>
+                {readinessData.checks.map((check, idx) => {
+                  const isHealthy = check.status === "pass";
+                  const componentName = check.componentId?.replace(/_/g, ' ') || 'Unknown';
+                  const description = componentDescriptions[check.componentId] || '';
+                  
+                  return (
+                    <div 
+                      key={idx} 
+                      style={{
+                        padding: '10px',
+                        background: isHealthy ? '#f0fdf4' : '#fef2f2',
+                        borderRadius: '8px',
+                        marginBottom: '8px',
+                        border: `1px solid ${isHealthy ? '#bbf7d0' : '#fecaca'}`,
+                      }}
+                    >
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: '6px',
+                      }}>
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          color: isHealthy ? '#166534' : '#dc2626',
+                        }}>
+                          <span style={{ fontSize: '14px' }}>
+                            {componentIcons[check.componentId] || '🔧'}
+                          </span>
+                          <span>{componentName}</span>
+                        </div>
+                        <div style={{
+                          fontSize: '16px',
+                          color: isHealthy ? '#10b981' : '#ef4444',
+                        }}>
+                          {isHealthy ? '✓' : '✕'}
+                        </div>
+                      </div>
+                      
+                      {/* Component Description */}
+                      {description && (
+                        <div style={{
+                          fontSize: '9px',
+                          color: '#64748b',
+                          marginBottom: '6px',
+                          lineHeight: '1.4',
+                        }}>
+                          {description}
+                        </div>
+                      )}
+                      
+                      {/* Component Details */}
+                      {check.componentType && (
+                        <div style={{
+                          fontSize: '9px',
+                          color: '#64748b',
+                          fontFamily: 'monospace',
+                          background: 'rgba(255,255,255,0.5)',
+                          padding: '4px 6px',
+                          borderRadius: '4px',
+                          marginTop: '4px',
+                        }}>
+                          Type: {check.componentType}
+                        </div>
+                      )}
+                      
+                      {/* Output/Error Details */}
+                      {check.output && (
+                        <div style={{
+                          fontSize: '9px',
+                          color: isHealthy ? '#166534' : '#dc2626',
+                          marginTop: '4px',
+                          fontFamily: 'monospace',
+                          background: 'rgba(255,255,255,0.5)',
+                          padding: '4px 6px',
+                          borderRadius: '4px',
+                          wordBreak: 'break-word',
+                        }}>
+                          {typeof check.output === 'object' 
+                            ? JSON.stringify(check.output, null, 2).substring(0, 100) + (JSON.stringify(check.output).length > 100 ? '...' : '')
+                            : String(check.output).substring(0, 100) + (String(check.output).length > 100 ? '...' : '')
+                          }
+                        </div>
+                      )}
+                      
+                      {/* Time/Performance Info */}
+                      {check.time && (
+                        <div style={{
+                          fontSize: '9px',
+                          color: '#64748b',
+                          marginTop: '4px',
+                        }}>
+                          ⏱️ Response: {check.time}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Health Data Summary */}
+            {healthData && (
+              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  color: '#475569',
+                  marginBottom: '8px',
+                }}>
+                  📊 Health Metrics
+                </div>
+                <div style={{
+                  fontSize: '10px',
+                  color: '#64748b',
+                  background: '#f8fafc',
+                  padding: '8px',
+                  borderRadius: '6px',
+                  border: '1px solid #e2e8f0',
+                }}>
+                  {healthData.status && (
+                    <div style={{ marginBottom: '4px' }}>
+                      Status: <strong>{healthData.status}</strong>
+                    </div>
+                  )}
+                  {healthData.version && (
+                    <div style={{ marginBottom: '4px' }}>
+                      Version: <strong>{healthData.version}</strong>
+                    </div>
+                  )}
+                  {healthData.timestamp && (
+                    <div>
+                      Last Check: {new Date(healthData.timestamp).toLocaleTimeString()}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Agents Summary */}
+            {agentsData?.agents && agentsData.agents.length > 0 && (
+              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  color: '#475569',
+                  marginBottom: '8px',
+                }}>
+                  🤖 Active Agents ({agentsData.agents.length})
+                </div>
+                <div style={{
+                  fontSize: '10px',
+                  color: '#64748b',
+                  background: '#f8fafc',
+                  padding: '8px',
+                  borderRadius: '6px',
+                  border: '1px solid #e2e8f0',
+                }}>
+                  {agentsData.agents.map((a) => a.name).join(', ')}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div 

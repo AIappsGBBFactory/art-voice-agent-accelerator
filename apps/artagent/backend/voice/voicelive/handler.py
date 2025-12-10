@@ -13,7 +13,7 @@ from typing import Any, Literal
 import numpy as np
 
 # Import agents loader for dynamic handoff_map building
-from apps.artagent.backend.agents.loader import (
+from apps.artagent.backend.registries.agentstore.loader import (
     build_agent_summaries,
     build_handoff_map,
     discover_agents,
@@ -1030,7 +1030,7 @@ class VoiceLiveSDKHandler:
                 if memo_manager and redis_mgr:
                     # Sync orchestrator state to memo_manager first
                     if self._orchestrator and hasattr(self._orchestrator, "_sync_to_memo_manager"):
-                        self._orchestrator._sync_to_memo_manager(memo_manager)
+                        self._orchestrator._sync_to_memo_manager()
                     await memo_manager.persist_to_redis_async(redis_mgr)
                     logger.info(
                         "📦 Session state persisted to Redis | session=%s",

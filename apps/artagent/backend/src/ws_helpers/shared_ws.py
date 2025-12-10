@@ -19,7 +19,7 @@ from contextlib import suppress
 from functools import partial
 from typing import Any
 
-from apps.artagent.backend.agents.loader import build_agent_summaries
+from apps.artagent.backend.registries.agentstore.loader import build_agent_summaries
 from apps.artagent.backend.src.services.acs.acs_helpers import play_response_with_queue
 from apps.artagent.backend.src.services.speech_services import SpeechSynthesizer
 from apps.artagent.backend.src.ws_helpers.envelopes import (

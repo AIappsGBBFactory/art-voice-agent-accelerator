@@ -57,7 +57,7 @@ logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
 if TYPE_CHECKING:
-    from apps.artagent.backend.agents.base import UnifiedAgent
+    from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
     from src.stateful.state_managment import MemoManager
 
 
@@ -125,6 +125,7 @@ def _get_or_create_adapter(
     session_id: str,
     call_connection_id: str,
     app_state: any,
+    memo_manager: MemoManager | None = None,
 ) -> CascadeOrchestratorAdapter:
     """
     Get or create a CascadeOrchestratorAdapter for the session.
@@ -135,11 +136,17 @@ def _get_or_create_adapter(
     if session_id in _adapters:
         return _adapters[session_id]
 
+    # Get scenario from MemoManager if available
+    scenario_name = None
+    if memo_manager:
+        scenario_name = memo_manager.get_value_from_corememory("scenario_name", None)
+
     # Create adapter using app.state config
     adapter = get_cascade_orchestrator(
         app_state=app_state,
         call_connection_id=call_connection_id,
         session_id=session_id,
+        scenario_name=scenario_name,
     )
 
     _adapters[session_id] = adapter
@@ -262,7 +269,7 @@ async def route_turn(
 
     # Get or create orchestrator adapter
     app_state = ws.app.state
-    adapter = _get_or_create_adapter(session_id, call_connection_id, app_state)
+    adapter = _get_or_create_adapter(session_id, call_connection_id, app_state, memo_manager=cm)
 
     # Sync adapter state from MemoManager
     adapter.sync_from_memo_manager(cm)

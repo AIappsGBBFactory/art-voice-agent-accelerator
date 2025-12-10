@@ -109,8 +109,8 @@ from api.v1.endpoints import demo_env
 # ─────────────────────────────────────────────────────────────────────────────
 # Unified Agents (new modular structure)
 # ─────────────────────────────────────────────────────────────────────────────
-from apps.artagent.backend.agents.loader import build_handoff_map, discover_agents
-from apps.artagent.backend.agents.tools.registry import initialize_tools as initialize_unified_tools
+from apps.artagent.backend.registries.agentstore.loader import build_handoff_map, discover_agents
+from apps.artagent.backend.registries.toolstore.registry import initialize_tools as initialize_unified_tools
 from apps.artagent.backend.api.v1.events.registration import register_default_handlers
 from apps.artagent.backend.api.v1.router import v1_router
 from apps.artagent.backend.config import (
@@ -729,7 +729,7 @@ async def lifespan(app: FastAPI):
 
         if scenario_name:
             # Load agents with scenario overrides
-            from apps.artagent.backend.agents.scenarios import (
+            from apps.artagent.backend.registries.scenariostore import (
                 get_scenario_agents,
                 get_scenario_start_agent,
                 load_scenario,
@@ -757,7 +757,7 @@ async def lifespan(app: FastAPI):
             unified_agents = discover_agents()
 
         handoff_map = build_handoff_map(unified_agents)
-        from apps.artagent.backend.agents.loader import build_agent_summaries
+        from apps.artagent.backend.registries.agentstore.loader import build_agent_summaries
 
         agent_summaries = build_agent_summaries(unified_agents)
 
@@ -783,9 +783,6 @@ async def lifespan(app: FastAPI):
     add_step("agents", start_agents)
 
     async def start_event_handlers() -> None:
-        # ─────────────────────────────────────────────────────────────────────
-        # Initialize Unified Tool Registry (new - apps/artagent/agents/tools/)
-        # ─────────────────────────────────────────────────────────────────────
         unified_tool_count = initialize_unified_tools()
         logger.info(
             "Unified tool registry initialized",

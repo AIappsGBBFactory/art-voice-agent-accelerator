@@ -20,12 +20,16 @@ const PanelCard = ({ title, icon, children, collapsible, defaultOpen = true }) =
   return (
     <Box
       sx={{
-        borderRadius: '18px',
-        border: '1px solid rgba(226,232,240,0.9)',
-        background: 'linear-gradient(135deg, rgba(248,250,252,0.96), rgba(255,255,255,0.92))',
-        boxShadow: '0 8px 22px rgba(15,23,42,0.08)',
+        borderRadius: '16px',
+        border: '1px solid rgba(226,232,240,0.6)',
+        background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
+        boxShadow: '0 2px 8px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.8)',
         p: 2,
         mb: 2,
+        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        '&:hover': {
+          boxShadow: '0 4px 12px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+        },
       }}
     >
       <Box
@@ -115,18 +119,17 @@ const AgentDetailsPanel = ({
         top: 0,
         left: 0,
         bottom: 0,
-        width: '340px',
+        width: '380px',
         maxWidth: '90vw',
-        background: 'linear-gradient(180deg, #f8fafc, #ffffff)',
-        borderRight: '1px solid rgba(226,232,240,0.8)',
-        boxShadow: '8px 0 24px rgba(15,23,42,0.12)',
-        zIndex: 1200,
+        background: 'linear-gradient(145deg, rgba(255,255,255,0.98), rgba(248,250,252,0.95))',
+        borderRight: '1px solid rgba(226,232,240,0.4)',
+        boxShadow: '8px 0 32px rgba(15,23,42,0.12), 0 0 0 1px rgba(226,232,240,0.4), inset 0 1px 0 rgba(255,255,255,0.8)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        zIndex: 1400,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        resize: 'horizontal',
-        minWidth: '280px',
-        maxWidth: '520px',
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 2, pb: 1.5, cursor: 'grab' }}>
@@ -169,14 +172,26 @@ const AgentDetailsPanel = ({
                 size="small"
                 label={displayAgentName}
                 icon={<SmartToyRoundedIcon fontSize="small" />}
-                sx={{ background: 'rgba(14,165,233,0.12)', color: '#0ea5e9', fontWeight: 700 }}
+                sx={{ 
+                  background: 'linear-gradient(135deg, rgba(14,165,233,0.08), rgba(14,165,233,0.06))', 
+                  color: '#0ea5e9', 
+                  fontWeight: 600,
+                  border: '1px solid rgba(14,165,233,0.2)',
+                  fontSize: '11px',
+                }}
               />
             )}
             {sessionId && (
               <Chip
                 size="small"
                 label={`Session: ${sessionId}`}
-                sx={{ background: 'rgba(99,102,241,0.12)', color: '#4338ca', fontWeight: 700 }}
+                sx={{ 
+                  background: 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(79,70,229,0.06))', 
+                  color: '#4338ca', 
+                  fontWeight: 600,
+                  border: '1px solid rgba(99,102,241,0.2)',
+                  fontSize: '11px',
+                }}
               />
             )}
           </Box>
@@ -246,10 +261,14 @@ const AgentDetailsPanel = ({
                 key={`${msg.turnId || msg.id || idx}-${idx}`}
                 sx={{
                   borderRadius: '10px',
-                  border: '1px solid rgba(226,232,240,0.9)',
-                  background: 'rgba(248,250,252,0.8)',
+                  border: '1px solid rgba(226,232,240,0.6)',
+                  background: 'linear-gradient(145deg, rgba(255,255,255,0.8), rgba(248,250,252,0.6))',
                   p: 1,
                   mb: 1,
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  '&:hover': {
+                    background: 'linear-gradient(145deg, rgba(248,250,252,0.9), rgba(241,245,249,0.7))',
+                  },
                 }}
               >
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
@@ -291,11 +310,16 @@ const AgentDetailsPanel = ({
             <Box
               key={tool.id || tool.ts || tool.tool}
               sx={{
-                borderRadius: '12px',
-                border: '1px solid rgba(226,232,240,0.9)',
-                background: 'rgba(34,197,94,0.04)',
+                borderRadius: '10px',
+                border: '1px solid rgba(34,197,94,0.2)',
+                background: 'linear-gradient(135deg, rgba(34,197,94,0.04), rgba(34,197,94,0.02))',
                 p: 1,
                 mb: 1,
+                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                '&:hover': {
+                  background: 'linear-gradient(135deg, rgba(34,197,94,0.08), rgba(34,197,94,0.04))',
+                  borderColor: 'rgba(34,197,94,0.3)',
+                },
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

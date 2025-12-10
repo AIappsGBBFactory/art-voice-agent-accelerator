@@ -1,0 +1,40 @@
+# Insurance Customer Service Scenario
+# Optimized for insurance claims, policy management, and customer support
+
+name: insurance
+description: Insurance customer service with claims processing and policy management
+
+# Starting agent
+# Testing flow: Auth Agent → Fraud Agent
+start_agent: auth_agent
+
+# Agents to include in this scenario
+agents:
+  - auth_agent
+  - fraud_agent
+
+# Agent-specific overrides
+agent_overrides:
+  auth_agent:
+    greeting: "Welcome to Insurance Services. For your security, I need to verify your policy information before we proceed."
+    template_vars:
+      security_level: "high"
+      mfa_required: true
+      verification_method: "policy_number"
+      company_name: "Insurance Services"
+
+  fraud_agent:
+    greeting: "I'm your fraud prevention specialist. I can help investigate suspicious activity or verify claim authenticity."
+    template_vars:
+      alert_threshold: "high"
+      auto_escalate: true
+      claim_verification: true
+      company_name: "Insurance Services"
+
+# Global variables (apply to all agents)
+template_vars:
+  company_name: "Insurance Services"
+  industry: "insurance"
+  compliance_required: true
+  region: "US"
+  claims_processing: true

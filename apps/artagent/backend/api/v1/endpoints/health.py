@@ -54,7 +54,7 @@ def _get_config_dynamic():
     }
 
 
-from apps.artagent.backend.agents.loader import build_agent_summaries
+from apps.artagent.backend.registries.agentstore.loader import build_agent_summaries
 from apps.artagent.backend.api.v1.schemas.health import (
     HealthResponse,
     PoolMetrics,

@@ -152,7 +152,7 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     await initializeAudioPlayback();
 
     const sessionId = getOrCreateSessionId();
-    const conversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${encodeURIComponent(sessionId)}`;
+    const conversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${encodeURIComponent(sessionId)}&scenario=${encodeURIComponent(window.selectedScenario || 'banking')}`;
 
     // 1) open WS
     const socket = new WebSocket(conversationUrl);
