@@ -662,23 +662,23 @@ export const styles = {
     width: "56px",
     height: "56px",
     borderRadius: "50%",
-    border: "none",
+    border: '1px solid rgba(226,232,240,0.6)',
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
     fontSize: "20px",
-    transition: "all 0.3s ease",
+    transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
     position: "relative",
-    background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
-    color: "#1f2937",
-    transform: isHovered ? "scale(1.08)" : "scale(1)",
+    background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
+    color: '#64748b',
+    transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
     boxShadow: isHovered ? 
-      "0 8px 24px rgba(100,116,139,0.3), 0 0 0 3px rgba(100,116,139,0.15)" :
-      "0 2px 8px rgba(0,0,0,0.08)",
+      '0 4px 16px rgba(100,116,139,0.15), inset 0 1px 0 rgba(255,255,255,0.8)' :
+      '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
     padding: 0,
     '& svg': {
-      color: isHovered ? "#0F172A" : "#1f2937",
+      color: isHovered ? '#475569' : '#64748b',
     },
   }),
 
@@ -686,43 +686,34 @@ export const styles = {
     width: "56px",
     height: "56px",
     borderRadius: "50%",
-    border: "none",
+    border: '1px solid rgba(226,232,240,0.6)',
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
     fontSize: "20px",
-    transition: "all 0.3s ease",
+    transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
     position: "relative",
-    // RECORDING (active): Strong red/pink gradient with glow
-    // IDLE (not active): Soft blue gradient
+    // RECORDING (active): Cyan accent gradient
+    // IDLE: White base gradient
     background: isActive ? 
-      (isHovered ? "linear-gradient(135deg, #ef4444, #dc2626)" : "linear-gradient(135deg, #f87171, #ef4444)") :
-      (isHovered ? "linear-gradient(135deg, #0ea5e9, #0284c7)" : "linear-gradient(135deg, #f1f5f9, #e2e8f0)"),
-    color: isActive ? "white" : (isHovered ? "white" : "#475569"),
-    transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
-    // RECORDING: Red pulsing glow
-    // IDLE: Subtle shadow
+      (isHovered ? 'linear-gradient(135deg, rgba(14,165,233,0.15), rgba(14,165,233,0.1))' : 'linear-gradient(145deg, rgba(14,165,233,0.1), rgba(14,165,233,0.08))') :
+      'linear-gradient(145deg, #ffffff, #fafbfc)',
+    color: isActive ? '#0ea5e9' : '#64748b',
+    transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
+    // RECORDING: Subtle cyan glow
+    // IDLE: Standard shadow
     boxShadow: isActive ? 
       (isHovered ? 
-        "0 8px 30px rgba(239,68,68,0.5), 0 0 0 4px rgba(239,68,68,0.2), inset 0 1px 2px rgba(255,255,255,0.3)" :
-        "0 6px 25px rgba(239,68,68,0.45), 0 0 0 3px rgba(239,68,68,0.18), 0 0 20px rgba(239,68,68,0.3)") :
+        '0 4px 16px rgba(14,165,233,0.2), inset 0 1px 0 rgba(255,255,255,0.8)' :
+        '0 2px 8px rgba(14,165,233,0.15), inset 0 1px 0 rgba(255,255,255,0.8)') :
       (isHovered ? 
-        "0 8px 25px rgba(14,165,233,0.4), 0 0 0 4px rgba(14,165,233,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
-        "0 2px 8px rgba(0,0,0,0.08)"),
+        '0 4px 16px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,0.8)' :
+        '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)'),
     padding: 0,
-    // Add subtle pulse animation when recording
-    animation: isActive ? "micPulse 2s ease-in-out infinite" : "none",
-    '@keyframes micPulse': {
-      '0%, 100%': {
-        boxShadow: "0 6px 25px rgba(239,68,68,0.45), 0 0 0 3px rgba(239,68,68,0.18), 0 0 20px rgba(239,68,68,0.3)"
-      },
-      '50%': {
-        boxShadow: "0 8px 30px rgba(239,68,68,0.6), 0 0 0 5px rgba(239,68,68,0.25), 0 0 30px rgba(239,68,68,0.4)"
-      },
-    },
+    animation: "none",
     '& svg': {
-      color: isActive ? "#ffffff" : (isHovered ? "#ffffff" : "#64748b"),
+      color: isActive ? '#0ea5e9' : (isHovered ? '#475569' : '#64748b'),
     },
   }),
 
@@ -731,15 +722,15 @@ export const styles = {
       width: "56px",
       height: "56px",
       borderRadius: "50%",
-      border: "none",
+      border: '1px solid rgba(226,232,240,0.6)',
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      transition: "all 0.3s ease",
+      transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
       position: "relative",
       padding: 0,
       '& svg': {
-        color: "#1f2937",
+        color: '#64748b',
       },
     };
 
@@ -747,40 +738,40 @@ export const styles = {
       return {
         ...base,
         cursor: "not-allowed",
-        background: "linear-gradient(135deg, #e2e8f0, #cbd5e1)",
-        opacity: 0.6,
-        boxShadow: "inset 0 0 0 1px rgba(148,163,184,0.35)",
+        background: 'linear-gradient(145deg, #f1f5f9, #e2e8f0)',
+        opacity: 0.5,
+        boxShadow: '0 2px 4px rgba(15,23,42,0.04)',
         '& svg': {
           color: "#94a3b8",
         },
       };
     }
 
-    // MUTED: Strong red/warning state with cross icon
-    // UNMUTED: Green/active state with microphone icon
+    // MUTED: Subtle red accent on white base
+    // UNMUTED: Subtle green accent on white base
     const palette = isMuted
       ? {
-          base: "linear-gradient(135deg, #fecaca, #fca5a5)",
-          hover: "linear-gradient(135deg, #ef4444, #dc2626)",
-          fg: "#7f1d1d",
-          hoverFg: "#ffffff",
-          shadow: "0 6px 20px rgba(239,68,68,0.4), 0 0 0 3px rgba(239,68,68,0.2)",
-          hoverShadow: "0 8px 28px rgba(239,68,68,0.5), 0 0 0 4px rgba(239,68,68,0.25)",
+          base: 'linear-gradient(145deg, rgba(254,202,202,0.3), rgba(252,165,165,0.2))',
+          hover: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(239,68,68,0.1))',
+          fg: '#ef4444',
+          hoverFg: '#dc2626',
+          shadow: '0 2px 8px rgba(239,68,68,0.15), inset 0 1px 0 rgba(255,255,255,0.8)',
+          hoverShadow: '0 4px 16px rgba(239,68,68,0.2), inset 0 1px 0 rgba(255,255,255,0.8)',
         }
       : {
-          base: "linear-gradient(135deg, #d1fae5, #a7f3d0)",
-          hover: "linear-gradient(135deg, #10b981, #059669)",
-          fg: "#065f46",
-          hoverFg: "#ffffff",
-          shadow: "0 6px 20px rgba(16,185,129,0.35), 0 0 0 3px rgba(16,185,129,0.18)",
-          hoverShadow: "0 8px 28px rgba(16,185,129,0.45), 0 0 0 4px rgba(16,185,129,0.22)",
+          base: 'linear-gradient(145deg, rgba(209,250,229,0.3), rgba(167,243,208,0.2))',
+          hover: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.1))',
+          fg: '#10b981',
+          hoverFg: '#059669',
+          shadow: '0 2px 8px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.8)',
+          hoverShadow: '0 4px 16px rgba(16,185,129,0.2), inset 0 1px 0 rgba(255,255,255,0.8)',
         };
 
     return {
       ...base,
       cursor: "pointer",
       background: isHovered ? palette.hover : palette.base,
-      transform: isHovered ? "scale(1.08)" : "scale(1)",
+      transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
       boxShadow: isHovered ? palette.hoverShadow : palette.shadow,
       '& svg': {
         color: isHovered ? palette.hoverFg : palette.fg,
@@ -793,17 +784,16 @@ export const styles = {
       width: "56px",
       height: "56px",
       borderRadius: "50%",
-      border: "none",
+      border: '1px solid rgba(226,232,240,0.6)',
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       fontSize: "20px",
-      transition: "all 0.3s ease",
+      transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
       position: "relative",
-      color: "#1f2937",
       padding: 0,
       '& svg': {
-        color: "#1f2937",
+        color: '#64748b',
       },
     };
 
@@ -811,42 +801,38 @@ export const styles = {
       return {
         ...base,
         cursor: "not-allowed",
-        background: "linear-gradient(135deg, #e2e8f0, #cbd5e1)",
+        background: 'linear-gradient(145deg, #f1f5f9, #e2e8f0)',
         color: "#94a3b8",
-        transform: "scale(1)",
-        boxShadow: "inset 0 0 0 1px rgba(148, 163, 184, 0.3)",
-        opacity: 0.7,
-        padding: 0,
+        transform: 'translateY(0)',
+        boxShadow: '0 2px 4px rgba(15,23,42,0.04)',
+        opacity: 0.5,
         '& svg': {
           color: "#94a3b8",
         },
       };
     }
 
-    // ACTIVE (in call): Strong red "hang up" state
-    // INACTIVE: Blue "start call" state
+    // ACTIVE (in call): Subtle red accent for "hang up"
+    // INACTIVE: Subtle green accent for "start call"
     return {
       ...base,
       cursor: "pointer",
       background: isActive ? 
-        (isHovered ? "linear-gradient(135deg, #dc2626, #b91c1c)" : "linear-gradient(135deg, #ef4444, #dc2626)") :
-        (isHovered ? "linear-gradient(135deg, #3b82f6, #2563eb)" : "linear-gradient(135deg, #dbeafe, #bfdbfe)"),
-      color: isActive ? 
-        "white" :
-        (isHovered ? "white" : "#1e40af"),
-      transform: isHovered ? "scale(1.08)" : (isActive ? "scale(1.05)" : "scale(1)"),
-      // ACTIVE: Red glow for "danger/end call"
-      // INACTIVE: Blue glow for "start call"
+        (isHovered ? 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(239,68,68,0.1))' : 'linear-gradient(145deg, rgba(239,68,68,0.1), rgba(239,68,68,0.08))') :
+        (isHovered ? 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.1))' : 'linear-gradient(145deg, rgba(16,185,129,0.1), rgba(16,185,129,0.08))'),
+      color: isActive ? '#ef4444' : '#10b981',
+      transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
+      // ACTIVE: Subtle red glow for "danger/end call"
+      // INACTIVE: Subtle green glow for "start call"
       boxShadow: isActive ? 
         (isHovered ? 
-          "0 8px 30px rgba(220,38,38,0.5), 0 0 0 4px rgba(220,38,38,0.25), inset 0 1px 2px rgba(255,255,255,0.2)" :
-          "0 6px 25px rgba(239,68,68,0.45), 0 0 0 3px rgba(239,68,68,0.2)") :
+          '0 4px 16px rgba(239,68,68,0.2), inset 0 1px 0 rgba(255,255,255,0.8)' :
+          '0 2px 8px rgba(239,68,68,0.15), inset 0 1px 0 rgba(255,255,255,0.8)') :
         (isHovered ? 
-          "0 8px 25px rgba(59,130,246,0.4), 0 0 0 4px rgba(59,130,246,0.15), inset 0 1px 2px rgba(255,255,255,0.2)" :
-          "0 2px 8px rgba(0,0,0,0.08)"),
-      padding: 0,
+          '0 4px 16px rgba(16,185,129,0.2), inset 0 1px 0 rgba(255,255,255,0.8)' :
+          '0 2px 8px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.8)'),
       '& svg': {
-        color: isActive ? "#ffffff" : (isHovered ? "#ffffff" : "#1e40af"),
+        color: isActive ? '#ef4444' : '#10b981',
       },
     };
   },

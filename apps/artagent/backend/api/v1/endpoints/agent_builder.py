@@ -22,19 +22,19 @@ import time
 from typing import Any
 
 import yaml
-from apps.artagent.backend.agents.base import (
+from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
     SpeechConfig,
     UnifiedAgent,
     VoiceConfig,
 )
-from apps.artagent.backend.agents.loader import (
+from apps.artagent.backend.registries.agentstore.loader import (
     AGENTS_DIR,
     load_defaults,
     load_prompt,
 )
-from apps.artagent.backend.agents.tools.registry import (
+from apps.artagent.backend.registries.toolstore.registry import (
     _TOOL_DEFINITIONS,
     initialize_tools,
 )
@@ -857,7 +857,7 @@ async def reload_agent_templates(request: Request) -> dict[str, Any]:
     This endpoint re-runs discover_agents() and updates app.state.unified_agents,
     making newly created or modified agents available without restarting the server.
     """
-    from apps.artagent.backend.agents.loader import (
+    from apps.artagent.backend.registries.agentstore.loader import (
         build_agent_summaries,
         build_handoff_map,
         discover_agents,

@@ -52,7 +52,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from apps.artagent.backend.agents.tools.registry import is_handoff_tool
+from apps.artagent.backend.registries.toolstore.registry import is_handoff_tool
 from apps.artagent.backend.voice.shared.base import (
     OrchestratorContext,
     OrchestratorResult,
@@ -71,8 +71,8 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 if TYPE_CHECKING:
-    from apps.artagent.backend.agents.base import UnifiedAgent
-    from apps.artagent.backend.agents.session_manager import HandoffProvider
+    from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
+    from apps.artagent.backend.registries.agentstore.session_manager import HandoffProvider
     from src.stateful.state_managment import MemoManager
 
 try:
@@ -339,7 +339,7 @@ class CascadeOrchestratorAdapter:
             return
 
         try:
-            from apps.artagent.backend.agents.loader import build_handoff_map
+            from apps.artagent.backend.registries.agentstore.loader import build_handoff_map
 
             self.handoff_map = build_handoff_map(self.agents)
             logger.debug("Built handoff map: %s", self.handoff_map)

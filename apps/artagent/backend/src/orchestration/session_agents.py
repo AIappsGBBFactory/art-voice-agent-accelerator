@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
-    from apps.artagent.backend.agents.base import UnifiedAgent
+    from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 
 logger = get_logger(__name__)
 

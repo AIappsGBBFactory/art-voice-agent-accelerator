@@ -108,16 +108,16 @@ const ConversationControls = React.memo(({
                   width: 36,
                   height: 36,
                   borderRadius: 12,
-                  border: active ? "1px solid #2563eb" : "1px solid rgba(226,232,240,0.9)",
+                  border: '1px solid rgba(226,232,240,0.6)',
                   background: active
-                    ? "linear-gradient(135deg, #e0ecff, #f2f7ff)"
-                    : "rgba(255,255,255,0.94)",
-                  color: active ? "#0f172a" : "#475569",
+                    ? 'linear-gradient(145deg, rgba(248,250,252,0.98), rgba(241,245,249,0.95))'
+                    : 'linear-gradient(145deg, #ffffff, #fafbfc)',
+                  color: active ? '#6366f1' : '#64748b',
                   cursor: "pointer",
-                  transition: "all 0.18s ease",
+                  transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
                   boxShadow: active
-                    ? "0 8px 18px rgba(59,130,246,0.2)"
-                    : "0 6px 16px rgba(15,23,42,0.12)",
+                    ? '0 2px 8px rgba(99,102,241,0.12), inset 0 1px 0 rgba(255,255,255,0.8)'
+                    : '0 2px 6px rgba(15,23,42,0.06), inset 0 1px 0 rgba(255,255,255,0.8)',
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",

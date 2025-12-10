@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from apps.artagent.backend.agents.scenarios.loader import ScenarioConfig
+    from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
 
 try:
     from utils.ml_logging import get_logger
@@ -109,7 +109,7 @@ class OrchestratorConfigResult:
 def _load_base_agents() -> dict[str, Any]:
     """Load agents from the unified agent registry."""
     try:
-        from apps.artagent.backend.agents.loader import discover_agents
+        from apps.artagent.backend.registries.agentstore.loader import discover_agents
 
         return discover_agents()
     except ImportError as e:
@@ -120,7 +120,7 @@ def _load_base_agents() -> dict[str, Any]:
 def _build_base_handoff_map(agents: dict[str, Any]) -> dict[str, str]:
     """Build handoff map from agent declarations."""
     try:
-        from apps.artagent.backend.agents.loader import build_handoff_map
+        from apps.artagent.backend.registries.agentstore.loader import build_handoff_map
 
         return build_handoff_map(agents)
     except ImportError as e:
@@ -131,7 +131,7 @@ def _build_base_handoff_map(agents: dict[str, Any]) -> dict[str, str]:
 def _load_scenario(scenario_name: str) -> ScenarioConfig | None:
     """Load a scenario configuration."""
     try:
-        from apps.artagent.backend.agents.scenarios import load_scenario
+        from apps.artagent.backend.registries.scenariostore import load_scenario
 
         return load_scenario(scenario_name)
     except ImportError as e:
@@ -142,7 +142,7 @@ def _load_scenario(scenario_name: str) -> ScenarioConfig | None:
 def _get_scenario_agents(scenario_name: str) -> dict[str, Any]:
     """Get agents with scenario overrides applied."""
     try:
-        from apps.artagent.backend.agents.scenarios import get_scenario_agents
+        from apps.artagent.backend.registries.scenariostore import get_scenario_agents
 
         return get_scenario_agents(scenario_name)
     except ImportError as e:

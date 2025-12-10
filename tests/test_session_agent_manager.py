@@ -14,13 +14,13 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from apps.artagent.backend.agents.base import (
+from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
     UnifiedAgent,
     VoiceConfig,
 )
-from apps.artagent.backend.agents.session_manager import (
+from apps.artagent.backend.registries.agentstore.session_manager import (
     SessionAgentConfig,
     SessionAgentManager,
     SessionAgentRegistry,

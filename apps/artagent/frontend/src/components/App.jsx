@@ -160,9 +160,26 @@ function RealTimeVoiceApp() {
     return fallbackRealtimeStreamMode;
   });
   const [sessionProfiles, setSessionProfiles] = useState({});
-  // Profile menu state moved to ProfileButton component
-  // Profile menu state moved to ProfileButton component
+  // Session ID must be declared before scenario helpers that use it
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
+  
+  // Scenario selection state - now per session
+  const [showScenarioMenu, setShowScenarioMenu] = useState(false);
+  const scenarioButtonRef = useRef(null);
+  
+  // Helper to get scenario for current session (default: banking)
+  const getSessionScenario = useCallback((sessId = sessionId) => {
+    return sessionProfiles[sessId]?.scenario || 'banking';
+  }, [sessionProfiles, sessionId]);
+  
+  // Helper to set scenario for current session
+  const setSessionScenario = useCallback((scenario, sessId = sessionId) => {
+    setSessionProfiles(prev => ({
+      ...prev,
+      [sessId]: { ...prev[sessId], scenario }
+    }));
+  }, [sessionId]);
+  // Profile menu state moved to ProfileButton component
   const [editingSessionId, setEditingSessionId] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState(() => getOrCreateSessionId());
   const [sessionUpdating, setSessionUpdating] = useState(false);
@@ -173,7 +190,7 @@ function RealTimeVoiceApp() {
   const [textInput, setTextInput] = useState("");
   const [graphEvents, setGraphEvents] = useState([]);
   const graphEventCounterRef = useRef(0);
-  const currentAgentRef = useRef("Assistant");
+  const currentAgentRef = useRef("Concierge");
   const [mainView, setMainView] = useState("chat"); // chat | graph | timeline
   const [lastUserMessage, setLastUserMessage] = useState(null);
   const [lastAssistantMessage, setLastAssistantMessage] = useState(null);
@@ -247,7 +264,7 @@ function RealTimeVoiceApp() {
     currentAgentRef.current ||
     agentInventory?.startAgent ||
     (agentInventory?.agents && agentInventory.agents[0]?.name) ||
-    "Assistant";
+    "Concierge";
   const activeAgentName = (activeAgentNameRaw || "").trim();
 
   const activeAgentInfo = useMemo(() => {
@@ -305,7 +322,7 @@ function RealTimeVoiceApp() {
         setAgentInventory(normalized);
         if (
           normalized.startAgent &&
-          (currentAgentRef.current === "Assistant" || !currentAgentRef.current)
+          (currentAgentRef.current === "Concierge" || !currentAgentRef.current)
         ) {
           currentAgentRef.current = normalized.startAgent;
         setSelectedAgentName(normalized.startAgent);
@@ -632,6 +649,58 @@ function RealTimeVoiceApp() {
     document.addEventListener('mousedown', handleRealtimeOutsideClick);
     return () => document.removeEventListener('mousedown', handleRealtimeOutsideClick);
   }, [showRealtimeModePanel]);
+
+  useEffect(() => {
+    if (!showScenarioMenu) {
+      return undefined;
+    }
+
+    const handleScenarioOutsideClick = (event) => {
+      const buttonNode = scenarioButtonRef.current;
+      if (buttonNode && buttonNode.contains(event.target)) {
+        return;
+      }
+      // Check if click is inside the menu
+      const menuNode = document.querySelector('[data-scenario-menu]');
+      if (menuNode && menuNode.contains(event.target)) {
+        return;
+      }
+      setShowScenarioMenu(false);
+    };
+
+    document.addEventListener('mousedown', handleScenarioOutsideClick);
+    return () => document.removeEventListener('mousedown', handleScenarioOutsideClick);
+  }, [showScenarioMenu]);
+
+  // Close backend panel on outside click
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      // Check if the BackendIndicator has a panel open
+      const panelNode = document.querySelector('[data-backend-panel]');
+      if (!panelNode) return;
+      
+      // Don't close if clicking inside the panel
+      if (panelNode.contains(event.target)) {
+        return;
+      }
+      
+      // Find the backend button and check if we clicked it
+      const buttons = document.querySelectorAll('button[title="Backend Status"]');
+      for (const button of buttons) {
+        if (button.contains(event.target)) {
+          return;
+        }
+      }
+      
+      // Click was outside - trigger a click on the button to close
+      if (buttons.length > 0) {
+        buttons[0].click();
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   useEffect(() => {
     if (recording) {
@@ -1187,7 +1256,7 @@ function RealTimeVoiceApp() {
     setShowPhoneInput(false);
     setGraphEvents([]);
     graphEventCounterRef.current = 0;
-    currentAgentRef.current = "Assistant";
+    currentAgentRef.current = "Concierge";
     micMutedRef.current = false;
     setMicMuted(false);
     closeRelaySocket("session reset");
@@ -1550,9 +1619,10 @@ function RealTimeVoiceApp() {
                        activeSessionProfile?.profile?.contact_info?.email || null;
       const emailParam = userEmail ? `&user_email=${encodeURIComponent(userEmail)}` : '';
       
+      const currentScenario = getSessionScenario();
       const baseConversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${sessionId}&streaming_mode=${encodeURIComponent(
         realtimeMode,
-      )}${emailParam}`;
+      )}${emailParam}&scenario=${encodeURIComponent(currentScenario)}`;
       resetMetrics(sessionId);
       assistantStreamGenerationRef.current = 0;
       terminationReasonRef.current = null;
@@ -1978,7 +2048,7 @@ function RealTimeVoiceApp() {
       if (!payload.to) {
         // If speaker is user, target is current agent; otherwise target user by default.
         if (inferredSpeaker === "User") {
-          payload.to = currentAgentRef.current || payload.agent_name || "Assistant";
+          payload.to = currentAgentRef.current || payload.agent_name || "Concierge";
         } else if (inferredSpeaker) {
           payload.to = "User";
         }
@@ -2116,7 +2186,7 @@ function RealTimeVoiceApp() {
         appendGraphEvent({
           kind: "event",
           from: payload.speaker || "System",
-          to: currentAgentRef.current || "Assistant",
+          to: currentAgentRef.current || "Concierge",
           text: "Call connected",
           ts: payload.ts || payload.timestamp,
         });
@@ -2133,7 +2203,7 @@ function RealTimeVoiceApp() {
         appendGraphEvent({
           kind: "event",
           from: payload.speaker || "System",
-          to: currentAgentRef.current || "Assistant",
+          to: currentAgentRef.current || "Concierge",
           text: "Call disconnected",
           ts: payload.ts || payload.timestamp,
         });
@@ -2161,7 +2231,7 @@ function RealTimeVoiceApp() {
         appendGraphEvent({
           kind: "event",
           from: "System",
-          to: currentAgentRef.current || "Assistant",
+          to: currentAgentRef.current || "Concierge",
           text: reasonText,
           ts: payload.ts || payload.timestamp,
         });
@@ -2180,7 +2250,7 @@ function RealTimeVoiceApp() {
         const ttfbMs = payload.tts_ttfb_ms ?? payload.ttsTtfbMs;
         const sttMs = payload.stt_latency_ms ?? payload.sttLatencyMs;
         const durationMs = payload.duration_ms ?? payload.durationMs;
-        const agentName = payload.agent_name ?? payload.agentName ?? "Assistant";
+        const agentName = payload.agent_name ?? payload.agentName ?? "Concierge";
         
         // Log to metrics panel
         publishMetricsSummary(`Turn ${turnNum} server metrics`, {
@@ -2304,7 +2374,7 @@ function RealTimeVoiceApp() {
           : "Escalating you to a live agent. Please hold while we connect.";
         appendGraphEvent({
           kind: "switch",
-          from: currentAgentRef.current || "Assistant",
+          from: currentAgentRef.current || "Concierge",
           to: payload.data?.target_agent || "Live Agent",
           text: transferText,
           ts: payload.ts || payload.timestamp,
@@ -2648,7 +2718,7 @@ function RealTimeVoiceApp() {
       }
 
       if (type === "assistant_streaming") {
-        const streamingSpeaker = speaker || "Assistant";
+        const streamingSpeaker = speaker || "Concierge";
         const streamGeneration = assistantStreamGenerationRef.current;
         registerAssistantStreaming(streamingSpeaker);
         setActiveSpeaker(streamingSpeaker);
@@ -2725,7 +2795,7 @@ function RealTimeVoiceApp() {
         return;
       }
 
-      if (msgType === "assistant" || msgType === "status" || speaker === "Assistant") {
+      if (msgType === "assistant" || msgType === "status" || speaker === "Concierge") {
         if (msgType === "status") {
           const normalizedStatus = (txt || "").toLowerCase();
           if (
@@ -2735,7 +2805,7 @@ function RealTimeVoiceApp() {
             return;
           }
         }
-        const assistantSpeaker = resolveAgentLabel(payload, speaker || "Assistant");
+        const assistantSpeaker = resolveAgentLabel(payload, speaker || "Concierge");
         registerAssistantFinal(assistantSpeaker);
         setActiveSpeaker(assistantSpeaker);
         const messageOptions = {
@@ -3270,69 +3340,237 @@ function RealTimeVoiceApp() {
 
   return (
     <div style={{ ...styles.root, maxWidth: `${chatWidth}px` }}>
-      <div
-        style={{
-          position: "fixed",
-          top: 18,
-          right: 18,
-          zIndex: 1300,
-        }}
-      >
-        <HelpButton />
-      </div>
       <div style={{ ...styles.mainContainer, maxWidth: `${chatWidth}px` }}>
-        <IndustryTag />
-        <div style={styles.helpButtonDock}>
-          <Button
-            variant="contained"
-            size="small"
+        {/* Left Vertical Sidebar - Sleek Professional Design */}
+        <div style={{
+          position: 'fixed',
+          top: '50%',
+          left: '20px',
+          transform: 'translateY(-50%)',
+          zIndex: 1300,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          alignItems: 'center',
+          background: 'linear-gradient(145deg, rgba(255,255,255,0.98), rgba(248,250,252,0.95))',
+          padding: '12px 10px',
+          borderRadius: '20px',
+          boxShadow: '0 4px 24px rgba(15,23,42,0.08), 0 0 0 1px rgba(226,232,240,0.4), inset 0 1px 0 rgba(255,255,255,0.8)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+        }}>
+          {/* Scenario Selector Button */}
+          <div style={{
+            paddingBottom: '8px',
+            borderBottom: '1px solid rgba(226,232,240,0.6)',
+            position: 'relative',
+            width: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+          }}>
+            <button
+              ref={scenarioButtonRef}
+              onClick={() => setShowScenarioMenu((prev) => !prev)}
+              title="Select Industry Scenario"
+              style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '12px',
+                border: '1px solid rgba(226,232,240,0.6)',
+                background: getSessionScenario() === 'banking' 
+                  ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
+                  : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                color: '#ffffff',
+                fontSize: '18px',
+                fontWeight: '500',
+                cursor: 'pointer',
+                transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                boxShadow: '0 2px 8px rgba(15,23,42,0.1), inset 0 1px 0 rgba(255,255,255,0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 4px 16px rgba(15,23,42,0.15), inset 0 1px 0 rgba(255,255,255,0.15)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.1), inset 0 1px 0 rgba(255,255,255,0.15)';
+              }}
+            >
+              {getSessionScenario() === 'banking' ? '🏦' : '🛡️'}
+            </button>
+
+            {/* Scenario Selection Menu */}
+            {showScenarioMenu && (
+              <div 
+                data-scenario-menu
+                style={{
+                position: 'absolute',
+                left: '64px',
+                top: '0',
+                background: 'linear-gradient(145deg, rgba(255,255,255,0.98), rgba(248,250,252,0.95))',
+                borderRadius: '14px',
+                padding: '6px',
+                boxShadow: '0 8px 32px rgba(15,23,42,0.12), 0 0 0 1px rgba(226,232,240,0.4), inset 0 1px 0 rgba(255,255,255,0.8)',
+                backdropFilter: 'blur(24px)',
+                WebkitBackdropFilter: 'blur(24px)',
+                minWidth: '180px',
+                zIndex: 1400,
+              }}>
+                {[
+                  { id: 'banking', icon: '🏦', label: 'Banking' },
+                  { id: 'insurance', icon: '🛡️', label: 'Insurance' },
+                ].map(({ id, icon, label }) => (
+                  <button
+                    key={id}
+                    onClick={() => {
+                      setSessionScenario(id);
+                      setShowScenarioMenu(false);
+                      appendLog(`${icon} Switched to ${label} for session ${sessionId}`);
+                      
+                      if (callActive) {
+                        // ACS mode: restart the call with new scenario
+                        appendLog(`🔄 Restarting call with ${label} scenario...`);
+                        terminateACSCall();
+                        setTimeout(() => {
+                          handlePhoneButtonClick();
+                        }, 500);
+                      } else if (recording) {
+                        // Browser recording mode: reconnect WebSocket with new scenario
+                        appendLog(`🔄 Reconnecting with ${label} scenario...`);
+                        handleMicToggle(); // Stop current recording
+                        setTimeout(() => {
+                          handleMicToggle(); // Start new recording with new scenario
+                        }, 500);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: getSessionScenario() === id 
+                        ? 'linear-gradient(135deg, rgba(99,102,241,0.1), rgba(79,70,229,0.08))' 
+                        : 'transparent',
+                      color: getSessionScenario() === id ? '#4f46e5' : '#64748b',
+                      fontSize: '13px',
+                      fontWeight: getSessionScenario() === id ? '600' : '500',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                      textAlign: 'left',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (getSessionScenario() !== id) {
+                        e.currentTarget.style.background = 'rgba(148,163,184,0.06)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (getSessionScenario() !== id) {
+                        e.currentTarget.style.background = 'transparent';
+                      }
+                    }}
+                  >
+                    <span style={{ fontSize: '16px' }}>{icon}</span>
+                    <span>{label}</span>
+                    {getSessionScenario() === id && (
+                      <span style={{ marginLeft: 'auto', fontSize: '14px', color: '#4f46e5' }}>✓</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Agent Builder Button */}
+          <button
             onClick={() => setShowAgentBuilder(true)}
-            startIcon={<BuildRoundedIcon fontSize="small" />}
-            sx={{
-              textTransform: "none",
-              borderRadius: "12px",
-              background: "linear-gradient(135deg, #f59e0b, #d97706)",
-              boxShadow: "0 8px 18px rgba(217,119,6,0.25)",
-              fontWeight: 700,
-              color: "#fff",
-              marginRight: "8px",
-              '&:hover': {
-                background: "linear-gradient(135deg, #d97706, #b45309)",
-              },
+            title="Agent Builder"
+            style={{
+              width: '44px',
+              height: '44px',
+              borderRadius: '12px',
+              border: '1px solid rgba(226,232,240,0.6)',
+              background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
+              color: '#f59e0b',
+              fontSize: '18px',
+              cursor: 'pointer',
+              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+              boxShadow: '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 4px 16px rgba(245,158,11,0.2), inset 0 1px 0 rgba(255,255,255,0.8)';
+              e.currentTarget.style.background = 'linear-gradient(135deg, #fef3c7, #fde68a)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)';
+              e.currentTarget.style.background = 'linear-gradient(145deg, #ffffff, #fafbfc)';
             }}
           >
-            Agent Builder
-          </Button>
-          <Button
-            variant="contained"
-            size="small"
+            <BuildRoundedIcon fontSize="small" />
+          </button>
+
+          {/* Agent Context Button */}
+          <button
             onClick={() => setShowAgentPanel((prev) => !prev)}
-            startIcon={<SmartToyRoundedIcon fontSize="small" />}
-            sx={{
-              textTransform: "none",
-              borderRadius: "12px",
-              background: "linear-gradient(135deg, #0ea5e9, #6366f1)",
-              boxShadow: "0 8px 18px rgba(79,70,229,0.25)",
-              fontWeight: 700,
-              color: "#fff",
-              '&:hover': {
-                background: "linear-gradient(135deg, #0284c7, #4f46e5)",
-              },
+            title="Agent Context"
+            style={{
+              width: '44px',
+              height: '44px',
+              borderRadius: '12px',
+              border: '1px solid rgba(226,232,240,0.6)',
+              background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
+              color: '#0ea5e9',
+              fontSize: '18px',
+              cursor: 'pointer',
+              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+              boxShadow: '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 4px 16px rgba(14,165,233,0.2), inset 0 1px 0 rgba(255,255,255,0.8)';
+              e.currentTarget.style.background = 'linear-gradient(135deg, #e0f2fe, #bae6fd)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)';
+              e.currentTarget.style.background = 'linear-gradient(145deg, #ffffff, #fafbfc)';
             }}
           >
-            Agent Context
-          </Button>
-        </div>
-        <div style={styles.backendIndicatorDock}>
-          <BackendIndicator
-            url={API_BASE_URL}
+            <SmartToyRoundedIcon fontSize="small" />
+          </button>
+
+          {/* Divider */}
+          <div style={{
+            width: '32px',
+            height: '1px',
+            background: 'linear-gradient(90deg, transparent, rgba(226,232,240,0.6), transparent)',
+            margin: '4px 0',
+          }} />
+
+          {/* Backend Status Button */}
+          <BackendIndicator 
+            url={API_BASE_URL} 
             onStatusChange={handleSystemStatus}
-            onAgentSelect={(name) => {
-              setSelectedAgentName(name);
-              setShowAgentsPanel(true);
-            }}
+            compact={true}
           />
+          
+          {/* Help Button */}
+          <HelpButton />
         </div>
+
         <div
           ref={mainShellRef}
           style={{

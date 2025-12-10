@@ -189,6 +189,7 @@ async def browser_conversation_endpoint(
     session_id: str | None = Query(None),
     streaming_mode: str | None = Query(None),
     user_email: str | None = Query(None),
+    scenario: str | None = Query(None, description="Scenario name (e.g., 'banking', 'default')"),
 ) -> None:
     """
     WebSocket endpoint for browser-based voice conversations.
@@ -196,6 +197,9 @@ async def browser_conversation_endpoint(
     Supports two modes:
     - Voice Live: VoiceLiveSDKHandler (direct, like media.py)
     - Speech Cascade: MediaHandler.create() factory
+    
+    Query Parameters:
+    - scenario: Industry scenario (banking, default, etc.)
     """
     handler: Any = None  # MediaHandler or VoiceLiveSDKHandler
     memory_manager: MemoManager | None = None
@@ -224,6 +228,7 @@ async def browser_conversation_endpoint(
                     "api.version": "v1",
                     "browser.session_id": session_id,
                     "stream.mode": str(stream_mode),
+                    "scenario.name": scenario or "default",
                     "network.protocol.name": "websocket",
                 },
             ) as span:
@@ -249,6 +254,7 @@ async def browser_conversation_endpoint(
                         transport=TransportType.BROWSER,
                         conn_id=conn_id,
                         user_email=user_email,
+                        scenario=scenario,
                     )
                     handler = await MediaHandler.create(config, websocket.app.state)
                     memory_manager = handler.memory_manager

@@ -42,7 +42,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 # Self-contained tool registry (no legacy vlagent dependency)
-from apps.artagent.backend.agents.tools import (
+from apps.artagent.backend.registries.toolstore import (
     execute_tool,
     initialize_tools,
     is_handoff_tool,
@@ -60,7 +60,7 @@ from azure.ai.voicelive.models import (
 from opentelemetry import trace
 
 if TYPE_CHECKING:
-    from apps.artagent.backend.agents.session_manager import HandoffProvider
+    from apps.artagent.backend.registries.agentstore.session_manager import HandoffProvider
     from src.stateful.state_managment import MemoManager
 
     from .agent_adapter import VoiceLiveAgentAdapter

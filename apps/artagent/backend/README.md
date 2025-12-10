@@ -1,145 +1,152 @@
-# **ARTVoice Backend**
+# ARTVoice Backend
 
-**FastAPI + multi-agent voice AI** for real-time phone calls via Azure Communication Services.
+FastAPI backend for real-time voice AI via Azure Communication Services.
 
-## **Architecture**
+## Architecture
 
 ```
-Phone → ACS → WebSocket → STT → Multi-Agent AI → TTS → Audio Response
+Phone → ACS → WebSocket → STT → Multi-Agent AI → TTS → Audio
 ```
 
-## **Key Features**
-
-- **Multi-Agent System**: ARTAgent, LVAgent, FoundryAgents with specialized roles
-- **Connection Pooling**: Pre-warmed Azure clients for low-latency responses
-- **WebSocket Streaming**: Real-time audio processing for natural conversation
-- **Session Management**: Redis-backed state persistence across connections
-
-## **Structure**
+## Structure
 
 ```
 backend/
-├── main.py              # FastAPI app entry point
-├── api/v1/              # REST and WebSocket endpoints 
-├── config/              # Voice, features, environment config
-└── src/                 # Core services and agent framework
+├── main.py              # FastAPI app + startup
+├── api/v1/              # REST + WebSocket endpoints
+├── voice/               # Voice orchestration (SpeechCascade, VoiceLive)
+├── registries/          # Agent, tool, scenario registration
+└── config/              # Settings and feature flags
 ```
 
-## **Key Endpoints**
+## Key Endpoints
 
-- **`/api/v1/media/stream`** - ACS media streaming
-- **`/api/v1/realtime/conversation`** - Real-time voice conversation
-- **`/api/v1/calls/*`** - Call management and status
-- **`/health`** - System health and readiness
+| Endpoint | Purpose |
+|----------|---------|
+| `/api/v1/media/stream` | ACS media streaming WebSocket |
+| `/api/v1/realtime/conversation` | Real-time voice WebSocket |
+| `/api/v1/calls/*` | Call management |
+| `/health` | Health check |
+
+## Core Folders
+
+### `registries/` - Agent, Tool, Scenario System
+```
+registries/
+├── agentstore/          # Agent definitions (YAML-based)
+├── toolstore/           # Tool registry (@register_tool)
+└── scenariostore/       # Industry scenarios (banking, etc.)
+```
+
+**Usage:**
+```python
+from apps.artagent.backend.registries.agentstore import discover_agents
+from apps.artagent.backend.registries.toolstore import register_tool
+from apps.artagent.backend.registries.scenariostore import load_scenario
+```
+
+See [`registries/README.md`](./registries/README.md) for details.
+
+### `voice/` - Voice Orchestration
+```
+voice/
+├── speech_cascade/      # Custom STT/TTS pipeline orchestrator
+├── voicelive/           # Azure OpenAI Realtime API orchestrator
+└── handoffs/            # Agent handoff logic
+```
+
+Two orchestration paths:
+- **SpeechCascade**: Custom pipeline (Azure Speech STT → AOAI → Azure Speech TTS)
+- **VoiceLive**: Managed API (Azure OpenAI Realtime with built-in voice)
+
+### `api/v1/` - HTTP + WebSocket APIs
 ```
 api/v1/
-├── endpoints/           # WebSocket and REST handlers
+├── endpoints/
 │   ├── calls.py         # ACS call management
-│   ├── media.py         # Media streaming WebSocket
-│   ├── realtime.py      # Real-time conversation WebSocket
-│   └── health.py        # Health monitoring
-├── handlers/            # Business logic handlers
-├── schemas/             # Pydantic models
-└── router.py            # Route registration
+│   ├── media.py         # Media streaming handler
+│   ├── realtime.py      # Real-time voice handler
+│   └── health.py        # Health checks
+└── schemas/             # Pydantic request/response models
 ```
 
-### **Environment Configuration**
+### `config/` - Configuration
 ```
 config/
-├── app_config.py        # Main application configuration
-├── app_settings.py      # Agent and environment settings
-├── connection_config.py # WebSocket and session limits
+├── app_config.py        # Main app settings
+├── app_settings.py      # Agent/orchestrator settings
 └── feature_flags.py     # Feature toggles
 ```
 
-## **Core Application Architecture**
+## Quick Start
 
-### **Agent System (ARTAgent Framework)**
-```
-src/agents/              # YAML-driven agent framework
-├── base.py              # ARTAgent class for agent creation
-├── agents/         # Agent YAML configurations
-├── prompt_store/        # Jinja prompt templates
-├── tool_store/          # Agent tool registry
-└── README.md            # Agent creation guide
+### Run Backend
+```bash
+make start_backend
 ```
 
-### **Orchestration Engine**
-```
-src/orchestration/       # Multi-agent routing and coordination
-├── orchestrator.py      # Main routing entry point
-├── registry.py          # Agent registration system
-├── auth.py              # Authentication agent handler
-├── specialists.py       # Specialist agent handlers
-├── greetings.py         # Agent handoff management
-├── gpt_flow.py          # GPT response processing
-├── tools.py             # Tool execution framework
-├── termination.py       # Session termination logic
-├── latency.py           # Performance monitoring
-└── README.md            # Orchestrator guide
+### Add New Agent
+1. Create YAML in `registries/agentstore/`
+2. Define prompts, tools, handoffs
+3. Restart or call `/api/v1/agents/refresh`
+
+### Add New Tool
+```python
+# In registries/toolstore/your_tool.py
+from apps.artagent.backend.registries.toolstore.registry import register_tool
+
+@register_tool(name="your_tool", description="...")
+async def your_tool(param: str) -> dict:
+    return {"result": "..."}
 ```
 
-### **Azure Services Integration**
-```
-src/services/            # External service integrations
-├── speech_services.py   # Azure Speech STT/TTS
-├── redis_services.py    # Session state management
-├── openai_services.py   # Azure OpenAI integration
-├── cosmosdb_services.py # CosmosDB document storage
-└── acs/                 # Azure Communication Services
+### Load Scenario
+```python
+from apps.artagent.backend.registries.scenariostore import load_scenario
+
+scenario = load_scenario("banking_customer_service")
+agents = get_scenario_agents("banking_customer_service")
 ```
 
-### **Session Management**
-```
-src/sessions/            # WebSocket session lifecycle
-├── session_statistics.py # Session metrics and monitoring
-└── __init__.py          # Session management utilities
-```
-
-### **WebSocket Utilities**
-```
-src/ws_helpers/          # WebSocket session management
-├── shared_ws.py         # Shared WebSocket utilities
-└── envelopes.py         # Message envelope handling
-```
-
-### **Core Utilities**
-```
-src/utils/               # Core utilities and helpers
-├── tracing.py           # OpenTelemetry tracing
-└── auth.py              # Authentication utilities
-```
-
-### **Connection Pools (Global)**
-```
-src/pools/               # Connection pooling (shared across apps)
-├── async_pool.py        # Async connection pools
-├── connection_manager.py # Thread-safe connections
-├── session_manager.py   # Session lifecycle management
-├── session_metrics.py   # Session monitoring
-├── websocket_manager.py # WebSocket connection pooling
-├── aoai_pool.py         # Azure OpenAI connection pool
-└── dedicated_tts_pool.py # Dedicated TTS connection pool
-```
-
-## **Key Features**
-
-- **Real-time WebSocket Streaming** - Low-latency audio and conversation processing
-- **Azure Service Integration** - ACS, Speech Services, OpenAI native support
-- **Connection Pooling** - Optimized for high-concurrency connections
-- **Session Management** - Persistent state with Redis backend
-- **Production Ready** - Comprehensive logging, tracing, health monitoring
-
-## **WebSocket Flow**
+## WebSocket Flow
 
 ```
-Client → WebSocket → Handler → Azure Services → Response → Client
+1. Client connects → /api/v1/media/stream or /api/v1/realtime/conversation
+2. Audio chunks → STT (Azure Speech or Realtime API)
+3. Text → Multi-agent orchestrator
+4. Response → TTS (Azure Speech or Realtime API)
+5. Audio → Stream back to client
 ```
 
-1. **WebSocket Connection** - Connect via `/api/v1/media/stream` or `/api/v1/realtime/conversation`
-2. **Audio Processing** - Real-time STT with Azure Speech
-3. **AI Response** - Azure OpenAI generates contextual responses  
-4. **Speech Synthesis** - Azure Speech TTS for voice responses
-5. **Real-time Streaming** - Audio/text streamed back to client
+## Troubleshooting
+
+### Import Errors
+Use new paths:
+```python
+# ✅ Correct
+from apps.artagent.backend.registries.agentstore import discover_agents
+
+# ❌ Old (deprecated)
+from apps.artagent.backend.agents_store import discover_agents
+```
+
+### Agent Not Found
+```python
+agents = discover_agents()
+print([a.name for a in agents])  # List all discovered agents
+```
+
+### Tool Not Registered
+```python
+from apps.artagent.backend.registries.toolstore.registry import list_tools
+print(list_tools())  # List all registered tools
+```
+
+### Health Check Failed
+```bash
+curl http://localhost:8000/health
+```
+
+Check logs for Azure service connectivity issues (Speech, OpenAI, Redis, CosmosDB).
 
 

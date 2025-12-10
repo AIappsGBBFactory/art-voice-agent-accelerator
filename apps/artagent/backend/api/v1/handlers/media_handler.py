@@ -47,7 +47,7 @@ from enum import Enum
 from typing import Any
 
 # Personalized greeting generation
-from apps.artagent.backend.agents.tools.personalized_greeting import (
+from apps.artagent.backend.registries.toolstore.personalized_greeting import (
     generate_personalized_greeting,
 )
 from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
@@ -150,6 +150,7 @@ class MediaHandlerConfig:
     call_connection_id: str | None = None  # ACS only
     stream_mode: StreamMode = field(default_factory=lambda: ACS_STREAMING_MODE)
     user_email: str | None = None
+    scenario: str | None = None  # Industry scenario (banking, default, etc.)
 
 
 # ============================================================================
@@ -271,6 +272,10 @@ class MediaHandler:
         redis_mgr = app_state.redis
         session_key = config.call_connection_id or config.session_id
         memory_manager = cls._load_memory_manager(redis_mgr, session_key, config.session_id)
+
+        # Store scenario in memory for orchestrator access
+        if config.scenario:
+            memory_manager.set_corememory("scenario_name", config.scenario)
 
         handler = cls(config, memory_manager, app_state)
         handler._latency_tool = LatencyTool(memory_manager)

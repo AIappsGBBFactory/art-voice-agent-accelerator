@@ -20,8 +20,26 @@ const HelpButton = () => {
   return (
     <div
       style={{
-        ...styles.helpButton,
-        ...(isHovered ? styles.helpButtonHover : {}),
+        width: '44px',
+        height: '44px',
+        borderRadius: '12px',
+        border: '1px solid rgba(226,232,240,0.6)',
+        background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
+        color: '#6366f1',
+        fontSize: '14px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        boxShadow: '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+        ...(isHovered || isClicked ? {
+          transform: 'translateY(-2px)',
+          boxShadow: '0 4px 16px rgba(99,102,241,0.2), inset 0 1px 0 rgba(255,255,255,0.8)',
+          background: 'linear-gradient(135deg, #eef2ff, #e0e7ff)',
+        } : {}),
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={handleMouseLeave}
@@ -32,6 +50,16 @@ const HelpButton = () => {
         style={{
           ...styles.helpTooltip,
           ...((isHovered || isClicked) ? styles.helpTooltipVisible : {}),
+          // Override position to show on right side with sleek design
+          top: '50%',
+          left: '64px',
+          right: 'auto',
+          transform: (isHovered || isClicked) ? 'translateY(-50%)' : 'translateY(-50%) translateX(-8px)',
+          width: '340px',
+          background: 'linear-gradient(145deg, rgba(255,255,255,0.98), rgba(248,250,252,0.95))',
+          boxShadow: '0 8px 32px rgba(15,23,42,0.12), 0 0 0 1px rgba(226,232,240,0.4), inset 0 1px 0 rgba(255,255,255,0.8)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
         }}
       >
         <div style={styles.helpTooltipTitle} />
