@@ -1,67 +1,43 @@
 # Note: build this image from the root of the project directory
 
 # Use an official Python runtime as a parent image
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.11-slim-bookworm
 
-# Install uv - extremely fast Python package manager
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Update packages to mitigate vulnerabilities
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV UV_COMPILE_BYTECODE=1
-ENV UV_LINK_MODE=copy
-
-# Set the working directory in the container
-WORKDIR /app
-
-# Install system dependencies required for audio processing
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc build-essential portaudio19-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copy files needed for dependency resolution
-COPY uv.lock pyproject.toml README.md LICENSE ./
-
-# Install dependencies (without the project itself)
-RUN uv sync --frozen --no-install-project --no-editable
-
-# Copy source code
-COPY ./apps /app/apps
-COPY ./src /app/src
-COPY ./utils /app/utils
-
-# Install the project itself
-RUN uv sync --frozen --no-editable
-
-# =============================================================================
-# Final production image
-# =============================================================================
-FROM python:3.11-slim-bookworm
-
-# Install runtime dependencies only (skip full upgrade for faster builds)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends portaudio19-dev && \
-    rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and group
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
+# Set the working directory in the container
 WORKDIR /app
 
-# Copy the virtual environment from builder
-COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+# Copy the dependencies file to the working directory
+COPY requirements.txt .
 
-# Copy application code
-COPY --chown=appuser:appuser ./apps /app/apps
-COPY --chown=appuser:appuser ./src /app/src
-COPY --chown=appuser:appuser ./utils /app/utils
+# Install any needed packages specified in requirements.txt
+# Use a virtual environment to isolate dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc build-essential portaudio19-dev && \
+    rm -rf /var/lib/apt/lists/*
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PATH="/app/.venv/bin:$PATH"
+# Copy the current directory contents into the container at /app
+COPY ./apps /app/apps
+COPY ./src /app/src
+COPY ./utils /app/utils
+
+# Set PYTHONPATH to include the app directory
 ENV PYTHONPATH="/app:$PYTHONPATH"
+
+# Change ownership of the /app directory to the non-root user
+RUN chown -R appuser:appuser /app
 
 # Switch to the non-root user
 USER appuser
@@ -70,4 +46,5 @@ USER appuser
 EXPOSE 8000
 
 # Define the command to run the application
+# The main.py file should be at /app/apps/artagent/backend/main.py
 CMD ["uvicorn", "apps.artagent.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
