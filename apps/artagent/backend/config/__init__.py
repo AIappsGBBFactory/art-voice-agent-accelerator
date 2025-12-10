@@ -191,29 +191,6 @@ from .types import (
 )
 
 # =============================================================================
-# APP CONFIGURATION PROVIDER (Phase 2-4)
-# =============================================================================
-from .appconfig_provider import (
-    # Core functions
-    get_config_value,
-    get_config_int,
-    get_config_float,
-    get_feature_flag,
-    
-    # Cache management
-    refresh_cache,
-    refresh_appconfig_cache,  # Alias
-    
-    # Status and monitoring
-    get_provider_status,
-    get_appconfig_status,  # Alias
-    
-    # Initialization
-    bootstrap_appconfig,
-    initialize_appconfig,  # Alias for bootstrap_appconfig
-)
-
-# =============================================================================
 # CONVENIENCE
 # =============================================================================
 
@@ -256,18 +233,6 @@ __all__ = [
     # Validation
     "validate_settings",
     "validate_app_settings",
-    
-    # App Configuration Provider
-    "get_config_value",
-    "get_config_int",
-    "get_config_float",
-    "get_feature_flag",
-    "refresh_cache",
-    "refresh_appconfig_cache",
-    "get_provider_status",
-    "get_appconfig_status",
-    "bootstrap_appconfig",
-    "initialize_appconfig",
     
     # Most-used settings (alphabetical)
     "ACS_CONNECTION_STRING",

@@ -13,51 +13,9 @@ from __future__ import annotations
 import sys
 import os
 
-# Force unbuffered output for container logs
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
-
-# Use stderr for startup diagnostics (Azure logs often only show stderr)
-def log(msg):
-    print(msg, file=sys.stderr, flush=True)
-
-log("=" * 60)
-log("🚀 Backend Startup - App Config Integration v4")
-log(f"   AZURE_APPCONFIG_ENDPOINT: {os.getenv('AZURE_APPCONFIG_ENDPOINT', '<not set>')}")
-log(f"   AZURE_APPCONFIG_LABEL: {os.getenv('AZURE_APPCONFIG_LABEL', '<not set>')}")
-log(f"   AZURE_CLIENT_ID: {(os.getenv('AZURE_CLIENT_ID', '')[:20] + '...') if os.getenv('AZURE_CLIENT_ID') else '<not set>'}")
-log("=" * 60)
-
 # Add parent directories to sys.path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.dirname(__file__))
-
-# ============================================================================
-# BOOTSTRAP APP CONFIGURATION (MUST BE FIRST)
-# ============================================================================
-# Load App Configuration values into environment variables BEFORE any other
-# imports that read from os.getenv() at module load time (settings.py, etc.)
-log("🔄 Starting App Configuration bootstrap...")
-try:
-    from config.appconfig_provider import bootstrap_appconfig
-    log("   Imported bootstrap_appconfig successfully")
-    result = bootstrap_appconfig()
-    log(f"   Bootstrap returned: {result}")
-except Exception as e:
-    log(f"❌ CRITICAL: App Configuration bootstrap failed: {e}")
-    log("   Continuing with environment variables only...")
-    import traceback
-    traceback.print_exc(file=sys.stderr)
-
-# Log critical env vars after bootstrap
-log("📋 Critical environment variables after bootstrap:")
-log(f"   AZURE_OPENAI_ENDPOINT: {os.getenv('AZURE_OPENAI_ENDPOINT', '<NOT SET>')[:60] if os.getenv('AZURE_OPENAI_ENDPOINT') else '<NOT SET>'}")
-log(f"   AZURE_SPEECH_ENDPOINT: {os.getenv('AZURE_SPEECH_ENDPOINT', '<NOT SET>')[:60] if os.getenv('AZURE_SPEECH_ENDPOINT') else '<NOT SET>'}")
-log(f"   ACS_ENDPOINT: {os.getenv('ACS_ENDPOINT', '<NOT SET>')[:60] if os.getenv('ACS_ENDPOINT') else '<NOT SET>'}")
-
-# ============================================================================
-# Now safe to import modules that depend on environment variables
-# ============================================================================
 
 from src.pools.warmable_pool import WarmableResourcePool
 from utils.telemetry_config import setup_azure_monitor

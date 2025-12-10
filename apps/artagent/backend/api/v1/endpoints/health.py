@@ -19,41 +19,20 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 
-import os
-
 from config import (
-    get_provider_status,
-    refresh_appconfig_cache,
+    ACS_CONNECTION_STRING,
+    ACS_ENDPOINT,
+    ACS_SOURCE_PHONE_NUMBER,
+    AZURE_SPEECH_ENDPOINT,
+    AZURE_SPEECH_KEY,
+    AZURE_SPEECH_REGION,
+    AZURE_SPEECH_RESOURCE_ID,
+    BACKEND_AUTH_CLIENT_ID,
+    AZURE_TENANT_ID,
+    ALLOWED_CLIENT_IDS,
+    ENABLE_AUTH_VALIDATION,
+    DEFAULT_TTS_VOICE,
 )
-
-
-def _get_config_dynamic():
-    """
-    Read configuration values dynamically at runtime.
-    
-    This is needed because App Configuration bootstrap sets environment variables
-    AFTER the module is imported. Reading from os.getenv() ensures we get the
-    latest values that were set by the bootstrap process.
-    """
-    return {
-        "ACS_CONNECTION_STRING": os.getenv("ACS_CONNECTION_STRING", ""),
-        "ACS_ENDPOINT": os.getenv("ACS_ENDPOINT", ""),
-        "ACS_SOURCE_PHONE_NUMBER": os.getenv("ACS_SOURCE_PHONE_NUMBER", ""),
-        "AZURE_SPEECH_ENDPOINT": os.getenv("AZURE_SPEECH_ENDPOINT", ""),
-        "AZURE_SPEECH_KEY": os.getenv("AZURE_SPEECH_KEY", ""),
-        "AZURE_SPEECH_REGION": os.getenv("AZURE_SPEECH_REGION", ""),
-        "AZURE_SPEECH_RESOURCE_ID": os.getenv("AZURE_SPEECH_RESOURCE_ID", ""),
-        "BACKEND_AUTH_CLIENT_ID": os.getenv("BACKEND_AUTH_CLIENT_ID", ""),
-        "AZURE_TENANT_ID": os.getenv("AZURE_TENANT_ID", ""),
-        "ALLOWED_CLIENT_IDS": [
-            x.strip()
-            for x in os.getenv("ALLOWED_CLIENT_IDS", "").split(",")
-            if x.strip()
-        ],
-        "ENABLE_AUTH_VALIDATION": os.getenv("ENABLE_AUTH_VALIDATION", "false").lower()
-        in ("true", "1", "yes"),
-        "DEFAULT_TTS_VOICE": os.getenv("DEFAULT_TTS_VOICE", ""),
-    }
 from apps.artagent.backend.api.v1.schemas.health import (
     HealthResponse,
     ServiceCheck,
@@ -280,39 +259,32 @@ def _validate_auth_configuration() -> tuple[bool, str]:
     :raises ValueError: If critical authentication configuration is malformed.
     """
     try:
-        # Read config dynamically to get values set by App Configuration bootstrap
-        cfg = _get_config_dynamic()
-        enable_auth = cfg["ENABLE_AUTH_VALIDATION"]
-        backend_client_id = cfg["BACKEND_AUTH_CLIENT_ID"]
-        tenant_id = cfg["AZURE_TENANT_ID"]
-        allowed_clients = cfg["ALLOWED_CLIENT_IDS"]
-        
-        if not enable_auth:
+        if not ENABLE_AUTH_VALIDATION:
             logger.debug("Authentication validation is disabled")
             return True, "Auth validation disabled"
 
         validation_errors = []
 
         # Check BACKEND_AUTH_CLIENT_ID is a valid GUID
-        if not backend_client_id:
+        if not BACKEND_AUTH_CLIENT_ID:
             validation_errors.append("BACKEND_AUTH_CLIENT_ID is not set")
-        elif not _validate_guid(backend_client_id):
+        elif not _validate_guid(BACKEND_AUTH_CLIENT_ID):
             validation_errors.append("BACKEND_AUTH_CLIENT_ID is not a valid GUID")
 
         # Check AZURE_TENANT_ID is a valid GUID
-        if not tenant_id:
+        if not AZURE_TENANT_ID:
             validation_errors.append("AZURE_TENANT_ID is not set")
-        elif not _validate_guid(tenant_id):
+        elif not _validate_guid(AZURE_TENANT_ID):
             validation_errors.append("AZURE_TENANT_ID is not a valid GUID")
 
         # Check ALLOWED_CLIENT_IDS has at least one valid client ID
-        if not allowed_clients:
+        if not ALLOWED_CLIENT_IDS:
             validation_errors.append(
                 "ALLOWED_CLIENT_IDS is empty - at least one client ID required"
             )
         else:
             invalid_client_ids = [
-                cid for cid in allowed_clients if not _validate_guid(cid)
+                cid for cid in ALLOWED_CLIENT_IDS if not _validate_guid(cid)
             ]
             if invalid_client_ids:
                 validation_errors.append(
@@ -327,7 +299,7 @@ def _validate_auth_configuration() -> tuple[bool, str]:
             return False, error_message
 
         success_message = (
-            f"Auth validation enabled with {len(allowed_clients)} allowed client(s)"
+            f"Auth validation enabled with {len(ALLOWED_CLIENT_IDS)} allowed client(s)"
         )
         logger.info(
             f"Authentication configuration validation successful: {success_message}"
@@ -585,13 +557,6 @@ async def readiness_check(
     )
     health_checks.append(auth_config_status)
 
-    # Check App Configuration (non-critical - degraded if unavailable)
-    appconfig_status = await fast_ping(
-        _check_appconfig_fast,
-        component="app_configuration",
-    )
-    health_checks.append(appconfig_status)
-
     # Determine overall status
     failed_checks = [check for check in health_checks if check.status != "healthy"]
     if failed_checks:
@@ -705,120 +670,6 @@ async def pools_health(request: Request) -> PoolsHealthResponse:
     )
 
 
-@router.get(
-    "/appconfig",
-    summary="App Configuration Status",
-    description="""
-    Get Azure App Configuration provider status and cache metrics.
-    
-    This endpoint provides visibility into:
-    - Whether App Configuration is enabled and connected
-    - Cache hit/miss statistics
-    - Configuration source breakdown (appconfig vs env vars)
-    - Feature flag status
-    
-    Useful for verifying the migration from environment variables to App Configuration.
-    """,
-    tags=["Health"],
-)
-async def appconfig_status(request: Request, refresh: bool = False):
-    """
-    Get Azure App Configuration provider status.
-    
-    Args:
-        request: FastAPI request object.
-        refresh: If True, force refresh the cache before returning status.
-        
-    Returns:
-        JSON object with provider status, cache metrics, and configuration source info.
-    """
-    start_time = time.time()
-    
-    try:
-        # Optionally refresh cache
-        if refresh:
-            await asyncio.to_thread(refresh_appconfig_cache)
-        
-        # Get provider status (thread-safe)
-        status = await asyncio.to_thread(get_provider_status)
-        
-        response_time = round((time.time() - start_time) * 1000, 2)
-        
-        return {
-            "status": "healthy" if status.get("enabled") else "disabled",
-            "timestamp": time.time(),
-            "response_time_ms": response_time,
-            "provider": status,
-            "message": (
-                "App Configuration provider is active"
-                if status.get("enabled")
-                else "App Configuration not configured - using environment variables only"
-            ),
-        }
-    except Exception as e:
-        logger.error(f"Error getting App Configuration status: {e}")
-        return JSONResponse(
-            content={
-                "status": "error",
-                "timestamp": time.time(),
-                "response_time_ms": round((time.time() - start_time) * 1000, 2),
-                "error": str(e),
-                "message": "Failed to get App Configuration status",
-            },
-            status_code=500,
-        )
-
-
-@router.post(
-    "/appconfig/refresh",
-    summary="Refresh App Configuration Cache",
-    description="""
-    Force refresh the App Configuration cache.
-    
-    This endpoint triggers a cache refresh to pull the latest configuration
-    values from Azure App Configuration. Use this after updating configuration
-    values in App Configuration to apply changes without restarting the application.
-    """,
-    tags=["Health"],
-)
-async def appconfig_refresh(request: Request):
-    """
-    Force refresh the App Configuration cache.
-    
-    Returns:
-        JSON object confirming the refresh operation.
-    """
-    start_time = time.time()
-    
-    try:
-        # Refresh cache
-        await asyncio.to_thread(refresh_appconfig_cache)
-        
-        # Get updated status
-        status = await asyncio.to_thread(get_provider_status)
-        
-        response_time = round((time.time() - start_time) * 1000, 2)
-        
-        return {
-            "status": "success",
-            "timestamp": time.time(),
-            "response_time_ms": response_time,
-            "message": "App Configuration cache refreshed",
-            "provider": status,
-        }
-    except Exception as e:
-        logger.error(f"Error refreshing App Configuration cache: {e}")
-        return JSONResponse(
-            content={
-                "status": "error",
-                "timestamp": time.time(),
-                "response_time_ms": round((time.time() - start_time) * 1000, 2),
-                "error": str(e),
-                "message": "Failed to refresh App Configuration cache",
-            },
-            status_code=500,
-        )
-
 async def _check_redis_fast(redis_manager) -> ServiceCheck:
     """Fast Redis connectivity check."""
     start = time.time()
@@ -882,24 +733,18 @@ async def _check_azure_openai_fast(openai_client) -> ServiceCheck:
 async def _check_speech_configuration_fast(stt_pool, tts_pool) -> ServiceCheck:
     """Validate speech configuration values and pool readiness without external calls."""
     start = time.time()
-    
-    # Read config dynamically to get values set by App Configuration bootstrap
-    cfg = _get_config_dynamic()
 
     missing: List[str] = []
     config_summary = {
-        "region": bool(cfg["AZURE_SPEECH_REGION"]),
-        "endpoint": bool(cfg["AZURE_SPEECH_ENDPOINT"]),
-        "key_present": bool(cfg["AZURE_SPEECH_KEY"]),
-        "resource_id_present": bool(cfg["AZURE_SPEECH_RESOURCE_ID"]),
+        "region": bool(AZURE_SPEECH_REGION),
+        "endpoint": bool(AZURE_SPEECH_ENDPOINT),
+        "key_present": bool(AZURE_SPEECH_KEY),
+        "resource_id_present": bool(AZURE_SPEECH_RESOURCE_ID),
     }
 
-    # Region is always required
     if not config_summary["region"]:
         missing.append("AZURE_SPEECH_REGION")
 
-    # Either key OR resource_id (managed identity) is required for authentication
-    # Key is optional when using managed identity with resource_id
     if not (config_summary["key_present"] or config_summary["resource_id_present"]):
         missing.append("AZURE_SPEECH_KEY or AZURE_SPEECH_RESOURCE_ID")
 
@@ -958,15 +803,9 @@ async def _check_speech_configuration_fast(stt_pool, tts_pool) -> ServiceCheck:
 async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
     """Fast ACS caller check with comprehensive phone number and config validation."""
     start = time.time()
-    
-    # Read config dynamically to get values set by App Configuration bootstrap
-    cfg = _get_config_dynamic()
-    acs_phone = cfg["ACS_SOURCE_PHONE_NUMBER"]
-    acs_conn_string = cfg["ACS_CONNECTION_STRING"]
-    acs_endpoint = cfg["ACS_ENDPOINT"]
 
     # Check if ACS phone number is provided
-    if not acs_phone or acs_phone == "null":
+    if not ACS_SOURCE_PHONE_NUMBER or ACS_SOURCE_PHONE_NUMBER == "null":
         return ServiceCheck(
             component="acs_caller",
             status="unhealthy",
@@ -975,7 +814,7 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         )
 
     # Validate phone number format
-    is_valid, error_msg = _validate_phone_number(acs_phone)
+    is_valid, error_msg = _validate_phone_number(ACS_SOURCE_PHONE_NUMBER)
     if not is_valid:
         return ServiceCheck(
             component="acs_caller",
@@ -985,8 +824,8 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         )
 
     # Check ACS connection string or endpoint
-    acs_conn_missing = not acs_conn_string
-    acs_endpoint_missing = not acs_endpoint
+    acs_conn_missing = not ACS_CONNECTION_STRING
+    acs_endpoint_missing = not ACS_ENDPOINT
     if acs_conn_missing and acs_endpoint_missing:
         return ServiceCheck(
             component="acs_caller",
@@ -1000,9 +839,9 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         missing = []
         if not is_valid:
             missing.append(f"ACS_SOURCE_PHONE_NUMBER ({error_msg})")
-        if not acs_conn_string:
+        if not ACS_CONNECTION_STRING:
             missing.append("ACS_CONNECTION_STRING")
-        if not acs_endpoint:
+        if not ACS_ENDPOINT:
             missing.append("ACS_ENDPOINT")
         details = (
             f"ACS caller not configured. Missing: {', '.join(missing)}"
@@ -1019,9 +858,9 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
 
     # Obfuscate phone number, show only last 4 digits
     obfuscated_phone = (
-        "*" * (len(acs_phone) - 4) + acs_phone[-4:]
-        if len(acs_phone) > 4
-        else acs_phone
+        "*" * (len(ACS_SOURCE_PHONE_NUMBER) - 4) + ACS_SOURCE_PHONE_NUMBER[-4:]
+        if len(ACS_SOURCE_PHONE_NUMBER) > 4
+        else ACS_SOURCE_PHONE_NUMBER
     )
     return ServiceCheck(
         component="acs_caller",
@@ -1132,53 +971,6 @@ async def _check_auth_configuration_fast() -> ServiceCheck:
         )
 
 
-async def _check_appconfig_fast() -> ServiceCheck:
-    """Fast App Configuration provider check."""
-    start = time.time()
-
-    try:
-        status = get_provider_status()
-        
-        if not status.get("enabled"):
-            # App Config not configured - this is OK, not unhealthy
-            return ServiceCheck(
-                component="app_configuration",
-                status="healthy",
-                check_time_ms=round((time.time() - start) * 1000, 2),
-                details="Not configured (using env vars)",
-            )
-        
-        # Check if config was loaded successfully (key is "loaded", not "available")
-        if status.get("loaded"):
-            key_count = status.get("key_count", 0)
-            details_parts = [
-                f"endpoint={status.get('endpoint', 'unknown')}",
-                f"keys={key_count}",
-                f"label={status.get('label', 'none')}",
-            ]
-            return ServiceCheck(
-                component="app_configuration",
-                status="healthy",
-                check_time_ms=round((time.time() - start) * 1000, 2),
-                details=", ".join(details_parts),
-            )
-        else:
-            return ServiceCheck(
-                component="app_configuration",
-                status="degraded",
-                error=status.get("error", "Config not loaded"),
-                check_time_ms=round((time.time() - start) * 1000, 2),
-                details="Falling back to env vars",
-            )
-    except Exception as e:
-        return ServiceCheck(
-            component="app_configuration",
-            status="unhealthy",
-            error=f"App Configuration check failed: {str(e)}",
-            check_time_ms=round((time.time() - start) * 1000, 2),
-        )
-
-
 @router.get("/agents")
 async def get_agents_info(request: Request, include_state: bool = False):
     """
@@ -1246,9 +1038,7 @@ def _normalize_tools(agent_obj: Any) -> Dict[str, List[str]]:
             agent_voice_style = getattr(agent, "voice_style", "chat")
 
             # Fallback to DEFAULT_TTS_VOICE if agent doesn't have voice configured
-            # Read dynamically as config may have been set by App Configuration bootstrap
-            cfg = _get_config_dynamic()
-            current_voice = agent_voice or cfg["DEFAULT_TTS_VOICE"]
+            current_voice = agent_voice or DEFAULT_TTS_VOICE
 
             tools_normalized = _normalize_tools(agent)
 

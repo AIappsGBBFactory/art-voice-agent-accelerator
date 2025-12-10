@@ -37,6 +37,11 @@ resource "azapi_resource" "ai_foundry_account" {
       restrictOutboundNetworkAccess = false
     }
   }
+
+  response_export_values = [
+    "properties.endpoint",
+    "properties.endpoints"
+  ]
 }
 
 

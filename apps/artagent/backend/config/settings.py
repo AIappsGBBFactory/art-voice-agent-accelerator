@@ -102,10 +102,9 @@ AZURE_SPEECH_KEY: str = (
 AZURE_SPEECH_RESOURCE_ID: str = os.getenv("AZURE_SPEECH_RESOURCE_ID", "")
 
 # Azure Voice Live (preview)
-# Note: Uses AZURE_VOICELIVE_* format to match VoiceLiveSettings pydantic model
-AZURE_VOICE_LIVE_ENDPOINT: str = os.getenv("AZURE_VOICELIVE_ENDPOINT", "") or os.getenv("AZURE_VOICE_LIVE_ENDPOINT", "")
-AZURE_VOICE_API_KEY: str = os.getenv("AZURE_VOICELIVE_API_KEY", "") or os.getenv("AZURE_VOICE_API_KEY", "")
-AZURE_VOICE_LIVE_MODEL: str = os.getenv("AZURE_VOICELIVE_MODEL", "") or os.getenv("AZURE_VOICE_LIVE_MODEL", "gpt-4o")
+AZURE_VOICE_LIVE_ENDPOINT: str = os.getenv("AZURE_VOICE_LIVE_ENDPOINT", "")
+AZURE_VOICE_API_KEY: str = os.getenv("AZURE_VOICE_API_KEY", "")
+AZURE_VOICE_LIVE_MODEL: str = os.getenv("AZURE_VOICE_LIVE_MODEL", "gpt-4o")
 
 
 # ==============================================================================

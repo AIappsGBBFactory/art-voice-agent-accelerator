@@ -241,6 +241,7 @@ sync_infra_key "azure/appinsights/connection-string" "APPLICATIONINSIGHTS_CONNEC
 # Voice Live (optional)
 sync_infra_key "azure/voicelive/endpoint" "AZURE_VOICELIVE_ENDPOINT"
 sync_infra_key "azure/voicelive/model" "AZURE_VOICELIVE_MODEL"
+sync_infra_key "azure/voicelive/resource-id" "AZURE_VOICELIVE_RESOURCE_ID"
 
 # Environment metadata
 sync_infra_key "app/environment" "AZURE_ENV_NAME"
