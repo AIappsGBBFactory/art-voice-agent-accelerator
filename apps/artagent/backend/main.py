@@ -17,6 +17,12 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
+# ---------------- App Configuration Bootstrap --------------------------------
+# MUST be called BEFORE any other imports that depend on environment variables
+# This loads settings from Azure App Configuration and syncs them to os.environ
+from config.appconfig_provider import bootstrap_appconfig
+bootstrap_appconfig()
+
 from src.pools.warmable_pool import WarmableResourcePool
 from utils.telemetry_config import setup_azure_monitor
 
