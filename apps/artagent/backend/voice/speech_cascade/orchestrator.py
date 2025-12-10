@@ -1685,13 +1685,17 @@ def get_cascade_orchestrator(
         Configured CascadeOrchestratorAdapter
     """
     # Resolve configuration
-    if app_state is not None:
-        config = resolve_from_app_state(app_state)
-    else:
+    # Priority: explicit scenario_name overrides app_state preloads so per-session
+    # scenarios (stored in MemoManager) take effect for cascade mode.
+    if scenario_name:
         config = resolve_orchestrator_config(
             scenario_name=scenario_name,
             start_agent=start_agent,
         )
+    elif app_state is not None:
+        config = resolve_from_app_state(app_state)
+    else:
+        config = resolve_orchestrator_config(start_agent=start_agent)
 
     # Use resolved start_agent unless explicitly overridden
     effective_start_agent = start_agent or config.start_agent

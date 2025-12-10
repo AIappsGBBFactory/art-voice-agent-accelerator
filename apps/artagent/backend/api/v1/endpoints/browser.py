@@ -61,6 +61,8 @@ from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 from utils.session_context import session_context
 
+from apps.artagent.backend.src.orchestration.unified import cleanup_adapter
+
 from ..handlers.media_handler import (
     VOICE_LIVE_PCM_SAMPLE_RATE,
     VOICE_LIVE_SILENCE_GAP_SECONDS,
@@ -239,7 +241,7 @@ async def browser_conversation_endpoint(
                 # Create handler based on mode
                 if stream_mode == StreamMode.VOICE_LIVE:
                     handler, memory_manager = await _create_voice_live_handler(
-                        websocket, session_id, conn_id, user_email
+                        websocket, session_id, conn_id, user_email, scenario
                     )
                     metadata = {
                         "cm": memory_manager,
@@ -315,6 +317,7 @@ async def _create_voice_live_handler(
     session_id: str,
     conn_id: str,
     user_email: str | None,
+    scenario: str | None,
 ) -> tuple[VoiceLiveSDKHandler, MemoManager]:
     """
     Create VoiceLiveSDKHandler with barge-in infrastructure.
@@ -330,6 +333,8 @@ async def _create_voice_live_handler(
     """
     redis_mgr = websocket.app.state.redis
     memory_manager = MemoManager.from_redis(session_id, redis_mgr)
+    if scenario:
+        memory_manager.set_corememory("scenario_name", scenario)
 
     # Set up session context
     session_context = SessionContext(
@@ -340,6 +345,7 @@ async def _create_voice_live_handler(
     websocket.state.session_context = session_context
     websocket.state.cm = memory_manager
     websocket.state.session_id = session_id
+    websocket.state.scenario = scenario
 
     # Initialize barge-in state on websocket.state
     cancel_event = asyncio.Event()
@@ -700,6 +706,10 @@ async def _cleanup_conversation(
                 if isinstance(handler, MediaHandler):
                     await handler.stop()
                 # VoiceLiveSDKHandler cleanup already done in processing finally block
+
+            # Clear orchestrator adapter cache for this session
+            if session_id:
+                cleanup_adapter(session_id)
 
             # Unregister connection
             if conn_id:
