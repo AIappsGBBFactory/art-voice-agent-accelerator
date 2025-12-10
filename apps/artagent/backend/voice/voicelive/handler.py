@@ -813,11 +813,12 @@ class VoiceLiveSDKHandler:
                     self._connection = await self._connection_cm.__aenter__()
                     conn_span.set_attribute("voicelive.model", self._settings.azure_voicelive_model)
 
-                # ─────────────────────────────────────────────────────────────────
+                # ─────────────────────────────────────────────────────────────
                 # Agent Loading - Prefer unified agents from app.state
-                # ─────────────────────────────────────────────────────────────────
+                # ─────────────────────────────────────────────────────────────
                 agents = None
                 orchestrator_config = None
+                scenario_name = getattr(self.websocket.state, "scenario", None)
 
                 # Try to get unified agents from app.state (set in main.py)
                 app_state = getattr(self.websocket, "app", None)
@@ -828,12 +829,13 @@ class VoiceLiveSDKHandler:
                     # Use unified agents - adapt them for VoiceLive
                     unified_agents = app_state.unified_agents
                     agents = adapt_unified_agents(unified_agents)
-                    orchestrator_config = resolve_from_app_state(app_state)
+                    orchestrator_config = resolve_orchestrator_config(scenario_name=scenario_name)
                     span.set_attribute("voicelive.agent_source", "unified")
                     logger.info(
-                        "Using unified agents for VoiceLive | count=%d start_agent=%s",
+                        "Using unified agents for VoiceLive | count=%d start_agent=%s scenario=%s",
                         len(agents),
                         orchestrator_config.start_agent if orchestrator_config else "default",
+                        scenario_name or getattr(orchestrator_config, "scenario_name", None) or "(none)",
                     )
                 else:
                     # Fallback to auto-discovery of unified agents
@@ -842,12 +844,13 @@ class VoiceLiveSDKHandler:
                     )
                     discovered_agents = discover_agents()
                     agents = adapt_unified_agents(discovered_agents)
-                    orchestrator_config = resolve_orchestrator_config()
+                    orchestrator_config = resolve_orchestrator_config(scenario_name=scenario_name)
                     span.set_attribute("voicelive.agent_source", "discovered")
                     logger.info(
-                        "Discovered unified agents | count=%d start_agent=%s",
+                        "Discovered unified agents | count=%d start_agent=%s scenario=%s",
                         len(agents),
                         orchestrator_config.start_agent if orchestrator_config else "default",
+                        scenario_name or getattr(orchestrator_config, "scenario_name", None) or "(none)",
                     )
 
                 span.set_attribute("voicelive.agents_count", len(agents))

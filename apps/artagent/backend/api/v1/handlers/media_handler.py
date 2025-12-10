@@ -51,6 +51,7 @@ from apps.artagent.backend.registries.toolstore.personalized_greeting import (
     generate_personalized_greeting,
 )
 from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
+from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
 
 # Use unified orchestrator (new modular agent structure)
 from apps.artagent.backend.src.orchestration.unified import route_turn
@@ -312,6 +313,19 @@ class MediaHandler:
 
         # Initialize active agent in memory for this session
         # Priority: 1. Session agent (Agent Builder), 2. Unified agent (from disk)
+        scenario_start_agent = None
+        if config.scenario:
+            try:
+                scenario_cfg = resolve_orchestrator_config(scenario_name=config.scenario)
+                scenario_start_agent = scenario_cfg.start_agent or scenario_start_agent
+            except Exception as exc:
+                logger.warning(
+                    "[%s] Failed to resolve scenario start_agent for '%s': %s",
+                    handler._session_short,
+                    config.scenario,
+                    exc,
+                )
+
         session_agent = get_session_agent(config.session_id)
         if session_agent:
             start_agent = session_agent
@@ -323,7 +337,10 @@ class MediaHandler:
                 session_agent.voice.name if session_agent.voice else "default",
             )
         else:
-            start_agent_name = getattr(app_state, "start_agent", "Concierge")
+            if scenario_start_agent:
+                start_agent_name = scenario_start_agent
+            else:
+                start_agent_name = getattr(app_state, "start_agent", "Concierge")
             unified_agents = getattr(app_state, "unified_agents", {})
             start_agent = unified_agents.get(start_agent_name)
 

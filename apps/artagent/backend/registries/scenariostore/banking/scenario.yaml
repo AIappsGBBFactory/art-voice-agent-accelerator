@@ -5,42 +5,18 @@ name: banking
 description: Private banking customer service with personalized greetings and financial tools
 
 # Starting agent
-start_agent: concierge
+start_agent: Concierge
 
 # Agents to include in this scenario
 # Testing flow: Concierge → Investment Advisor OR Card Recommendation
 agents:
-  - concierge
-  - investment_advisor
-  - card_recommendation
+  - Concierge
+  - AuthAgent
+  - InvestmentAdvisor
+  - CardRecommendation
 
-# Agent-specific overrides
-agent_overrides:
-  concierge:
-    greeting: "Good morning! Welcome to Private Banking. I'm your concierge assistant. How may I help you today?"
-    template_vars:
-      bank_name: "Private Banking"
-      business_hours: "Monday-Friday 8am-6pm EST"
-    add_tools:
-      - customer_intelligence
-      - personalized_greeting
-
-  auth_agent:
-    greeting: "For your security, I need to verify your identity."
-    template_vars:
-      security_level: "high"
-      mfa_required: true
-
-  investment_advisor:
-    greeting: "I'm your investment advisor. I can help you with portfolio management, market insights, and investment recommendations."
-    add_tools:
-      - get_portfolio_summary
-      - get_market_data
-    template_vars:
-      compliance_mode: true
-
-# Global variables (apply to all agents)
-template_vars:
+# Agent defaults applied to all agents
+agent_defaults:
   company_name: "Private Banking"
   industry: "banking"
   compliance_required: true

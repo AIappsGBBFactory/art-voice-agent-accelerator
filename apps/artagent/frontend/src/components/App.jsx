@@ -3482,6 +3482,18 @@ function RealTimeVoiceApp() {
                     )}
                   </button>
                 ))}
+                <div style={{
+                  marginTop: '8px',
+                  padding: '8px 10px 6px',
+                  borderRadius: '10px',
+                  background: 'rgba(148,163,184,0.08)',
+                  color: '#475569',
+                  fontSize: '12px',
+                  lineHeight: 1.4,
+                  border: '1px dashed rgba(148,163,184,0.35)',
+                }}>
+                  Scenario is tied to this session. Start a new session to switch cleanly.
+                </div>
               </div>
             )}
           </div>
@@ -3623,6 +3635,20 @@ function RealTimeVoiceApp() {
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                   <div style={styles.sessionTagLabel}>Active Session</div>
                   <code style={styles.sessionTagValue}>{sessionId}</code>
+                  <div style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "4px 8px",
+                    borderRadius: "10px",
+                    background: "rgba(79,70,229,0.08)",
+                    color: "#4338ca",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    textTransform: "capitalize",
+                  }}>
+                    {getSessionScenario()} · scenario
+                  </div>
                   {sessionUpdateError && !editingSessionId && (
                     <div style={{ color: "#dc2626", fontSize: "12px" }}>
                       {sessionUpdateError}
