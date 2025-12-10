@@ -41,44 +41,43 @@ Both orchestrators (Cascade and VoiceLive) share the same handoff infrastructure
 
 ## Architecture Diagram
 
-```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          Orchestration Layer                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌─────────────────────────┐       ┌──────────────────────────────────┐ │
-│  │   VoiceLiveHandler      │       │   SpeechCascadeHandler           │ │
-│  │   (OpenAI Realtime)     │       │   (Azure Speech SDK)             │ │
-│  └───────────┬─────────────┘       └──────────────┬───────────────────┘ │
-│              │                                    │                     │
-│              ▼                                    ▼                     │
-│  ┌─────────────────────────┐       ┌──────────────────────────────────┐ │
-│  │   LiveOrchestrator      │       │   CascadeOrchestratorAdapter     │ │
-│  │                         │       │                                  │ │
-│  │  ┌───────────────────┐  │       │  ┌─────────────────────────────┐ │ │
-│  │  │  handoff_map      │  │       │  │    handoff_map              │ │ │
-│  │  │  (from agents)    │  │       │  │    (from agents)            │ │ │
-│  │  │  ├─handoff_fraud  │  │       │  │                             │ │ │
-│  │  │  │  →FraudAgent   │  │       │  │  StateKeys for MemoManager  │ │ │
-│  │  │  └─handoff_paypal │  │       │  │  ├─ active_agent            │ │ │
-│  │  │     →PayPalAgent  │  │       │  │  └─ pending_handoff         │ │ │
-│  │  └───────────────────┘  │       │  └─────────────────────────────┘ │ │
-│  │                         │       │                                  │ │
-│  └─────────────────────────┘       └──────────────────────────────────┘ │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-                                     │
-                              ┌──────┴──────┐
-                              │             │
-                              ▼             ▼
-                    ┌─────────────────┐   ┌───────────────────┐
-                    │  HandoffContext │   │  build_handoff_   │
-                    │  source_agent   │   │  system_vars()    │
-                    │  target_agent   │   │                   │
-                    │  reason         │   │  Builds context   │
-                    │  context_data   │   │  for agent switch │
-                    └─────────────────┘   └───────────────────┘
+```mermaid
+flowchart TB
+    subgraph Handlers["Transport Layer"]
+        VLH["VoiceLive Handler"]
+        SCH["SpeechCascade Handler"]
+    end
+
+    subgraph Orchestrators["Orchestrator Layer"]
+        VLO["LiveOrchestrator"]
+        SCO["CascadeOrchestrator"]
+    end
+
+    subgraph Context["Context Management"]
+        HM["handoff_map<br/>tool → agent routing"]
+        HC["HandoffContext<br/>source, target, reason"]
+        BH["build_handoff_system_vars()<br/>preserves session state"]
+    end
+
+    VLH --> VLO
+    SCH --> SCO
+    VLO -->|"detects handoff tool"| HM
+    SCO -->|"detects handoff tool"| HM
+    HM -->|"triggers"| HC
+    HC -->|"builds"| BH
+    BH -->|"injects into new agent"| Orchestrators
 ```
+
+> **Key Insight**: The orchestrator handles all handoff mechanics—developers only define `handoff.trigger` in YAML and the context flows automatically.
+
+### Source Files
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **VoiceLiveHandler** | `voice/voicelive/handler.py` | Bridges ACS media streams to multi-agent orchestration |
+| **LiveOrchestrator** | `voice/voicelive/orchestrator.py` | Orchestrates agent switching and tool execution for VoiceLive |
+| **SpeechCascadeHandler** | `voice/speech_cascade/handler.py` | Three-thread architecture for low-latency voice |
+| **CascadeOrchestratorAdapter** | `voice/speech_cascade/orchestrator.py` | Integrates unified agents with SpeechCascade |
 
 ---
 
@@ -88,50 +87,28 @@ Both orchestrators (Cascade and VoiceLive) share the same handoff infrastructure
 
 Both orchestrators use **tool-based handoffs** where the LLM calls a handoff function that the orchestrator intercepts to trigger an agent switch.
 
-```text
-┌──────────────┐    ┌─────────────────┐    ┌───────────────────┐     ┌──────────────┐
-│    User      │    │  EricaConcierge │    │   Orchestrator    │     │  FraudAgent  │
-│              │    │    (Active)     │    │                   │     │   (Target)   │
-└──────┬───────┘    └────────┬────────┘    └─────────┬─────────┘     └──────┬───────┘
-       │                     │                       │                      │
-       │ "I think my card    │                       │                      │
-       │  was stolen"        │                       │                      │
-       │────────────────────►│                       │                      │
-       │                     │                       │                      │
-       │                     │ LLM decides handoff   │                      │
-       │                     │ is needed             │                      │
-       │                     │                       │                      │
-       │                     │ Tool call:            │                      │
-       │                     │ handoff_fraud_agent(  │                      │
-       │                     │   reason="stolen card"│                      │
-       │                     │   caller_name="John"  │                      │
-       │                     │ )                     │                      │
-       │                     │──────────────────────►│                      │
-       │                     │                       │                      │
-       │                     │                       │ 1. is_handoff_tool() │
-       │                     │                       │    → true            │
-       │                     │                       │                      │
-       │                     │                       │ 2. Build context:    │
-       │                     │                       │    source=Erica      │
-       │                     │                       │    target=FraudAgent │
-       │                     │                       │    reason=stolen card│
-       │                     │                       │                      │
-       │                     │                       │ 3. execute_handoff() │
-       │                     │                       │    → success=true    │
-       │                     │                       │                      │
-       │                     │                       │ 4. _switch_to()      │
-       │                     │                       │─────────────────────►│
-       │                     │                       │                      │
-       │                     │                       │                      │ Apply session
-       │                     │                       │                      │ with handoff
-       │                     │                       │                      │ context
-       │                     │                       │                      │
-       │ "I'm the fraud      │                       │                      │
-       │  specialist. I see  │                       │◄─────────────────────│
-       │  you're concerned   │                       │                      │
-       │  about your card..."│                       │                      │
-       │◄────────────────────┼───────────────────────┼──────────────────────│
-       │                     │                       │                      │
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Concierge
+    participant O as Orchestrator
+    participant F as FraudAgent
+
+    U->>C: "My card was stolen"
+    Note over C: LLM selects handoff tool
+    C->>O: handoff_fraud_agent(reason, context)
+    
+    rect rgb(240, 248, 255)
+        Note over O: ORCHESTRATOR HANDLES:
+        Note over O: 1. Detect via handoff_map
+        Note over O: 2. Build HandoffContext
+        Note over O: 3. Preserve session state
+        Note over O: 4. Switch active agent
+    end
+    
+    O->>F: Apply session + context
+    Note over F: Receives: reason, profile,<br/>last utterance, caller info
+    F-->>U: "I'm the fraud specialist..."
 ```
 
 ### Handoff Map (Dynamic Discovery)
@@ -287,121 +264,68 @@ def build_handoff_system_vars(
 
 ### Complete Handoff Lifecycle
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                            HANDOFF LIFECYCLE                                    │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                 │
-│  1. USER INPUT                                                                  │
-│  ┌──────────────────┐                                                           │
-│  │ "I think my card │                                                           │
-│  │  was stolen"     │                                                           │
-│  └────────┬─────────┘                                                           │
-│           │                                                                     │
-│           ▼                                                                     │
-│  2. AGENT PROCESSING                                                            │
-│  ┌──────────────────────────────────────────────────────────────────────┐       │
-│  │  EricaConcierge (active agent)                                       │       │
-│  │  ┌─────────────────────────────────────────────────────────────────┐ │       │
-│  │  │ LLM evaluates: "stolen card" → needs fraud specialist           │ │       │
-│  │  │ Selects tool: handoff_fraud_agent                               │ │       │
-│  │  └─────────────────────────────────────────────────────────────────┘ │       │
-│  └────────┬─────────────────────────────────────────────────────────────┘       │
-│           │                                                                     │
-│           ▼                                                                     │
-│  3. HANDOFF DETECTION                                                           │
-│  ┌──────────────────────────────────────────────────────────────────────┐       │
-│  │  handoff_map.get("handoff_fraud_agent")                              │       │
-│  │                    │                                                 │       │
-│  │                    ▼                                                 │       │
-│  │  ┌─────────────────────────────────────────────────────────────────┐ │       │
-│  │  │ handoff_map lookup (built from agent YAML):                     │ │       │
-│  │  │   "handoff_fraud_agent" → "FraudAgent"  ✓ MATCH                 │ │       │
-│  │  └─────────────────────────────────────────────────────────────────┘ │       │
-│  └────────┬─────────────────────────────────────────────────────────────┘       │
-│           │                                                                     │
-│           ▼                                                                     │
-│  4. CONTEXT BUILDING                                                            │
-│  ┌──────────────────────────────────────────────────────────────────────┐       │
-│  │  build_handoff_system_vars():                                        │       │
-│  │  ├─ source_agent: "EricaConcierge"                                   │       │
-│  │  ├─ target_agent: "FraudAgent"                                       │       │
-│  │  ├─ handoff_reason: "stolen card"                                    │       │
-│  │  ├─ user_last_utterance: "I think my card was stolen"                │       │
-│  │  ├─ session_profile: {...} (carried forward)                         │       │
-│  │  └─ handoff_context: {caller_name: "John", ...}                      │       │
-│  └────────┬─────────────────────────────────────────────────────────────┘       │
-│           │                                                                     │
-│           ▼                                                                     │
-│  5. AGENT SWITCH                                                                │
-│  ┌──────────────────────────────────────────────────────────────────────┐       │
-│  │  orchestrator._switch_to("FraudAgent", system_vars)                  │       │
-│  │  ├─ Cancel pending TTS/audio (if barge-in)                           │       │
-│  │  ├─ Emit summary span for EricaConcierge (token usage)               │       │
-│  │  ├─ Load FraudAgent configuration                                    │       │
-│  │  ├─ Render prompt with handoff context                               │       │
-│  │  ├─ Apply session with new instructions                              │       │
-│  │  └─ Queue greeting if first visit                                    │       │
-│  └────────┬─────────────────────────────────────────────────────────────┘       │
-│           │                                                                     │
-│           ▼                                                                     │
-│  6. NEW AGENT RESPONSE                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐       │
-│  │  FraudAgent now active                                               │       │
-│  │  ├─ Context injected: "user concerned about stolen card"             │       │
-│  │  └─ Responds: "I'm the fraud specialist. I can help with that..."    │       │
-│  └──────────────────────────────────────────────────────────────────────┘       │
-│                                                                                 │
-└─────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Input["User Interaction"]
+        A["User: 'My card was stolen'"]
+    end
+    
+    subgraph Agent["Active Agent"]
+        B["LLM selects handoff tool"]
+    end
+    
+    subgraph Orch["Orchestrator - Context Management"]
+        C["Detect: handoff_map lookup"]
+        D["Build: HandoffContext"]
+        E["Preserve: session_profile, client_id"]
+        F["Switch: load new agent + inject context"]
+    end
+    
+    subgraph Target["Target Agent"]
+        G["Receives full context"]
+        H["Responds with awareness"]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
 ```
+
+**Context preserved through handoffs:**
+- `session_profile` — Customer name, account info
+- `handoff_reason` — Why the transfer occurred  
+- `user_last_utterance` — What the user just said
+- `handoff_context` — Custom data from source agent
+- `customer_intelligence` — Personalization data
 
 ### Barge-In During Handoff
 
-```text
-┌───────────────────────────────────────────────────────────────────────────┐
-│                     BARGE-IN DURING HANDOFF                               │
-├───────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   User            Agent A             Orchestrator          Agent B       │
-│     │                │                      │                   │         │
-│     │   "transfer    │                      │                   │         │
-│     │    please"     │                      │                   │         │
-│     │───────────────►│                      │                   │         │
-│     │                │                      │                   │         │
-│     │                │ handoff_to_agent_b() │                   │         │
-│     │                │─────────────────────►│                   │         │
-│     │                │                      │                   │         │
-│     │                │                      │ _switch_to(B)     │         │
-│     │                │                      │──────────────────►│         │
-│     │                │                      │                   │         │
-│     │                │                      │  Agent B starts   │         │
-│     │                │                      │  greeting: "Hello │         │
-│     │                │                      │  I'm Agent B..."  │         │
-│     │                │                      │◄──────────────────│         │
-│     │                │                      │                   │         │
-│     │                │        TTS playing   │                   │         │
-│     │◄───────────────┼──────────────────────│                   │         │
-│     │                │                      │                   │         │
-│     │  "Actually,    │                      │                   │         │
-│     │   wait..."     │                      │                   │         │
-│     │────────────────┼─────────────────────►│                   │         │
-│     │                │                      │                   │         │
-│     │                │         BARGE-IN!    │                   │         │
-│     │                │                      │                   │         │
-│     │                │      ┌───────────────┴──────────────┐    │         │
-│     │                │      │ 1. Cancel TTS playback       │    │         │
-│     │                │      │ 2. Stop audio                │    │         │
-│     │                │      │ 3. Agent B processes new     │    │         │
-│     │                │      │    user input                │    │         │
-│     │                │      └───────────────┬──────────────┘    │         │
-│     │                │                      │                   │         │
-│     │  Agent B       │                      │                   │         │
-│     │  responds to   │                      │◄──────────────────│         │
-│     │  interruption  │                      │                   │         │
-│     │◄───────────────┼──────────────────────│                   │         │
-│     │                │                      │                   │         │
-└───────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant B as Agent B
+
+    U->>O: "transfer please"
+    O->>B: Switch + inject context
+    B-->>U: TTS: "Hello, I'm Agent B..."
+    U->>O: "Actually, wait..."
+    
+    rect rgb(255, 240, 240)
+        Note over O: Orchestrator handles barge-in:
+        O->>O: 1. Cancel TTS playback
+        O->>O: 2. Update context with interruption
+        O->>B: 3. Forward new input + context
+    end
+    
+    B-->>U: Responds with full context
 ```
+
+> The orchestrator manages interruptions seamlessly—Agent B receives the updated context including the user's interruption.
 
 ---
 
@@ -644,20 +568,20 @@ Let the system choose appropriate greetings:
 
 ### 3. Token Attribution
 
-The system tracks token usage per agent for cost attribution. Each orchestrator emits a summary span when switching agents:
+The orchestrator tracks token usage per agent for cost attribution, emitting a summary span on each handoff:
 
-```text
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  EricaConcierge │    │    FraudAgent   │    │   TradingDesk   │
-│  ─────────────  │    │  ─────────────  │    │  ─────────────  │
-│  Input:   450   │    │  Input:   320   │    │  Input:   180   │
-│  Output:  120   │    │  Output:   85   │    │  Output:   45   │
-│  Turns:     3   │    │  Turns:     2   │    │  Turns:     1   │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                     │                      │
-         └─────────────────────┴──────────────────────┘
-                               │
-                     Session Total: 1200 tokens
+```mermaid
+flowchart LR
+    subgraph Session["Orchestrator Tracks Per-Agent Usage"]
+        E["Concierge<br/>450 in / 120 out"]
+        F["FraudAgent<br/>320 in / 85 out"]
+        D["TradingDesk<br/>180 in / 45 out"]
+    end
+    
+    E --> T
+    F --> T
+    D --> T
+    T(["Session Total: 1200 tokens"])
 ```
 
 ### 4. Sanitize Handoff Context
@@ -691,11 +615,33 @@ _HANDOFF_CONTROL_FLAGS = frozenset({
 
 ## Key Source Files
 
-| Component | Location |
-|-----------|----------|
-| **Handoff Context** | `apps/artagent/backend/voice/handoffs/context.py` |
-| **Tool Registry** | `apps/artagent/backend/agents/tools/registry.py` |
-| **Handoff Map Builder** | `apps/artagent/backend/agents/loader.py` |
-| **LiveOrchestrator** | `apps/artagent/backend/voice/voicelive/orchestrator.py` |
-| **CascadeOrchestrator** | `apps/artagent/backend/voice/speech_cascade/orchestrator.py` |
-| **Agent Definitions** | `apps/artagent/backend/agents/*/agent.yaml` |
+### Core Handoff Infrastructure
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| **Handoff Context** | `voice/handoffs/context.py` | `HandoffContext`, `HandoffResult` dataclasses and `build_handoff_system_vars()` |
+| **Tool Registry** | `agents/tools/registry.py` | `is_handoff_tool()`, tool registration and execution |
+| **Handoff Map Builder** | `agents/loader.py` | `build_handoff_map()` - builds tool→agent routing |
+| **Agent Definitions** | `agents/*/agent.yaml` | YAML configs with `handoff.trigger` declarations |
+
+### VoiceLive Mode (`voice/voicelive/`)
+
+| File | Description |
+|------|-------------|
+| `handler.py` | `VoiceLiveSDKHandler` - bridges ACS media streams to orchestration |
+| `orchestrator.py` | `LiveOrchestrator` - handles `_execute_tool_call()` and `_switch_to()` for handoffs |
+| `agent_adapter.py` | `adapt_unified_agents()` - adapts UnifiedAgent to VoiceLive format |
+| `session_loader.py` | Loads user profiles for session context |
+| `tool_helpers.py` | `push_tool_start()`, `push_tool_end()` - tool execution telemetry |
+| `settings.py` | VoiceLive-specific configuration |
+| `metrics.py` | `record_llm_ttft()`, `record_tts_ttfb()` - latency metrics |
+
+### SpeechCascade Mode (`voice/speech_cascade/`)
+
+| File | Description |
+|------|-------------|
+| `handler.py` | `SpeechCascadeHandler` - three-thread architecture for low-latency voice |
+| `orchestrator.py` | `CascadeOrchestratorAdapter` - handles `_execute_tool_call()` with state-based handoffs |
+| `tts.py` | Text-to-speech synthesis |
+| `tts_sender.py` | Sends TTS audio to transport layer |
+| `metrics.py` | Cascade-specific latency metrics |

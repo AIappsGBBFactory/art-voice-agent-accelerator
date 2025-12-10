@@ -29,46 +29,41 @@ The agent framework in this accelerator was designed with specific requirements 
 
 ## Architecture Overview
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Agent Framework Architecture                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
-│  │   _defaults.yaml │───▶│  concierge/      │    │  fraud_agent/    │       │
-│  │   (Base Config)  │    │   agent.yaml     │    │   agent.yaml     │       │
-│  └──────────────────┘    │   prompt.jinja   │    │   prompt.jinja   │       │
-│                          └────────┬─────────┘    └────────┬─────────┘       │
-│                                   │                       │                 │
-│                          ┌────────▼───────────────────────▼──────────┐      │
-│                          │            Agent Loader                   │      │
-│                          │    discover_agents() → Dict[str, Agent]   │      │
-│                          └────────────────────┬──────────────────────┘      │
-│                                               │                             │
-│         ┌─────────────────────────────────────│                             │
-│         │                                     │                             │
-│  ┌──────▼──────┐                     ┌────────▼────────┐                    │
-│  │ Tool        │                     │ Session Agent   │                    │
-│  │ Registry    │◀────────────────────│ Manager         │                    │
-│  │             │   get_tools()       │                 │                    │
-│  └──────┬──────┘                     └────────┬────────┘                    │
-│         │                                     │                             │
-│         │                          ┌──────────▼──────────┐                  │
-│         │                          │ Runtime Overrides   │                  │
-│         │                          │ - Prompt changes    │                  │
-│         │                          │ - Voice switching   │                  │
-│         │                          │ - Tool modification │                  │
-│         │                          └──────────┬──────────┘                  │
-│         │                                     │                             │
-│  ┌──────▼─────────────────────────────────────▼──────────────────────┐      │
-│  │                      Orchestrators                                │      │
-│  │  ┌───────────────────────┐    ┌───────────────────────────────┐   │      │
-│  │  │   CascadeOrchestrator │    │      LiveOrchestrator         │   │      │
-│  │  │   (Azure Speech Mode) │    │   (OpenAI Realtime Mode)      │   │      │
-│  │  └───────────────────────┘    └───────────────────────────────┘   │      │
-│  └───────────────────────────────────────────────────────────────────┘      │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Config["Configuration Layer"]
+        defaults["_defaults.yaml<br/>(Base Config)"]
+        concierge["concierge/<br/>agent.yaml<br/>prompt.jinja"]
+        fraud["fraud_agent/<br/>agent.yaml<br/>prompt.jinja"]
+        defaults --> concierge
+        defaults --> fraud
+    end
+
+    subgraph Loader["Agent Loader"]
+        discover["discover_agents()<br/>→ Dict[str, Agent]"]
+    end
+
+    subgraph Components["Core Components"]
+        registry["Tool Registry"]
+        session["Session Agent Manager"]
+        overrides["Runtime Overrides<br/>• Prompt changes<br/>• Voice switching<br/>• Tool modification"]
+        session -->|get_tools| registry
+        session --> overrides
+    end
+
+    subgraph Orchestrators["Orchestrators"]
+        cascade["CascadeOrchestrator<br/>(Azure Speech Mode)"]
+        live["LiveOrchestrator<br/>(OpenAI Realtime Mode)"]
+    end
+
+    concierge --> discover
+    fraud --> discover
+    discover --> session
+    discover --> registry
+    overrides --> cascade
+    overrides --> live
+    registry --> cascade
+    registry --> live
 ```
 
 ---
@@ -455,16 +450,16 @@ In VoiceLive mode, handoffs are executed as tool calls. When the LLM calls a han
 4. New agent's prompt is loaded with context
 5. Greeting is spoken (if configured)
 
-```text
-Caller: "I think someone stole my card"
-    │
-    ▼
-┌─────────────┐     handoff_fraud_agent()     ┌─────────────┐
-│  Concierge  │──────────────────────────────▶│ FraudAgent  │
-└─────────────┘                               └─────────────┘
-                                                     │
-                                                     ▼
-                          "You're now speaking with the Fraud Prevention desk..."
+```mermaid
+flowchart LR
+    caller["Caller: I think someone stole my card"]
+    concierge["Concierge"]
+    fraud["FraudAgent"]
+    response["You're now speaking with<br/>the Fraud Prevention desk..."]
+
+    caller --> concierge
+    concierge -->|handoff_fraud_agent| fraud
+    fraud --> response
 ```
 
 ### State-Based Handoffs (SpeechCascade)

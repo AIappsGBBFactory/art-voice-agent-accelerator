@@ -224,6 +224,25 @@ main() {
     
     check_dependencies
 
+    # Check if LOCAL_STATE is set to true - skip remote state setup
+    local local_state=$(get_azd_env "LOCAL_STATE")
+    if [[ "$local_state" == "true" ]]; then
+        log_info "LOCAL_STATE=true is set in azd environment"
+        log_info "Skipping remote state setup - using local state instead"
+        echo ""
+        log_warning "Your Terraform state will be stored locally in the project directory."
+        log_warning "This means:"
+        log_warning "  • State is NOT shared with your team"
+        log_warning "  • State may be lost if .terraform/ is deleted"
+        log_warning "  • NOT recommended for production or shared environments"
+        echo ""
+        log_info "To switch to remote state:"
+        log_info "  azd env set LOCAL_STATE \"false\""
+        log_info "  azd hooks run preprovision"
+        echo ""
+        return 0
+    fi
+
     # Get environment values
     local env_name=$(get_azd_env "AZURE_ENV_NAME")
     local location=$(get_azd_env "AZURE_LOCATION")
@@ -272,7 +291,7 @@ main() {
         echo "   Location:         $location"
         echo ""
         
-        read -p "Use these values? [Y]es / [n]o (use local state) / [c]ustom: " choice
+        read -p "Use these values? [Y]es / [n]o (use local state) / [e]xisting: " choice
         case "$choice" in
             [Nn]*)
                 echo ""
@@ -286,7 +305,14 @@ main() {
                 log_warning "  • State may be lost if .terraform/ is deleted"
                 log_warning "  • NOT recommended for production or shared environments"
                 echo ""
-                log_info "To configure remote state later, run:"
+                
+                # Set LOCAL_STATE flag to indicate local backend should be used
+                azd env set LOCAL_STATE "true"
+                log_info "Set LOCAL_STATE=true in azd environment"
+                echo ""
+                
+                log_info "To switch to remote state later, run:"
+                log_info "  azd env set LOCAL_STATE \"false\""
                 log_info "  azd env set RS_RESOURCE_GROUP \"<resource-group-name>\""
                 log_info "  azd env set RS_STORAGE_ACCOUNT \"<storage-account-name>\""
                 log_info "  azd env set RS_CONTAINER_NAME \"<container-name>\""
@@ -294,9 +320,9 @@ main() {
                 echo ""
                 return 0
                 ;;
-            [Cc]*)
+            [Ee]*)
                 echo ""
-                log_info "Enter custom values (press Enter to keep default):"
+                log_info "Enter existing values (press Enter to keep default):"
                 echo ""
                 read -p "   Resource Group [$resource_group]: " custom_rg
                 resource_group="${custom_rg:-$resource_group}"

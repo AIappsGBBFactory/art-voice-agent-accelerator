@@ -20,25 +20,19 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc build-essential portaudio19-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install dependencies first (better layer caching)
-# Only copy files needed for dependency resolution
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    --mount=type=bind,source=README.md,target=README.md \
-    --mount=type=bind,source=LICENSE,target=LICENSE \
-    uv sync --frozen --no-install-project --no-editable
+# Copy files needed for dependency resolution
+COPY uv.lock pyproject.toml README.md LICENSE ./
+
+# Install dependencies (without the project itself)
+RUN uv sync --frozen --no-install-project --no-editable
 
 # Copy source code
 COPY ./apps /app/apps
 COPY ./src /app/src
 COPY ./utils /app/utils
-COPY pyproject.toml README.md LICENSE ./
 
 # Install the project itself
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    uv sync --frozen --no-editable
+RUN uv sync --frozen --no-editable
 
 # =============================================================================
 # Final production image

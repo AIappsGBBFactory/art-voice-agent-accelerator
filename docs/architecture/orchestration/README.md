@@ -153,14 +153,29 @@ The `CascadeOrchestratorAdapter.process_turn()` method:
 
 VoiceLive is event-driven — the orchestrator reacts to events from the OpenAI Realtime API:
 
-```
-Audio Stream ←→ OpenAI Realtime API ←→ LiveOrchestrator
-                      ↓                       ↓
-              Events (transcription,    Event Handlers
-              audio delta, tool call)        ↓
-                                      Tool Execution
-                                             ↓
-                                      Handoff + Session Update
+```mermaid
+flowchart LR
+    subgraph Audio["Bidirectional Audio"]
+        A[Audio Stream]
+    end
+    
+    subgraph Realtime["OpenAI Realtime API"]
+        R[Realtime API]
+        E1[Events]
+    end
+    
+    subgraph Orchestrator["LiveOrchestrator"]
+        L[handle_event]
+        H[Event Handlers]
+        T[Tool Execution]
+        S[Handoff + Session Update]
+    end
+    
+    A <--> R
+    R --> E1
+    E1 -->|transcription<br>audio delta<br>tool call| H
+    H --> T
+    T --> S
 ```
 
 The `LiveOrchestrator.handle_event()` method routes events:
@@ -253,12 +268,18 @@ Both orchestrators emit OpenTelemetry spans following GenAI semantic conventions
 
 ### Span Hierarchy
 
-```
-invoke_agent (per agent session)
-├── llm_request (LLM call)
-│   ├── tool_execution (each tool)
-│   └── tool_execution
-└── agent_switch (if handoff)
+```mermaid
+flowchart TD
+    IA["invoke_agent<br>(per agent session)"]
+    LR["llm_request<br>(LLM call)"]
+    TE1["tool_execution<br>(each tool)"]
+    TE2["tool_execution"]
+    AS["agent_switch<br>(if handoff)"]
+    
+    IA --> LR
+    LR --> TE1
+    LR --> TE2
+    IA --> AS
 ```
 
 ### Key Attributes
