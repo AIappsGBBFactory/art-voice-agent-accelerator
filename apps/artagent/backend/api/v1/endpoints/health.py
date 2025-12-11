@@ -80,7 +80,7 @@ class AgentDefinition:
 
     name: str  # Human-readable name (e.g., "auth", "fraud")
     state_attr: str  # Attribute name on app.state (e.g., "auth_agent")
-    config_path: str = ""  # Legacy - agents now in backend/agents/<name>/agent.yaml
+    config_path: str = ""  # Legacy - agents now in backend/registries/agentstore/<name>/agent.yaml
     aliases: list[str] = field(default_factory=list)  # Alternative names for API lookup
 
 
@@ -137,7 +137,7 @@ class AgentRegistry:
 
 
 # Global registry instance - populated at module load
-# NOTE: Agents are now auto-discovered from apps/artagent/backend/agents/
+# NOTE: Agents are now auto-discovered from apps/artagent/backend/registries/agentstore/
 # This registry provides backward compatibility for health checks.
 _agent_registry = AgentRegistry()
 
@@ -306,19 +306,19 @@ def _validate_auth_configuration() -> tuple[bool, str]:
         validation_errors = []
 
         # Check BACKEND_AUTH_CLIENT_ID is a valid GUID
-        if not BACKEND_AUTH_CLIENT_ID:
+        if not backend_client_id:
             validation_errors.append("BACKEND_AUTH_CLIENT_ID is not set")
-        elif not _validate_guid(BACKEND_AUTH_CLIENT_ID):
+        elif not _validate_guid(backend_client_id):
             validation_errors.append("BACKEND_AUTH_CLIENT_ID is not a valid GUID")
 
         # Check AZURE_TENANT_ID is a valid GUID
-        if not AZURE_TENANT_ID:
+        if not tenant_id:
             validation_errors.append("AZURE_TENANT_ID is not set")
-        elif not _validate_guid(AZURE_TENANT_ID):
+        elif not _validate_guid(tenant_id):
             validation_errors.append("AZURE_TENANT_ID is not a valid GUID")
 
         # Check ALLOWED_CLIENT_IDS has at least one valid client ID
-        if not ALLOWED_CLIENT_IDS:
+        if not allowed_clients:
             validation_errors.append(
                 "ALLOWED_CLIENT_IDS is empty - at least one client ID required"
             )
@@ -881,10 +881,10 @@ async def _check_speech_configuration_fast(stt_pool, tts_pool) -> ServiceCheck:
 
     missing: list[str] = []
     config_summary = {
-        "region": bool(AZURE_SPEECH_REGION),
-        "endpoint": bool(AZURE_SPEECH_ENDPOINT),
-        "key_present": bool(AZURE_SPEECH_KEY),
-        "resource_id_present": bool(AZURE_SPEECH_RESOURCE_ID),
+        "region": bool(cfg["AZURE_SPEECH_REGION"]),
+        "endpoint": bool(cfg["AZURE_SPEECH_ENDPOINT"]),
+        "key_present": bool(cfg["AZURE_SPEECH_KEY"]),
+        "resource_id_present": bool(cfg["AZURE_SPEECH_RESOURCE_ID"]),
     }
 
     if not config_summary["region"]:
@@ -956,7 +956,7 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
     acs_endpoint = cfg["ACS_ENDPOINT"]
 
     # Check if ACS phone number is provided
-    if not ACS_SOURCE_PHONE_NUMBER or ACS_SOURCE_PHONE_NUMBER == "null":
+    if not acs_phone or acs_phone == "null":
         return ServiceCheck(
             component="acs_caller",
             status="unhealthy",
@@ -965,7 +965,7 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         )
 
     # Validate phone number format
-    is_valid, error_msg = _validate_phone_number(ACS_SOURCE_PHONE_NUMBER)
+    is_valid, error_msg = _validate_phone_number(acs_phone)
     if not is_valid:
         return ServiceCheck(
             component="acs_caller",
@@ -975,8 +975,8 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         )
 
     # Check ACS connection string or endpoint
-    acs_conn_missing = not ACS_CONNECTION_STRING
-    acs_endpoint_missing = not ACS_ENDPOINT
+    acs_conn_missing = not acs_conn_string
+    acs_endpoint_missing = not acs_endpoint
     if acs_conn_missing and acs_endpoint_missing:
         return ServiceCheck(
             component="acs_caller",
@@ -990,9 +990,9 @@ async def _check_acs_caller_fast(acs_caller) -> ServiceCheck:
         missing = []
         if not is_valid:
             missing.append(f"ACS_SOURCE_PHONE_NUMBER ({error_msg})")
-        if not ACS_CONNECTION_STRING:
+        if not acs_conn_string:
             missing.append("ACS_CONNECTION_STRING")
-        if not ACS_ENDPOINT:
+        if not acs_endpoint:
             missing.append("ACS_ENDPOINT")
         details = (
             f"ACS caller not configured. Missing: {', '.join(missing)}"
