@@ -18,6 +18,57 @@ logger = get_logger("agents.scenarios.loader")
 
 
 @dataclass
+class HandoffConfig:
+    """Configuration for a handoff route - a directed edge in the agent graph.
+
+    Each handoff is a complete edge definition:
+    - FROM which agent initiates the handoff
+    - TO which agent receives the handoff
+    - TOOL what tool name triggers this route
+    - TYPE discrete (silent) or announced (greeting)
+
+    This allows different behavior for the same tool depending on context.
+    Example: handoff_concierge from FraudAgent might be discrete (returning),
+    but from AuthAgent might be announced (first routing).
+
+    Attributes:
+        from_agent: Source agent initiating the handoff
+        to_agent: Target agent receiving the handoff
+        tool: The handoff tool name that triggers this route
+        type: "discrete" (silent) or "announced" (greet on switch)
+        share_context: Whether to pass conversation context (default True)
+    """
+
+    from_agent: str = ""
+    to_agent: str = ""
+    tool: str = ""
+    type: str = "announced"  # "discrete" or "announced"
+    share_context: bool = True
+
+    @property
+    def greet_on_switch(self) -> bool:
+        """Convenience property - announced means greet on switch."""
+        return self.type == "announced"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> HandoffConfig:
+        """Create from dictionary."""
+        # Handle 'type' field - can be "discrete" or "announced"
+        handoff_type = data.get("type", "announced")
+        # Also support greet_on_switch for backward compatibility
+        if "greet_on_switch" in data and "type" not in data:
+            handoff_type = "announced" if data["greet_on_switch"] else "discrete"
+
+        return cls(
+            from_agent=data.get("from", data.get("from_agent", "")),
+            to_agent=data.get("to", data.get("to_agent", "")),
+            tool=data.get("tool", data.get("tool_name", "")),
+            type=handoff_type,
+            share_context=data.get("share_context", True),
+        )
+
+
+@dataclass
 class AgentOverride:
     """Override settings for a specific agent in a scenario."""
 
@@ -82,12 +133,29 @@ class ScenarioConfig:
     # Starting agent override
     start_agent: str | None = None
 
+    # Default handoff behavior for this scenario
+    # "announced" = target agent greets/announces transfer (default)
+    # "discrete" = silent handoff, agent continues naturally
+    handoff_type: str = "announced"
+
+    # Handoff configurations - list of directed edges (from → to via tool)
+    handoffs: list[HandoffConfig] = field(default_factory=list)
+
     @classmethod
     def from_dict(cls, name: str, data: dict[str, Any]) -> ScenarioConfig:
         """Create from dictionary."""
         agent_defaults = None
         if "agent_defaults" in data:
             agent_defaults = AgentOverride.from_dict(data.get("agent_defaults") or {})
+
+        # Parse handoff configurations as list of edges
+        handoffs: list[HandoffConfig] = []
+        raw_handoffs = data.get("handoffs", [])
+        if isinstance(raw_handoffs, list):
+            # New format: list of {from, to, tool, type, share_context}
+            for h in raw_handoffs:
+                if isinstance(h, dict) and h.get("from") and h.get("to"):
+                    handoffs.append(HandoffConfig.from_dict(h))
 
         return cls(
             name=name,
@@ -97,7 +165,61 @@ class ScenarioConfig:
             global_template_vars=data.get("template_vars", {}),
             tools=data.get("tools", []),
             start_agent=data.get("start_agent"),
+            handoff_type=data.get("handoff_type", "announced"),
+            handoffs=handoffs,
         )
+
+    def get_handoff_config(
+        self,
+        from_agent: str,
+        tool_name: str | None = None,
+        to_agent: str | None = None,
+    ) -> HandoffConfig:
+        """
+        Get handoff config for a specific route.
+
+        Lookup priority:
+        1. Match by (from_agent, tool_name) - most specific
+        2. Match by (from_agent, to_agent) - if tool not specified
+        3. Match by tool_name only - fallback
+        4. Return default based on scenario's handoff_type
+        """
+        # Priority 1: Match by from + tool
+        if tool_name:
+            for h in self.handoffs:
+                if h.from_agent == from_agent and h.tool == tool_name:
+                    return h
+
+        # Priority 2: Match by from + to
+        if to_agent:
+            for h in self.handoffs:
+                if h.from_agent == from_agent and h.to_agent == to_agent:
+                    return h
+
+        # Priority 3: Match by tool only (any source)
+        if tool_name:
+            for h in self.handoffs:
+                if h.tool == tool_name:
+                    return h
+
+        # Default based on scenario's handoff_type
+        return HandoffConfig(
+            from_agent=from_agent,
+            to_agent=to_agent or "",
+            tool=tool_name or "",
+            type=self.handoff_type,
+            share_context=True,
+        )
+
+    def build_handoff_map(self) -> dict[str, str]:
+        """Build tool→agent routing map from handoff configurations."""
+        handoff_map: dict[str, str] = {}
+        for h in self.handoffs:
+            if h.tool and h.to_agent:
+                # Note: If same tool appears multiple times, last one wins
+                # This is fine since tool→agent mapping should be consistent
+                handoff_map[h.tool] = h.to_agent
+        return handoff_map
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -267,12 +389,78 @@ def get_scenario_template_vars(scenario_name: str) -> dict[str, Any]:
     return scenario.global_template_vars if scenario else {}
 
 
+def get_handoff_config(
+    scenario_name: str | None,
+    from_agent: str,
+    tool_name: str,
+) -> HandoffConfig:
+    """
+    Get handoff configuration for a specific handoff route.
+
+    Looks up the handoff config by (from_agent, tool_name) to find the
+    exact route behavior. Falls back to scenario defaults if not found.
+
+    Args:
+        scenario_name: Active scenario name (or None)
+        from_agent: The agent initiating the handoff
+        tool_name: The handoff tool name being called
+
+    Returns:
+        HandoffConfig with from_agent, to_agent, type, share_context
+    """
+    if not scenario_name:
+        # No scenario - use default announced behavior
+        return HandoffConfig(
+            from_agent=from_agent,
+            tool=tool_name,
+            type="announced",
+            share_context=True,
+        )
+
+    scenario = load_scenario(scenario_name)
+    if not scenario:
+        return HandoffConfig(
+            from_agent=from_agent,
+            tool=tool_name,
+            type="announced",
+            share_context=True,
+        )
+
+    return scenario.get_handoff_config(from_agent=from_agent, tool_name=tool_name)
+
+
+def build_handoff_map_from_scenario(scenario_name: str | None) -> dict[str, str]:
+    """
+    Build handoff_map (tool_name → agent_name) from scenario configuration.
+
+    This replaces the agent-level handoff.trigger approach. The scenario
+    is now the single source of truth for handoff routing.
+
+    Args:
+        scenario_name: Active scenario name (or None for empty map)
+
+    Returns:
+        Dict mapping handoff tool names to target agent names
+    """
+    if not scenario_name:
+        return {}
+
+    scenario = load_scenario(scenario_name)
+    if not scenario:
+        return {}
+
+    return scenario.build_handoff_map()
+
+
 __all__ = [
     "load_scenario",
     "list_scenarios",
     "get_scenario_agents",
     "get_scenario_start_agent",
     "get_scenario_template_vars",
+    "get_handoff_config",
+    "build_handoff_map_from_scenario",
     "ScenarioConfig",
     "AgentOverride",
+    "HandoffConfig",
 ]
