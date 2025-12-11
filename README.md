@@ -10,11 +10,26 @@ You own the agentic design; this repo handles the end-to-end voice plumbing. We 
 
 *Explore the full docs for tutorials, API, deployment guides & architecture patterns* -> https://azure-samples.github.io/art-voice-agent-accelerator/
 
+## **See it in Action**
 
-<details closed>
-<summary><h3>The what and why behind this accelerator</h3></summary>
+<p align="center">
+<a href="https://www.youtube.com/watch?v=H_uAA5_h40E"><img src="docs/assets/youtube.png" height="150"></a> <a href="https://vimeo.com/1115976100"><img src="docs/assets/ARTAgentVimeoDemo.png" height="150"></a>
+</p>
 
-## **What you get**
+<p align="center">
+<a href="https://www.youtube.com/watch?v=H_uAA5_h40E">▶️ Full overview on YouTube</a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="https://vimeo.com/1115976100">▶️ Demo app walkthrough</a>
+</p>
+
+<p align="center">
+💡 <strong>Want to run this app?</strong> All the code is here! See <strong>Getting Started</strong> below.
+</p>
+
+<details>
+<summary><strong>The what and why behind this accelerator</strong> (click to expand)</summary>
+
+<br>
+
+### **What you get**
 
 - **Omnichannel, including first-class telephony**. Azure Communication Services (ACS) integration for PSTN, SIP transfer, IVR/DTMF routing, and number provisioning—extendable for contact centers and custom IVR trees.
 
@@ -39,25 +54,6 @@ You own the agentic design; this repo handles the end-to-end voice plumbing. We 
 We ship the scaffolding to make that last mile fast: structured logging, metrics/tracing hooks, and a load-testing harness so you can profile end-to-end latency and concurrency, then tune or harden as needed to reach your target volume.
 
 </details>
-
-## **Demo, Demo, Demo..**
-
-</br>
-
-<div align="center">
-  <a href="https://vimeo.com/1115976100">
-    <img src="docs/assets/ARTAgentVimeoDemo.png" alt="Demo Video - ARTAgent in Action" style="max-width:95%; border-radius:20px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); border: 3px solid #e0e0e0;">
-  </a>
-  <p style="font-size: smaller; font-family: cursive; font-style: italic; margin-top: 8px;">
-    Click the image to watch the ARTAgent Demo.
-  </p>
-  
-  <div style="margin: 20px auto; padding: 10px 15px; background: linear-gradient(135deg, #0078d4 0%, #106ebe 100%); border-radius: 15px; color: white; text-align: center; max-width: 400px; border: 2px solid #ffffff20; box-shadow: 0 4px 15px rgba(0,120,212,0.3);">
-    <div style="font-size: 0.75em; font-weight: bold; margin-bottom: 3px;">Want to run this app?</div>
-    <div style="font-size: 0.65em; margin-bottom: 5px;">All the code is here!</div>
-    <div style="font-size: 0.6em; font-weight: normal; opacity: 0.9;">👇 Go to the "Getting Started" section below for step-by-step instructions</div>
-  </div>
-</div>
 
 ## **The How (Architecture)**
 

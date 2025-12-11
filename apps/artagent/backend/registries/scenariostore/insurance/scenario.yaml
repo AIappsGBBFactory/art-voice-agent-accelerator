@@ -13,6 +13,26 @@ agents:
   - AuthAgent
   - FraudAgent
 
+# Handoff behavior - default for unlisted routes
+handoff_type: announced
+
+# Handoff configurations - directed edges in the agent graph
+# Each handoff defines: FROM → TO via TOOL with TYPE (discrete/announced)
+handoffs:
+  # Auth routes to Fraud specialist
+  - from: AuthAgent
+    to: FraudAgent
+    tool: handoff_fraud_agent
+    type: announced           # Fraud is sensitive - always announce
+    share_context: true
+
+  # Fraud returns to Auth
+  - from: FraudAgent
+    to: AuthAgent
+    tool: handoff_to_auth
+    type: discrete            # Returning after fraud check - seamless
+    share_context: true
+
 # Agent defaults applied to all agents
 agent_defaults:
   company_name: "Insurance Services"
