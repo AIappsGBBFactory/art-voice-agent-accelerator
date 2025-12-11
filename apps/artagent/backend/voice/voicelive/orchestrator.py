@@ -47,6 +47,7 @@ from apps.artagent.backend.registries.toolstore import (
     initialize_tools,
     is_handoff_tool,
 )
+from apps.artagent.backend.registries.scenariostore.loader import get_handoff_config
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import build_handoff_system_vars, sanitize_handoff_context
 from apps.artagent.backend.voice.shared.session_state import (
@@ -949,6 +950,19 @@ class LiveOrchestrator:
                     except Exception:
                         logger.debug("[Handoff] Audio stop failed", exc_info=True)
 
+                # Get handoff config from scenario (if any)
+                scenario_name: str | None = None
+                if self._memo_manager:
+                    scenario_name = self._memo_manager.get_value_from_corememory(
+                        "scenario_name", None
+                    )
+                # Lookup handoff config by (from_agent, tool_name) for full context
+                handoff_cfg = get_handoff_config(scenario_name, self.active, name)
+
+                tool_span.set_attribute("voicelive.handoff.share_context", handoff_cfg.share_context)
+                tool_span.set_attribute("voicelive.handoff.greet_on_switch", handoff_cfg.greet_on_switch)
+                tool_span.set_attribute("voicelive.handoff.type", handoff_cfg.type)
+
                 # Use shared helper to build consistent handoff context
                 ctx = build_handoff_system_vars(
                     source_agent=self.active,
@@ -957,6 +971,8 @@ class LiveOrchestrator:
                     tool_args=args,
                     current_system_vars=self._system_vars,
                     user_last_utterance=last_user_message,
+                    share_context=handoff_cfg.share_context,
+                    greet_on_switch=handoff_cfg.greet_on_switch,
                 )
 
                 logger.info("[Handoff Tool] '%s' triggered | %s → %s", name, self.active, target)
@@ -1018,6 +1034,9 @@ class LiveOrchestrator:
                 )
                 previous_agent = self._system_vars.get("previous_agent", "previous agent")
 
+                # Get handoff mode from context (set by build_handoff_system_vars)
+                greet_on_switch = ctx.get("greet_on_switch", True)
+
                 # Schedule response trigger after a brief delay to let session settle.
                 # The new agent will respond naturally to the context.
                 async def _trigger_handoff_response():
@@ -1032,14 +1051,26 @@ class LiveOrchestrator:
                             ResponseCreateParams,
                         )
 
-                        # Give the new agent context about the handoff
-                        handoff_instruction = (
-                            f"You just received a transfer from {previous_agent}. "
-                            f'The customer\'s request: "{user_question}". '
-                            f"Briefly greet them and address their request directly."
-                        )
-                        if handoff_summary:
-                            handoff_instruction += f" Context: {handoff_summary}"
+                        # Build instruction based on handoff mode
+                        if greet_on_switch:
+                            # Announced mode: agent greets and acknowledges transfer
+                            handoff_instruction = (
+                                f"You just received a transfer from {previous_agent}. "
+                                f'The customer\'s request: "{user_question}". '
+                                f"Briefly greet them and address their request directly."
+                            )
+                            if handoff_summary:
+                                handoff_instruction += f" Context: {handoff_summary}"
+                        else:
+                            # Discrete mode: silent handoff, no announcement
+                            handoff_instruction = (
+                                f'The customer\'s request: "{user_question}". '
+                                f"Address their request directly. "
+                                f"Do NOT announce that you are a different agent or mention any transfer. "
+                                f"Continue the conversation naturally as if seamless."
+                            )
+                            if handoff_summary:
+                                handoff_instruction += f" Context: {handoff_summary}"
 
                         await self.conn.send(
                             ClientEventResponseCreate(
@@ -1049,7 +1080,7 @@ class LiveOrchestrator:
                             )
                         )
                         logger.info(
-                            "[Handoff] Triggered new agent '%s' to respond naturally", target
+                            "[Handoff] Triggered new agent '%s' | greet=%s", target, greet_on_switch
                         )
                     except Exception as e:
                         logger.warning("[Handoff] Failed to trigger response: %s", e)

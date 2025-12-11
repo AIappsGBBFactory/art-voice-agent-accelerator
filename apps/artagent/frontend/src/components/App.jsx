@@ -3632,23 +3632,27 @@ function RealTimeVoiceApp() {
                 }}
               >
                 <span style={styles.sessionTagIcon}>💬</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <div style={styles.sessionTagLabel}>Active Session</div>
-                  <code style={styles.sessionTagValue}>{sessionId}</code>
-                  <div style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "4px 8px",
-                    borderRadius: "10px",
-                    background: "rgba(79,70,229,0.08)",
-                    color: "#4338ca",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    textTransform: "capitalize",
-                  }}>
-                    {getSessionScenario()} · scenario
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={styles.sessionTagLabel}>Active Session</div>
+                    <span style={{
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      background: getSessionScenario() === 'banking' 
+                        ? "rgba(99,102,241,0.1)" 
+                        : "rgba(16,185,129,0.1)",
+                      color: getSessionScenario() === 'banking' 
+                        ? "#6366f1" 
+                        : "#10b981",
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.5px",
+                    }}>
+                      {getSessionScenario()}
+                    </span>
                   </div>
+                  <code style={styles.sessionTagValue}>{sessionId}</code>
                   {sessionUpdateError && !editingSessionId && (
                     <div style={{ color: "#dc2626", fontSize: "12px" }}>
                       {sessionUpdateError}
