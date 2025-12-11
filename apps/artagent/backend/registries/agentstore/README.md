@@ -38,9 +38,9 @@ agents/
 ### Loading Agents
 
 ```python
-from apps.artagent.backend.agents.loader import discover_agents, build_handoff_map
+from apps.artagent.backend.registries.agentstore import discover_agents, build_handoff_map
 
-# Discover all agents from the agents/ directory
+# Discover all agents from the registries/agentstore/ directory
 agents = discover_agents()
 
 # Build the handoff map (tool_name → target_agent)
@@ -62,7 +62,7 @@ tools = concierge.get_tools()
 ### Using the Tool Registry
 
 ```python
-from apps.artagent.backend.agents.tools import (
+from apps.artagent.backend.registries.toolstore import (
     initialize_tools,
     execute_tool,
     get_tools_for_agent,
@@ -136,7 +136,7 @@ The **SessionAgentManager** enables:
 ### Future Integration Example
 
 ```python
-from apps.artagent.backend.agents.session_manager import SessionAgentManager
+from apps.artagent.backend.registries.agentstore.session_manager import SessionAgentManager
 
 # Create manager for a session (future pattern)
 session_mgr = SessionAgentManager(
@@ -198,7 +198,7 @@ Before writing code, answer these questions:
 
 ```bash
 # Create the agent directory
-mkdir -p apps/artagent/backend/agents/my_new_agent
+mkdir -p apps/artagent/backend/registries/agentstore/my_new_agent
 ```
 
 ## Step 3: Create `agent.yaml`
@@ -208,7 +208,7 @@ The `agent.yaml` file defines your agent's identity, behavior, and capabilities.
 ### Minimal Configuration
 
 ```yaml
-# agents/my_new_agent/agent.yaml
+# registries/agentstore/my_new_agent/agent.yaml
 name: MyNewAgent
 description: Brief description of what this agent does
 
@@ -617,7 +617,7 @@ tools:
 ### Verify Agent Loads
 
 ```python
-from apps.artagent.backend.agents.loader import discover_agents, build_handoff_map
+from apps.artagent.backend.registries.agentstore import discover_agents, build_handoff_map
 
 # Check agent is discovered
 agents = discover_agents()
@@ -656,7 +656,7 @@ assert "John Smith" in prompt
 
 ```python
 import pytest
-from apps.artagent.backend.agents.tools import initialize_tools, execute_tool
+from apps.artagent.backend.registries.toolstore import initialize_tools, execute_tool
 
 @pytest.mark.asyncio
 async def test_handoff_to_my_new_agent():
@@ -758,9 +758,9 @@ Tools are the actions agents can take. They follow OpenAI's function calling for
 ## Step 2: Define Schema and Executor
 
 ```python
-# agents/tools/banking.py
+# registries/toolstore/banking.py
 
-from apps.artagent.backend.agents.tools.registry import register_tool
+from apps.artagent.backend.registries.toolstore.registry import register_tool
 
 # 1. Schema (OpenAI function calling format)
 calculate_loan_payment_schema: Dict[str, Any] = {
@@ -847,9 +847,9 @@ register_tool(
 For tools unique to a single agent, create `tools.py` in the agent directory:
 
 ```python
-# agents/my_agent/tools.py
+# registries/agentstore/my_agent/tools.py
 
-from apps.artagent.backend.agents.tools.registry import register_tool
+from apps.artagent.backend.registries.toolstore.registry import register_tool
 
 # This file is auto-loaded when the agent is loaded
 # Tools registered here can override shared tools if needed
@@ -1026,7 +1026,7 @@ handoff_fraud_agent({
 
 ```python
 import pytest
-from apps.artagent.backend.agents.loader import discover_agents, build_handoff_map
+from apps.artagent.backend.registries.agentstore import discover_agents, build_handoff_map
 
 def test_all_agents_load():
     """Verify all agents can be discovered and loaded."""
@@ -1045,7 +1045,7 @@ def test_handoff_map_complete():
 
 def test_agent_tools_exist():
     """Verify all referenced tools are registered."""
-    from apps.artagent.backend.agents.tools import initialize_tools, get_tool_schema
+    from apps.artagent.backend.registries.toolstore import initialize_tools, get_tool_schema
     initialize_tools()
     
     agents = discover_agents()
@@ -1069,7 +1069,7 @@ def test_prompts_render():
 @pytest.mark.asyncio
 async def test_tool_execution():
     """Test that tools execute correctly."""
-    from apps.artagent.backend.agents.tools import initialize_tools, execute_tool
+    from apps.artagent.backend.registries.toolstore import initialize_tools, execute_tool
     initialize_tools()
     
     result = await execute_tool("get_account_summary", {"client_id": "CLT-001"})
@@ -1079,7 +1079,7 @@ async def test_tool_execution():
 @pytest.mark.asyncio
 async def test_handoff_execution():
     """Test handoff tool returns correct payload."""
-    from apps.artagent.backend.agents.tools import initialize_tools, execute_tool
+    from apps.artagent.backend.registries.toolstore import initialize_tools, execute_tool
     initialize_tools()
     
     result = await execute_tool("handoff_fraud_agent", {
@@ -1115,19 +1115,19 @@ agents = discover_agents()
 
 ```python
 # Verify tool is registered
-from apps.artagent.backend.agents.tools import initialize_tools, list_tools
+from apps.artagent.backend.registries.toolstore import initialize_tools, list_tools
 initialize_tools()
 print(list_tools())  # Should include your tool
 
 # Check for import errors
-from apps.artagent.backend.agents.tools import banking  # Should not error
+from apps.artagent.backend.registries.toolstore import banking  # Should not error
 ```
 
 ### Handoff Not Working
 
 ```python
 # Verify handoff map
-from apps.artagent.backend.agents.loader import discover_agents, build_handoff_map
+from apps.artagent.backend.registries.agentstore import discover_agents, build_handoff_map
 agents = discover_agents()
 handoff_map = build_handoff_map(agents)
 print(handoff_map)  # Should map tool name → agent name

@@ -203,7 +203,7 @@ AZURE_COSMOS_COLLECTION_NAME: str = os.getenv("AZURE_COSMOS_COLLECTION_NAME", ""
 # ==============================================================================
 # NOTE: Per-agent voice settings are now defined in each agent's agent.yaml.
 # These settings provide fallback defaults used by legacy code paths.
-# See: apps/artagent/backend/agents/<agent_name>/agent.yaml
+# See: apps/artagent/backend/registries/agentstore/<agent_name>/agent.yaml
 # ==============================================================================
 
 # Fallback TTS voice (used when agent voice is not available)

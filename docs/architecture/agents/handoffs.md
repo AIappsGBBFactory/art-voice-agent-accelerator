@@ -3,266 +3,422 @@
 > **Navigation**: [Architecture](../README.md) | [Orchestration](../orchestration/README.md) | [Agent Framework](README.md)
 
 This document explains the **agent handoff system** in the ART Voice Agent Accelerator—how specialized agents transfer conversations to each other seamlessly across both orchestrator modes.
-
+!!! example "See It In Practice"
+    These concepts are demonstrated in the [Industry Solutions](../../industry/README.md):
+    
+    - **[Banking](../../industry/banking.md)** — Discrete handoffs for seamless specialist routing
+    - **[Insurance](../../industry/insurance.md)** — Announced handoffs for security-first authentication
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Architecture Diagram](#architecture-diagram)
-3. [Handoff Mechanisms](#handoff-mechanisms)
-   - [Tool-Based Handoffs](#tool-based-handoffs)
-   - [Handoff Map (Dynamic Discovery)](#handoff-map-dynamic-discovery)
-4. [Orchestrator Integration](#orchestrator-integration)
-5. [Flow Diagrams](#flow-diagrams)
-6. [Implementation Guide](#implementation-guide)
-7. [Configuration Reference](#configuration-reference)
+2. [Architecture: Scenario-Driven Handoffs](#architecture-scenario-driven-handoffs)
+3. [How Scenarios Define Handoffs](#how-scenarios-define-handoffs)
+4. [Handoff Types](#handoff-types)
+5. [Agent Configuration (Simplified)](#agent-configuration-simplified)
+6. [Orchestrator Integration](#orchestrator-integration)
+7. [Flow Diagrams](#flow-diagrams)
+8. [Implementation Guide](#implementation-guide)
+9. [Configuration Reference](#configuration-reference)
 
 ---
 
 ## Overview
 
 In multi-agent voice systems, **handoffs** allow specialized agents to transfer conversations to each other. For example:
-- A concierge agent (`EricaConcierge`) might transfer to a fraud specialist (`FraudAgent`)
-- An investment advisor might escalate to compliance (`ComplianceDesk`)
+- A concierge agent routes to a fraud specialist when the customer reports suspicious activity
+- An investment advisor escalates to compliance for regulatory questions
 
-The handoff system uses **tool-based detection** with a **dynamically-built handoff map**:
+### The New Model: Scenario-Driven Handoffs
 
-| Component | Purpose | Location |
-|-----------|---------|----------|
-| **`build_handoff_map()`** | Builds tool_name→agent_name map from YAML | `agents/loader.py` |
-| **`is_handoff_tool()`** | Checks if a tool triggers agent switch | `agents/tools/registry.py` |
-| **`HandoffContext`** | Context data passed during transitions | `voice/handoffs/context.py` |
-| **`HandoffResult`** | Result signaling success/failure | `voice/handoffs/context.py` |
+Previously, handoff routing was embedded within each agent's configuration. This created tight coupling—changing handoff behavior required modifying multiple agent files.
 
-Both orchestrators (Cascade and VoiceLive) share the same handoff infrastructure.
+**Now, handoffs are defined at the scenario level**, providing:
+
+| Benefit | Description |
+|---------|-------------|
+| **Modularity** | Agents focus on capabilities; scenarios handle orchestration |
+| **Reusability** | Same agent behaves differently in banking vs. insurance scenarios |
+| **Contextual Behavior** | Handoff can be "announced" or "discrete" depending on scenario |
+| **Single Source of Truth** | One file defines all handoff routes for a use case |
+
+```mermaid
+flowchart LR
+    subgraph Before["❌ Before: Agent-Embedded"]
+        A1[Agent A] -->|"hardcoded routes"| A2[Agent B]
+        A1 -->|"hardcoded routes"| A3[Agent C]
+    end
+    
+    subgraph After["✅ After: Scenario-Driven"]
+        S[Scenario] -->|"defines routes"| B1[Agent A]
+        S -->|"defines routes"| B2[Agent B]
+        S -->|"defines routes"| B3[Agent C]
+    end
+```
 
 ---
 
-## Architecture Diagram
+## Architecture: Scenario-Driven Handoffs
+
+### Component Overview
+
+| Component | Purpose | Location |
+|-----------|---------|----------|
+| **Scenario YAML** | Defines handoff routes as directed graph edges | `registries/scenariostore/<name>/` |
+| **`ScenarioConfig`** | Parses scenario and builds handoff configurations | `scenariostore/loader.py` |
+| **`HandoffConfig`** | Represents a single handoff route (from → to) | `scenariostore/loader.py` |
+| **`build_handoff_map_from_scenario()`** | Creates tool→agent routing map from scenario | `scenariostore/loader.py` |
+| **`get_handoff_config()`** | Looks up handoff behavior for a specific route | `scenariostore/loader.py` |
+
+### Architecture Diagram
 
 ```mermaid
 flowchart TB
-    subgraph Handlers["Transport Layer"]
-        VLH["VoiceLive Handler"]
-        SCH["SpeechCascade Handler"]
+    subgraph Scenario["Scenario Configuration"]
+        yaml["orchestration.yaml<br/>handoffs: [from, to, tool, type]"]
     end
-
+    
+    subgraph Loader["Scenario Loader"]
+        config["ScenarioConfig"]
+        handoffMap["build_handoff_map()<br/>tool → agent"]
+        handoffLookup["get_handoff_config()<br/>from + tool → behavior"]
+    end
+    
     subgraph Orchestrators["Orchestrator Layer"]
         VLO["LiveOrchestrator"]
         SCO["CascadeOrchestrator"]
     end
-
-    subgraph Context["Context Management"]
-        HM["handoff_map<br/>tool → agent routing"]
-        HC["HandoffContext<br/>source, target, reason"]
-        BH["build_handoff_system_vars()<br/>preserves session state"]
+    
+    subgraph Agents["Agent Layer"]
+        AgentA["Agent A<br/>(no routing logic)"]
+        AgentB["Agent B<br/>(no routing logic)"]
     end
 
-    VLH --> VLO
-    SCH --> SCO
-    VLO -->|"detects handoff tool"| HM
-    SCO -->|"detects handoff tool"| HM
-    HM -->|"triggers"| HC
-    HC -->|"builds"| BH
-    BH -->|"injects into new agent"| Orchestrators
+    yaml --> config
+    config --> handoffMap
+    config --> handoffLookup
+    handoffMap --> VLO
+    handoffMap --> SCO
+    handoffLookup --> VLO
+    handoffLookup --> SCO
+    VLO --> AgentA
+    VLO --> AgentB
+    SCO --> AgentA
+    SCO --> AgentB
 ```
 
-> **Key Insight**: The orchestrator handles all handoff mechanics—developers only define `handoff.trigger` in YAML and the context flows automatically.
-
-### Source Files
-
-| Component | File | Description |
-|-----------|------|-------------|
-| **VoiceLiveHandler** | `voice/voicelive/handler.py` | Bridges ACS media streams to multi-agent orchestration |
-| **LiveOrchestrator** | `voice/voicelive/orchestrator.py` | Orchestrates agent switching and tool execution for VoiceLive |
-| **SpeechCascadeHandler** | `voice/speech_cascade/handler.py` | Three-thread architecture for low-latency voice |
-| **CascadeOrchestratorAdapter** | `voice/speech_cascade/orchestrator.py` | Integrates unified agents with SpeechCascade |
+> **Key Insight**: Agents no longer contain routing logic—they simply declare their `handoff.trigger` (the tool name that activates them). The scenario defines which agents can call which handoff tools and how the transition should behave.
 
 ---
 
-## Handoff Mechanisms
+## How Scenarios Define Handoffs
 
-### Tool-Based Handoffs
+Scenarios define handoffs as **directed edges** in an agent graph. Each edge specifies:
+- **FROM**: The source agent initiating the handoff
+- **TO**: The target agent receiving the handoff
+- **TOOL**: The tool name that triggers this route
+- **TYPE**: How the transition should behave (announced vs discrete)
 
-Both orchestrators use **tool-based handoffs** where the LLM calls a handoff function that the orchestrator intercepts to trigger an agent switch.
+### Example: Banking Scenario
+
+```yaml
+# registries/scenariostore/banking/orchestration.yaml
+
+name: banking
+description: Private banking customer service
+
+# Starting agent
+start_agent: Concierge
+
+# Agents included in this scenario
+agents:
+  - Concierge
+  - AuthAgent
+  - InvestmentAdvisor
+  - CardRecommendation
+
+# Default handoff behavior for unlisted routes
+handoff_type: announced
+
+# Handoff configurations - directed edges in the agent graph
+handoffs:
+  # Concierge routes to specialists
+  - from: Concierge
+    to: AuthAgent
+    tool: handoff_to_auth
+    type: announced           # Auth is sensitive - always greet
+
+  - from: Concierge
+    to: InvestmentAdvisor
+    tool: handoff_investment_advisor
+    type: discrete            # Seamless handoff
+    share_context: true
+
+  - from: Concierge
+    to: CardRecommendation
+    tool: handoff_card_recommendation
+    type: discrete            # Seamless handoff
+
+  # Specialists return to Concierge
+  - from: InvestmentAdvisor
+    to: Concierge
+    tool: handoff_concierge
+    type: discrete            # Returning - seamless
+
+  - from: CardRecommendation
+    to: Concierge
+    tool: handoff_concierge
+    type: discrete            # Returning - seamless
+
+# Template variables applied to all agents
+agent_defaults:
+  company_name: "Private Banking"
+  industry: "banking"
+```
+
+### Example: Insurance Scenario
+
+The same agents can behave differently in a different scenario:
+
+```yaml
+# registries/scenariostore/insurance/scenario.yaml
+
+name: insurance
+description: Insurance claims and policy management
+
+start_agent: AuthAgent     # Different starting point!
+
+agents:
+  - AuthAgent
+  - FraudAgent
+
+handoffs:
+  - from: AuthAgent
+    to: FraudAgent
+    tool: handoff_fraud_agent
+    type: announced           # Fraud is sensitive - announce
+
+  - from: FraudAgent
+    to: AuthAgent
+    tool: handoff_to_auth
+    type: discrete            # Returning - seamless
+
+agent_defaults:
+  company_name: "Insurance Services"
+  industry: "insurance"
+```
+
+### Handoff Graph Visualization
 
 ```mermaid
-sequenceDiagram
-    participant U as User
-    participant C as Concierge
-    participant O as Orchestrator
-    participant F as FraudAgent
-
-    U->>C: "My card was stolen"
-    Note over C: LLM selects handoff tool
-    C->>O: handoff_fraud_agent(reason, context)
-    
-    rect rgb(240, 248, 255)
-        Note over O: ORCHESTRATOR HANDLES:
-        Note over O: 1. Detect via handoff_map
-        Note over O: 2. Build HandoffContext
-        Note over O: 3. Preserve session state
-        Note over O: 4. Switch active agent
+flowchart LR
+    subgraph Banking["Banking Scenario"]
+        BC[Concierge] -->|"announced"| BA[AuthAgent]
+        BC -->|"discrete"| BI[InvestmentAdvisor]
+        BC -->|"discrete"| BR[CardRecommendation]
+        BI -->|"discrete"| BC
+        BR -->|"discrete"| BC
     end
     
-    O->>F: Apply session + context
-    Note over F: Receives: reason, profile,<br/>last utterance, caller info
-    F-->>U: "I'm the fraud specialist..."
+    subgraph Insurance["Insurance Scenario"]
+        IA[AuthAgent] -->|"announced"| IF[FraudAgent]
+        IF -->|"discrete"| IA
+    end
 ```
 
-### Handoff Map (Dynamic Discovery)
+---
 
-The handoff map is built **dynamically from agent YAML declarations** at startup:
+## Handoff Types
 
-```python title="apps/artagent/backend/agents/loader.py"
-def build_handoff_map(agents: Dict[str, UnifiedAgent]) -> Dict[str, str]:
-    """
-    Build handoff map from agent declarations.
+Scenarios support two handoff types that control the user experience:
 
-    Each agent can declare a `handoff.trigger` which is the tool name
-    that other agents use to transfer to this agent.
+### Announced Handoffs
 
-    Returns:
-        Dict of tool_name → agent_name
-    """
-    handoff_map: Dict[str, str] = {}
+The target agent **greets the user**, making the transition explicit:
 
-    for agent in agents.values():
-        if agent.handoff.trigger:
-            handoff_map[agent.handoff.trigger] = agent.name
-
-    return handoff_map
+```yaml
+- from: Concierge
+  to: AuthAgent
+  tool: handoff_to_auth
+  type: announced
 ```
 
-**Agent YAML configuration** (declaring the trigger):
+**User Experience:**
+> **Concierge**: "Let me connect you with our authentication team."  
+> **AuthAgent**: "I need to verify your identity before we continue. Let's get you authenticated."
 
-```yaml title="apps/artagent/backend/agents/fraud_agent/agent.yaml"
-agent:
-  name: FraudAgent
-  description: Specialist for fraud and security concerns
+**Use Cases:**
+- Sensitive operations (authentication, fraud)
+- Clear departmental transitions
+- When user should know they're speaking to a specialist
 
+### Discrete Handoffs
+
+The target agent **continues naturally** without an explicit greeting:
+
+```yaml
+- from: Concierge
+  to: InvestmentAdvisor
+  tool: handoff_investment_advisor
+  type: discrete
+```
+
+**User Experience:**
+> **Concierge**: "I'll help you with your retirement accounts."  
+> **InvestmentAdvisor**: "Looking at your 401k, I see you have..."
+
+**Use Cases:**
+- Seamless specialist routing
+- Returning to a previous agent
+- When continuity matters more than acknowledgment
+
+### Context Sharing
+
+The `share_context` flag controls whether conversation context flows to the target:
+
+```yaml
+- from: Concierge
+  to: FraudAgent
+  tool: handoff_fraud_agent
+  type: announced
+  share_context: true    # Default: true
+```
+
+When `true`, the target agent receives:
+- `handoff_reason` — Why the handoff occurred
+- `user_last_utterance` — What the user just said
+- `session_profile` — Customer information
+- `handoff_context` — Custom data from the source agent
+
+---
+
+## Agent Configuration (Simplified)
+
+With scenario-driven handoffs, **agents become simpler**. They only need to declare:
+1. Their `handoff.trigger` — the tool name that activates them
+2. Their greeting/return_greeting — what to say on arrival
+3. Their tools — including handoff tools they can call
+
+### Example: Simplified Agent YAML
+
+```yaml
+# registries/agentstore/fraud_agent/agent.yaml
+
+name: FraudAgent
+description: Post-authentication fraud detection specialist
+
+# Greetings - used when handoff type is "announced"
+greeting: "You are now speaking with the Fraud Prevention desk. How can I help?"
+return_greeting: "Welcome back to the Fraud Prevention desk."
+
+# Handoff trigger - how other agents route TO this agent
 handoff:
-  trigger: handoff_fraud_agent  # Other agents call this tool to route here
-  enabled: true
+  trigger: handoff_fraud_agent
 
-# The tool definition that routes to this agent
-handoff_tools:
-  - name: handoff_fraud_agent
-    description: Transfer to fraud specialist for suspicious activity
-    parameters:
-      type: object
-      properties:
-        reason:
-          type: string
-          description: Why the handoff is needed
-        caller_name:
-          type: string
-          description: Customer's name for personalization
-      required: [reason]
+# Tools this agent can use (including handoffs to other agents)
+tools:
+  - analyze_recent_transactions
+  - check_suspicious_activity
+  - block_card_emergency
+  - create_fraud_case
+  - handoff_concierge        # Can return to concierge
+  - handoff_to_auth          # Can route to auth if needed
+  - escalate_human
+
+# Voice, model, prompt configuration...
+voice:
+  name: en-US-OnyxTurboMultilingualNeural
+
+prompt: prompt.jinja
 ```
 
-**Checking if a tool is a handoff**:
+### What Changed?
 
-```python title="apps/artagent/backend/agents/tools/registry.py"
-def is_handoff_tool(name: str) -> bool:
-    """Check if a tool triggers agent handoff."""
-    defn = _TOOL_DEFINITIONS.get(name)
-    return defn.is_handoff if defn else False
-```
+| Before (Agent-Embedded) | After (Scenario-Driven) |
+|------------------------|------------------------|
+| Agent defines WHERE it can route | Agent lists tools it CAN call |
+| Agent defines HOW handoffs behave | Scenario defines handoff behavior |
+| Changing routes = edit agent YAML | Changing routes = edit scenario YAML |
+| Same agent, same behavior everywhere | Same agent, contextual behavior |
+
+### Agents Focus on Capabilities
+
+Agents now focus on:
+- ✅ What they're good at (description, prompt)
+- ✅ What tools they need (tools list)
+- ✅ How they sound (voice, greetings)
+- ✅ Their identity (handoff.trigger)
+
+Agents don't need to know:
+- ❌ Which agents they'll work with
+- ❌ Whether handoffs should be announced or discrete
+- ❌ The overall conversation flow
 
 ---
 
 ## Orchestrator Integration
 
-### VoiceLive Orchestrator
+Both orchestrators use the scenario-based handoff map and configuration:
 
-In `LiveOrchestrator`, handoffs happen via the event loop when a function call is detected:
+### Initialization
 
-```python title="apps/artagent/backend/voice/voicelive/orchestrator.py"
-async def _execute_tool_call(self, call_id: str, name: str, args: Dict[str, Any]) -> None:
-    """Execute a tool call from the realtime API."""
-    
+```python
+from registries.scenariostore.loader import (
+    build_handoff_map_from_scenario,
+    get_handoff_config,
+)
+
+# Build handoff routing from scenario
+handoff_map = build_handoff_map_from_scenario(scenario_name)
+# → {"handoff_fraud_agent": "FraudAgent", "handoff_concierge": "Concierge", ...}
+```
+
+### During Tool Execution
+
+```python
+async def _execute_tool_call(self, name: str, args: Dict[str, Any]) -> None:
     # Check if this is a handoff tool
-    if self._handoff_map.get(name):
-        target_agent = self._handoff_map[name]
-        
-        # Build handoff context using helper
-        system_vars = build_handoff_system_vars(
-            source_agent=self._active_agent_name,
-            target_agent=target_agent,
-            tool_result=result,
-            tool_args=args,
-            current_system_vars=self._current_system_vars,
-            user_last_utterance=self._last_user_utterance,
+    target_agent = self._handoff_map.get(name)
+    if target_agent:
+        # Get handoff configuration from scenario
+        handoff_cfg = get_handoff_config(
+            scenario_name=self._scenario_name,
+            from_agent=self._active_agent_name,
+            tool_name=name,
         )
         
-        # Execute the switch
-        await self._switch_to(target_agent, system_vars)
+        # Determine greeting behavior
+        should_greet = handoff_cfg.greet_on_switch  # True if "announced"
+        
+        # Execute the switch with appropriate behavior
+        await self._switch_to(
+            target_agent,
+            system_vars,
+            greet=should_greet,
+        )
         return
     
     # Otherwise execute as business tool
     result = await execute_tool(name, args)
-    # ...
 ```
 
-### Cascade Orchestrator
+### VoiceLive vs Cascade
 
-In `CascadeOrchestratorAdapter`, handoffs happen within the tool-call loop:
+Both orchestrators share the same handoff infrastructure:
 
-```python title="apps/artagent/backend/voice/speech_cascade/orchestrator.py"
-async def _execute_tool_call(self, call: ChatCompletionMessageToolCall) -> Tuple[Dict, bool]:
-    """Execute tool call, returning (result, is_handoff)."""
-    name = call.function.name
-    args = json.loads(call.function.arguments)
-    
-    # Check if handoff tool
-    if self._handoff_map.get(name):
-        target_agent = self._handoff_map[name]
-        result = await execute_tool(name, args)
-        
-        # Store handoff state for next turn
-        self._state[StateKeys.PENDING_HANDOFF] = target_agent
-        self._state[StateKeys.HANDOFF_CONTEXT] = result
-        
-        return result, True  # Signal handoff occurred
-    
-    # Execute business tool
-    result = await execute_tool(name, args)
-    return result, False
-```
-
-### Shared Handoff Context Builder
-
-Both orchestrators use the shared `build_handoff_system_vars()` helper:
-
-```python title="apps/artagent/backend/voice/handoffs/context.py"
-def build_handoff_system_vars(
-    *,
-    source_agent: str,
-    target_agent: str,
-    tool_result: Dict[str, Any],
-    tool_args: Dict[str, Any],
-    current_system_vars: Dict[str, Any],
-    user_last_utterance: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Build system_vars dict for agent handoff from tool result and session state.
-    
-    This shared logic ensures consistent handoff context across orchestrators:
-    1. Extracts and sanitizes handoff_context from tool result
-    2. Builds handoff_reason from multiple fallback sources
-    3. Carries forward key session variables (profile, client_id, etc.)
-    4. Applies session_overrides if present
-    """
-    # ... implementation
-```
+| Aspect | VoiceLive | Cascade |
+|--------|-----------|---------|
+| Detection | Event loop intercepts tool calls | Tool-call loop checks handoff_map |
+| Context | `build_handoff_system_vars()` | Same helper function |
+| Switch | `await self._switch_to()` | State stored, applied next turn |
+| Greeting | Session update triggers TTS | TTS queue receives greeting |
 
 ---
 
 ## Flow Diagrams
 
-### Complete Handoff Lifecycle
+### Complete Handoff Lifecycle (Scenario-Driven)
 
 ```mermaid
 flowchart TD
@@ -270,20 +426,22 @@ flowchart TD
         A["User: 'My card was stolen'"]
     end
     
-    subgraph Agent["Active Agent"]
-        B["LLM selects handoff tool"]
+    subgraph Agent["Active Agent (Concierge)"]
+        B["LLM selects handoff_fraud_agent tool"]
     end
     
-    subgraph Orch["Orchestrator - Context Management"]
-        C["Detect: handoff_map lookup"]
-        D["Build: HandoffContext"]
-        E["Preserve: session_profile, client_id"]
-        F["Switch: load new agent + inject context"]
+    subgraph Orch["Orchestrator"]
+        C["1. Lookup: handoff_map['handoff_fraud_agent']"]
+        D["2. Config: get_handoff_config(scenario, from, tool)"]
+        E["3. Build: HandoffContext with shared data"]
+        F["4. Switch: load FraudAgent + inject context"]
+        G{"type == 'announced'?"}
     end
     
-    subgraph Target["Target Agent"]
-        G["Receives full context"]
-        H["Responds with awareness"]
+    subgraph Target["Target Agent (FraudAgent)"]
+        H["Receives full context"]
+        I["Greets: 'You're now speaking with...'"]
+        J["Responds naturally (no greeting)"]
     end
 
     A --> B
@@ -292,7 +450,10 @@ flowchart TD
     D --> E
     E --> F
     F --> G
-    G --> H
+    G -->|Yes| I
+    G -->|No| J
+    I --> H
+    J --> H
 ```
 
 **Context preserved through handoffs:**
@@ -331,130 +492,256 @@ sequenceDiagram
 
 ## Implementation Guide
 
-### Adding a New Handoff Target
+### Adding a New Agent to a Scenario
 
-1. **Create the target agent YAML** with a `handoff.trigger`:
+With scenario-driven handoffs, adding a new agent involves three steps:
 
-```yaml title="apps/artagent/backend/agents/new_specialist/agent.yaml"
-agent:
-  name: NewSpecialistAgent
-  description: Specialist for new domain
+#### Step 1: Create the Agent
 
+```yaml
+# registries/agentstore/new_specialist/agent.yaml
+
+name: NewSpecialistAgent
+description: Specialist for new domain
+
+greeting: "Hi, I'm the new specialist. How can I help?"
+return_greeting: "Welcome back. What else can I help with?"
+
+# Define how other agents route TO this agent
 handoff:
-  trigger: handoff_new_specialist  # Tool name that routes here
-  enabled: true
-  
-greeting: "Hi, I'm the new specialist. I understand you need help with..."
-return_greeting: "Welcome back to new specialist support."
+  trigger: handoff_new_specialist
 
-prompts:
-  path: new_specialist.jinja
-
-# Optional: Define the handoff tool schema if you want custom parameters
-handoff_tools:
-  - name: handoff_new_specialist
-    description: Transfer to the new specialist
-    parameters:
-      type: object
-      properties:
-        reason:
-          type: string
-          description: Why handoff is needed
-        details:
-          type: string
-          description: Additional context
-      required: [reason]
-
+# Tools this agent can use
 tools:
   - some_specialist_tool
+  - handoff_concierge        # Can return to main agent
+
+voice:
+  name: en-US-ShimmerTurboMultilingualNeural
+
+prompt: prompt.jinja
 ```
 
-2. **Add the handoff tool to source agents**:
+#### Step 2: Register the Handoff Tool
 
-```yaml title="apps/artagent/backend/agents/concierge/agent.yaml"
-tools:
-  # ... other tools
-  - handoff_new_specialist  # Now this agent can transfer
-```
+```python
+# registries/toolstore/handoffs.py
 
-3. **Register the tool executor** (if it does anything special):
-
-```python title="apps/artagent/backend/agents/tools/registry.py"
 @register_tool(
     name="handoff_new_specialist",
-    description="Transfer to the new specialist",
-    is_handoff=True,  # Mark as handoff tool
+    description="Transfer to the new specialist for domain expertise",
+    is_handoff=True,
 )
 async def handoff_new_specialist(reason: str, details: str = "") -> Dict[str, Any]:
-    """Handoff to new specialist with context."""
     return {
         "success": True,
-        "handoff_context": {
-            "reason": reason,
-            "details": details,
-        },
+        "handoff_context": {"reason": reason, "details": details},
         "handoff_summary": f"Transferring to specialist: {reason}",
     }
 ```
 
-4. **Create the prompt template**:
+#### Step 3: Add to Scenario
 
-```jinja title="apps/artagent/backend/agents/new_specialist/new_specialist.jinja"
-You are a specialist in the new domain.
+```yaml
+# registries/scenariostore/banking/orchestration.yaml
 
-{{#if previous_agent}}
-The customer was transferred from {{previous_agent}}.
-{{#if handoff_reason}}
-Transfer reason: {{handoff_reason}}
-{{/if}}
-{{#if user_last_utterance}}
-Their last message: "{{user_last_utterance}}"
-{{/if}}
-{{/if}}
+agents:
+  - Concierge
+  - NewSpecialistAgent     # Add the new agent
 
-{{#if session_profile}}
-Customer: {{session_profile.name}}
-{{/if}}
+handoffs:
+  # ... existing handoffs ...
+  
+  # Add handoff routes for new agent
+  - from: Concierge
+    to: NewSpecialistAgent
+    tool: handoff_new_specialist
+    type: announced            # Or "discrete" for seamless
+
+  - from: NewSpecialistAgent
+    to: Concierge
+    tool: handoff_concierge
+    type: discrete             # Returning - usually seamless
 ```
 
-### Testing Handoffs
+#### Step 4: Update Source Agent's Tools
 
-```python title="tests/test_handoff.py"
+```yaml
+# registries/agentstore/concierge/agent.yaml
+
+tools:
+  # ... existing tools ...
+  - handoff_new_specialist   # Now Concierge can route here
+```
+
+### Creating a New Scenario
+
+To create a new scenario with custom handoff behavior:
+
+```yaml
+# registries/scenariostore/healthcare/scenario.yaml
+
+name: healthcare
+description: Healthcare customer service
+
+start_agent: ReceptionAgent
+
+agents:
+  - ReceptionAgent
+  - NurseAgent
+  - BillingAgent
+
+handoff_type: announced     # Default for all handoffs
+
+handoffs:
+  # Reception routes to specialists
+  - from: ReceptionAgent
+    to: NurseAgent
+    tool: handoff_nurse
+    type: announced
+    
+  - from: ReceptionAgent
+    to: BillingAgent
+    tool: handoff_billing
+    type: discrete          # Billing is less formal
+    
+  # Specialists return to reception
+  - from: NurseAgent
+    to: ReceptionAgent
+    tool: handoff_reception
+    type: discrete
+    
+  - from: BillingAgent
+    to: ReceptionAgent
+    tool: handoff_reception
+    type: discrete
+
+agent_defaults:
+  company_name: "City Health Clinic"
+  industry: "healthcare"
+  hipaa_compliant: true
+```
+
+### Testing Scenario-Based Handoffs
+
+```python
+# tests/test_scenario_handoffs.py
 import pytest
-from apps.artagent.backend.agents import discover_agents, build_handoff_map
+from registries.scenariostore.loader import (
+    load_scenario,
+    build_handoff_map_from_scenario,
+    get_handoff_config,
+)
 
-def test_handoff_map_includes_new_agent():
-    agents = discover_agents()
-    handoff_map = build_handoff_map(agents)
+def test_scenario_handoff_map():
+    handoff_map = build_handoff_map_from_scenario("banking")
     
-    assert "handoff_new_specialist" in handoff_map
-    assert handoff_map["handoff_new_specialist"] == "NewSpecialistAgent"
+    assert handoff_map["handoff_fraud_agent"] == "FraudAgent"
+    assert handoff_map["handoff_concierge"] == "Concierge"
 
-def test_handoff_context_building():
-    from apps.artagent.backend.voice.handoffs import build_handoff_system_vars
-    
-    ctx = build_handoff_system_vars(
-        source_agent="Concierge",
-        target_agent="NewSpecialistAgent",
-        tool_result={"handoff_summary": "customer needs specialist"},
-        tool_args={"reason": "domain expertise needed"},
-        current_system_vars={"session_profile": {"name": "John"}},
-        user_last_utterance="I need help with this",
+def test_handoff_config_lookup():
+    cfg = get_handoff_config(
+        scenario_name="banking",
+        from_agent="Concierge",
+        tool_name="handoff_investment_advisor",
     )
     
-    assert ctx["previous_agent"] == "Concierge"
-    assert ctx["active_agent"] == "NewSpecialistAgent"
-    assert ctx["handoff_reason"] == "customer needs specialist"
-    assert ctx["session_profile"]["name"] == "John"
+    assert cfg.to_agent == "InvestmentAdvisor"
+    assert cfg.type == "discrete"
+    assert cfg.greet_on_switch == False
+
+def test_announced_vs_discrete():
+    # Auth handoff should be announced
+    auth_cfg = get_handoff_config("banking", "Concierge", "handoff_to_auth")
+    assert auth_cfg.type == "announced"
+    assert auth_cfg.greet_on_switch == True
+    
+    # Investment handoff should be discrete
+    invest_cfg = get_handoff_config("banking", "Concierge", "handoff_investment_advisor")
+    assert invest_cfg.type == "discrete"
+    assert invest_cfg.greet_on_switch == False
 ```
 
 ---
 
 ## Configuration Reference
 
+### ScenarioConfig
+
+The main configuration object for scenarios:
+
+```python
+@dataclass
+class ScenarioConfig:
+    name: str                                    # Scenario identifier
+    description: str = ""                        # Human-readable description
+    agents: list[str] = field(...)               # Agents included (empty = all)
+    start_agent: str | None = None               # Initial agent
+    handoff_type: str = "announced"              # Default: "announced" or "discrete"
+    handoffs: list[HandoffConfig] = field(...)   # Handoff route definitions
+    agent_defaults: AgentOverride | None = None  # Global template vars
+    global_template_vars: dict[str, Any] = field(...)  # Template variables
+```
+
+### HandoffConfig
+
+Represents a single handoff route (directed edge):
+
+```python
+@dataclass
+class HandoffConfig:
+    from_agent: str = ""           # Source agent initiating handoff
+    to_agent: str = ""             # Target agent receiving handoff
+    tool: str = ""                 # Tool name that triggers this route
+    type: str = "announced"        # "discrete" or "announced"
+    share_context: bool = True     # Pass conversation context?
+
+    @property
+    def greet_on_switch(self) -> bool:
+        """Returns True if type is 'announced'."""
+        return self.type == "announced"
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `from_agent` | `str` | `""` | Agent initiating the handoff |
+| `to_agent` | `str` | `""` | Agent receiving the handoff |
+| `tool` | `str` | `""` | Tool name that triggers this route |
+| `type` | `str` | `"announced"` | Handoff behavior: `"announced"` or `"discrete"` |
+| `share_context` | `bool` | `True` | Whether to pass conversation context |
+
+### Scenario YAML Schema
+
+```yaml
+# scenario.yaml or orchestration.yaml
+
+name: string                    # Required: unique identifier
+description: string             # Optional: human-readable description
+
+start_agent: string             # Optional: initial agent name
+agents: [string]                # Optional: list of agent names (empty = all)
+
+handoff_type: string            # Optional: default "announced" or "discrete"
+
+handoffs:                       # List of handoff route definitions
+  - from: string                # Required: source agent name
+    to: string                  # Required: target agent name
+    tool: string                # Required: handoff tool name
+    type: string                # Optional: "announced" (default) or "discrete"
+    share_context: boolean      # Optional: true (default) or false
+
+agent_defaults:                 # Optional: applied to all agents
+  company_name: string
+  industry: string
+  # ... any template variables
+
+template_vars:                  # Optional: global template variables
+  key: value
+```
+
 ### HandoffContext Dataclass
 
-```python title="apps/artagent/backend/voice/handoffs/context.py"
+```python
 @dataclass
 class HandoffContext:
     """
@@ -487,7 +774,7 @@ class HandoffContext:
 
 ### HandoffResult Dataclass
 
-```python title="apps/artagent/backend/voice/handoffs/context.py"
+```python
 @dataclass
 class HandoffResult:
     """
@@ -615,33 +902,37 @@ _HANDOFF_CONTROL_FLAGS = frozenset({
 
 ## Key Source Files
 
-### Core Handoff Infrastructure
+### Scenario Store (`registries/scenariostore/`)
 
 | Component | Location | Description |
 |-----------|----------|-------------|
-| **Handoff Context** | `voice/handoffs/context.py` | `HandoffContext`, `HandoffResult` dataclasses and `build_handoff_system_vars()` |
-| **Tool Registry** | `agents/tools/registry.py` | `is_handoff_tool()`, tool registration and execution |
-| **Handoff Map Builder** | `agents/loader.py` | `build_handoff_map()` - builds tool→agent routing |
-| **Agent Definitions** | `agents/*/agent.yaml` | YAML configs with `handoff.trigger` declarations |
+| **Scenario Loader** | `scenariostore/loader.py` | `load_scenario()`, `build_handoff_map_from_scenario()`, `get_handoff_config()` |
+| **ScenarioConfig** | `scenariostore/loader.py` | Configuration dataclass with handoff routes |
+| **HandoffConfig** | `scenariostore/loader.py` | Represents a single directed edge (from → to) |
+| **Banking Scenario** | `scenariostore/banking/orchestration.yaml` | Private banking handoff routes |
+| **Insurance Scenario** | `scenariostore/insurance/scenario.yaml` | Insurance claims handoff routes |
+| **Default Scenario** | `scenariostore/default/scenario.yaml` | All agents, default behavior |
 
-### VoiceLive Mode (`voice/voicelive/`)
+### Agent Store (`registries/agentstore/`)
 
-| File | Description |
-|------|-------------|
-| `handler.py` | `VoiceLiveSDKHandler` - bridges ACS media streams to orchestration |
-| `orchestrator.py` | `LiveOrchestrator` - handles `_execute_tool_call()` and `_switch_to()` for handoffs |
-| `agent_adapter.py` | `adapt_unified_agents()` - adapts UnifiedAgent to VoiceLive format |
-| `session_loader.py` | Loads user profiles for session context |
-| `tool_helpers.py` | `push_tool_start()`, `push_tool_end()` - tool execution telemetry |
-| `settings.py` | VoiceLive-specific configuration |
-| `metrics.py` | `record_llm_ttft()`, `record_tts_ttfb()` - latency metrics |
+| Component | Location | Description |
+|-----------|----------|-------------|
+| **Agent Loader** | `agentstore/loader.py` | `discover_agents()`, `build_handoff_map()` |
+| **UnifiedAgent** | `agentstore/base.py` | Agent configuration dataclass |
+| **Defaults** | `agentstore/_defaults.yaml` | Inherited defaults for all agents |
+| **Agent Definitions** | `agentstore/*/agent.yaml` | Individual agent configurations |
 
-### SpeechCascade Mode (`voice/speech_cascade/`)
+### Handoff Infrastructure
 
-| File | Description |
-|------|-------------|
-| `handler.py` | `SpeechCascadeHandler` - three-thread architecture for low-latency voice |
-| `orchestrator.py` | `CascadeOrchestratorAdapter` - handles `_execute_tool_call()` with state-based handoffs |
-| `tts.py` | Text-to-speech synthesis |
-| `tts_sender.py` | Sends TTS audio to transport layer |
-| `metrics.py` | Cascade-specific latency metrics |
+| Component | Location | Description |
+|-----------|----------|-------------|
+| **Handoff Context** | `voice/handoffs/context.py` | `HandoffContext`, `HandoffResult`, `build_handoff_system_vars()` |
+| **Tool Registry** | `registries/toolstore/registry.py` | `is_handoff_tool()`, tool registration and execution |
+| **Handoff Tools** | `registries/toolstore/handoffs.py` | Handoff tool definitions |
+
+### Orchestrators
+
+| Mode | File | Description |
+|------|------|-------------|
+| **VoiceLive** | `voice/voicelive/orchestrator.py` | `LiveOrchestrator` - handles handoffs via event loop |
+| **Cascade** | `voice/speech_cascade/orchestrator.py` | `CascadeOrchestratorAdapter` - state-based handoffs |
