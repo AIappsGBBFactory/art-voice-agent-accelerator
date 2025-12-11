@@ -232,7 +232,10 @@ _SCENARIOS_DIR = Path(__file__).parent
 
 def _load_scenario_file(scenario_dir: Path) -> ScenarioConfig | None:
     """Load a scenario from its directory."""
+    # Support both naming conventions: scenario.yaml and orchestration.yaml
     config_path = scenario_dir / "scenario.yaml"
+    if not config_path.exists():
+        config_path = scenario_dir / "orchestration.yaml"
     if not config_path.exists():
         return None
 
@@ -241,7 +244,7 @@ def _load_scenario_file(scenario_dir: Path) -> ScenarioConfig | None:
             data = yaml.safe_load(f) or {}
 
         scenario = ScenarioConfig.from_dict(scenario_dir.name, data)
-        logger.debug("Loaded scenario: %s", scenario.name)
+        logger.debug("Loaded scenario: %s from %s", scenario.name, config_path.name)
         return scenario
 
     except Exception as e:
