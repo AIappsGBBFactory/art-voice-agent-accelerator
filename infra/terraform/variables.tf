@@ -138,6 +138,41 @@ variable "enable_voice_live" {
   type        = bool
   default     = true
 }
+
+variable "voice_live_location" {
+  description = "Azure region for Voice Live resources. Must be one of: eastus2, westus2, swedencentral, southeastasia"
+  type        = string
+  default     = "eastus2"
+  validation {
+    condition     = contains(["eastus2", "westus2", "swedencentral", "southeastasia"], var.voice_live_location)
+    error_message = "Voice Live location must be one of: eastus2, westus2, swedencentral, southeastasia."
+  }
+}
+
+variable "voice_live_model_deployments" {
+  description = "Azure OpenAI model deployments for Voice Live (real-time speech)"
+  type = list(object({
+    name     = string
+    version  = string
+    sku_name = string
+    capacity = number
+  }))
+  default = [
+    {
+      name     = "gpt-realtime"
+      version  = "2025-08-28"
+      sku_name = "GlobalStandard"
+      capacity = 4
+    },
+    {
+      name     = "gpt-4o-transcribe"
+      version  = "2025-03-20"
+      sku_name = "GlobalStandard"
+      capacity = 150
+    }
+  ]
+}
+
 variable "model_deployments" {
   description = "Azure OpenAI model deployments optimized for high performance"
   type = list(object({

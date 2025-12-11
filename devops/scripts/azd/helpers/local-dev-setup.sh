@@ -22,7 +22,8 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Use LOCAL_DEV_SCRIPT_DIR to avoid conflict when sourced from postprovision.sh
+LOCAL_DEV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Color codes
 RED='\033[0;31m'
@@ -127,8 +128,8 @@ generate_legacy_env() {
     
     log_info "Generating legacy full environment file..."
     
-    if [[ -f "$SCRIPT_DIR/generate-env.sh" ]]; then
-        "$SCRIPT_DIR/generate-env.sh" "$(get_azd_value AZURE_ENV_NAME dev)" "$output_file"
+    if [[ -f "$LOCAL_DEV_SCRIPT_DIR/generate-env.sh" ]]; then
+        "$LOCAL_DEV_SCRIPT_DIR/generate-env.sh" "$(get_azd_value AZURE_ENV_NAME dev)" "$output_file"
         log_success "Generated legacy environment file: $output_file"
     else
         log_error "Legacy generate-env.sh not found"

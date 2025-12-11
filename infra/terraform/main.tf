@@ -85,12 +85,10 @@ locals {
     "SecurityControl" = var.environment_name != "prod" ? "Ignore" : null
   }
 
-  voice_live_available_regions = [
-    "eastus2",
-    "westus2",
-    "swedencentral",
-    "southeastasia",
-  ]
+  voice_live_available_regions = ["eastus2", "westus2", "swedencentral", "southeastasia"]
+
+  # Voice Live model names to exclude from base deployments when using separate Voice Live account
+  voice_live_model_names = [for d in var.voice_live_model_deployments : d.name]
 
   # Resource naming with Azure standard abbreviations
   # Following Azure Cloud Adoption Framework: https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-abbreviations
@@ -120,38 +118,25 @@ locals {
   foundry_project_desc    = "AI Foundry project for ${var.environment_name} environment"
 
   voice_live_supported_region      = contains(local.voice_live_available_regions, azurerm_resource_group.main.location)
-  voice_live_primary_region        = local.voice_live_available_regions[0]
+  voice_live_primary_region        = var.voice_live_location
   should_enable_voice_live_here    = var.enable_voice_live && local.voice_live_supported_region
   should_create_voice_live_account = var.enable_voice_live && !local.voice_live_supported_region
-
-  voice_live_model_names = ["gpt-realtime", "gpt-4o-transcribe"]
 
   base_model_deployments_map = {
     for deployment in var.model_deployments :
     deployment.name => deployment
     if !(local.should_create_voice_live_account && contains(local.voice_live_model_names, deployment.name))
   }
-  voice_live_model_name = "gpt-realtime"
+
+  # Convert voice_live_model_deployments variable to map
   voice_live_model_deployments_map = {
-    for name, details in {
-      "gpt-realtime" = {
-        name     = "gpt-realtime"
-        version  = "2025-08-28"
-        sku_name = "GlobalStandard"
-        capacity = 4
-      }
-      "gpt-4o-transcribe" = {
-        name     = "gpt-4o-transcribe"
-        version  = "2025-03-20"
-        sku_name = "GlobalStandard"
-        capacity = 150
-      }
-    } : name => details
+    for deployment in var.voice_live_model_deployments :
+    deployment.name => deployment
   }
 
   combined_model_deployments_map = local.should_enable_voice_live_here ? merge(local.base_model_deployments_map, local.voice_live_model_deployments_map) : local.base_model_deployments_map
   combined_model_deployments     = [for deployment in values(local.combined_model_deployments_map) : deployment]
-  voice_live_model_deployments   = [for deployment in values(local.voice_live_model_deployments_map) : deployment]
+  voice_live_model_deployments   = var.voice_live_model_deployments
 
   voice_live_project_display = "AI Foundry Voice Live ${var.environment_name}"
   voice_live_project_desc    = "AI Foundry Voice Live project for ${var.environment_name} environment"

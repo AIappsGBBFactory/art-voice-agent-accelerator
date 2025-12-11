@@ -11,8 +11,8 @@
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly DEFAULT_CONFIG="$SCRIPT_DIR/../../../../config/appconfig.json"
+readonly SYNC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly DEFAULT_CONFIG="$SYNC_SCRIPT_DIR/../../../../config/appconfig.json"
 
 # ============================================================================
 # Logging
@@ -66,70 +66,51 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 # ============================================================================
-# App Config Helper
+# Build Import JSON
 # ============================================================================
 
-set_key() {
-    local key="$1" value="$2"
-    local label_arg=""
-    [[ -n "$LABEL" ]] && label_arg="--label $LABEL"
+# Create temp file for batch import
+IMPORT_FILE=$(mktemp)
+trap "rm -f $IMPORT_FILE" EXIT
+
+# Initialize JSON array
+echo '[]' > "$IMPORT_FILE"
+
+# Helper to add a key-value to the import file
+add_kv() {
+    local key="$1" value="$2" content_type="${3:-}"
     
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log "[DRY-RUN] Would set: $key = $value"
-        return 0
+    # Skip empty values
+    [[ -z "$value" ]] && return 0
+    
+    local entry
+    if [[ -n "$content_type" ]]; then
+        entry=$(jq -n --arg k "$key" --arg v "$value" --arg l "$LABEL" --arg ct "$content_type" \
+            '{key: $k, value: $v, label: $l, content_type: $ct}')
+    else
+        entry=$(jq -n --arg k "$key" --arg v "$value" --arg l "$LABEL" \
+            '{key: $k, value: $v, label: $l}')
     fi
     
-    az appconfig kv set \
-        --endpoint "$ENDPOINT" \
-        --key "$key" \
-        --value "$value" \
-        $label_arg \
-        --auth-mode login \
-        --yes \
-        --output none 2>/dev/null
+    # Append to import file
+    jq --argjson new "$entry" '. += [$new]' "$IMPORT_FILE" > "${IMPORT_FILE}.tmp" && mv "${IMPORT_FILE}.tmp" "$IMPORT_FILE"
 }
 
-set_feature() {
-    local key="$1" enabled="$2"
-    local label_arg=""
-    [[ -n "$LABEL" ]] && label_arg="--label $LABEL"
+# Helper to add Key Vault reference
+add_kv_ref() {
+    local key="$1" secret_name="$2"
+    local kv_uri
+    kv_uri=$(azd env get-value AZURE_KEY_VAULT_ENDPOINT 2>/dev/null || echo "")
     
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log "[DRY-RUN] Would set feature: $key = $enabled"
-        return 0
-    fi
+    [[ -z "$kv_uri" ]] && return 0
     
-    if [[ "$enabled" == "true" ]]; then
-        az appconfig feature set \
-            --endpoint "$ENDPOINT" \
-            --feature "$key" \
-            $label_arg \
-            --auth-mode login \
-            --yes \
-            --output none 2>/dev/null
-        az appconfig feature enable \
-            --endpoint "$ENDPOINT" \
-            --feature "$key" \
-            $label_arg \
-            --auth-mode login \
-            --yes \
-            --output none 2>/dev/null
-    else
-        az appconfig feature set \
-            --endpoint "$ENDPOINT" \
-            --feature "$key" \
-            $label_arg \
-            --auth-mode login \
-            --yes \
-            --output none 2>/dev/null
-        az appconfig feature disable \
-            --endpoint "$ENDPOINT" \
-            --feature "$key" \
-            $label_arg \
-            --auth-mode login \
-            --yes \
-            --output none 2>/dev/null
-    fi
+    local ref_value="{\"uri\":\"${kv_uri}secrets/${secret_name}\"}"
+    add_kv "$key" "$ref_value" "application/vnd.microsoft.appconfig.keyvaultref+json;charset=utf-8"
+}
+
+# Helper to get azd env value
+get_azd_value() {
+    azd env get-value "$1" 2>/dev/null || echo ""
 }
 
 # ============================================================================
@@ -146,156 +127,182 @@ info "Config: $CONFIG_FILE"
 [[ "$DRY_RUN" == "true" ]] && warn "DRY RUN - no changes will be made"
 echo "├─────────────────────────────────────────────────────────────"
 
-count=0
-errors=0
-
 # ============================================================================
 # SECTION 1: Infrastructure Keys from azd env
 # ============================================================================
 log ""
-log "Syncing infrastructure keys from azd env..."
-
-# Helper to get azd env value and set it
-sync_infra_key() {
-    local app_key="$1"
-    local env_var="$2"
-    local value
-    value=$(azd env get-value "$env_var" 2>/dev/null || echo "")
-    if [[ -n "$value" ]]; then
-        if set_key "$app_key" "$value"; then
-            count=$((count + 1))
-            log "  ✓ $app_key"
-        else
-            errors=$((errors + 1))
-            warn "Failed to set: $app_key"
-        fi
-    else
-        log "  ⊘ $app_key (not set)"
-    fi
-}
-
-# Helper for Key Vault references
-sync_keyvault_ref() {
-    local app_key="$1"
-    local secret_name="$2"
-    local kv_uri
-    kv_uri=$(azd env get-value AZURE_KEY_VAULT_ENDPOINT 2>/dev/null || echo "")
-    if [[ -n "$kv_uri" ]]; then
-        local ref_value="{\"uri\":\"${kv_uri}secrets/${secret_name}\"}"
-        local label_arg=""
-        [[ -n "$LABEL" ]] && label_arg="--label $LABEL"
-        
-        if [[ "$DRY_RUN" == "true" ]]; then
-            log "  [DRY-RUN] Would set KV ref: $app_key"
-            return 0
-        fi
-        
-        if az appconfig kv set-keyvault \
-            --endpoint "$ENDPOINT" \
-            --key "$app_key" \
-            --secret-identifier "${kv_uri}secrets/${secret_name}" \
-            $label_arg \
-            --auth-mode login \
-            --yes \
-            --output none 2>/dev/null; then
-            count=$((count + 1))
-            log "  ✓ $app_key (KV ref)"
-        else
-            errors=$((errors + 1))
-            warn "Failed to set KV ref: $app_key"
-        fi
-    fi
-}
+log "Collecting infrastructure keys from azd env..."
 
 # Azure OpenAI
-sync_infra_key "azure/openai/endpoint" "AZURE_OPENAI_ENDPOINT"
-sync_infra_key "azure/openai/deployment-id" "AZURE_OPENAI_CHAT_DEPLOYMENT_ID"
-sync_infra_key "azure/openai/api-version" "AZURE_OPENAI_API_VERSION"
+add_kv "azure/openai/endpoint" "$(get_azd_value AZURE_OPENAI_ENDPOINT)"
+add_kv "azure/openai/deployment-id" "$(get_azd_value AZURE_OPENAI_CHAT_DEPLOYMENT_ID)"
+add_kv "azure/openai/api-version" "$(get_azd_value AZURE_OPENAI_API_VERSION)"
 
 # Azure Speech
-sync_infra_key "azure/speech/endpoint" "AZURE_SPEECH_ENDPOINT"
-sync_infra_key "azure/speech/region" "AZURE_SPEECH_REGION"
-sync_infra_key "azure/speech/resource-id" "AZURE_SPEECH_RESOURCE_ID"
+add_kv "azure/speech/endpoint" "$(get_azd_value AZURE_SPEECH_ENDPOINT)"
+add_kv "azure/speech/region" "$(get_azd_value AZURE_SPEECH_REGION)"
+add_kv "azure/speech/resource-id" "$(get_azd_value AZURE_SPEECH_RESOURCE_ID)"
 
 # Azure Communication Services
-sync_infra_key "azure/acs/endpoint" "ACS_ENDPOINT"
-sync_infra_key "azure/acs/immutable-id" "ACS_IMMUTABLE_ID"
-sync_keyvault_ref "azure/acs/connection-string" "acs-connection-string"
+add_kv "azure/acs/endpoint" "$(get_azd_value ACS_ENDPOINT)"
+add_kv "azure/acs/immutable-id" "$(get_azd_value ACS_IMMUTABLE_ID)"
+add_kv_ref "azure/acs/connection-string" "acs-connection-string"
 
 # Redis
-sync_infra_key "azure/redis/hostname" "REDIS_HOSTNAME"
-sync_infra_key "azure/redis/port" "REDIS_PORT"
+add_kv "azure/redis/hostname" "$(get_azd_value REDIS_HOSTNAME)"
+add_kv "azure/redis/port" "$(get_azd_value REDIS_PORT)"
 
 # Cosmos DB
-sync_infra_key "azure/cosmos/database-name" "AZURE_COSMOS_DATABASE_NAME"
-sync_infra_key "azure/cosmos/collection-name" "AZURE_COSMOS_COLLECTION_NAME"
-sync_infra_key "azure/cosmos/connection-string" "AZURE_COSMOS_CONNECTION_STRING"
+add_kv "azure/cosmos/database-name" "$(get_azd_value AZURE_COSMOS_DATABASE_NAME)"
+add_kv "azure/cosmos/collection-name" "$(get_azd_value AZURE_COSMOS_COLLECTION_NAME)"
+add_kv "azure/cosmos/connection-string" "$(get_azd_value AZURE_COSMOS_CONNECTION_STRING)"
 
 # Storage
-sync_infra_key "azure/storage/account-name" "AZURE_STORAGE_ACCOUNT_NAME"
-sync_infra_key "azure/storage/container-url" "AZURE_STORAGE_CONTAINER_URL"
+add_kv "azure/storage/account-name" "$(get_azd_value AZURE_STORAGE_ACCOUNT_NAME)"
+add_kv "azure/storage/container-url" "$(get_azd_value AZURE_STORAGE_CONTAINER_URL)"
 
 # App Insights
-sync_infra_key "azure/appinsights/connection-string" "APPLICATIONINSIGHTS_CONNECTION_STRING"
+add_kv "azure/appinsights/connection-string" "$(get_azd_value APPLICATIONINSIGHTS_CONNECTION_STRING)"
 
 # Voice Live (optional)
-sync_infra_key "azure/voicelive/endpoint" "AZURE_VOICELIVE_ENDPOINT"
-sync_infra_key "azure/voicelive/model" "AZURE_VOICELIVE_MODEL"
-sync_infra_key "azure/voicelive/resource-id" "AZURE_VOICELIVE_RESOURCE_ID"
+add_kv "azure/voicelive/endpoint" "$(get_azd_value AZURE_VOICELIVE_ENDPOINT)"
+add_kv "azure/voicelive/model" "$(get_azd_value AZURE_VOICELIVE_MODEL)"
+add_kv "azure/voicelive/resource-id" "$(get_azd_value AZURE_VOICELIVE_RESOURCE_ID)"
 
 # Environment metadata
-sync_infra_key "app/environment" "AZURE_ENV_NAME"
+add_kv "app/environment" "$(get_azd_value AZURE_ENV_NAME)"
+
+log "  ✓ Collected infrastructure keys"
 
 # ============================================================================
 # SECTION 2: Application Settings from config/appconfig.json
 # ============================================================================
 log ""
-log "Syncing application settings from config file..."
+log "Collecting application settings from config file..."
 
 # Process each section
 for section in pools connections session voice aoai warm-pool monitoring; do
-    # Get all keys in section
     keys=$(jq -r ".[\"$section\"] // {} | keys[]" "$CONFIG_FILE" 2>/dev/null || echo "")
     for key in $keys; do
         value=$(jq -r ".[\"$section\"][\"$key\"]" "$CONFIG_FILE")
-        full_key="app/$section/$key"
-        if set_key "$full_key" "$value"; then
-            count=$((count + 1))
-            log "  ✓ $full_key"
-        else
-            errors=$((errors + 1))
-            warn "Failed to set: $full_key"
-        fi
+        add_kv "app/$section/$key" "$value"
     done
 done
 
+log "  ✓ Collected application settings"
+
+# Add sentinel for refresh trigger
+add_kv "app/sentinel" "v$(date +%s)"
+
 # ============================================================================
-# SECTION 3: Feature Flags
+# SECTION 3: Batch Import
+# ============================================================================
+log ""
+
+count=$(jq 'length' "$IMPORT_FILE")
+log "Importing $count settings in batch..."
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    log "[DRY-RUN] Would import:"
+    jq -r '.[] | "  \(.key) = \(.value | tostring | .[0:50])"' "$IMPORT_FILE"
+else
+    # Use az appconfig kv import with JSON file
+    if az appconfig kv import \
+        --endpoint "$ENDPOINT" \
+        --source file \
+        --path "$IMPORT_FILE" \
+        --format json \
+        --auth-mode login \
+        --yes \
+        --output none 2>/dev/null; then
+        success "Imported $count settings"
+    else
+        fail "Batch import failed, falling back to individual imports..."
+        # Fallback: import one by one (slower but more reliable)
+        errors=0
+        jq -c '.[]' "$IMPORT_FILE" | while read -r item; do
+            key=$(echo "$item" | jq -r '.key')
+            value=$(echo "$item" | jq -r '.value')
+            ct=$(echo "$item" | jq -r '.content_type // ""')
+            
+            local ct_arg=""
+            [[ -n "$ct" ]] && ct_arg="--content-type \"$ct\""
+            
+            if ! az appconfig kv set \
+                --endpoint "$ENDPOINT" \
+                --key "$key" \
+                --value "$value" \
+                --label "$LABEL" \
+                --auth-mode login \
+                --yes \
+                --output none 2>/dev/null; then
+                errors=$((errors + 1))
+            fi
+        done
+        
+        if [[ $errors -gt 0 ]]; then
+            warn "Completed with $errors errors"
+        else
+            success "Fallback import completed"
+        fi
+    fi
+fi
+
+# ============================================================================
+# SECTION 4: Feature Flags (must be set individually)
 # ============================================================================
 log ""
 log "Syncing feature flags..."
+feature_count=0
 features=$(jq -r '.features // {} | keys[]' "$CONFIG_FILE" 2>/dev/null || echo "")
-for feature in $features; do
-    enabled=$(jq -r ".features[\"$feature\"]" "$CONFIG_FILE")
-    if set_feature "$feature" "$enabled"; then
-        count=$((count + 1))
-        log "  ✓ $feature = $enabled"
-    else
-        errors=$((errors + 1))
-        warn "Failed to set feature: $feature"
-    fi
-done
 
-# Trigger refresh
-if [[ "$DRY_RUN" != "true" ]]; then
-    set_key "app/sentinel" "v$(date +%s)" || true
+if [[ -n "$features" ]]; then
+    for feature in $features; do
+        enabled=$(jq -r ".features[\"$feature\"]" "$CONFIG_FILE")
+        
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log "  [DRY-RUN] Would set feature: $feature = $enabled"
+            continue
+        fi
+        
+        label_arg=""
+        [[ -n "$LABEL" ]] && label_arg="--label $LABEL"
+        
+        az appconfig feature set \
+            --endpoint "$ENDPOINT" \
+            --feature "$feature" \
+            $label_arg \
+            --auth-mode login \
+            --yes \
+            --output none 2>/dev/null || true
+        
+        if [[ "$enabled" == "true" ]]; then
+            az appconfig feature enable \
+                --endpoint "$ENDPOINT" \
+                --feature "$feature" \
+                $label_arg \
+                --auth-mode login \
+                --yes \
+                --output none 2>/dev/null || true
+        else
+            az appconfig feature disable \
+                --endpoint "$ENDPOINT" \
+                --feature "$feature" \
+                $label_arg \
+                --auth-mode login \
+                --yes \
+                --output none 2>/dev/null || true
+        fi
+        
+        feature_count=$((feature_count + 1))
+        log "  ✓ $feature = $enabled"
+    done
+    success "Set $feature_count feature flags"
+else
+    log "  No feature flags defined"
 fi
 
 echo "├─────────────────────────────────────────────────────────────"
-if [[ $errors -eq 0 ]]; then
-    success "Synced $count settings"
-else
-    warn "Synced $count settings with $errors errors"
-fi
+success "Sync complete: $count settings + $feature_count feature flags"
 echo "╰─────────────────────────────────────────────────────────────"
 echo ""

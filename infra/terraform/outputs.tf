@@ -239,7 +239,7 @@ output "AZURE_VOICELIVE_RESOURCE_ID" {
 
 output "AZURE_VOICELIVE_MODEL" {
   description = "Azure Voice Live model deployment name"
-  value       = var.enable_voice_live ? local.voice_live_model_name : ""
+  value       = var.enable_voice_live && length(local.voice_live_model_names) > 0 ? local.voice_live_model_names[0] : ""
 }
 
 # ============================================================================
