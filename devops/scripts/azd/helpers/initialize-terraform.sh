@@ -53,11 +53,6 @@ get_azd_env() {
 storage_exists() {
     local account="$1"
     local rg="$2"
-    az storage account show --name "$account" --resource-group "$rg" &> /dev/null
-    local result
-    result=$(az storage account show --name "$account" --resource-group "$rg" --query "provisioningState" -o tsv 2>/dev/null)
-    log_info "Checked storage account '$account' in resource group '$rg': provisioningState=$result"
-    echo "az storage account show --name \"$account\" --resource-group \"$rg\" --query \"provisioningState\" -o tsv"
     local result
     result=$(az storage account show --name "$account" --resource-group "$rg" --query "provisioningState" -o tsv 2>/dev/null)
     if [[ "$result" == "Succeeded" ]]; then
@@ -294,7 +289,13 @@ main() {
         echo "   Location:         $location"
         echo ""
         
-        read -p "Use these values? [Y]es / [n]o (use local state) / [e]xisting: " choice
+        # In CI/non-interactive mode, auto-accept defaults
+        local choice="Y"
+        if [[ "${TF_INIT_SKIP_INTERACTIVE:-}" != "true" ]]; then
+            read -p "Use these values? [Y]es / [n]o (use local state) / [e]xisting: " choice
+        else
+            log_info "CI mode: auto-accepting proposed configuration"
+        fi
         case "$choice" in
             [Nn]*)
                 echo ""
