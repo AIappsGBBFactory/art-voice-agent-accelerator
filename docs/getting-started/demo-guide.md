@@ -202,7 +202,7 @@ Popular voice options:
 
 ### Choose Your Orchestration Mode
 
-=== "Voice Live (Recommended for Low Latency)"
+#### "Voice Live (Recommended for Low Latency)"
     
     **How it works:** Audio streams directly to OpenAI's Realtime API
     
@@ -227,7 +227,7 @@ Popular voice options:
     - Simple, fast demos
     - When Azure Speech customization isn't needed
 
-=== "Cascade (Recommended for Control)"
+#### "Cascade (Recommended for Control)"
     
     **How it works:** Audio flows through Azure Speech services with separate STT and TTS
     
@@ -300,7 +300,7 @@ flowchart LR
 | **VAD Latency** | Time to detect speech start/stop | < 100ms |
 | **STT Latency** | Time to transcribe your speech | < 500ms |
 | **LLM TTFT** | Time to first token from LLM | < 300ms |
-| **TTS Latency** | Time to start audio playback | < 200ms |
+| **TTS Latency TTFB** | Time to start audio playback | < 200ms |
 | **Total Turn Time** | End-to-end response time | < 1.5s |
 
 ### Handoff Behavior

@@ -187,7 +187,7 @@ For now, you can safely ignore this file when onboarding.
 
 ```python
 # Check what agents were discovered:
-from apps.artagent.backend.agents import discover_agents
+from apps.artagent.backend.registries.agentstore import discover_agents
 agents = discover_agents()
 print(list(agents.keys()))  # Should show your agent
 ```
@@ -196,7 +196,7 @@ print(list(agents.keys()))  # Should show your agent
 
 ```python
 # Check the handoff_map:
-from apps.artagent.backend.agents import discover_agents, build_handoff_map
+from apps.artagent.backend.registries.agentstore import discover_agents, build_handoff_map
 agents = discover_agents()
 handoff_map = build_handoff_map(agents)
 print(handoff_map)  # Should show tool→agent mappings

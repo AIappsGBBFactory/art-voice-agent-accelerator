@@ -16,6 +16,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[5]
 _ENV_FILE = _PROJECT_ROOT / ".env"
+# Agents are now in apps/artagent/backend/registries/agentstore/
+_AGENTSTORE_DIR = Path(__file__).resolve().parents[2] / "registries" / "agentstore"
 _LEGACY_AGENT_ROOT = _PROJECT_ROOT / ".azure" / "_legacy" / "agents" / "vlagent"
 
 
@@ -48,8 +50,8 @@ class VoiceLiveSettings(BaseSettings):
     # Application Configuration
     start_agent: str = Field(default="Concierge", description="Initial agent to start with")
     agents_dir: str = Field(
-        default=str(_LEGACY_AGENT_ROOT / "agents"),
-        description="Directory containing agent YAML files",
+        default=str(_AGENTSTORE_DIR),
+        description="Directory containing agent YAML files (registries/agentstore)",
     )
     templates_dir: str = Field(
         default=str(_LEGACY_AGENT_ROOT / "templates"),
@@ -75,15 +77,15 @@ class VoiceLiveSettings(BaseSettings):
 
     @property
     def agents_path(self) -> Path:
-        """Get absolute path to agents directory."""
+        """Get absolute path to agents directory (registries/agentstore)."""
         base = Path(self.agents_dir).expanduser()
-        return base.resolve() if base.is_absolute() else (_LEGACY_AGENT_ROOT / base).resolve()
+        return base.resolve() if base.is_absolute() else (_AGENTSTORE_DIR / base).resolve()
 
     @property
     def templates_path(self) -> Path:
         """Get absolute path to templates directory."""
         base = Path(self.templates_dir).expanduser()
-        return base.resolve() if base.is_absolute() else (_LEGACY_AGENT_ROOT / base).resolve()
+        return base.resolve() if base.is_absolute() else (_AGENTSTORE_DIR / base).resolve()
 
     @property
     def has_api_key_auth(self) -> bool:
