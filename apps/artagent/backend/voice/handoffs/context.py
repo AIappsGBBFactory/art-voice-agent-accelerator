@@ -79,6 +79,8 @@ def build_handoff_system_vars(
     tool_args: dict[str, Any],
     current_system_vars: dict[str, Any],
     user_last_utterance: str | None = None,
+    share_context: bool = True,
+    greet_on_switch: bool = True,
 ) -> dict[str, Any]:
     """
     Build system_vars dict for agent handoff from tool result and session state.
@@ -89,6 +91,7 @@ def build_handoff_system_vars(
     2. Builds handoff_reason from multiple fallback sources
     3. Carries forward key session variables (profile, client_id, etc.)
     4. Applies session_overrides if present
+    5. Adds handoff template vars for Jinja prompts (is_handoff, share_context, greet_on_switch)
 
     Args:
         source_agent: Name of the agent initiating the handoff
@@ -97,6 +100,8 @@ def build_handoff_system_vars(
         tool_args: Arguments passed to the handoff tool
         current_system_vars: Current session's system_vars dict
         user_last_utterance: User's most recent speech (for context)
+        share_context: Whether to pass full context to target agent (default True)
+        greet_on_switch: Whether target agent should announce the handoff (default True)
 
     Returns:
         system_vars dict ready for agent.apply_session()
@@ -109,6 +114,8 @@ def build_handoff_system_vars(
             tool_args={"reason": "fraud inquiry"},
             current_system_vars={"session_profile": {...}, "client_id": "123"},
             user_last_utterance="I think someone stole my card",
+            share_context=True,
+            greet_on_switch=False,  # Discrete handoff
         )
     """
     # Extract and sanitize handoff_context from tool result
@@ -152,23 +159,28 @@ def build_handoff_system_vars(
         "handoff_reason": handoff_reason,
         "previous_agent": source_agent,
         "active_agent": target_agent,
-        "handoff_context": handoff_context,
+        "handoff_context": handoff_context if share_context else {},
         "handoff_message": tool_result.get("message"),
+        # Template variables for Jinja prompts
+        "is_handoff": True,
+        "share_context": share_context,
+        "greet_on_switch": greet_on_switch,
     }
 
-    if details:
+    if details and share_context:
         ctx["details"] = details
 
-    if user_last_utterance:
+    if user_last_utterance and share_context:
         ctx["user_last_utterance"] = user_last_utterance
 
     if session_overrides:
         ctx["session_overrides"] = session_overrides
 
-    # Carry forward key session variables from current session
-    for key in ("session_profile", "client_id", "customer_intelligence", "institution_name"):
-        if key in current_system_vars:
-            ctx[key] = current_system_vars[key]
+    # Carry forward key session variables from current session (if sharing context)
+    if share_context:
+        for key in ("session_profile", "client_id", "customer_intelligence", "institution_name"):
+            if key in current_system_vars:
+                ctx[key] = current_system_vars[key]
 
     return ctx
 

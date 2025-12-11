@@ -1,0 +1,63 @@
+# Banking Customer Service Scenario
+# Optimized for private banking and wealth management
+
+name: banking
+description: Private banking customer service with personalized greetings and financial tools
+
+# Starting agent
+start_agent: Concierge
+
+# Agents to include in this scenario
+# Testing flow: Concierge → Investment Advisor OR Card Recommendation
+agents:
+  - Concierge
+  - AuthAgent
+  - InvestmentAdvisor
+  - CardRecommendation
+
+# Handoff behavior - default for unlisted routes
+handoff_type: announced
+
+# Handoff configurations - directed edges in the agent graph
+# Each handoff defines: FROM → TO via TOOL with TYPE (discrete/announced)
+handoffs:
+  # Concierge routes to specialists
+  - from: Concierge
+    to: AuthAgent
+    tool: handoff_to_auth
+    type: announced           # Auth is sensitive - always greet
+
+  - from: Concierge
+    to: InvestmentAdvisor
+    tool: handoff_investment_advisor
+    type: discrete            # Seamless handoff
+    share_context: true
+
+  - from: Concierge
+    to: CardRecommendation
+    tool: handoff_card_recommendation
+    type: discrete            # Seamless handoff
+    share_context: true
+
+  # Specialists return to Concierge
+  - from: AuthAgent
+    to: Concierge
+    tool: handoff_concierge
+    type: announced
+
+  - from: InvestmentAdvisor
+    to: Concierge
+    tool: handoff_concierge
+    type: discrete            # Returning after help - seamless
+
+  - from: CardRecommendation
+    to: Concierge
+    tool: handoff_concierge
+    type: discrete            # Returning after help - seamless
+
+# Agent defaults applied to all agents
+agent_defaults:
+  company_name: "Private Banking"
+  industry: "banking"
+  compliance_required: true
+  region: "US"
