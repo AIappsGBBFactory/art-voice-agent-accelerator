@@ -4,8 +4,12 @@
 # Each target is documented for clarity and maintainability
 ############################################################
 
+# Ensure uv is in PATH (installed via curl -LsSf https://astral.sh/uv/install.sh | sh)
+UV_BIN := $(HOME)/.local/bin/uv
+export PATH := $(HOME)/.local/bin:$(PATH)
+
 # Python interpreter to use (via uv)
-PYTHON_INTERPRETER = uv run python
+PYTHON_INTERPRETER = $(UV_BIN) run python
 # Ensure current directory is in PYTHONPATH
 export PYTHONPATH=$(PWD):$PYTHONPATH;
 SCRIPTS_DIR = devops/scripts/local-dev
@@ -85,23 +89,23 @@ endef
 # Create the virtual environment using uv
 create_venv:
 	@echo "Creating virtual environment with uv..."
-	uv sync
+	$(UV_BIN) sync
 
 
 # Recreate the virtual environment (clean install)
 recreate_venv:
 	@echo "Removing existing .venv and recreating..."
 	rm -rf .venv
-	uv sync
+	$(UV_BIN) sync
 
 
 # Update dependencies to latest compatible versions
 update_deps:
 	@echo "Updating dependencies..."
-	uv sync --upgrade
+	$(UV_BIN) sync --upgrade
 
 start_backend:
-	uv run python $(SCRIPTS_DIR)/start_backend.py
+	$(UV_BIN) run python $(SCRIPTS_DIR)/start_backend.py
 
 start_frontend:
 	bash $(SCRIPTS_DIR)/start_frontend.sh
@@ -110,7 +114,7 @@ start_tunnel:
 	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
 
 generate_audio:
-	uv run python $(SCRIPTS_LOAD_DIR)/utils/audio_generator.py --max-turns 5
+	$(UV_BIN) run python $(SCRIPTS_LOAD_DIR)/utils/audio_generator.py --max-turns 5
 
 # WebSocket endpoint load testing (current approach)
 # DEPLOYED_URL = 
@@ -203,7 +207,7 @@ purchase_acs_phone_number:
 	fi
 
 	@echo "📞 Creating a new ACS phone number using Python script..."
-	uv run python devops/scripts/azd/helpers/acs_phone_number_manager.py --endpoint $(ACS_ENDPOINT) purchase --country $(COUNTRY_CODE) --area $(AREA_CODE)  --phone-number-type $(PHONE_TYPE)
+	$(UV_BIN) run python devops/scripts/azd/helpers/acs_phone_number_manager.py --endpoint $(ACS_ENDPOINT) purchase --country $(COUNTRY_CODE) --area $(AREA_CODE)  --phone-number-type $(PHONE_TYPE)
 
 # Purchase ACS phone number using PowerShell (Windows)	
 # Usage: make purchase_acs_phone_number_ps [ENV_FILE=custom.env] [COUNTRY_CODE=US] [AREA_CODE=833] [PHONE_TYPE=TOLL_FREE]
@@ -583,14 +587,14 @@ help:
 
 # Serve documentation locally with live reload
 docs-serve:
-	uv run mkdocs serve -f docs/mkdocs.yml
+	$(UV_BIN) run mkdocs serve -f docs/mkdocs.yml
 
 # Build documentation for production
 docs-build:
-	uv run mkdocs build -f docs/mkdocs.yml
+	$(UV_BIN) run mkdocs build -f docs/mkdocs.yml
 
 # Deploy documentation to GitHub Pages
 docs-deploy:
-	uv run mkdocs gh-deploy -f docs/mkdocs.yml
+	$(UV_BIN) run mkdocs gh-deploy -f docs/mkdocs.yml
 
 .PHONY: docs-serve docs-build docs-deploy

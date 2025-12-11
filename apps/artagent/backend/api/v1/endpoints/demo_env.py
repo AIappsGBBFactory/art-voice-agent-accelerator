@@ -267,6 +267,46 @@ def _build_profile(
     ttl_hours = DEMOS_TTL_SECONDS // 3600
     ttl_days = max(1, ttl_hours // 24)
 
+    # Generate banking-specific data for banking tools
+    account_tenure_years = round(relationship_duration)
+    has_existing_card = rng.choice([True, True, False])  # 66% have existing card
+    has_401k = rng.choice([True, True, True, False])  # 75% have 401k
+    income_bracket = rng.choice(["medium", "medium_high", "high", "very_high"])
+    
+    # Generate account numbers (last 4 digits only for display)
+    checking_last4 = f"{rng.randint(1000, 9999)}"
+    savings_last4 = f"{rng.randint(1000, 9999)}"
+    
+    # Generate existing credit card if applicable
+    existing_cards = []
+    if has_existing_card:
+        card_types = [
+            {"name": "Cash Rewards", "product_id": "cash-rewards-002"},
+            {"name": "Travel Rewards", "product_id": "travel-rewards-001"},
+        ]
+        card = rng.choice(card_types)
+        card_last4 = f"{rng.randint(1000, 9999)}"
+        card_opened = (anchor - timedelta(days=rng.randint(180, 1800))).date().isoformat()
+        existing_cards.append({
+            # UI field names
+            "productName": card["name"],
+            "last4": card_last4,
+            "openedDate": card_opened,
+            "rewardsType": "cash_back" if "Cash" in card["name"] else "points",
+            "hasAnnualFee": False,
+            "foreignTxFeePct": 0 if "Travel" in card["name"] else 3,
+            # Tool field names (for banking tools)
+            "product_name": card["name"],
+            "product_id": card["product_id"],
+            "last_four": card_last4,
+            "credit_limit": rng.choice([5000, 7500, 10000, 15000]),
+            "current_balance": round(rng.uniform(200, 2500), 2),
+        })
+
+    # Generate 401k/retirement data
+    former_employer_401k_balance = rng.randint(25000, 150000) if has_401k else 0
+    current_ira_balance = rng.randint(5000, 50000) if rng.choice([True, False]) else 0
+
     customer_intelligence = {
         "relationship_context": {
             "relationship_tier": template["relationship_tier"],
@@ -291,6 +331,90 @@ def _build_profile(
             "preferred_transaction_times": rng.sample(PREFERRED_TIMES, k=2),
             "risk_tolerance": rng.choice(("Conservative", "Moderate", "Growth")),
             "usual_spending_range": rng.choice(SPENDING_RANGES),
+        },
+        # Banking-specific profile data for banking tools
+        "bank_profile": {
+            "accountTenureYears": account_tenure_years,
+            "cards": existing_cards,
+            "uses_contoso_401k": has_401k,
+            "has_direct_deposit": rng.choice([True, True, False]),
+            "preferred_branch": rng.choice(["Online", "Downtown", "Westside", "Mobile App"]),
+            # Account details for UI display
+            "account_number_last4": checking_last4,
+            "routing_number": "021000021",  # Contoso Bank routing
+            "current_balance": round(rng.uniform(1500, 25000), 2),
+        },
+        "employment": {
+            "income_bracket": income_bracket,
+            "incomeBand": income_bracket,  # UI field name
+            "employment_status": "employed",
+            "employer_name": template.get("institution_name", "Contoso Corp"),
+            "currentEmployerName": template.get("institution_name", "Contoso Corp"),  # UI field
+            "currentEmployerStartDate": (anchor - timedelta(days=rng.randint(180, 730))).date().isoformat(),
+            "previousEmployerName": "Previous Employer Inc." if has_401k else None,
+            "previousEmployerEndDate": (anchor - timedelta(days=rng.randint(30, 180))).date().isoformat() if has_401k else None,
+            "usesContosoFor401k": has_401k,  # Used by get_401k_details tool
+        },
+        "payroll_setup": {
+            "hasDirectDeposit": rng.choice([True, True, False]),
+            "pendingSetup": False,
+            "lastPaycheckDate": (anchor - timedelta(days=rng.randint(1, 14))).date().isoformat(),
+            "payFrequency": rng.choice(["biweekly", "monthly", "weekly"]),
+        },
+        "accounts": {
+            "checking": {
+                "account_number_last4": checking_last4,
+                "balance": round(rng.uniform(1500, 25000), 2),
+                "available": round(rng.uniform(1500, 25000), 2),
+                "account_type": "checking",
+            },
+            "savings": {
+                "account_number_last4": savings_last4,
+                "balance": round(rng.uniform(5000, 75000), 2),
+                "available": round(rng.uniform(5000, 75000), 2),
+                "account_type": "savings",
+            },
+        },
+        # Retirement profile - matches UI (ProfileDetailsPanel) and tools (investments.py) expectations
+        "retirement_profile": {
+            # Retirement accounts array - displayed in UI and used by get_401k_details
+            "retirement_accounts": [
+                {
+                    "accountId": f"401k-{rng.randint(100000, 999999)}",
+                    "type": "401k",  # UI expects 'type' not 'accountType'
+                    "accountType": "401(k)",  # Keep for tools
+                    "provider": rng.choice(["Fidelity", "Vanguard", "Charles Schwab", "T. Rowe Price"]),
+                    "balance": former_employer_401k_balance,
+                    "estimatedBalance": former_employer_401k_balance,  # UI field
+                    "balanceBand": "$50k-$100k" if former_employer_401k_balance < 100000 else "$100k-$200k",
+                    "employerName": "Previous Employer Inc.",
+                    "isFormerEmployer": True,
+                    "status": "active",  # UI expects status
+                    "vestingPercentage": 100,
+                    "vestingStatus": "100% Vested",  # UI expects vestingStatus string
+                },
+            ] if has_401k else [],
+            # Merrill Lynch accounts (for Contoso Banking customers)
+            "merrill_accounts": [
+                {
+                    "accountId": f"ML-{rng.randint(100000, 999999)}",
+                    "brand": "Merrill Lynch",  # UI expects brand
+                    "accountType": rng.choice(["ira", "roth_ira"]),
+                    "balance": current_ira_balance,
+                    "estimatedBalance": current_ira_balance,  # UI field
+                },
+            ] if current_ira_balance > 0 else [],
+            # Plan features - used by UI and tools
+            "plan_features": {
+                "has401kPayOnCurrentPlan": has_401k,
+                "currentEmployerMatchPct": rng.choice([3, 4, 5, 6]) if has_401k else 0,
+                "rolloverEligible": has_401k,
+                "vestingSchedule": "immediate" if has_401k else None,
+            },
+            # Additional profile fields used by UI and tools
+            "risk_profile": rng.choice(["conservative", "moderate", "growth", "aggressive"]),
+            "investmentKnowledgeLevel": rng.choice(["beginner", "intermediate", "advanced"]),
+            "retirement_readiness_score": round(rng.uniform(5.0, 9.5), 1),
         },
         "memory_score": {
             "communication_style": conversation["communication_style"],
@@ -318,6 +442,12 @@ def _build_profile(
         "conversation_context": {
             "known_preferences": conversation["known_preferences"],
             "suggested_talking_points": conversation["talking_points"],
+        },
+        # Preferences for prompt templates (used by banking_concierge prompt.jinja)
+        "preferences": {
+            "preferredContactMethod": rng.choice(["phone", "email", "sms", "app"]),
+            "communicationStyle": conversation["communication_style"],
+            "languagePreference": "en-US",
         },
         "active_alerts": [
             {

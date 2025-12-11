@@ -8,42 +8,36 @@
 name: InvestmentAdvisor
 description: Retirement accounts, 401(k) rollovers, IRA guidance, investment products
 
-greeting: ""  # Seamless handoff - no greeting needed
-return_greeting: "What else about your retirement or investments?"
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Handoff Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
-  trigger: handoff_investment_advisor
-  # Handoff transition message spoken when entering this agent
-  transition_message: "Let me look at your retirement accounts and options."
+  trigger: handoff_investment_advisor  # Other agents call this to reach InvestmentAdvisor
+
+greeting: |
+  {% if caller_name %}Hi {{ caller_name }}, I'm the retirement and investment specialist. Let me help you with your accounts.
+  {% else %}Hi, I'm the retirement and investment specialist. Let me help you with your accounts.
+  {% endif %}
+return_greeting: "Welcome back. What else about your retirement or investments?"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 voice:
-  name: en-US-EchoTurboMultilingualNeural
+  name: en-US-AlloyTurboMultilingualNeural
   type: azure-standard
   rate: "-4%"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model Configuration (LLM for agent reasoning)
 # ─────────────────────────────────────────────────────────────────────────────
-model:
-  deployment_id: gpt-4o                   # Used by both modes
+voicelive_model:
+  deployment_id: gpt-4o-realtime-preview
   temperature: 0.7
-  top_p: 0.9
-  max_tokens: 150
 
-# Uncomment to use DIFFERENT models per mode:
-# voicelive_model:
-#   deployment_id: gpt-4o-realtime-preview
-#   temperature: 0.7
-#
-# cascade_model:
-#   deployment_id: gpt-4o-mini
-#   temperature: 0.8
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.8
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session Configuration (VoiceLive Mode Only)
@@ -95,10 +89,10 @@ tools:
   - get_account_routing_info
   - get_account_summary
   
-  # Handoffs (tool-based strategy)
-  - handoff_bank_advisor          # Human specialist for execution
-  - handoff_card_recommendation      # If topic shifts to cards
-  - handoff_concierge          # Return to main concierge
+  # Handoffs
+  - handoff_bank_advisor
+  - handoff_card_recommendation
+  - handoff_concierge
   
   # Escalation
   - escalate_human

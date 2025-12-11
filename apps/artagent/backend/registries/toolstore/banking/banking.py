@@ -16,6 +16,12 @@ from typing import TYPE_CHECKING, Any
 from apps.artagent.backend.registries.toolstore.registry import register_tool
 from utils.ml_logging import get_logger
 
+from .constants import (
+    CARD_KNOWLEDGE_BASE,
+    CARD_PRODUCTS,
+    CREDIT_LIMITS_BY_INCOME,
+)
+
 try:  # pragma: no cover - optional dependency during tests
     from src.cosmosdb.manager import CosmosDBMongoCoreManager as _CosmosManagerImpl
 except Exception:  # pragma: no cover - handled at runtime
@@ -170,6 +176,45 @@ finalize_card_application_schema: dict[str, Any] = {
             "client_id": {"type": "string", "description": "Customer identifier"},
             "card_product_id": {"type": "string", "description": "Card product ID"},
             "card_name": {"type": "string", "description": "Full card product name"},
+        },
+        "required": ["client_id", "card_product_id"],
+    },
+}
+
+search_credit_card_faqs_schema: dict[str, Any] = {
+    "name": "search_credit_card_faqs",
+    "description": "Search credit card FAQ knowledge base for information about APR, fees, benefits, eligibility, and rewards. Returns relevant FAQ entries matching the query.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query (e.g., 'APR', 'foreign transaction fees', 'travel insurance')",
+            },
+            "card_name": {
+                "type": "string",
+                "description": "Optional card name to filter results (e.g., 'Travel Rewards', 'Premium Rewards')",
+            },
+            "top_k": {
+                "type": "integer",
+                "description": "Maximum number of results to return (default: 3)",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+evaluate_card_eligibility_schema: dict[str, Any] = {
+    "name": "evaluate_card_eligibility",
+    "description": (
+        "Evaluate if a customer is pre-approved or eligible for a specific credit card. "
+        "Returns eligibility status, credit limit estimate, and next steps."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {"type": "string", "description": "Customer identifier"},
+            "card_product_id": {"type": "string", "description": "Card product to evaluate eligibility for"},
         },
         "required": ["client_id", "card_product_id"],
     },
@@ -344,57 +389,10 @@ async def _lookup_user_by_client_id(client_id: str) -> dict[str, Any] | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MOCK DATA
+# CARD PRODUCTS & E-SIGN STATE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_MOCK_PROFILES = {
-    "CLT-001-JS": {
-        "full_name": "John Smith",
-        "client_id": "CLT-001-JS",
-        "institution_name": "Contoso Bank",
-        "contact_info": {"email": "john.smith@email.com", "phone_last_4": "5678"},
-        "customer_intelligence": {
-            "relationship_context": {
-                "relationship_tier": "Platinum",
-                "relationship_duration_years": 8,
-            },
-            "bank_profile": {
-                "current_balance": 45230.50,
-                "accountTenureYears": 8,
-                "cards": [{"productName": "Cash Rewards"}],
-                "behavior_summary": {
-                    "travelSpendShare": 0.25,
-                    "diningSpendShare": 0.15,
-                    "foreignTransactionCount": 4,
-                },
-            },
-            "spending_patterns": {"avg_monthly_spend": 4500},
-            "preferences": {"preferredContactMethod": "mobile"},
-        },
-    },
-    "CLT-002-JD": {
-        "full_name": "Jane Doe",
-        "client_id": "CLT-002-JD",
-        "institution_name": "Contoso Bank",
-        "contact_info": {"email": "jane.doe@email.com", "phone_last_4": "9012"},
-        "customer_intelligence": {
-            "relationship_context": {"relationship_tier": "Gold", "relationship_duration_years": 3},
-            "bank_profile": {
-                "current_balance": 12500.00,
-                "accountTenureYears": 3,
-                "cards": [{"productName": "Travel Rewards"}],
-                "behavior_summary": {
-                    "travelSpendShare": 0.40,
-                    "diningSpendShare": 0.20,
-                    "foreignTransactionCount": 8,
-                },
-            },
-            "spending_patterns": {"avg_monthly_spend": 3200},
-            "preferences": {"preferredContactMethod": "email"},
-        },
-    },
-}
-
+# Mock transactions for get_recent_transactions (sample data for demo)
 _MOCK_TRANSACTIONS = [
     {
         "id": "TXN-001",
@@ -478,24 +476,18 @@ _PENDING_ESIGN: dict[str, dict] = {}
 
 
 async def get_user_profile(args: dict[str, Any]) -> dict[str, Any]:
-    """Get customer profile from Cosmos DB, falling back to mock data."""
+    """Get customer profile from Cosmos DB."""
     client_id = (args.get("client_id") or "").strip()
 
     if not client_id:
         return {"success": False, "message": "client_id is required."}
 
-    # Try Cosmos DB first
-    cosmos_profile = await _lookup_user_by_client_id(client_id)
-    if cosmos_profile:
-        return {"success": True, "profile": cosmos_profile, "data_source": "cosmos"}
-
-    # Fall back to mock profiles
-    profile = _MOCK_PROFILES.get(client_id)
+    # Get profile from Cosmos DB
+    profile = await _lookup_user_by_client_id(client_id)
     if profile:
-        logger.info("📋 Profile loaded from mock data: %s", client_id)
-        return {"success": True, "profile": profile, "data_source": "mock"}
+        return {"success": True, "profile": profile, "data_source": "cosmos"}
 
-    return {"success": False, "message": f"Profile not found for {client_id}"}
+    return {"success": False, "message": f"Profile not found for {client_id}. Please create a profile first."}
 
 
 async def get_account_summary(args: dict[str, Any]) -> dict[str, Any]:
@@ -505,39 +497,62 @@ async def get_account_summary(args: dict[str, Any]) -> dict[str, Any]:
     if not client_id:
         return {"success": False, "message": "client_id is required."}
 
-    # Try Cosmos DB first
+    # Get profile from Cosmos DB
     profile = await _lookup_user_by_client_id(client_id)
-    if not profile:
-        # Fall back to mock profiles
-        profile = _MOCK_PROFILES.get(client_id)
 
     if not profile:
-        return {"success": False, "message": f"Account not found for {client_id}"}
+        return {"success": False, "message": f"Account not found for {client_id}. Please create a profile first."}
 
-    # Extract balance from customer_intelligence or account_status
+    # Extract account data from customer_intelligence
     customer_intel = profile.get("customer_intelligence", {})
-    balance = (
-        customer_intel.get("account_status", {}).get("current_balance")
-        or customer_intel.get("bank_profile", {}).get("current_balance")
-        or 0
-    )
-
-    return {
-        "success": True,
-        "accounts": [
+    bank_profile = customer_intel.get("bank_profile", {})
+    accounts_data = customer_intel.get("accounts", {})
+    
+    # Build accounts list from actual data
+    accounts = []
+    
+    # Checking account
+    checking = accounts_data.get("checking", {})
+    if checking:
+        accounts.append({
+            "type": "checking",
+            "balance": checking.get("balance", 0),
+            "available": checking.get("available", checking.get("balance", 0)),
+            "account_number_last4": checking.get("account_number_last4", bank_profile.get("account_number_last4", "----")),
+            "routing_number": bank_profile.get("routing_number", "021000021"),
+        })
+    
+    # Savings account
+    savings = accounts_data.get("savings", {})
+    if savings:
+        accounts.append({
+            "type": "savings",
+            "balance": savings.get("balance", 0),
+            "available": savings.get("available", savings.get("balance", 0)),
+            "account_number_last4": savings.get("account_number_last4", "----"),
+            "routing_number": bank_profile.get("routing_number", "021000021"),
+        })
+    
+    # Fallback if no accounts data available
+    if not accounts:
+        balance = (
+            customer_intel.get("account_status", {}).get("current_balance")
+            or bank_profile.get("current_balance")
+            or 0
+        )
+        accounts = [
             {
                 "type": "checking",
                 "balance": balance,
-                "account_number_last4": "4532",
-                "routing_number": "026009593",
+                "available": balance,
+                "account_number_last4": bank_profile.get("account_number_last4", "----"),
+                "routing_number": bank_profile.get("routing_number", "021000021"),
             },
-            {
-                "type": "savings",
-                "balance": balance * 0.3,
-                "account_number_last4": "7891",
-                "routing_number": "026009593",
-            },
-        ],
+        ]
+
+    return {
+        "success": True,
+        "accounts": accounts,
     }
 
 
@@ -633,8 +648,9 @@ async def send_card_agreement(args: dict[str, Any]) -> dict[str, Any]:
 
     _PENDING_ESIGN[client_id] = {"code": code, "card_product_id": product_id}
 
-    profile = _MOCK_PROFILES.get(client_id, {})
-    email = profile.get("contact_info", {}).get("email", "customer@email.com")
+    # Get customer email from Cosmos DB
+    profile = await _lookup_user_by_client_id(client_id)
+    email = profile.get("contact_info", {}).get("email", "customer@email.com") if profile else "customer@email.com"
 
     logger.info("📧 Card agreement sent: %s - code: %s", client_id, code)
 
@@ -699,6 +715,225 @@ async def finalize_card_application(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def search_credit_card_faqs(args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Search credit card FAQ knowledge base.
+    
+    Uses local CARD_KNOWLEDGE_BASE for RAG fallback when Azure AI Search is unavailable.
+    Returns matching FAQ entries for card-specific questions about APR, fees, benefits, etc.
+    
+    Args:
+        args: Dict with 'query', optional 'card_name' and 'top_k'
+        
+    Returns:
+        Dict with 'success', 'results' list, and 'source' indicator
+    """
+    query = (args.get("query") or "").strip().lower()
+    card_name_filter = (args.get("card_name") or "").strip().lower()
+    top_k = args.get("top_k", 3)
+    
+    if not query:
+        return {"success": False, "message": "Query is required.", "results": []}
+    
+    # Map card names to product IDs
+    card_name_to_id = {
+        "travel rewards": "travel-rewards-001",
+        "premium rewards": "premium-rewards-001",
+        "cash rewards": "cash-rewards-002",
+        "unlimited cash": "unlimited-cash-003",
+    }
+    
+    # Map query keywords to knowledge base keys
+    query_key_mapping = {
+        "apr": "apr",
+        "interest": "apr",
+        "rate": "apr",
+        "foreign": "foreign_fees",
+        "international": "foreign_fees",
+        "transaction fee": "foreign_fees",
+        "atm": "atm_cash_advance",
+        "cash advance": "atm_cash_advance",
+        "withdraw": "atm_cash_advance",
+        "eligible": "eligibility",
+        "qualify": "eligibility",
+        "credit score": "eligibility",
+        "fico": "eligibility",
+        "benefit": "benefits",
+        "perk": "benefits",
+        "annual fee": "benefits",
+        "insurance": "benefits",
+        "reward": "rewards",
+        "point": "rewards",
+        "cash back": "rewards",
+        "earn": "rewards",
+        "balance transfer": "balance_transfer",
+        "transfer": "balance_transfer",
+        "travel": "best_for_travel",
+        "abroad": "best_for_travel",
+    }
+    
+    results = []
+    
+    # Determine which cards to search
+    if card_name_filter and card_name_filter in card_name_to_id:
+        cards_to_search = {card_name_to_id[card_name_filter]: CARD_KNOWLEDGE_BASE.get(card_name_to_id[card_name_filter], {})}
+    else:
+        cards_to_search = CARD_KNOWLEDGE_BASE
+    
+    # Find matching knowledge base key
+    matched_key = None
+    for keyword, kb_key in query_key_mapping.items():
+        if keyword in query:
+            matched_key = kb_key
+            break
+    
+    # Search through cards
+    for card_id, card_kb in cards_to_search.items():
+        if not card_kb:
+            continue
+            
+        # Format card name from ID
+        card_display_name = card_id.replace("-", " ").replace("001", "").replace("002", "").replace("003", "").strip().title()
+        
+        if matched_key and matched_key in card_kb:
+            results.append({
+                "card_name": card_display_name,
+                "card_id": card_id,
+                "topic": matched_key,
+                "answer": card_kb[matched_key],
+            })
+        else:
+            # Fallback: search all entries for query terms
+            for topic, answer in card_kb.items():
+                if query in answer.lower() or query in topic.lower():
+                    results.append({
+                        "card_name": card_display_name,
+                        "card_id": card_id,
+                        "topic": topic,
+                        "answer": answer,
+                    })
+    
+    # Limit results
+    results = results[:top_k]
+    
+    logger.info("🔍 FAQ search: query='%s', card_filter='%s', results=%d", query, card_name_filter, len(results))
+    
+    return {
+        "success": True,
+        "query": query,
+        "card_filter": card_name_filter or None,
+        "results": results,
+        "source": "CARD_KNOWLEDGE_BASE",
+        "note": "Results from local FAQ knowledge base. For real-time data, Azure AI Search integration recommended.",
+    }
+
+
+async def evaluate_card_eligibility(args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Evaluate if a customer is pre-approved or eligible for a specific credit card.
+    
+    Uses customer tier and profile to determine eligibility status:
+    - PRE_APPROVED: Customer can proceed directly to e-signature
+    - APPROVED_WITH_REVIEW: Approved but may get different terms
+    - PENDING_VERIFICATION: Need additional information
+    - DECLINED: Not eligible (suggest alternatives)
+    
+    Args:
+        args: Dict with 'client_id' and 'card_product_id'
+        
+    Returns:
+        Dict with eligibility_status, credit_limit, and next_steps
+    """
+    client_id = (args.get("client_id") or "").strip()
+    card_product_id = (args.get("card_product_id") or "").strip()
+    
+    if not client_id or not card_product_id:
+        return {"success": False, "message": "client_id and card_product_id are required."}
+    
+    logger.info("🔍 Evaluating card eligibility | client_id=%s card=%s", client_id, card_product_id)
+    
+    # Get card product details
+    card_product = CARD_PRODUCTS.get(card_product_id)
+    if not card_product:
+        return {"success": False, "message": f"Unknown card product: {card_product_id}"}
+    
+    # Fetch customer data from Cosmos DB
+    mgr = _get_demo_users_manager()
+    customer_data = None
+    if mgr:
+        try:
+            customer_data = await asyncio.to_thread(mgr.read_document, {"client_id": client_id})
+        except Exception as exc:
+            logger.warning("Could not fetch customer data: %s", exc)
+    
+    # Require customer data from Cosmos DB - no mock fallback
+    if not customer_data:
+        return {"success": False, "message": f"Customer profile not found for {client_id}. Please create a profile first."}
+    
+    # Extract customer profile
+    customer_intelligence = customer_data.get("customer_intelligence", {})
+    relationship_context = customer_intelligence.get("relationship_context", {})
+    bank_profile = customer_intelligence.get("bank_profile", {})
+    
+    customer_tier = relationship_context.get("relationship_tier", customer_data.get("tier", "Standard"))
+    existing_cards = bank_profile.get("cards", [])
+    
+    # Simple eligibility scoring
+    tier_lower = customer_tier.lower()
+    eligibility_score = 50  # Base score
+    
+    if "diamond" in tier_lower or "platinum" in tier_lower:
+        eligibility_score += 30
+    elif "gold" in tier_lower:
+        eligibility_score += 15
+    
+    if len(existing_cards) > 0:
+        eligibility_score += 15
+    
+    # Determine credit limit
+    if eligibility_score >= 80:
+        credit_limit = CREDIT_LIMITS_BY_INCOME.get("high", 15000)
+    elif eligibility_score >= 60:
+        credit_limit = CREDIT_LIMITS_BY_INCOME.get("medium", 8500)
+    else:
+        credit_limit = CREDIT_LIMITS_BY_INCOME.get("low", 5000)
+    
+    # Determine status
+    if eligibility_score >= 75:
+        eligibility_status = "PRE_APPROVED"
+        status_message = "Great news! You're pre-approved for this card."
+        next_step = "send_card_agreement"
+        can_proceed = True
+    elif eligibility_score >= 55:
+        eligibility_status = "APPROVED_WITH_REVIEW"
+        status_message = "You're approved! I'll send you the agreement to review and sign."
+        next_step = "send_card_agreement"
+        can_proceed = True
+    else:
+        eligibility_status = "PENDING_VERIFICATION"
+        status_message = "We need a bit more information to complete your application."
+        next_step = "request_more_info"
+        can_proceed = False
+    
+    logger.info(
+        "✅ Eligibility evaluated | client_id=%s card=%s score=%d status=%s limit=$%d",
+        client_id, card_product_id, eligibility_score, eligibility_status, credit_limit
+    )
+    
+    return {
+        "success": True,
+        "message": status_message,
+        "eligibility_status": eligibility_status,
+        "eligibility_score": eligibility_score,
+        "credit_limit": credit_limit,
+        "card_name": card_product.name,
+        "card_product_id": card_product_id,
+        "can_proceed_to_agreement": can_proceed,
+        "next_step": next_step,
+        "customer_tier": customer_tier,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -745,4 +980,16 @@ register_tool(
     finalize_card_application_schema,
     finalize_card_application,
     tags={"banking", "cards", "esign"},
+)
+register_tool(
+    "search_credit_card_faqs",
+    search_credit_card_faqs_schema,
+    search_credit_card_faqs,
+    tags={"banking", "cards", "faq"},
+)
+register_tool(
+    "evaluate_card_eligibility",
+    evaluate_card_eligibility_schema,
+    evaluate_card_eligibility,
+    tags={"banking", "cards", "eligibility"},
 )

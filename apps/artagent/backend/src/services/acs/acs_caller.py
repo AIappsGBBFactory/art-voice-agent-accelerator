@@ -92,7 +92,7 @@ def initialize_acs_caller_instance() -> AcsCaller | None:
         )
         logger.info(
             "AcsCaller initialised with phone: %s...",
-            acs_source_phone[:4] if acs_source_phone else "???",
+            ACS_SOURCE_PHONE_NUMBER[:4] if ACS_SOURCE_PHONE_NUMBER else "???",
         )
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Failed to initialise AcsCaller: %s", exc, exc_info=True)

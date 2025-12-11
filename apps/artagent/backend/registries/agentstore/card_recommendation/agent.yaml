@@ -8,41 +8,43 @@
 name: CardRecommendation
 description: Credit card recommendations, comparisons, and e-signature applications
 
-greeting: ""  # Seamless handoff - no greeting needed
-return_greeting: "What else would you like to know about cards?"
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Handoff Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
-  trigger: handoff_card_recommendation
-  transition_message: "Let me find the best card options for you."
+  trigger: handoff_card_recommendation  # Other agents call this to reach CardRecommendation
+
+greeting: |
+  {% if caller_name %}Hi {{ caller_name }}, I'm the card recommendation specialist. Let me find the best options for you.
+  {% else %}Hi, I'm the card recommendation specialist. Let me find the best options for you.
+  {% endif %}
+return_greeting: "Welcome back. What else would you like to know about cards?"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 voice:
-  name: en-US-EchoTurboMultilingualNeural
+  name: en-US-AlloyTurboMultilingualNeural
   type: azure-standard
   rate: "-4%"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model Configuration (LLM for agent reasoning)
 # ─────────────────────────────────────────────────────────────────────────────
-model:
-  deployment_id: gpt-4o                   # Used by both modes
-  temperature: 0.7
-  top_p: 0.9
-  max_tokens: 150
+# model:
+#   deployment_id: gpt-4o                   # Used by both modes
+#   temperature: 0.7
+#   top_p: 0.9
+#   max_tokens: 150
 
 # Uncomment to use DIFFERENT models per mode:
-# voicelive_model:
-#   deployment_id: gpt-4o-realtime-preview
-#   temperature: 0.7
-#
-# cascade_model:
-#   deployment_id: gpt-4o-mini
-#   temperature: 0.8
+voicelive_model:
+  deployment_id: gpt-4o-realtime-preview
+  temperature: 0.7
+
+cascade_model:
+  deployment_id: gpt-4o-mini
+  temperature: 0.8
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session Configuration (VoiceLive Mode Only)
@@ -84,19 +86,17 @@ tools:
   # Card Search & Details
   - search_card_products
   - get_card_details
+  - search_credit_card_faqs
+  - evaluate_card_eligibility
   
   # Application Flow
   - send_card_agreement
   - verify_esignature
   - finalize_card_application
   
-  # MFA (if needed)
-  - send_mfa_code
-  - verify_mfa_code
-  
-  # Handoffs (tool-based strategy)
-  - handoff_investment_advisor        # If topic shifts to retirement
-  - handoff_concierge           # Return to main concierge
+  # Handoffs
+  - handoff_investment_advisor
+  - handoff_concierge
   
   # Escalation
   - escalate_human

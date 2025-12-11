@@ -258,6 +258,7 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
   const customerIntel = data?.customer_intelligence ?? {};
   const coreIdentity = customerIntel.core_identity ?? {};
   const bankProfile = customerIntel.bank_profile ?? {};
+  const accounts = customerIntel.accounts ?? {};
   const employment = customerIntel.employment ?? {};
   const payrollSetup = customerIntel.payroll_setup ?? {};
   const retirementProfile = customerIntel.retirement_profile ?? {};
@@ -375,15 +376,47 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
               </SectionCard>
             )}
 
-            {/* Bank Profile */}
-            {(bankProfile.current_balance !== undefined || bankProfile.accountTenureYears) && (
+            {/* Bank Accounts */}
+            {(bankProfile.current_balance !== undefined || bankProfile.accountTenureYears || accounts.checking || accounts.savings) && (
               <SectionCard sx={{ mt: 2 }}>
-                <SectionTitle icon="🏦">Bank Account</SectionTitle>
-                <ProfileDetailRow label="Account ID" value={bankProfile.primaryCheckingAccountId} />
-                <ProfileDetailRow label="Balance" value={formatCurrency(bankProfile.current_balance)} />
-                <ProfileDetailRow label="Routing Number" value={bankProfile.routing_number} />
-                <ProfileDetailRow label="Account Last 4" value={`****${bankProfile.account_number_last4}`} />
+                <SectionTitle icon="🏦">Bank Accounts</SectionTitle>
+                
+                {/* Checking Account */}
+                {accounts.checking && (
+                  <Box sx={{ mb: 2 }}>
+                    <ProfileDetailRow label="Account Type" value="Checking" />
+                    <ProfileDetailRow label="Last 4" value={`****${accounts.checking.account_number_last4}`} />
+                    <ProfileDetailRow label="Balance" value={formatCurrency(accounts.checking.balance)} />
+                    <ProfileDetailRow label="Available" value={formatCurrency(accounts.checking.available)} />
+                    <ProfileDetailRow label="Routing" value={bankProfile.routing_number} />
+                  </Box>
+                )}
+                
+                {accounts.checking && accounts.savings && <Divider sx={{ my: 1.5 }} />}
+                
+                {/* Savings Account */}
+                {accounts.savings && (
+                  <Box>
+                    <ProfileDetailRow label="Account Type" value="Savings" />
+                    <ProfileDetailRow label="Last 4" value={`****${accounts.savings.account_number_last4}`} />
+                    <ProfileDetailRow label="Balance" value={formatCurrency(accounts.savings.balance)} />
+                    <ProfileDetailRow label="Available" value={formatCurrency(accounts.savings.available)} />
+                  </Box>
+                )}
+                
+                {/* Account Summary (fallback for older profiles) */}
+                {!accounts.checking && !accounts.savings && (
+                  <>
+                    <ProfileDetailRow label="Balance" value={formatCurrency(bankProfile.current_balance)} />
+                    <ProfileDetailRow label="Routing Number" value={bankProfile.routing_number} />
+                    <ProfileDetailRow label="Account Last 4" value={`****${bankProfile.account_number_last4}`} />
+                  </>
+                )}
+                
+                <Divider sx={{ my: 1.5 }} />
                 <ProfileDetailRow label="Account Tenure" value={bankProfile.accountTenureYears ? `${bankProfile.accountTenureYears} years` : '—'} />
+                <ProfileDetailRow label="Direct Deposit" value={bankProfile.has_direct_deposit ? '✅ Active' : '❌ Not Set Up'} />
+                <ProfileDetailRow label="Preferred Branch" value={bankProfile.preferred_branch} />
               </SectionCard>
             )}
 
