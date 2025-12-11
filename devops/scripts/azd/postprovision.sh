@@ -272,7 +272,7 @@ show_summary() {
         log ""
         log "Next steps:"
         log "  • Verify: azd show"
-        log "  • Health check: curl \$(azd env get-value BACKEND_CONTAINER_APP_URL)/health"
+        log "  • Health check: curl \$(azd env get-value BACKEND_CONTAINER_APP_URL)/api/v1/health"
         [[ -z "$phone" ]] && log "  • Configure phone: Azure Portal → ACS → Phone numbers"
     fi
     
