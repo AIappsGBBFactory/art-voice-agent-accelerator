@@ -95,7 +95,9 @@ create_storage() {
     # Create resource group
     if ! az group show --name "$resource_group" &> /dev/null; then
         log_info "Creating resource group: $resource_group"
-        az group create --name "$resource_group" --location "$location" --output none
+        az group create --name "$resource_group" --location "$location" \
+            --tags "SecurityControl=Ignore" \
+            --output none
     fi
     
     # Create storage account
@@ -109,6 +111,7 @@ create_storage() {
             --kind StorageV2 \
             --allow-blob-public-access false \
             --min-tls-version TLS1_2 \
+            --tags "SecurityControl=Ignore" \
             --output none
             
         # Enable versioning and change feed (best-effort)

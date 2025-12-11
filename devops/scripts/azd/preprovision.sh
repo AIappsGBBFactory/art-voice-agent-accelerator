@@ -197,7 +197,73 @@ terraform {
 EOF
         
         success "Backend configured for Azure Storage remote state"
+        # Note: provider.conf.json is generated separately after initialize-terraform.sh
+        # to ensure RS_* variables are set
     fi
+}
+
+# Generate provider.conf.json for remote state backend configuration
+# azd uses this file to pass -backend-config values to terraform init
+generate_provider_conf_json() {
+    local provider_conf="$SCRIPT_DIR/../../../infra/terraform/provider.conf.json"
+    
+    # Get remote state configuration from azd env or environment variables
+    local rs_resource_group="${RS_RESOURCE_GROUP:-}"
+    local rs_storage_account="${RS_STORAGE_ACCOUNT:-}"
+    local rs_container_name="${RS_CONTAINER_NAME:-}"
+    local rs_state_key="${RS_STATE_KEY:-}"
+    
+    # Try to get from azd env if not set
+    if [[ -z "$rs_resource_group" ]]; then
+        rs_resource_group=$(azd env get-value RS_RESOURCE_GROUP 2>/dev/null || echo "")
+    fi
+    if [[ -z "$rs_storage_account" ]]; then
+        rs_storage_account=$(azd env get-value RS_STORAGE_ACCOUNT 2>/dev/null || echo "")
+    fi
+    if [[ -z "$rs_container_name" ]]; then
+        rs_container_name=$(azd env get-value RS_CONTAINER_NAME 2>/dev/null || echo "")
+    fi
+    if [[ -z "$rs_state_key" ]]; then
+        rs_state_key=$(azd env get-value RS_STATE_KEY 2>/dev/null || echo "")
+    fi
+    
+    # Validate required values
+    if [[ -z "$rs_resource_group" || -z "$rs_storage_account" || -z "$rs_container_name" ]]; then
+        warn "Remote state variables not fully configured"
+        warn "Set RS_RESOURCE_GROUP, RS_STORAGE_ACCOUNT, RS_CONTAINER_NAME via 'azd env set'"
+        warn "Or run initialize-terraform.sh to create remote state storage"
+        return 1
+    fi
+    
+    # Default state key if not set
+    if [[ -z "$rs_state_key" ]]; then
+        rs_state_key="${AZURE_ENV_NAME:-terraform}.tfstate"
+        info "Using default state key: $rs_state_key"
+    fi
+    
+    log "Generating provider.conf.json for remote state backend..."
+    
+    # Build JSON using jq for proper escaping
+    local json_content
+    json_content=$(jq -n \
+        --arg rg "$rs_resource_group" \
+        --arg sa "$rs_storage_account" \
+        --arg container "$rs_container_name" \
+        --arg key "$rs_state_key" \
+        '{
+            resource_group_name: $rg,
+            storage_account_name: $sa,
+            container_name: $container,
+            key: $key
+        }'
+    )
+    
+    echo "$json_content" > "$provider_conf"
+    success "Generated provider.conf.json"
+    log "   resource_group_name: $rs_resource_group"
+    log "   storage_account_name: $rs_storage_account"
+    log "   container_name: $rs_container_name"
+    log "   key: $rs_state_key"
 }
 
 # Generate main.tfvars.json from current azd environment
@@ -280,6 +346,11 @@ provider_terraform() {
         is_ci && export TF_INIT_SKIP_INTERACTIVE=true
         log "Setting up Terraform remote state..."
         bash "$tf_init"
+        
+        # Generate provider.conf.json AFTER initialize-terraform.sh
+        # This ensures RS_* variables are set (either existing or newly created)
+        log ""
+        generate_provider_conf_json
     elif [[ "$local_state" == "true" ]]; then
         info "Using local state - skipping remote state initialization"
     else

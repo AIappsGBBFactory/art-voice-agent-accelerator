@@ -16,22 +16,24 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the dependencies file to the working directory
-COPY requirements.txt .
-
-# Install any needed packages specified in requirements.txt
-# Use a virtual environment to isolate dependencies
+# Install build dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc build-essential portaudio19-dev && \
     rm -rf /var/lib/apt/lists/*
+
+# Set up virtual environment
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip
 
-# Copy the current directory contents into the container at /app
+# Copy the source code and project files
+COPY pyproject.toml .
 COPY ./apps /app/apps
 COPY ./src /app/src
 COPY ./utils /app/utils
+
+# Install the package (reads dependencies from pyproject.toml)
+RUN pip install --no-cache-dir .
 
 # Set PYTHONPATH to include the app directory
 ENV PYTHONPATH="/app:$PYTHONPATH"
