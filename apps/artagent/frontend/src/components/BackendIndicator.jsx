@@ -166,7 +166,9 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect
     azure_openai: "🧠",
     speech_services: "🎙️",
     acs_caller: "📞",
-    rt_agents: "🤖"
+    rt_agents: "🤖",
+    auth_configuration: "🔐",
+    app_configuration: "⚙️",
   };
 
   // Component descriptions
@@ -175,7 +177,9 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect
     azure_openai: "Azure OpenAI - GPT models & embeddings",
     speech_services: "Speech Services - STT/TTS processing",
     acs_caller: "Communication Services - Voice calling",
-    rt_agents: "RT Agents - Real-time Voice Agents"
+    rt_agents: "RT Agents - Real-time Voice Agents",
+    auth_configuration: "Authentication config (client IDs, tenant IDs, allowed callers)",
+    app_configuration: "Azure App Configuration (feature flags, secrets, and settings)",
   };
 
   const handleBackendClick = (e) => {
@@ -394,19 +398,29 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect
                   Components
                 </div>
                 {readinessData.checks.map((check, idx) => {
-                  const isHealthy = check.status === "pass";
-                  const componentName = check.componentId?.replace(/_/g, ' ') || 'Unknown';
-                  const description = componentDescriptions[check.componentId] || '';
-                  
+                  const componentKey = (check.component || check.componentId || 'unknown').toLowerCase();
+                  const status = (check.status || 'unknown').toLowerCase();
+                  const isHealthy = status === "healthy";
+                  const isDegraded = status === "degraded";
+                  const componentName = componentKey !== 'unknown'
+                    ? componentKey.replace(/_/g, ' ')
+                    : 'Unknown component';
+                  const description = componentDescriptions[componentKey] || '';
+                  const statusIcon = isHealthy ? '✓' : isDegraded ? '⚠' : '✕';
+                  const background = isHealthy ? '#f0fdf4' : isDegraded ? '#fffbeb' : '#fef2f2';
+                  const border = isHealthy ? '#bbf7d0' : isDegraded ? '#fed7aa' : '#fecaca';
+                  const statusColor = isHealthy ? '#166534' : isDegraded ? '#92400e' : '#dc2626';
+                  const detailText = check.error || check.details;
+
                   return (
                     <div 
                       key={idx} 
                       style={{
                         padding: '10px',
-                        background: isHealthy ? '#f0fdf4' : '#fef2f2',
+                        background,
                         borderRadius: '8px',
                         marginBottom: '8px',
-                        border: `1px solid ${isHealthy ? '#bbf7d0' : '#fecaca'}`,
+                        border: `1px solid ${border}`,
                       }}
                     >
                       <div style={{
@@ -421,18 +435,18 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect
                           gap: '6px',
                           fontSize: '11px',
                           fontWeight: '600',
-                          color: isHealthy ? '#166534' : '#dc2626',
+                          color: statusColor,
                         }}>
                           <span style={{ fontSize: '14px' }}>
-                            {componentIcons[check.componentId] || '🔧'}
+                            {componentIcons[componentKey] || '🔧'}
                           </span>
                           <span>{componentName}</span>
                         </div>
                         <div style={{
                           fontSize: '16px',
-                          color: isHealthy ? '#10b981' : '#ef4444',
+                          color: statusColor,
                         }}>
-                          {isHealthy ? '✓' : '✕'}
+                          {statusIcon}
                         </div>
                       </div>
                       
@@ -447,27 +461,12 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect
                           {description}
                         </div>
                       )}
-                      
-                      {/* Component Details */}
-                      {check.componentType && (
-                        <div style={{
-                          fontSize: '9px',
-                          color: '#64748b',
-                          fontFamily: 'monospace',
-                          background: 'rgba(255,255,255,0.5)',
-                          padding: '4px 6px',
-                          borderRadius: '4px',
-                          marginTop: '4px',
-                        }}>
-                          Type: {check.componentType}
-                        </div>
-                      )}
-                      
+
                       {/* Output/Error Details */}
-                      {check.output && (
+                      {detailText && (
                         <div style={{
                           fontSize: '9px',
-                          color: isHealthy ? '#166534' : '#dc2626',
+                          color: statusColor,
                           marginTop: '4px',
                           fontFamily: 'monospace',
                           background: 'rgba(255,255,255,0.5)',
@@ -475,21 +474,18 @@ const BackendIndicator = ({ url, onConfigureClick, onStatusChange, onAgentSelect
                           borderRadius: '4px',
                           wordBreak: 'break-word',
                         }}>
-                          {typeof check.output === 'object' 
-                            ? JSON.stringify(check.output, null, 2).substring(0, 100) + (JSON.stringify(check.output).length > 100 ? '...' : '')
-                            : String(check.output).substring(0, 100) + (String(check.output).length > 100 ? '...' : '')
-                          }
+                          {String(detailText)}
                         </div>
                       )}
-                      
+
                       {/* Time/Performance Info */}
-                      {check.time && (
+                      {typeof check.check_time_ms === 'number' && (
                         <div style={{
                           fontSize: '9px',
                           color: '#64748b',
                           marginTop: '4px',
                         }}>
-                          ⏱️ Response: {check.time}
+                          ⏱️ {Math.round(check.check_time_ms)}ms
                         </div>
                       )}
                     </div>

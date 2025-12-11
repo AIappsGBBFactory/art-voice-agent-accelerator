@@ -216,6 +216,23 @@ jobs:
         id: tf-params
         run: |
           echo "🔧 Setting up Terraform parameters..."
+
+          # GitHub Actions env file requires NAME=VALUE per line.
+          # If a value contains newlines (common for JSON), it must be written via heredoc.
+          write_github_env() {
+            local name="$1"
+            local value="$2"
+            if [[ "${value}" == *$'\n'* ]]; then
+              local delimiter="EOF_$(date +%s%N)"
+              {
+                echo "${name}<<${delimiter}";
+                echo "${value}";
+                echo "${delimiter}";
+              } >> "${GITHUB_ENV}"
+            else
+              printf '%s=%s\n' "${name}" "${value}" >> "${GITHUB_ENV}"
+            fi
+          }
           
           # Determine environment for tfvars
           TFVARS_ENV="${{ env.AZURE_ENV_NAME }}"
@@ -227,8 +244,15 @@ jobs:
             echo "📄 Loading static params from: $TFVARS_FILE"
             # Export each key from the tfvars file as TF_VAR_*
             for key in $(jq -r 'keys[]' "$TFVARS_FILE"); do
-              value=$(jq -r --arg k "$key" '.[$k]' "$TFVARS_FILE")
-              echo "TF_VAR_${key}=${value}" >> $GITHUB_ENV
+              value_type=$(jq -r --arg k "$key" '.[$k] | type' "$TFVARS_FILE")
+              if [ "$value_type" = "string" ]; then
+                # Keep strings unquoted for Terraform's TF_VAR_ parsing.
+                value=$(jq -r --arg k "$key" '.[$k]' "$TFVARS_FILE")
+              else
+                # Compact JSON for objects/arrays/numbers/bools to avoid newlines in $GITHUB_ENV.
+                value=$(jq -c --arg k "$key" '.[$k]' "$TFVARS_FILE")
+              fi
+              write_github_env "TF_VAR_${key}" "${value}"
             done
           else
             echo "⚠️ No environment-specific tfvars found: $TFVARS_FILE"
@@ -245,9 +269,9 @@ jobs:
           
           # Set dynamic parameters via TF_VAR_* (azd best practice)
           # These override any values from the tfvars file
-          echo "TF_VAR_environment_name=${{ env.AZURE_ENV_NAME }}" >> $GITHUB_ENV
-          echo "TF_VAR_principal_type=${PRINCIPAL_TYPE}" >> $GITHUB_ENV
-          echo "TF_VAR_deployed_by=${GITHUB_ACTOR}" >> $GITHUB_ENV
+          write_github_env "TF_VAR_environment_name" "${{ env.AZURE_ENV_NAME }}"
+          write_github_env "TF_VAR_principal_type" "${PRINCIPAL_TYPE}"
+          write_github_env "TF_VAR_deployed_by" "${GITHUB_ACTOR}"
           
           echo "✅ TF_VAR_* configured for environment: ${{ env.AZURE_ENV_NAME }} (Auth: $AUTH_METHOD)"
 
