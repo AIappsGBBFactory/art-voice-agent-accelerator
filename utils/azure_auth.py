@@ -7,6 +7,9 @@ from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 
+# Timeout for credential acquisition (prevents hanging on auth failures)
+_CREDENTIAL_TIMEOUT_SEC = float(os.getenv("AZURE_CREDENTIAL_TIMEOUT_SEC", "10.0"))
+
 
 def _using_managed_identity() -> bool:
     """Check if running with Managed Identity (Azure hosted environment)."""
@@ -26,11 +29,8 @@ def _is_local_dev() -> bool:
     """
     env = os.getenv("ENVIRONMENT", "").lower()
 
-    # Explicit environment setting takes priority
-    if env in ("dev", "development", "local"):
+    if env not in ("prod", "production", "staging"):
         return True
-    if env in ("prod", "production", "staging"):
-        return False
 
     # Fall back to Azure hosting signals
     is_azure_hosted = bool(
@@ -42,14 +42,11 @@ def _is_local_dev() -> bool:
     return not is_azure_hosted
 
 
-@lru_cache(maxsize=1)
-def get_credential():
+def _create_credential_internal():
     """
-    Get Azure credential based on environment.
-
-    - Managed Identity: Used when AZURE_CLIENT_ID/MSI_ENDPOINT/IDENTITY_ENDPOINT is set
-    - Local Dev: Uses CLI credential (requires `az login`)
-    - Production: Uses only environment + managed identity credentials
+    Internal credential creation - not cached.
+    
+    Returns the appropriate credential based on environment.
     """
     if _using_managed_identity():
         return ManagedIdentityCredential(client_id=os.getenv("AZURE_CLIENT_ID"))
@@ -78,3 +75,18 @@ def get_credential():
         exclude_powershell_credential=True,
         exclude_interactive_browser_credential=True,
     )
+
+
+@lru_cache(maxsize=1)
+def get_credential():
+    """
+    Get Azure credential based on environment.
+
+    - Managed Identity: Used when AZURE_CLIENT_ID/MSI_ENDPOINT/IDENTITY_ENDPOINT is set
+    - Local Dev: Uses CLI credential (requires `az login`)
+    - Production: Uses only environment + managed identity credentials
+    
+    Note: Credential creation is fast, but token acquisition (which happens
+    on first use) can be slow. The credential object is cached for reuse.
+    """
+    return _create_credential_internal()

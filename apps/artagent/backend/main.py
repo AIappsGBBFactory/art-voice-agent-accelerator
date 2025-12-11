@@ -648,7 +648,7 @@ async def lifespan(app: FastAPI):
                 success = await warm_openai_connection(timeout_sec=10.0)
                 return ("openai_connection", success)
             except Exception as e:
-                logger.warning("OpenAI warmup setup failed: %s", e)
+                logger.error("OpenAI warmup setup failed: %s", e)
                 return ("openai_connection", False)
 
         warmup_tasks.append(warm_openai())

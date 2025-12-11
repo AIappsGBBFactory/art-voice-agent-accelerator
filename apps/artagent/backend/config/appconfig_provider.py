@@ -212,9 +212,7 @@ def _load_config_from_appconfig() -> dict[str, Any] | None:
                 _log(f"   ✅ Loaded {len(config_dict)} configuration keys")
 
                 # Log all keys for debugging
-                if config_dict:
-                    _log(f"   All keys: {list(config_dict.keys())}")
-                else:
+                if not config_dict:
                     _log("   ⚠️  No keys loaded from App Configuration!")
 
                 # Log some sample keys (first 5)

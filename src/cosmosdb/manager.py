@@ -139,19 +139,22 @@ class CosmosDBMongoCoreManager:
                 auth_callback = AzureIdentityTokenCallback(credential)
                 auth_properties = {"OIDC_CALLBACK": auth_callback}
 
-                # Override connection string for OIDC
+                # Build connection string for OIDC with required parameters
                 connection_string = (
                     f"mongodb+srv://{cluster_name}.global.mongocluster.cosmos.azure.com/"
+                    "?tls=true&authMechanism=MONGODB-OIDC&retrywrites=false&maxIdleTimeMS=120000"
                 )
                 self.cluster_host = f"{cluster_name}.global.mongocluster.cosmos.azure.com"
 
                 logger.info(f"Using OIDC authentication for cluster: {cluster_name}")
+                logger.debug(f"OIDC connection string: {connection_string}")
 
                 self.client = pymongo.MongoClient(
                     connection_string,
                     connectTimeoutMS=120000,
                     tls=True,
-                    retryWrites=True,
+                    retryWrites=False,  # Cosmos DB MongoDB vCore doesn't support retryWrites
+                    maxIdleTimeMS=120000,
                     authMechanism="MONGODB-OIDC",
                     authMechanismProperties=auth_properties,
                 )

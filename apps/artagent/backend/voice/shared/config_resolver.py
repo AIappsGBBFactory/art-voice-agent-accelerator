@@ -52,7 +52,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────
 
 # Unified default start agent name (used by both adapters)
-DEFAULT_START_AGENT = "Concierge"
+DEFAULT_START_AGENT = "BankingConcierge"
 
 # Environment variable for scenario selection
 SCENARIO_ENV_VAR = "AGENT_SCENARIO"

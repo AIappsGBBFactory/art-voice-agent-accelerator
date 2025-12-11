@@ -673,8 +673,8 @@ class ThreadSafeConnectionManager:
                 extra={"pattern": pattern, "node_id": self._node_id},
             )
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "Failed to start distributed session listener: %s",
+            logger.warning(
+                "Distributed session listener unavailable (non-critical): %s",
                 exc,
             )
             self._redis_mgr = None
