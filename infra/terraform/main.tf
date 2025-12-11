@@ -5,6 +5,9 @@
 terraform {
   required_version = ">= 1.1.7, < 2.0.0"
 
+  # Backend is configured separately via backend-azurerm.tf or backend-local.tf
+  # The preprovision script selects the appropriate backend based on LOCAL_STATE env var
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -107,10 +110,10 @@ locals {
     container_env              = "cae-${var.name}-${var.environment_name}-${local.resource_token}"
     email_service              = "email-${var.name}-${var.environment_name}-${local.resource_token}"
     email_domain               = "AzureManagedDomain"
-    foundry_account            = substr(replace("aif${var.name}${var.environment_name}", "/[^a-zA-Z0-9]/", ""), 0, 24)
-    foundry_project            = "aif${var.name}${var.environment_name}proj"
-    voice_live_foundry_account = substr(replace("avl${var.name}${var.environment_name}", "/[^a-zA-Z0-9]/", ""), 0, 24)
-    voice_live_foundry_project = "aif${var.name}${var.environment_name}-vl-proj"
+    foundry_account            = substr(replace("aif${var.name}${local.resource_token}", "/[^a-zA-Z0-9]/", ""), 0, 24)
+    foundry_project            = "aif${var.name}${local.resource_token}proj"
+    voice_live_foundry_account = substr(replace("avl${var.name}${local.resource_token}", "/[^a-zA-Z0-9]/", ""), 0, 24)
+    voice_live_foundry_project = "avl${var.name}${local.resource_token}proj"
   }
 
   foundry_project_display = "AI Foundry ${var.environment_name}"
@@ -135,7 +138,7 @@ locals {
         name     = "gpt-realtime"
         version  = "2025-08-28"
         sku_name = "GlobalStandard"
-        capacity = 10
+        capacity = 4
       }
       "gpt-4o-transcribe" = {
         name     = "gpt-4o-transcribe"

@@ -13,7 +13,7 @@ RUN npm ci
 # Copy the rest of the application code
 COPY . .
 
-# Build the application for production (with placeholder)
+# Build the application for production
 RUN npm run build
 
 # Stage 2: Serve the application
@@ -23,12 +23,12 @@ WORKDIR /app
 # Install curl and jq for App Configuration REST API calls
 RUN apk add --no-cache curl jq bash
 
-# Copy built files and package.json
+# Copy built files from builder stage
 COPY --from=builder /app/dist ./dist
 COPY package.json package-lock.json ./
 COPY entrypoint.sh ./
 
-# Install production dependencies
+# Install production dependencies only
 RUN npm ci --omit=dev
 
 # Make entrypoint executable

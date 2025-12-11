@@ -78,6 +78,8 @@ env:
 # Minimal permissions - OIDC handled conditionally per job
 permissions:
   contents: read    # Required to checkout repository
+  id-token: write   # Required for OIDC authentication
+  pull-requests: read # Required to access PR details
 
 jobs:
   # ============================================================================
@@ -197,19 +199,40 @@ jobs:
           azd env set RS_CONTAINER_NAME "${{ env.RS_CONTAINER_NAME }}"
           azd env set DB_INITIALIZED "${{env.DB_INITIALIZED }}"
           
+          # Extract location from tfvars and set in azd environment
+          TFVARS_FILE="infra/terraform/params/main.tfvars.${{ env.AZURE_ENV_NAME }}.json"
+          if [ -f "$TFVARS_FILE" ]; then
+            LOCATION=$(jq -r '.location // empty' "$TFVARS_FILE")
+            if [ -n "$LOCATION" ]; then
+              echo "🔧 Setting AZURE_LOCATION from tfvars: $LOCATION"
+              azd env set AZURE_LOCATION "$LOCATION"
+            fi
+          fi
+          
           echo "✅ AZD environment configured"
 
       - name: ⚙️ Setup Terraform Parameters
         if: (steps.azure-login-oidc.outcome == 'success') || (steps.azure-login-sp.outcome == 'success')
+        id: tf-params
         run: |
           echo "🔧 Setting up Terraform parameters..."
           
           # Determine environment for tfvars
           TFVARS_ENV="${{ env.AZURE_ENV_NAME }}"
           
-          # Base parameters from environment tfvars
-          BASE_PARAMS=$(cat "infra/terraform/params/main.tfvars.${TFVARS_ENV}.json")
-          echo "Base: $(echo "$BASE_PARAMS" | jq -c .)"
+          # Load base parameters from environment-specific tfvars file
+          # These are static/per-environment settings (location, SKUs, feature flags)
+          TFVARS_FILE="infra/terraform/params/main.tfvars.${TFVARS_ENV}.json"
+          if [ -f "$TFVARS_FILE" ]; then
+            echo "📄 Loading static params from: $TFVARS_FILE"
+            # Export each key from the tfvars file as TF_VAR_*
+            for key in $(jq -r 'keys[]' "$TFVARS_FILE"); do
+              value=$(jq -r --arg k "$key" '.[$k]' "$TFVARS_FILE")
+              echo "TF_VAR_${key}=${value}" >> $GITHUB_ENV
+            done
+          else
+            echo "⚠️ No environment-specific tfvars found: $TFVARS_FILE"
+          fi
           
           # Determine authentication method for Terraform
           if [ "${{ env.USE_OIDC }}" = "true" ]; then
@@ -220,21 +243,13 @@ jobs:
             AUTH_METHOD="ClientSecret"
           fi
           
-          # Add dynamic parameters
-          FINAL_PARAMS=$(echo "$BASE_PARAMS" | jq \
-            --arg env "${{ env.AZURE_ENV_NAME }}" \
-            --arg principal_type "$PRINCIPAL_TYPE" \
-            --arg deployed_by "${GITHUB_ACTOR}" \
-            --arg auth_method "$AUTH_METHOD" \
-            '. + {
-              environment_name: $env,
-              principal_type: $principal_type,
-              deployed_by: $deployed_by,
-              auth_method: $auth_method
-            }')
+          # Set dynamic parameters via TF_VAR_* (azd best practice)
+          # These override any values from the tfvars file
+          echo "TF_VAR_environment_name=${{ env.AZURE_ENV_NAME }}" >> $GITHUB_ENV
+          echo "TF_VAR_principal_type=${PRINCIPAL_TYPE}" >> $GITHUB_ENV
+          echo "TF_VAR_deployed_by=${GITHUB_ACTOR}" >> $GITHUB_ENV
           
-          echo "$FINAL_PARAMS" > infra/terraform/main.tfvars.json
-          echo "✅ Parameters configured for environment: ${{ env.AZURE_ENV_NAME }} (Auth: $AUTH_METHOD)"
+          echo "✅ TF_VAR_* configured for environment: ${{ env.AZURE_ENV_NAME }} (Auth: $AUTH_METHOD)"
 
       - name: 🔧 Configure Terraform Backend
         if: (steps.azure-login-oidc.outcome == 'success') || (steps.azure-login-sp.outcome == 'success')

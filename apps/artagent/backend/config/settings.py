@@ -5,6 +5,11 @@ Application Settings
 All environment-loaded configuration in one place, organized by domain.
 This is the single source of truth for runtime configuration.
 
+Loading Order:
+    1. Load .env.local (if exists) - local development overrides
+    2. Environment variables (container/cloud deployments)
+    3. Azure App Configuration (if configured) - loaded via appconfig_provider
+
 Usage:
     from config import POOL_SIZE_TTS, AZURE_OPENAI_ENDPOINT
     from config.settings import AzureSettings, AgentSettings
@@ -17,6 +22,56 @@ from pathlib import Path
 # Add root directory to path for imports
 root_dir = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(root_dir))
+
+# ==============================================================================
+# LOAD .env.local FILE (FIRST PRIORITY FOR LOCAL DEVELOPMENT)
+# ==============================================================================
+# .env.local is loaded FIRST to allow local development overrides.
+# Variables already set in the environment will NOT be overridden.
+# This supports the workflow:
+#   1. .env.local provides local dev values
+#   2. Container/cloud env vars take precedence if already set
+#   3. Azure App Configuration can layer additional config later
+
+def _load_dotenv_local():
+    """
+    Load .env.local file if it exists.
+
+    Search order:
+    1. apps/artagent/backend/.env.local (app-specific)
+    2. Project root .env.local
+    3. Project root .env (fallback)
+
+    Only loads values NOT already set in the environment.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        # python-dotenv not available, skip
+        return
+
+    # Define search paths relative to this file
+    backend_dir = Path(__file__).parent.parent  # apps/artagent/backend
+    project_root = backend_dir.parent.parent.parent  # repository root
+
+    # Priority order for .env files
+    env_files = [
+        backend_dir / ".env.local",      # App-specific local overrides
+        project_root / ".env.local",     # Project-wide local overrides
+        project_root / ".env",           # Default project env (lowest priority)
+    ]
+
+    for env_file in env_files:
+        if env_file.exists():
+            # override=False means existing env vars are NOT overwritten
+            load_dotenv(env_file, override=False)
+            # Log to stderr for startup diagnostics
+            print(f"📁 Loaded environment from: {env_file}", file=sys.stderr, flush=True)
+            break
+
+
+# Load .env.local BEFORE any os.getenv() calls
+_load_dotenv_local()
 
 # StreamMode enum import with fallback
 try:

@@ -31,7 +31,7 @@ variable "acs_source_phone_number" {
 variable "name" {
   description = "Base name for the real-time audio agent application"
   type        = string
-  default     = "rtaudioagent"
+  default     = "artagent"
   validation {
     condition     = length(var.name) >= 1 && length(var.name) <= 20
     error_message = "Name must be between 1 and 20 characters."
@@ -106,7 +106,7 @@ variable "acs_data_location" {
 variable "disable_local_auth" {
   description = "Disable local authentication and use Azure AD/managed identity only"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_redis_ha" {
@@ -133,7 +133,6 @@ variable "redis_port" {
   type        = number
   default     = 10000
 }
-
 variable "enable_voice_live" {
   description = "Enable Azure Voice Live service for real-time speech capabilities"
   type        = bool
@@ -158,7 +157,7 @@ variable "model_deployments" {
       name     = "text-embedding-3-large"
       version  = "1"
       sku_name = "GlobalStandard"
-      capacity = 500
+      capacity = 100
     },
   ]
 }

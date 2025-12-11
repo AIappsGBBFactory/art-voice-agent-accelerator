@@ -196,7 +196,7 @@ resource "azurerm_role_assignment" "backend_appconfig" {
 - `apps/artagent/backend/config/appconfig_provider.py` - Main provider (~350 lines)
 - `apps/artagent/backend/config/__init__.py` - Updated exports
 - `apps/artagent/backend/api/v1/endpoints/health.py` - Added status endpoints
-- `requirements.txt` - Added azure-appconfiguration dependency
+- `pyproject.toml` - azure-appconfiguration in dependencies
 
 #### Key Functions Available:
 ```python

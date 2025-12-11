@@ -1,4 +1,4 @@
-# Testing Framework
+# Testing Framework (WIP)
 
 Comprehensive unit and integration testing suite for ARTVoice Accelerator covering core components along the call automation path.
 
@@ -379,8 +379,11 @@ make create_conda_env
 # Activate environment
 make activate_conda_env
 
-# Install test dependencies
-pip install -r requirements-test.txt
+# Install test dependencies (using uv - recommended)
+uv sync --extra dev
+
+# Or with pip:
+# pip install -e .[dev]
 ```
 
 ## Best Practices
