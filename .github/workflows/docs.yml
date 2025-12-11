@@ -87,29 +87,7 @@ jobs:
           version: "latest"
 
       - name: Install docs dependencies
-        run: |
-          # Docs pipeline should install ONLY docs tooling.
-          # Important: don't `uv sync` the project; that would install runtime deps we don't need.
-          python - <<'PY'
-          import pathlib
-          import tomllib
-
-          pyproject = pathlib.Path('pyproject.toml')
-          data = tomllib.loads(pyproject.read_text(encoding='utf-8'))
-          docs_deps = (
-              data.get('project', {})
-              .get('optional-dependencies', {})
-              .get('docs', [])
-          )
-          if not docs_deps:
-              raise SystemExit('No [project.optional-dependencies].docs found in pyproject.toml')
-
-          req_path = pathlib.Path('requirements-docs.txt')
-          req_path.write_text('\n'.join(docs_deps) + '\n', encoding='utf-8')
-          print(f'Wrote {req_path} with {len(docs_deps)} dependencies')
-          PY
-
-          uv pip install -r requirements-docs.txt
+        run: uv sync --extra docs
 
       - name: Deploy docs
         uses: mhausenblas/mkdocs-deploy-gh-pages@1.26
