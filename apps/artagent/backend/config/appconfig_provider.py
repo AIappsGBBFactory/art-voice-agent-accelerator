@@ -29,6 +29,7 @@ import logging
 import os
 import sys
 import threading
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,61 @@ APPCONFIG_ENABLED = bool(APPCONFIG_ENDPOINT)
 # Global configuration dictionary (loaded from App Config)
 _config: dict[str, Any] | None = None
 _config_lock = threading.Lock()
+
+_dotenv_local_keys_cache: set[str] | None = None
+
+
+def _find_project_root(start: Path) -> Path | None:
+    current = start.resolve()
+    for parent in [current, *current.parents]:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return None
+
+
+def _get_dotenv_local_keys() -> set[str]:
+    """Return env var names explicitly declared in a .env.local file.
+
+    These keys are treated as user-intentional local overrides and should not be
+    overwritten by App Configuration.
+    """
+
+    global _dotenv_local_keys_cache
+    if _dotenv_local_keys_cache is not None:
+        return _dotenv_local_keys_cache
+
+    keys: set[str] = set()
+    try:
+        from dotenv import dotenv_values
+    except Exception:
+        _dotenv_local_keys_cache = set()
+        return _dotenv_local_keys_cache
+
+    backend_dir = Path(__file__).resolve().parents[1]  # .../backend
+    project_root = _find_project_root(backend_dir)
+
+    candidates: list[Path] = [backend_dir / ".env.local"]
+    if project_root is not None:
+        candidates.append(project_root / ".env.local")
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            values = dotenv_values(path)
+            keys.update({k for k in values.keys() if k})
+        except Exception:
+            # If parsing fails, fall back to empty (do not accidentally protect keys).
+            pass
+
+    _dotenv_local_keys_cache = keys
+    return _dotenv_local_keys_cache
+
+
+def _env_override_allowed_when_appconfig_loaded(env_var_name: str) -> bool:
+    """Only allow env-var overrides when explicitly set in .env.local."""
+
+    return env_var_name in _get_dotenv_local_keys() and env_var_name in os.environ
 
 
 # ==============================================================================
@@ -266,7 +322,8 @@ def sync_appconfig_to_env(config_dict: dict[str, Any] | None = None) -> dict[str
         return {}
 
     synced: dict[str, str] = {}
-    skipped: list[str] = []
+    overridden: list[str] = []
+    skipped_dotenv: list[str] = []
     not_found: list[str] = []
 
     # Log all available keys for diagnostics
@@ -293,11 +350,14 @@ def sync_appconfig_to_env(config_dict: dict[str, Any] | None = None) -> dict[str
                 matched_key = alt_key
 
         if value is not None:
-            # Don't override existing env vars
-            if os.getenv(env_var_name):
-                skipped.append(env_var_name)
+            # Precedence: .env.local > AppConfig > ambient env vars
+            # If user explicitly set the env var via .env.local, never overwrite.
+            if _env_override_allowed_when_appconfig_loaded(env_var_name):
+                skipped_dotenv.append(env_var_name)
                 continue
 
+            if env_var_name in os.environ:
+                overridden.append(env_var_name)
             os.environ[env_var_name] = value
             synced[env_var_name] = value
         else:
@@ -315,8 +375,10 @@ def sync_appconfig_to_env(config_dict: dict[str, Any] | None = None) -> dict[str
         ]
         if critical_synced:
             _log(f"   ✅ Critical vars synced: {critical_synced}")
-    if skipped:
-        _log(f"   ⏭️  Skipped {len(skipped)} vars (already set in environment)")
+    if overridden:
+        _log(f"   ♻️  Overrode {len(overridden)} pre-set env vars (App Config takes precedence)")
+    if skipped_dotenv:
+        _log(f"   🧾 Skipped {len(skipped_dotenv)} vars (explicitly set in .env.local)")
     if not_found:
         _log(f"   ⚠️  Critical keys not found in App Config: {not_found}")
 
@@ -400,11 +462,18 @@ def get_config_value(
 
     # Check loaded config first
     with _config_lock:
+        config_loaded = _config is not None
         if _config and appconfig_key in _config:
             return str(_config[appconfig_key])
 
     # Fall back to environment variable
     if env_var_name:
+        # When AppConfig is loaded, ignore ambient env vars unless explicitly
+        # provided via .env.local (to avoid surprising/incorrect behavior).
+        if APPCONFIG_ENABLED and config_loaded and not _env_override_allowed_when_appconfig_loaded(
+            env_var_name
+        ):
+            return default
         value = os.getenv(env_var_name)
         if value is not None:
             return value
@@ -440,6 +509,7 @@ def get_feature_flag(
 
     # Check loaded config
     with _config_lock:
+        config_loaded = _config is not None
         if _config and feature_key in _config:
             flag_data = _config[feature_key]
             if isinstance(flag_data, dict):
@@ -448,6 +518,10 @@ def get_feature_flag(
 
     # Fall back to environment variable
     if env_var_name:
+        if APPCONFIG_ENABLED and config_loaded and not _env_override_allowed_when_appconfig_loaded(
+            env_var_name
+        ):
+            return default
         env_value = os.getenv(env_var_name, "").lower()
         if env_value in ("true", "1", "yes", "on"):
             return True
