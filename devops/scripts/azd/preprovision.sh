@@ -211,7 +211,6 @@ generate_provider_conf_json() {
     local rs_resource_group="${RS_RESOURCE_GROUP:-}"
     local rs_storage_account="${RS_STORAGE_ACCOUNT:-}"
     local rs_container_name="${RS_CONTAINER_NAME:-}"
-    local rs_state_key="${RS_STATE_KEY:-}"
     
     # Try to get from azd env if not set
     if [[ -z "$rs_resource_group" ]]; then
@@ -223,9 +222,6 @@ generate_provider_conf_json() {
     if [[ -z "$rs_container_name" ]]; then
         rs_container_name=$(azd env get-value RS_CONTAINER_NAME 2>/dev/null || echo "")
     fi
-    if [[ -z "$rs_state_key" ]]; then
-        rs_state_key=$(azd env get-value RS_STATE_KEY 2>/dev/null || echo "")
-    fi
     
     # Validate required values
     if [[ -z "$rs_resource_group" || -z "$rs_storage_account" || -z "$rs_container_name" ]]; then
@@ -235,11 +231,8 @@ generate_provider_conf_json() {
         return 1
     fi
     
-    # Default state key if not set
-    if [[ -z "$rs_state_key" ]]; then
-        rs_state_key="${AZURE_ENV_NAME:-terraform}.tfstate"
-        info "Using default state key: $rs_state_key"
-    fi
+    # Always use environment name for state key to ensure consistency
+    local rs_state_key="${AZURE_ENV_NAME}.tfstate"
     
     log "Generating provider.conf.json for remote state backend..."
     
