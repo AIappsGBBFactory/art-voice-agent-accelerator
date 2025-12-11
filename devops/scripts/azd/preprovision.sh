@@ -299,7 +299,7 @@ generate_tfvars_json() {
     success "Generated main.tfvars.json"
     log "   environment_name: $AZURE_ENV_NAME"
     log "   location: $AZURE_LOCATION"
-    [[ -n "$principal_id" ]] && log "   principal_id: ${principal_id:0:8}..."
+    [[ -n "$principal_id" ]] && log "   principal_id: ${principal_id:0:8}..." || true
 }
 
 # ============================================================================
@@ -338,7 +338,7 @@ provider_terraform() {
     # Run remote state initialization (only if not using local state)
     local local_state="${LOCAL_STATE:-}"
     if [[ -z "$local_state" ]]; then
-        local_state=$(azd env get-value LOCAL_STATE 2>/dev/null || echo "")
+        local_state=$(azd env get-value LOCAL_STATE 2>/dev/null) || local_state=""
     fi
     
     local tf_init="$SCRIPT_DIR/helpers/initialize-terraform.sh"
