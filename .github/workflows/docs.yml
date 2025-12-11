@@ -44,6 +44,7 @@ jobs:
 
       - name: Install docs dependencies (from pyproject extras)
         run: |
+          # Extract docs dependencies from pyproject.toml
           python - <<'PY'
           import pathlib
           import tomllib
@@ -62,7 +63,8 @@ jobs:
           print(f'Wrote {req} with {len(docs_deps)} dependencies')
           PY
 
-          uv pip install -r requirements-docs.txt
+          # Install into system Python (--system required for uv outside a venv)
+          uv pip install --system -r requirements-docs.txt
 
       - name: Setup Pages
         id: pages
