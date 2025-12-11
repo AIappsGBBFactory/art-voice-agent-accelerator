@@ -227,7 +227,16 @@ def resolve_orchestrator_config(
     # Build handoff map if not provided
     if handoff_map is not None:
         result.handoff_map = handoff_map
+    elif result.scenario:
+        # Use scenario's handoff routes (preferred - single source of truth)
+        result.handoff_map = result.scenario.build_handoff_map()
+        logger.debug(
+            "Built handoff_map from scenario '%s': %s",
+            result.scenario_name,
+            result.handoff_map,
+        )
     else:
+        # Fall back to building from agent handoff.trigger properties
         result.handoff_map = _build_base_handoff_map(result.agents)
 
     # Validate start agent exists
