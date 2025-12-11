@@ -7,14 +7,23 @@ import threading
 from collections.abc import Awaitable, Callable
 
 import numpy as np
-import pyaudio
-import sounddevice as sd
+
+try:
+    import pyaudio  # type: ignore
+except ImportError:  # pragma: no cover
+    pyaudio = None  # type: ignore
+
+try:
+    import sounddevice as sd  # type: ignore
+except ImportError:  # pragma: no cover
+    sd = None  # type: ignore
+
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
 from pydub import AudioSegment
 
 CHUNK_LENGTH_S = 0.05  # 100ms
 SAMPLE_RATE = 24000
-FORMAT = pyaudio.paInt16
+FORMAT = pyaudio.paInt16 if pyaudio is not None else None
 CHANNELS = 1
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
@@ -35,6 +44,11 @@ def audio_to_pcm16_base64(audio_bytes: bytes) -> bytes:
 
 class AudioPlayerAsync:
     def __init__(self):
+        if sd is None:
+            raise RuntimeError(
+                "sounddevice is required for audio playback. Install dev extras (pip install '.[dev]') "
+                "and ensure your OS audio dependencies are available."
+            )
         self.queue = []
         self.lock = threading.Lock()
         self.stream = sd.OutputStream(
@@ -102,6 +116,12 @@ async def send_audio_worker_sounddevice(
 ):
     sent_audio = False
 
+    if sd is None:
+        raise RuntimeError(
+            "sounddevice is required for microphone capture. Install dev extras (pip install '.[dev]') "
+            "and ensure your OS audio dependencies are available."
+        )
+
     device_info = sd.query_devices()
     print(device_info)
 
@@ -152,6 +172,11 @@ def list_audio_input_devices() -> None:
     """
     Print all available input devices (microphones) for user selection.
     """
+    if pyaudio is None:
+        raise RuntimeError(
+            "pyaudio is required to list input devices. Install dev extras (pip install '.[dev]') and "
+            "ensure PortAudio is installed on your system."
+        )
     p = pyaudio.PyAudio()
     print("\nAvailable audio input devices:")
     for i in range(p.get_device_count()):
@@ -167,6 +192,11 @@ def choose_audio_device(predefined_index: int = None) -> int:
     If predefined_index is provided and valid, use it.
     Otherwise, prompt user if multiple devices are available.
     """
+    if pyaudio is None:
+        raise RuntimeError(
+            "pyaudio is required to select an input device. Install dev extras (pip install '.[dev]') and "
+            "ensure PortAudio is installed on your system."
+        )
     p = pyaudio.PyAudio()
     try:
         mic_indices = [
