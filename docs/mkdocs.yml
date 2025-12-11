@@ -96,6 +96,9 @@ nav:
     - Overview: api/README.md
     - API Reference: api/api-reference.md
   - Industry Solutions:
+    - Overview: industry/README.md
+    - Banking: industry/banking.md
+    - Insurance: industry/insurance.md
     - Healthcare: industry/healthcare.md
   - Samples & Labs:
     - Overview: samples/README.md
