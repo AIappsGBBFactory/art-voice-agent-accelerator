@@ -23,48 +23,35 @@ The Application Map shows **components** (your code) and **dependencies** (exter
 
 ### Target Application Map Topology
 
-```
-                                    ┌─────────────────────┐
-                                    │   Browser Client    │
-                                    │  (JavaScript SDK)   │
-                                    └──────────┬──────────┘
-                                               │
-                      ┌────────────────────────┼────────────────────────┐
-                      │                        │                        │
-                      ▼                        ▼                        ▼
-        ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
-        │   artagent-api      │  │   artagent-api      |  │   artagent-api      │
-        │  (voice-handler)    │  │  (acs-handler)      │  │  (events-webhook)   │
-        │                     │  │                     │  │                     │
-        │  cloud.role.name=   │  │  cloud.role.name=   │  │  cloud.role.name=   │
-        │  "artagent-api"     │  │  "artagent-api"     │  │  "artagent-api"     │
-        └──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘
-                   │                        │                        │
-                   └────────────────────────┼────────────────────────┘
-                                            │
-                                            ▼
-                              ┌─────────────────────────┐
-                              │     MediaHandler        │
-                              │   (orchestration)       │
-                              └─────────────┬───────────┘
-                                            │
-              ┌─────────────────────────────┼─────────────────────────────┐
-              │                             │                             │
-              ▼                             ▼                             ▼
-┌─────────────────────────┐   ┌─────────────────────────┐   ┌─────────────────────────┐
-│     Azure OpenAI        │   │     Azure Speech        │   │  Azure Communication    │
-│    (dependency)         │   │    (dependency)         │   │     Services            │
-│                         │   │                         │   │    (dependency)         │
-│  peer.service=          │   │  peer.service=          │   │  peer.service=          │
-│  "azure.ai.openai"      │   │  "azure.speech"         │   │  "azure.communication"  │
-└─────────────────────────┘   └─────────────────────────┘   └─────────────────────────┘
-              │                             │
-              ▼                             ▼
-┌─────────────────────────┐   ┌─────────────────────────┐
-│     Azure Redis         │   │    Azure Cosmos DB      │
-│    (dependency)         │   │    (dependency)         │
-│  peer.service="redis"   │   │  peer.service="cosmosdb"│
-└─────────────────────────┘   └─────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CLIENT ["🌐 Browser Client"]
+        browser["JavaScript SDK"]
+    end
+
+    subgraph API_LAYER ["☁️ artagent-api (cloud.role.name)"]
+        voice["voice-handler"]
+        acs["acs-handler"]
+        events["events-webhook"]
+    end
+
+    subgraph ORCHESTRATION ["⚙️ Orchestration"]
+        media["MediaHandler"]
+    end
+
+    subgraph DEPENDENCIES ["📡 External Dependencies (peer.service)"]
+        aoai["Azure OpenAI<br/>azure.ai.openai"]
+        speech["Azure Speech<br/>azure.speech"]
+        acsvc["Azure Communication Services<br/>azure.communication"]
+        redis["Azure Redis<br/>redis"]
+        cosmos["Azure Cosmos DB<br/>cosmosdb"]
+    end
+
+    browser --> voice & acs & events
+    voice & acs & events --> media
+    media --> aoai & speech & acsvc
+    aoai --> redis
+    speech --> cosmos
 ```
 
 ### Critical Application Map Requirements
@@ -436,18 +423,20 @@ with tracer.start_as_current_span("my_operation"):
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  WebSocket Endpoint (browser.py / media.py)                     │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │ async with session_context(call_id, session_id, ...):     │  │
-│  │   ├─► MediaHandler                                        │  │
-│  │   │   ├─► SpeechCascadeHandler (logs auto-correlated)     │  │
-│  │   │   ├─► STT callbacks (logs auto-correlated)            │  │
-│  │   │   └─► Orchestrator (spans auto-correlated)            │  │
-│  │   └─► All Redis/CosmosDB spans (auto-correlated)          │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph WS["WebSocket Endpoint (browser.py / media.py)"]
+        subgraph SC["async with session_context(call_id, session_id, ...)"]
+            MH["📡 MediaHandler"]
+            MH --> SCH["🎙️ SpeechCascadeHandler<br/>(logs auto-correlated)"]
+            MH --> STT["🔊 STT callbacks<br/>(logs auto-correlated)"]
+            MH --> ORCH["🤖 Orchestrator<br/>(spans auto-correlated)"]
+            MH --> DB["💾 All Redis/CosmosDB spans<br/>(auto-correlated)"]
+        end
+    end
+    
+    style SC fill:#e8f5e9,stroke:#4caf50
+    style MH fill:#2196f3,stroke:#1976d2,color:#fff
 ```
 
 ### How It Works

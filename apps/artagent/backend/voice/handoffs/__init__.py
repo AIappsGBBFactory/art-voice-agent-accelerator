@@ -36,7 +36,7 @@ Usage:
 
 See Also:
     - docs/architecture/handoff-inventory.md for handoff architecture
-    - apps/artagent/backend/agents/loader.py for build_handoff_map()
+    - apps/artagent/backend/registries/agentstore/loader.py for build_handoff_map()
 """
 
 from __future__ import annotations
