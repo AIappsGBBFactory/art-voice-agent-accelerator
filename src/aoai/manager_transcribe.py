@@ -7,7 +7,11 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-import pyaudio
+try:
+    import pyaudio  # type: ignore
+except ImportError:  # pragma: no cover
+    pyaudio = None  # type: ignore
+
 import websockets
 from dotenv import load_dotenv
 
@@ -30,6 +34,11 @@ class AudioRecorder:
         chunk: int,
         device_index: int | None = None,
     ):
+        if pyaudio is None:
+            raise RuntimeError(
+                "pyaudio is required for microphone recording. Install dev extras (pip install '.[dev]') and "
+                "ensure PortAudio is installed on your system."
+            )
         self.rate = rate
         self.channels = channels
         self.format = format_
