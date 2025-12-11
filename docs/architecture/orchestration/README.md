@@ -26,48 +26,41 @@ Both orchestrators:
 ## Architecture Diagram
 
 ```mermaid
-graph TD
-    subgraph "ACS Media Stream"
-        WS[WebSocket Connection]
+flowchart LR
+    subgraph Input
+        WS[WebSocket]
     end
-    
-    WS --> Mode{ACS_STREAMING_MODE}
-    
-    Mode -->|MEDIA / TRANSCRIPTION| Cascade[CascadeOrchestratorAdapter]
-    Mode -->|VOICE_LIVE| Live[LiveOrchestrator]
-    
-    subgraph "Shared Components"
-        Agents[Unified Agent Registry]
-        Tools[Tool Registry]
-        Memo[MemoManager]
-        Handoffs[Handoff Map]
+
+    subgraph Orchestration
+        WS --> Mode{Streaming Mode}
+        Mode -->|MEDIA / TRANSCRIPTION| Cascade[SpeechCascade]
+        Mode -->|VOICE_LIVE| Live[VoiceLive]
     end
-    
-    Cascade --> Agents
-    Live --> Agents
-    Cascade --> Tools
-    Live --> Tools
-    Cascade --> Memo
-    Live --> Memo
-    Cascade --> Handoffs
-    Live --> Handoffs
-    
-    subgraph "SpeechCascade Path"
-        STT[Azure Speech STT]
-        LLM1[Azure OpenAI Chat]
-        TTS[Azure Speech TTS]
+
+    subgraph Cascade Path
+        Cascade --> STT[Azure Speech STT]
+        STT --> LLM[Azure OpenAI]
+        LLM --> TTS[Azure Speech TTS]
     end
-    
-    subgraph "VoiceLive Path"
-        RT[OpenAI Realtime API]
+
+    subgraph VoiceLive Path
+        Live --> RT[OpenAI Realtime API]
     end
-    
-    Cascade --> STT
-    Cascade --> LLM1
-    Cascade --> TTS
-    
-    Live --> RT
+
+    subgraph Shared
+        Agents[(Agents)]
+        Tools[(Tools)]
+        State[(State)]
+    end
+
+    Cascade -.-> Shared
+    Live -.-> Shared
 ```
+
+Both orchestrators share:
+- **Agents** — Unified agent registry from `apps/artagent/backend/agents/`
+- **Tools** — Centralized tool registry with handoff support
+- **State** — `MemoManager` for session persistence
 
 ---
 
@@ -160,14 +153,29 @@ The `CascadeOrchestratorAdapter.process_turn()` method:
 
 VoiceLive is event-driven — the orchestrator reacts to events from the OpenAI Realtime API:
 
-```
-Audio Stream ←→ OpenAI Realtime API ←→ LiveOrchestrator
-                      ↓                       ↓
-              Events (transcription,    Event Handlers
-              audio delta, tool call)        ↓
-                                      Tool Execution
-                                             ↓
-                                      Handoff + Session Update
+```mermaid
+flowchart LR
+    subgraph Audio["Bidirectional Audio"]
+        A[Audio Stream]
+    end
+    
+    subgraph Realtime["OpenAI Realtime API"]
+        R[Realtime API]
+        E1[Events]
+    end
+    
+    subgraph Orchestrator["LiveOrchestrator"]
+        L[handle_event]
+        H[Event Handlers]
+        T[Tool Execution]
+        S[Handoff + Session Update]
+    end
+    
+    A <--> R
+    R --> E1
+    E1 -->|transcription<br>audio delta<br>tool call| H
+    H --> T
+    T --> S
 ```
 
 The `LiveOrchestrator.handle_event()` method routes events:
@@ -260,12 +268,18 @@ Both orchestrators emit OpenTelemetry spans following GenAI semantic conventions
 
 ### Span Hierarchy
 
-```
-invoke_agent (per agent session)
-├── llm_request (LLM call)
-│   ├── tool_execution (each tool)
-│   └── tool_execution
-└── agent_switch (if handoff)
+```mermaid
+flowchart TD
+    IA["invoke_agent<br>(per agent session)"]
+    LR["llm_request<br>(LLM call)"]
+    TE1["tool_execution<br>(each tool)"]
+    TE2["tool_execution"]
+    AS["agent_switch<br>(if handoff)"]
+    
+    IA --> LR
+    LR --> TE1
+    LR --> TE2
+    IA --> AS
 ```
 
 ### Key Attributes

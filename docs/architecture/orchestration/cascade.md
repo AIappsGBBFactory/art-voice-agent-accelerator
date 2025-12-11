@@ -13,32 +13,39 @@ The Cascade Orchestrator is designed for scenarios requiring:
 - **Azure Speech voices** — Full access to neural TTS voices and styles
 - **Phrase list customization** — Speech recognition enhancement
 
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│                    SpeechCascade Architecture                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   Audio In ──► Azure Speech STT ──► Transcript                      │
-│                                          │                          │
-│                                          ▼                          │
-│                           ┌───────────────────────────┐             │
-│                           │ CascadeOrchestratorAdapter│             │
-│                           │                           │             │
-│                           │  ├─ UnifiedAgent Registry │             │
-│                           │  ├─ Tool Registry         │             │
-│                           │  ├─ Handoff Map           │             │
-│                           │  └─ MemoManager           │             │
-│                           └────────────┬──────────────┘             │
-│                                        │                            │
-│                           Azure OpenAI (streaming)                  │
-│                                        │                            │
-│                                        ▼                            │
-│                              Sentence Buffer                        │
-│                                        │                            │
-│                                        ▼                            │
-│                    Azure Speech TTS ──► Audio Out                   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Input["Input"]
+        AI[Audio In]
+    end
+    
+    subgraph STT["Speech Recognition"]
+        S[Azure Speech STT]
+        T[Transcript]
+    end
+    
+    subgraph Cascade["CascadeOrchestratorAdapter"]
+        UA[UnifiedAgent Registry]
+        TR[Tool Registry]
+        HM[Handoff Map]
+        MM[MemoManager]
+    end
+    
+    subgraph LLM["Language Model"]
+        AOAI[Azure OpenAI<br>streaming]
+    end
+    
+    subgraph Processing["Response Processing"]
+        SB[Sentence Buffer]
+    end
+    
+    subgraph Output["Output"]
+        TTS[Azure Speech TTS]
+        AO[Audio Out]
+    end
+    
+    AI --> S --> T --> Cascade
+    Cascade --> AOAI --> SB --> TTS --> AO
 ```
 
 ---

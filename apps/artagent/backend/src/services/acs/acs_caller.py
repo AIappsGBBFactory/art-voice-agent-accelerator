@@ -12,10 +12,15 @@ import os
 
 from apps.artagent.backend.src.services.acs.acs_helpers import construct_websocket_url
 
-# Import constants that don't come from App Configuration
-from config.constants import (
+from config import (
     ACS_CALL_CALLBACK_PATH,
+    ACS_CONNECTION_STRING,
+    ACS_ENDPOINT,
+    ACS_SOURCE_PHONE_NUMBER,
     ACS_WEBSOCKET_PATH,
+    AZURE_SPEECH_ENDPOINT,
+    AZURE_STORAGE_CONTAINER_URL,
+    BASE_URL,
 )
 from src.acs.acs_helper import AcsCaller
 from utils.ml_logging import get_logger
@@ -59,42 +64,31 @@ def initialize_acs_caller_instance() -> AcsCaller | None:
     if _instance:
         return _instance
 
-    # Read config dynamically to get App Configuration values
-    cfg = _get_config_dynamic()
-    acs_source_phone = cfg["ACS_SOURCE_PHONE_NUMBER"]
-    base_url = cfg["BASE_URL"]
-    acs_connection_string = cfg["ACS_CONNECTION_STRING"]
-    acs_endpoint = cfg["ACS_ENDPOINT"]
-    speech_endpoint = cfg["AZURE_SPEECH_ENDPOINT"]
-    storage_url = cfg["AZURE_STORAGE_CONTAINER_URL"]
-
     # Check if required ACS configuration is present
-    if not all([acs_source_phone, base_url]):
+    if not all([ACS_SOURCE_PHONE_NUMBER, BASE_URL]):
         logger.warning(
             "⚠️  ACS TELEPHONY DISABLED: Missing required environment variables "
-            "(ACS_SOURCE_PHONE_NUMBER=%s, BASE_URL=%s). "
+            "(ACS_SOURCE_PHONE_NUMBER or BASE_URL). "
             "📞 Dial-in and dial-out calling will not work. "
-            "🔌 WebSocket conversation endpoint remains available for direct connections.",
-            acs_source_phone[:4] + "..." if acs_source_phone else "<not set>",
-            base_url[:30] + "..." if base_url else "<not set>",
+            "🔌 WebSocket conversation endpoint remains available for direct connections."
         )
         return None
 
-    callback_url = f"{base_url.rstrip('/')}{ACS_CALL_CALLBACK_PATH}"
-    ws_url = construct_websocket_url(base_url, ACS_WEBSOCKET_PATH)
+    callback_url = f"{BASE_URL.rstrip('/')}{ACS_CALL_CALLBACK_PATH}"
+    ws_url = construct_websocket_url(BASE_URL, ACS_WEBSOCKET_PATH)
     if not ws_url:
         logger.error("Could not build ACS media WebSocket URL; disabling outbound calls")
         return None
 
     try:
         _instance = AcsCaller(
-            source_number=acs_source_phone,
-            acs_connection_string=acs_connection_string,
-            acs_endpoint=acs_endpoint,
+            source_number=ACS_SOURCE_PHONE_NUMBER,
+            acs_connection_string=ACS_CONNECTION_STRING,
+            acs_endpoint=ACS_ENDPOINT,
             callback_url=callback_url,
             websocket_url=ws_url,
-            cognitive_services_endpoint=speech_endpoint,
-            recording_storage_container_url=storage_url,
+            cognitive_services_endpoint=AZURE_SPEECH_ENDPOINT,
+            recording_storage_container_url=AZURE_STORAGE_CONTAINER_URL,
         )
         logger.info(
             "AcsCaller initialised with phone: %s...",
