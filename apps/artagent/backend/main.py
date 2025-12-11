@@ -780,12 +780,15 @@ async def lifespan(app: FastAPI):
                 start_agent = get_scenario_start_agent(scenario_name) or "Concierge"
                 app.state.scenario = scenario
                 app.state.start_agent = start_agent
+                # Use scenario's handoff routes as the source of truth
+                app.state.scenario_handoff_map = scenario.build_handoff_map()
                 logger.info(
                     "Loaded scenario: %s",
                     scenario_name,
                     extra={
                         "start_agent": start_agent,
                         "template_vars": list(scenario.global_template_vars.keys()),
+                        "scenario_handoffs": list(app.state.scenario_handoff_map.keys()),
                     },
                 )
             else:
@@ -795,7 +798,20 @@ async def lifespan(app: FastAPI):
             # Standard agent loading
             unified_agents = discover_agents()
 
-        handoff_map = build_handoff_map(unified_agents)
+        # Build handoff_map: prefer scenario handoffs over agent-level handoff.trigger
+        scenario_handoff_map = getattr(app.state, "scenario_handoff_map", None)
+        if scenario_handoff_map:
+            # Use scenario handoff routes as the primary source
+            handoff_map = scenario_handoff_map
+            # Optionally merge with agent-level triggers for agents not in scenario
+            agent_handoff_map = build_handoff_map(unified_agents)
+            for tool, agent in agent_handoff_map.items():
+                if tool not in handoff_map:
+                    handoff_map[tool] = agent
+        else:
+            # No scenario, use agent-level handoff.trigger
+            handoff_map = build_handoff_map(unified_agents)
+
         from apps.artagent.backend.registries.agentstore.loader import build_agent_summaries
 
         agent_summaries = build_agent_summaries(unified_agents)
@@ -810,6 +826,7 @@ async def lifespan(app: FastAPI):
                 "agent_count": len(unified_agents),
                 "agents": list(unified_agents.keys()),
                 "handoff_count": len(handoff_map),
+                "handoff_map_keys": list(handoff_map.keys()),
                 "agent_summaries": agent_summaries,
                 "scenario": scenario_name or "(none)",
             },
