@@ -1039,30 +1039,32 @@ class LiveOrchestrator:
 
                 # Schedule response trigger after a brief delay to let session settle.
                 # The new agent will respond naturally to the context.
+                # NOTE: For announced handoffs, the greeting is already handled by
+                # _select_pending_greeting() which renders the agent's greeting template.
+                # This response trigger just prompts the agent to address the user's request.
                 async def _trigger_handoff_response():
                     await asyncio.sleep(0.25)
                     try:
-                        # Don't use trigger_response with say= for handoffs.
-                        # Instead, create a response.create() so the new agent
-                        # responds naturally using its own personality and instructions.
-                        # The session has already been updated with the new agent's config.
                         from azure.ai.voicelive.models import (
                             ClientEventResponseCreate,
                             ResponseCreateParams,
                         )
 
                         # Build instruction based on handoff mode
+                        # NOTE: Greeting is handled separately by _select_pending_greeting()
+                        # which uses the agent's greeting/return_greeting from agent.yaml.
+                        # Here we just instruct the agent on how to handle the conversation.
                         if greet_on_switch:
-                            # Announced mode: agent greets and acknowledges transfer
+                            # Announced mode: greeting already rendered from agent.yaml
+                            # Just instruct agent to address the request after greeting
                             handoff_instruction = (
-                                f"You just received a transfer from {previous_agent}. "
                                 f'The customer\'s request: "{user_question}". '
-                                f"Briefly greet them and address their request directly."
+                                f"Address their request directly after your greeting."
                             )
                             if handoff_summary:
                                 handoff_instruction += f" Context: {handoff_summary}"
                         else:
-                            # Discrete mode: silent handoff, no announcement
+                            # Discrete mode: silent handoff, no announcement, no greeting
                             handoff_instruction = (
                                 f'The customer\'s request: "{user_question}". '
                                 f"Address their request directly. "
@@ -1176,10 +1178,21 @@ class LiveOrchestrator:
             or system_vars.get("handoff_reason")
         )
 
-        # For handoffs (seamless continuation), skip automatic greeting
-        # The new agent will respond naturally to the context
+        # For handoffs, check greet_on_switch to decide greeting behavior
+        # - greet_on_switch=True (announced): Use the agent's greeting/return_greeting
+        # - greet_on_switch=False (discrete): Skip greeting, continue seamlessly
         if has_handoff:
-            return None
+            greet_on_switch = system_vars.get("greet_on_switch", True)
+            if not greet_on_switch:
+                # Discrete handoff - no greeting, agent continues seamlessly
+                logger.debug(
+                    "[Greeting] Discrete handoff to %s - skipping greeting", agent_name
+                )
+                return None
+            # Announced handoff - continue to render greeting below
+            logger.debug(
+                "[Greeting] Announced handoff to %s - will render greeting", agent_name
+            )
 
         # Priority 2: Render greeting/return_greeting with full session context
         # This is consistent with Speech Cascade's _derive_default_greeting behavior

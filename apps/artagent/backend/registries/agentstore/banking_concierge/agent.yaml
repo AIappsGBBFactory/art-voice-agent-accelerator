@@ -1,46 +1,45 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Concierge Agent - Unified Schema
+# Banking Concierge Agent - Unified Schema
 # ═══════════════════════════════════════════════════════════════════════════════
 # Primary banking concierge that orchestrates customer interactions
 # Routes to specialist agents when appropriate
 # Works with both SpeechCascade and VoiceLive orchestrators
 # ═══════════════════════════════════════════════════════════════════════════════
 
-name: Concierge
+name: BankingConcierge
 description: Primary banking assistant - handles most customer needs and routes complex requests to specialists
-
-greeting: |
-  {% if caller_name and institution_name %}Hi {{ caller_name }}, welcome to {{ institution_name }}. I'm {{ agent_name | default('Erica') }}, your personal banking assistant. How can I help you today?
-  {% elif caller_name %}Hi {{ caller_name }}, I'm {{ agent_name | default('Erica') }}, your banking assistant. How can I help you today?
-  {% elif institution_name %}Hi, welcome to {{ institution_name }}. I'm {{ agent_name | default('Erica') }}. How can I help you today?
-  {% else %}Hi, I'm {{ agent_name | default('Erica') }}, your banking assistant. How can I help you today?
-  {% endif %}
-
-return_greeting: |
-  {% if caller_name %}Welcome back, {{ caller_name }}. Is there anything else I can assist you with?
-  {% else %}Welcome back. I'm the Concierge agent. Is there anything else I can assist you with?
-  {% endif %}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Handoff Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
-  trigger: handoff_concierge   # Other agents call this to reach Erica
-  is_entry_point: true               # This is the default starting agent
+  trigger: handoff_concierge  # Other agents call this to return to BankingConcierge
+
+greeting: |
+  {% if caller_name and institution_name %}Hi {{ caller_name }}, welcome to {{ institution_name }}. I'm {{ agent_name | default('your banking assistant') }}. How can I help you today?
+  {% elif caller_name %}Hi {{ caller_name }}, I'm {{ agent_name | default('your banking assistant') }}. How can I help you today?
+  {% elif institution_name %}Hi, welcome to {{ institution_name }}. I'm {{ agent_name | default('your banking assistant') }}. How can I help you today?
+  {% else %}Hi, I'm {{ agent_name | default('your banking assistant') }}. How can I help you today?
+  {% endif %}
+
+return_greeting: |
+  {% if caller_name %}Welcome back, {{ caller_name }}. Is there anything else I can assist you with?
+  {% else %}Welcome back. Is there anything else I can assist you with?
+  {% endif %}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration (Used by BOTH VoiceLive and Cascade modes)
 # ─────────────────────────────────────────────────────────────────────────────
 voice:
-  name: en-US-AvaMultilingualNeural     # Azure TTS voice name
+  name: en-US-AlloyTurboMultilingualNeural   # Fast, natural multilingual voice
   # Alternative voices:
-  # name: en-US-EmmaMultilingualNeural  # Clear, trustworthy
-  # name: en-US-BrianMultilingualNeural # Professional male
-  # name: en-US-JennyNeural             # Warm, conversational
-  type: azure-standard                   # Voice provider (azure-standard or azure-neural)
-  rate: "-4%"                            # Speech rate: -50% (slower) to +100% (faster)
-  # pitch: "+0%"                         # Pitch: -50% (lower) to +50% (higher)
-  # style: cheerful                      # Voice style: cheerful, empathetic, calm, professional
+  # name: en-US-AvaMultilingualNeural        # Warm, professional
+  # name: en-US-EmmaMultilingualNeural       # Clear, trustworthy
+  # name: en-US-BrianMultilingualNeural      # Professional male
+  type: azure-standard                        # Voice provider (azure-standard or azure-neural)
+  rate: "-4%"                                 # Speech rate: -50% (slower) to +100% (faster)
+  # pitch: "+0%"                              # Pitch: -50% (lower) to +50% (higher)
+  # style: cheerful                           # Voice style: cheerful, empathetic, calm, professional
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model Configuration (LLM for agent reasoning)
@@ -134,28 +133,17 @@ speech:
 tools:
   # Identity & Profile
   - verify_client_identity
-  - send_mfa_code
-  - verify_mfa_code
-  - resend_mfa_code
   - get_user_profile
-  - generate_personalized_greeting
   
   # Account Operations
   - get_account_summary
   - get_recent_transactions
   - refund_fee
   
-  # Handoffs to All Specialists
-  - handoff_card_recommendation      # Credit card recommendations
-  - handoff_investment_advisor       # Investment & retirement
-  - handoff_transfer_agency_agent    # Transfer agency / DRIP
-  - handoff_fraud_agent              # Fraud investigation
-  - handoff_compliance_desk          # Compliance & regulatory
-  - handoff_bank_advisor             # Wealth management
-  - handoff_to_trading               # Trading desk
-  - handoff_to_auth                  # Authentication specialist
-  - handoff_general_kb               # General KB - no auth required
-  
+  # Handoffs to Specialists
+  - handoff_card_recommendation        # Credit card recommendations
+  - handoff_investment_advisor         # Investment & retirement
+
   # Escalation
   - escalate_human
   - escalate_emergency

@@ -227,6 +227,21 @@ def initialize_tools() -> int:
         return len(_TOOL_DEFINITIONS)
 
     # Import tool modules - this triggers their registration
+    # Each module registers its tools at import time via register_tool()
+    from apps.artagent.backend.registries.toolstore import auth  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import call_transfer  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import compliance  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import customer_intelligence  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import escalation  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import fraud  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import handoffs  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import investment  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import knowledge_base  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import personalized_greeting  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import transfer_agency  # noqa: F401
+    from apps.artagent.backend.registries.toolstore import voicemail  # noqa: F401
+    from apps.artagent.backend.registries.toolstore.banking import banking  # noqa: F401
+    from apps.artagent.backend.registries.toolstore.banking import investments  # noqa: F401
 
     _INITIALIZED = True
     logger.info("Tool registry initialized with %d tools", len(_TOOL_DEFINITIONS))

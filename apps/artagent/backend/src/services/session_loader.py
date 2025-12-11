@@ -177,8 +177,9 @@ async def _lookup_cosmos_by_client_id(client_id: str) -> dict[str, Any] | None:
         logger.debug("CosmosDBMongoCoreManager not available")
         return None
 
-    database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME", "rtmtdb")
-    collection_name = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "demo_users")
+    # Use same defaults as demo_env.py to ensure consistency
+    database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME", "financial_services_db")
+    collection_name = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
 
     try:
         cosmos = CosmosDBMongoCoreManager(

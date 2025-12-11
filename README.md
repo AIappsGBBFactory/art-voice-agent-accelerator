@@ -20,9 +20,7 @@ You own the agentic design; this repo handles the end-to-end voice plumbing. We 
 <a href="https://www.youtube.com/watch?v=H_uAA5_h40E">▶️ Full overview on YouTube</a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="https://vimeo.com/1115976100">▶️ Demo app walkthrough</a>
 </p>
 
-<p align="center">
-💡 <strong>Want to run this app?</strong> All the code is here! See <strong>Getting Started</strong> below.
-</p>
+<br>
 
 <details>
 <summary><strong>The what and why behind this accelerator</strong> (click to expand)</summary>
