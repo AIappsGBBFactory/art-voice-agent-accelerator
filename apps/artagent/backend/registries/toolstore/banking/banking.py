@@ -226,7 +226,9 @@ evaluate_card_eligibility_schema: dict[str, Any] = {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
-_DEFAULT_DEMO_DB = "financial_services_db"
+
+# User profiles are stored in audioagentdb.users
+_DEFAULT_DEMO_DB = "audioagentdb"
 _DEFAULT_DEMO_USERS_COLLECTION = "users"
 
 
@@ -242,12 +244,11 @@ def _get_demo_database_name() -> str:
 
 def _get_demo_users_collection_name() -> str:
     """Get the users collection name from environment or use default."""
-    for env_key in ("AZURE_COSMOS_USERS_COLLECTION_NAME", "AZURE_COSMOS_COLLECTION_NAME"):
-        value = os.getenv(env_key)
-        if value:
-            stripped = value.strip()
-            if stripped:
-                return stripped
+    value = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME")
+    if value:
+        stripped = value.strip()
+        if stripped:
+            return stripped
     return _DEFAULT_DEMO_USERS_COLLECTION
 
 
@@ -497,8 +498,14 @@ async def get_account_summary(args: dict[str, Any]) -> dict[str, Any]:
     if not client_id:
         return {"success": False, "message": "client_id is required."}
 
-    # Get profile from Cosmos DB
-    profile = await _lookup_user_by_client_id(client_id)
+    # First, check if session profile was injected by the orchestrator
+    profile = args.get("_session_profile")
+    data_source = "session"
+    
+    # Fallback to Cosmos DB lookup if no session profile
+    if not profile:
+        profile = await _lookup_user_by_client_id(client_id)
+        data_source = "cosmos"
 
     if not profile:
         return {"success": False, "message": f"Account not found for {client_id}. Please create a profile first."}
@@ -557,16 +564,46 @@ async def get_account_summary(args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def get_recent_transactions(args: dict[str, Any]) -> dict[str, Any]:
-    """Get recent transactions."""
+    """Get recent transactions from user profile or fallback to mock data."""
     client_id = (args.get("client_id") or "").strip()
     limit = args.get("limit", 10)
 
     if not client_id:
         return {"success": False, "message": "client_id is required."}
 
+    # First, check if session profile was injected by the orchestrator
+    # This avoids redundant Cosmos DB lookups for already-loaded profiles
+    session_profile = args.get("_session_profile")
+    if session_profile:
+        customer_intel = session_profile.get("demo_metadata", {})
+        transactions = customer_intel.get("transactions", [])
+        if transactions:
+            logger.info("📋 Loaded %d transactions from session profile: %s", len(transactions), client_id)
+            return {
+                "success": True,
+                "transactions": transactions[:limit],
+                "data_source": "session",
+            }
+
+    # Fallback: Try to get transactions from Cosmos DB
+    profile = await _lookup_user_by_client_id(client_id)
+    if profile:
+        customer_intel = profile.get("demo_metadata", {})
+        transactions = customer_intel.get("transactions", [])
+        if transactions:
+            logger.info("📋 Loaded %d transactions from Cosmos: %s", len(transactions), client_id)
+            return {
+                "success": True,
+                "transactions": transactions[:limit],
+                "data_source": "cosmos",
+            }
+
+    # Fallback to mock transactions if no profile or no transactions found
+    logger.info("📋 Using mock transactions for: %s (no profile data)", client_id)
     return {
         "success": True,
         "transactions": _MOCK_TRANSACTIONS[:limit],
+        "data_source": "mock",
     }
 
 

@@ -264,10 +264,10 @@ class AzureRedisManager:
                 self.redis_client = redis.Redis(**standalone_kwargs)
                 self.logger.info("Azure Redis connection initialized in standalone mode.")
         except RedisClusterException as exc:
-            self.logger.error("Redis cluster initialization failed: %s", exc)
+            self.logger.warning("Redis cluster initialization failed (will try standalone): %s", exc)
             if not self.use_cluster:
                 raise
-            self.logger.warning("Falling back to standalone Redis client after cluster failure.")
+            self.logger.info("Falling back to standalone Redis client.")
             standalone_kwargs = {**common_kwargs, "db": self.db, **auth_kwargs}
             self.redis_client = redis.Redis(**standalone_kwargs)
             self.use_cluster = False

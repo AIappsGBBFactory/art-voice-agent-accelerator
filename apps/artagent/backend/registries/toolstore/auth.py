@@ -131,7 +131,8 @@ _PENDING_MFA: dict[str, str] = {}  # client_id -> code
 _COSMOS_MANAGER: CosmosDBMongoCoreManager | None = None
 _COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
 
-_DEFAULT_DEMO_DB = "financial_services_db"
+# User profiles are stored in audioagentdb.users
+_DEFAULT_DEMO_DB = "audioagentdb"
 _DEFAULT_DEMO_USERS_COLLECTION = "users"
 
 
@@ -145,7 +146,7 @@ def _get_demo_database_name() -> str:
 
 
 def _get_demo_users_collection_name() -> str:
-    for env_key in ("AZURE_COSMOS_USERS_COLLECTION_NAME", "AZURE_COSMOS_COLLECTION_NAME"):
+    for env_key in ("AZURE_COSMOS_USERS_COLLECTION_NAME"):
         value = os.getenv(env_key)
         if value:
             stripped = value.strip()

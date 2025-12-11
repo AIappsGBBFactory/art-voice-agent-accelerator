@@ -206,45 +206,39 @@ if [[ "$DRY_RUN" == "true" ]]; then
     log "[DRY-RUN] Would import:"
     jq -r '.[] | "  \(.key) = \(.value | tostring | .[0:50])"' "$IMPORT_FILE"
 else
-    # Use az appconfig kv import with JSON file
-    if az appconfig kv import \
-        --endpoint "$ENDPOINT" \
-        --source file \
-        --path "$IMPORT_FILE" \
-        --format json \
-        --auth-mode login \
-        --yes \
-        --output none 2>/dev/null; then
-        success "Imported $count settings"
-    else
-        fail "Batch import failed, falling back to individual imports..."
-        # Fallback: import one by one (slower but more reliable)
-        errors=0
-        jq -c '.[]' "$IMPORT_FILE" | while read -r item; do
-            key=$(echo "$item" | jq -r '.key')
-            value=$(echo "$item" | jq -r '.value')
-            ct=$(echo "$item" | jq -r '.content_type // ""')
-            
-            local ct_arg=""
-            [[ -n "$ct" ]] && ct_arg="--content-type \"$ct\""
-            
-            if ! az appconfig kv set \
-                --endpoint "$ENDPOINT" \
-                --key "$key" \
-                --value "$value" \
-                --label "$LABEL" \
-                --auth-mode login \
-                --yes \
-                --output none 2>/dev/null; then
-                errors=$((errors + 1))
-            fi
-        done
+    # Import settings individually (az appconfig kv import has format issues with nested JSON)
+    errors=0
+    imported=0
+    jq -c '.[]' "$IMPORT_FILE" | while read -r item; do
+        key=$(echo "$item" | jq -r '.key')
+        value=$(echo "$item" | jq -r '.value')
+        label=$(echo "$item" | jq -r '.label // ""')
+        ct=$(echo "$item" | jq -r '.content_type // ""')
         
-        if [[ $errors -gt 0 ]]; then
-            warn "Completed with $errors errors"
+        # Build command args
+        cmd_args=(
+            --endpoint "$ENDPOINT"
+            --key "$key"
+            --value "$value"
+            --auth-mode login
+            --yes
+            --output none
+        )
+        [[ -n "$label" ]] && cmd_args+=(--label "$label")
+        [[ -n "$ct" ]] && cmd_args+=(--content-type "$ct")
+        
+        if az appconfig kv set "${cmd_args[@]}" 2>/dev/null; then
+            imported=$((imported + 1))
         else
-            success "Fallback import completed"
+            errors=$((errors + 1))
+            warn "Failed to set: $key"
         fi
+    done
+    
+    if [[ $errors -gt 0 ]]; then
+        warn "Completed with $errors errors"
+    else
+        success "Imported $count settings"
     fi
 fi
 

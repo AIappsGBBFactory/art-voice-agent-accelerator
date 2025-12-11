@@ -1184,6 +1184,12 @@ class CascadeOrchestratorAdapter:
                                 args = (
                                     json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                                 )
+                                # Inject session context into tool args for profile-aware tools
+                                # This allows tools to use already-loaded session data
+                                if cm:
+                                    session_profile = cm.get_value_from_corememory("session_profile")
+                                    if session_profile:
+                                        args["_session_profile"] = session_profile
                                 result = await agent.execute_tool(tool_name, args)
                                 logger.info(
                                     "Tool executed | name=%s result_keys=%s",
@@ -1561,13 +1567,19 @@ class CascadeOrchestratorAdapter:
         self.sync_from_memo_manager(cm)
 
         # Pull existing history for active agent
+        # IMPORTANT: Make a copy of the history list to avoid reference issues.
+        # get_history() returns a reference to the internal list, so we must copy
+        # it BEFORE appending the new user message. Otherwise, the history list
+        # will include the current user message, and _build_messages() will add
+        # it again, causing duplicate user messages.
         history = []
         try:
-            history = cm.get_history(self._active_agent)
+            history = list(cm.get_history(self._active_agent) or [])
         except Exception:
             history = []
 
         # Persist user turn into history for continuity
+        # This happens AFTER we copy the history, so it doesn't affect the copy
         if transcript:
             try:
                 cm.append_to_history(self._active_agent, "user", transcript)
