@@ -191,13 +191,21 @@ main() {
             echo "  2) Legacy (full .env file)"
             echo "  3) Show status only"
             echo ""
-            read -p "Choice (1-3): " choice
+            echo "(Auto-selecting minimal in 10 seconds if no input...)"
+            
+            if read -t 10 -p "Choice (1-3): " choice; then
+                : # Got input
+            else
+                echo ""
+                log_info "No input received, using minimal (App Config-based) setup"
+                choice="1"
+            fi
             
             case "$choice" in
                 1) generate_minimal_env ".env.local" ;;
                 2) generate_legacy_env ".env.legacy" ;;
                 3) show_config_status ;;
-                *) log_error "Invalid choice" && exit 1 ;;
+                *) log_error "Invalid choice" && generate_minimal_env ".env.local" ;;
             esac
             ;;
     esac

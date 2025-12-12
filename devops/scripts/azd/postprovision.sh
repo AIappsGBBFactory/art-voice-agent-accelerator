@@ -171,7 +171,15 @@ task_phone_number() {
     log "  1) Enter existing phone number"
     log "  2) Skip for now"
     log ""
-    read -rp "│ Choice (1-2): " choice
+    log "(Auto-skipping in 10 seconds if no input...)"
+    
+    if read -t 10 -rp "│ Choice (1-2): " choice; then
+        : # Got input
+    else
+        log ""
+        info "No input received, skipping phone configuration"
+        choice="2"
+    fi
     
     case "$choice" in
         1)
