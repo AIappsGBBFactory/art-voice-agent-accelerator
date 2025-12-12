@@ -159,7 +159,7 @@ The API supports multiple streaming modes configured via `ACS_STREAMING_MODE`:
 | `TRANSCRIPTION` | Real-time transcription only | PCM 16kHz mono | Call recording and analysis |
 | `REALTIME` | Browser-based Speech Cascade | PCM 16kHz mono | Browser voice conversations |
 
-**📖 [Detailed Configuration](../guides/streaming-modes.md)** - Complete streaming mode documentation
+**📖 [Streaming Mode Details](../architecture/speech/README.md)** - Complete streaming mode documentation
 
 ---
 
@@ -171,7 +171,7 @@ The API supports multiple streaming modes configured via `ACS_STREAMING_MODE`:
 2. **Route Turn Thread** - LLM orchestration and tool execution
 3. **Main Event Loop** - WebSocket I/O and TTS streaming
 
-**📖 [Architecture Details](../architecture/speech/speech-cascade.md)** - Complete speech architecture documentation
+**📖 [Architecture Details](../architecture/speech/README.md)** - Complete speech architecture documentation
 
 ---
 
@@ -189,7 +189,7 @@ The API supports multiple streaming modes configured via `ACS_STREAMING_MODE`:
 ## Related Documentation
 
 - **[API Reference](api-reference.md)** - Complete OpenAPI specification with interactive testing
-- **[Speech Architecture](../architecture/speech/)** - STT, TTS, and cascade orchestration
-- **[Agent Architecture](../architecture/agents/)** - Multi-agent system and handoffs
-- **[Data Architecture](../architecture/data/)** - State management and persistence
+- **[Speech Architecture](../architecture/speech/README.md)** - STT, TTS, and cascade orchestration
+- **[Agent Architecture](../architecture/agents/README.md)** - Multi-agent system and handoffs
+- **[Data Architecture](../architecture/data/README.md)** - State management and persistence
 - **[Architecture Overview](../architecture/README.md)** - System architecture and deployment patterns

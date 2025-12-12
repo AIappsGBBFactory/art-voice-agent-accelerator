@@ -2,7 +2,10 @@
 
 > **Status:** DRAFT | **Created:** 2025 | **Audience:** Engineering Team
 
-This document outlines a structured approach to instrumentation, metrics, and logging for our real-time voice agent application. The goal is to provide actionable observability without overwhelming noise, aligned with OpenTelemetry GenAI semantic conventions and optimized for **Azure Application Insights Application Map**.
+This document outlines a structured approach to instrumentation, metrics, and logging for our real-time voice agent application. The goal is to provide actionable observability without overwhelming noise, aligned with [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) and optimized for **[Azure Application Insights Application Map](https://learn.microsoft.com/azure/azure-monitor/app/app-map)**.
+
+!!! info "Official Guidance"
+    This implementation follows Microsoft's recommended patterns for [tracing AI agents in production](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/trace-agents-sdk) and [Azure Monitor OpenTelemetry integration](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-enable).
 
 ---
 
@@ -19,7 +22,9 @@ This document outlines a structured approach to instrumentation, metrics, and lo
 
 ## 🗺️ Application Map Design
 
-The Application Map shows **components** (your code) and **dependencies** (external services). For proper visualization:
+The [Application Map](https://learn.microsoft.com/azure/azure-monitor/app/app-map) shows **components** (your code) and **dependencies** (external services). Per Microsoft's documentation, proper visualization requires correct resource attributes and span kinds.
+
+> 📖 **Reference:** [Application Map: Triage Distributed Applications](https://learn.microsoft.com/azure/azure-monitor/app/app-map)
 
 ### Target Application Map Topology
 
@@ -66,6 +71,8 @@ flowchart TB
 
 ### Resource Attributes (Set at Startup)
 
+Per [Azure Monitor OpenTelemetry configuration](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-configuration#set-the-cloud-role-name-and-the-cloud-role-instance), `service.name` maps to Cloud Role Name and `service.instance.id` maps to Cloud Role Instance:
+
 ```python
 # In telemetry_config.py
 from opentelemetry.sdk.resources import Resource
@@ -83,59 +90,60 @@ resource = Resource.create({
 
 ## 📐 Architecture Layers & Instrumentation Points
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         FRONTEND (Dashboard)                        │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ WebSocket
-┌──────────────────────────────▼──────────────────────────────────────┐
-│                    API LAYER (FastAPI Endpoints)                    │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐                 │
-│  │ /ws/voice   │  │ /media/acs  │  │ /api/events  │                 │
-│  │  (Browser)  │  │ (ACS calls) │  │  (webhooks)  │                 │
-│  │  SERVER ⬇   │  │  SERVER ⬇   │  │  SERVER ⬇    │                 │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬───────┘                 │
-└─────────┼────────────────┼────────────────┼─────────────────────────┘
-          │                │                │
-┌─────────▼────────────────▼────────────────▼─────────────────────────┐
-│                    HANDLERS (MediaHandler)                          │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │ SpeechCascadeHandler                      INTERNAL spans      │  │
-│  │  ├─ _on_user_transcript()    ─────────────────────┐           │  │
-│  │  ├─ _on_partial_transcript() ─────────────────────┤           │  │
-│  │  └─ _on_vad_event()          ─────────────────────┘           │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────┬───────────────────────────────────┘
-                                  │
-┌─────────────────────────────────▼───────────────────────────────────┐
-│                      ORCHESTRATION LAYER                            │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────────┐   │
-│  │  ArtAgentFlow   │  │  ToolExecution  │  │ ResponseOrchestrat │   │
-│  │   INTERNAL      │  │   INTERNAL      │  │   INTERNAL         │   │
-│  └────────┬────────┘  └────────┬────────┘  └─────────┬──────────┘   │
-└───────────┼────────────────────┼─────────────────────┼──────────────┘
-            │                    │                     │
-┌───────────▼────────────────────▼─────────────────────▼──────────────┐
-│                     EXTERNAL SERVICES (CLIENT spans)                │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────┐ │
-│  │ Azure OpenAI   │  │  Azure Speech  │  │  Azure Communication   │ │
-│  │ peer.service=  │  │  peer.service= │  │    Services (ACS)      │ │
-│  │ azure.ai.openai│  │  azure.speech  │  │  peer.service=         │ │
-│  │  CLIENT ⬇      │  │  CLIENT ⬇      │  │  azure.communication   │ │
-│  └────────────────┘  └────────────────┘  └────────────────────────┘ │
-│  ┌────────────────┐  ┌────────────────┐                             │
-│  │  Azure Redis   │  │ Azure CosmosDB │                             │
-│  │  peer.service= │  │  peer.service= │                             │
-│  │  redis         │  │  cosmosdb      │                             │
-│  │  CLIENT ⬇      │  │  CLIENT ⬇      │                             │
-│  └────────────────┘  └────────────────┘                             │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph FRONTEND ["🖥️ FRONTEND (Dashboard)"]
+        dashboard["Browser Client"]
+    end
 
-Legend:
-  SERVER ⬇  = SpanKind.SERVER (inbound request - creates "request" in App Insights)
-  CLIENT ⬇  = SpanKind.CLIENT (outbound call - creates "dependency" in App Insights)
-  INTERNAL  = SpanKind.INTERNAL (internal processing - shows in trace details)
+    subgraph API ["☁️ API LAYER (FastAPI Endpoints)"]
+        direction LR
+        ws_voice["/ws/voice<br/>(Browser)<br/>SERVER ↓"]
+        media_acs["/media/acs<br/>(ACS calls)<br/>SERVER ↓"]
+        api_events["/api/events<br/>(webhooks)<br/>SERVER ↓"]
+    end
+
+    subgraph HANDLERS ["⚙️ HANDLERS (MediaHandler)"]
+        cascade["SpeechCascadeHandler<br/>INTERNAL spans"]
+        cascade_methods["_on_user_transcript()<br/>_on_partial_transcript()<br/>_on_vad_event()"]
+    end
+
+    subgraph ORCHESTRATION ["🎭 ORCHESTRATION LAYER"]
+        direction LR
+        agent["ArtAgentFlow<br/>INTERNAL"]
+        tools["ToolExecution<br/>INTERNAL"]
+        response["ResponseOrchestrator<br/>INTERNAL"]
+    end
+
+    subgraph EXTERNAL ["📡 EXTERNAL SERVICES (CLIENT spans)"]
+        direction TB
+        subgraph row1 [" "]
+            direction LR
+            aoai["Azure OpenAI<br/>peer.service=azure.ai.openai<br/>CLIENT ↓"]
+            speech["Azure Speech<br/>peer.service=azure.speech<br/>CLIENT ↓"]
+            acs["Azure Communication Services<br/>peer.service=azure.communication<br/>CLIENT ↓"]
+        end
+        subgraph row2 [" "]
+            direction LR
+            redis["Azure Redis<br/>peer.service=redis<br/>CLIENT ↓"]
+            cosmos["Azure CosmosDB<br/>peer.service=cosmosdb<br/>CLIENT ↓"]
+        end
+    end
+
+    dashboard -->|WebSocket| API
+    ws_voice & media_acs & api_events --> HANDLERS
+    cascade --> cascade_methods
+    HANDLERS --> ORCHESTRATION
+    agent & tools & response --> EXTERNAL
 ```
+
+**Legend:**
+
+| Span Kind | Description | App Insights |
+|-----------|-------------|--------------|
+| **SERVER ↓** | `SpanKind.SERVER` - inbound request | Creates "request" |
+| **CLIENT ↓** | `SpanKind.CLIENT` - outbound call | Creates "dependency" |
+| **INTERNAL** | `SpanKind.INTERNAL` - internal processing | Shows in trace details |
 
 ---
 
@@ -154,6 +162,8 @@ Legend:
 | `turn.total_latency` | Full turn round-trip | Start VAD → audio playback begins |
 
 ### 2. **LLM Metrics** (OpenTelemetry GenAI Conventions)
+
+These attributes follow the [OpenTelemetry Semantic Conventions for Generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/), which define standardized telemetry for LLM operations:
 
 | Attribute | OTel Attribute Name | Example |
 |-----------|---------------------|---------|
@@ -191,7 +201,7 @@ Legend:
 
 ## 🏗️ Span Hierarchy (Trace Structure)
 
-Following OpenTelemetry GenAI semantic conventions with proper **SpanKind** for Application Map:
+Following [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) with proper **[SpanKind](https://opentelemetry.io/docs/concepts/signals/traces/#span-kind)** for Application Map. The span hierarchy below aligns with [Azure AI Foundry tracing patterns](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/trace-agents-sdk):
 
 ```
 [ROOT] voice_session (SERVER)                          ← Shows as REQUEST in App Insights
@@ -710,7 +720,7 @@ resource turnLatencyAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pre
 
 ## 🔍 Intelligent View (Smart Detection)
 
-Application Insights **Smart Detection** automatically identifies anomalies in your application telemetry.
+[Application Insights Smart Detection](https://learn.microsoft.com/azure/azure-monitor/alerts/proactive-diagnostics) automatically identifies anomalies in your application telemetry using machine learning algorithms.
 
 ### Enabling Smart Detection
 
@@ -769,6 +779,8 @@ Returns `200 OK` only if all critical dependencies are healthy. Returns `503 Ser
 - ✅ **Auth Configuration** - GUID validation (when enabled)
 
 ### Health Check Integration
+
+Health probes follow [Azure Container Apps health probe configuration](https://learn.microsoft.com/azure/container-apps/health-probes) and [Kubernetes probe patterns](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/).
 
 **Kubernetes Deployment:**
 ```yaml
@@ -998,7 +1010,9 @@ dependencies
 
 ## 🤖 OpenAI Client Auto-Instrumentation
 
-The project uses the `opentelemetry-instrumentation-openai-v2` package for automatic tracing of OpenAI API calls with GenAI semantic conventions.
+The project uses the `opentelemetry-instrumentation-openai-v2` package for automatic tracing of OpenAI API calls with GenAI semantic conventions. This follows Microsoft's recommended approach for [tracing generative AI applications](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/trace-production-sdk).
+
+> 📖 **Reference:** [Enable tracing for Azure AI Agents SDK](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/trace-agents-sdk)
 
 ### What Gets Instrumented Automatically
 
@@ -1069,14 +1083,49 @@ The instrumentor follows OpenTelemetry GenAI semantic conventions:
 
 ## 🔗 References
 
-- [Application Map: Triage Distributed Applications](https://learn.microsoft.com/azure/azure-monitor/app/app-map)
-- [Set Cloud Role Name and Instance](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-configuration#set-the-cloud-role-name-and-the-cloud-role-instance)
-- [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
-- [Azure Monitor OpenTelemetry](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-enable)
-- [Azure AI Foundry: Tracing for Agents](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/trace-production-sdk) ← **NEW**
-- [Application Insights Agent Observability](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-add-modify)
-- [OpenTelemetry Span Kind](https://opentelemetry.io/docs/concepts/signals/traces/#span-kind)
-- [Project Instrumentation: utils/telemetry_config.py](../../../utils/telemetry_config.py)
-- [Project Latency Tool: src/tools/latency_tool.py](../../../src/tools/latency_tool.py)
+### Azure AI & Agents
+
+| Topic | Documentation |
+|-------|---------------|
+| **Tracing AI Agents** | [Enable tracing for Azure AI Agents SDK](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/trace-agents-sdk) |
+| **Production Tracing** | [Tracing in production with the Azure AI SDK](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/trace-production-sdk) |
+| **Visualize Traces** | [Visualize your traces in Azure AI Foundry](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/visualize-traces) |
+
+### Azure Monitor & Application Insights
+
+| Topic | Documentation |
+|-------|---------------|
+| **Application Map** | [Application Map: Triage Distributed Applications](https://learn.microsoft.com/azure/azure-monitor/app/app-map) |
+| **OpenTelemetry Setup** | [Enable Azure Monitor OpenTelemetry](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-enable) |
+| **Cloud Role Configuration** | [Set Cloud Role Name and Instance](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-configuration#set-the-cloud-role-name-and-the-cloud-role-instance) |
+| **Add/Modify Telemetry** | [Add and modify OpenTelemetry](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-add-modify) |
+| **Smart Detection** | [Proactive Diagnostics](https://learn.microsoft.com/azure/azure-monitor/alerts/proactive-diagnostics) |
+| **Log-based Alerts** | [Create log alerts](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-create-log-alert-rule) |
+
+### OpenTelemetry Standards
+
+| Topic | Documentation |
+|-------|---------------|
+| **GenAI Semantic Conventions** | [Generative AI Spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) |
+| **GenAI Metrics** | [Generative AI Metrics](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/) |
+| **Span Kinds** | [Span Kind](https://opentelemetry.io/docs/concepts/signals/traces/#span-kind) |
+| **Context Propagation** | [Context and Propagation](https://opentelemetry.io/docs/concepts/signals/traces/#context-propagation) |
+
+### Azure Services
+
+| Topic | Documentation |
+|-------|---------------|
+| **Azure Speech Telemetry** | [Speech SDK logging](https://learn.microsoft.com/azure/ai-services/speech-service/how-to-use-logging) |
+| **Azure OpenAI Monitoring** | [Monitor Azure OpenAI](https://learn.microsoft.com/azure/ai-services/openai/how-to/monitoring) |
+| **Container Apps Health Probes** | [Health probes in Azure Container Apps](https://learn.microsoft.com/azure/container-apps/health-probes) |
+| **Redis Monitoring** | [Monitor Azure Cache for Redis](https://learn.microsoft.com/azure/azure-cache-for-redis/cache-how-to-monitor) |
+| **Cosmos DB Monitoring** | [Monitor Azure Cosmos DB](https://learn.microsoft.com/azure/cosmos-db/monitor) |
+
+### Project Implementation
+
+- **Telemetry Configuration:** `utils/telemetry_config.py`
+- **Latency Tracking Tool:** `src/tools/latency_tool.py`
+- **Session Context:** `utils/session_context.py`
+- **Logging Configuration:** `utils/ml_logging.py`
 
 ---

@@ -125,9 +125,9 @@
     3. **[API Reference](../api/README.md)** - Endpoints and WebSocket protocols
     
 === "🏗️ Architects"
-    1. **[Data Flow Patterns](data-flows.md)** - Storage strategies and state management
+    1. **[Data Flow Patterns](data/flows.md)** - Storage strategies and state management
     2. **[Production Deployment](../deployment/production.md)** - Infrastructure and scaling
-    3. **[Integrations Overview](integrations.md)** - External service connectivity
+    3. **[ACS Integrations](acs/integrations.md)** - External service connectivity
 
 === "🔧 Operations"
     1. **[Monitoring Guide](../operations/monitoring.md)** - Application insights and observability

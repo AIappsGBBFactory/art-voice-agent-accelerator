@@ -31,7 +31,7 @@ class ScenarioListResponse(BaseModel):
     scenarios: list[ScenarioInfo]
 
 
-@router.get("/scenarios", response_model=ScenarioListResponse)
+@router.get("/scenarios", response_model=ScenarioListResponse, tags=["Scenarios"])
 async def get_scenarios():
     """
     List all available scenarios.
@@ -57,7 +57,7 @@ async def get_scenarios():
     return ScenarioListResponse(scenarios=scenarios)
 
 
-@router.get("/scenarios/{scenario_name}", response_model=ScenarioInfo)
+@router.get("/scenarios/{scenario_name}", response_model=ScenarioInfo, tags=["Scenarios"])
 async def get_scenario(scenario_name: str):
     """
     Get details for a specific scenario.

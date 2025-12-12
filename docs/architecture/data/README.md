@@ -10,9 +10,9 @@ Session management in the real-time voice agent architecture is handled by three
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **MemoManager** | [src/stateful/state_managment.py](../../src/stateful/state_managment.py) | Core session state container with Redis persistence |
-| **session_state.py** | [voice/shared/session_state.py](../../apps/artagent/backend/voice/shared/session_state.py) | Orchestrator ↔ MemoManager sync utilities |
-| **session_loader.py** | [services/session_loader.py](../../apps/artagent/backend/src/services/session_loader.py) | User profile resolution (Cosmos DB / mock) |
+| **MemoManager** | `src/stateful/state_managment.py` | Core session state container with Redis persistence |
+| **session_state.py** | `apps/artagent/backend/voice/shared/session_state.py` | Orchestrator ↔ MemoManager sync utilities |
+| **session_loader.py** | `apps/artagent/backend/src/services/session_loader.py` | User profile resolution (Cosmos DB / mock) |
 
 ```mermaid
 graph TB
@@ -372,4 +372,3 @@ await mgr.persist()
 - [Orchestration Overview](../orchestration/README.md) - How orchestrators use session state
 - [Agent Framework](../agents/README.md) - Agent configuration and loading
 - [Handoff Strategies](../agents/handoffs.md) - Context preservation during handoffs
-- [SESSION_MAPPING.md](../../../apps/artagent/backend/agents/SESSION_MAPPING.md) - Onboarding guide
