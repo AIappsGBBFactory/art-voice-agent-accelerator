@@ -345,12 +345,14 @@ prompt: prompt.jinja
 ### Agents Focus on Capabilities
 
 Agents now focus on:
+
 - ✅ What they're good at (description, prompt)
 - ✅ What tools they need (tools list)
 - ✅ How they sound (voice, greetings)
 - ✅ Their identity (handoff.trigger)
 
 Agents don't need to know:
+
 - ❌ Which agents they'll work with
 - ❌ Whether handoffs should be announced or discrete
 - ❌ The overall conversation flow
