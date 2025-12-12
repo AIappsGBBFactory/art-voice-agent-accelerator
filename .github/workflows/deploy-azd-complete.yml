@@ -1,5 +1,5 @@
-name: Deploy to Azure
-run-name: Deploy to Azure (${{ inputs.environment || 'dev' }} - ${{ inputs.action || 'up' }})
+name: 🚀 Deploy to Azure
+run-name: 🚀 Deploy to Azure (${{ inputs.environment || 'dev' }} - ${{ inputs.action || 'up' }})
 
 on:
   workflow_dispatch:

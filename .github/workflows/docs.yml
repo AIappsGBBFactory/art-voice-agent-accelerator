@@ -1,4 +1,5 @@
-name: Deploy Documentation
+name: 📚 Deploy MKDocs Documentation
+run-name: 📚 Deploy MKDocs Documentation (${{ github.ref }})
 
 on:
   push:
