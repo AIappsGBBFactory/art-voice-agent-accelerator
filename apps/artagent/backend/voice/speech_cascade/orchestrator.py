@@ -547,6 +547,12 @@ class CascadeOrchestratorAdapter:
 
                     # Get tools for current agent
                     tools = agent.get_tools()
+                    logger.info(
+                        "🔧 Agent tools loaded | agent=%s tool_count=%d tool_names=%s",
+                        self._active_agent,
+                        len(tools) if tools else 0,
+                        [t.get("function", {}).get("name") for t in tools] if tools else [],
+                    )
 
                     # Process with LLM (streaming) - session scope is preserved
                     response_text, tool_calls = await self._process_llm(
@@ -903,11 +909,12 @@ class CascadeOrchestratorAdapter:
         ) as span:
             try:
                 logger.info(
-                    "Starting LLM request (streaming) | agent=%s model=%s temp=%.2f iteration=%d",
+                    "Starting LLM request (streaming) | agent=%s model=%s temp=%.2f iteration=%d tools=%d",
                     self._active_agent,
                     model_name,
                     temperature,
                     _iteration,
+                    len(tools) if tools else 0,
                 )
 
                 # Use asyncio.Queue for thread-safe async communication
@@ -1578,6 +1585,13 @@ class CascadeOrchestratorAdapter:
         except Exception:
             history = []
 
+        logger.info(
+            "📜 History before turn | agent=%s history_count=%d transcript=%s",
+            self._active_agent,
+            len(history),
+            transcript[:50] if transcript else "(none)",
+        )
+
         # Persist user turn into history for continuity
         # This happens AFTER we copy the history, so it doesn't affect the copy
         if transcript:
@@ -1630,6 +1644,13 @@ class CascadeOrchestratorAdapter:
         if result.response_text:
             try:
                 cm.append_to_history(self._active_agent, "assistant", result.response_text)
+                # Log history state after appending
+                final_history = cm.get_history(self._active_agent)
+                logger.info(
+                    "📜 History after turn | agent=%s history_count=%d",
+                    self._active_agent,
+                    len(final_history) if final_history else 0,
+                )
             except Exception:
                 logger.debug("Failed to append assistant turn to history", exc_info=True)
 

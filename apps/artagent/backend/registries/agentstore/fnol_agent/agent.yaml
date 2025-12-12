@@ -11,20 +11,20 @@ description: |
   information from callers who have experienced auto accidents, property
   damage, or other insured losses. Handles emergency escalation when needed.
 
-greeting: "Hi, I'm here to help you file your claim. Take your time—what happened?"
-return_greeting: "Welcome back. Let's continue with your claim. Where were we?"
+greeting: |
+  {% if caller_name %}Hi {{ caller_name }}, I'm here to help you file your claim. Take your time - what happened?
+  {% else %}Hi, I'm here to help you file your claim. Take your time - what happened?
+  {% endif %}
+return_greeting: |
+  {% if caller_name %}{{ caller_name }}, let's continue with your claim. Where were we?
+  {% else %}Welcome back. Let's continue with your claim. Where were we?
+  {% endif %}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Handoff Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
   trigger: handoff_fnol_agent      # Other agents call this to reach FNOLAgent
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Model Configuration
-# ─────────────────────────────────────────────────────────────────────────────
-model:
-  temperature: 0.6                   # Lower for consistent claim intake
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration
@@ -35,7 +35,20 @@ voice:
   rate: "-2%"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Session Configuration (VoiceLive-specific)
+# Model Configuration (LLM for agent reasoning)
+# ─────────────────────────────────────────────────────────────────────────────
+voicelive_model:
+  deployment_id: gpt-4o-realtime-preview
+  temperature: 0.6                   # Lower for consistent claim intake
+  max_tokens: 250
+
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.6
+  max_tokens: 150
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session Configuration (VoiceLive Mode Only)
 # ─────────────────────────────────────────────────────────────────────────────
 session:
   modalities: [TEXT, AUDIO]
@@ -55,20 +68,44 @@ session:
   tool_choice: auto
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Speech Configuration (Cascade Mode Only)
+# ─────────────────────────────────────────────────────────────────────────────
+speech:
+  recognition:
+    language: en-US
+
+  synthesis:
+    voice_name: en-US-AlloyTurboMultilingualNeural
+
+  vad:
+    threshold: 0.02
+    silence_duration_ms: 700
+    prefix_padding_ms: 200
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Tools (referenced by name from shared registry)
 # ─────────────────────────────────────────────────────────────────────────────
 tools:
   # Core FNOL Tools
   - record_fnol                      # Record First Notice of Loss claim
   
-  # Handoffs
-  - handoff_to_general_info_agent    # Non-claim inquiries (billing, renewals)
-  - handoff_concierge                # Return to main menu
+  # Handoffs (Insurance scenario)
+  - handoff_policy_advisor           # Policy questions (billing, renewals)
   
   # Escalation
+  - escalate_human
   - escalate_emergency               # Medical/fire/injury emergencies
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Template Variables
+# ─────────────────────────────────────────────────────────────────────────────
+template_vars:
+  institution_name: "XYMZ Insurance"
+  agent_name: "ClaimsIntake"
+  industry: "insurance"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt (external Jinja file)
 # ─────────────────────────────────────────────────────────────────────────────
-prompt: prompt.jinja
+prompts:
+  path: prompt.jinja

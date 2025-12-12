@@ -285,6 +285,64 @@ handoff_general_kb_schema: dict[str, Any] = {
     },
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# INSURANCE HANDOFF SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+handoff_policy_advisor_schema: dict[str, Any] = {
+    "name": "handoff_policy_advisor",
+    "description": (
+        "Transfer to Policy Advisor for insurance policy questions and changes. "
+        "Use for policy modifications, renewals, coverage questions, or cancellations."
+        + SILENT_HANDOFF_NOTE
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {"type": "string", "description": "Customer identifier from verify_client_identity"},
+            "caller_name": {"type": "string", "description": "Customer name from verify_client_identity"},
+            "policy_type": {
+                "type": "string",
+                "description": "Type of policy (auto, home, health, life, umbrella)",
+            },
+            "request_type": {
+                "type": "string",
+                "description": "What they need (change, renewal, question, cancellation)",
+            },
+            "policy_number": {"type": "string", "description": "Policy number if known"},
+        },
+        "required": ["client_id", "caller_name"],
+    },
+}
+
+handoff_fnol_agent_schema: dict[str, Any] = {
+    "name": "handoff_fnol_agent",
+    "description": (
+        "Transfer to FNOL (First Notice of Loss) Agent for filing insurance claims. "
+        "Use when customer needs to report an accident, damage, theft, or other loss."
+        + SILENT_HANDOFF_NOTE
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {"type": "string", "description": "Customer identifier from verify_client_identity"},
+            "caller_name": {"type": "string", "description": "Customer name from verify_client_identity"},
+            "incident_type": {
+                "type": "string",
+                "description": "Type of incident (auto_accident, property_damage, theft, injury, other)",
+            },
+            "incident_date": {"type": "string", "description": "Date of incident if known"},
+            "policy_number": {"type": "string", "description": "Policy number if known"},
+            "urgency": {
+                "type": "string",
+                "enum": ["normal", "urgent", "emergency"],
+                "description": "Urgency level of the claim",
+            },
+        },
+        "required": ["client_id", "caller_name"],
+    },
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTORS
@@ -545,6 +603,85 @@ async def handoff_general_kb(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# INSURANCE HANDOFF EXECUTORS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def handoff_policy_advisor(args: dict[str, Any]) -> dict[str, Any]:
+    """Transfer to Policy Advisor Agent for policy questions and changes."""
+    client_id = (args.get("client_id") or "").strip()
+    caller_name = (args.get("caller_name") or "").strip()
+    policy_type = (args.get("policy_type") or "").strip()
+    request_type = (args.get("request_type") or "").strip()
+    policy_number = (args.get("policy_number") or "").strip()
+
+    if not client_id:
+        return {"success": False, "message": "client_id is required."}
+    if not caller_name:
+        return {"success": False, "message": "caller_name is required."}
+
+    logger.info(
+        "📋 Handoff to PolicyAdvisor | client=%s caller=%s policy_type=%s request=%s",
+        client_id, caller_name, policy_type, request_type
+    )
+
+    return _build_handoff_payload(
+        target_agent="PolicyAdvisor",
+        message="Let me connect you with our policy advisor.",
+        summary=f"Policy inquiry: {request_type or policy_type or 'general'}",
+        context={
+            "client_id": client_id,
+            "caller_name": caller_name,
+            "policy_id": policy_number or client_id,  # Alias for prompt template
+            "policy_type": policy_type,
+            "request_type": request_type,
+            "policy_number": policy_number,
+            "handoff_timestamp": _utc_now(),
+            "previous_agent": "AuthAgent",
+        },
+        extra={"should_interrupt_playback": True},
+    )
+
+
+async def handoff_fnol_agent(args: dict[str, Any]) -> dict[str, Any]:
+    """Transfer to FNOL Agent for filing insurance claims."""
+    client_id = (args.get("client_id") or "").strip()
+    caller_name = (args.get("caller_name") or "").strip()
+    incident_type = (args.get("incident_type") or "").strip()
+    incident_date = (args.get("incident_date") or "").strip()
+    policy_number = (args.get("policy_number") or "").strip()
+    urgency = (args.get("urgency") or "normal").strip()
+
+    if not client_id:
+        return {"success": False, "message": "client_id is required."}
+    if not caller_name:
+        return {"success": False, "message": "caller_name is required."}
+
+    logger.info(
+        "🚨 Handoff to FNOLAgent | client=%s caller=%s incident=%s urgency=%s",
+        client_id, caller_name, incident_type, urgency
+    )
+
+    return _build_handoff_payload(
+        target_agent="FNOLAgent",
+        message="I'll connect you with our claims specialist to help file your claim.",
+        summary=f"FNOL: {incident_type or 'incident report'}",
+        context={
+            "client_id": client_id,
+            "caller_name": caller_name,
+            "policy_id": policy_number or client_id,  # Alias for prompt template
+            "incident_type": incident_type,
+            "incident_date": incident_date,
+            "policy_number": policy_number,
+            "urgency": urgency,
+            "handoff_timestamp": _utc_now(),
+            "previous_agent": "AuthAgent",
+        },
+        extra={"should_interrupt_playback": urgency == "emergency"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -618,4 +755,20 @@ register_tool(
     handoff_general_kb,
     is_handoff=True,
     tags={"handoff", "knowledge_base"},
+)
+
+# Insurance handoff tools
+register_tool(
+    "handoff_policy_advisor",
+    handoff_policy_advisor_schema,
+    handoff_policy_advisor,
+    is_handoff=True,
+    tags={"handoff", "insurance", "policy"},
+)
+register_tool(
+    "handoff_fnol_agent",
+    handoff_fnol_agent_schema,
+    handoff_fnol_agent,
+    is_handoff=True,
+    tags={"handoff", "insurance", "claims"},
 )

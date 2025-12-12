@@ -208,8 +208,9 @@ async def record_fnol(args: RecordFNOLArgs) -> Dict[str, Any]:
     from the caller. Generates a unique claim ID and confirms the filing.
     
     Args:
-        policy_id: Policy ID of the insured
-        caller_name: Name of the caller
+        _session_profile: Optional session profile injected by orchestrator
+        policy_id: Policy ID of the insured (falls back to session profile)
+        caller_name: Name of the caller (falls back to session profile)
         driver_name: Name of the driver at time of incident
         driver_relationship: Driver's relationship to policyholder
         vehicle_year: Year of the vehicle
@@ -234,9 +235,17 @@ async def record_fnol(args: RecordFNOLArgs) -> Dict[str, Any]:
         return _json(False, "Invalid request format.")
     
     try:
-        # Extract required fields
-        policy_id = (args.get("policy_id") or "").strip()
-        caller_name = (args.get("caller_name") or "").strip()
+        # Check for session profile first (injected by orchestrator after auth)
+        session_profile = args.get("_session_profile")
+        
+        # Extract required fields - use session profile if available
+        if session_profile:
+            policy_id = session_profile.get("policy_id", "")
+            caller_name = session_profile.get("caller_name") or session_profile.get("full_name", "")
+        else:
+            policy_id = (args.get("policy_id") or "").strip()
+            caller_name = (args.get("caller_name") or "").strip()
+        
         driver_name = (args.get("driver_name") or caller_name).strip()
         vehicle_make = (args.get("vehicle_make") or "").strip()
         vehicle_model = (args.get("vehicle_model") or "").strip()
