@@ -1,33 +1,38 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Auth Agent - Unified Schema
+# FNOL Agent - First Notice of Loss
 # ═══════════════════════════════════════════════════════════════════════════════
-# Authentication and identity verification specialist
-# Works with both SpeechCascade and VoiceLive orchestrators
-#
-# Note: When used with the 'banking' scenario, this agent gets the
-# generate_personalized_greeting tool added for high-touch experience.
+# Insurance claim intake specialist for XYMZ Insurance
+# Collects claim information and records FNOL (First Notice of Loss)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-name: AuthAgent
-description: Handles MFA, identity verification, and security questions
+name: FNOLAgent
+description: |
+  Insurance First-Notice-of-Loss (FNOL) intake specialist. Collects claim
+  information from callers who have experienced auto accidents, property
+  damage, or other insured losses. Handles emergency escalation when needed.
 
-greeting: "I need to verify your identity before we continue. Let's get you authenticated."
-return_greeting: "Let's continue with verification."
+greeting: "Hi, I'm here to help you file your claim. Take your time—what happened?"
+return_greeting: "Welcome back. Let's continue with your claim. Where were we?"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Handoff Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
-  trigger: handoff_to_auth            # Other agents call this to reach AuthAgent
+  trigger: handoff_fnol_agent      # Other agents call this to reach FNOLAgent
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+model:
+  temperature: 0.6                   # Lower for consistent claim intake
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 voice:
-  name: en-US-ShimmerTurboMultilingualNeural
+  name: en-US-AlloyTurboMultilingualNeural
   type: azure-standard
-  rate: "0%"
+  rate: "-2%"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session Configuration (VoiceLive-specific)
@@ -38,14 +43,14 @@ session:
   output_audio_format: PCM16
 
   input_audio_transcription_settings:
-    model: azure-speech
+    model: gpt-4o-transcribe
     language: en-US
 
   turn_detection:
     type: azure_semantic_vad
     threshold: 0.5
     prefix_padding_ms: 240
-    silence_duration_ms: 700
+    silence_duration_ms: 720
 
   tool_choice: auto
 
@@ -53,25 +58,17 @@ session:
 # Tools (referenced by name from shared registry)
 # ─────────────────────────────────────────────────────────────────────────────
 tools:
-  # MFA & Identity Verification
-  - verify_client_identity
-  - send_mfa_code
-  - verify_mfa_code
-  - resend_mfa_code
+  # Core FNOL Tools
+  - record_fnol                      # Record First Notice of Loss claim
   
-  # Handoffs (for tool-based strategy)
-  - handoff_concierge              # Return to concierge
-  - handoff_fraud_agent            # Transfer to fraud if suspicious
+  # Handoffs
+  - handoff_to_general_info_agent    # Non-claim inquiries (billing, renewals)
+  - handoff_concierge                # Return to main menu
   
   # Escalation
-  - escalate_human
-
-template_vars:
-  institution_name: "Skynet"
-  agent_name: "FriendlyBot"
+  - escalate_emergency               # Medical/fire/injury emergencies
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Prompt (inline for simple agent)
+# Prompt (external Jinja file)
 # ─────────────────────────────────────────────────────────────────────────────
-prompts:
-  path: prompt.jinja
+prompt: prompt.jinja
