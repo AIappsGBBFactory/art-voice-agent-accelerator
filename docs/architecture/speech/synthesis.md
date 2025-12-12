@@ -231,10 +231,10 @@ CMD ["python", "-m", "your_app"]
 
 ## API Integration
 
-The speech synthesis functionality integrates with the main API endpoints - see **[API Reference](../api/api-reference.md)** for complete endpoint documentation:
+The speech synthesis functionality integrates with the main API endpoints - see **[API Reference](../../api/api-reference.md)** for complete endpoint documentation:
 
 - **Call Management** - TTS for outbound call prompts and conversation responses
 - **Media Streaming** - Real-time TTS synthesis for ACS call conversations  
 - **Health Monitoring** - TTS service validation and voice testing
 
-For complete API documentation, see the [API Overview](../api/README.md).
+For complete API documentation, see the [API Overview](../../api/README.md).

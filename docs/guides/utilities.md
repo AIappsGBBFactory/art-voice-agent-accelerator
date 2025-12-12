@@ -363,7 +363,7 @@ The demo environment endpoint generates mock users for testing:
 
 ## Related Documentation
 
-- [Resource Pools](../architecture/speech/resource-pools.md) - Pool configuration and troubleshooting
-- [Agent Registry](../agents/README.md) - Creating and configuring agents
-- [Tool Development](../api/tools.md) - Building custom tools
+- [Resource Pools](../architecture/speech/README.md) - Pool configuration and troubleshooting
+- [Agent Registry](../architecture/agents/README.md) - Creating and configuring agents
+- [API Reference](../api/api-reference.md) - Building custom tools
 - [Streaming Modes](../architecture/speech/README.md) - SpeechCascade vs VoiceLive

@@ -9,7 +9,7 @@
 
 | Document | Reason |
 |----------|--------|
-| **agent-configuration-proposal.md** | Proposal implemented → see [agent-framework.md](../agent-framework.md) |
+| **agent-configuration-proposal.md** | Proposal implemented → see [agents/README.md](../agents/README.md) |
 | **session-agent-config-proposal.md** | RFC implemented → `SessionAgentManager` exists in codebase |
 | **microsoft-agent-framework-evaluation.md** | One-time evaluation document, decision made |
 | **SESSION_OPTIMIZATION_NOTES.md** | All optimization items completed ✅ |
@@ -22,10 +22,10 @@
 
 For up-to-date architecture documentation, see:
 
-- **[Agent Framework](../agent-framework.md)** — YAML-driven agent configuration
+- **[Agent Framework](../agents/README.md)** — YAML-driven agent configuration
 - **[Orchestration Overview](../orchestration/README.md)** — Dual orchestrator architecture
-- **[Session Management](../session-management.md)** — MemoManager and Redis patterns
-- **[Handoff Strategies](../handoff-strategies.md)** — Multi-agent routing
+- **[Session Management](../data/README.md)** — MemoManager and Redis patterns
+- **[Handoff Strategies](../agents/handoffs.md)** — Multi-agent routing
 - **[Telemetry](../telemetry.md)** — OpenTelemetry and observability
 
 ---
