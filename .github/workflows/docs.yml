@@ -1,5 +1,5 @@
-name: 📚 Deploy MKDocs Documentation
-run-name: 📚 Deploy MKDocs Documentation (${{ github.ref }})
+name: 📖 Deploy MKDocs Documentation
+run-name: "📖 Deploy MKDocs Documentation (branch: ${{ github.ref_name }})"
 
 on:
   push:

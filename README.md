@@ -2,13 +2,44 @@
 
 # **ARTVoice Accelerator Framework**
 
+<table align="center">
+  <tr>
+    <td align="center"><b>Staging</b></td>
+    <td align="center"><b>Prod</b></td>
+    <td align="center"><b>Docs</b></td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml">
+        <img alt="🚀 Deploy to Azure (staging)" src="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml/badge.svg?branch=staging" />
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml">
+        <img alt="🚀 Deploy to Azure (prod)" src="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml/badge.svg?branch=main" />
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml">
+        <img alt="📖 Deploy MKDocs Documentation" src="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml/badge.svg" />
+      </a>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <b>New here?</b>
+  Start with
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/">Getting started</a>
+  &nbsp;•&nbsp;
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/">Docs home</a>
+</p>
+
 > **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
 
 <img src="docs/assets/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
 
 You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
-
-*Explore the full docs for tutorials, API, deployment guides & architecture patterns* -> https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/
 
 ## **See it in Action**
 
