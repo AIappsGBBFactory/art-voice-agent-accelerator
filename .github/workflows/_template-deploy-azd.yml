@@ -31,6 +31,10 @@ on:
         description: 'Database initialization status'
         required: false
         type: string
+    secrets:
+      GH_PAT:
+        description: 'Optional GitHub PAT used to write environment variables (GITHUB_TOKEN cannot)'
+        required: false
     outputs:
       resource_group:
         description: 'The resource group name'
@@ -80,6 +84,7 @@ jobs:
       # Pass through existing environment variables if set
       appconfig_endpoint_existing: ${{ vars.AZURE_APPCONFIG_ENDPOINT }}
       appconfig_label_existing: ${{ vars.AZURE_APPCONFIG_LABEL }}
+      container_registry_endpoint_existing: ${{ vars.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
     
     env:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -302,6 +307,8 @@ jobs:
       # Use existing App Config from environment variables if available
       EXISTING_APPCONFIG_ENDPOINT: ${{ needs.setup.outputs.appconfig_endpoint_existing }}
       EXISTING_APPCONFIG_LABEL: ${{ needs.setup.outputs.appconfig_label_existing }}
+      # Use existing Container Registry endpoint from environment variables if available
+      EXISTING_CONTAINER_REGISTRY_ENDPOINT: ${{ needs.setup.outputs.container_registry_endpoint_existing }}
     
     steps:
       - name: 🛒 Checkout
@@ -364,6 +371,12 @@ jobs:
             azd env set AZURE_APPCONFIG_LABEL "$EXISTING_APPCONFIG_LABEL"
           fi
 
+          # Use existing Container Registry endpoint from GitHub environment if available
+          if [ -n "$EXISTING_CONTAINER_REGISTRY_ENDPOINT" ]; then
+            echo "📌 Using existing AZURE_CONTAINER_REGISTRY_ENDPOINT from environment: $EXISTING_CONTAINER_REGISTRY_ENDPOINT"
+            azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$EXISTING_CONTAINER_REGISTRY_ENDPOINT"
+          fi
+
       - name: 🔧 Setup Terraform Parameters
         run: |
           TFVARS_FILE="infra/terraform/params/main.tfvars.${AZURE_ENV_NAME}.json"
@@ -398,6 +411,40 @@ jobs:
             }
           }
           EOF
+
+      - name: 📥 Load AZD Environment Values
+        if: inputs.action != 'down'
+        run: |
+          # Pull any previously saved values (including AZURE_RESOURCE_GROUP) from the azd environment
+          if azd env get-values > /tmp/azd-values.env 2>/dev/null; then
+            set -a
+            # shellcheck disable=SC1091
+            source /tmp/azd-values.env
+            set +a
+
+            if [ -n "${AZURE_RESOURCE_GROUP:-}" ]; then
+              echo "AZURE_RESOURCE_GROUP=$AZURE_RESOURCE_GROUP" >> "$GITHUB_ENV"
+              echo "📌 Using AZURE_RESOURCE_GROUP=$AZURE_RESOURCE_GROUP"
+            else
+              echo "ℹ️ AZURE_RESOURCE_GROUP not present in azd env (may be set during provision)."
+            fi
+
+            if [ -n "${AZURE_CONTAINER_REGISTRY_ENDPOINT:-}" ]; then
+              echo "AZURE_CONTAINER_REGISTRY_ENDPOINT=$AZURE_CONTAINER_REGISTRY_ENDPOINT" >> "$GITHUB_ENV"
+              echo "📌 Using AZURE_CONTAINER_REGISTRY_ENDPOINT=$AZURE_CONTAINER_REGISTRY_ENDPOINT"
+            fi
+          else
+            echo "ℹ️ azd env get-values failed (environment may not be initialized yet)."
+          fi
+
+      - name: ✅ Require AZURE_RESOURCE_GROUP for deploy
+        if: inputs.action == 'deploy'
+        run: |
+          if [ -z "${AZURE_RESOURCE_GROUP:-}" ]; then
+            echo "❌ AZURE_RESOURCE_GROUP is not set for this environment."
+            echo "   Run 'up' or 'provision' first, or set AZURE_RESOURCE_GROUP explicitly."
+            exit 1
+          fi
 
       # ----------------------------------------------------------------------
       # ACTION: PROVISION
@@ -510,8 +557,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           APPCONFIG_ENDPOINT: ${{ needs.execute.outputs.appconfig_endpoint }}
           APPCONFIG_LABEL: ${{ needs.execute.outputs.appconfig_label }}
+          CONTAINER_REGISTRY_ENDPOINT: ${{ needs.execute.outputs.container_registry_endpoint }}
         run: |
           echo "📝 Updating GitHub environment variables for '${{ inputs.environment }}'..."
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "ℹ️ GH_PAT not provided; skipping environment variable persistence."
+            exit 0
+          fi
           
           if [ -n "$APPCONFIG_ENDPOINT" ] && [ "$APPCONFIG_ENDPOINT" != "unknown" ]; then
             gh variable set AZURE_APPCONFIG_ENDPOINT \
@@ -527,6 +580,14 @@ jobs:
               --env "${{ inputs.environment }}" \
               --repo "${{ github.repository }}" || echo "⚠️ Could not set AZURE_APPCONFIG_LABEL"
             echo "✅ AZURE_APPCONFIG_LABEL=$APPCONFIG_LABEL"
+          fi
+
+          if [ -n "$CONTAINER_REGISTRY_ENDPOINT" ] && [ "$CONTAINER_REGISTRY_ENDPOINT" != "unknown" ]; then
+            gh variable set AZURE_CONTAINER_REGISTRY_ENDPOINT \
+              --body "$CONTAINER_REGISTRY_ENDPOINT" \
+              --env "${{ inputs.environment }}" \
+              --repo "${{ github.repository }}" || echo "⚠️ Could not set AZURE_CONTAINER_REGISTRY_ENDPOINT"
+            echo "✅ AZURE_CONTAINER_REGISTRY_ENDPOINT=$CONTAINER_REGISTRY_ENDPOINT"
           fi
 
       - name: 📋 Generate Summary
