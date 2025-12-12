@@ -1,0 +1,81 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Policy Advisor Agent - Insurance Policy Management
+# ═══════════════════════════════════════════════════════════════════════════════
+# Specialized agent for policy questions, changes, renewals, and cancellations
+# Handles auto, home, health, life, and other insurance policies
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: PolicyAdvisor
+description: Insurance policy advisor who helps customers with policy changes, renewals, and questions
+
+greeting: |
+  {% if caller_name %}Hi {{ caller_name }}, I'm your policy advisor. I can help you make changes to your policy, answer questions about your coverage, or assist with renewals. What would you like to do today?
+  {% else %}Hello, I'm your policy advisor. I can help you make changes to your policy, answer questions about your coverage, or assist with renewals. How can I assist you?
+  {% endif %}
+
+return_greeting: |
+  {% if caller_name %}{{ caller_name }}, is there anything else I can help you with regarding your policy?
+  {% else %}Is there anything else about your policy I can help with?
+  {% endif %}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Handoff Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+handoff:
+  trigger: handoff_policy_advisor
+  is_entry_point: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Voice Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+voice:
+  name: en-US-AvaMultilingualNeural
+  type: azure-standard
+  rate: "-4%"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+  input_audio_transcription_settings:
+    model: gpt-4o-transcribe
+    language: en-US
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+model:
+  deployment_id: gpt-4o-realtime-preview
+  temperature: 0.7
+  top_p: 0.9
+  max_response_output_tokens: 4096
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tools (Handoffs & Functions)
+# ─────────────────────────────────────────────────────────────────────────────
+tools:
+  # Handoffs to other agents
+  - handoff_concierge
+  - handoff_claims_specialist
+  - handoff_coverage_specialist
+  - handoff_compliance_desk
+  - escalate_human
+  
+  # Policy management tools
+  - get_policy_details
+  - update_policy_information
+  - add_policy_coverage
+  - remove_policy_coverage
+  - get_renewal_quote
+  - cancel_policy
+  - reinstate_policy
+  - add_policy_holder
+  - remove_policy_holder
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt Template Path
+# ─────────────────────────────────────────────────────────────────────────────
+prompt_template_path: policy_advisor/prompt.md

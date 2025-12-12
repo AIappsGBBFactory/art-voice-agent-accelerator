@@ -1,0 +1,96 @@
+# Banking Customer Service Scenario
+# Optimized for private banking and wealth management
+
+name: banking
+description: Private banking customer service with personalized greetings and financial tools
+
+# Starting agent
+start_agent: BankingConcierge
+
+# Agents to include in this scenario
+# Flow: BankingConcierge (entry) → CardRecommendation OR InvestmentAdvisor
+# Both specialists can handoff to each other and return to BankingConcierge
+agents:
+  - BankingConcierge
+  - CardRecommendation
+  - InvestmentAdvisor
+
+# Handoff behavior - default for unlisted routes
+handoff_type: announced
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Handoff Graph - Directed edges between agents
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#                    ┌─────────────────────────────────────┐
+#                    │                                     │
+#                    ▼                                     │
+#              ┌───────────────┐                           │
+#              │BankingConcierge│ (Entry Point)            │
+#              └───────┬───────┘                           │
+#                      │                                   │
+#            ┌─────────┴─────────┐                         │
+#            │                   │                         │
+#            ▼                   ▼                         │
+#     ┌──────────────┐   ┌────────────────┐                │
+#     │    Card      │   │   Investment   │                │
+#     │Recommendation│◄─►│    Advisor     │                │
+#     └──────┬───────┘   └───────┬────────┘                │
+#            │                   │                         │
+#            └─────────┬─────────┘                         │
+#                      │                                   │
+#                      └───────────────────────────────────┘
+#                        (All return to BankingConcierge)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+handoffs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # BankingConcierge → Specialists (Entry routes)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - from: BankingConcierge
+    to: CardRecommendation
+    tool: handoff_card_recommendation
+    type: discrete            # Seamless - same conversation continues
+    share_context: true
+
+  - from: BankingConcierge
+    to: InvestmentAdvisor
+    tool: handoff_investment_advisor
+    type: discrete            # Seamless - same conversation continues
+    share_context: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Cross-Specialist Handoffs (expertise-based routing)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - from: CardRecommendation
+    to: InvestmentAdvisor
+    tool: handoff_investment_advisor
+    type: discrete            # Seamless transition between specialists
+    share_context: true
+
+  - from: InvestmentAdvisor
+    to: CardRecommendation
+    tool: handoff_card_recommendation
+    type: discrete            # Seamless transition between specialists
+    share_context: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Return to BankingConcierge (all specialists can return)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - from: CardRecommendation
+    to: BankingConcierge
+    tool: handoff_concierge
+    type: discrete            # Seamless return
+
+  - from: InvestmentAdvisor
+    to: BankingConcierge
+    tool: handoff_concierge
+    type: discrete            # Seamless return
+
+# Agent defaults applied to all agents
+agent_defaults:
+  company_name: "{{ institution_name | default('Contoso Bank') }}"
+  industry: "banking"
+  compliance_required: true
+  region: "US"

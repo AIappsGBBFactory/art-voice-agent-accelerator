@@ -6,12 +6,12 @@ Reusable email templates that can be used by any tool.
 Provides both plain text and HTML versions with consistent styling.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Any
 
 
 class EmailTemplates:
     """Collection of reusable email templates."""
-    
+
     @staticmethod
     def get_base_html_styles() -> str:
         """Get base CSS styles for HTML emails."""
@@ -28,25 +28,23 @@ class EmailTemplates:
         .footer { background: #333; color: white; padding: 15px; text-align: center; border-radius: 0 0 8px 8px; }
         .next-steps { background: #e8f4fd; border-left: 4px solid #0078d4; }
         """
-    
+
     @staticmethod
     def create_claim_confirmation_email(
-        claim_data: Dict[str, Any], 
-        claim_id: str,
-        caller_name: str
+        claim_data: dict[str, Any], claim_id: str, caller_name: str
     ) -> tuple[str, str, str]:
         """
         Create claim confirmation email content.
-        
+
         Returns:
             Tuple of (subject, plain_text_body, html_body)
         """
         vehicle_details = claim_data.get("vehicle_details", {})
         loss_location = claim_data.get("loss_location", {})
         injury_assessment = claim_data.get("injury_assessment", {})
-        
+
         subject = f"Claim Confirmation - {claim_id}"
-        
+
         # Plain text version
         plain_text_body = f"""Dear {caller_name},
 
@@ -97,12 +95,18 @@ Best regards,
 ARTVoice Insurance Claims Department"""
 
         # HTML version
-        vehicle_condition_class = ' highlight' if not claim_data.get('vehicle_drivable') else ''
-        vehicle_condition_text = 'Drivable' if claim_data.get('vehicle_drivable') else 'Not Drivable'
-        injury_class = ' highlight' if injury_assessment.get('injured') else ''
-        injury_text = 'Yes' if injury_assessment.get('injured') else 'No'
-        injury_details_row = f'<div class="info-row"><span class="label">Details:</span><span class="value">{injury_assessment.get("details", "None reported")}</span></div>' if injury_assessment.get('details') else ''
-        
+        vehicle_condition_class = " highlight" if not claim_data.get("vehicle_drivable") else ""
+        vehicle_condition_text = (
+            "Drivable" if claim_data.get("vehicle_drivable") else "Not Drivable"
+        )
+        injury_class = " highlight" if injury_assessment.get("injured") else ""
+        injury_text = "Yes" if injury_assessment.get("injured") else "No"
+        injury_details_row = (
+            f'<div class="info-row"><span class="label">Details:</span><span class="value">{injury_assessment.get("details", "None reported")}</span></div>'
+            if injury_assessment.get("details")
+            else ""
+        )
+
         html_body = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -191,28 +195,25 @@ ARTVoice Insurance Claims Department"""
 </html>"""
 
         return subject, plain_text_body, html_body
-    
+
     @staticmethod
     def create_policy_notification_email(
-        customer_name: str,
-        policy_id: str,
-        notification_type: str,
-        details: Dict[str, Any]
+        customer_name: str, policy_id: str, notification_type: str, details: dict[str, Any]
     ) -> tuple[str, str, str]:
         """
         Create policy notification email content.
-        
+
         Args:
             customer_name: Name of the customer
             policy_id: Policy ID
             notification_type: Type of notification (renewal, update, etc.)
             details: Additional details for the notification
-            
+
         Returns:
             Tuple of (subject, plain_text_body, html_body)
         """
         subject = f"Policy {notification_type.title()} - {policy_id}"
-        
+
         plain_text_body = f"""Dear {customer_name},
 
 This is to notify you about your policy {policy_id}.
@@ -260,30 +261,30 @@ ARTVoice Insurance Customer Service"""
 
     @staticmethod
     def create_mfa_code_email(
-        otp_code: str, 
-        client_name: str, 
-        institution_name: str, 
-        transaction_amount: float = 0, 
-        transaction_type: str = "general_inquiry"
+        otp_code: str,
+        client_name: str,
+        institution_name: str,
+        transaction_amount: float = 0,
+        transaction_type: str = "general_inquiry",
     ) -> tuple[str, str, str]:
         """
         Create context-aware MFA verification code email for financial services.
-        
+
         Args:
             otp_code: 6-digit verification code
             client_name: Name of the client
             institution_name: Financial institution name
             transaction_amount: Amount (used only for context, not displayed)
             transaction_type: Type of transaction or operation
-            
+
         Returns:
             Tuple of (subject, plain_text_body, html_body)
         """
         # Get user-friendly call context
         call_reason = _get_call_context(transaction_type)
-        
-        subject = f"Financial Services - Verification Code Required"
-        
+
+        subject = "Financial Services - Verification Code Required"
+
         # Plain text version (no transaction details)
         plain_text_body = f"""Dear {client_name},
 
@@ -365,11 +366,11 @@ def _get_call_context(transaction_type: str) -> str:
     """Map transaction types to actual call reasons that users understand."""
     call_reasons = {
         "account_inquiry": "account questions and information",
-        "balance_check": "account balance and holdings review", 
+        "balance_check": "account balance and holdings review",
         "transaction_history": "transaction history and statements",
         "small_transfers": "transfer and payment requests",
         "medium_transfers": "transfer and payment requests",
-        "large_transfers": "large transfer authorization", 
+        "large_transfers": "large transfer authorization",
         "liquidations": "investment liquidation and fund access",
         "large_liquidations": "large liquidation requests",
         "portfolio_rebalancing": "portfolio management and rebalancing",
@@ -377,36 +378,36 @@ def _get_call_context(transaction_type: str) -> str:
         "fund_operations": "fund management operations",
         "institutional_transfers": "institutional transfer services",
         "drip_liquidation": "dividend reinvestment plan (DRIP) liquidation",
-        "large_drip_liquidation": "large DRIP liquidation requests", 
+        "large_drip_liquidation": "large DRIP liquidation requests",
         "institutional_servicing": "institutional client services",
         "fraud_reporting": "fraud reporting and security concerns",
         "dispute_transaction": "transaction disputes and investigations",
         "fraud_investigation": "fraud investigation assistance",
         "general_inquiry": "general account and service inquiries",
         "emergency_liquidations": "emergency liquidation services",
-        "regulatory_overrides": "regulatory compliance matters"
+        "regulatory_overrides": "regulatory compliance matters",
     }
-    
+
     return call_reasons.get(transaction_type, "financial services assistance")
 
 
 class FraudEmailTemplates:
     """Professional fraud case email templates matching MFA style."""
-    
+
     @staticmethod
     def create_fraud_case_email(
         case_number: str,
-        client_name: str, 
+        client_name: str,
         institution_name: str,
         email_type: str = "case_created",
         blocked_card_last_4: str = None,
         estimated_loss: float = 0,
-        provisional_credits: List[Dict] = None,
-        additional_details: str = ""
+        provisional_credits: list[dict] = None,
+        additional_details: str = "",
     ) -> tuple[str, str, str]:
         """
         Create professional fraud case notification email.
-        
+
         Args:
             case_number: Fraud case ID
             client_name: Name of the client
@@ -416,25 +417,25 @@ class FraudEmailTemplates:
             estimated_loss: Total estimated loss amount
             provisional_credits: List of provisional credit transactions
             additional_details: Additional information to include
-            
+
         Returns:
             Tuple of (subject, plain_text_body, html_body)
         """
         from datetime import datetime
-        
+
         # Email subjects by type
         subject_map = {
             "case_created": f"🛡️ Fraud Protection Activated - Case {case_number}",
-            "card_blocked": f"🔒 Card Security Alert - Immediate Protection",
+            "card_blocked": "🔒 Card Security Alert - Immediate Protection",
             "investigation_update": f"📋 Fraud Investigation Update - Case {case_number}",
-            "resolution": f"✅ Fraud Case Resolved - Case {case_number}"
+            "resolution": f"✅ Fraud Case Resolved - Case {case_number}",
         }
-        
+
         subject = subject_map.get(email_type, f"Security Notification - Case {case_number}")
-        
+
         # Calculate total provisional credits
-        total_credits = sum(credit.get('amount', 0) for credit in (provisional_credits or []))
-        
+        total_credits = sum(credit.get("amount", 0) for credit in (provisional_credits or []))
+
         # Plain text version
         plain_text_body = f"""Dear {client_name},
 
@@ -594,18 +595,18 @@ Fraud Protection Team
 
         # Add provisional credits section if applicable
         if provisional_credits and total_credits > 0:
-            html_body += f"""
+            html_body += """
         <div class="credits-section">
             <h4>💰 PROVISIONAL CREDITS PROCESSING</h4>
             <p>The following unauthorized transactions are being provisionally credited:</p>
             <ul>"""
-            
+
             for credit in provisional_credits:
-                merchant = credit.get('merchant', 'Unknown Merchant')
-                amount = credit.get('amount', 0)
-                date = credit.get('date', 'Recent')
+                merchant = credit.get("merchant", "Unknown Merchant")
+                amount = credit.get("amount", 0)
+                date = credit.get("date", "Recent")
                 html_body += f"<li><strong>${amount:.2f}</strong> - {merchant} ({date})</li>"
-            
+
             html_body += f"""
             </ul>
             <p><strong>Total Provisional Credit: ${total_credits:.2f}</strong></p>
