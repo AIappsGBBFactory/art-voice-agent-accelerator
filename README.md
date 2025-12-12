@@ -1,6 +1,5 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-# **ARTVoice Accelerator Framework**
 
 <table align="center" border="0" cellspacing="0" cellpadding="12">
 <tr>
@@ -24,6 +23,8 @@
   ·
   <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/">Architecture</a>
 </p>
+
+# **ARTVoice Accelerator Framework**
 
 > **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
 
