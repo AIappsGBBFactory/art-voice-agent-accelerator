@@ -16,6 +16,7 @@ The repository follows a modular, microservice-oriented structure with clear sep
 | `utils/` | Cross-cutting utilities (logging, telemetry) |
 | `samples/` | Example implementations and labs |
 | `devops/` | CI/CD scripts and security tooling |
+| `config/` | Application configuration (App Configuration templates) |
 
 ---
 
@@ -27,7 +28,6 @@ The repository follows a modular, microservice-oriented structure with clear sep
 ├── 📄 pyproject.toml            # Python dependencies and tool config (single source of truth)
 ├── 📄 uv.lock                   # Lockfile for reproducible builds (managed by uv)
 ├── 📄 azure.yaml                # Azure Developer CLI (azd) configuration
-├── 📄 docker-compose.yml        # Local development containers
 ├── 📄 environment.yaml          # Conda environment (alternative to uv)
 ├── 📄 Makefile                  # Automation commands
 ├── 📄 mkdocs.yml                # Documentation site configuration
@@ -51,36 +51,74 @@ FastAPI-based real-time voice agent service with WebSocket support.
 ├── 📄 main.py                   # FastAPI application entry point
 ├── 📄 README.md                 # Backend documentation
 │
-├── 📁 agents/                   # AI Agent definitions
-│   ├── 📄 base.py               # Base agent class
-│   ├── 📄 loader.py             # Agent configuration loader
-│   ├── 📄 session_manager.py    # Agent session management
-│   ├── 📄 _defaults.yaml        # Default agent configuration
-│   ├── 📁 auth_agent/           # Authentication agent
-│   ├── 📁 card_recommendation/  # Card recommendation agent
-│   ├── 📁 compliance_desk/      # Compliance desk agent
-│   ├── 📁 concierge/            # Concierge agent
-│   ├── 📁 custom_agent/         # Custom agent template
-│   ├── 📁 fraud_agent/          # Fraud detection agent
-│   ├── 📁 investment_advisor/   # Investment advisor agent
-│   ├── 📁 scenarios/            # Agent scenario configurations
-│   └── 📁 tools/                # Agent-specific tools
+├── 📁 registries/               # Unified Agent & Tool Registry System
+│   ├── 📄 README.md             # Registry system documentation
+│   │
+│   ├── 📁 agentstore/           # Agent definitions
+│   │   ├── 📄 _defaults.yaml    # Default agent configuration
+│   │   ├── 📄 base.py           # Base agent class
+│   │   ├── 📄 loader.py         # Agent configuration loader
+│   │   ├── 📄 session_manager.py # Agent session management
+│   │   ├── 📁 auth_agent/       # Authentication agent
+│   │   ├── 📁 banking_concierge/ # Banking concierge agent
+│   │   ├── 📁 card_recommendation/ # Card recommendation agent
+│   │   ├── 📁 claims_specialist/ # Insurance claims specialist
+│   │   ├── 📁 compliance_desk/  # Compliance desk agent
+│   │   ├── 📁 concierge/        # Main concierge agent
+│   │   ├── 📁 custom_agent/     # Custom agent template
+│   │   ├── 📁 fnol_agent/       # First Notice of Loss agent
+│   │   ├── 📁 fraud_agent/      # Fraud detection agent
+│   │   ├── 📁 investment_advisor/ # Investment advisor agent
+│   │   └── 📁 policy_advisor/   # Insurance policy advisor
+│   │
+│   ├── 📁 scenariostore/        # Scenario configurations
+│   │   ├── 📄 loader.py         # Scenario loader
+│   │   ├── 📁 banking/          # Banking scenario
+│   │   ├── 📁 default/          # Default scenario
+│   │   └── 📁 insurance/        # Insurance scenario
+│   │
+│   └── 📁 toolstore/            # Tool registry
+│       ├── 📄 registry.py       # Core tool registration
+│       ├── 📄 auth.py           # Authentication tools
+│       ├── 📄 call_transfer.py  # Call transfer tools
+│       ├── 📄 compliance.py     # Compliance tools
+│       ├── 📄 customer_intelligence.py # Customer intelligence tools
+│       ├── 📄 escalation.py     # Human escalation tools
+│       ├── 📄 fnol.py           # First Notice of Loss tools
+│       ├── 📄 fraud.py          # Fraud detection tools
+│       ├── 📄 handoffs.py       # Agent handoff tools
+│       ├── 📄 insurance.py      # Insurance policy & claims tools
+│       ├── 📄 investment.py     # Investment tools
+│       ├── 📄 knowledge_base.py # RAG knowledge base tools
+│       ├── 📄 personalized_greeting.py # Greeting tools
+│       ├── 📄 rag_retrieval.py  # RAG retrieval tools
+│       ├── 📄 transfer_agency.py # Transfer agency tools
+│       ├── 📄 voicemail.py      # Voicemail tools
+│       └── 📁 banking/          # Banking-specific tools
+│           ├── 📄 banking.py    # Account & transaction tools
+│           ├── 📄 constants.py  # Banking constants
+│           ├── 📄 email_templates.py # Email templates
+│           └── 📄 investments.py # Investment tools
 │
 ├── 📁 api/                      # REST API endpoints
 │   ├── 📄 swagger_docs.py       # OpenAPI documentation
-│   └── 📁 v1/                   # API version 1 endpoints
+│   └── 📁 v1/                   # API version 1
+│       ├── 📄 router.py         # API router
+│       └── 📁 endpoints/        # API endpoint handlers
+│           ├── 📄 agent_builder.py  # Dynamic agent creation
+│           ├── 📄 demo_env.py   # Demo environment endpoints
+│           ├── 📄 health.py     # Health checks
+│           ├── 📄 media.py      # Media streaming endpoints
+│           └── 📄 ...
 │
 ├── 📁 config/                   # Configuration management
+│   ├── 📄 settings.py           # Main settings
 │   ├── 📄 ai_config.py          # AI service configuration
 │   ├── 📄 app_config.py         # Application configuration
-│   ├── 📄 app_settings.py       # Settings management
 │   ├── 📄 appconfig_provider.py # Azure App Configuration provider
 │   ├── 📄 connection_config.py  # Connection string management
 │   ├── 📄 constants.py          # Application constants
 │   ├── 📄 feature_flags.py      # Feature flag management
-│   ├── 📄 infrastructure.py     # Infrastructure configuration
-│   ├── 📄 security_config.py    # Security settings
-│   ├── 📄 settings.py           # Main settings
 │   └── 📄 voice_config.py       # Voice/speech configuration
 │
 ├── 📁 src/                      # Backend source code
@@ -88,7 +126,6 @@ FastAPI-based real-time voice agent service with WebSocket support.
 │   ├── 📁 orchestration/        # Call orchestration logic
 │   ├── 📁 services/             # Business logic services
 │   ├── 📁 sessions/             # Session management
-│   ├── 📁 utils/                # Backend utilities
 │   └── 📁 ws_helpers/           # WebSocket helper utilities
 │
 └── 📁 voice/                    # Voice processing modules
@@ -129,7 +166,9 @@ Reusable business logic shared across applications.
 ├── 📁 acs/                      # Azure Communication Services
 ├── 📁 agenticmemory/            # Agent memory management
 ├── 📁 aoai/                     # Azure OpenAI integration
+├── 📁 appconfig/                # Azure App Configuration client
 ├── 📁 blob/                     # Azure Blob Storage
+├── 📁 common/                   # Common utilities
 ├── 📁 cosmosdb/                 # Cosmos DB integration
 ├── 📁 enums/                    # Enumeration definitions
 ├── 📁 pools/                    # Connection and resource pools
@@ -151,14 +190,39 @@ Infrastructure-as-Code for Azure deployments.
 ```
 📁 infra/
 ├── 📄 README.md                 # Infrastructure documentation
+│
 ├── 📁 bicep/                    # Azure Bicep templates
 │   ├── 📄 main.bicep            # Main infrastructure template
 │   └── 📁 modules/              # Reusable Bicep modules
+│
 └── 📁 terraform/                # Terraform configurations
     ├── 📄 main.tf               # Main Terraform configuration
     ├── 📄 variables.tf          # Variable definitions
+    ├── 📄 outputs.tf            # Output definitions
+    ├── 📄 ai-foundry.tf         # AI Foundry resources
+    ├── 📄 ai-foundry-vl.tf      # Voice Live AI resources
+    ├── 📄 appconfig.tf          # App Configuration resources
+    ├── 📄 communication.tf      # ACS resources
+    ├── 📄 containers.tf         # Container Apps resources
+    ├── 📄 core.tf               # Core infrastructure
+    ├── 📄 keyvault.tf           # Key Vault resources
+    ├── 📄 redis.tf              # Redis resources
     ├── 📁 modules/              # Terraform modules
-    └── 📁 environments/         # Environment-specific configs
+    └── 📁 params/               # Environment-specific parameters
+        ├── 📄 main.tfvars.json  # Default parameters
+        └── 📄 main.tfvars.prod.json # Production parameters
+```
+
+---
+
+## Configuration (`config/`)
+
+Application configuration templates for Azure App Configuration.
+
+```
+📁 config/
+├── 📄 appconfig.json            # App Configuration settings
+└── 📁 appconfig/                # Additional config templates
 ```
 
 ---
@@ -175,13 +239,16 @@ MkDocs-based documentation site.
 ├── 📁 api/                      # API reference documentation
 ├── 📁 architecture/             # Architecture documentation
 ├── 📁 assets/                   # Documentation assets (images, CSS)
+├── 📁 community/                # Community guidelines
 ├── 📁 deployment/               # Deployment guides
 ├── 📁 getting-started/          # Getting started guides
 ├── 📁 guides/                   # Developer guides
 ├── 📁 industry/                 # Industry-specific use cases
 ├── 📁 operations/               # Operations and troubleshooting
+├── 📁 proposals/                # Design proposals
 ├── 📁 samples/                  # Sample documentation
-└── 📁 security/                 # Security documentation
+├── 📁 security/                 # Security documentation
+└── 📁 testing/                  # Testing documentation
 ```
 
 ---
@@ -199,6 +266,7 @@ Comprehensive test suites.
 ├── 📄 test_*.py                 # Various unit/integration tests
 ├── 📄 apim-test.http            # API Management tests
 ├── 📄 backend.http              # Backend API tests
+├── 📁 _legacy_v1_tests/         # Legacy v1 tests
 └── 📁 load/                     # Load testing
     ├── 📄 README.md             # Load testing documentation
     └── 📄 locustfile.py         # Locust load test script
@@ -233,9 +301,14 @@ CI/CD scripts and security tooling.
 ```
 📁 devops/
 ├── 📄 azure-bicep.yaml          # Azure Bicep pipeline
-├── 📄 .terraform-docs.yaml      # Terraform documentation config
+├── 📄 docker-compose.yml        # Local development containers
 ├── 📁 scripts/                  # Deployment scripts
 │   ├── 📁 azd/                  # Azure Developer CLI scripts
+│   │   ├── 📄 postprovision.sh  # Post-provisioning script
+│   │   ├── 📄 preprovision.sh   # Pre-provisioning script
+│   │   └── 📁 helpers/          # Helper scripts
+│   │       └── 📄 local-dev-setup.sh # Local dev setup
+│   ├── 📁 local-dev/            # Local development scripts
 │   └── 📁 misc/                 # Miscellaneous scripts
 └── 📁 security/                 # Security scanning
     ├── 📄 bandit_to_sarif.py    # Bandit to SARIF converter
@@ -288,8 +361,10 @@ Cross-cutting utilities for logging, telemetry, and authentication.
 
 | What you need | Where to look |
 |---------------|---------------|
-| API endpoints | `apps/artagent/backend/api/v1/` |
-| Agent definitions | `apps/artagent/backend/agents/` |
+| API endpoints | `apps/artagent/backend/api/v1/endpoints/` |
+| Agent definitions | `apps/artagent/backend/registries/agentstore/` |
+| Scenario configs | `apps/artagent/backend/registries/scenariostore/` |
+| Tool implementations | `apps/artagent/backend/registries/toolstore/` |
 | Configuration | `apps/artagent/backend/config/` |
 | WebSocket handlers | `apps/artagent/backend/src/ws_helpers/` |
 | Voice processing | `apps/artagent/backend/voice/` |
@@ -305,9 +380,10 @@ Cross-cutting utilities for logging, telemetry, and authentication.
 
 1. **Backend Developer**: Start with `apps/artagent/backend/main.py`
 2. **Frontend Developer**: Start with `apps/artagent/frontend/src/`
-3. **AI/Agent Engineer**: Start with `apps/artagent/backend/agents/`
-4. **DevOps Engineer**: Start with `infra/` and `azure.yaml`
-5. **Integration Developer**: Start with `src/acs/` and `src/speech/`
+3. **AI/Agent Engineer**: Start with `apps/artagent/backend/registries/agentstore/`
+4. **Tool Developer**: Start with `apps/artagent/backend/registries/toolstore/`
+5. **DevOps Engineer**: Start with `infra/` and `azure.yaml`
+6. **Integration Developer**: Start with `src/acs/` and `src/speech/`
 
 ### 📦 Package Management
 

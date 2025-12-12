@@ -3,8 +3,8 @@
 ## 📋 Overview
 
 You can configure **TTS voice** and **LLM model** for each agent in two places:
-1. **Agent YAML** (`agentstore/{agent_name}/agent.yaml`) - Agent defaults
-2. **Scenario YAML** (`scenariostore/{scenario}/scenario.yaml`) - Per-scenario overrides
+1. **Agent YAML** (`registries/agentstore/{agent_name}/agent.yaml`) - Agent defaults
+2. **Scenario YAML** (`registries/scenariostore/{scenario}/scenario.yaml`) - Per-scenario overrides
 
 ---
 
@@ -13,7 +13,7 @@ You can configure **TTS voice** and **LLM model** for each agent in two places:
 ### In Agent YAML
 
 ```yaml
-# agentstore/concierge/agent.yaml
+# registries/agentstore/concierge/agent.yaml
 
 voice:
   name: en-US-AvaMultilingualNeural  # Azure TTS voice name
@@ -87,7 +87,7 @@ You have **TWO options** for configuring models:
 Use **`model:`** only - both VoiceLive and Cascade will use this configuration:
 
 ```yaml
-# agentstore/concierge/agent.yaml
+# registries/agentstore/concierge/agent.yaml
 
 # ✅ SIMPLE: One model for both modes
 model:
@@ -102,7 +102,7 @@ model:
 Use **`model:`** for VoiceLive AND **`llm:`** for Cascade:
 
 ```yaml
-# agentstore/concierge/agent.yaml
+# registries/agentstore/concierge/agent.yaml
 
 # ✅ ADVANCED: Different model per mode
 model:
@@ -221,7 +221,7 @@ session:
 ### Override Voice Per Scenario
 
 ```yaml
-# scenariostore/banking/scenario.yaml
+# registries/scenariostore/banking/scenario.yaml
 
 agent_overrides:
   concierge:
@@ -240,7 +240,7 @@ agent_overrides:
 ### Override Model Per Scenario
 
 ```yaml
-# scenariostore/insurance/scenario.yaml
+# registries/scenariostore/insurance/scenario.yaml
 
 agent_overrides:
   fraud_agent:
@@ -262,7 +262,7 @@ agent_overrides:
 ### Full Agent Configuration (Works with BOTH modes)
 
 ```yaml
-# agentstore/concierge/agent.yaml
+# registries/agentstore/concierge/agent.yaml
 
 name: Concierge
 description: Primary banking assistant
@@ -368,8 +368,7 @@ tools:
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt Template
 # ─────────────────────────────────────────────────────────────────────────────
-prompts:
-  path: prompt.jinja
+prompt_template_path: concierge/prompt.md
 ```
 
 ### Key Points
@@ -386,7 +385,7 @@ When you switch `ACS_STREAMING_MODE` environment variable, the agent automatical
 ## 🎨 Scenario-Specific Customization
 
 ```yaml
-# scenariostore/banking/scenario.yaml
+# registries/scenariostore/banking/scenario.yaml
 
 name: banking
 start_agent: concierge
@@ -440,14 +439,14 @@ make restart_backend
 ### A/B Testing Multiple Voices
 
 ```yaml
-# scenariostore/banking/scenario.yaml
+# registries/scenariostore/banking/scenario.yaml
 
 agent_overrides:
   concierge:
     voice:
       name: en-US-AvaMultilingualNeural   # Voice A
       
-# scenariostore/insurance/scenario.yaml
+# registries/scenariostore/insurance/scenario.yaml
 
 agent_overrides:
   concierge:
@@ -462,9 +461,9 @@ Switch scenarios in UI to compare voices!
 ## 📊 Voice Configuration Hierarchy
 
 **Priority (highest to lowest)**:
-1. **Scenario override** - `scenariostore/{scenario}/scenario.yaml` → `agent_overrides.{agent}.voice`
-2. **Agent default** - `agentstore/{agent}/agent.yaml` → `voice`
-3. **Global default** - `agentstore/_defaults.yaml` → `voice`
+1. **Scenario override** - `registries/scenariostore/{scenario}/scenario.yaml` → `agent_overrides.{agent}.voice`
+2. **Agent default** - `registries/agentstore/{agent}/agent.yaml` → `voice`
+3. **Global default** - `registries/agentstore/_defaults.yaml` → `voice`
 4. **System fallback** - `en-US-AvaMultilingualNeural`
 
 Example:
