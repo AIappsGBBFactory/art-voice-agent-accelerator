@@ -507,7 +507,7 @@ jobs:
       - name: 📝 Update GitHub Environment Variables
         if: inputs.action != 'down'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           APPCONFIG_ENDPOINT: ${{ needs.execute.outputs.appconfig_endpoint }}
           APPCONFIG_LABEL: ${{ needs.execute.outputs.appconfig_label }}
         run: |
