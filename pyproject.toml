@@ -93,9 +93,9 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://azure-samples.github.io/art-voice-agent-accelerator/"
-Source = "https://github.com/Azure-Samples/art-voice-agent-accelerator"
-Tracker = "https://github.com/Azure-Samples/art-voice-agent-accelerator/issues"
+Documentation = "https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/"
+Source = "https://github.com/aiappsgbbfactory/art-voice-agent-accelerator"
+Tracker = "https://github.com/aiappsgbbfactory/art-voice-agent-accelerator/issues"
 
 [project.optional-dependencies]
 dev = [
