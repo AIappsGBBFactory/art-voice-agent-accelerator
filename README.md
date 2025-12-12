@@ -8,7 +8,7 @@
 
 You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
 
-*Explore the full docs for tutorials, API, deployment guides & architecture patterns* -> https://azure-samples.github.io/art-voice-agent-accelerator/
+*Explore the full docs for tutorials, API, deployment guides & architecture patterns* -> https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/
 
 ## **See it in Action**
 
