@@ -1,5 +1,5 @@
 {
-  "name": "rtaudioagent",
+  "name": "artaudioagent",
   "location": "eastus",
   "openai_location": null,
   "cosmosdb_location": null,
