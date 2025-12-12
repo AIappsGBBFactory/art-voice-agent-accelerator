@@ -243,8 +243,14 @@ jobs:
           if [ -f "$TFVARS_FILE" ]; then
             echo "📄 Loading static params from: $TFVARS_FILE"
             # Export each key from the tfvars file as TF_VAR_*
+            # Skip null values - Terraform will use the variable's default value
             for key in $(jq -r 'keys[]' "$TFVARS_FILE"); do
               value_type=$(jq -r --arg k "$key" '.[$k] | type' "$TFVARS_FILE")
+              # Skip null values - let Terraform use variable defaults
+              if [ "$value_type" = "null" ]; then
+                echo "  ⏭️ Skipping $key (null value, will use Terraform default)"
+                continue
+              fi
               if [ "$value_type" = "string" ]; then
                 # Keep strings unquoted for Terraform's TF_VAR_ parsing.
                 value=$(jq -r --arg k "$key" '.[$k]' "$TFVARS_FILE")
