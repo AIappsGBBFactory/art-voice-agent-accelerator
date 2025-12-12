@@ -1,30 +1,20 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-
-<table align="center" border="0" cellspacing="0" cellpadding="12">
-<tr>
-<td align="center"><b>Staging</b><br/><a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Staging" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=staging" /></a></td>
-<td align="center"><b>Prod</b><br/><a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Prod" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=main" /></a></td>
-<td align="center"><b>Docs</b><br/><a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml"><img alt="Docs" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/docs.yml" /></a></td>
-</tr>
-</table>
+# **ARTVoice Accelerator Framework**
 
 <p align="center">
-  <b>Start here:</b>
+<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Staging" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=staging&label=Staging&style=flat-square" height="18" /></a>
+<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Prod" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=main&label=Prod&style=flat-square" height="18" /></a>
+<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml"><img alt="Docs" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/docs.yml?label=Docs&style=flat-square" height="18" /></a>
+</p>
+
+<p align="center">
   <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/">Getting started</a>
-  →
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/local-development/">Run locally</a>
-  →
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/quickstart/">Deploy (azd up)</a>
-  &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/">Docs</a>
   ·
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/deployment/">Deployment</a>
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/">Docs</a>
   ·
   <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/">Architecture</a>
 </p>
-
-# **ARTVoice Accelerator Framework**
 
 > **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
 
