@@ -13,14 +13,6 @@ os.environ.setdefault("AZURE_OPENAI_API_KEY", "test-key")
 os.environ.setdefault("AZURE_OPENAI_CHAT_DEPLOYMENT_ID", "test-deployment")
 
 import asyncio
-import json
-import pytest
-from types import SimpleNamespace
-from unittest.mock import patch, AsyncMock
-
-from apps.rtagent.backend.api.v1.handlers.dtmf_validation_lifecycle import (
-    DTMFValidationLifecycle,
-)
 
 
 class DummyMemo:
