@@ -60,13 +60,35 @@ class DemoUserProfile(BaseModel):
     customer_intelligence: dict[str, Any]
 
 
+class TransactionLocation(BaseModel):
+    """Location details for a transaction."""
+    city: str | None = None
+    state: str | None = None
+    country: str
+    country_code: str
+    is_international: bool = False
+
+
 class DemoTransaction(BaseModel):
+    """Transaction model matching UI ProfileDetailsPanel expectations."""
     transaction_id: str
     merchant: str
     amount: float
     category: str
     timestamp: datetime
     risk_score: int
+    # Location object for UI display
+    location: TransactionLocation
+    # Card used for transaction
+    card_last4: str
+    # Fee fields
+    foreign_transaction_fee: float | None = None
+    fee_reason: str | None = None
+    # Original currency for international transactions
+    original_amount: float | None = None
+    original_currency: str | None = None
+    # Optional notes
+    notes: str | None = None
 
 
 class DemoInteractionPlan(BaseModel):
@@ -483,35 +505,146 @@ def _build_profile(
     )
 
 
+# International merchants with country, city, code, merchant, category
+# Format: (country, country_code, city, merchant, category, currency)
+INTERNATIONAL_MERCHANTS: tuple[tuple[str, str, str, str, str, str], ...] = (
+    ("United Kingdom", "GB", "London", "Harrods London", "shopping", "GBP"),
+    ("Germany", "DE", "Berlin", "Berliner Technik GmbH", "electronics", "EUR"),
+    ("Japan", "JP", "Tokyo", "Tokyo Electronics Co.", "electronics", "JPY"),
+    ("France", "FR", "Paris", "Parisian Boutique", "shopping", "EUR"),
+    ("Mexico", "MX", "Cancun", "Cancun Resort & Spa", "travel", "MXN"),
+    ("Canada", "CA", "Vancouver", "Vancouver Tech Hub", "software", "CAD"),
+    ("Australia", "AU", "Sydney", "Sydney Trading Co.", "services", "AUD"),
+    ("Italy", "IT", "Milan", "Milano Fashion House", "shopping", "EUR"),
+    ("Spain", "ES", "Barcelona", "Barcelona Digital Services", "services", "EUR"),
+    ("Brazil", "BR", "São Paulo", "São Paulo Tech Solutions", "software", "BRL"),
+)
+
+# Domestic cities for transaction locations
+DOMESTIC_LOCATIONS: tuple[tuple[str, str], ...] = (
+    ("Seattle", "WA"),
+    ("San Francisco", "CA"),
+    ("New York", "NY"),
+    ("Austin", "TX"),
+    ("Chicago", "IL"),
+    ("Boston", "MA"),
+    ("Denver", "CO"),
+    ("Miami", "FL"),
+)
+
+# Foreign transaction fee percentage (3%)
+FOREIGN_TRANSACTION_FEE_RATE = 0.03
+
+# Currency exchange rates (approximate, for demo purposes)
+EXCHANGE_RATES: dict[str, float] = {
+    "GBP": 0.79,  # 1 USD = 0.79 GBP
+    "EUR": 0.92,  # 1 USD = 0.92 EUR
+    "JPY": 149.5,  # 1 USD = 149.5 JPY
+    "MXN": 17.2,  # 1 USD = 17.2 MXN
+    "CAD": 1.36,  # 1 USD = 1.36 CAD
+    "AUD": 1.53,  # 1 USD = 1.53 AUD
+    "BRL": 4.97,  # 1 USD = 4.97 BRL
+}
+
+
 def _build_transactions(
     client_id: str,
     rng: Random,
     anchor: datetime,
-    count: int = 3,
+    count: int = 5,
+    card_last4: str = "4242",
 ) -> list[DemoTransaction]:
-    """Generate lightweight transaction history aligned with the demo dataset."""
-    merchants = (
+    """Generate transaction history with 2 international + domestic transactions.
+    
+    Args:
+        client_id: User identifier for transaction IDs
+        rng: Random generator for consistent demo data
+        anchor: Base timestamp for transaction dates
+        count: Total number of transactions (min 2 international + rest domestic)
+        card_last4: Last 4 digits of card used for transactions
+    
+    Returns:
+        List of DemoTransaction objects sorted by timestamp (newest first)
+    """
+    domestic_merchants = (
         "Microsoft Store",
         "Azure Marketplace",
         "Contoso Travel",
         "Fabrikam Office Supply",
         "Northwind Analytics",
+        "Starbucks",
+        "Amazon",
+        "Whole Foods",
     )
-    categories = ("software", "travel", "cloud", "services", "training")
+    domestic_categories = ("software", "travel", "cloud", "services", "training", "dining", "shopping", "groceries")
     transactions: list[DemoTransaction] = []
-    for index in range(count):
+
+    # Always generate 2 international transactions with fees
+    intl_choices = rng.sample(INTERNATIONAL_MERCHANTS, k=2)
+    for idx, (country, country_code, city, merchant, category, currency) in enumerate(intl_choices):
+        timestamp = anchor - timedelta(hours=rng.randint(1, 48), minutes=rng.randint(0, 59))
+        amount_usd = round(rng.uniform(150.0, 2500.0), 2)
+        fee = round(amount_usd * FOREIGN_TRANSACTION_FEE_RATE, 2)
+        
+        # Calculate original amount in foreign currency
+        exchange_rate = EXCHANGE_RATES.get(currency, 1.0)
+        original_amount = round(amount_usd * exchange_rate, 2)
+        
+        transactions.append(
+            DemoTransaction(
+                transaction_id=f"TXN-{client_id}-INT-{idx + 1:03d}",
+                merchant=merchant,
+                amount=float(amount_usd),
+                category=category,
+                timestamp=timestamp,
+                risk_score=rng.choice((35, 55, 72, 85)),  # Higher risk for international
+                location=TransactionLocation(
+                    city=city,
+                    state=None,
+                    country=country,
+                    country_code=country_code,
+                    is_international=True,
+                ),
+                card_last4=card_last4,
+                foreign_transaction_fee=fee,
+                fee_reason="Foreign Transaction Fee (3%)",
+                original_amount=original_amount,
+                original_currency=currency,
+                notes=f"International purchase in {city}, {country}",
+            ),
+        )
+
+    # Generate remaining domestic transactions
+    domestic_count = max(0, count - 2)
+    for index in range(domestic_count):
         timestamp = anchor - timedelta(hours=rng.randint(1, 96), minutes=rng.randint(0, 59))
-        amount = round(rng.uniform(49.0, 3250.0), 2)
+        amount = round(rng.uniform(5.0, 500.0), 2)
+        city, state = rng.choice(DOMESTIC_LOCATIONS)
+        
         transactions.append(
             DemoTransaction(
                 transaction_id=f"TXN-{client_id}-{index + 1:03d}",
-                merchant=rng.choice(merchants),
+                merchant=rng.choice(domestic_merchants),
                 amount=float(amount),
-                category=rng.choice(categories),
+                category=rng.choice(domestic_categories),
                 timestamp=timestamp,
-                risk_score=rng.choice((8, 14, 22, 35, 55, 72)),
+                risk_score=rng.choice((8, 14, 22, 35)),
+                location=TransactionLocation(
+                    city=city,
+                    state=state,
+                    country="United States",
+                    country_code="US",
+                    is_international=False,
+                ),
+                card_last4=card_last4,
+                foreign_transaction_fee=None,
+                fee_reason=None,
+                original_amount=None,
+                original_currency=None,
+                notes=None,
             ),
         )
+
     transactions.sort(key=lambda item: item.timestamp, reverse=True)
     return transactions
 
@@ -743,7 +876,13 @@ async def create_temporary_user(
     anchor = datetime.now(tz=UTC)
     expires_at = anchor + timedelta(hours=24)
     profile = _build_profile(payload, rng, anchor)
-    transactions = _build_transactions(profile.client_id, rng, anchor)
+    
+    # Extract card last4 from profile for transaction generation
+    bank_profile = profile.customer_intelligence.get("bank_profile", {})
+    cards = bank_profile.get("cards", [])
+    card_last4 = cards[0].get("last4", "4242") if cards else f"{rng.randint(1000, 9999)}"
+    
+    transactions = _build_transactions(profile.client_id, rng, anchor, card_last4=card_last4)
     interaction_plan = _build_interaction_plan(payload, rng)
     response = DemoUserResponse(
         entry_id=f"demo-entry-{rng.randint(100000, 999999)}",
