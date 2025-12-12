@@ -108,10 +108,10 @@ locals {
     container_env              = "cae-${var.name}-${var.environment_name}-${local.resource_token}"
     email_service              = "email-${var.name}-${var.environment_name}-${local.resource_token}"
     email_domain               = "AzureManagedDomain"
-    foundry_account            = substr(replace("aif${var.name}${local.resource_token}", "/[^a-zA-Z0-9]/", ""), 0, 24)
-    foundry_project            = "aif${var.name}${local.resource_token}proj"
-    voice_live_foundry_account = substr(replace("avl${var.name}${local.resource_token}", "/[^a-zA-Z0-9]/", ""), 0, 24)
-    voice_live_foundry_project = "avl${var.name}${local.resource_token}proj"
+    foundry_account            = substr(replace("aif-${var.name}-${local.resource_token}", "/[^a-zA-Z0-9]/", ""), 0, 24)
+    foundry_project            = "aif-${var.name}-${local.resource_token}-proj"
+    voice_live_foundry_account = substr(replace("avl-${var.name}-${local.resource_token}", "/[^a-zA-Z0-9]/", ""), 0, 24)
+    voice_live_foundry_project = "avl-${var.name}-${local.resource_token}-proj"
   }
 
   foundry_project_display = "AI Foundry ${var.environment_name}"
