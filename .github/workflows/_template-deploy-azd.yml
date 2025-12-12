@@ -85,6 +85,7 @@ jobs:
       appconfig_endpoint_existing: ${{ vars.AZURE_APPCONFIG_ENDPOINT }}
       appconfig_label_existing: ${{ vars.AZURE_APPCONFIG_LABEL }}
       container_registry_endpoint_existing: ${{ vars.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
+      resource_group_existing: ${{ vars.AZURE_RESOURCE_GROUP }}
     
     env:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -309,6 +310,8 @@ jobs:
       EXISTING_APPCONFIG_LABEL: ${{ needs.setup.outputs.appconfig_label_existing }}
       # Use existing Container Registry endpoint from environment variables if available
       EXISTING_CONTAINER_REGISTRY_ENDPOINT: ${{ needs.setup.outputs.container_registry_endpoint_existing }}
+      # Use existing resource group from environment variables if available (deploy-only runs)
+      EXISTING_AZURE_RESOURCE_GROUP: ${{ needs.setup.outputs.resource_group_existing }}
     
     steps:
       - name: 🛒 Checkout
@@ -375,6 +378,13 @@ jobs:
           if [ -n "$EXISTING_CONTAINER_REGISTRY_ENDPOINT" ]; then
             echo "📌 Using existing AZURE_CONTAINER_REGISTRY_ENDPOINT from environment: $EXISTING_CONTAINER_REGISTRY_ENDPOINT"
             azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$EXISTING_CONTAINER_REGISTRY_ENDPOINT"
+          fi
+
+          # Use existing resource group from GitHub environment if available
+          if [ -n "$EXISTING_AZURE_RESOURCE_GROUP" ]; then
+            echo "📌 Using existing AZURE_RESOURCE_GROUP from environment: $EXISTING_AZURE_RESOURCE_GROUP"
+            azd env set AZURE_RESOURCE_GROUP "$EXISTING_AZURE_RESOURCE_GROUP"
+            echo "AZURE_RESOURCE_GROUP=$EXISTING_AZURE_RESOURCE_GROUP" >> "$GITHUB_ENV"
           fi
 
       - name: 🔧 Setup Terraform Parameters
@@ -558,6 +568,7 @@ jobs:
           APPCONFIG_ENDPOINT: ${{ needs.execute.outputs.appconfig_endpoint }}
           APPCONFIG_LABEL: ${{ needs.execute.outputs.appconfig_label }}
           CONTAINER_REGISTRY_ENDPOINT: ${{ needs.execute.outputs.container_registry_endpoint }}
+          RESOURCE_GROUP: ${{ needs.execute.outputs.resource_group }}
         run: |
           echo "📝 Updating GitHub environment variables for '${{ inputs.environment }}'..."
 
@@ -588,6 +599,14 @@ jobs:
               --env "${{ inputs.environment }}" \
               --repo "${{ github.repository }}" || echo "⚠️ Could not set AZURE_CONTAINER_REGISTRY_ENDPOINT"
             echo "✅ AZURE_CONTAINER_REGISTRY_ENDPOINT=$CONTAINER_REGISTRY_ENDPOINT"
+          fi
+
+          if [ -n "$RESOURCE_GROUP" ] && [ "$RESOURCE_GROUP" != "unknown" ]; then
+            gh variable set AZURE_RESOURCE_GROUP \
+              --body "$RESOURCE_GROUP" \
+              --env "${{ inputs.environment }}" \
+              --repo "${{ github.repository }}" || echo "⚠️ Could not set AZURE_RESOURCE_GROUP"
+            echo "✅ AZURE_RESOURCE_GROUP=$RESOURCE_GROUP"
           fi
 
       - name: 📋 Generate Summary
