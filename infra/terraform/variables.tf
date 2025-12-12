@@ -122,12 +122,16 @@ variable "enable_voice_live" {
 }
 
 variable "voice_live_location" {
-  description = "Azure region for Voice Live resources. Must be one of: eastus2, westus2, swedencentral, southeastasia"
+  description = <<-EOT
+    Azure region for Voice Live resources.
+    Supported regions: eastus2, westus2, swedencentral, southeastasia
+    See: https://learn.microsoft.com/azure/ai-services/speech-service/regions?tabs=voice-live
+  EOT
   type        = string
   default     = "eastus2"
   validation {
     condition     = contains(["eastus2", "westus2", "swedencentral", "southeastasia"], var.voice_live_location)
-    error_message = "Voice Live location must be one of: eastus2, westus2, swedencentral, southeastasia."
+    error_message = "Voice Live location must be one of: eastus2, westus2, swedencentral, southeastasia. See https://learn.microsoft.com/azure/ai-services/speech-service/regions?tabs=voice-live"
   }
 }
 
