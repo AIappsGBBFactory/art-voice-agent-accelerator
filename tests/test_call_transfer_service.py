@@ -1,9 +1,8 @@
 import types
 
 import pytest
-
-from apps.rtagent.backend.src.services.acs import call_transfer as call_transfer_module
-from apps.rtagent.backend.src.agents.vlagent.tool_store import call_transfer as tool_module
+from apps.artagent.backend.src.agents.vlagent.tool_store import call_transfer as tool_module
+from apps.artagent.backend.src.services.acs import call_transfer as call_transfer_module
 
 
 @pytest.mark.asyncio
@@ -19,8 +18,14 @@ async def test_transfer_call_success(monkeypatch):
     async def immediate_to_thread(func, /, *args, **kwargs):
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(call_transfer_module, "_build_target_identifier", lambda target: f"identifier:{target}")
-    monkeypatch.setattr(call_transfer_module, "_build_optional_phone", lambda value: f"phone:{value}" if value else None)
+    monkeypatch.setattr(
+        call_transfer_module, "_build_target_identifier", lambda target: f"identifier:{target}"
+    )
+    monkeypatch.setattr(
+        call_transfer_module,
+        "_build_optional_phone",
+        lambda value: f"phone:{value}" if value else None,
+    )
     monkeypatch.setattr(call_transfer_module.asyncio, "to_thread", immediate_to_thread)
 
     result = await call_transfer_module.transfer_call(

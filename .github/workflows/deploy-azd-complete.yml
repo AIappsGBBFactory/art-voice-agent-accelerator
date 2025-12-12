@@ -52,7 +52,7 @@ jobs:
       action: ${{ inputs.action || 'up' }}
       # # Use repository variables for remote state with fallbacks
       # rs_resource_group: ${{ vars.RS_RESOURCE_GROUP || 'Default-ActivityLogAlerts' }}
-      # rs_storage_account: ${{ vars.RS_STORAGE_ACCOUNT || 'rtagent' }}
+      # rs_storage_account: ${{ vars.RS_STORAGE_ACCOUNT || 'artagent' }}
       # rs_container_name: ${{ vars.RS_CONTAINER_NAME || 'tfstate' }}
     secrets: inherit
 

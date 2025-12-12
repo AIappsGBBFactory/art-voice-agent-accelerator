@@ -58,10 +58,12 @@
     **Solutions:**
     1.  **Check Python Environment & Dependencies:**
         ```bash
-        # Ensure you are in the correct conda environment
+        # Reinstall dependencies with uv (recommended)
+        uv sync
+        
+        # Or with pip in a conda environment
         conda activate audioagent
-        # Reinstall dependencies
-        pip install -r requirements.txt
+        pip install -e .[dev]
         ```
     2.  **Free Up Port:** If port `8010` is in use, find and terminate the process:
         ```bash
@@ -70,7 +72,7 @@
         ```
     3.  **Run with Debug Logging:**
         ```bash
-        uvicorn apps.rtagent.backend.main:app --reload --port 8010 --log-level debug
+        uv run uvicorn apps.artagent.backend.main:app --reload --port 8010 --log-level debug
         ```
     4.  **Verify Environment File (`.env`):** Ensure the file exists and all required variables for Azure, Redis, and OpenAI are correctly set.
 

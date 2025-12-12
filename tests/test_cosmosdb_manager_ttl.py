@@ -1,10 +1,9 @@
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pymongo
+import pytest
 from bson.son import SON
-
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
 
 
@@ -61,7 +60,7 @@ def test_upsert_document_with_ttl_adds_ttl_and_expiry():
     assert updated_doc["ttl"] > datetime.utcnow()
     assert "expires_at" in updated_doc
     expires_at = datetime.fromisoformat(updated_doc["expires_at"].replace("Z", "+00:00"))
-    assert expires_at > datetime.now(timezone.utc)
+    assert expires_at > datetime.now(UTC)
     assert "ttl" not in base_doc
 
 
@@ -82,7 +81,7 @@ def test_insert_document_with_ttl_adds_ttl_and_expiry():
     assert isinstance(inserted_doc["ttl"], datetime)
     assert inserted_doc["ttl"] > datetime.utcnow()
     expires_at = datetime.fromisoformat(inserted_doc["expires_at"].replace("Z", "+00:00"))
-    assert expires_at > datetime.now(timezone.utc)
+    assert expires_at > datetime.now(UTC)
     assert "ttl" not in base_doc
 
 

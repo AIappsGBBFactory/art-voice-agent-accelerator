@@ -1,5 +1,4 @@
 import pytest
-
 from src.speech.phrase_list_manager import (
     PhraseListManager,
     get_global_phrase_manager,

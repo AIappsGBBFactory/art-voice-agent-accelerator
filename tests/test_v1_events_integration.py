@@ -9,27 +9,26 @@ Tests the integration between:
 - Event Handlers (business logic processing)
 """
 
-import asyncio
 import json
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi.testclient import TestClient
-from azure.core.messaging import CloudEvent
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from apps.artagent.backend.api.v1.events.handlers import CallEventHandlers
 
 # Import the modules we're testing
-from apps.rtagent.backend.api.v1.events.processor import (
+from apps.artagent.backend.api.v1.events.processor import (
     CallEventProcessor,
     reset_call_event_processor,
 )
-from apps.rtagent.backend.api.v1.events.handlers import CallEventHandlers
-from apps.rtagent.backend.api.v1.events.types import (
-    CallEventContext,
+from apps.artagent.backend.api.v1.events.registration import register_default_handlers
+from apps.artagent.backend.api.v1.events.types import (
     ACSEventTypes,
+    CallEventContext,
     V1EventTypes,
 )
-from apps.rtagent.backend.api.v1.events.registration import register_default_handlers
-from apps.rtagent.backend.api.v1.handlers.acs_call_lifecycle import ACSLifecycleHandler
+from apps.artagent.backend.api.v1.handlers.acs_call_lifecycle import ACSLifecycleHandler
+from azure.core.messaging import CloudEvent
 
 
 class TestV1EventsIntegration:
@@ -73,9 +72,7 @@ class TestV1EventsIntegration:
             type=ACSEventTypes.CALL_CONNECTED,
             data={
                 "callConnectionId": "test_call_123",
-                "callConnectionProperties": {
-                    "connectedTime": datetime.utcnow().isoformat() + "Z"
-                },
+                "callConnectionProperties": {"connectedTime": datetime.utcnow().isoformat() + "Z"},
             },
         )
 
@@ -120,7 +117,7 @@ class TestV1EventsIntegration:
         """Test that default handlers are registered correctly."""
         register_default_handlers()
 
-        from apps.rtagent.backend.api.v1.events.processor import (
+        from apps.artagent.backend.api.v1.events.processor import (
             get_call_event_processor,
         )
 
@@ -133,9 +130,7 @@ class TestV1EventsIntegration:
         assert V1EventTypes.CALL_INITIATED in stats["event_types"]
         assert ACSEventTypes.CALL_CONNECTED in stats["event_types"]
 
-    async def test_call_initiated_handler(
-        self, sample_call_event_context, mock_memo_manager
-    ):
+    async def test_call_initiated_handler(self, sample_call_event_context, mock_memo_manager):
         """Test call initiated event handler."""
         # Modify context for call initiated event
         sample_call_event_context.event_type = V1EventTypes.CALL_INITIATED
@@ -167,7 +162,7 @@ class TestV1EventsIntegration:
     #     sample_call_event_context.clients = mock_clients
 
     #     with patch(
-    #         "apps.rtagent.backend.api.v1.events.acs_events.broadcast_session_envelope",
+    #         "apps.artagent.backend.api.v1.events.acs_events.broadcast_session_envelope",
     #         new_callable=AsyncMock,
     #     ) as mock_broadcast:
     #         sample_call_event_context.event_type = ACSEventTypes.CALL_CONNECTED
@@ -218,9 +213,7 @@ class TestV1EventsIntegration:
             # Verify the specific handler was called
             mock_handle.assert_called_once_with(sample_call_event_context)
 
-    async def test_acs_lifecycle_handler_event_emission(
-        self, mock_acs_caller, mock_redis_mgr
-    ):
+    async def test_acs_lifecycle_handler_event_emission(self, mock_acs_caller, mock_redis_mgr):
         """Test that ACS lifecycle handler emits events correctly."""
         handler = ACSLifecycleHandler()
 
@@ -242,7 +235,6 @@ class TestV1EventsIntegration:
             assert emit_args[0] == "V1.Call.Initiated"  # event_type
             assert emit_args[1] == "test_call_123"  # call_connection_id
             assert emit_args[2]["target_number"] == "+1234567890"  # data
-
 
     async def test_event_context_data_extraction(self):
         """Test event context data extraction methods."""
@@ -407,9 +399,7 @@ class TestEndToEndIntegration:
                 type=ACSEventTypes.PARTICIPANTS_UPDATED,
                 data={
                     "callConnectionId": "webhook_call_123",
-                    "participants": [
-                        {"identifier": {"phoneNumber": {"value": "+1234567890"}}}
-                    ],
+                    "participants": [{"identifier": {"phoneNumber": {"value": "+1234567890"}}}],
                 },
             ),
         ]
@@ -419,7 +409,7 @@ class TestEndToEndIntegration:
         mock_state.redis = MagicMock()
 
         # 4. Process through event system
-        from apps.rtagent.backend.api.v1.events.processor import (
+        from apps.artagent.backend.api.v1.events.processor import (
             get_call_event_processor,
         )
 
@@ -453,7 +443,7 @@ class TestEndToEndIntegration:
         # Create malformed event
         bad_event = CloudEvent(source="test", type="Unknown.Event.Type", data=None)
 
-        from apps.rtagent.backend.api.v1.events.processor import (
+        from apps.artagent.backend.api.v1.events.processor import (
             get_call_event_processor,
         )
 
