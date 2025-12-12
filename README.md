@@ -2,37 +2,27 @@
 
 # **ARTVoice Accelerator Framework**
 
-<table align="center">
-  <tr>
-    <td align="center"><b>Staging</b></td>
-    <td align="center"><b>Prod</b></td>
-    <td align="center"><b>Docs</b></td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml">
-        <img alt="🚀 Deploy to Azure (staging)" src="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml/badge.svg?branch=staging" />
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml">
-        <img alt="🚀 Deploy to Azure (prod)" src="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml/badge.svg?branch=main" />
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml">
-        <img alt="📖 Deploy MKDocs Documentation" src="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml/badge.svg" />
-      </a>
-    </td>
-  </tr>
+<table align="center" border="0" cellspacing="0" cellpadding="12">
+<tr>
+<td align="center"><b>Staging</b><br/><a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Staging" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=staging" /></a></td>
+<td align="center"><b>Prod</b><br/><a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Prod" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=main" /></a></td>
+<td align="center"><b>Docs</b><br/><a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml"><img alt="Docs" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/docs.yml" /></a></td>
+</tr>
 </table>
 
 <p align="center">
-  <b>New here?</b>
-  Start with
+  <b>Start here:</b>
   <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/">Getting started</a>
-  &nbsp;•&nbsp;
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/">Docs home</a>
+  →
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/local-development/">Run locally</a>
+  →
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/quickstart/">Deploy (azd up)</a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/">Docs</a>
+  ·
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/deployment/">Deployment</a>
+  ·
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/">Architecture</a>
 </p>
 
 > **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
@@ -182,15 +172,14 @@ azd up   # ~15 min for complete infra and code deployment
 
 ### 📚 Documentation Guides
 
-| Goal | Guide |
-|------|-------|
-| **Prerequisites & Setup** | [`docs/getting-started/prerequisites.md`](docs/getting-started/prerequisites.md) |
-| **Quick Start (15 min)** | [`docs/getting-started/quickstart.md`](docs/getting-started/quickstart.md) |
-| **Local development** | [`docs/getting-started/local-development.md`](docs/getting-started/local-development.md) |
-| **Infrastructure details** | [`infra/README.md`](infra/README.md) |
-| **Production deployment** | [`docs/deployment/README.md`](docs/deployment/README.md) |
-| **Architecture** | [`docs/architecture/README.md`](docs/architecture/README.md) |
-| **Try the demo** | [`docs/getting-started/demo-guide.md`](docs/getting-started/demo-guide.md) |
+- Start here: [Getting started](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/)
+- Deploy in ~15 minutes: [Quick start](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/quickstart/)
+- Run locally: [Local development](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/local-development/)
+- Setup: [Prerequisites](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/prerequisites/)
+- Try the UI: [Demo guide](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/demo-guide/)
+- Production guidance: [Deployment guide](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/deployment/)
+- Understand the system: [Architecture](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/)
+- IaC details (repo): [infra/README.md](infra/README.md)
 
 
 ## **Community & ARTist Certification**
