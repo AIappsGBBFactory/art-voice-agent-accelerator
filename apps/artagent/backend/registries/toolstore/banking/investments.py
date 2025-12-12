@@ -15,11 +15,6 @@ from typing import Any, Dict, List, Optional, TypedDict
 from apps.artagent.backend.registries.toolstore.registry import register_tool
 from utils.ml_logging import get_logger
 
-try:  # pragma: no cover - optional dependency during tests
-    from src.cosmosdb.manager import CosmosDBMongoCoreManager as _CosmosManagerImpl
-except Exception:  # pragma: no cover - handled at runtime
-    _CosmosManagerImpl = None
-
 # Import centralized constants (local import)
 from .constants import (
     INSTITUTION_CONFIG,
@@ -140,83 +135,14 @@ search_rollover_guidance_schema: dict[str, Any] = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# COSMOS DB HELPERS
+# COSMOS DB HELPERS - Import from banking.py for consistency
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_COSMOS_USERS_MANAGER = None
-
-# Default database/collection names - same as demo_env.py uses
-_DEFAULT_DEMO_DB = "financial_services_db"
-_DEFAULT_DEMO_USERS_COLLECTION = "users"
-
-
-def _get_demo_database_name() -> str:
-    """Get the database name from environment or use default."""
-    import os
-    value = os.getenv("AZURE_COSMOS_DATABASE_NAME")
-    if value:
-        stripped = value.strip()
-        if stripped:
-            return stripped
-    return _DEFAULT_DEMO_DB
-
-
-def _get_demo_users_collection_name() -> str:
-    """Get the users collection name from environment or use default."""
-    import os
-    for env_key in ("AZURE_COSMOS_USERS_COLLECTION_NAME", "AZURE_COSMOS_COLLECTION_NAME"):
-        value = os.getenv(env_key)
-        if value:
-            stripped = value.strip()
-            if stripped:
-                return stripped
-    return _DEFAULT_DEMO_USERS_COLLECTION
-
-
-def _get_cosmos_manager():
-    """Resolve the shared Cosmos DB client from FastAPI app state."""
-    try:
-        from apps.artagent.backend import main as backend_main
-    except Exception:
-        return None
-
-    app = getattr(backend_main, "app", None)
-    state = getattr(app, "state", None) if app else None
-    return getattr(state, "cosmos", None)
-
-
-def _get_demo_users_manager():
-    """Return a Cosmos DB manager pointed at the demo users collection."""
-    global _COSMOS_USERS_MANAGER
-    
-    database_name = _get_demo_database_name()
-    container_name = _get_demo_users_collection_name()
-    
-    if _COSMOS_USERS_MANAGER is not None:
-        return _COSMOS_USERS_MANAGER
-
-    base_manager = _get_cosmos_manager()
-    if base_manager is not None:
-        _COSMOS_USERS_MANAGER = base_manager
-        return _COSMOS_USERS_MANAGER
-
-    if _CosmosManagerImpl is None:
-        logger.warning("Cosmos manager implementation unavailable")
-        return None
-
-    try:
-        _COSMOS_USERS_MANAGER = _CosmosManagerImpl(
-            database_name=database_name,
-            collection_name=container_name,
-        )
-        logger.info(
-            "Initialized Cosmos users manager | db=%s collection=%s",
-            database_name, container_name
-        )
-        return _COSMOS_USERS_MANAGER
-    except Exception as exc:
-        logger.warning("Unable to initialize Cosmos users manager: %s", exc)
-        return None
+# Import shared Cosmos helpers from banking.py to ensure consistent DB access
+from apps.artagent.backend.registries.toolstore.banking.banking import (
+    _lookup_user_by_client_id,
+    _sanitize_for_json,
+)
 
 
 def _json(
@@ -228,11 +154,6 @@ def _json(
     result = {"success": success, "message": message}
     result.update(extras)
     return result
-
-
-def _utc_now() -> str:
-    """Return current UTC timestamp in ISO format."""
-    return datetime.now(timezone.utc).isoformat()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -269,16 +190,13 @@ async def get_account_routing_info(args: GetAccountRoutingInfoArgs) -> Dict[str,
         
         logger.info("🏦 Fetching account routing info | client_id=%s", client_id)
         
-        # Fetch customer profile from Cosmos DB
-        try:
-            users_cosmos = _get_demo_users_manager()
-            customer = await asyncio.to_thread(
-                users_cosmos.read_document,
-                {"client_id": client_id}
-            )
-        except Exception as db_error:
-            logger.error(f"❌ Database error: {db_error}")
-            return _json(False, "Unable to retrieve account information.")
+        # First check if session profile was injected by orchestrator
+        customer = args.get("_session_profile")
+        if customer:
+            logger.info("📋 Using session profile for routing info: %s", client_id)
+        else:
+            # Fallback: Fetch customer profile from Cosmos DB
+            customer = await _lookup_user_by_client_id(client_id)
         
         if not customer:
             logger.warning(f"❌ Customer not found: {client_id}")
@@ -346,16 +264,13 @@ async def get_401k_details(args: Get401kDetailsArgs) -> Dict[str, Any]:
         
         logger.info("💼 Fetching 401(k) details | client_id=%s", client_id)
         
-        # Fetch customer profile
-        try:
-            users_cosmos = _get_demo_users_manager()
-            customer = await asyncio.to_thread(
-                users_cosmos.read_document,
-                {"client_id": client_id}
-            )
-        except Exception as db_error:
-            logger.error(f"❌ Database error: {db_error}")
-            return _json(False, "Unable to retrieve retirement account information.")
+        # First check if session profile was injected by orchestrator (avoids redundant Cosmos lookups)
+        customer = args.get("_session_profile")
+        if customer:
+            logger.info("📋 Using session profile for 401(k) details: %s", client_id)
+        else:
+            # Fallback: Fetch customer profile from Cosmos DB
+            customer = await _lookup_user_by_client_id(client_id)
         
         if not customer:
             logger.warning(f"❌ Customer not found: {client_id}")
@@ -369,12 +284,32 @@ async def get_401k_details(args: Get401kDetailsArgs) -> Dict[str, Any]:
         merrill_accounts = retirement.get("merrill_accounts", [])
         plan_features = retirement.get("plan_features", {})
         
-        current_employer = employment.get("currentEmployerName", "Unknown")
+        current_employer = employment.get("currentEmployerName", "your current employer")
         uses_contoso_401k = employment.get("usesContosoFor401k", False)
         
+        # Calculate total retirement balance
+        total_401k_balance = sum(a.get("balance", 0) for a in accounts)
+        total_ira_balance = sum(a.get("balance", 0) for a in merrill_accounts)
+        total_retirement_balance = total_401k_balance + total_ira_balance
+        
+        # Build detailed response
+        has_retirement_accounts = len(accounts) > 0 or len(merrill_accounts) > 0
+        
+        if not has_retirement_accounts:
+            logger.info("⚠️ No retirement accounts found | client=%s", client_id)
+            return _json(
+                True,
+                "No retirement accounts currently on file.",
+                retirement_accounts=[],
+                merrill_accounts=[],
+                current_employer=current_employer,
+                has_accounts=False,
+                suggestion="Would you like to learn about opening an IRA or setting up a 401(k) with your current employer?"
+            )
+        
         logger.info(
-            "✅ 401(k) details retrieved | client=%s accounts=%d merrill=%d",
-            client_id, len(accounts), len(merrill_accounts)
+            "✅ 401(k) details retrieved | client=%s accounts=%d merrill=%d total=$%,.2f",
+            client_id, len(accounts), len(merrill_accounts), total_retirement_balance
         )
         
         return _json(
@@ -435,16 +370,13 @@ async def get_rollover_options(args: GetRolloverOptionsArgs) -> Dict[str, Any]:
             client_id, previous_employer or "unspecified"
         )
         
-        # Fetch customer profile to tailor recommendations
-        try:
-            users_cosmos = _get_demo_users_manager()
-            customer = await asyncio.to_thread(
-                users_cosmos.read_document,
-                {"client_id": client_id}
-            )
-        except Exception as db_error:
-            logger.error(f"❌ Database error: {db_error}")
-            return _json(False, "Unable to retrieve customer information.")
+        # First check if session profile was injected by orchestrator
+        customer = args.get("_session_profile")
+        if customer:
+            logger.info("📋 Using session profile for rollover options: %s", client_id)
+        else:
+            # Fallback: Fetch customer profile from Cosmos DB
+            customer = await _lookup_user_by_client_id(client_id)
         
         if not customer:
             logger.warning(f"❌ Customer not found: {client_id}")
@@ -601,16 +533,13 @@ async def calculate_tax_impact(args: CalculateTaxImpactArgs) -> Dict[str, Any]:
             client_id, rollover_type, amount
         )
         
-        # Fetch customer profile
-        try:
-            users_cosmos = _get_demo_users_manager()
-            customer = await asyncio.to_thread(
-                users_cosmos.read_document,
-                {"client_id": client_id}
-            )
-        except Exception as db_error:
-            logger.error(f"❌ Database error: {db_error}")
-            return _json(False, "Unable to retrieve customer information.")
+        # First check if session profile was injected by orchestrator
+        customer = args.get("_session_profile")
+        if customer:
+            logger.info("📋 Using session profile for tax impact: %s", client_id)
+        else:
+            # Fallback: Fetch customer profile from Cosmos DB
+            customer = await _lookup_user_by_client_id(client_id)
         
         if not customer:
             logger.warning(f"❌ Customer not found: {client_id}")
@@ -822,6 +751,197 @@ async def get_retirement_accounts(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SCHEDULE ADVISOR CONSULTATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+schedule_advisor_consultation_schema: Dict[str, Any] = {
+    "name": "schedule_advisor_consultation",
+    "description": (
+        "Schedule a consultation with a licensed financial advisor for complex investment decisions, "
+        "retirement planning, tax optimization, or estate planning. The consultation will be "
+        "personalized based on the customer's financial profile and retirement accounts."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "Unique customer identifier"
+            },
+            "topic": {
+                "type": "string",
+                "description": "Primary topic for consultation (e.g., '401k rollover', 'retirement planning', 'tax optimization')"
+            },
+            "preferred_time": {
+                "type": "string",
+                "description": "Preferred consultation time (e.g., 'morning', 'afternoon', 'specific date/time')"
+            },
+            "advisor_type": {
+                "type": "string",
+                "enum": ["general", "retirement", "tax", "estate"],
+                "description": "Type of advisor specialization needed"
+            },
+            "urgency": {
+                "type": "string",
+                "enum": ["low", "normal", "high"],
+                "description": "How soon the customer needs the consultation"
+            },
+        },
+        "required": ["client_id", "topic"],
+    },
+}
+
+
+class ScheduleAdvisorConsultationArgs(TypedDict, total=False):
+    """Input schema for schedule_advisor_consultation."""
+    client_id: str
+    topic: str
+    preferred_time: Optional[str]
+    advisor_type: Optional[str]
+    urgency: Optional[str]
+
+
+async def schedule_advisor_consultation(args: ScheduleAdvisorConsultationArgs) -> Dict[str, Any]:
+    """
+    Schedule a consultation with a licensed financial advisor.
+    
+    Retrieves customer's retirement profile to provide context for the advisor
+    and schedules an appropriate consultation based on the topic and urgency.
+    
+    Args:
+        client_id: Unique customer identifier
+        topic: Primary topic for consultation
+        preferred_time: Preferred consultation time
+        advisor_type: Type of advisor specialization needed
+        urgency: How soon the customer needs the consultation
+    
+    Returns:
+        Dict with appointment confirmation and preparation tips
+    """
+    if not isinstance(args, dict):
+        logger.error("Invalid args type: %s. Expected dict.", type(args))
+        return _json(False, "Invalid request format.")
+    
+    try:
+        client_id = (args.get("client_id") or "").strip()
+        topic = (args.get("topic") or "").strip()
+        preferred_time = (args.get("preferred_time") or "").strip()
+        advisor_type = (args.get("advisor_type") or "general").strip().lower()
+        urgency = (args.get("urgency") or "normal").strip().lower()
+        
+        if not client_id:
+            return _json(False, "client_id is required to schedule a consultation.")
+        
+        if not topic:
+            return _json(False, "Please specify a topic for the consultation.")
+        
+        # First check if session profile was injected by orchestrator
+        customer = args.get("_session_profile")
+        if customer:
+            logger.info("📋 Using session profile for advisor consultation: %s", client_id)
+        else:
+            # Fallback: Retrieve customer data from Cosmos (optional - can proceed without)
+            customer = await _lookup_user_by_client_id(client_id)
+        
+        # Extract relevant profile info for advisor context
+        profile_context = {}
+        if customer:
+            customer_intel = customer.get("customer_intelligence", {})
+            retirement = customer_intel.get("retirement_profile", {})
+            employment = customer_intel.get("employment", {})
+            
+            # Calculate total retirement assets
+            accounts = retirement.get("retirement_accounts", [])
+            merrill_accounts = retirement.get("merrill_accounts", [])
+            total_balance = sum(a.get("balance", 0) for a in accounts + merrill_accounts)
+            
+            profile_context = {
+                "has_retirement_accounts": len(accounts) > 0,
+                "has_ira_accounts": len(merrill_accounts) > 0,
+                "total_retirement_assets": total_balance,
+                "current_employer": employment.get("currentEmployerName", "Unknown"),
+                "risk_profile": retirement.get("risk_profile", "moderate"),
+            }
+        
+        # Generate appointment details
+        from datetime import datetime, timedelta
+        import random
+        
+        appointment_id = f"APT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+        
+        # Determine scheduling based on urgency
+        if urgency == "high":
+            availability_message = "within 24 hours"
+            next_available = datetime.now() + timedelta(hours=24)
+        elif urgency == "low":
+            availability_message = "within 1 week"
+            next_available = datetime.now() + timedelta(days=7)
+        else:
+            availability_message = "within 48 hours"
+            next_available = datetime.now() + timedelta(hours=48)
+        
+        scheduled_time = preferred_time if preferred_time else f"Next available - {availability_message}"
+        
+        # Map advisor type to specialist description
+        advisor_descriptions = {
+            "general": "Certified Financial Planner (CFP)",
+            "retirement": "Retirement Planning Specialist",
+            "tax": "Tax-Advantaged Investment Specialist",
+            "estate": "Estate & Wealth Transfer Advisor",
+        }
+        
+        # Topic-specific preparation tips
+        preparation_tips = [
+            "Have recent account statements ready for review",
+            "Note any specific questions you want to address",
+        ]
+        
+        if "rollover" in topic.lower() or "401k" in topic.lower():
+            preparation_tips.extend([
+                "Gather your previous employer 401(k) statements",
+                "Know the balance and vesting status of accounts to roll over",
+            ])
+        elif "tax" in topic.lower():
+            preparation_tips.extend([
+                "Have your most recent tax return available",
+                "Know your current and expected tax bracket",
+            ])
+        elif "retirement" in topic.lower():
+            preparation_tips.extend([
+                "Consider your target retirement age",
+                "Think about your desired retirement lifestyle",
+            ])
+        
+        logger.info(
+            "📅 Advisor consultation scheduled | client=%s topic=%s advisor=%s urgency=%s appt=%s",
+            client_id, topic, advisor_type, urgency, appointment_id
+        )
+        
+        return _json(
+            True,
+            f"Consultation scheduled with a {advisor_descriptions.get(advisor_type, 'financial advisor')}.",
+            appointment_id=appointment_id,
+            topic=topic,
+            advisor_type=advisor_type,
+            advisor_description=advisor_descriptions.get(advisor_type, "Certified Financial Planner"),
+            scheduled_time=scheduled_time,
+            urgency=urgency,
+            confirmation_sent=True,
+            preparation_tips=preparation_tips,
+            profile_context=profile_context if profile_context else None,
+            next_steps=[
+                "You will receive a confirmation email with dial-in details",
+                "A calendar invite will be sent to your registered email",
+                "You can reschedule up to 4 hours before the appointment",
+            ]
+        )
+    
+    except Exception as error:
+        logger.error(f"❌ Failed to schedule advisor consultation: {error}", exc_info=True)
+        return _json(False, "Unable to schedule consultation at this time. Please try again or call our service line.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -861,3 +981,12 @@ register_tool(
     search_rollover_guidance,
     tags={"investments", "retirement", "knowledge_base"},
 )
+# NOTE: schedule_advisor_consultation is NOT registered here because
+# handoff_bank_advisor in handoffs.py handles Merrill advisor callbacks.
+# The function is kept for reference but the prompt uses handoff_bank_advisor.
+# register_tool(
+#     "schedule_advisor_consultation",
+#     schedule_advisor_consultation_schema,
+#     schedule_advisor_consultation,
+#     tags={"investments", "retirement", "advisor", "scheduling"},
+# )
