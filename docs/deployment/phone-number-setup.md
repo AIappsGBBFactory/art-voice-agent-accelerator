@@ -20,7 +20,7 @@ After deploying the infrastructure, you need to configure an Azure Communication
 2. Find your **Azure Communication Services** resource (named `acs-<environment>-<token>`)
 3. In the left navigation, select **Telephony and SMS** → **Phone numbers**
 
-![ACS Phone Numbers](../assets/acs-phone-numbers.png)
+![ACS Phone Numbers](https://learn.microsoft.com/azure/communication-services/media/telephony/telephony-overview.png)
 
 ### Step 2: Get a Phone Number
 

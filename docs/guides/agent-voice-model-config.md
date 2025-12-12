@@ -612,7 +612,7 @@ speech:
 
 ## 🔗 Related Documentation
 
-- [Agent Configuration Schema](../api/agent-schema.md)
-- [Scenario Configuration Guide](../architecture/scenario-system.md)
+- [Agent Framework](../architecture/agents/README.md) — Agent configuration and YAML schemas
+- [Orchestration Overview](../architecture/orchestration/README.md) — VoiceLive vs Cascade modes
 - [Azure TTS Voice List](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support?tabs=tts)
 - [OpenAI Model Documentation](https://platform.openai.com/docs/models)

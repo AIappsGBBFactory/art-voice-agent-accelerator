@@ -169,7 +169,7 @@ terraform plan
 terraform apply
 ```
 
-> **📖 For full Terraform details** including module structure, all variables, and outputs, see the [Infrastructure README](../../infra/README.md).
+> **📖 For full Terraform details** including module structure, all variables, and outputs, see the [Infrastructure README](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/infra/README.md).
 
 ---
 
@@ -298,7 +298,7 @@ Remote state is **automatically configured** by `azd` pre-provision hooks. No ma
 
 ### For Direct Terraform
 
-See the [Infrastructure README](../../infra/README.md#terraform-backend-configuration) for detailed state configuration options:
+See the [Infrastructure README](https://github.com/Azure-Samples/art-voice-agent-accelerator/tree/main/infra/README.md#terraform-backend-configuration) for detailed state configuration options:
 
 - **BYOS**: Bring your own storage account via environment variables
 - **Local State**: Set `LOCAL_STATE=true` for development/testing  

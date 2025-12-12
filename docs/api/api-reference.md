@@ -168,7 +168,7 @@ Controls the audio processing pipeline and determines handler selection:
 | `VOICE_LIVE` | Azure OpenAI Realtime API | PCM 24kHz mono | Advanced conversational AI |
 | `TRANSCRIPTION` | Real-time transcription only | PCM 16kHz mono | Call recording and analysis |
 
-**📖 Reference**: [Complete streaming modes documentation](../guides/streaming-modes.md)
+**📖 Reference**: [Streaming modes documentation](../architecture/speech/README.md)
 
 ### Performance Tuning
 
@@ -301,8 +301,8 @@ REDIS_OPERATION_TIMEOUT=5
 ### Development Resources
 
 - **[Interactive API Explorer](#interactive-documentation)** - Test all endpoints directly in browser
-- **[WebSocket Testing](../guides/streaming-modes.md)** - WebSocket connection examples
-- **[Authentication Setup](../getting-started/configuration.md)** - Detailed auth configuration
+- **[Streaming Modes](../architecture/speech/README.md)** - WebSocket connection examples
+- **[Local Development](../getting-started/local-development.md)** - Development setup and configuration
 - **[Architecture Overview](../architecture/README.md)** - System design and deployment patterns
 
 ### Production Considerations
