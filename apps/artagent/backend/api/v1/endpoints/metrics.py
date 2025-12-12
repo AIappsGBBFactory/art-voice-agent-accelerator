@@ -143,6 +143,7 @@ async def _get_session_metrics_data(request: Request) -> dict[str, Any]:
     response_model=ActiveSessionsResponse,
     summary="List active sessions",
     description="Get a list of all active sessions with basic metrics.",
+    tags=["Session Metrics"],
 )
 async def list_active_sessions(request: Request) -> ActiveSessionsResponse:
     """
@@ -193,6 +194,7 @@ async def list_active_sessions(request: Request) -> ActiveSessionsResponse:
     response_model=SessionMetricsResponse,
     summary="Get session metrics",
     description="Get detailed latency and telemetry metrics for a specific session.",
+    tags=["Session Metrics"],
 )
 async def get_session_metrics(
     request: Request,
@@ -303,6 +305,7 @@ async def get_session_metrics(
     "/summary",
     summary="Get aggregated metrics summary",
     description="Get aggregated latency metrics across all recent sessions.",
+    tags=["Session Metrics"],
 )
 async def get_metrics_summary(
     request: Request,

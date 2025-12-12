@@ -2,13 +2,25 @@
 
 # **ARTVoice Accelerator Framework**
 
+<p align="center">
+<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Staging" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=staging&label=Staging&style=flat-square" height="18" /></a>
+<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Prod" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=main&label=Prod&style=flat-square" height="18" /></a>
+<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml"><img alt="Docs" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/docs.yml?label=Docs&style=flat-square" height="18" /></a>
+</p>
+
+<p align="center">
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/">Getting started</a>
+  ·
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/">Docs</a>
+  ·
+  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/">Architecture</a>
+</p>
+
 > **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
 
 <img src="docs/assets/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
 
 You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
-
-*Explore the full docs for tutorials, API, deployment guides & architecture patterns* -> https://azure-samples.github.io/art-voice-agent-accelerator/
 
 ## **See it in Action**
 
@@ -151,15 +163,14 @@ azd up   # ~15 min for complete infra and code deployment
 
 ### 📚 Documentation Guides
 
-| Goal | Guide |
-|------|-------|
-| **Prerequisites & Setup** | [`docs/getting-started/prerequisites.md`](docs/getting-started/prerequisites.md) |
-| **Quick Start (15 min)** | [`docs/getting-started/quickstart.md`](docs/getting-started/quickstart.md) |
-| **Local development** | [`docs/getting-started/local-development.md`](docs/getting-started/local-development.md) |
-| **Infrastructure details** | [`infra/README.md`](infra/README.md) |
-| **Production deployment** | [`docs/deployment/README.md`](docs/deployment/README.md) |
-| **Architecture** | [`docs/architecture/README.md`](docs/architecture/README.md) |
-| **Try the demo** | [`docs/getting-started/demo-guide.md`](docs/getting-started/demo-guide.md) |
+- Start here: [Getting started](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/)
+- Deploy in ~15 minutes: [Quick start](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/quickstart/)
+- Run locally: [Local development](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/local-development/)
+- Setup: [Prerequisites](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/prerequisites/)
+- Try the UI: [Demo guide](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/demo-guide/)
+- Production guidance: [Deployment guide](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/deployment/)
+- Understand the system: [Architecture](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/)
+- IaC details (repo): [infra/README.md](infra/README.md)
 
 
 ## **Community & ARTist Certification**

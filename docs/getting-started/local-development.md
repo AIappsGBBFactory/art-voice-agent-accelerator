@@ -187,6 +187,18 @@ npm run dev
     - AI responses
     - Audio playback
 
+### API Documentation
+
+The backend exposes interactive API documentation:
+
+| URL | Format | Best For |
+|-----|--------|----------|
+| http://localhost:8010/redoc | ReDoc | Reading API reference |
+| http://localhost:8010/docs | Swagger UI | Interactive testing |
+
+!!! tip "Explore Available Endpoints"
+    Visit `/redoc` to see all available API endpoints, request/response schemas, and WebSocket contracts for the voice pipeline.
+
 ---
 
 ## :material-tools: Development Alternatives
