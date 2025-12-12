@@ -17,28 +17,73 @@ class DynamicDocsManager:
         pass
 
     def generate_tags(self) -> list[dict[str, str]]:
-        """Generate OpenAPI tags."""
+        """Generate OpenAPI tags for all API endpoints."""
         return [
-            # V1 API Tags
+            # ═══════════════════════════════════════════════════════════════════
+            # Health & System Operations
+            # ═══════════════════════════════════════════════════════════════════
+            {
+                "name": "Health",
+                "description": "Health monitoring, readiness probes, and system status checks",
+            },
+            # ═══════════════════════════════════════════════════════════════════
+            # Call Operations
+            # ═══════════════════════════════════════════════════════════════════
             {
                 "name": "Call Management",
-                "description": "V1 API - Advanced call management with lifecycle operations",
+                "description": "Outbound/inbound call initiation, termination, and lifecycle operations via Azure Communication Services",
             },
             {
                 "name": "Call Events",
-                "description": "V1 API - Event processing and webhook management",
+                "description": "ACS webhook callbacks and call event processing (connected, disconnected, DTMF, etc.)",
+            },
+            # ═══════════════════════════════════════════════════════════════════
+            # Media & WebSocket Streaming
+            # ═══════════════════════════════════════════════════════════════════
+            {
+                "name": "ACS Media Session",
+                "description": "Azure Communication Services media streaming for phone calls (Speech Cascade mode)",
             },
             {
-                "name": "Real-time Communication",
-                "description": "V1 API - Real-time audio streaming and processing",
+                "name": "Browser Communication",
+                "description": "Browser-based voice conversations via WebSocket (Voice Live SDK or Speech Cascade)",
             },
             {
-                "name": "Media Session",
-                "description": "V1 API - Media streaming and session management",
+                "name": "Browser Status",
+                "description": "Browser service status and active WebSocket connection statistics",
             },
             {
-                "name": "Health",
-                "description": "V1 API - Health monitoring and system status",
+                "name": "WebSocket",
+                "description": "WebSocket transport endpoints for real-time audio streaming and dashboard relay",
+            },
+            # ═══════════════════════════════════════════════════════════════════
+            # Metrics & Telemetry
+            # ═══════════════════════════════════════════════════════════════════
+            {
+                "name": "Session Metrics",
+                "description": "Session telemetry, latency statistics, and turn-level metrics for active conversations",
+            },
+            {
+                "name": "Telemetry",
+                "description": "OpenTelemetry-based observability data and performance metrics",
+            },
+            # ═══════════════════════════════════════════════════════════════════
+            # Agent Configuration
+            # ═══════════════════════════════════════════════════════════════════
+            {
+                "name": "Agent Builder",
+                "description": "Dynamic agent creation, template management, and session-scoped agent configuration",
+            },
+            {
+                "name": "Scenarios",
+                "description": "Multi-agent scenario definitions with handoff routing and orchestration modes",
+            },
+            # ═══════════════════════════════════════════════════════════════════
+            # Demo Environment
+            # ═══════════════════════════════════════════════════════════════════
+            {
+                "name": "demo-env",
+                "description": "Demo environment utilities for creating temporary user profiles and test data",
             },
         ]
 
