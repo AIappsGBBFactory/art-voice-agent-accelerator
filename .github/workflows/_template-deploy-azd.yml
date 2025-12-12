@@ -467,7 +467,7 @@ jobs:
       # ----------------------------------------------------------------------
       - name: 📤 Extract Outputs
         id: outputs
-        if: inputs.action != 'down'
+        if: inputs.action == 'up' || inputs.action == 'provision'
         run: |
           echo "🔍 Extracting deployment outputs..."
           
