@@ -129,40 +129,103 @@ The Agent Builder lets you create custom AI agents directly from the frontend wi
 
 ### Configure Tools
 
-Tools give agents capabilities to take actions. Select from available tools:
+Tools give agents capabilities to take actions. Each agent's tools are defined in their `agent.yaml` file:
+
+```yaml
+# Example from concierge/agent.yaml
+tools:
+  - verify_client_identity
+  - get_account_summary
+  - handoff_card_recommendation
+  - handoff_investment_advisor
+  - transfer_call_to_call_center
+```
 
 | Tool Category | Examples | Use Case |
 |---------------|----------|----------|
-| **Account Tools** | `get_account_summary`, `get_balance` | Financial inquiries |
-| **Transaction Tools** | `get_transactions`, `verify_transaction` | Transaction lookups |
+| **Account Tools** | `get_account_summary`, `get_recent_transactions` | Financial inquiries |
+| **Identity Tools** | `verify_client_identity`, `get_user_profile` | Customer verification |
 | **MFA Tools** | `send_verification_code`, `verify_code` | Security verification |
 | **Transfer Tools** | `transfer_call_to_call_center` | Live agent escalation |
 | **Handoff Tools** | `handoff_fraud_agent`, `handoff_concierge` | Agent-to-agent routing |
 
-### Configure Handoffs
+!!! info "Handoff Tools vs Scenario Routing"
+    While agents declare which handoff tools they can use, the **scenario configuration** determines the actual routing behavior (discrete vs announced) and validates the agent graph.
 
-Handoffs enable multi-agent conversations. When you add a handoff tool:
+### Understanding Scenarios
 
-1. **Add the handoff tool** to the agent's tool list (e.g., `handoff_fraud_agent`)
-2. **The handoff map** automatically routes calls to the target agent
-3. **Context is preserved** — the new agent knows why the customer was transferred
+Scenarios define the complete multi-agent orchestration graph. Each scenario specifies:
 
-Example handoff configuration:
+1. **Which agents are included** in the conversation flow
+2. **The starting agent** for the scenario
+3. **Handoff routes** — directed edges defining agent-to-agent transfers
+4. **Handoff behavior** — `discrete` (silent) or `announced` (target agent greets)
+
+Scenarios are defined in YAML files under `apps/artagent/backend/registries/scenariostore/`:
+
+| Scenario | File | Description |
+|----------|------|-------------|
+| `banking` | `banking/orchestration.yaml` | Private banking with card and investment specialists |
+| `insurance` | `insurance/scenario.yaml` | Insurance claims with auth and fraud agents |
+| `default` | `default/scenario.yaml` | All agents available, announced handoffs |
+
+### Handoff Configuration (Scenario-Level)
+
+Handoffs are now configured at the **scenario level**, not per-agent. Each handoff is a directed edge in the agent graph:
+
+```yaml
+# Example from banking/orchestration.yaml
+handoffs:
+  - from: BankingConcierge
+    to: CardRecommendation
+    tool: handoff_card_recommendation
+    type: discrete            # Silent transition
+    share_context: true
+
+  - from: CardRecommendation
+    to: BankingConcierge
+    tool: handoff_concierge
+    type: discrete            # Seamless return
+```
+
+**Handoff Types:**
+
+| Type | Behavior | Use Case |
+|------|----------|----------|
+| `discrete` | Silent handoff, conversation continues naturally | Same-team specialists, returns |
+| `announced` | Target agent greets/announces the transfer | Sensitive topics (fraud), new context |
+
+**Example: Banking Scenario Graph:**
 
 ```mermaid
 flowchart LR
-    subgraph CustomerConcierge["🎧 CustomerConcierge"]
-        direction TB
-        T1["handoff_fraud_agent"]
-        T2["handoff_trading_desk"]
-        T3["get_account_summary"]
+    subgraph Banking["🏦 Banking Scenario"]
+        BC["BankingConcierge"]
+        CR["CardRecommendation"]
+        IA["InvestmentAdvisor"]
     end
     
-    CustomerConcierge -->|"Card stolen?"| FA["🔒 FraudAgent"]
-    CustomerConcierge -->|"Trade stocks?"| TA["📈 TradingAgent"]
+    BC -->|"handoff_card_recommendation"| CR
+    BC -->|"handoff_investment_advisor"| IA
+    CR <-->|"cross-specialist"| IA
+    CR -->|"handoff_concierge"| BC
+    IA -->|"handoff_concierge"| BC
 ```
 
 ### Configure VAD (Voice Activity Detection)
+
+!!! tip "Selecting a Scenario"
+    Scenarios are loaded based on configuration. To switch scenarios:
+    
+    1. Set the `SCENARIO_NAME` environment variable (e.g., `banking`, `insurance`, `default`)
+    2. Or configure via the frontend's scenario selector (if available)
+    
+    Each scenario defines:
+    
+    - Which agents are available
+    - The starting agent
+    - How handoffs behave between agents
+    - Shared template variables (company name, industry, etc.)
 
 VAD settings control how the system detects when you're speaking:
 
@@ -202,58 +265,51 @@ Popular voice options:
 
 ### Choose Your Orchestration Mode
 
-#### "Voice Live (Recommended for Low Latency)"
-    
-    **How it works:** Audio streams directly to OpenAI's Realtime API
-    
-    ```mermaid
-    flowchart LR
-        A["🎤 Your Voice"] --> B["OpenAI Realtime API"]
-        B --> C["🔊 Audio Response"]
-    ```
-    
-    **Characteristics:**
-    
-    | Metric | Typical Value |
-    |--------|---------------|
-    | End-to-end latency | ~200-400ms |
-    | Barge-in handling | Automatic |
-    | Audio processing | Server-managed VAD |
-    | Voice options | OpenAI voices |
-    
-    **Best for:**
-    
-    - Lowest possible latency requirements
-    - Simple, fast demos
-    - When Azure Speech customization isn't needed
+The system supports two orchestration modes. Select based on your latency and customization needs:
 
-#### "Cascade (Recommended for Control)"
+#### Voice Live (Recommended for Low Latency)
+
+Audio streams directly to OpenAI's Realtime API:
+
+```
+🎤 Your Voice  →  OpenAI Realtime API  →  🔊 Audio Response
+```
+
+| Metric | Typical Value |
+|--------|---------------|
+| End-to-end latency | ~200-400ms |
+| Barge-in handling | Automatic |
+| Audio processing | Server-managed VAD |
+| Voice options | OpenAI voices |
+
+**Best for:** Lowest latency requirements, simple demos, when Azure Speech customization isn't needed.
+
+---
+
+#### Cascade (Recommended for Control)
+
+Audio flows through Azure Speech services with separate STT and TTS:
+
+```
+🎤 Your Voice  →  Azure STT  →  LLM  →  Azure TTS  →  🔊 Audio
+```
+
+| Metric | Typical Value |
+|--------|---------------|
+| End-to-end latency | ~400-800ms |
+| Barge-in handling | Custom VAD |
+| Audio processing | Azure Speech SDK |
+| Voice options | Azure Neural Voices |
+
+**Best for:** Custom VAD/segmentation control, Azure Neural Voice selection, phrase list customization, fine-grained audio control.
+
+---
+
+!!! tip "Switching Modes"
+    Set `ACS_STREAMING_MODE` in your `.env` file:
     
-    **How it works:** Audio flows through Azure Speech services with separate STT and TTS
-    
-    ```mermaid
-    flowchart LR
-        A["🎤 Your Voice"] --> B["Azure STT"]
-        B --> C["LLM"]
-        C --> D["Azure TTS"]
-        D --> E["🔊 Audio"]
-    ```
-    
-    **Characteristics:**
-    
-    | Metric | Typical Value |
-    |--------|---------------|
-    | End-to-end latency | ~400-800ms |
-    | Barge-in handling | Custom VAD |
-    | Audio processing | Azure Speech SDK |
-    | Voice options | Azure Neural Voices |
-    
-    **Best for:**
-    
-    - Custom VAD/segmentation control
-    - Azure Neural Voice selection
-    - Phrase list customization for domain terms
-    - Fine-grained audio control
+    - `VOICE_LIVE` — Use OpenAI Realtime API
+    - `MEDIA` — Use Cascade (Azure Speech)
 
 ### Start Speaking
 
@@ -305,13 +361,20 @@ flowchart LR
 
 ### Handoff Behavior
 
-When an agent hands off to another agent:
+When an agent hands off to another agent, behavior depends on the **handoff type** defined in the scenario:
 
-1. **Context Transfer** — The new agent receives conversation context
-2. **Greeting** — New agent introduces itself with context
-3. **Seamless Continuation** — Conversation continues without repeating information
+| Handoff Type | Behavior |
+|--------------|----------|
+| **Announced** | Target agent greets the customer, acknowledging the transfer |
+| **Discrete** | Silent handoff — conversation continues naturally without explicit transition |
 
-**Example handoff flow:**
+**Context is always transferred:**
+
+1. **`handoff_context`** — Includes reason, summary, and relevant data
+2. **`previous_agent`** — Target agent knows who handed off
+3. **`share_context: true`** — Preserves full conversation history (configurable)
+
+**Example: Announced Handoff (Fraud)**
 
 ```mermaid
 sequenceDiagram
@@ -321,9 +384,24 @@ sequenceDiagram
     
     U->>C: "I think someone stole my credit card"
     C->>C: Detects fraud concern
-    C->>U: "I'm connecting you with our fraud specialist right away."
+    Note over C,F: type: announced
     C-->>F: Handoff with context
     F->>U: "I'm the fraud specialist. I understand you're concerned about potential unauthorized activity. Let me help you secure your account immediately."
+```
+
+**Example: Discrete Handoff (Same-team specialist)**
+
+```mermaid
+sequenceDiagram
+    participant U as 👤 You
+    participant BC as 🏦 BankingConcierge
+    participant CR as 💳 CardRecommendation
+    
+    U->>BC: "I want a new credit card"
+    BC->>BC: Routes to card specialist
+    Note over BC,CR: type: discrete (silent)
+    BC-->>CR: Handoff with context
+    CR->>U: "I'd be happy to help you find the perfect card. What do you typically spend the most on - travel, dining, or groceries?"
 ```
 
 ### Watch for Anomalies
@@ -359,9 +437,10 @@ sequenceDiagram
 
 | Scenario | What to Say | Expected Behavior |
 |----------|-------------|-------------------|
-| **Fraud Concern** | "I think my card was stolen" | Handoff to FraudAgent |
-| **Investment Question** | "I want to discuss my portfolio" | Handoff to InvestmentAdvisor |
-| **Return to Concierge** | "Take me back to the main menu" | Handoff to Concierge |
+| **Card Interest** | "I want a new credit card" | Handoff to CardRecommendation (discrete) |
+| **Investment Question** | "I want to discuss my portfolio" | Handoff to InvestmentAdvisor (discrete) |
+| **Fraud Concern** | "I think my card was stolen" | Handoff to FraudAgent (announced) |
+| **Return to Concierge** | "That's all I needed for investments" | Handoff back to BankingConcierge (discrete) |
 
 ### Barge-in Testing
 
@@ -385,6 +464,12 @@ curl http://localhost:8010/readiness
 
 # View available agents
 curl http://localhost:8010/api/v1/agents
+
+# View available scenarios
+ls apps/artagent/backend/registries/scenariostore/
+
+# Check scenario configuration
+cat apps/artagent/backend/registries/scenariostore/banking/orchestration.yaml
 ```
 
 ### Environment Variables Checklist
@@ -440,10 +525,16 @@ BASE_URL=https://<tunnel-url>       # From devtunnel host
 !!! question "Handoffs not working"
     **Check:**
     
-    1. Handoff tool is in the source agent's tool list
+    1. Handoff tool is in the source agent's tool list (`agent.yaml`)
     2. Target agent exists and is loaded
-    3. Check backend logs for handoff events
-    4. Verify handoff map includes the tool
+    3. Scenario includes both agents in the `agents:` list
+    4. Handoff route is defined in scenario's `handoffs:` section
+    5. Check backend logs for handoff events
+    
+    ```bash
+    # Verify scenario handoff configuration
+    cat apps/artagent/backend/registries/scenariostore/banking/orchestration.yaml
+    ```
 
 !!! question "High latency responses"
     **Check:**
@@ -485,13 +576,26 @@ BASE_URL=https://<tunnel-url>       # From devtunnel host
     - Review the [Architecture Overview](../architecture/README.md)
 
 === "After Intermediate"
+    - Learn about [Scenario Configuration](#understanding-scenarios) for multi-agent orchestration
     - Deep dive into [Handoff Strategies](../architecture/agents/handoffs.md)
     - Learn about [Telemetry](../architecture/telemetry.md) and monitoring
     - Try [Load Testing](../operations/load-testing.md)
 
 === "After Advanced"
+    - Create custom scenarios in `apps/artagent/backend/registries/scenariostore/`
     - Set up [Production Deployment](../deployment/production.md)
     - Configure [CI/CD Pipelines](../deployment/cicd.md)
     - Implement custom tools and integrations
+
+---
+
+## :material-folder-cog: Key Configuration Locations
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Agents** | `apps/artagent/backend/registries/agentstore/` | Agent definitions (`agent.yaml` + `prompt.jinja`) |
+| **Scenarios** | `apps/artagent/backend/registries/scenariostore/` | Multi-agent orchestration graphs |
+| **Tools** | `apps/artagent/backend/registries/toolstore/` | Tool schemas and executors |
+| **Defaults** | `apps/artagent/backend/registries/agentstore/_defaults.yaml` | Shared agent defaults |
 
 <!-- markdownlint-enable MD046 MD032 -->

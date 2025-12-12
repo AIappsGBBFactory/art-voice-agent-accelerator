@@ -1269,7 +1269,7 @@ def _extract_agent_info(agent: Any, defn: AgentDefinition) -> dict[str, Any] | N
         }
 
 
-@router.get("/agents")
+@router.get("/agents", tags=["Health"])
 async def get_agents_info(request: Request, include_state: bool = False):
     """
     Get information about loaded RT agents including their configuration,
@@ -1397,7 +1397,7 @@ async def get_agents_info(request: Request, include_state: bool = False):
         )
 
 
-@router.get("/agents/{agent_name}")
+@router.get("/agents/{agent_name}", tags=["Health"])
 async def get_agent_detail(agent_name: str, request: Request, session_id: str | None = None):
     """
     Get detailed info for a specific agent, including normalized tools/handoff tools.
@@ -1481,7 +1481,7 @@ class AgentConfigUpdate(BaseModel):
     voice: AgentVoiceUpdate | None = None
 
 
-@router.put("/agents/{agent_name}")
+@router.put("/agents/{agent_name}", tags=["Health"])
 async def update_agent_config(agent_name: str, config: AgentConfigUpdate, request: Request):
     """
     Update configuration for a specific agent (model settings, voice, etc.).
