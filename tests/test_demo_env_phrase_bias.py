@@ -1,9 +1,8 @@
 import types
 
 import pytest
-
-from apps.rtagent.backend.api.v1.endpoints import demo_env
-from apps.rtagent.backend.api.v1.endpoints.demo_env import DemoUserProfile
+from apps.artagent.backend.api.v1.endpoints import demo_env
+from apps.artagent.backend.api.v1.endpoints.demo_env import DemoUserProfile
 
 
 class DummyManager:

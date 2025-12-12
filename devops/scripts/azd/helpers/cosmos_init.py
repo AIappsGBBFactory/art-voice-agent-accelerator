@@ -29,8 +29,7 @@ class ManagerProtocol(Protocol):
         self,
         document: Mapping[str, object],
         query: Mapping[str, object],
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class AzureIdentityTokenCallback(OIDCCallback):
@@ -147,9 +146,7 @@ async def main(args: argparse.Namespace) -> None:
     if match:
         cluster_name = match.group(1)
     else:
-        raise ValueError(
-            "Could not determine cluster name for OIDC authentication"
-        )
+        raise ValueError("Could not determine cluster name for OIDC authentication")
 
     # Setup Azure Identity credential for OIDC
     credential = DefaultAzureCredential()
@@ -228,4 +225,3 @@ if __name__ == "__main__":
         raise SystemExit(0)
     asyncio.run(main(args=args))
     logger.info("Cosmos DB initialization completed.")
-

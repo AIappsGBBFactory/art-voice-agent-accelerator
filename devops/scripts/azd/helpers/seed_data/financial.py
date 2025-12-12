@@ -142,7 +142,11 @@ def _build_users(anchor: datetime) -> Sequence[dict]:
                         "notification_urgency": "Immediate",
                         "card_replacement_speed": "Expedited",
                     },
-                    "fraud_history": {"previous_cases": 0, "false_positive_rate": 5, "security_awareness_score": 92},
+                    "fraud_history": {
+                        "previous_cases": 0,
+                        "false_positive_rate": 5,
+                        "security_awareness_score": 92,
+                    },
                 },
                 "conversation_context": {
                     "known_preferences": [
@@ -180,8 +184,7 @@ def _build_users(anchor: datetime) -> Sequence[dict]:
             "authorization_level": "advisor",
             "max_transaction_limit": 10_000_000,
             "mfa_required_threshold": 5_000,
-            "contact_info": {
-            },
+            "contact_info": {},
             "verification_codes": {"ssn4": "5432", "employee_id4": "9876", "phone4": "4441"},
             "mfa_settings": {
                 "enabled": True,
@@ -213,7 +216,12 @@ def _build_users(anchor: datetime) -> Sequence[dict]:
                 },
                 "spending_patterns": {
                     "avg_monthly_spend": 35_000,
-                    "common_merchants": ["Microsoft Store", "Amazon Business", "Starbucks", "Office Depot"],
+                    "common_merchants": [
+                        "Microsoft Store",
+                        "Amazon Business",
+                        "Starbucks",
+                        "Office Depot",
+                    ],
                     "preferred_transaction_times": ["10-12 PM", "3-5 PM"],
                     "risk_tolerance": "Moderate",
                     "usual_spending_range": "$500 - $8,000",
@@ -232,14 +240,22 @@ def _build_users(anchor: datetime) -> Sequence[dict]:
                     "typical_transaction_behavior": {
                         "usual_spending_range": "$500 - $8,000",
                         "common_locations": ["Seattle", "Bellevue", "Portland"],
-                        "typical_merchants": ["Tech vendors", "Office supplies", "Corporate dining"],
+                        "typical_merchants": [
+                            "Tech vendors",
+                            "Office supplies",
+                            "Corporate dining",
+                        ],
                     },
                     "security_preferences": {
                         "preferred_verification": "SMS + Security questions",
                         "notification_urgency": "Standard",
                         "card_replacement_speed": "Standard",
                     },
-                    "fraud_history": {"previous_cases": 0, "false_positive_rate": 8, "security_awareness_score": 89},
+                    "fraud_history": {
+                        "previous_cases": 0,
+                        "false_positive_rate": 8,
+                        "security_awareness_score": 89,
+                    },
                 },
                 "conversation_context": {
                     "known_preferences": [
@@ -353,7 +369,11 @@ def _build_users(anchor: datetime) -> Sequence[dict]:
                         "notification_urgency": "Standard",
                         "card_replacement_speed": "Standard",
                     },
-                    "fraud_history": {"previous_cases": 1, "false_positive_rate": 12, "security_awareness_score": 87},
+                    "fraud_history": {
+                        "previous_cases": 1,
+                        "false_positive_rate": 12,
+                        "security_awareness_score": 87,
+                    },
                 },
                 "conversation_context": {
                     "known_preferences": [
@@ -561,12 +581,11 @@ def _build_mfa_sessions(anchor: datetime) -> Sequence[dict]:
         },
     )
 
+
 def _build_transfer_agency_clients(anchor: datetime) -> Sequence[dict]:
     """Create institutional transfer-agency client fixtures."""
     timestamp = _iso(anchor)
-    return (
-      
-    )
+    return ()
 
 
 def _build_drip_positions(anchor: datetime) -> Sequence[dict]:
