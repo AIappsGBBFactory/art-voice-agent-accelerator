@@ -8,6 +8,7 @@ This directory contains GitHub Actions workflows for automated deployment of you
 |----------|------|-------------|
 | **Deploy to Azure** | [`deploy-azd-complete.yml`](./deploy-azd-complete.yml) | Main deployment workflow - use this one |
 | **Deploy Documentation** | [`docs.yml`](./docs.yml) | Builds and deploys docs to GitHub Pages |
+| **Test AZD Hooks** | [`test-azd-hooks.yml`](./test-azd-hooks.yml) | Tests preprovision/postprovision hooks across platforms |
 | **_template-deploy-azd** | [`_template-deploy-azd.yml`](./_template-deploy-azd.yml) | ⚠️ Internal template - do not run directly |
 
 ## 🚀 Quick Start
@@ -105,6 +106,54 @@ These are used on subsequent deployments to maintain consistency.
 - **Push to `main`**: Auto-deploys to `dev`
 - **Pull Request**: Preview infrastructure changes
 - **Manual**: Run any action on any environment
+
+## 🧪 Test AZD Hooks Workflow
+
+The `test-azd-hooks.yml` workflow validates the AZD preprovision and postprovision hooks across multiple platforms.
+
+### What It Tests
+
+| Test | Description |
+|------|-------------|
+| **Lint** | ShellCheck analysis of all shell scripts |
+| **Syntax Validation** | Bash syntax checking (`bash -n`) |
+| **Logging Functions** | Verifies unified logging utilities work |
+| **Location Resolution** | Tests tfvars-based location resolution |
+| **Backend Configuration** | Tests Terraform backend.tf generation |
+| **Regional Availability** | Validates Azure service availability checks |
+
+### Platforms Tested
+
+| Platform | Runner | Shell |
+|----------|--------|-------|
+| 🐧 Linux | `ubuntu-latest` | Bash |
+| 🍎 macOS | `macos-latest` | Bash |
+| 🪟 Windows | `windows-latest` | Git Bash |
+
+### Triggers
+
+- Push to `main` or `staging` (when hook scripts change)
+- Pull requests (when hook scripts change)
+- Manual dispatch with optional debug mode
+
+### Running Locally
+
+```bash
+# Validate script syntax
+bash -n devops/scripts/azd/preprovision.sh
+bash -n devops/scripts/azd/postprovision.sh
+
+# Run preflight checks
+cd devops/scripts/azd/helpers
+source preflight-checks.sh
+run_preflight_checks
+
+# Test with local state (no Azure required)
+export LOCAL_STATE=true
+export AZURE_ENV_NAME=local-test
+export AZURE_LOCATION=eastus2
+bash devops/scripts/azd/preprovision.sh terraform
+```
 
 ## 🔗 Related Documentation
 

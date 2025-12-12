@@ -167,9 +167,10 @@ task_phone_number() {
     # Interactive mode
     log ""
     log "A phone number is required for voice calls."
+    log "You must provision a phone number manually via Azure Portal first."
     log ""
-    log "  1) Enter existing phone number"
-    log "  2) Skip for now"
+    log "  1) Enter existing phone number (must be provisioned in Azure Portal)"
+    log "  2) Skip for now (configure later)"
     log ""
     log "(Auto-skipping in 10 seconds if no input...)"
     
@@ -183,6 +184,12 @@ task_phone_number() {
     
     case "$choice" in
         1)
+            log ""
+            log "To get a phone number:"
+            log "  1. Azure Portal → Communication Services → Phone numbers → + Get"
+            log "  2. Select country/region and number type (toll-free or geographic)"
+            log "  3. Complete the purchase and copy the number"
+            log ""
             read -rp "│ Phone (E.164 format, e.g. +18001234567): " phone
             if [[ "$phone" =~ ^\+[0-9]{10,15}$ ]]; then
                 appconfig_set "$endpoint" "azure/acs/source-phone-number" "$phone" "$label"
@@ -190,15 +197,17 @@ task_phone_number() {
                 trigger_config_refresh "$endpoint" "$label"
                 success "Phone saved: $phone"
             else
-                fail "Invalid format"
+                fail "Invalid format. Phone must be in E.164 format (e.g., +18001234567)"
             fi
             ;;
         *)
             info "Skipped - configure later via Azure Portal"
             log ""
             log "To configure manually:"
-            log "  1. Azure Portal → ACS resource → Phone numbers → + Get"
-            log "  2. Update App Config: azure/acs/source-phone-number"
+            log "  1. Azure Portal → Communication Services → Phone numbers → + Get"
+            log "  2. Purchase a phone number for your region"
+            log "  3. Update App Config: azure/acs/source-phone-number"
+            log "  Or run: azd env set ACS_SOURCE_PHONE_NUMBER '+1XXXXXXXXXX' && azd provision"
             ;;
     esac
     
