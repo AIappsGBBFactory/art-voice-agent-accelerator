@@ -303,5 +303,5 @@ output "BACKEND_CONTAINER_APP_URL" {
 
 output "BACKEND_API_URL" {
   description = "Backend API URL"
-  value       = var.backend_api_public_url != null ? var.backend_api_public_url : "https://${azurerm_container_app.backend.ingress[0].fqdn}"
+  value       = "https://${azurerm_container_app.backend.ingress[0].fqdn}"
 }
