@@ -10,25 +10,6 @@
 		// Docker-in-Docker for container builds
 		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
 		
-		// Common utilities with zsh
-		"ghcr.io/devcontainers/features/common-utils:2": {
-			"installZsh": true,
-			"configureZshAsDefaultShell": true,
-			"installOhMyZsh": true,
-			"upgradePackages": true,
-			"username": "vscode"
-		},
-		
-		// Zsh plugins
-		"ghcr.io/devcontainers-extra/features/zsh-plugins:0": {
-			"plugins": "ssh-agent zsh-syntax-highlighting zsh-autosuggestions",
-			"omzPlugins": "https://github.com/zsh-users/zsh-autosuggestions https://github.com/zsh-users/zsh-syntax-highlighting",
-			"username": "vscode"
-		},
-		
-		// Shell history persistence
-		"ghcr.io/stuartleeks/dev-container-features/shell-history:0": {},
-		
 		// Node.js for React/Vite frontend
 		"ghcr.io/devcontainers/features/node:1": {
 			"version": "22"
@@ -58,32 +39,17 @@
 				"python.terminal.activateEnvironment": true
 			},
 			"extensions": [
-				// Python
+				// Python (essential)
 				"ms-python.python",
 				"ms-python.debugpy",
-				"kevinrose.vsc-python-indent",
-				"visualstudioexptteam.vscodeintellicode",
 				// GitHub Copilot
 				"GitHub.copilot",
 				"GitHub.copilot-chat",
-				// Markdown
-				"shd101wyy.markdown-preview-enhanced",
-				"darkriszty.markdown-table-prettify",
-				"DavidAnson.vscode-markdownlint",
-				"yzhang.markdown-all-in-one",
-				// Azure
+				// Azure (essential for this project)
 				"ms-azuretools.azure-dev",
 				"ms-azuretools.vscode-azureterraform",
-				"ms-vscode.azurecli",
-				"ms-azureaispeech.azure-ai-speech-toolkit",
-				// Git/GitHub
-				"github.vscode-github-actions",
 				// Utilities
-				"esbenp.prettier-vscode",
-				"timonwong.shellcheck",
-				"shardulm94.trailing-spaces",
-				"streetsidesoftware.code-spell-checker",
-				"ms-vscode-remote.vscode-remote-extensionpack"
+				"timonwong.shellcheck"
 			]
 		}
 	},
@@ -105,10 +71,5 @@
 	"postCreateCommand": "bash .devcontainer/post_create.sh",
 	
 	// Run as non-root user
-	"remoteUser": "vscode",
-	
-	// Mount SSH keys from host
-	"mounts": [
-		"source=${env:HOME}${env:USERPROFILE}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached"
-	]
+	"remoteUser": "vscode"
 }

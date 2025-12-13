@@ -1,5 +1,5 @@
 name: 🚀 Deploy to Azure
-run-name: 🚀 Deploy to Azure (${{ inputs.environment || 'dev' }} - ${{ inputs.action || 'up' }})
+run-name: 🚀 Deploy to Azure (${{ inputs.environment || github.event_name == 'push' && (github.ref == 'refs/heads/main' && 'prod' || 'staging') || 'dev' }} - ${{ inputs.action || 'up' }})
 
 on:
   workflow_dispatch:
@@ -27,15 +27,18 @@ on:
   push:
     branches:
       - main
+      - staging
     paths:
       - 'infra/terraform/**'
       - 'src/**'
       - 'apps/**'
       - 'azure.yaml'
       - '.github/workflows/_template-deploy-azd.yml'
+
   pull_request:
     branches:
       - main
+      - staging
     paths:
       - 'infra/terraform/**'
       - 'azure.yaml'
@@ -49,6 +52,23 @@ jobs:
     name: 🚀 Deploy
     uses: ./.github/workflows/_template-deploy-azd.yml
     with:
-      environment: ${{ inputs.environment || 'dev' }}
+      # For workflow_dispatch: use input
+      # For push to main: deploy to prod
+      # For push to staging: deploy to staging
+      # For pull_request: use target branch to determine environment (staging for staging, dev for main)
+      environment: ${{ inputs.environment
+        || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'prod')
+        || (github.event_name == 'push' && github.ref == 'refs/heads/staging' && 'staging')
+        || (github.event_name == 'pull_request' && github.base_ref == 'staging' && 'staging')
+        || 'dev' }}
+        ? inputs.environment
+        : github.event_name == 'push' && github.ref == 'refs/heads/main'
+          ? 'prod'
+          : github.event_name == 'push' && github.ref == 'refs/heads/staging'
+            ? 'staging'
+            : github.event_name == 'pull_request' && github.base_ref == 'staging'
+              ? 'staging'
+              : 'dev'
+      }}
       action: ${{ inputs.action || 'up' }}
     secrets: inherit

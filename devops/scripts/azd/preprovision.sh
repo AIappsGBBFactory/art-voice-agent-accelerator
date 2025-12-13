@@ -411,6 +411,19 @@ main() {
     
     is_ci && info "🤖 CI/CD mode detected"
     
+    # Run preflight checks first (tools, auth, providers, ARM_SUBSCRIPTION_ID)
+    local preflight_script="$SCRIPT_DIR/helpers/preflight-checks.sh"
+    if [[ -f "$preflight_script" ]]; then
+        # shellcheck source=helpers/preflight-checks.sh
+        source "$preflight_script"
+        if ! run_preflight_checks; then
+            fail "Preflight checks failed. Please resolve the issues above before continuing."
+            exit 1
+        fi
+    else
+        warn "Preflight checks script not found, skipping environment validation"
+    fi
+    
     case "$PROVIDER" in
         terraform) provider_terraform ;;
         bicep)     provider_bicep ;;

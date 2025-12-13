@@ -16,6 +16,7 @@ Install these tools on your development machine:
 | **Docker** | Container builds | [:material-download: Install](https://docs.docker.com/get-docker/) | `docker --version` |
 | **Python 3.11+** | Backend runtime | [:material-download: Install](https://www.python.org/downloads/) | `python --version` |
 | **Node.js 22+** | Frontend build | [:material-download: Install](https://nodejs.org/) | `node --version` |
+| **jq** | JSON processing for scripts | [:material-download: Install](https://jqlang.github.io/jq/download/) | `jq --version` |
 
 ---
 
@@ -37,6 +38,9 @@ Install these tools on your development machine:
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
     sudo apt install -y nodejs
     
+    # jq (JSON processor)
+    sudo apt install -y jq
+    
     # Docker
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker $USER
@@ -50,6 +54,7 @@ Install these tools on your development machine:
     brew install azd
     brew install python@3.11
     brew install node@22
+    brew install jq
     brew install --cask docker
     ```
 
@@ -61,6 +66,7 @@ Install these tools on your development machine:
     winget install Microsoft.Azd
     winget install Python.Python.3.11
     winget install OpenJS.NodeJS.LTS
+    winget install jqlang.jq
     winget install Docker.DockerDesktop
     ```
 
@@ -106,7 +112,7 @@ Run this script to verify all prerequisites:
 echo "🔍 Checking prerequisites..."
 
 # Check each tool
-for cmd in az azd docker python3 node; do
+for cmd in az azd docker python3 node jq; do
   if command -v $cmd &> /dev/null; then
     echo "✅ $cmd: $(command -v $cmd)"
   else
