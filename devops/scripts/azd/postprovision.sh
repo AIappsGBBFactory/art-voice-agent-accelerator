@@ -206,8 +206,19 @@ task_phone_number() {
             log "To configure manually:"
             log "  1. Azure Portal → Communication Services → Phone numbers → + Get"
             log "  2. Purchase a phone number for your region"
-            log "  3. Update App Config: azure/acs/source-phone-number"
-            log "  Or run: azd env set ACS_SOURCE_PHONE_NUMBER '+1XXXXXXXXXX' && azd provision"
+            log "  3. Set the phone number using one of these methods:"
+            log ""
+            log "  Option A - Using azd (will sync on next provision):"
+            log "    azd env set ACS_SOURCE_PHONE_NUMBER '+1XXXXXXXXXX'"
+            log "    azd provision"
+            log ""
+            log "  Option B - Direct App Config update (immediate):"
+            log "    az appconfig kv set \\"
+            log "      --endpoint \"$endpoint\" \\"
+            log "      --key \"azure/acs/source-phone-number\" \\"
+            log "      --value \"+1XXXXXXXXXX\" \\"
+            log "      --label \"$label\" \\"
+            log "      --auth-mode login --yes"
             ;;
     esac
     
