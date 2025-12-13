@@ -60,20 +60,20 @@ This happens when scripts have Windows-style line endings (CRLF instead of LF).
 **Fix:**
 
 ```bash
-# Option 1: Use the built-in helper function
+# Option 1: Manual fix with sed (macOS)
+sed -i '' 's/\r$//' devops/scripts/azd/*.sh
+
+# Option 2: Manual fix with sed (Linux)
+sed -i 's/\r$//' devops/scripts/azd/*.sh
+
+# Option 3: Use the built-in helper function (requires working line endings)
+# Note: This requires that you can source preflight-checks.sh. If line endings are already broken, use Option 1 or 2 first.
 cd devops/scripts/azd/helpers
 source preflight-checks.sh
 fix_line_endings  # Fixes all .sh files in devops/scripts/
 
-# Option 2: Fix a single file
+# Option 4: Fix a single file using the helper function
 fix_file_line_endings devops/scripts/azd/preprovision.sh
-
-# Option 3: Manual fix with sed (macOS)
-sed -i '' 's/\r$//' devops/scripts/azd/*.sh
-
-# Option 3: Manual fix with sed (Linux)
-sed -i 's/\r$//' devops/scripts/azd/*.sh
-
 # Prevent future issues
 git config --global core.autocrlf input
 ```
