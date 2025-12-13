@@ -215,7 +215,7 @@ jobs:
           echo ""
           echo "✅ Preprovision hook executed successfully via azd"
 
-      - name: � Run Postprovision Hook via AZD
+      - name: 📦 Run Postprovision Hook via AZD
         run: |
           # Use existing azd environment
           azd env select ${{ env.AZURE_ENV_NAME }}
@@ -236,7 +236,7 @@ jobs:
           echo ""
           echo "✅ Postprovision hook executed successfully via azd"
 
-      - name: �📋 Linux Test Summary
+      - name: 📋 Linux Test Summary
         run: |
           echo "## 🐧 Linux Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -381,7 +381,7 @@ jobs:
           echo ""
           echo "✅ Preprovision hook executed successfully via azd (macOS)"
 
-      - name: � Run Postprovision Hook via AZD
+      - name: 📦 Run Postprovision Hook via AZD
         run: |
           # Use existing azd environment
           azd env select ${{ env.AZURE_ENV_NAME }}
@@ -402,7 +402,7 @@ jobs:
           echo ""
           echo "✅ Postprovision hook executed successfully via azd (macOS)"
 
-      - name: �📋 macOS Test Summary
+      - name: 📋 macOS Test Summary
         run: |
           echo "## 🍎 macOS Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -504,7 +504,7 @@ jobs:
           echo ""
           echo "✅ Preprovision hook executed successfully via azd (Windows)"
 
-      - name: � Run Postprovision Hook via AZD
+      - name: 📦 Run Postprovision Hook via AZD
         shell: bash
         run: |
           # Use existing azd environment
@@ -526,7 +526,7 @@ jobs:
           echo ""
           echo "✅ Postprovision hook executed successfully via azd (Windows)"
 
-      - name: �📋 Windows Test Summary
+      - name: 📋 Windows Test Summary
         shell: bash
         run: |
           echo "## 🪟 Windows Test Results" >> $GITHUB_STEP_SUMMARY
