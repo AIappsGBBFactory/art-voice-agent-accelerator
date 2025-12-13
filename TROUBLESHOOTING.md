@@ -102,14 +102,32 @@ az provider show --namespace Microsoft.Communication --query "registrationState"
 
 ### Terraform state lock errors
 
-**Fix:**
+**Error:** `Error acquiring the state lock` or `Error locking state: Error acquiring the state lock`
+
+**Fix for remote state (Azure Storage backend):**
 
 ```bash
 cd infra/terraform
+
+# Option 1: Force unlock with the lock ID from the error message
 terraform force-unlock <lock-id>
 
-# Or clean and retry
-rm -rf .terraform terraform.tfstate*
+# Option 2: Break the blob lease directly in Azure Storage
+az storage blob lease break \
+  --blob-name "terraform.tfstate" \
+  --container-name "tfstate" \
+  --account-name "<storage-account-name>"
+
+# Then retry
+azd provision
+```
+
+**Fix for local state only:**
+
+```bash
+cd infra/terraform
+rm -rf .terraform.lock.hcl .terraform/terraform.tfstate
+terraform init
 azd provision
 ```
 
@@ -163,8 +181,7 @@ uv run uvicorn apps.artagent.backend.main:app --reload --port 8010 --log-level d
 # Check authentication
 az account show
 
-# View deployment logs
-azd logs
+azd monitor
 
 # Nuclear option - clean redeploy
 azd down --force --purge
