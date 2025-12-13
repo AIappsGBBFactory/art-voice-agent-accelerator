@@ -104,6 +104,99 @@ See [Phone Number Setup](phone-number-setup.md) for:
 
 ---
 
+## :material-cog-outline: Deployment Hooks & Configuration
+
+The `azd up` command runs automated pre-provisioning and post-provisioning hooks that handle environment validation, setup, and configuration.
+
+### Pre-Provisioning Hook
+
+The pre-provisioning script (`devops/scripts/azd/preprovision.sh`) runs before Terraform and performs:
+
+| Task | Description |
+|------|-------------|
+| **Tool Validation** | Checks az, azd, jq, docker are installed |
+| **CLI Extensions** | Auto-installs quota, redisenterprise, cosmosdb-preview extensions |
+| **Azure Auth** | Validates Azure CLI and azd authentication |
+| **Subscription Config** | Sets ARM_SUBSCRIPTION_ID for Terraform |
+| **Provider Registration** | Registers required Azure resource providers |
+| **Regional Availability** | Checks if services are available in target region |
+| **Quota Checks** | Validates OpenAI TPM quotas (opt-in for others) |
+| **Remote State Setup** | Creates Azure Storage for Terraform state |
+
+### Post-Provisioning Hook
+
+The post-provisioning script (`devops/scripts/azd/postprovision.sh`) runs after Terraform and handles:
+
+| Task | Description |
+|------|-------------|
+| **Cosmos DB Init** | Seeds database with initial data |
+| **Phone Number Config** | Interactive prompt for ACS phone number |
+| **URL Updates** | Configures backend/WebSocket URLs in App Configuration |
+| **Settings Sync** | Syncs config/appconfig.json to Azure App Configuration |
+| **Local Dev Setup** | Generates .env.local for local development |
+
+### Environment Variables & Flags
+
+Control deployment behavior with these environment variables:
+
+#### Preflight Check Flags
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PREFLIGHT_DEEP_CHECKS` | `false` | Enable slow quota checks for Cosmos DB, Redis, Container Apps |
+| `PREFLIGHT_LIVE_CHECKS` | `true` | Enable live Azure API checks (set `false` in CI for faster runs) |
+| `CI` | - | Auto-detected; affects interactive prompts and default behaviors |
+
+**Example: Enable deep quota checks**
+```bash
+PREFLIGHT_DEEP_CHECKS=true azd up
+```
+
+#### Terraform State Flags
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOCAL_STATE` | `false` | Use local Terraform state instead of Azure Storage |
+| `RS_STORAGE_ACCOUNT` | - | Existing storage account for remote state |
+| `RS_RESOURCE_GROUP` | - | Resource group for remote state storage |
+| `RS_CONTAINER_NAME` | - | Blob container for state files |
+| `RS_STATE_KEY` | - | State file key (auto-set to `<env>.tfstate`) |
+| `TF_INIT_SKIP_INTERACTIVE` | - | Skip interactive prompts during Terraform init |
+
+**Example: Use local state for development**
+```bash
+azd env set LOCAL_STATE true
+azd up
+```
+
+**Example: Use existing remote state**
+```bash
+azd env set RS_STORAGE_ACCOUNT "mystorageaccount"
+azd env set RS_RESOURCE_GROUP "rg-tfstate"
+azd env set RS_CONTAINER_NAME "tfstate"
+azd env set RS_STATE_KEY "myenv.tfstate"
+azd up
+```
+
+#### CI/CD Flags
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CI` | - | Set to `true` for CI/CD pipelines |
+| `GITHUB_ACTIONS` | - | Auto-set in GitHub Actions |
+| `AZD_SKIP_INTERACTIVE` | - | Skip all interactive prompts |
+| `ACS_SOURCE_PHONE_NUMBER` | - | Pre-configure phone number (E.164 format) |
+
+**Example: CI/CD deployment**
+```bash
+export CI=true
+export TF_INIT_SKIP_INTERACTIVE=true
+export ACS_SOURCE_PHONE_NUMBER="+18001234567"
+azd up --no-prompt
+```
+
+---
+
 ## :material-arrow-right: Next Steps
 
 | Topic | Guide |

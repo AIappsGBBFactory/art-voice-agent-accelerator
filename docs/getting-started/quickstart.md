@@ -89,6 +89,28 @@ You'll be prompted for:
 | Azure location | Choose a region (e.g., `eastus`, `westus2`) |
 | Remote state storage | Press `Y` (recommended) |
 
+### Deployment Hooks
+
+The deployment runs automated pre-provisioning and post-provisioning scripts:
+
+**Pre-Provisioning (`preprovision.sh`):**
+
+- ✅ Validates required CLI tools (az, azd, jq, docker)
+- ✅ Installs Azure CLI extensions (quota, redisenterprise, cosmosdb-preview)
+- ✅ Checks Azure authentication
+- ✅ Configures ARM_SUBSCRIPTION_ID
+- ✅ Registers required Azure resource providers
+- ✅ Checks regional service availability
+- ✅ Sets up Terraform remote state storage
+
+**Post-Provisioning (`postprovision.sh`):**
+
+- ✅ Initializes Cosmos DB database
+- ✅ Configures phone number (interactive prompt)
+- ✅ Updates App Configuration URLs
+- ✅ Syncs app settings
+- ✅ Generates `.env.local` for local development
+
 ### Deployment Output
 
 When complete, you'll see:
