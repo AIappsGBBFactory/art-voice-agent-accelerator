@@ -876,6 +876,12 @@ run_preflight_checks() {
     header "✅ Running Preflight Checks"
     
     local failed=0
+    local skip_azure_checks="${PREFLIGHT_LIVE_CHECKS:-true}"
+    
+    # In CI mode without explicit PREFLIGHT_LIVE_CHECKS, skip Azure auth checks
+    if [[ "${CI:-}" == "true" && "${PREFLIGHT_LIVE_CHECKS:-}" != "true" ]]; then
+        skip_azure_checks="false"
+    fi
     
     # 1. Check required tools
     if ! check_required_tools; then
@@ -883,29 +889,38 @@ run_preflight_checks() {
     fi
     log ""
     
-    # 2. Check Docker is running
-    if ! check_docker_running; then
-        failed=1
+    # 2. Check Docker is running (skip in CI - may not have Docker)
+    if [[ "${CI:-}" == "true" ]]; then
+        info "Skipping Docker check (CI mode)"
+    elif ! check_docker_running; then
+        warn "Docker not running - some features may not work"
+        # Don't fail for Docker in CI
     fi
     log ""
     
-    # 3. Check Azure authentication
-    if ! check_azure_auth; then
-        failed=1
+    # 3-5. Azure auth checks (skip in CI mode without credentials)
+    if [[ "$skip_azure_checks" == "false" ]]; then
+        info "Skipping Azure authentication checks (CI mode, PREFLIGHT_LIVE_CHECKS=false)"
+        log ""
+    else
+        # 3. Check Azure authentication
+        if ! check_azure_auth; then
+            failed=1
+        fi
+        log ""
+        
+        # 4. Configure subscription and ARM_SUBSCRIPTION_ID
+        if ! configure_subscription; then
+            failed=1
+        fi
+        log ""
+        
+        # 5. Check and register resource providers
+        if ! check_resource_providers; then
+            failed=1
+        fi
+        log ""
     fi
-    log ""
-    
-    # 4. Configure subscription and ARM_SUBSCRIPTION_ID
-    if ! configure_subscription; then
-        failed=1
-    fi
-    log ""
-    
-    # 5. Check and register resource providers
-    if ! check_resource_providers; then
-        failed=1
-    fi
-    log ""
     
     # 6. Check regional service availability (informational, non-blocking)
     check_regional_availability
