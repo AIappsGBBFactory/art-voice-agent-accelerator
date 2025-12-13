@@ -2,7 +2,7 @@ name: Test AZD Hooks
 
 on:
   push:
-    branches: [main, staging, feat/troubleshooting-enhancements]
+    branches: [main, staging]
     paths:
       - 'devops/scripts/azd/**'
       - 'azure.yaml'
