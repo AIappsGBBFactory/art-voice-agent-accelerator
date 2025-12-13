@@ -540,6 +540,109 @@ jobs:
           echo "| 🚀 azd hooks run postprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
+  # JOB: Test in Dev Container (Codespaces-like environment)
+  # ============================================================================
+  test-devcontainer:
+    name: 🐳 Test in Dev Container
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: 🛒 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐳 Build and Test in Dev Container
+        uses: devcontainers/ci@v0.3
+        with:
+          runCmd: |
+            echo "╭─────────────────────────────────────────────────────────────"
+            echo "│ 🐳 Testing AZD Hooks in Dev Container"
+            echo "├─────────────────────────────────────────────────────────────"
+            
+            # Verify environment
+            echo "│ Environment:"
+            echo "│   OS: $(uname -a)"
+            echo "│   Shell: $SHELL"
+            echo "│   User: $(whoami)"
+            echo ""
+            
+            # Check installed tools
+            echo "│ Installed Tools:"
+            echo "│   Azure CLI: $(az --version 2>/dev/null | head -1 || echo 'not found')"
+            echo "│   AZD: $(azd version 2>/dev/null | head -1 || echo 'not found')"
+            echo "│   Terraform: $(terraform version 2>/dev/null | head -1 || echo 'not found')"
+            echo "│   Node.js: $(node --version 2>/dev/null || echo 'not found')"
+            echo "│   Python: $(python3 --version 2>/dev/null || echo 'not found')"
+            echo "│   jq: $(jq --version 2>/dev/null || echo 'not found')"
+            echo "│   Docker: $(docker --version 2>/dev/null || echo 'not found')"
+            echo ""
+            
+            # Validate script syntax
+            echo "│ Validating script syntax..."
+            bash -n devops/scripts/azd/preprovision.sh && echo "│   ✓ preprovision.sh"
+            bash -n devops/scripts/azd/postprovision.sh && echo "│   ✓ postprovision.sh"
+            for script in devops/scripts/azd/helpers/*.sh; do
+              bash -n "$script" && echo "│   ✓ $(basename $script)"
+            done
+            echo ""
+            
+            # Create mock azd environment
+            export CI=true
+            export AZURE_ENV_NAME=ci-devcontainer
+            export AZURE_LOCATION=eastus2
+            export LOCAL_STATE=true
+            export PREFLIGHT_LIVE_CHECKS=false
+            
+            mkdir -p .azure/$AZURE_ENV_NAME
+            cat > .azure/$AZURE_ENV_NAME/.env << EOF
+            AZURE_ENV_NAME="$AZURE_ENV_NAME"
+            AZURE_LOCATION="$AZURE_LOCATION"
+            LOCAL_STATE="true"
+            DB_INITIALIZED="true"
+            PREFLIGHT_LIVE_CHECKS="false"
+            EOF
+            
+            # Initialize azd environment
+            azd env select $AZURE_ENV_NAME 2>/dev/null || azd env new $AZURE_ENV_NAME --no-prompt
+            azd env set AZURE_LOCATION $AZURE_LOCATION
+            azd env set LOCAL_STATE true
+            azd env set PREFLIGHT_LIVE_CHECKS false
+            
+            # Run preprovision hook
+            echo "│ Running preprovision hook..."
+            azd hooks run preprovision
+            echo "│ ✓ Preprovision hook completed"
+            echo ""
+            
+            # Set mock values for postprovision
+            azd env set DB_INITIALIZED true
+            azd env set AZURE_APPCONFIG_ENDPOINT "https://mock-appconfig.azconfig.io"
+            azd env set BACKEND_API_URL "https://mock-backend.azurecontainerapps.io"
+            
+            # Run postprovision hook
+            echo "│ Running postprovision hook..."
+            azd hooks run postprovision
+            echo "│ ✓ Postprovision hook completed"
+            echo ""
+            
+            echo "╰─────────────────────────────────────────────────────────────"
+            echo "✅ Dev Container tests passed!"
+
+      - name: 📋 Dev Container Test Summary
+        run: |
+          echo "## 🐳 Dev Container Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐳 Dev Container Build | ✓ Built |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔧 Tools Installed | ✓ Verified |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📜 Script Syntax | ✓ Validated |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 azd hooks run preprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 azd hooks run postprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This validates the same environment users get in **GitHub Codespaces**." >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
   # JOB: Integration Test (Requires Azure Auth - Optional)
   # ============================================================================
   integration-test:
@@ -690,7 +793,7 @@ jobs:
   summary:
     name: 📊 Test Summary
     runs-on: ubuntu-latest
-    needs: [lint, test-linux, test-macos, test-windows]
+    needs: [lint, test-linux, test-macos, test-windows, test-devcontainer]
     if: always()
     
     steps:
@@ -706,6 +809,7 @@ jobs:
           echo "| 🐧 Linux | ${{ needs.test-linux.result == 'success' && '🟢 Passed' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 🍎 macOS | ${{ needs.test-macos.result == 'success' && '🟢 Passed' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 🪟 Windows | ${{ needs.test-windows.result == 'success' && '🟢 Passed' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐳 Dev Container | ${{ needs.test-devcontainer.result == 'success' && '🟢 Passed' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Tested Scripts" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -717,7 +821,8 @@ jobs:
         run: |
           if [[ "${{ needs.test-linux.result }}" != "success" ]] || \
              [[ "${{ needs.test-macos.result }}" != "success" ]] || \
-             [[ "${{ needs.test-windows.result }}" != "success" ]]; then
+             [[ "${{ needs.test-windows.result }}" != "success" ]] || \
+             [[ "${{ needs.test-devcontainer.result }}" != "success" ]]; then
             echo "❌ Some platform tests failed"
             exit 1
           fi
