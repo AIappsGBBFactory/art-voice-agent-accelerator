@@ -90,6 +90,12 @@ jobs:
           which jq || sudo apt-get update && sudo apt-get install -y jq
           jq --version
 
+      - name: 🔧 Setup Azure CLI
+        run: |
+          # Azure CLI is pre-installed on GitHub runners, verify it
+          az version
+          echo "✅ Azure CLI available"
+
       - name: 🔧 Create Mock Environment
         run: |
           # Create azd environment without Azure login
@@ -101,6 +107,7 @@ jobs:
           AZURE_LOCATION="${{ env.AZURE_LOCATION }}"
           LOCAL_STATE="true"
           DB_INITIALIZED="true"
+          PREFLIGHT_LIVE_CHECKS="false"
           EOF
           
           echo "Created mock azd environment"
@@ -190,18 +197,44 @@ jobs:
             exit 1
           fi
 
-      - name: � Run Preprovision Hook via AZD
+      - name: 🚀 Run Preprovision Hook via AZD
         run: |
           # Initialize azd environment properly
           azd env select ${{ env.AZURE_ENV_NAME }} 2>/dev/null || azd env new ${{ env.AZURE_ENV_NAME }} --no-prompt
           azd env set AZURE_LOCATION ${{ env.AZURE_LOCATION }}
           azd env set LOCAL_STATE true
+          azd env set PREFLIGHT_LIVE_CHECKS false
+          
+          # Export vars for the hook script
+          export PREFLIGHT_LIVE_CHECKS=false
+          export LOCAL_STATE=true
           
           echo "Running: azd hooks run preprovision"
           azd hooks run preprovision
           
           echo ""
           echo "✅ Preprovision hook executed successfully via azd"
+
+      - name: � Run Postprovision Hook via AZD
+        run: |
+          # Use existing azd environment
+          azd env select ${{ env.AZURE_ENV_NAME }}
+          
+          # Set mock values that postprovision expects
+          azd env set DB_INITIALIZED true
+          azd env set AZURE_APPCONFIG_ENDPOINT "https://mock-appconfig.azconfig.io"
+          azd env set BACKEND_API_URL "https://mock-backend.azurecontainerapps.io"
+          
+          # Export vars for the hook script
+          export PREFLIGHT_LIVE_CHECKS=false
+          export LOCAL_STATE=true
+          export CI=true
+          
+          echo "Running: azd hooks run postprovision"
+          azd hooks run postprovision
+          
+          echo ""
+          echo "✅ Postprovision hook executed successfully via azd"
 
       - name: �📋 Linux Test Summary
         run: |
@@ -215,6 +248,7 @@ jobs:
           echo "| 🧪 Location Resolution | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
           echo "| 🧪 Backend Config | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
           echo "| 🚀 azd hooks run preprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 azd hooks run postprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: Test Hooks on macOS
@@ -236,6 +270,13 @@ jobs:
           which jq || brew install jq
           jq --version
 
+      - name: 🔧 Setup Azure CLI
+        run: |
+          # Install Azure CLI if not present
+          which az || brew install azure-cli
+          az version
+          echo "✅ Azure CLI available"
+
       - name: 🔧 Create Mock Environment
         run: |
           mkdir -p .azure/${{ env.AZURE_ENV_NAME }}
@@ -245,6 +286,7 @@ jobs:
           AZURE_LOCATION="${{ env.AZURE_LOCATION }}"
           LOCAL_STATE="true"
           DB_INITIALIZED="true"
+          PREFLIGHT_LIVE_CHECKS="false"
           EOF
 
       - name: 📜 Validate Script Syntax (preprovision.sh)
@@ -321,12 +363,17 @@ jobs:
             echo "❌ get_provider_regions function not found"
           fi
 
-      - name: � Run Preprovision Hook via AZD
+      - name: 🚀 Run Preprovision Hook via AZD
         run: |
           # Initialize azd environment properly
           azd env select ${{ env.AZURE_ENV_NAME }} 2>/dev/null || azd env new ${{ env.AZURE_ENV_NAME }} --no-prompt
           azd env set AZURE_LOCATION ${{ env.AZURE_LOCATION }}
           azd env set LOCAL_STATE true
+          azd env set PREFLIGHT_LIVE_CHECKS false
+          
+          # Export vars for the hook script
+          export PREFLIGHT_LIVE_CHECKS=false
+          export LOCAL_STATE=true
           
           echo "Running: azd hooks run preprovision"
           azd hooks run preprovision
@@ -334,7 +381,28 @@ jobs:
           echo ""
           echo "✅ Preprovision hook executed successfully via azd (macOS)"
 
-      - name: 📋 macOS Test Summary
+      - name: � Run Postprovision Hook via AZD
+        run: |
+          # Use existing azd environment
+          azd env select ${{ env.AZURE_ENV_NAME }}
+          
+          # Set mock values that postprovision expects
+          azd env set DB_INITIALIZED true
+          azd env set AZURE_APPCONFIG_ENDPOINT "https://mock-appconfig.azconfig.io"
+          azd env set BACKEND_API_URL "https://mock-backend.azurecontainerapps.io"
+          
+          # Export vars for the hook script
+          export PREFLIGHT_LIVE_CHECKS=false
+          export LOCAL_STATE=true
+          export CI=true
+          
+          echo "Running: azd hooks run postprovision"
+          azd hooks run postprovision
+          
+          echo ""
+          echo "✅ Postprovision hook executed successfully via azd (macOS)"
+
+      - name: �📋 macOS Test Summary
         run: |
           echo "## 🍎 macOS Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -345,6 +413,7 @@ jobs:
           echo "| 🧪 Logging Functions | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
           echo "| 🧪 Regional Checks | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
           echo "| 🚀 azd hooks run preprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 azd hooks run postprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: Test Hooks on Windows
@@ -366,6 +435,12 @@ jobs:
           echo "Git Bash version:"
           & "C:\Program Files\Git\bin\bash.exe" --version
 
+      - name: 🔧 Setup Azure CLI
+        run: |
+          # Azure CLI is pre-installed on Windows GitHub runners
+          az version
+          Write-Host "✅ Azure CLI available"
+
       - name: 🔧 Create Mock Environment
         shell: bash
         run: |
@@ -376,6 +451,7 @@ jobs:
           AZURE_LOCATION="${{ env.AZURE_LOCATION }}"
           LOCAL_STATE="true"
           DB_INITIALIZED="true"
+          PREFLIGHT_LIVE_CHECKS="false"
           EOF
 
       - name: 📜 Validate Script Syntax (preprovision.sh)
@@ -409,13 +485,18 @@ jobs:
           echo "✅ Windows/Git Bash logging functions work correctly"
         continue-on-error: true
 
-      - name: � Run Preprovision Hook via AZD
+      - name: 🚀 Run Preprovision Hook via AZD
         shell: bash
         run: |
           # Initialize azd environment properly
           azd env select ${{ env.AZURE_ENV_NAME }} 2>/dev/null || azd env new ${{ env.AZURE_ENV_NAME }} --no-prompt
           azd env set AZURE_LOCATION ${{ env.AZURE_LOCATION }}
           azd env set LOCAL_STATE true
+          azd env set PREFLIGHT_LIVE_CHECKS false
+          
+          # Export vars for the hook script
+          export PREFLIGHT_LIVE_CHECKS=false
+          export LOCAL_STATE=true
           
           echo "Running: azd hooks run preprovision"
           azd hooks run preprovision
@@ -423,7 +504,29 @@ jobs:
           echo ""
           echo "✅ Preprovision hook executed successfully via azd (Windows)"
 
-      - name: 📋 Windows Test Summary
+      - name: � Run Postprovision Hook via AZD
+        shell: bash
+        run: |
+          # Use existing azd environment
+          azd env select ${{ env.AZURE_ENV_NAME }}
+          
+          # Set mock values that postprovision expects
+          azd env set DB_INITIALIZED true
+          azd env set AZURE_APPCONFIG_ENDPOINT "https://mock-appconfig.azconfig.io"
+          azd env set BACKEND_API_URL "https://mock-backend.azurecontainerapps.io"
+          
+          # Export vars for the hook script
+          export PREFLIGHT_LIVE_CHECKS=false
+          export LOCAL_STATE=true
+          export CI=true
+          
+          echo "Running: azd hooks run postprovision"
+          azd hooks run postprovision
+          
+          echo ""
+          echo "✅ Postprovision hook executed successfully via azd (Windows)"
+
+      - name: �📋 Windows Test Summary
         shell: bash
         run: |
           echo "## 🪟 Windows Test Results" >> $GITHUB_STEP_SUMMARY
@@ -434,6 +537,7 @@ jobs:
           echo "| 📜 Helper Scripts | ✓ Validated |" >> $GITHUB_STEP_SUMMARY
           echo "| 🧪 Logging Functions | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
           echo "| 🚀 azd hooks run preprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 azd hooks run postprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: Integration Test (Requires Azure Auth - Optional)
