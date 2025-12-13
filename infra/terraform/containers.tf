@@ -60,6 +60,19 @@ resource "azurerm_container_app_environment" "main" {
 # CONTAINER APPS
 # ============================================================================
 
+# Normalize memory format to match Azure API response (e.g., "4Gi" -> "4.0Gi")
+# This prevents frivolous Terraform updates due to format differences
+locals {
+  # Ensure memory format includes decimal (Azure returns "4.0Gi", not "4Gi")
+  normalized_backend_memory = replace(
+    var.container_memory_gb,
+    "/^([0-9]+)(Gi)$/",
+    "$1.0$2"
+  )
+  # Frontend uses fixed 1Gi
+  normalized_frontend_memory = "1.0Gi"
+}
+
 # Frontend Container App
 resource "azurerm_container_app" "frontend" {
   name                         = "${var.name}-frontend-${local.resource_token}"
@@ -106,7 +119,7 @@ resource "azurerm_container_app" "frontend" {
       name   = "main"
       image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
       cpu    = 0.5
-      memory = "1.0Gi"
+      memory = local.normalized_frontend_memory
 
       # Azure App Configuration (PRIMARY CONFIG SOURCE)
       env {
@@ -176,7 +189,7 @@ resource "azurerm_container_app" "backend" {
       name   = "main"
       image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
       cpu    = var.container_cpu_cores
-      memory = var.container_memory_gb
+      memory = local.normalized_backend_memory
 
       # ======================================================================
       # BOOTSTRAP ENVIRONMENT VARIABLES
