@@ -190,17 +190,31 @@ jobs:
             exit 1
           fi
 
-      - name: 📋 Linux Test Summary
+      - name: � Run Preprovision Hook via AZD
+        run: |
+          # Initialize azd environment properly
+          azd env select ${{ env.AZURE_ENV_NAME }} 2>/dev/null || azd env new ${{ env.AZURE_ENV_NAME }} --no-prompt
+          azd env set AZURE_LOCATION ${{ env.AZURE_LOCATION }}
+          azd env set LOCAL_STATE true
+          
+          echo "Running: azd hooks run preprovision"
+          azd hooks run preprovision
+          
+          echo ""
+          echo "✅ Preprovision hook executed successfully via azd"
+
+      - name: �📋 Linux Test Summary
         run: |
           echo "## 🐧 Linux Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Script Syntax | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Helper Scripts | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Logging Functions | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Location Resolution | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Backend Config | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📜 Script Syntax | ✓ Validated |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📜 Helper Scripts | ✓ Validated |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Logging Functions | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Location Resolution | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Backend Config | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 azd hooks run preprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: Test Hooks on macOS
@@ -307,16 +321,30 @@ jobs:
             echo "❌ get_provider_regions function not found"
           fi
 
+      - name: � Run Preprovision Hook via AZD
+        run: |
+          # Initialize azd environment properly
+          azd env select ${{ env.AZURE_ENV_NAME }} 2>/dev/null || azd env new ${{ env.AZURE_ENV_NAME }} --no-prompt
+          azd env set AZURE_LOCATION ${{ env.AZURE_LOCATION }}
+          azd env set LOCAL_STATE true
+          
+          echo "Running: azd hooks run preprovision"
+          azd hooks run preprovision
+          
+          echo ""
+          echo "✅ Preprovision hook executed successfully via azd (macOS)"
+
       - name: 📋 macOS Test Summary
         run: |
           echo "## 🍎 macOS Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Script Syntax | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Helper Scripts | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Logging Functions | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Regional Checks | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📜 Script Syntax | ✓ Validated |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📜 Helper Scripts | ✓ Validated |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Logging Functions | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Regional Checks | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 azd hooks run preprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: Test Hooks on Windows
@@ -381,6 +409,20 @@ jobs:
           echo "✅ Windows/Git Bash logging functions work correctly"
         continue-on-error: true
 
+      - name: � Run Preprovision Hook via AZD
+        shell: bash
+        run: |
+          # Initialize azd environment properly
+          azd env select ${{ env.AZURE_ENV_NAME }} 2>/dev/null || azd env new ${{ env.AZURE_ENV_NAME }} --no-prompt
+          azd env set AZURE_LOCATION ${{ env.AZURE_LOCATION }}
+          azd env set LOCAL_STATE true
+          
+          echo "Running: azd hooks run preprovision"
+          azd hooks run preprovision
+          
+          echo ""
+          echo "✅ Preprovision hook executed successfully via azd (Windows)"
+
       - name: 📋 Windows Test Summary
         shell: bash
         run: |
@@ -388,9 +430,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Script Syntax | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Helper Scripts | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| Logging Functions | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📜 Script Syntax | ✓ Validated |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📜 Helper Scripts | ✓ Validated |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Logging Functions | ✓ Tested |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 azd hooks run preprovision | ✓ Executed |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: Integration Test (Requires Azure Auth - Optional)
@@ -532,10 +575,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Azure Login | ${{ steps.azure-login.outcome == 'success' && '✅ Success' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Live Region Checks | ${{ steps.azure-login.outcome == 'success' && '✅ Tested' || '⏭️ Skipped (no auth)' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Cached Region Checks | ✅ Tested |" >> $GITHUB_STEP_SUMMARY
-          echo "| Preprovision Hook | ✅ Tested |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔐 Azure Login | ${{ steps.azure-login.outcome == 'success' && '🟢 Authenticated' || '⚪ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌍 Live Region Checks | ${{ steps.azure-login.outcome == 'success' && '🟢 Tested' || '⚪ Skipped (no auth)' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Cached Region Checks | 🟢 Tested |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 Preprovision Hook | 🟢 Executed |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: Summary
@@ -555,10 +598,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔍 Lint | ${{ needs.lint.result == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🐧 Linux | ${{ needs.test-linux.result == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🍎 macOS | ${{ needs.test-macos.result == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🪟 Windows | ${{ needs.test-windows.result == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔍 Lint | ${{ needs.lint.result == 'success' && '🟢 Passed' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐧 Linux | ${{ needs.test-linux.result == 'success' && '🟢 Passed' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🍎 macOS | ${{ needs.test-macos.result == 'success' && '🟢 Passed' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🪟 Windows | ${{ needs.test-windows.result == 'success' && '🟢 Passed' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Tested Scripts" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
