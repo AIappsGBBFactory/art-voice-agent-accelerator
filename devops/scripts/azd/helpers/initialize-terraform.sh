@@ -108,6 +108,26 @@ create_storage() {
             --min-tls-version TLS1_2 \
             --tags "SecurityControl=Ignore" \
             --output none
+        
+        # Wait for storage account to be fully provisioned
+        log_info "Waiting for storage account to be ready..."
+        local max_wait=60
+        local waited=0
+        while [[ $waited -lt $max_wait ]]; do
+            local state
+            state=$(az storage account show --name "$storage_account" --resource-group "$resource_group" --query "provisioningState" -o tsv 2>/dev/null || echo "")
+            if [[ "$state" == "Succeeded" ]]; then
+                log_success "Storage account is ready"
+                break
+            fi
+            log_info "Storage account provisioning state: $state (waiting...)"
+            sleep 5
+            waited=$((waited + 5))
+        done
+        
+        if [[ $waited -ge $max_wait ]]; then
+            log_warning "Storage account may not be fully ready after ${max_wait}s, proceeding anyway"
+        fi
             
         # Enable versioning and change feed (best-effort)
         # Some Azure CLI versions/extensions may hit InvalidApiVersionParameter; do not fail setup.
@@ -127,37 +147,93 @@ create_storage() {
         fi
     fi
     
-    # Create container
-    if ! az storage container show \
-        --name "$container" \
-        --account-name "$storage_account" \
-        --auth-mode login &> /dev/null; then
-        log_info "Creating storage container: $container"
-        az storage container create \
-            --name "$container" \
-            --account-name "$storage_account" \
-            --auth-mode login \
-            --output none
-    fi
-    
     # Assign permissions
     local user_id=$(az ad signed-in-user show --query id -o tsv)
     local storage_id=$(az storage account show \
         --name "$storage_account" \
         --resource-group "$resource_group" \
         --query id -o tsv)
-        
-    if ! az role assignment list \
+    
+    local role_exists
+    role_exists=$(az role assignment list \
         --assignee "$user_id" \
         --scope "$storage_id" \
         --role "Storage Blob Data Contributor" \
-        --query "length(@)" -o tsv | grep -q "1"; then
+        --query "length(@)" -o tsv 2>/dev/null || echo "0")
+        
+    if [[ "$role_exists" != "1" ]]; then
         log_info "Assigning storage permissions..."
         az role assignment create \
             --assignee "$user_id" \
             --role "Storage Blob Data Contributor" \
             --scope "$storage_id" \
             --output none
+        
+        # Wait for RBAC role assignment to propagate
+        # Azure RBAC can take 1-5 minutes to propagate; we wait up to 90 seconds
+        log_info "Waiting for RBAC role assignment to propagate..."
+        local max_rbac_wait=90
+        local rbac_waited=0
+        local rbac_ready=false
+        
+        while [[ $rbac_waited -lt $max_rbac_wait ]]; do
+            # Test if we can actually access the storage with the new role
+            if az storage container list \
+                --account-name "$storage_account" \
+                --auth-mode login \
+                -o none 2>/dev/null; then
+                log_success "RBAC role assignment is active"
+                rbac_ready=true
+                break
+            fi
+            log_info "RBAC propagation in progress... (${rbac_waited}s/${max_rbac_wait}s)"
+            sleep 10
+            rbac_waited=$((rbac_waited + 10))
+        done
+        
+        if [[ "$rbac_ready" != "true" ]]; then
+            log_warning "RBAC role may not be fully propagated after ${max_rbac_wait}s"
+            log_warning "If you encounter permission errors, wait a few minutes and retry"
+        fi
+    else
+        log_info "Storage permissions already assigned"
+    fi
+    
+    # Create container
+    if ! az storage container show \
+        --name "$container" \
+        --account-name "$storage_account" \
+        --auth-mode login &> /dev/null; then
+        log_info "Creating storage container: $container"
+        
+        # Retry container creation a few times in case RBAC is still propagating
+        local container_created=false
+        local container_retries=3
+        for ((i=1; i<=container_retries; i++)); do
+            if az storage container create \
+                --name "$container" \
+                --account-name "$storage_account" \
+                --auth-mode login \
+                --output none 2>/dev/null; then
+                container_created=true
+                log_success "Storage container created"
+                break
+            else
+                if [[ $i -lt $container_retries ]]; then
+                    log_warning "Container creation failed (attempt $i/$container_retries), retrying in 10s..."
+                    sleep 10
+                fi
+            fi
+        done
+        
+        if [[ "$container_created" != "true" ]]; then
+            log_error "Failed to create storage container after $container_retries attempts"
+            log_error "This may be due to RBAC propagation delay. Please wait a few minutes and run:"
+            log_error "  az storage container create --name $container --account-name $storage_account --auth-mode login"
+            return 1
+        fi
+    else
+        log_info "Storage container already exists"
     fi
 }
 
@@ -262,8 +338,19 @@ main() {
     local storage_account=$(get_azd_env "RS_STORAGE_ACCOUNT")
     local container=$(get_azd_env "RS_CONTAINER_NAME")
     local resource_group=$(get_azd_env "RS_RESOURCE_GROUP")
+    local state_key=$(get_azd_env "RS_STATE_KEY")
     
-    # If all remote state config exists AND storage account exists, use it
+    # If all 4 remote state config values are set, skip setup entirely
+    if [[ -n "$storage_account" ]] && [[ -n "$container" ]] && [[ -n "$resource_group" ]] && [[ -n "$state_key" ]]; then
+        log_success "Remote state already configured - skipping setup"
+        log_info "  Storage Account: $storage_account"
+        log_info "  Container: $container" 
+        log_info "  Resource Group: $resource_group"
+        log_info "  State Key: $state_key"
+        return 0
+    fi
+    
+    # Partial or no config - need to set up
     if [[ -n "$storage_account" ]] && [[ -n "$container" ]] && [[ -n "$resource_group" ]] && storage_exists "$storage_account" "$resource_group"; then
         log_success "Using existing remote state configuration"
         log_info "Storage Account: $storage_account"
@@ -338,14 +425,44 @@ main() {
                 container="${custom_container:-$container}"
                 
                 echo ""
-                log_info "Using custom configuration:"
+                log_info "Using existing remote state configuration:"
                 log_info "   Resource Group:  $resource_group"
                 log_info "   Storage Account: $storage_account"
                 log_info "   Container:       $container"
+                
+                # For existing resources, just set the variables and let Terraform validate
+                # Don't try to create anything - the user says these already exist
+                azd env set RS_STORAGE_ACCOUNT "$storage_account"
+                azd env set RS_CONTAINER_NAME "$container"
+                azd env set RS_RESOURCE_GROUP "$resource_group"
+                azd env set RS_STATE_KEY "$env_name.tfstate"
+                
+                log_success "Remote state configuration saved"
+                echo ""
+                log_info "Terraform will validate connectivity during 'terraform init'"
+                log_info "If you see authentication errors, ensure you have 'Storage Blob Data Contributor'"
+                log_info "role on the storage account."
+                echo ""
+                
+                # Skip create_storage - jump directly to success
+                echo ""
+                log_success "✅ Terraform remote state setup completed!"
+                echo ""
+                echo "📋 Configuration:"
+                echo "   Storage Account: $storage_account"
+                echo "   Container: $container"
+                echo "   Resource Group: $resource_group"
+                echo ""
+                echo "📁 Files created/updated:"
+                echo "   - infra/terraform/provider.conf.json"
+                echo ""
+                echo "💡 Terraform variables (environment_name, location) are provided via"
+                echo "   TF_VAR_* environment variables from preprovision.sh"
+                return 0
                 ;;
         esac
         
-        # Create the storage resources
+        # Create the storage resources (only for "Y" option - new resources)
         create_storage "$storage_account" "$container" "$resource_group" "$location"
         
         # Set azd environment variables
