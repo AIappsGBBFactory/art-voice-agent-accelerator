@@ -48,9 +48,13 @@ check_required_tools() {
     local tool_checks=(
         "az:Azure CLI:https://docs.microsoft.com/cli/azure/install-azure-cli"
         "azd:Azure Developer CLI:https://aka.ms/azd-install"
-        "docker:Docker:https://docs.docker.com/get-docker/"
         "jq:jq (JSON processor):https://jqlang.github.io/jq/download/"
     )
+    
+    # Docker is optional in CI mode
+    if [[ "${CI:-}" != "true" ]]; then
+        tool_checks+=("docker:Docker:https://docs.docker.com/get-docker/")
+    fi
     
     for tool_info in "${tool_checks[@]}"; do
         IFS=':' read -r cmd name url <<< "$tool_info"
@@ -69,6 +73,17 @@ check_required_tools() {
             missing_tools+=("$name|$url")
         fi
     done
+    
+    # Check Docker separately in CI mode (warn only)
+    if [[ "${CI:-}" == "true" ]]; then
+        if command -v docker &>/dev/null; then
+            local version
+            version=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
+            log "  ✓ Docker ($version)"
+        else
+            log "  ⚪ Docker - skipped (CI mode)"
+        fi
+    fi
     
     # Optional tools (warn but don't fail)
     local optional_tools=(
