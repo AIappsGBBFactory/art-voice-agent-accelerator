@@ -121,6 +121,44 @@ check_required_tools() {
 }
 
 # ============================================================================
+# Azure CLI Extensions
+# ============================================================================
+
+install_required_extensions() {
+    log "Checking Azure CLI extensions..."
+    
+    # Extensions needed for quota checks and resource management
+    # Format: name:display_name:description
+    local extensions=(
+        "quota:Azure Quota:Required for quota checks"
+        "redisenterprise:Redis Enterprise:Required for Azure Managed Redis"
+        "cosmosdb-preview:Cosmos DB Preview:Required for MongoDB vCore"
+    )
+    
+    for ext_info in "${extensions[@]}"; do
+        local ext_name display_name description
+        IFS=':' read -r ext_name display_name description <<< "$ext_info"
+        
+        # Check if extension is installed
+        if az extension show --name "$ext_name" &>/dev/null; then
+            local version
+            version=$(az extension show --name "$ext_name" --query version -o tsv 2>/dev/null || echo "installed")
+            log "  ✓ $display_name extension ($version)"
+        else
+            log "  Installing $display_name extension..."
+            if az extension add --name "$ext_name" --yes 2>/dev/null; then
+                log "  ✓ $display_name extension installed"
+            else
+                warn "  ⚠ Could not install $display_name extension ($description)"
+            fi
+        fi
+    done
+    
+    success "Azure CLI extensions ready"
+    return 0
+}
+
+# ============================================================================
 # Azure Authentication Check
 # ============================================================================
 
@@ -286,23 +324,23 @@ check_resource_providers() {
     return 0
 }
 
-# ============================================================================
-# Docker Check
-# ============================================================================
+# # ============================================================================
+# # Docker Check - handled by azd package
+# # ============================================================================
 
-check_docker_running() {
-    log "Checking Docker daemon..."
+# check_docker_running() {
+#     log "Checking Docker daemon..."
     
-    if ! docker info &>/dev/null; then
-        fail "Docker daemon is not running"
-        fail "Please start Docker Desktop or the Docker service"
-        return 1
-    fi
+#     if ! docker info &>/dev/null; then
+#         fail "Docker daemon is not running"
+#         fail "Please start Docker Desktop or the Docker service"
+#         return 1
+#     fi
     
-    log "  ✓ Docker daemon running"
-    success "Docker ready"
-    return 0
-}
+#     log "  ✓ Docker daemon running"
+#     success "Docker ready"
+#     return 0
+# }
 
 # ============================================================================
 # Line Ending Fix (dos2unix)
@@ -564,41 +602,108 @@ check_all_openai_quotas() {
 
 # Check Cosmos DB MongoDB vCore quota (subscription-level check)
 # Note: MongoDB vCore has per-subscription limits, not regional quotas
-# This check is skipped by default as it can be slow
+# Usage: check_cosmosdb_vcore_quota <location> [sku]
 check_cosmosdb_vcore_quota() {
     local location="$1"
     local sku="${2:-M30}"
     
     # MongoDB vCore clusters are limited per subscription (default: 25 clusters)
-    # Skip the slow API call and return success - quota issues will surface during deployment
-    # The az cosmosdb mongocluster list command can be very slow (30s+)
-    echo "0|25"
-    return 0
+    # This check can be slow (10-30s) so it's only run with PREFLIGHT_DEEP_CHECKS=true
+    local deep_checks="${PREFLIGHT_DEEP_CHECKS:-false}"
+    
+    if [[ "$deep_checks" != "true" ]]; then
+        echo "skipped"
+        return 2  # Skipped
+    fi
+    
+    # Count existing MongoDB vCore clusters
+    local current_count
+    current_count=$(az cosmosdb mongocluster list --query "length(@)" -o tsv 2>/dev/null || echo "")
+    
+    if [[ -z "$current_count" ]]; then
+        echo "skipped"
+        return 2
+    fi
+    
+    local limit=25  # Default subscription limit
+    local available=$((limit - current_count))
+    
+    echo "$current_count|$limit"
+    if [[ $available -ge 1 ]]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 # Check Azure Managed Redis capacity
 # Note: Redis Enterprise has subscription quotas managed via Azure Portal
-# This check is skipped by default as it can be slow
+# Usage: check_redis_quota <location> [sku]
 check_redis_quota() {
     local location="$1"
     local sku="${2:-MemoryOptimized_M10}"
     
-    # Skip the slow API call and return success - quota issues will surface during deployment
-    # The az redisenterprise list command can be very slow
-    echo "0|10"
-    return 0
+    # This check can be slow so it's only run with PREFLIGHT_DEEP_CHECKS=true
+    local deep_checks="${PREFLIGHT_DEEP_CHECKS:-false}"
+    
+    if [[ "$deep_checks" != "true" ]]; then
+        echo "skipped"
+        return 2  # Skipped
+    fi
+    
+    # Count existing Redis Enterprise clusters
+    local current_count
+    current_count=$(az redisenterprise list --query "length(@)" -o tsv 2>/dev/null || echo "")
+    
+    if [[ -z "$current_count" ]]; then
+        echo "skipped"
+        return 2
+    fi
+    
+    local limit=10  # Default subscription limit
+    local available=$((limit - current_count))
+    
+    echo "$current_count|$limit"
+    if [[ $available -ge 1 ]]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 # Check Container Apps quota (vCPU cores per subscription per region)
-# This check is skipped by default as it can be slow
+# Usage: check_container_apps_quota <location> [required_vcpus]
 check_container_apps_quota() {
     local location="$1"
     local required_vcpus="${2:-10}"  # Min 5 replicas * 2 vCPU = 10 vCPU minimum
     
-    # Skip the slow API call and return success - quota issues will surface during deployment
-    # The az containerapp list command can be slow across large subscriptions
-    echo "0|100"
-    return 0
+    # This check can be slow so it's only run with PREFLIGHT_DEEP_CHECKS=true
+    local deep_checks="${PREFLIGHT_DEEP_CHECKS:-false}"
+    
+    if [[ "$deep_checks" != "true" ]]; then
+        echo "skipped"
+        return 2  # Skipped
+    fi
+    
+    # Query Container Apps vCPU usage in the region
+    # Note: This requires listing all container apps and summing their vCPUs
+    local total_vcpus=0
+    local apps_json
+    apps_json=$(az containerapp list --query "[?location=='$location'].{cpu:properties.template.containers[0].resources.cpu}" -o json 2>/dev/null || echo "[]")
+    
+    if [[ "$apps_json" != "[]" && -n "$apps_json" ]]; then
+        total_vcpus=$(echo "$apps_json" | jq '[.[].cpu // 0 | tonumber] | add // 0' 2>/dev/null || echo "0")
+    fi
+    
+    local limit=100  # Default regional limit
+    local available=$((limit - total_vcpus))
+    
+    echo "$total_vcpus|$limit"
+    if [[ $available -ge $required_vcpus ]]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 # Main quota checking function
@@ -634,25 +739,79 @@ check_resource_quotas() {
     fi
     
     # -------------------------------------------------------------------------
-    # Cosmos DB MongoDB vCore Quota (informational - skipped for speed)
+    # Cosmos DB MongoDB vCore Quota
     # -------------------------------------------------------------------------
     log ""
     log "  Cosmos DB MongoDB vCore:"
-    log "    ⚪ Quota check skipped (subscription limit: ~25 clusters)"
+    local cosmos_result
+    cosmos_result=$(check_cosmosdb_vcore_quota "$location")
+    local cosmos_status=$?
+    
+    if [[ $cosmos_status -eq 2 ]]; then
+        log "    ⚪ Quota check skipped (set PREFLIGHT_DEEP_CHECKS=true to enable)"
+        log "    ℹ️  Subscription limit: ~25 clusters"
+    elif [[ $cosmos_status -eq 0 ]]; then
+        local cosmos_used cosmos_limit
+        cosmos_used=$(echo "$cosmos_result" | cut -d'|' -f1)
+        cosmos_limit=$(echo "$cosmos_result" | cut -d'|' -f2)
+        log "    ✓ Using $cosmos_used/$cosmos_limit clusters"
+    else
+        local cosmos_used cosmos_limit
+        cosmos_used=$(echo "$cosmos_result" | cut -d'|' -f1)
+        cosmos_limit=$(echo "$cosmos_result" | cut -d'|' -f2)
+        warn "    ⚠ Cluster limit reached: $cosmos_used/$cosmos_limit"
+        quota_warnings=$((quota_warnings + 1))
+    fi
     
     # -------------------------------------------------------------------------
-    # Azure Managed Redis Quota (informational - skipped for speed)
+    # Azure Managed Redis Quota
     # -------------------------------------------------------------------------
     log ""
     log "  Azure Managed Redis:"
-    log "    ⚪ Quota check skipped (subscription limit: ~10 clusters)"
+    local redis_result
+    redis_result=$(check_redis_quota "$location")
+    local redis_status=$?
+    
+    if [[ $redis_status -eq 2 ]]; then
+        log "    ⚪ Quota check skipped (set PREFLIGHT_DEEP_CHECKS=true to enable)"
+        log "    ℹ️  Subscription limit: ~10 clusters"
+    elif [[ $redis_status -eq 0 ]]; then
+        local redis_used redis_limit
+        redis_used=$(echo "$redis_result" | cut -d'|' -f1)
+        redis_limit=$(echo "$redis_result" | cut -d'|' -f2)
+        log "    ✓ Using $redis_used/$redis_limit clusters"
+    else
+        local redis_used redis_limit
+        redis_used=$(echo "$redis_result" | cut -d'|' -f1)
+        redis_limit=$(echo "$redis_result" | cut -d'|' -f2)
+        warn "    ⚠ Cluster limit reached: $redis_used/$redis_limit"
+        quota_warnings=$((quota_warnings + 1))
+    fi
     
     # -------------------------------------------------------------------------
-    # Container Apps vCPU Quota (informational - skipped for speed)
+    # Container Apps vCPU Quota
     # -------------------------------------------------------------------------
     log ""
     log "  Azure Container Apps:"
-    log "    ⚪ Quota check skipped (regional limit: ~100 vCPU)"
+    local aca_result
+    aca_result=$(check_container_apps_quota "$location" 10)
+    local aca_status=$?
+    
+    if [[ $aca_status -eq 2 ]]; then
+        log "    ⚪ Quota check skipped (set PREFLIGHT_DEEP_CHECKS=true to enable)"
+        log "    ℹ️  Regional limit: ~100 vCPU"
+    elif [[ $aca_status -eq 0 ]]; then
+        local aca_used aca_limit
+        aca_used=$(echo "$aca_result" | cut -d'|' -f1)
+        aca_limit=$(echo "$aca_result" | cut -d'|' -f2)
+        log "    ✓ Using $aca_used/$aca_limit vCPU in $location"
+    else
+        local aca_used aca_limit
+        aca_used=$(echo "$aca_result" | cut -d'|' -f1)
+        aca_limit=$(echo "$aca_result" | cut -d'|' -f2)
+        warn "    ⚠ vCPU limit may be insufficient: $aca_used/$aca_limit (need ~10)"
+        quota_warnings=$((quota_warnings + 1))
+    fi
     
     log ""
     
@@ -843,19 +1002,19 @@ check_regional_availability() {
     fi
     
     # -------------------------------------------------------------------------
-    # Azure Cache for Redis - Query via Azure CLI
+    # Azure Managed Redis (Enterprise) - Query via Azure CLI
     # -------------------------------------------------------------------------
     if [[ "$use_live_checks" == "true" ]]; then
-        log "  Querying Azure for Redis Cache availability..."
-        if check_provider_region "Microsoft.Cache" "redisenterprise" "$location"; then
-            log "  ✓ Azure Cache for Redis (live check)"
+        log "  Querying Azure for Managed Redis availability..."
+        if check_provider_region "Microsoft.Cache" "redisEnterprise" "$location"; then
+            log "  ✓ Azure Managed Redis (live check)"
         else
-            warn "  ⚠ Azure Cache for Redis may not be available in $location"
+            warn "  ⚠ Azure Managed Redis may not be available in $location"
             warnings=$((warnings + 1))
         fi
     else
-        # Redis is broadly available, assume it's available
-        log "  ✓ Azure Cache for Redis (cached)"
+        # Redis Enterprise is broadly available, assume it's available
+        log "  ✓ Azure Managed Redis (cached)"
     fi
     
     log ""
@@ -904,14 +1063,14 @@ run_preflight_checks() {
     fi
     log ""
     
-    # 2. Check Docker is running (skip in CI - may not have Docker)
-    if [[ "${CI:-}" == "true" ]]; then
-        info "Skipping Docker check (CI mode)"
-    elif ! check_docker_running; then
-        warn "Docker not running - some features may not work"
-        # Don't fail for Docker in CI
-    fi
-    log ""
+    # # 2. Check Docker is running (skip in CI - may not have Docker)
+    # if [[ "${CI:-}" == "true" ]]; then
+    #     info "Skipping Docker check (CI mode)"
+    # elif ! check_docker_running; then
+    #     warn "Docker not running - some features may not work"
+    #     # Don't fail for Docker in CI
+    # fi
+    # log ""
     
     # 3-5. Azure auth checks (skip in CI mode without credentials)
     if [[ "$skip_azure_checks" == "false" ]]; then
@@ -922,6 +1081,10 @@ run_preflight_checks() {
         if ! check_azure_auth; then
             failed=1
         fi
+        log ""
+        
+        # 3b. Install required Azure CLI extensions
+        install_required_extensions
         log ""
         
         # 4. Configure subscription and ARM_SUBSCRIPTION_ID

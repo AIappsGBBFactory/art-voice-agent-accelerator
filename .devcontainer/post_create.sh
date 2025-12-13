@@ -44,17 +44,17 @@ source "$HOME/.local/bin/env" 2>/dev/null || export PATH="$HOME/.local/bin:$PATH
 # =============================================================================
 # Install Bicep CLI (multi-arch)
 # =============================================================================
-echo "📦 Installing Bicep CLI..."
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    BICEP_URL="https://github.com/Azure/bicep/releases/latest/download/bicep-linux-arm64"
-else
-    BICEP_URL="https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64"
-fi
+# echo "📦 Installing Bicep CLI..."
+# if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+#     BICEP_URL="https://github.com/Azure/bicep/releases/latest/download/bicep-linux-arm64"
+# else
+#     BICEP_URL="https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64"
+# fi
 
-curl -Lo bicep "$BICEP_URL"
-chmod +x ./bicep
-sudo mv ./bicep /usr/local/bin/bicep
-echo "✅ Bicep installed: $(bicep --version)"
+# curl -Lo bicep "$BICEP_URL"
+# chmod +x ./bicep
+# sudo mv ./bicep /usr/local/bin/bicep
+# echo "✅ Bicep installed: $(bicep --version)"
 
 # =============================================================================
 # Install system dependencies for Python packages
