@@ -51,6 +51,35 @@ winget install jqlang.jq
 
 ---
 
+### "bad interpreter" or script execution errors (Windows line endings)
+
+**Error:** `/bin/bash^M: bad interpreter: No such file or directory`
+
+This happens when scripts have Windows-style line endings (CRLF instead of LF).
+
+**Fix:**
+
+```bash
+# Option 1: Use the built-in helper function
+cd devops/scripts/azd/helpers
+source preflight-checks.sh
+fix_line_endings  # Fixes all .sh files in devops/scripts/
+
+# Option 2: Fix a single file
+fix_file_line_endings devops/scripts/azd/preprovision.sh
+
+# Option 3: Manual fix with sed (macOS)
+sed -i '' 's/\r$//' devops/scripts/azd/*.sh
+
+# Option 3: Manual fix with sed (Linux)
+sed -i 's/\r$//' devops/scripts/azd/*.sh
+
+# Prevent future issues
+git config --global core.autocrlf input
+```
+
+---
+
 ### `MissingSubscriptionRegistration` for Azure providers
 
 **Error:** `The subscription is not registered to use namespace 'Microsoft.Communication'`
