@@ -207,6 +207,44 @@ curl -v http://localhost:8010/health
 
 ---
 
+## Documentation (MkDocs)
+
+### `cannot find module 'material.extensions.emoji'` or `'mermaid2'`
+
+**Error:** MkDocs fails with module not found errors when building documentation.
+
+**Cause:** The docs dependencies are in an optional dependency group and need to be installed separately.
+
+**Fix:** Install docs dependencies using uv (recommended):
+
+```bash
+# Install with docs extras
+uv pip install -e ".[docs]"
+
+# Or use pip
+pip install -e ".[docs]"
+```
+
+**Required packages** (defined in `pyproject.toml` under `[project.optional-dependencies].docs`):
+
+- `mkdocs>=1.6.1`
+- `mkdocs-material>=9.4.0`
+- `mkdocstrings[python]>=0.20.0`
+- `pymdown-extensions>=10.0.0`
+- `mkdocs-mermaid2-plugin>=1.2.2`
+- `neoteroi-mkdocs==1.1.3`
+
+**Build the docs:**
+
+```bash
+mkdocs build -f docs/mkdocs.yml
+
+# Or serve locally with live reload
+mkdocs serve -f docs/mkdocs.yml
+```
+
+---
+
 ## Need More Help?
 
 - **Full Troubleshooting Guide:** [docs/operations/troubleshooting.md](docs/operations/troubleshooting.md)
