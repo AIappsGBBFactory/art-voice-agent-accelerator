@@ -705,16 +705,14 @@ class LiveOrchestrator:
                 session_id,
             )
         
-        # Only broadcast session_updated to UI when agent actually changes
-        if agent_changed and self.messenger:
-            try:
-                await self.messenger.send_session_update(
-                    agent_name=self.active,
-                    session_obj=session_obj,
-                    transport=self._transport,
-                )
-            except Exception:
-                logger.debug("Failed to emit session update envelope", exc_info=True)
+        # NOTE: We do NOT broadcast session_updated here because set_active_agent()
+        # already emits an agent_change envelope in _switch_to(). The frontend treats
+        # both events the same way, so emitting both causes duplicate UI updates.
+        # The session_updated event was previously causing the "SESSION UPDATED" spam
+        # in the UI even when only routine context updates occurred.
+        #
+        # If you need to broadcast session config changes (voice, VAD settings, etc.)
+        # to the UI, consider a separate mechanism that doesn't overlap with agent_change.
 
         # Only reset audio state for agent switches (not context refreshes)
         if agent_changed:
