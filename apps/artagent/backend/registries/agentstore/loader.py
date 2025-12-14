@@ -143,34 +143,33 @@ def load_agent(
     # =========================================================================
     # MODEL CONFIGURATION - Support mode-specific models
     # =========================================================================
-    # Priority:
-    #   - voicelive_model (if in voice_live mode)
-    #   - cascade_model (if in media/cascade mode)
-    #   - model (fallback for both modes)
+    # Load all model configs:
+    #   - model: fallback/default config
+    #   - voicelive_model: for VoiceLive/realtime mode
+    #   - cascade_model: for Cascade/media mode
     # =========================================================================
-    
-    # Determine which model config to use based on streaming mode
-    mode_specific_key = None
-    if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
-        mode_specific_key = "voicelive_model"
-    elif ACS_STREAMING_MODE == StreamMode.MEDIA:
-        mode_specific_key = "cascade_model"
-    
-    # Try mode-specific config first, then fall back to generic "model"
-    model_raw = {}
-    if mode_specific_key and mode_specific_key in raw:
-        model_raw = _deep_merge(defaults.get("model", {}), raw[mode_specific_key])
+
+    # Load default/fallback model config
+    model_raw = _deep_merge(defaults.get("model", {}), raw.get("model", {}))
+
+    # Load mode-specific model configs (if present in YAML)
+    voicelive_model_raw = None
+    cascade_model_raw = None
+
+    if "voicelive_model" in raw:
+        voicelive_model_raw = _deep_merge(defaults.get("model", {}), raw["voicelive_model"])
         logger.debug(
-            f"Using {mode_specific_key} for agent {identity['name']}: "
-            f"deployment_id={raw[mode_specific_key].get('deployment_id')}"
+            f"Loaded voicelive_model for agent {identity['name']}: "
+            f"deployment_id={raw['voicelive_model'].get('deployment_id')}"
         )
-    else:
-        model_raw = _deep_merge(defaults.get("model", {}), raw.get("model", {}))
-        if mode_specific_key:
-            logger.debug(
-                f"No {mode_specific_key} found, using generic 'model' for agent {identity['name']}"
-            )
-    
+
+    if "cascade_model" in raw:
+        cascade_model_raw = _deep_merge(defaults.get("model", {}), raw["cascade_model"])
+        logger.debug(
+            f"Loaded cascade_model for agent {identity['name']}: "
+            f"deployment_id={raw['cascade_model'].get('deployment_id')}"
+        )
+
     # Merge with defaults for voice, speech, session
     voice_raw = _deep_merge(defaults.get("voice", {}), raw.get("voice", {}))
     speech_raw = _deep_merge(defaults.get("speech", {}), raw.get("speech", {}))
@@ -194,6 +193,8 @@ def load_agent(
         return_greeting=identity["return_greeting"],
         handoff=handoff,
         model=ModelConfig.from_dict(model_raw),
+        voicelive_model=ModelConfig.from_dict(voicelive_model_raw) if voicelive_model_raw else None,
+        cascade_model=ModelConfig.from_dict(cascade_model_raw) if cascade_model_raw else None,
         voice=VoiceConfig.from_dict(voice_raw),
         speech=SpeechConfig.from_dict(speech_raw),
         session=session_raw,

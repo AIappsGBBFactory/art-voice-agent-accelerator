@@ -223,7 +223,11 @@ class UnifiedAgent:
     # ─────────────────────────────────────────────────────────────────
     # Model Settings
     # ─────────────────────────────────────────────────────────────────
+    # Default/fallback model config (used when mode-specific not available)
     model: ModelConfig = field(default_factory=ModelConfig)
+    # Mode-specific model configs (from agent.yaml)
+    voicelive_model: ModelConfig | None = None  # For VoiceLive/realtime mode
+    cascade_model: ModelConfig | None = None  # For Cascade/media mode
 
     # ─────────────────────────────────────────────────────────────────
     # Voice Settings (TTS)
@@ -261,6 +265,43 @@ class UnifiedAgent:
     metadata: dict[str, Any] = field(default_factory=dict)
     source_dir: Path | None = None
     _custom_tools_loaded: bool = field(default=False, init=False, repr=False)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # MODEL ACCESS
+    # ═══════════════════════════════════════════════════════════════════
+
+    def get_model_for_mode(self, mode: str) -> "ModelConfig":
+        """
+        Get model configuration for the specified mode.
+
+        Priority:
+        1. Mode-specific config (voicelive_model or cascade_model)
+        2. Fallback to generic 'model' config
+
+        Args:
+            mode: The mode to get the model for. Supported values:
+                - "cascade", "media" → cascade_model
+                - "voicelive", "realtime" → voicelive_model
+
+        Returns:
+            ModelConfig for the requested mode
+        """
+        mode_lower = mode.lower()
+
+        # VoiceLive / Realtime mode
+        if mode_lower in ("voicelive", "realtime", "voice_live"):
+            if self.voicelive_model is not None:
+                return self.voicelive_model
+            return self.model
+
+        # Cascade / Media mode
+        if mode_lower in ("cascade", "media"):
+            if self.cascade_model is not None:
+                return self.cascade_model
+            return self.model
+
+        # Unknown mode - fall back to default model
+        return self.model
 
     # ═══════════════════════════════════════════════════════════════════
     # TOOL INTEGRATION (via shared registry)
