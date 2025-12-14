@@ -199,6 +199,11 @@ class LiveOrchestrator:
         # MemoManager for session state continuity (consistent with CascadeOrchestratorAdapter)
         self._memo_manager: MemoManager | None = memo_manager
 
+        # Track agent at last SESSION_UPDATED to avoid duplicate UI broadcasts
+        self._last_session_updated_agent: str | None = None
+        # Flag to indicate a context-only session update (don't reset audio/cancel response)
+        self._context_update_in_progress: bool = False
+
         # LLM TTFT tracking
         self._llm_turn_start_time: float | None = None
         self._llm_first_token_time: float | None = None
@@ -482,12 +487,18 @@ class LiveOrchestrator:
             if not updated_instructions:
                 return
 
-            # Update session with new instructions
+            # Update session with new instructions (context-only update)
             from azure.ai.voicelive.models import RequestSession
 
-            await self.conn.session.update(
-                session=RequestSession(instructions=updated_instructions)
-            )
+            # Mark this as a context-only update so _handle_session_updated doesn't
+            # broadcast to UI or cancel responses
+            self._context_update_in_progress = True
+            try:
+                await self.conn.session.update(
+                    session=RequestSession(instructions=updated_instructions)
+                )
+            finally:
+                self._context_update_in_progress = False
 
             logger.debug(
                 "[LiveOrchestrator] Updated session | agent=%s history_len=%d slots=%s",
@@ -653,13 +664,49 @@ class LiveOrchestrator:
     # ═══════════════════════════════════════════════════════════════════════════
 
     async def _handle_session_updated(self, event) -> None:
-        """Handle SESSION_UPDATED event."""
+        """Handle SESSION_UPDATED event.
+        
+        This is called for ALL session.update() calls, including:
+        - Full agent switches (apply_session)
+        - Context-only updates (_update_session_context)
+        
+        We only broadcast to UI and reset audio for actual agent switches,
+        not for routine context refreshes.
+        """
         session_obj = getattr(event, "session", None)
         session_id = getattr(session_obj, "id", "unknown") if session_obj else "unknown"
         voice_info = getattr(session_obj, "voice", None) if session_obj else None
-        logger.info("Session ready: %s | voice=%s", session_id, voice_info)
-
-        if self.messenger:
+        
+        # Check if this is a context-only update (instructions refresh)
+        if self._context_update_in_progress:
+            logger.debug(
+                "Session updated (context refresh) | agent=%s session=%s",
+                self.active,
+                session_id,
+            )
+            # Don't broadcast to UI, don't reset audio, don't cancel responses
+            return
+        
+        # Check if agent actually changed since last broadcast
+        agent_changed = self._last_session_updated_agent != self.active
+        self._last_session_updated_agent = self.active
+        
+        if agent_changed:
+            logger.info(
+                "Session ready (agent switch) | agent=%s session=%s voice=%s",
+                self.active,
+                session_id,
+                voice_info,
+            )
+        else:
+            logger.debug(
+                "Session ready (no agent change) | agent=%s session=%s",
+                self.active,
+                session_id,
+            )
+        
+        # Only broadcast session_updated to UI when agent actually changes
+        if agent_changed and self.messenger:
             try:
                 await self.messenger.send_session_update(
                     agent_name=self.active,
@@ -669,14 +716,16 @@ class LiveOrchestrator:
             except Exception:
                 logger.debug("Failed to emit session update envelope", exc_info=True)
 
-        if self.audio:
-            await self.audio.stop_playback()
-        try:
-            await self.conn.response.cancel()
-        except Exception:
-            logger.debug("response.cancel() failed during session_ready", exc_info=True)
-        if self.audio:
-            await self.audio.start_capture()
+        # Only reset audio state for agent switches (not context refreshes)
+        if agent_changed:
+            if self.audio:
+                await self.audio.stop_playback()
+            try:
+                await self.conn.response.cancel()
+            except Exception:
+                logger.debug("response.cancel() failed during session_ready", exc_info=True)
+            if self.audio:
+                await self.audio.start_capture()
 
         if self._pending_greeting and self._pending_greeting_agent == self.active:
             self._cancel_pending_greeting_tasks()
