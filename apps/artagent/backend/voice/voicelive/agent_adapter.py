@@ -174,7 +174,7 @@ class VoiceLiveAgentAdapter:
         self._tools: list[FunctionTool] | None = None
 
     # ═══════════════════════════════════════════════════════════════════
-    # PROPERTY PASSTHROUGH
+    # PROPERTY PASSTHROUGH (delegate to underlying UnifiedAgent)
     # ═══════════════════════════════════════════════════════════════════
 
     @property
@@ -187,53 +187,24 @@ class VoiceLiveAgentAdapter:
 
     @property
     def greeting(self) -> str | None:
-        """
-        Get default greeting (rendered with env vars only).
-
-        For context-aware greetings, use render_greeting(context) instead.
-        """
+        """Default greeting (rendered with env vars only). Use render_greeting() for context-aware."""
         return self._agent.render_greeting()
 
     @property
     def return_greeting(self) -> str | None:
-        """
-        Get default return greeting (rendered with env vars only).
-
-        For context-aware greetings, use render_return_greeting(context) instead.
-        """
+        """Default return greeting. Use render_return_greeting() for context-aware."""
         return self._agent.render_return_greeting()
 
+    # Delegate render methods directly to UnifiedAgent
     def render_greeting(self, context: dict[str, Any] | None = None) -> str | None:
-        """
-        Render greeting with session context.
-
-        Delegates to UnifiedAgent.render_greeting() for consistent behavior
-        with Speech Cascade mode.
-
-        Args:
-            context: Session context (caller_name, institution_name,
-                    customer_intelligence, session_profile, etc.)
-
-        Returns:
-            Rendered greeting string, or None if not configured
-        """
+        """Render greeting with session context (caller_name, institution_name, etc.)."""
         return self._agent.render_greeting(context)
 
     def render_return_greeting(self, context: dict[str, Any] | None = None) -> str | None:
-        """
-        Render return greeting with session context.
-
-        Delegates to UnifiedAgent.render_return_greeting() for consistent
-        behavior with Speech Cascade mode.
-
-        Args:
-            context: Session context (caller_name, institution_name, etc.)
-
-        Returns:
-            Rendered return greeting string, or None if not configured
-        """
+        """Render return greeting with session context."""
         return self._agent.render_return_greeting(context)
 
+    # Voice configuration passthrough
     @property
     def voice_name(self) -> str | None:
         return self._agent.voice.name

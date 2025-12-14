@@ -68,7 +68,7 @@ class SessionStateKeys:
 
     # Core orchestration state
     ACTIVE_AGENT = "active_agent"
-    """Name of the currently active agent (e.g., "EricaConcierge")"""
+    """Name of the currently active agent (e.g., "Concierge")"""
 
     VISITED_AGENTS = "visited_agents"
     """List of agent names visited in this session (for return_greeting logic)"""

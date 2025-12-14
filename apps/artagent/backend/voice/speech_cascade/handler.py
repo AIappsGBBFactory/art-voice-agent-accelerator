@@ -236,21 +236,56 @@ class ThreadBridge:
                     f"[{self.connection_id}] Enqueued speech event type={event.event_type.value} qsize={speech_queue.qsize()}"
                 )
         except asyncio.QueueFull:
-            logger.warning(f"[{self.connection_id}] Speech queue full, evicting oldest event")
+            # Only evict PARTIAL (interim) transcriptions - never drop TTS responses
+            if event.event_type == SpeechEventType.PARTIAL:
+                logger.debug(f"[{self.connection_id}] Queue full, dropping PARTIAL event")
+                return
+            
+            # For important events (TTS, FINAL, etc.), try to evict PARTIAL events only
+            evicted = False
             try:
-                evicted = speech_queue.get_nowait()
-                logger.info(
-                    f"[{self.connection_id}] Dropped oldest speech event type={evicted.event_type.value}"
-                )
-            except asyncio.QueueEmpty:
+                # Try to find and remove a PARTIAL event
+                temp_events = []
+                while not speech_queue.empty():
+                    try:
+                        old_event = speech_queue.get_nowait()
+                        if not evicted and old_event.event_type == SpeechEventType.PARTIAL:
+                            evicted = True
+                            logger.debug(f"[{self.connection_id}] Evicted PARTIAL to make room for {event.event_type.value}")
+                        else:
+                            temp_events.append(old_event)
+                    except asyncio.QueueEmpty:
+                        break
+                
+                # Put back non-evicted events
+                for e in temp_events:
+                    try:
+                        speech_queue.put_nowait(e)
+                    except asyncio.QueueFull:
+                        break
+            except Exception:
                 pass
 
+            # Now try to add the important event
             try:
                 speech_queue.put_nowait(event)
+                logger.info(f"[{self.connection_id}] Enqueued {event.event_type.value} after eviction")
             except asyncio.QueueFull:
-                logger.error(
-                    f"[{self.connection_id}] Queue still full after eviction; dropping {event.event_type.value}"
-                )
+                # For TTS_RESPONSE, use blocking put - must not drop
+                if event.event_type == SpeechEventType.TTS_RESPONSE:
+                    logger.warning(f"[{self.connection_id}] Queue full for TTS, using blocking put")
+                    if self.main_loop and not self.main_loop.is_closed():
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(
+                                speech_queue.put(event), self.main_loop
+                            )
+                            future.result(timeout=5.0)  # Wait up to 5s for queue space
+                        except Exception as e:
+                            logger.error(f"[{self.connection_id}] Failed to queue TTS: {e}")
+                else:
+                    logger.error(
+                        f"[{self.connection_id}] Queue still full after eviction; dropping {event.event_type.value}"
+                    )
         except Exception:
             # Fallback to run_coroutine_threadsafe
             if self.main_loop and not self.main_loop.is_closed():
@@ -987,7 +1022,7 @@ class SpeechCascadeHandler:
         )
 
         # Cross-thread communication
-        self.speech_queue: asyncio.Queue = asyncio.Queue(maxsize=10)
+        self.speech_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
         self.thread_bridge = ThreadBridge()
 
         # Barge-in controller
@@ -1143,6 +1178,38 @@ class SpeechCascadeHandler:
                 voice_rate=voice_rate,
             )
         )
+
+    async def play_tts_immediate(
+        self,
+        text: str,
+        *,
+        voice_name: str | None = None,
+        voice_style: str | None = None,
+        voice_rate: str | None = None,
+    ) -> None:
+        """
+        Play TTS immediately without queueing.
+
+        Use this during LLM streaming to get immediate audio playback.
+        Bypasses the speech_queue which may be blocked during orchestrator execution.
+
+        Args:
+            text: Text to synthesize and play.
+            voice_name: Optional Azure TTS voice name override.
+            voice_style: Optional voice style (e.g., "cheerful").
+            voice_rate: Optional speech rate (e.g., "1.1").
+        """
+        if not text or not text.strip():
+            return
+
+        if self.on_tts_request:
+            await self.on_tts_request(
+                text,
+                SpeechEventType.TTS_RESPONSE,
+                voice_name=voice_name,
+                voice_style=voice_style,
+                voice_rate=voice_rate,
+            )
 
     def queue_tts(
         self,
