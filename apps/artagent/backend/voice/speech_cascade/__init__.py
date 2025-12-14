@@ -47,12 +47,6 @@ from .metrics import (
 from .orchestrator import CascadeOrchestratorAdapter, StateKeys
 from .tts import SAMPLE_RATE_ACS, SAMPLE_RATE_BROWSER, TTSPlayback
 
-# Legacy exports for backward compatibility (deprecated)
-from .tts_sender import (
-    send_tts_to_acs,
-    send_tts_to_browser,
-)
-
 __all__ = [
     # Handler components
     "SpeechCascadeHandler",
@@ -64,13 +58,10 @@ __all__ = [
     "BargeInController",
     "ResponseSender",
     "TranscriptEmitter",
-    # Unified TTS Playback (preferred)
+    # Unified TTS Playback
     "TTSPlayback",
     "SAMPLE_RATE_BROWSER",
     "SAMPLE_RATE_ACS",
-    # Legacy TTS (deprecated - use TTSPlayback)
-    "send_tts_to_browser",
-    "send_tts_to_acs",
     # Orchestrator shim
     "CascadeOrchestratorAdapter",
     "StateKeys",  # Re-export of SessionStateKeys for backward compatibility

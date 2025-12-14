@@ -60,10 +60,11 @@ tools:
   - resend_mfa_code
   
   # Handoffs (for tool-based strategy)
-  - handoff_concierge              # Return to concierge
+  - handoff_concierge              # Return to concierge (general inquiries)
+  - handoff_claims_specialist      # Transfer to claims specialist (claims/FNOL)
   - handoff_fraud_agent            # Transfer to fraud if suspicious
   
-  # Escalation
+  # Escalation (use ONLY after 2+ auth failures or explicit human request)
   - escalate_human
 
 template_vars:

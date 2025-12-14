@@ -212,7 +212,7 @@ class HandoffContext:
 
     Example:
         context = HandoffContext(
-            source_agent="EricaConcierge",
+            source_agent="Concierge",
             target_agent="FraudAgent",
             reason="User reported suspicious card activity",
             user_last_utterance="I think my card was stolen",

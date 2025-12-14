@@ -898,8 +898,11 @@ function RealTimeVoiceApp() {
   const pcmSinkRef = useRef(null);
   const playbackActiveRef = useRef(false);
   const assistantStreamGenerationRef = useRef(0);
+  const currentAudioGenerationRef = useRef(0); // Generation when current audio stream started
   const terminationReasonRef = useRef(null);
   const resampleWarningRef = useRef(false);
+  const audioInitFailedRef = useRef(false);
+  const audioInitAttemptedRef = useRef(false);
   const shouldReconnectRef = useRef(false);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
@@ -1086,6 +1089,10 @@ function RealTimeVoiceApp() {
   // Initialize playback audio context and worklet (call on user gesture)
   const initializeAudioPlayback = async () => {
     if (playbackAudioContextRef.current) return; // Already initialized
+    if (audioInitFailedRef.current) return; // Already failed, don't retry
+    if (audioInitAttemptedRef.current) return; // Already attempting
+    
+    audioInitAttemptedRef.current = true;
     
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
@@ -1119,6 +1126,8 @@ function RealTimeVoiceApp() {
       appendLog("🔊 Audio playback initialized");
       logger.info("AudioWorklet playback system initialized, context sample rate:", audioCtx.sampleRate);
     } catch (error) {
+      audioInitFailedRef.current = true;
+      audioInitAttemptedRef.current = false;
       logger.error("Failed to initialize audio playback:", error);
       appendLog("❌ Audio playback init failed");
     }
@@ -1361,15 +1370,15 @@ function RealTimeVoiceApp() {
       let formatted = null;
       if (typeof detail === "string") {
         formatted = detail;
-        logger.info(`[Metrics] ${label}: ${detail}`);
+        logger.debug(`[Metrics] ${label}: ${detail}`);
       } else if (detail && typeof detail === "object") {
         const entries = Object.entries(detail).filter(([, value]) => value !== undefined && value !== null && value !== "");
         formatted = entries
           .map(([key, value]) => `${key}=${value}`)
           .join(" • ");
-        logger.info(`[Metrics] ${label}`, detail);
+        logger.debug(`[Metrics] ${label}`, detail);
       } else {
-        logger.info(`[Metrics] ${label}`, metricsRef.current);
+        logger.debug(`[Metrics] ${label}`, metricsRef.current);
       }
 
       appendLog(formatted ? `📈 ${label} — ${formatted}` : `📈 ${label}`);
@@ -1627,6 +1636,9 @@ function RealTimeVoiceApp() {
       assistantStreamGenerationRef.current = 0;
       terminationReasonRef.current = null;
       resampleWarningRef.current = false;
+      audioInitFailedRef.current = false;
+      audioInitAttemptedRef.current = false;
+      currentAudioGenerationRef.current = 0;
       shouldReconnectRef.current = true;
       reconnectAttemptsRef.current = 0;
       if (reconnectTimeoutRef.current) {
@@ -2261,7 +2273,7 @@ function RealTimeVoiceApp() {
           agent: agentName,
         });
         
-        logger.info(`📊 Turn ${turnNum} metrics from server:`, {
+        logger.debug(`📊 Turn ${turnNum} metrics from server:`, {
           ttfbMs,
           ttftMs,
           sttMs,
@@ -2491,7 +2503,7 @@ function RealTimeVoiceApp() {
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data") {
         try {
-          logger.info("🔊 Received audio_data message:", {
+          logger.debug("🔊 Received audio_data message:", {
             frame_index: payload.frame_index,
             total_frames: payload.total_frames,
             sample_rate: payload.sample_rate,
@@ -2508,17 +2520,31 @@ function RealTimeVoiceApp() {
               payload.frame_index + 1 >= payload.total_frames);
 
           const frameIndex = Number.isFinite(payload.frame_index) ? payload.frame_index : 0;
+          
+          // Track generation for this audio stream - first frame starts a new stream
+          if (frameIndex === 0) {
+            currentAudioGenerationRef.current = assistantStreamGenerationRef.current;
+          }
+          
+          // Check if barge-in happened - skip audio from cancelled turns
+          if (currentAudioGenerationRef.current !== assistantStreamGenerationRef.current) {
+            logger.debug(`🔇 Skipping stale audio frame (gen ${currentAudioGenerationRef.current} vs ${assistantStreamGenerationRef.current})`);
+            // Still mark as not active since we're skipping
+            playbackActiveRef.current = false;
+            return;
+          }
+          
           registerAudioFrame(frameIndex, isFinalChunk);
 
           // Resume playback context if suspended (after text barge-in)
           if (playbackAudioContextRef.current) {
             const ctx = playbackAudioContextRef.current;
-            logger.info(`[Audio] Playback context state: ${ctx.state}`);
+            logger.debug(`[Audio] Playback context state: ${ctx.state}`);
             if (ctx.state === "suspended") {
               logger.info("[Audio] Resuming suspended playback context...");
               await ctx.resume();
               appendLog("▶️ TTS playback resumed");
-              logger.info(`[Audio] Playback context state after resume: ${ctx.state}`);
+              logger.debug(`[Audio] Playback context state after resume: ${ctx.state}`);
             }
           } else {
             logger.warn("[Audio] No playback context found, initializing...");
@@ -2559,28 +2585,31 @@ function RealTimeVoiceApp() {
             updateOutputLevelMeter(samples);
             appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
           } else {
-            logger.warn("Audio playback not initialized, attempting init...");
-            appendLog("⚠️ Audio playback not ready, initializing...");
-            // Try to initialize if not done yet
-            await initializeAudioPlayback();
-            if (pcmSinkRef.current) {
-              let samples = float32;
-              const playbackCtx = playbackAudioContextRef.current;
-              const sourceRate = payload.sample_rate;
-              if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
-                samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
-                if (!resampleWarningRef.current) {
-                  appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
-                  resampleWarningRef.current = true;
+            if (!audioInitFailedRef.current) {
+              logger.warn("Audio playback not initialized, attempting init...");
+              appendLog("⚠️ Audio playback not ready, initializing...");
+              // Try to initialize if not done yet
+              await initializeAudioPlayback();
+              if (pcmSinkRef.current) {
+                let samples = float32;
+                const playbackCtx = playbackAudioContextRef.current;
+                const sourceRate = payload.sample_rate;
+                if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
+                  samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
+                  if (!resampleWarningRef.current) {
+                    appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
+                    resampleWarningRef.current = true;
+                  }
                 }
+                pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
+                updateOutputLevelMeter(samples);
+                appendLog("🔊 TTS audio playing (after init)");
+              } else {
+                logger.error("Failed to initialize audio playback");
+                appendLog("❌ Audio init failed");
               }
-              pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
-              updateOutputLevelMeter(samples);
-              appendLog("🔊 TTS audio playing (after init)");
-            } else {
-              logger.error("Failed to initialize audio playback");
-              appendLog("❌ Audio init failed");
             }
+            // If init already failed, silently skip audio frames
           }
           playbackActiveRef.current = !isFinalChunk;
           return; // handled

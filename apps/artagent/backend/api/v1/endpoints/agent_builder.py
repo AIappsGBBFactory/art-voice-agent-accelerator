@@ -129,7 +129,15 @@ class DynamicAgentConfig(BaseModel):
     )
     prompt: str = Field(..., min_length=10, description="System prompt for the agent")
     tools: list[str] = Field(default_factory=list, description="List of tool names to enable")
-    model: ModelConfigSchema | None = None
+    cascade_model: ModelConfigSchema | None = Field(
+        default=None, description="Model config for cascade mode (STT→LLM→TTS)"
+    )
+    voicelive_model: ModelConfigSchema | None = Field(
+        default=None, description="Model config for voicelive mode (realtime API)"
+    )
+    model: ModelConfigSchema | None = Field(
+        default=None, description="Legacy: fallback model config (use cascade_model/voicelive_model instead)"
+    )
     voice: VoiceConfigSchema | None = None
     speech: SpeechConfigSchema | None = None
     template_vars: dict[str, Any] | None = None
@@ -562,13 +570,61 @@ async def create_dynamic_agent(
             detail=f"Invalid tools: {', '.join(invalid_tools)}. Use GET /tools to see available tools.",
         )
 
-    # Build model config
-    model_config = ModelConfig(
-        deployment_id=config.model.deployment_id if config.model else "gpt-4o",
-        temperature=config.model.temperature if config.model else 0.7,
-        top_p=config.model.top_p if config.model else 0.9,
-        max_tokens=config.model.max_tokens if config.model else 4096,
-    )
+    # Build model configs for each orchestration mode
+    # Priority: explicit mode-specific config > legacy model config > defaults
+    
+    # Cascade model (for STT→LLM→TTS mode)
+    if config.cascade_model:
+        cascade_model = ModelConfig(
+            deployment_id=config.cascade_model.deployment_id,
+            temperature=config.cascade_model.temperature,
+            top_p=config.cascade_model.top_p,
+            max_tokens=config.cascade_model.max_tokens,
+        )
+    elif config.model:
+        # Fallback: use legacy model, but swap realtime for gpt-4o
+        base_id = config.model.deployment_id
+        cascade_model = ModelConfig(
+            deployment_id="gpt-4o" if "realtime" in base_id.lower() else base_id,
+            temperature=config.model.temperature,
+            top_p=config.model.top_p,
+            max_tokens=config.model.max_tokens,
+        )
+    else:
+        cascade_model = ModelConfig(
+            deployment_id="gpt-4o",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=4096,
+        )
+    
+    # VoiceLive model (for realtime API mode)
+    if config.voicelive_model:
+        voicelive_model = ModelConfig(
+            deployment_id=config.voicelive_model.deployment_id,
+            temperature=config.voicelive_model.temperature,
+            top_p=config.voicelive_model.top_p,
+            max_tokens=config.voicelive_model.max_tokens,
+        )
+    elif config.model:
+        # Fallback: use legacy model, but ensure realtime for voicelive
+        base_id = config.model.deployment_id
+        voicelive_model = ModelConfig(
+            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-4o-realtime-preview",
+            temperature=config.model.temperature,
+            top_p=config.model.top_p,
+            max_tokens=config.model.max_tokens,
+        )
+    else:
+        voicelive_model = ModelConfig(
+            deployment_id="gpt-4o-realtime-preview",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=4096,
+        )
+    
+    # Default model uses cascade config
+    model_config = cascade_model
 
     # Build voice config
     voice_config = VoiceConfig(
@@ -589,7 +645,7 @@ async def create_dynamic_agent(
         speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
     )
 
-    # Create the agent
+    # Create the agent with mode-specific models
     agent = UnifiedAgent(
         name=config.name,
         description=config.description,
@@ -597,6 +653,8 @@ async def create_dynamic_agent(
         return_greeting=config.return_greeting,
         handoff=HandoffConfig(trigger=f"handoff_{config.name.lower().replace(' ', '_')}"),
         model=model_config,
+        cascade_model=cascade_model,
+        voicelive_model=voicelive_model,
         voice=voice_config,
         speech=speech_config,
         prompt_template=config.prompt,
@@ -632,6 +690,8 @@ async def create_dynamic_agent(
                 config.prompt[:200] + "..." if len(config.prompt) > 200 else config.prompt
             ),
             "tools": config.tools,
+            "cascade_model": cascade_model.to_dict(),
+            "voicelive_model": voicelive_model.to_dict(),
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
             "speech": speech_config.to_dict(),
@@ -714,13 +774,54 @@ async def update_session_agent(
     existing = get_session_agent(session_id)
     created_at = existing.metadata.get("created_at") if existing else time.time()
 
-    # Build configs
-    model_config = ModelConfig(
-        deployment_id=config.model.deployment_id if config.model else "gpt-4o",
-        temperature=config.model.temperature if config.model else 0.7,
-        top_p=config.model.top_p if config.model else 0.9,
-        max_tokens=config.model.max_tokens if config.model else 4096,
-    )
+    # Build model configs for each orchestration mode
+    if config.cascade_model:
+        cascade_model = ModelConfig(
+            deployment_id=config.cascade_model.deployment_id,
+            temperature=config.cascade_model.temperature,
+            top_p=config.cascade_model.top_p,
+            max_tokens=config.cascade_model.max_tokens,
+        )
+    elif config.model:
+        base_id = config.model.deployment_id
+        cascade_model = ModelConfig(
+            deployment_id="gpt-4o" if "realtime" in base_id.lower() else base_id,
+            temperature=config.model.temperature,
+            top_p=config.model.top_p,
+            max_tokens=config.model.max_tokens,
+        )
+    else:
+        cascade_model = ModelConfig(
+            deployment_id="gpt-4o",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=4096,
+        )
+    
+    if config.voicelive_model:
+        voicelive_model = ModelConfig(
+            deployment_id=config.voicelive_model.deployment_id,
+            temperature=config.voicelive_model.temperature,
+            top_p=config.voicelive_model.top_p,
+            max_tokens=config.voicelive_model.max_tokens,
+        )
+    elif config.model:
+        base_id = config.model.deployment_id
+        voicelive_model = ModelConfig(
+            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-4o-realtime-preview",
+            temperature=config.model.temperature,
+            top_p=config.model.top_p,
+            max_tokens=config.model.max_tokens,
+        )
+    else:
+        voicelive_model = ModelConfig(
+            deployment_id="gpt-4o-realtime-preview",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=4096,
+        )
+    
+    model_config = cascade_model  # Default fallback
 
     voice_config = VoiceConfig(
         name=config.voice.name if config.voice else "en-US-AvaMultilingualNeural",
@@ -740,7 +841,7 @@ async def update_session_agent(
         speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
     )
 
-    # Create updated agent
+    # Create updated agent with mode-specific models
     agent = UnifiedAgent(
         name=config.name,
         description=config.description,
@@ -748,6 +849,8 @@ async def update_session_agent(
         return_greeting=config.return_greeting,
         handoff=HandoffConfig(trigger=f"handoff_{config.name.lower().replace(' ', '_')}"),
         model=model_config,
+        cascade_model=cascade_model,
+        voicelive_model=voicelive_model,
         voice=voice_config,
         speech=speech_config,
         prompt_template=config.prompt,
@@ -780,6 +883,8 @@ async def update_session_agent(
             "return_greeting": config.return_greeting,
             "prompt_preview": config.prompt[:200] + "...",
             "tools": config.tools,
+            "cascade_model": cascade_model.to_dict(),
+            "voicelive_model": voicelive_model.to_dict(),
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
             "speech": speech_config.to_dict(),

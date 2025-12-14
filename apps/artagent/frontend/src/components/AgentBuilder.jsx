@@ -306,7 +306,8 @@ const extractJinjaVariables = (text = '') => {
 // MODEL DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const MODEL_OPTIONS = [
+// Models for Cascade mode (standard chat completion API)
+const CASCADE_MODEL_OPTIONS = [
   {
     id: 'gpt-4o',
     name: 'GPT-4o',
@@ -353,6 +354,31 @@ const MODEL_OPTIONS = [
     contextWindow: '16K tokens',
   },
 ];
+
+// Models for VoiceLive mode (realtime API)
+const VOICELIVE_MODEL_OPTIONS = [
+  {
+    id: 'gpt-4o-realtime-preview',
+    name: 'GPT-4o Realtime Preview',
+    description: 'Low-latency realtime voice model',
+    tier: 'recommended',
+    speed: 'fastest',
+    capabilities: ['Realtime Audio', 'Function Calling'],
+    contextWindow: '128K tokens',
+  },
+  {
+    id: 'gpt-4o-mini-realtime-preview',
+    name: 'GPT-4o Mini Realtime Preview',
+    description: 'Faster, cost-effective realtime model',
+    tier: 'standard',
+    speed: 'fastest',
+    capabilities: ['Realtime Audio', 'Function Calling'],
+    contextWindow: '128K tokens',
+  },
+];
+
+// Legacy: combined options for backward compatibility
+const MODEL_OPTIONS = CASCADE_MODEL_OPTIONS;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STYLES
@@ -581,7 +607,7 @@ const TemplateVariableHelper = React.memo(function TemplateVariableHelper({ onIn
 // MODEL SELECTOR COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ModelSelector({ value, onChange }) {
+function ModelSelector({ value, onChange, modelOptions = MODEL_OPTIONS, title = 'Select Model Deployment', showAlert = true }) {
   const getTierColor = (tier) => {
     switch (tier) {
       case 'recommended': return 'success';
@@ -603,23 +629,25 @@ function ModelSelector({ value, onChange }) {
 
   return (
     <Stack spacing={2}>
-      <Alert severity="info" icon={<WarningAmberIcon />} sx={{ borderRadius: '12px' }}>
-        <AlertTitle sx={{ fontWeight: 600 }}>Azure OpenAI Deployment Required</AlertTitle>
-        <Typography variant="body2">
-          The model deployment name must match a deployment in your Azure OpenAI resource. 
-          Ensure the selected model is deployed in your subscription before use.
-        </Typography>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          Check your Azure Portal → Azure OpenAI → Deployments to verify available models.
-        </Typography>
-      </Alert>
+      {showAlert && (
+        <Alert severity="info" icon={<WarningAmberIcon />} sx={{ borderRadius: '12px' }}>
+          <AlertTitle sx={{ fontWeight: 600 }}>Azure OpenAI Deployment Required</AlertTitle>
+          <Typography variant="body2">
+            The model deployment name must match a deployment in your Azure OpenAI resource. 
+            Ensure the selected model is deployed in your subscription before use.
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            Check your Azure Portal → Azure OpenAI → Deployments to verify available models.
+          </Typography>
+        </Alert>
+      )}
 
       <Typography variant="subtitle2" sx={{ mt: 1 }}>
-        Select Model Deployment
+        {title}
       </Typography>
 
       <Stack spacing={1.5}>
-        {MODEL_OPTIONS.map((model) => (
+        {modelOptions.map((model) => (
           <Card
             key={model.id}
             variant="outlined"
@@ -763,6 +791,18 @@ export default function AgentBuilder({
     return_greeting: '',
     prompt: DEFAULT_PROMPT,
     tools: [],
+    cascade_model: {
+      deployment_id: 'gpt-4o',
+      temperature: 0.7,
+      top_p: 0.9,
+      max_tokens: 4096,
+    },
+    voicelive_model: {
+      deployment_id: 'gpt-4o-realtime-preview',
+      temperature: 0.7,
+      top_p: 0.9,
+      max_tokens: 4096,
+    },
     model: {
       deployment_id: 'gpt-4o',
       temperature: 0.7,
@@ -1114,6 +1154,11 @@ export default function AgentBuilder({
       const template = data.template;
       
       // Apply template to config
+      // Build cascade_model and voicelive_model from template's model or use defaults
+      const templateModel = template.model || {};
+      const cascadeDefaults = { deployment_id: 'gpt-4o', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
+      const voiceliveDefaults = { deployment_id: 'gpt-4o-realtime-preview', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
+      
       setConfig(prev => ({
         ...prev,
         name: template.name || prev.name,
@@ -1124,6 +1169,12 @@ export default function AgentBuilder({
         tools: template.tools || prev.tools,
         voice: template.voice ? { ...prev.voice, ...template.voice } : prev.voice,
         model: template.model ? { ...prev.model, ...template.model } : prev.model,
+        cascade_model: template.cascade_model 
+          ? { ...cascadeDefaults, ...template.cascade_model }
+          : { ...cascadeDefaults, ...templateModel },
+        voicelive_model: template.voicelive_model
+          ? { ...voiceliveDefaults, ...template.voicelive_model }
+          : voiceliveDefaults,
         speech: template.speech ? { ...prev.speech, ...template.speech } : prev.speech,
         template_vars: template.template_vars ? { ...prev.template_vars, ...template.template_vars } : prev.template_vars,
       }));
@@ -1153,11 +1204,17 @@ export default function AgentBuilder({
         return_greeting: config.return_greeting,
         prompt: config.prompt,  // Backend expects 'prompt', not 'prompt_template'
         tools: config.tools,
-        model: {
-          deployment_id: config.model.deployment_id,
-          temperature: config.model.temperature,
-          top_p: config.model.top_p,
-          max_tokens: config.model.max_tokens,
+        cascade_model: {
+          deployment_id: config.cascade_model?.deployment_id || 'gpt-4o',
+          temperature: config.cascade_model?.temperature ?? 0.7,
+          top_p: config.cascade_model?.top_p ?? 0.9,
+          max_tokens: config.cascade_model?.max_tokens ?? 4096,
+        },
+        voicelive_model: {
+          deployment_id: config.voicelive_model?.deployment_id || 'gpt-4o-realtime-preview',
+          temperature: config.voicelive_model?.temperature ?? 0.7,
+          top_p: config.voicelive_model?.top_p ?? 0.9,
+          max_tokens: config.voicelive_model?.max_tokens ?? 4096,
         },
         voice: {
           name: config.voice.name,
@@ -2433,17 +2490,67 @@ export default function AgentBuilder({
             {/* ═══════════════════════════════════════════════════════════════════ */}
             <TabPanel value={activeTab} index={5}>
               <Stack spacing={3}>
-                <ModelSelector
-                  value={config.model.deployment_id}
-                  onChange={(v) => handleNestedConfigChange('model', 'deployment_id', v)}
-                />
+                <Alert severity="info" icon={<WarningAmberIcon />} sx={{ borderRadius: '12px' }}>
+                  <AlertTitle sx={{ fontWeight: 600 }}>Azure OpenAI Deployment Required</AlertTitle>
+                  <Typography variant="body2">
+                    Model deployment names must match deployments in your Azure OpenAI resource.
+                    Different models are used depending on the orchestration mode.
+                  </Typography>
+                </Alert>
+
+                {/* Cascade Mode Model */}
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+                      <Chip label="Cascade Mode" color="primary" size="small" />
+                      <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>
+                        🔄 STT → LLM → TTS Pipeline
+                      </Typography>
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Uses standard Chat Completion API. Best for complex conversations with tool calling.
+                    </Typography>
+                    <ModelSelector
+                      value={config.cascade_model?.deployment_id || 'gpt-4o'}
+                      onChange={(v) => handleNestedConfigChange('cascade_model', 'deployment_id', v)}
+                      modelOptions={CASCADE_MODEL_OPTIONS}
+                      title="Cascade Model Deployment"
+                      showAlert={false}
+                    />
+                  </CardContent>
+                </Card>
+
+                {/* VoiceLive Mode Model */}
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+                      <Chip label="VoiceLive Mode" color="secondary" size="small" />
+                      <Typography variant="subtitle2" color="secondary" sx={{ fontWeight: 600 }}>
+                        ⚡ Realtime Audio API
+                      </Typography>
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Uses Realtime API for ultra-low latency. Audio streams directly to/from the model.
+                    </Typography>
+                    <ModelSelector
+                      value={config.voicelive_model?.deployment_id || 'gpt-4o-realtime-preview'}
+                      onChange={(v) => handleNestedConfigChange('voicelive_model', 'deployment_id', v)}
+                      modelOptions={VOICELIVE_MODEL_OPTIONS}
+                      title="VoiceLive Model Deployment"
+                      showAlert={false}
+                    />
+                  </CardContent>
+                </Card>
 
                 <Divider />
 
                 <Card variant="outlined" sx={styles.sectionCard}>
                   <CardContent>
                     <Typography variant="subtitle2" color="primary" sx={{ mb: 3, fontWeight: 600 }}>
-                      ⚙️ Generation Parameters
+                      ⚙️ Generation Parameters (Shared)
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 3 }}>
+                      These parameters apply to both Cascade and VoiceLive modes.
                     </Typography>
 
                     <Stack spacing={4}>
@@ -2455,11 +2562,14 @@ export default function AgentBuilder({
                               <InfoOutlinedIcon fontSize="small" color="action" />
                             </Tooltip>
                           </Stack>
-                          <Chip label={config.model.temperature} size="small" color="primary" />
+                          <Chip label={config.cascade_model?.temperature ?? 0.7} size="small" color="primary" />
                         </Stack>
                         <Slider
-                          value={config.model.temperature}
-                          onChange={(_e, v) => handleNestedConfigChange('model', 'temperature', v)}
+                          value={config.cascade_model?.temperature ?? 0.7}
+                          onChange={(_e, v) => {
+                            handleNestedConfigChange('cascade_model', 'temperature', v);
+                            handleNestedConfigChange('voicelive_model', 'temperature', v);
+                          }}
                           min={0}
                           max={2}
                           step={0.1}
@@ -2480,11 +2590,14 @@ export default function AgentBuilder({
                               <InfoOutlinedIcon fontSize="small" color="action" />
                             </Tooltip>
                           </Stack>
-                          <Chip label={config.model.top_p} size="small" color="primary" />
+                          <Chip label={config.cascade_model?.top_p ?? 0.9} size="small" color="primary" />
                         </Stack>
                         <Slider
-                          value={config.model.top_p}
-                          onChange={(_e, v) => handleNestedConfigChange('model', 'top_p', v)}
+                          value={config.cascade_model?.top_p ?? 0.9}
+                          onChange={(_e, v) => {
+                            handleNestedConfigChange('cascade_model', 'top_p', v);
+                            handleNestedConfigChange('voicelive_model', 'top_p', v);
+                          }}
                           min={0}
                           max={1}
                           step={0.05}
@@ -2505,11 +2618,14 @@ export default function AgentBuilder({
                               <InfoOutlinedIcon fontSize="small" color="action" />
                             </Tooltip>
                           </Stack>
-                          <Chip label={`${config.model.max_tokens.toLocaleString()} tokens`} size="small" color="primary" />
+                          <Chip label={`${(config.cascade_model?.max_tokens ?? 4096).toLocaleString()} tokens`} size="small" color="primary" />
                         </Stack>
                         <Slider
-                          value={config.model.max_tokens}
-                          onChange={(_e, v) => handleNestedConfigChange('model', 'max_tokens', v)}
+                          value={config.cascade_model?.max_tokens ?? 4096}
+                          onChange={(_e, v) => {
+                            handleNestedConfigChange('cascade_model', 'max_tokens', v);
+                            handleNestedConfigChange('voicelive_model', 'max_tokens', v);
+                          }}
                           min={256}
                           max={16384}
                           step={256}

@@ -62,6 +62,7 @@ from apps.artagent.backend.voice.shared.config_resolver import (
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
+from apps.artagent.backend.voice.shared.handoff_service import HandoffService
 from apps.artagent.backend.voice.shared.session_state import (
     SessionStateKeys,
     sync_state_from_memo,
@@ -69,6 +70,17 @@ from apps.artagent.backend.voice.shared.session_state import (
 )
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
+
+
+@dataclass
+class HandoffResult:
+    """Result from executing a handoff."""
+    success: bool
+    target_agent: str = ""
+    handoff_type: str = "announced"  # "discrete" or "announced"
+    greeting: str | None = None
+    error: str | None = None
+
 
 if TYPE_CHECKING:
     from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
@@ -155,53 +167,6 @@ class CascadeSessionScope:
             yield scope
         finally:
             _cascade_session_ctx.reset(token)
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Handoff Context
-# ─────────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class CascadeHandoffContext:
-    """
-    Context passed during agent handoffs in Cascade mode.
-
-    Note: This is intentionally separate from voice/handoffs/context.py's
-    HandoffContext. Cascade mode has simpler needs (single-turn, synchronous)
-    so this is a leaner structure. VoiceLive mode uses the richer HandoffContext
-    which includes session_overrides, greeting, and async-friendly methods.
-    """
-
-    source_agent: str = ""
-    target_agent: str = ""
-    reason: str = ""
-    user_request: str = ""
-    customer_context: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dict for MemoManager storage."""
-        return {
-            "source_agent": self.source_agent,
-            "target_agent": self.target_agent,
-            "reason": self.reason,
-            "user_request": self.user_request,
-            "customer_context": self.customer_context,
-            "metadata": self.metadata,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CascadeHandoffContext:
-        """Create from dict (MemoManager retrieval)."""
-        return cls(
-            source_agent=data.get("source_agent", ""),
-            target_agent=data.get("target_agent", ""),
-            reason=data.get("reason", ""),
-            user_request=data.get("user_request", ""),
-            customer_context=data.get("customer_context"),
-            metadata=data.get("metadata", {}),
-        )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -436,16 +401,33 @@ class CascadeOrchestratorAdapter:
         # Fall back to instance reference
         return self._current_memo_manager
 
+    @property
+    def handoff_service(self) -> HandoffService:
+        """
+        Get the HandoffService for consistent handoff resolution.
+
+        Lazily initialized on first access using current orchestrator state.
+        Uses scenario config for handoff behavior (discrete/announced).
+        """
+        if not hasattr(self, "_handoff_service") or self._handoff_service is None:
+            # Get scenario name from config resolver
+            config = resolve_orchestrator_config()
+            self._handoff_service = HandoffService(
+                scenario_name=config.scenario_name,
+                handoff_map=self.handoff_map,
+                agents=self.agents,
+                memo_manager=self._current_memo_manager,
+            )
+        return self._handoff_service
+
     def get_handoff_target(self, tool_name: str) -> str | None:
         """
         Get the target agent for a handoff tool.
 
-        Prefers HandoffProvider (live lookup) over static handoff_map.
-        This allows session-level handoff_map updates to take effect.
+        Uses HandoffService (preferred) or falls back to provider/static map.
         """
-        if self._handoff_provider:
-            return self._handoff_provider.get_handoff_target(tool_name)
-        return self.handoff_map.get(tool_name)
+        # Use HandoffService for consistent resolution
+        return self.handoff_service.get_handoff_target(tool_name)
 
     def set_handoff_provider(self, provider: HandoffProvider) -> None:
         """
@@ -469,6 +451,110 @@ class CascadeOrchestratorAdapter:
         self._on_agent_switch = callback
 
     # ─────────────────────────────────────────────────────────────────
+    # History Management (Consolidated)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _record_turn(
+        self,
+        agent: str,
+        user_text: str | None,
+        assistant_text: str | None,
+    ) -> tuple[bool, bool]:
+        """
+        Record a conversation turn to history.
+
+        This is the SINGLE place where conversation history is written.
+        All in-memory, no I/O - safe for hot path.
+
+        Args:
+            agent: Agent name for the history thread
+            user_text: User's message (or None to skip)
+            assistant_text: Assistant's response (or None to skip)
+
+        Returns:
+            Tuple of (user_recorded, assistant_recorded)
+        """
+        cm = self._current_memo_manager
+        if not cm:
+            return (False, False)
+
+        user_recorded = False
+        assistant_recorded = False
+
+        if user_text and user_text.strip():
+            cm.append_to_history(agent, "user", user_text)
+            user_recorded = True
+
+        if assistant_text:
+            cm.append_to_history(agent, "assistant", assistant_text)
+            assistant_recorded = True
+
+        return (user_recorded, assistant_recorded)
+
+    def _get_conversation_history(self, cm: MemoManager) -> list[dict[str, str]]:
+        """
+        Build conversation history for the current agent.
+
+        Includes context from other agents to preserve cross-agent continuity.
+        Makes a COPY to avoid mutation issues.
+
+        Args:
+            cm: MemoManager instance
+
+        Returns:
+            List of message dicts for conversation history
+        """
+        # Get current agent's history (copy to avoid reference issues)
+        agent_history = list(cm.get_history(self._active_agent) or [])
+
+        # Collect substantive user messages from other agents
+        all_histories = cm.history.get_all()
+        seen_content: set[str] = set()
+        cross_agent_context: list[dict[str, str]] = []
+
+        for agent_name, msgs in all_histories.items():
+            if agent_name == self._active_agent:
+                continue
+            for msg in msgs:
+                if msg.get("role") != "user":
+                    continue
+                content = msg.get("content", "").strip()
+                # Skip short or greeting-like messages
+                if len(content) <= 10 or content.lower().startswith("welcome"):
+                    continue
+                # Deduplicate
+                key = content.lower()
+                if key not in seen_content:
+                    seen_content.add(key)
+                    cross_agent_context.append(msg)
+
+        # Cross-agent context first, then current agent's history
+        return cross_agent_context + agent_history
+
+    def _build_session_context(self, cm: MemoManager) -> dict[str, Any]:
+        """
+        Build session context dict for prompt rendering.
+
+        Args:
+            cm: MemoManager instance
+
+        Returns:
+            Dict with session variables for Jinja templates
+        """
+        return {
+            "memo_manager": cm,
+            "session_profile": cm.get_value_from_corememory("session_profile"),
+            "caller_name": cm.get_value_from_corememory("caller_name"),
+            "client_id": cm.get_value_from_corememory("client_id"),
+            "customer_intelligence": cm.get_value_from_corememory("customer_intelligence"),
+            "institution_name": cm.get_value_from_corememory("institution_name"),
+            "active_agent": cm.get_value_from_corememory("active_agent"),
+            "previous_agent": cm.get_value_from_corememory("previous_agent"),
+            "visited_agents": cm.get_value_from_corememory("visited_agents"),
+            "handoff_context": cm.get_value_from_corememory("handoff_context"),
+        }
+
+    # ─────────────────────────────────────────────────────────────────
     # Turn Processing
     # ─────────────────────────────────────────────────────────────────
 
@@ -483,20 +569,17 @@ class CascadeOrchestratorAdapter:
         """
         Process a conversation turn using the cascade pattern.
 
-        This method:
-        1. Gets current agent configuration
-        2. Renders prompt with runtime context
-        3. Calls LLM with tools
-        4. Handles tool calls (including handoffs)
-        5. Streams response via on_tts_chunk
-
-        Session Context:
-        - MemoManager is extracted from context.metadata and preserved
-        - CascadeSessionScope ensures context is available across thread boundaries
-        - State is synced back to MemoManager after processing
+        Flow:
+        1. Extract MemoManager from context
+        2. Build messages from history + user input
+        3. Call LLM with streaming
+        4. Handle tool calls / handoffs
+        5. Record conversation to history
+        6. Sync state to MemoManager
 
         Args:
             context: OrchestratorContext with user input and state
+
             on_tts_chunk: Callback for streaming TTS chunks
             on_tool_start: Callback when tool execution starts
             on_tool_end: Callback when tool execution completes
@@ -560,6 +643,7 @@ class CascadeOrchestratorAdapter:
                     # Check for handoff tool calls
                     handoff_executed = False
                     handoff_target = None
+                    handoff_greeting = None  # Store greeting for fallback
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("name", "")
                         if is_handoff_tool(tool_name):
@@ -584,7 +668,7 @@ class CascadeOrchestratorAdapter:
                                 except Exception:
                                     logger.debug("Failed to emit handoff tool_start", exc_info=True)
 
-                            await self._execute_handoff(
+                            handoff_result = await self._execute_handoff(
                                 target_agent=target_agent,
                                 tool_name=tool_name,
                                 args=parsed_args,
@@ -598,14 +682,20 @@ class CascadeOrchestratorAdapter:
                                         {
                                             "handoff": True,
                                             "target_agent": target_agent,
-                                            "success": True,
+                                            "handoff_type": handoff_result.handoff_type,
+                                            "success": handoff_result.success,
                                         },
                                     )
                                 except Exception:
                                     logger.debug("Failed to emit handoff tool_end", exc_info=True)
 
+                            if not handoff_result.success:
+                                logger.warning("Handoff to %s failed: %s", target_agent, handoff_result.error)
+                                continue
+
                             handoff_executed = True
                             handoff_target = target_agent
+                            handoff_greeting = handoff_result.greeting
                             break
 
                     # If handoff occurred, let the NEW agent respond immediately
@@ -678,6 +768,19 @@ class CascadeOrchestratorAdapter:
                                     on_tool_end=on_tool_end,
                                 )
 
+                                # Check if LLM produced meaningful response
+                                if not new_response_text or len(new_response_text.strip()) < 10:
+                                    # LLM response too short or empty - use greeting as fallback
+                                    if handoff_greeting:
+                                        logger.warning(
+                                            "New agent LLM response too short (%d chars), using greeting fallback",
+                                            len(new_response_text) if new_response_text else 0,
+                                        )
+                                        new_response_text = handoff_greeting
+                                        # Stream greeting to TTS
+                                        if on_tts_chunk and handoff_greeting:
+                                            await on_tts_chunk(handoff_greeting)
+
                                 logger.info(
                                     "New agent responded | agent=%s text_len=%d tool_calls=%d",
                                     handoff_target,
@@ -685,25 +788,12 @@ class CascadeOrchestratorAdapter:
                                     len(new_tool_calls),
                                 )
 
-                                # Persist the handoff turn to new agent's history
+                                # Record handoff turn using consolidated helper
+                                user_for_handoff = context.user_text if not new_agent_history else None
+                                self._record_turn(handoff_target, user_for_handoff, new_response_text)
+                                
+                                # Sync state
                                 if self._current_memo_manager:
-                                    try:
-                                        # Add user message if not already in history
-                                        if context.user_text and not new_agent_history:
-                                            self._current_memo_manager.append_to_history(
-                                                handoff_target, "user", context.user_text
-                                            )
-                                        # Add assistant response
-                                        if new_response_text:
-                                            self._current_memo_manager.append_to_history(
-                                                handoff_target, "assistant", new_response_text
-                                            )
-                                    except Exception:
-                                        logger.debug(
-                                            "Failed to persist handoff turn to history",
-                                            exc_info=True,
-                                        )
-
                                     self.sync_to_memo_manager(self._current_memo_manager)
 
                                 span.set_status(Status(StatusCode.OK))
@@ -722,18 +812,56 @@ class CascadeOrchestratorAdapter:
                                     handoff_err,
                                     exc_info=True,
                                 )
-                                # Fall through to return original response
+                                # Use greeting as fallback response
+                                if handoff_greeting:
+                                    logger.info(
+                                        "Using greeting as fallback after LLM error | agent=%s",
+                                        handoff_target,
+                                    )
+                                    # Stream greeting to TTS
+                                    if on_tts_chunk:
+                                        await on_tts_chunk(handoff_greeting)
+                                    
+                                    # Record the greeting as agent response
+                                    self._record_turn(handoff_target, context.user_text, handoff_greeting)
+                                    
+                                    if self._current_memo_manager:
+                                        self.sync_to_memo_manager(self._current_memo_manager)
+                                    
+                                    span.set_status(Status(StatusCode.OK))
+                                    return OrchestratorResult(
+                                        response_text=handoff_greeting,
+                                        tool_calls=tool_calls,
+                                        agent_name=self._active_agent,
+                                        interrupted=self._cancel_event.is_set(),
+                                        input_tokens=self._agent_input_tokens,
+                                        output_tokens=self._agent_output_tokens,
+                                    )
+                                # No greeting fallback - fall through to return original response
                         else:
                             logger.warning(
                                 "Handoff target agent not found: %s",
                                 handoff_target,
                             )
 
-                    # Sync state back to MemoManager before returning
+                    # ─── RECORD & FINALIZE ───
+                    # Record turn using consolidated helper (in-memory, no I/O)
+                    user_recorded, assistant_recorded = self._record_turn(
+                        self._active_agent, context.user_text, response_text
+                    )
+
+                    # Sync orchestrator state to MemoManager (in-memory)
                     if self._current_memo_manager:
                         self.sync_to_memo_manager(self._current_memo_manager)
 
-                    span.set_attribute("cascade.handoff_executed", handoff_executed)
+                    # Set span attributes for observability
+                    span.set_attributes({
+                        "cascade.user_recorded": user_recorded,
+                        "cascade.assistant_recorded": assistant_recorded,
+                        "cascade.user_text_len": len(context.user_text or ""),
+                        "cascade.response_text_len": len(response_text or ""),
+                        "cascade.handoff_executed": handoff_executed,
+                    })
                     span.set_status(Status(StatusCode.OK))
 
                     return OrchestratorResult(
@@ -840,19 +968,20 @@ class CascadeOrchestratorAdapter:
         """
         import json
 
-        # Get model configuration from current agent (allows session agents to override)
+        # Get model configuration from current agent (prefers cascade_model over generic model)
         agent = self.current_agent_config
         model_name = self.config.model_name  # Default from adapter config
         temperature = 0.7  # Default
         top_p = 0.9  # Default
         max_tokens = 4096  # Default
 
-        if agent and agent.model:
-            # Use agent's model configuration
-            model_name = agent.model.deployment_id or model_name
-            temperature = agent.model.temperature
-            top_p = agent.model.top_p
-            max_tokens = agent.model.max_tokens
+        if agent:
+            # Use get_model_for_mode to pick cascade_model if available, else fallback to model
+            model_config = agent.get_model_for_mode("cascade")
+            model_name = model_config.deployment_id or model_name
+            temperature = model_config.temperature
+            top_p = model_config.top_p
+            max_tokens = model_config.max_tokens
 
         # Safety: prevent infinite tool loops
         if _iteration >= _max_iterations:
@@ -916,20 +1045,30 @@ class CascadeOrchestratorAdapter:
                 collected_text: list[str] = []
                 stream_error: list[Exception] = []
                 loop = asyncio.get_running_loop()
+                tool_call_detected = False  # Track if tool calls are streaming
 
-                # Sentence buffer state
+                # Sentence buffer state for aggressive TTS streaming
                 sentence_buffer = ""
-                sentence_terms = ".!?"
-                min_chunk = 20
+                # Primary breaks: sentence endings
+                primary_terms = ".!?"
+                # Secondary breaks: natural pause points (colon, semicolon, newline)
+                # Note: comma excluded to avoid breaking numbers like "100,000"
+                secondary_terms = ";:\n"
+                min_chunk = 15  # Minimum chars before dispatching
+                max_buffer = 80  # Force dispatch if buffer exceeds this (even without breaks)
 
                 def _put_chunk(text: str) -> None:
                     """Thread-safe put to async queue."""
+                    # Don't send text to TTS if tool calls are being made
+                    # The LLM sometimes outputs explanatory text alongside tool calls
+                    if tool_call_detected:
+                        return
                     if text and text.strip():
                         loop.call_soon_threadsafe(tts_queue.put_nowait, text.strip())
 
                 def _streaming_completion():
                     """Run in thread - consumes OpenAI stream."""
-                    nonlocal sentence_buffer
+                    nonlocal sentence_buffer, tool_call_detected
                     try:
                         logger.debug(
                             "Starting OpenAI stream | model=%s messages=%d tools=%d temp=%.2f",
@@ -957,29 +1096,12 @@ class CascadeOrchestratorAdapter:
                             if not delta:
                                 continue
 
-                            # Text content
-                            if getattr(delta, "content", None):
-                                text = delta.content
-                                collected_text.append(text)
-                                sentence_buffer += text
-
-                                # Dispatch on sentence boundaries
-                                while len(sentence_buffer) >= min_chunk:
-                                    term_idx = -1
-                                    for t in sentence_terms:
-                                        idx = sentence_buffer.rfind(t)
-                                        if idx > term_idx:
-                                            term_idx = idx
-
-                                    if term_idx >= min_chunk - 10:
-                                        dispatch = sentence_buffer[: term_idx + 1]
-                                        sentence_buffer = sentence_buffer[term_idx + 1 :]
-                                        _put_chunk(dispatch)
-                                    else:
-                                        break
-
                             # Tool calls - aggregate streamed chunks by index
+                            # Check tool calls FIRST to detect before dispatching text
                             if getattr(delta, "tool_calls", None):
+                                if not tool_call_detected:
+                                    tool_call_detected = True
+                                    logger.debug("Tool call detected - suppressing TTS output")
                                 for tc in delta.tool_calls:
                                     # Use explicit None check - index=0 is valid!
                                     tc_idx = getattr(tc, "index", None)
@@ -1006,8 +1128,50 @@ class CascadeOrchestratorAdapter:
                                         fn_args = getattr(fn, "arguments", None)
                                         if fn_args:
                                             buf["arguments"] += fn_args
+
+                            # Text content - collect but only TTS if no tool calls
+                            if getattr(delta, "content", None):
+                                text = delta.content
+                                collected_text.append(text)
+                                sentence_buffer += text
+
+                                # Aggressive TTS streaming - dispatch as soon as we have a break point
+                                while len(sentence_buffer) >= min_chunk:
+                                    # First try primary breaks (sentence endings)
+                                    term_idx = -1
+                                    for t in primary_terms:
+                                        idx = sentence_buffer.rfind(t)
+                                        if idx > term_idx:
+                                            term_idx = idx
+
+                                    # If no sentence end, try secondary breaks (commas, colons, etc.)
+                                    if term_idx < min_chunk - 5:
+                                        for t in secondary_terms:
+                                            idx = sentence_buffer.rfind(t)
+                                            if idx > term_idx:
+                                                term_idx = idx
+
+                                    # If found a break point, dispatch up to it
+                                    if term_idx >= min_chunk - 5:
+                                        dispatch = sentence_buffer[: term_idx + 1]
+                                        sentence_buffer = sentence_buffer[term_idx + 1 :]
+                                        _put_chunk(dispatch)
+                                    # Force dispatch if buffer is getting too long (no break point found)
+                                    elif len(sentence_buffer) >= max_buffer:
+                                        # Find last space to avoid cutting mid-word
+                                        space_idx = sentence_buffer.rfind(" ", 0, max_buffer)
+                                        if space_idx > min_chunk:
+                                            dispatch = sentence_buffer[:space_idx]
+                                            sentence_buffer = sentence_buffer[space_idx + 1:]
+                                        else:
+                                            dispatch = sentence_buffer[:max_buffer]
+                                            sentence_buffer = sentence_buffer[max_buffer:]
+                                        _put_chunk(dispatch)
+                                    else:
+                                        break
+
                         logger.debug("OpenAI stream completed | chunks=%d", chunk_count)
-                        # Flush remaining buffer
+                        # Flush remaining buffer (only if no tool calls)
                         if sentence_buffer.strip():
                             _put_chunk(sentence_buffer)
                     except Exception as e:
@@ -1326,9 +1490,12 @@ class CascadeOrchestratorAdapter:
         tool_name: str,
         args: dict[str, Any],
         system_vars: dict[str, Any] | None = None,
-    ) -> bool:
+    ) -> HandoffResult:
         """
         Execute a handoff to another agent.
+
+        Uses HandoffService for consistent resolution and greeting selection
+        across both Cascade and VoiceLive orchestrators.
 
         Args:
             target_agent: Target agent name
@@ -1337,12 +1504,8 @@ class CascadeOrchestratorAdapter:
             system_vars: Optional system variables for greeting selection
 
         Returns:
-            True if handoff succeeded
+            HandoffResult with success status, handoff_type, greeting, etc.
         """
-        if target_agent not in self.agents:
-            logger.warning("Handoff target '%s' not found", target_agent)
-            return False
-
         previous_agent = self._active_agent
         is_first_visit = target_agent not in self._visited_agents
 
@@ -1356,15 +1519,28 @@ class CascadeOrchestratorAdapter:
                 "cascade.is_first_visit": is_first_visit,
             },
         ) as span:
-            # Create handoff context
-            context = CascadeHandoffContext(
+            # Use HandoffService for consistent resolution
+            resolution = self.handoff_service.resolve_handoff(
+                tool_name=tool_name,
+                tool_args=args,
                 source_agent=previous_agent,
-                target_agent=target_agent,
-                reason=args.get("reason", tool_name),
-                user_request=self._last_user_message or "",
-                customer_context=args.get("context"),
-                metadata=args,
+                current_system_vars=system_vars or self._session_vars,
+                user_last_utterance=self._last_user_message,
             )
+
+            if not resolution.success:
+                logger.warning(
+                    "Handoff resolution failed | tool=%s error=%s",
+                    tool_name,
+                    resolution.error,
+                )
+                span.set_status(Status(StatusCode.ERROR, resolution.error or "Handoff failed"))
+                return HandoffResult(
+                    success=False,
+                    target_agent=target_agent,
+                    handoff_type=resolution.handoff_type,
+                    error=resolution.error,
+                )
 
             # Update state
             self._visited_agents.add(target_agent)
@@ -1375,13 +1551,13 @@ class CascadeOrchestratorAdapter:
             self._agent_output_tokens = 0
             self._agent_start_time = time.perf_counter()
 
-            # Select greeting for new agent (from agent YAML config)
+            # Select greeting using HandoffService for consistent behavior
             new_agent = self.agents[target_agent]
-            greeting = self._select_greeting(
+            greeting = self.handoff_service.select_greeting(
                 agent=new_agent,
-                agent_name=target_agent,
-                system_vars=system_vars or args,
                 is_first_visit=is_first_visit,
+                greet_on_switch=resolution.greet_on_switch,
+                system_vars=resolution.system_vars,
             )
 
             # Notify callback
@@ -1389,20 +1565,28 @@ class CascadeOrchestratorAdapter:
                 await self._on_agent_switch(previous_agent, target_agent)
 
             span.set_attribute("cascade.greeting", greeting or "(none)")
+            span.set_attribute("cascade.handoff_type", resolution.handoff_type)
+            span.set_attribute("cascade.share_context", resolution.share_context)
             span.set_status(Status(StatusCode.OK))
 
             logger.info(
-                "Handoff: %s → %s (trigger=%s, greeting=%s)",
+                "Handoff: %s → %s (trigger=%s type=%s greeting=%s)",
                 previous_agent,
                 target_agent,
                 tool_name,
+                resolution.handoff_type,
                 "yes" if greeting else "no",
             )
 
-            return True
+            return HandoffResult(
+                success=True,
+                target_agent=target_agent,
+                handoff_type=resolution.handoff_type,
+                greeting=greeting,
+            )
 
     # ─────────────────────────────────────────────────────────────────
-    # Greeting Selection (from Agent YAML Config)
+    # Greeting Selection (delegates to HandoffService)
     # ─────────────────────────────────────────────────────────────────
 
     def _select_greeting(
@@ -1411,30 +1595,29 @@ class CascadeOrchestratorAdapter:
         agent_name: str,
         system_vars: dict[str, Any],
         is_first_visit: bool,
+        greet_on_switch: bool = True,
     ) -> str | None:
-        """Select appropriate greeting for agent activation."""
-        # Check for explicit greeting override
-        explicit = system_vars.get("greeting")
-        if not explicit:
-            overrides = system_vars.get("session_overrides", {})
-            if isinstance(overrides, dict):
-                explicit = overrides.get("greeting")
-        if explicit:
-            return explicit.strip() or None
+        """
+        Select appropriate greeting for agent activation.
 
-        # Check for handoff context (skip automatic greeting)
-        has_handoff = bool(
-            system_vars.get("handoff_context")
-            or system_vars.get("handoff_message")
-            or system_vars.get("handoff_reason")
+        Delegates to HandoffService for consistent behavior across orchestrators.
+
+        Args:
+            agent: The agent to get greeting for
+            agent_name: Name of the agent (unused, kept for backward compat)
+            system_vars: System variables for template rendering
+            is_first_visit: Whether this is first visit to agent
+            greet_on_switch: Whether to greet (from scenario config)
+
+        Returns:
+            Greeting text or None
+        """
+        return self.handoff_service.select_greeting(
+            agent=agent,
+            is_first_visit=is_first_visit,
+            greet_on_switch=greet_on_switch,
+            system_vars=system_vars,
         )
-        if has_handoff:
-            return None
-
-        # Use agent's rendered greeting from YAML (with Jinja2 templating)
-        if is_first_visit:
-            return agent.render_greeting(system_vars)
-        return agent.render_return_greeting(system_vars) or "Welcome back!"
 
     async def switch_agent(
         self,
@@ -1451,11 +1634,12 @@ class CascadeOrchestratorAdapter:
         Returns:
             True if switch succeeded
         """
-        return await self._execute_handoff(
+        result = await self._execute_handoff(
             target_agent=agent_name,
             tool_name=f"manual_switch_{agent_name}",
             args=context or {},
         )
+        return result.success
 
     # ─────────────────────────────────────────────────────────────────
     # MemoManager Integration
@@ -1550,10 +1734,16 @@ class CascadeOrchestratorAdapter:
         on_tts_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> str | None:
         """
-        Process user input in cascade pattern (legacy interface).
+        Process user input in cascade pattern.
 
-        This is the interface expected by SpeechCascadeHandler's
-        orchestrator_func parameter.
+        This is the main entry point called by SpeechCascadeHandler.
+        
+        Flow:
+        1. Sync state from MemoManager
+        2. Build history (with cross-agent context)
+        3. Build context and call process_turn
+        4. Fire-and-forget Redis persistence
+        5. Return response
 
         Args:
             transcript: User's transcribed speech
@@ -1561,79 +1751,48 @@ class CascadeOrchestratorAdapter:
             on_tts_chunk: Optional callback for streaming TTS
 
         Returns:
-            Full response text (or None if cancelled)
+            Full response text (or None if cancelled/error)
         """
-        # Sync state from MemoManager
+        # 1. Sync orchestrator state from MemoManager
         self.sync_from_memo_manager(cm)
+        
+        # Store reference for use in process_turn
+        self._current_memo_manager = cm
 
-        # Pull existing history for active agent
-        # IMPORTANT: Make a copy of the history list to avoid reference issues.
-        # get_history() returns a reference to the internal list, so we must copy
-        # it BEFORE appending the new user message. Otherwise, the history list
-        # will include the current user message, and _build_messages() will add
-        # it again, causing duplicate user messages.
-        history = []
-        try:
-            history = list(cm.get_history(self._active_agent) or [])
-        except Exception:
-            history = []
+        # 2. Build conversation history using helper
+        history = self._get_conversation_history(cm)
 
-        # Persist user turn into history for continuity
-        # This happens AFTER we copy the history, so it doesn't affect the copy
-        if transcript:
-            try:
-                cm.append_to_history(self._active_agent, "user", transcript)
-            except Exception:
-                logger.debug("Failed to append user turn to history", exc_info=True)
-
-        # Build session context from MemoManager for prompt rendering
-        session_context = {
-            "memo_manager": cm,
-            # Session profile and context for Jinja templates
-            "session_profile": cm.get_value_from_corememory("session_profile"),
-            "caller_name": cm.get_value_from_corememory("caller_name"),
-            "client_id": cm.get_value_from_corememory("client_id"),
-            "customer_intelligence": cm.get_value_from_corememory("customer_intelligence"),
-            "institution_name": cm.get_value_from_corememory("institution_name"),
-            "active_agent": cm.get_value_from_corememory("active_agent"),
-            "previous_agent": cm.get_value_from_corememory("previous_agent"),
-            "visited_agents": cm.get_value_from_corememory("visited_agents"),
-            "handoff_context": cm.get_value_from_corememory("handoff_context"),
-        }
-
-        # Build context
+        # 3. Build context and process
         context = OrchestratorContext(
             session_id=self.config.session_id or "",
-            websocket=None,  # Not used in cascade
+            websocket=None,
             call_connection_id=self.config.call_connection_id,
             user_text=transcript,
             conversation_history=history,
-            metadata=session_context,
+            metadata=self._build_session_context(cm),
         )
 
-        # Process turn
-        result = await self.process_turn(
-            context,
-            on_tts_chunk=on_tts_chunk,
-        )
+        result = await self.process_turn(context, on_tts_chunk=on_tts_chunk)
 
-        # Sync state back to MemoManager
-        self.sync_to_memo_manager(cm)
-
+        # 4. Handle errors/interrupts
         if result.error:
             logger.error("Turn processing error: %s", result.error)
             return None
-
         if result.interrupted:
             return None
 
-        if result.response_text:
-            try:
-                cm.append_to_history(self._active_agent, "assistant", result.response_text)
-            except Exception:
-                logger.debug("Failed to append assistant turn to history", exc_info=True)
+        # 5. Fire-and-forget Redis persistence (non-blocking)
+        if hasattr(cm, "_redis_manager") and cm._redis_manager:
+            asyncio.create_task(self._persist_to_redis_background(cm))
 
         return result.response_text
+
+    async def _persist_to_redis_background(self, cm: MemoManager) -> None:
+        """Background task to persist session state to Redis."""
+        try:
+            await cm.persist_to_redis_async(cm._redis_manager)
+        except Exception as e:
+            logger.warning("Redis persist failed: %s", e)
 
     def as_orchestrator_func(
         self,

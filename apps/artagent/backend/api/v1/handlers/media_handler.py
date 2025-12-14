@@ -951,7 +951,7 @@ class MediaHandler:
             logger.error("[%s] TTS failed: %s", self._session_short, e)
 
     def _record_greeting(self, text: str) -> None:
-        """Record greeting in memory."""
+        """Record greeting in memory (with duplicate prevention)."""
         if not self.memory_manager:
             return
         try:
@@ -960,6 +960,20 @@ class MediaHandler:
             agent_name = agent_name or self.memory_manager.get_value_from_corememory(
                 "active_agent", "System"
             )
+            
+            # Check if this exact greeting is already in history to prevent duplicates
+            existing_history = self.memory_manager.get_history(agent_name) or []
+            normalized_text = text.strip()
+            
+            # Check last few messages to avoid duplicate greetings
+            for msg in existing_history[-3:]:  # Check last 3 messages
+                if msg.get("role") == "assistant" and msg.get("content", "").strip() == normalized_text:
+                    logger.debug(
+                        "[%s] Skipping duplicate greeting in history",
+                        getattr(self, "_session_short", ""),
+                    )
+                    return  # Already recorded, skip
+            
             self.memory_manager.append_to_history(agent_name, "assistant", text)
             self.memory_manager.update_corememory("greeting_sent", True)
         except Exception as e:

@@ -9,6 +9,14 @@ Provides shared dataclasses and helper functions for agent-to-agent transitions:
 - **sanitize_handoff_context**: Removes control flags from handoff context
 - **build_handoff_system_vars**: Builds system_vars dict for agent switches
 
+For unified handoff resolution, use HandoffService from voice/shared:
+
+    from apps.artagent.backend.voice.shared import (
+        HandoffService,
+        HandoffResolution,
+        create_handoff_service,
+    )
+
 The handoff_map (tool_name → agent_name) is built dynamically from agent
 YAML declarations via `build_handoff_map()` in agents/loader.py.
 
@@ -26,7 +34,7 @@ Usage:
 
     # Build system_vars for handoff
     ctx = build_handoff_system_vars(
-        source_agent="EricaConcierge",
+        source_agent="Concierge",
         target_agent="FraudAgent",
         tool_result={"handoff_summary": "fraud inquiry"},
         tool_args={"reason": "user reported fraud"},
@@ -35,6 +43,7 @@ Usage:
     )
 
 See Also:
+    - docs/proposals/handoff-consolidation-plan.md for consolidation plan
     - docs/architecture/handoff-inventory.md for handoff architecture
     - apps/artagent/backend/registries/agentstore/loader.py for build_handoff_map()
 """
@@ -48,6 +57,9 @@ from .context import (
     build_handoff_system_vars,
     sanitize_handoff_context,
 )
+
+# Note: HandoffResolution is available from voice.shared.handoff_service
+# We don't re-export it here to avoid circular imports
 
 __all__ = [
     # Dataclasses

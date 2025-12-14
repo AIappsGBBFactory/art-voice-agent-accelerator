@@ -71,7 +71,8 @@ tools:
   - search_knowledge_base
   
   # Handoffs (for tool-based strategy)
-  - handoff_concierge        # Return to concierge
+  - handoff_to_auth          # Return to AuthAgent (insurance) or Concierge (banking)
+  - handoff_concierge        # Return to concierge (banking scenario)
   
   # Escalation
   - transfer_call_to_call_center

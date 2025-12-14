@@ -131,7 +131,7 @@ _PENDING_MFA: dict[str, str] = {}  # client_id -> code
 _COSMOS_MANAGER: CosmosDBMongoCoreManager | None = None
 _COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
 
-# User profiles are stored in audioagentdb.users
+# User profiles are stored in audioagentdb.users (single source of truth)
 _DEFAULT_DEMO_DB = "audioagentdb"
 _DEFAULT_DEMO_USERS_COLLECTION = "users"
 
@@ -146,12 +146,9 @@ def _get_demo_database_name() -> str:
 
 
 def _get_demo_users_collection_name() -> str:
-    for env_key in ("AZURE_COSMOS_USERS_COLLECTION_NAME"):
-        value = os.getenv(env_key)
-        if value:
-            stripped = value.strip()
-            if stripped:
-                return stripped
+    value = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME")
+    if value and value.strip():
+        return value.strip()
     return _DEFAULT_DEMO_USERS_COLLECTION
 
 
@@ -254,6 +251,7 @@ async def _lookup_user_in_cosmos(
     """Query Cosmos DB for the caller. Returns (record, failure_reason)."""
     cosmos = _get_demo_users_manager()
     if cosmos is None:
+        logger.warning("Cosmos manager unavailable for identity lookup")
         return None, "unavailable"
 
     name_pattern = f"^{re.escape(full_name)}$"
@@ -261,6 +259,14 @@ async def _lookup_user_in_cosmos(
         "verification_codes.ssn4": ssn_last_4,
         "full_name": {"$regex": name_pattern, "$options": "i"},
     }
+
+    logger.info(
+        "🔍 Looking up user in Cosmos: db=%s, collection=%s, name='%s', ssn4='%s'",
+        getattr(getattr(cosmos, "database", None), "name", "?"),
+        getattr(getattr(cosmos, "collection", None), "name", "?"),
+        full_name,
+        ssn_last_4,
+    )
 
     try:
         document = await asyncio.to_thread(cosmos.read_document, query)

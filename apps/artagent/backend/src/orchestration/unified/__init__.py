@@ -418,9 +418,9 @@ async def route_turn(
                     voice_style = agent_config.voice.style
                     voice_rate = agent_config.voice.rate
 
-                # Queue TTS via speech cascade with agent's voice configuration
+                # Play TTS immediately (bypass queue which is blocked during orchestration)
                 if hasattr(ws.state, "speech_cascade") and ws.state.speech_cascade:
-                    ws.state.speech_cascade.queue_tts(
+                    await ws.state.speech_cascade.play_tts_immediate(
                         text,
                         voice_name=voice_name,
                         voice_style=voice_style,

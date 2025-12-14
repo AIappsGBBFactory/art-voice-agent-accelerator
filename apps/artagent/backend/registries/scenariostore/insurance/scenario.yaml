@@ -5,12 +5,12 @@ name: insurance
 description: Insurance customer service with claims processing and policy management
 
 # Starting agent
-# Testing flow: Auth Agent → Fraud Agent
 start_agent: AuthAgent
 
 # Agents to include in this scenario
 agents:
   - AuthAgent
+  - ClaimsSpecialist
   - FraudAgent
 
 # Handoff behavior - default for unlisted routes
@@ -19,7 +19,14 @@ handoff_type: announced
 # Handoff configurations - directed edges in the agent graph
 # Each handoff defines: FROM → TO via TOOL with TYPE (discrete/announced)
 handoffs:
-  # Auth routes to Fraud specialist
+  # Auth routes to Claims specialist (after successful verification)
+  - from: AuthAgent
+    to: ClaimsSpecialist
+    tool: handoff_claims_specialist
+    type: discrete            # Seamless after auth
+    share_context: true
+
+  # Auth routes to Fraud specialist (for suspicious activity)
   - from: AuthAgent
     to: FraudAgent
     tool: handoff_fraud_agent
@@ -31,6 +38,20 @@ handoffs:
     to: AuthAgent
     tool: handoff_to_auth
     type: discrete            # Returning after fraud check - seamless
+    share_context: true
+    
+  # Claims can route to Fraud if suspicious
+  - from: ClaimsSpecialist
+    to: FraudAgent
+    tool: handoff_fraud_agent
+    type: announced
+    share_context: true
+
+  # Claims returns to Auth (after claim is filed/resolved)
+  - from: ClaimsSpecialist
+    to: AuthAgent
+    tool: handoff_to_auth
+    type: discrete            # Seamless return to main concierge
     share_context: true
 
 # Agent defaults applied to all agents

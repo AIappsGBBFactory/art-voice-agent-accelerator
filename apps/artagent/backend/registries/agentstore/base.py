@@ -224,6 +224,10 @@ class UnifiedAgent:
     # Model Settings
     # ─────────────────────────────────────────────────────────────────
     model: ModelConfig = field(default_factory=ModelConfig)
+    
+    # Mode-specific model overrides (if both are set, orchestrator picks)
+    cascade_model: ModelConfig | None = None
+    voicelive_model: ModelConfig | None = None
 
     # ─────────────────────────────────────────────────────────────────
     # Voice Settings (TTS)
@@ -492,6 +496,22 @@ class UnifiedAgent:
     def is_handoff_target(self, tool_name: str) -> bool:
         """Check if the given tool name routes to this agent."""
         return self.handoff.trigger == tool_name
+
+    def get_model_for_mode(self, mode: str) -> ModelConfig:
+        """
+        Get the appropriate model config for the given orchestration mode.
+        
+        Args:
+            mode: "cascade" or "voicelive"
+            
+        Returns:
+            The mode-specific model if defined, otherwise falls back to self.model
+        """
+        if mode == "cascade" and self.cascade_model is not None:
+            return self.cascade_model
+        if mode == "voicelive" and self.voicelive_model is not None:
+            return self.voicelive_model
+        return self.model
 
     # ═══════════════════════════════════════════════════════════════════
     # CONVENIENCE PROPERTIES
