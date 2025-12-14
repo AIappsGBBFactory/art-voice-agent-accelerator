@@ -76,7 +76,7 @@ from .shared import (
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
-from .speech_cascade import (  # Orchestrator (co-located with handler); Unified TTS Playback (preferred); Legacy TTS Sender (deprecated - use TTSPlayback)
+from .speech_cascade import (  # Orchestrator (co-located with handler); Unified TTS Playback
     SAMPLE_RATE_ACS,
     SAMPLE_RATE_BROWSER,
     BargeInController,
@@ -93,8 +93,6 @@ from .speech_cascade import (  # Orchestrator (co-located with handler); Unified
     record_barge_in,
     record_stt_recognition,
     record_turn_processing,
-    send_tts_to_acs,
-    send_tts_to_browser,
 )
 
 # Cascade orchestrator factory functions (re-exported from speech_cascade)
@@ -131,13 +129,10 @@ __all__ = [
     "record_stt_recognition",
     "record_turn_processing",
     "record_barge_in",
-    # Unified TTS Playback (preferred)
+    # Unified TTS Playback
     "TTSPlayback",
     "SAMPLE_RATE_BROWSER",
     "SAMPLE_RATE_ACS",
-    # Legacy TTS Sender (deprecated - use TTSPlayback)
-    "send_tts_to_browser",
-    "send_tts_to_acs",
     # VoiceLive SDK Handler
     "VoiceLiveSDKHandler",
     # VoiceLive Metrics
