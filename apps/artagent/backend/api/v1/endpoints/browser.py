@@ -295,16 +295,21 @@ async def browser_conversation_endpoint(
                 # Start speech cascade and run message loop
                 await handler.start()
                 await handler.run()
+                logger.debug("[%s] run() completed normally", session_id)
 
         except WebSocketDisconnect as e:
+            logger.debug("[%s] WebSocketDisconnect caught", session_id)
             _log_disconnect("conversation", session_id, e)
         except Exception as e:
+            logger.debug("[%s] Exception caught: %s", session_id, type(e).__name__)
             _log_error("conversation", session_id, e)
             raise
         finally:
+            logger.debug("[%s] finally block starting cleanup", session_id)
             await _cleanup_conversation(
                 websocket, session_id, handler, memory_manager, conn_id, stream_mode
             )
+            logger.debug("[%s] finally block cleanup complete", session_id)
 
 
 # =============================================================================
@@ -642,6 +647,15 @@ def _log_disconnect(endpoint: str, identifier: str | None, e: WebSocketDisconnec
 
 def _log_error(endpoint: str, identifier: str | None, e: Exception) -> None:
     """Log WebSocket error."""
+    # Log the actual exception for debugging
+    logger.error(
+        "[%s] %s error: %s (%s)",
+        identifier,
+        endpoint.capitalize(),
+        str(e),
+        type(e).__name__,
+        exc_info=True,  # Include traceback
+    )
     log_with_context(
         logger,
         "error",
