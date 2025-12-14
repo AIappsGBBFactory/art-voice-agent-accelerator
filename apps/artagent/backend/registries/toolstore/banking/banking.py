@@ -253,7 +253,7 @@ evaluate_card_eligibility_schema: dict[str, Any] = {
 
 _COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
 
-# User profiles are stored in audioagentdb.users
+# User profiles are stored in audioagentdb.users (single source of truth)
 _DEFAULT_DEMO_DB = "audioagentdb"
 _DEFAULT_DEMO_USERS_COLLECTION = "users"
 

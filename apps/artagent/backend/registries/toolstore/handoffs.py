@@ -285,6 +285,30 @@ handoff_general_kb_schema: dict[str, Any] = {
     },
 }
 
+handoff_claims_specialist_schema: dict[str, Any] = {
+    "name": "handoff_claims_specialist",
+    "description": (
+        "Transfer to Claims Specialist for claims processing and FNOL. "
+        "Use when customer needs to file a new claim, check claim status, or discuss claims."
+        + SILENT_HANDOFF_NOTE
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "client_id": {"type": "string", "description": "Customer identifier"},
+            "reason": {
+                "type": "string",
+                "description": "Reason for transfer (new_claim, claim_status, claim_question)",
+            },
+            "incident_summary": {
+                "type": "string",
+                "description": "Brief summary of the incident if known",
+            },
+        },
+        "required": [],
+    },
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTORS
@@ -544,6 +568,27 @@ async def handoff_general_kb(args: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+async def handoff_claims_specialist(args: dict[str, Any]) -> dict[str, Any]:
+    """Transfer to Claims Specialist for claims processing and FNOL."""
+    client_id = (args.get("client_id") or "").strip()
+    reason = (args.get("reason") or "claims_inquiry").strip()
+    incident_summary = (args.get("incident_summary") or "").strip()
+
+    logger.info("📋 Handoff to ClaimsSpecialist | client=%s reason=%s", client_id, reason)
+
+    return _build_handoff_payload(
+        target_agent="ClaimsSpecialist",
+        message="",  # Silent handoff - claims specialist will greet
+        summary=f"Claims handoff: {reason}",
+        context={
+            "client_id": client_id,
+            "reason": reason,
+            "incident_summary": incident_summary,
+            "handoff_timestamp": _utc_now(),
+        },
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -618,4 +663,11 @@ register_tool(
     handoff_general_kb,
     is_handoff=True,
     tags={"handoff", "knowledge_base"},
+)
+register_tool(
+    "handoff_claims_specialist",
+    handoff_claims_specialist_schema,
+    handoff_claims_specialist,
+    is_handoff=True,
+    tags={"handoff", "claims", "insurance"},
 )

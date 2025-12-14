@@ -48,6 +48,13 @@ from .session_state import (
     sync_state_to_memo,
 )
 
+# Handoff service (unified handoff resolution)
+from .handoff_service import (
+    HandoffResolution,
+    HandoffService,
+    create_handoff_service,
+)
+
 __all__ = [
     # Context/Result (shared data classes)
     "OrchestratorContext",
@@ -64,4 +71,8 @@ __all__ = [
     "SessionState",
     "sync_state_from_memo",
     "sync_state_to_memo",
+    # Handoff Service
+    "HandoffService",
+    "HandoffResolution",
+    "create_handoff_service",
 ]

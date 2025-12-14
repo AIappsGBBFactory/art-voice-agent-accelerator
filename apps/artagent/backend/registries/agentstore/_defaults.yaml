@@ -11,7 +11,27 @@
 # - Template variables for prompts
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Model configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Define separate models for each orchestration mode:
+#   - cascade_model:   Used by Cascade orchestrator (Chat Completions API)
+#   - voicelive_model: Used by VoiceLive orchestrator (Realtime API)
+#   - model:           Fallback if mode-specific model not defined
+# ─────────────────────────────────────────────────────────────────────────────
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.7
+  top_p: 0.9
+  max_tokens: 4096
+
+voicelive_model:
+  deployment_id: gpt-4o-realtime-preview
+  temperature: 0.7
+  top_p: 0.9
+  max_tokens: 4096
+
+# Fallback model (used if mode-specific model not defined)
 model:
   deployment_id: gpt-4o
   temperature: 0.7

@@ -209,6 +209,32 @@ class AzureRedisManager:
                 if attempt >= retries:
                     break
                 self._create_client()
+            except RedisClusterException as cluster_err:
+                # Handle cluster connection failures (e.g., "Redis Cluster cannot be connected")
+                last_exc = cluster_err
+                self.logger.warning(
+                    "Redis cluster error on %s (attempt %d/%d): %s",
+                    command_name,
+                    attempt + 1,
+                    retries + 1,
+                    cluster_err,
+                )
+                if attempt >= retries:
+                    break
+                self._create_client()
+            except OSError as os_err:
+                # Handle "I/O operation on closed file" and similar socket errors
+                last_exc = os_err
+                self.logger.warning(
+                    "Redis I/O error on %s (attempt %d/%d): %s",
+                    command_name,
+                    attempt + 1,
+                    retries + 1,
+                    os_err,
+                )
+                if attempt >= retries:
+                    break
+                self._create_client()
             except Exception as exc:  # pragma: no cover - safeguard
                 last_exc = exc
                 self.logger.error("Unexpected Redis error on %s: %s", command_name, exc)
