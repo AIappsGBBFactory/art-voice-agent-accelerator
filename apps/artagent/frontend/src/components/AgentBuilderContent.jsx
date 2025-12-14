@@ -66,6 +66,11 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import StarIcon from '@mui/icons-material/Star';
 import EditIcon from '@mui/icons-material/Edit';
 import HearingIcon from '@mui/icons-material/Hearing';
+import PersonIcon from '@mui/icons-material/Person';
+import BusinessIcon from '@mui/icons-material/Business';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import BadgeIcon from '@mui/icons-material/Badge';
+import InsightsIcon from '@mui/icons-material/Insights';
 
 import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
@@ -114,6 +119,17 @@ const styles = {
       borderRadius: '8px',
     },
   },
+  templateVarChip: {
+    fontFamily: 'monospace',
+    fontSize: '12px',
+    height: '28px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    '&:hover': {
+      transform: 'translateY(-1px)',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    },
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -132,6 +148,336 @@ function TabPanel({ children, value, index, ...other }) {
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEMPLATE VARIABLE REFERENCE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const TEMPLATE_VARIABLES = [
+  {
+    name: 'caller_name',
+    description: 'Full name of the caller from session profile',
+    example: '{{ caller_name | default("valued customer") }}',
+    icon: <PersonIcon fontSize="small" />,
+    source: 'Session Profile',
+  },
+  {
+    name: 'institution_name',
+    description: 'Name of your organization/institution',
+    example: '{{ institution_name | default("Contoso Bank") }}',
+    icon: <BusinessIcon fontSize="small" />,
+    source: 'Template Vars',
+  },
+  {
+    name: 'agent_name',
+    description: 'Display name of the AI agent',
+    example: '{{ agent_name | default("Assistant") }}',
+    icon: <SmartToyIcon fontSize="small" />,
+    source: 'Template Vars',
+  },
+  {
+    name: 'client_id',
+    description: 'Unique identifier for the customer',
+    example: '{% if client_id %}Account: {{ client_id }}{% endif %}',
+    icon: <BadgeIcon fontSize="small" />,
+    source: 'Session Profile',
+  },
+  {
+    name: 'customer_intelligence',
+    description: 'Customer insights and preferences object',
+    example: '{{ customer_intelligence.preferred_channel }}',
+    icon: <InsightsIcon fontSize="small" />,
+    source: 'Session Profile',
+  },
+  {
+    name: 'session_profile',
+    description: 'Full session profile object with all customer data',
+    example: '{{ session_profile.email }}',
+    icon: <AccountBalanceIcon fontSize="small" />,
+    source: 'Core Memory',
+  },
+  {
+    name: 'tools',
+    description: 'List of available tool names for this agent',
+    example: '{% for tool in tools %}{{ tool }}{% endfor %}',
+    icon: <BuildIcon fontSize="small" />,
+    source: 'Agent Config',
+  },
+];
+
+const TEMPLATE_VARIABLE_DOCS = [
+  {
+    key: 'caller_name',
+    label: 'caller_name',
+    type: 'string',
+    source: 'Session Profile',
+    paths: ['profile.caller_name', 'profile.name', 'profile.contact_info.full_name', 'profile.contact_info.first_name'],
+    example: 'Ava Harper',
+    description: 'Full name of the caller as captured or inferred from the session profile.',
+  },
+  {
+    key: 'institution_name',
+    label: 'institution_name',
+    type: 'string',
+    source: 'Template Vars (defaults) or Session Profile',
+    paths: ['template_vars.institution_name', 'profile.institution_name'],
+    example: 'Contoso Financial',
+    description: 'Brand or institution name used for introductions and persona anchoring.',
+  },
+  {
+    key: 'agent_name',
+    label: 'agent_name',
+    type: 'string',
+    source: 'Template Vars (defaults)',
+    paths: ['template_vars.agent_name'],
+    example: 'Concierge',
+    description: 'Display name of the current AI agent.',
+  },
+  {
+    key: 'client_id',
+    label: 'client_id',
+    type: 'string',
+    source: 'Session Profile / memo',
+    paths: ['profile.client_id', 'profile.customer_id', 'profile.contact_info.client_id', 'memo_manager.client_id'],
+    example: 'C123-9982',
+    description: 'Internal customer identifier or account code if present in the session context.',
+  },
+  {
+    key: 'customer_intelligence',
+    label: 'customer_intelligence',
+    type: 'object',
+    source: 'Session Profile',
+    paths: ['profile.customer_intelligence', 'profile.customer_intel'],
+    example: '{ "preferred_channel": "voice", "risk_score": 0.12 }',
+    description: 'Structured insight object about the customer (preferences, segments, scores).',
+  },
+  {
+    key: 'customer_intelligence.relationship_context.relationship_tier',
+    label: 'customer_intelligence.relationship_context.relationship_tier',
+    type: 'string',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.relationship_context.relationship_tier',
+      'profile.customer_intel.relationship_context.relationship_tier',
+    ],
+    example: 'Platinum',
+    description: 'Relationship tier from customer_intelligence.relationship_context.',
+  },
+  {
+    key: 'customer_intelligence.relationship_context.relationship_duration_years',
+    label: 'customer_intelligence.relationship_context.relationship_duration_years',
+    type: 'number',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.relationship_context.relationship_duration_years',
+      'profile.customer_intel.relationship_context.relationship_duration_years',
+    ],
+    example: '8',
+    description: 'Relationship duration (years) from customer_intelligence.relationship_context.',
+  },
+  {
+    key: 'customer_intelligence.preferences.preferredContactMethod',
+    label: 'customer_intelligence.preferences.preferredContactMethod',
+    type: 'string',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.preferences.preferredContactMethod',
+      'profile.customer_intel.preferences.preferredContactMethod',
+    ],
+    example: 'mobile',
+    description: 'Preferred contact method from customer_intelligence.preferences.',
+  },
+  {
+    key: 'customer_intelligence.bank_profile.current_balance',
+    label: 'customer_intelligence.bank_profile.current_balance',
+    type: 'number',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.bank_profile.current_balance',
+      'profile.customer_intel.bank_profile.current_balance',
+    ],
+    example: '45230.50',
+    description: 'Current balance from customer_intelligence.bank_profile.',
+  },
+  {
+    key: 'customer_intelligence.spending_patterns.avg_monthly_spend',
+    label: 'customer_intelligence.spending_patterns.avg_monthly_spend',
+    type: 'number',
+    source: 'Session Profile',
+    paths: [
+      'profile.customer_intelligence.spending_patterns.avg_monthly_spend',
+      'profile.customer_intel.spending_patterns.avg_monthly_spend',
+    ],
+    example: '4500',
+    description: 'Average monthly spend from customer_intelligence.spending_patterns.',
+  },
+  {
+    key: 'session_profile',
+    label: 'session_profile',
+    type: 'object',
+    source: 'Session Profile',
+    paths: ['profile'],
+    example: '{ "email": "user@example.com", "contact_info": { ... } }',
+    description: 'Full session profile object containing contact_info, verification codes, and custom fields.',
+  },
+  {
+    key: 'session_profile.email',
+    label: 'session_profile.email',
+    type: 'string',
+    source: 'Session Profile',
+    paths: ['profile.email'],
+    example: 'user@example.com',
+    description: 'Email from the session profile.',
+  },
+  {
+    key: 'session_profile.contact_info.phone_last_4',
+    label: 'session_profile.contact_info.phone_last_4',
+    type: 'string',
+    source: 'Session Profile',
+    paths: ['profile.contact_info.phone_last_4'],
+    example: '5678',
+    description: 'Phone last 4 from session profile contact_info.',
+  },
+  {
+    key: 'tools',
+    label: 'tools',
+    type: 'array<string>',
+    source: 'Agent Config',
+    paths: ['tools'],
+    example: '["get_account_summary", "handoff_to_auth"]',
+    description: 'List of enabled tool names for the agent (honors your current selection).',
+  },
+];
+
+// Extract Jinja-style variables from text (e.g., "{{ caller_name }}", "{{ user.name | default('') }}")
+const extractJinjaVariables = (text = '') => {
+  const vars = new Set();
+  const regex = /\{\{\s*([a-zA-Z0-9_.]+)(?:\s*\|[^}]*)?\s*\}\}/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const candidate = match[1];
+    if (candidate) {
+        const trimmed = candidate.trim();
+        if (trimmed) {
+          vars.add(trimmed);
+          const root = trimmed.split('.')[0];
+          if (root) vars.add(root);
+        }
+    }
+  }
+  return Array.from(vars);
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEMPLATE VARIABLE HELPER COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const TemplateVariableHelper = React.memo(function TemplateVariableHelper({ onInsert, usedVars = [] }) {
+  const [copiedVar, setCopiedVar] = useState(null);
+  const [expanded, setExpanded] = useState(true);
+  const usedSet = useMemo(() => new Set(usedVars || []), [usedVars]);
+
+  const varsBySource = useMemo(() => {
+    const groups = {
+      'Session Profile': [],
+      'Customer Intelligence': [],
+      Other: [],
+    };
+    TEMPLATE_VARIABLE_DOCS.forEach((doc) => {
+      const key = doc.key || '';
+      if (key.startsWith('customer_intelligence')) {
+        groups['Customer Intelligence'].push(doc);
+      } else if (key.startsWith('session_profile')) {
+        groups['Session Profile'].push(doc);
+      } else {
+        groups.Other.push(doc);
+      }
+    });
+    Object.keys(groups).forEach((key) => {
+      groups[key].sort((a, b) => a.label.localeCompare(b.label));
+    });
+    return groups;
+  }, []);
+
+  const handleCopy = useCallback(
+    (varName) => {
+      const textToCopy = `{{ ${varName} }}`;
+      navigator.clipboard.writeText(textToCopy);
+      setCopiedVar(varName);
+      setTimeout(() => setCopiedVar(null), 2000);
+      if (onInsert) onInsert(textToCopy);
+    },
+    [onInsert],
+  );
+
+  return (
+    <Card variant="outlined" sx={{ ...styles.sectionCard, mb: 2 }}>
+      <CardContent sx={{ pb: '12px !important' }}>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2, justifyContent: 'space-between' }}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <InfoOutlinedIcon color="primary" fontSize="small" />
+            <Typography variant="subtitle2" color="primary">
+              Available Template Variables
+            </Typography>
+          </Stack>
+          <Button size="small" onClick={() => setExpanded((prev) => !prev)}>
+            {expanded ? 'Hide' : 'Show'}
+          </Button>
+        </Stack>
+        <Collapse in={expanded} timeout="auto">
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+            Click a variable to copy. These are populated from the session profile at runtime.
+          </Typography>
+          <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
+            <Chip label="Used in template" size="small" color="success" variant="filled" />
+            <Chip label="Not used" size="small" variant="outlined" />
+          </Stack>
+          <Stack spacing={1.5}>
+            {Object.entries(varsBySource).map(([source, docs]) => (
+              <Box key={source}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: '#475569', mb: 0.5, display: 'block' }}>
+                  {source}
+                </Typography>
+                <Stack direction="row" flexWrap="wrap" gap={1}>
+                  {docs.map((doc) => {
+                    const active = usedSet.has(doc.key) || copiedVar === doc.key;
+                    return (
+                      <Tooltip
+                        key={doc.key}
+                        title={
+                          <Box sx={{ p: 0.5 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{doc.description}</Typography>
+                            <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#93c5fd' }}>
+                              {doc.example}
+                            </Typography>
+                            <Typography variant="caption" display="block" sx={{ mt: 0.5, color: '#a5b4fc' }}>
+                              Type: {doc.type}
+                            </Typography>
+                          </Box>
+                        }
+                        arrow
+                      >
+                        <Chip
+                          icon={copiedVar === doc.key ? <CheckIcon fontSize="small" /> : undefined}
+                          label={`{{ ${doc.key} }}`}
+                          size="small"
+                          variant={active ? 'filled' : 'outlined'}
+                          color={active ? 'success' : 'default'}
+                          onClick={() => handleCopy(doc.key)}
+                          sx={styles.templateVarChip}
+                        />
+                      </Tooltip>
+                    );
+                  })}
+                </Stack>
+              </Box>
+            ))}
+          </Stack>
+        </Collapse>
+      </CardContent>
+    </Card>
+  );
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEFAULT PROMPT
@@ -333,6 +679,17 @@ export default function AgentBuilderContent({
     return availableTools.filter((t) => !t.is_handoff);
   }, [availableTools, toolFilter]);
 
+  // Compute used Jinja variables from prompt, greeting, return_greeting
+  const usedVars = useMemo(() => {
+    const fromGreeting = extractJinjaVariables(config.greeting);
+    const fromReturnGreeting = extractJinjaVariables(config.return_greeting);
+    const fromPrompt = extractJinjaVariables(config.prompt);
+    return [...new Set([...fromGreeting, ...fromReturnGreeting, ...fromPrompt])];
+  }, [config.greeting, config.return_greeting, config.prompt]);
+
+  // Ref for prompt textarea to support variable insertion
+  const promptTextareaRef = useRef(null);
+
   // ─────────────────────────────────────────────────────────────────────────
   // HANDLERS
   // ─────────────────────────────────────────────────────────────────────────
@@ -347,6 +704,28 @@ export default function AgentBuilderContent({
       [parent]: { ...prev[parent], [field]: value },
     }));
   }, []);
+
+  // Insert variable at cursor position in prompt textarea
+  const handleInsertVariable = useCallback((varText) => {
+    const textarea = promptTextareaRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart || 0;
+      const end = textarea.selectionEnd || 0;
+      const text = config.prompt;
+      const before = text.substring(0, start);
+      const after = text.substring(end);
+      const newText = before + varText + after;
+      handleConfigChange('prompt', newText);
+      // Set cursor position after inserted text
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(start + varText.length, start + varText.length);
+      }, 0);
+    } else {
+      // Fallback: append to end
+      handleConfigChange('prompt', config.prompt + varText);
+    }
+  }, [config.prompt, handleConfigChange]);
 
   const handleToolToggle = useCallback((toolName) => {
     setConfig((prev) => ({
@@ -578,18 +957,23 @@ export default function AgentBuilderContent({
                   </CardContent>
                 </Card>
 
-                {/* Templates */}
+                {/* Templates & Existing Agents */}
                 <Card variant="outlined" sx={styles.sectionCard}>
                   <CardContent>
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1, fontWeight: 600 }}>
                       <FolderOpenIcon fontSize="small" sx={{ mr: 1, verticalAlign: 'middle' }} />
-                      Start from Template
+                      Edit Existing or Create from Template
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                      Select an agent to edit or use as a starting template for a new agent.
                     </Typography>
                     <Stack direction="row" flexWrap="wrap" gap={1}>
                       {availableTemplates.map((t) => (
                         <Chip
                           key={t.id}
                           label={t.name}
+                          icon={t.is_session_agent ? <SmartToyIcon fontSize="small" /> : <StarIcon fontSize="small" />}
+                          color={t.is_session_agent ? 'secondary' : 'default'}
                           onClick={() => handleApplyTemplate(t.id)}
                           sx={{ cursor: 'pointer' }}
                         />
@@ -607,19 +991,32 @@ export default function AgentBuilderContent({
 
             {/* TAB 1: PROMPT */}
             <TabPanel value={activeTab} index={1}>
+              {/* Template Variable Helper */}
+              <TemplateVariableHelper onInsert={handleInsertVariable} usedVars={usedVars} />
+
               <Card variant="outlined" sx={styles.sectionCard}>
                 <CardContent>
                   <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
                     📝 System Prompt
                   </Typography>
                   <TextField
+                    inputRef={promptTextareaRef}
                     value={config.prompt}
                     onChange={(e) => handleConfigChange('prompt', e.target.value)}
                     fullWidth
                     multiline
                     rows={20}
+                    placeholder="Enter your system prompt with Jinja2 template syntax..."
                     sx={styles.promptEditor}
                   />
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 2, lineHeight: 1.6 }}
+                  >
+                    <strong>Tip:</strong> Use Jinja2 syntax like <code>{'{{ variable }}'}</code> for dynamic content 
+                    and <code>{'{% if condition %}...{% endif %}'}</code> for conditional sections.
+                  </Typography>
                 </CardContent>
               </Card>
             </TabPanel>

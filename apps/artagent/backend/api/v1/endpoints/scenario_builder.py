@@ -42,6 +42,9 @@ from apps.artagent.backend.registries.scenariostore.loader import (
     list_scenarios,
     load_scenario,
 )
+from apps.artagent.backend.src.orchestration.session_agents import (
+    list_session_agents,
+)
 from apps.artagent.backend.src.orchestration.session_scenarios import (
     get_session_scenario,
     list_session_scenarios,
@@ -159,6 +162,8 @@ class AgentInfo(BaseModel):
     greeting: str | None = None
     tools: list[str] = []
     is_entry_point: bool = False
+    is_session_agent: bool = False  # True if this is a dynamically created session agent
+    session_id: str | None = None  # Session ID if this is a session agent
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -291,9 +296,11 @@ async def list_available_agents() -> dict[str, Any]:
     List all available agents for scenario configuration.
 
     Returns agent information for building scenario orchestration graphs.
+    Includes both static agents from YAML files and dynamic session agents.
     """
     start = time.time()
 
+    # Get static agents from registry (YAML files)
     agents_registry = discover_agents()
     agents_list: list[AgentInfo] = []
 
@@ -306,16 +313,49 @@ async def list_available_agents() -> dict[str, Any]:
                 tools=agent.tool_names if hasattr(agent, "tool_names") else [],
                 is_entry_point=name.lower() == "concierge"
                 or "concierge" in name.lower(),
+                is_session_agent=False,
+                session_id=None,
             )
         )
 
-    # Sort by name, with entry points first
-    agents_list.sort(key=lambda a: (not a.is_entry_point, a.name))
+    # Get dynamic session agents
+    # list_session_agents() returns {"{session_id}:{agent_name}": agent}
+    session_agents = list_session_agents()
+    for composite_key, agent in session_agents.items():
+        # Parse the composite key to extract session_id
+        parts = composite_key.split(":", 1)
+        session_id = parts[0] if len(parts) > 1 else composite_key
+        
+        # Check if this session agent already exists in static registry
+        # (avoid duplicates if agent was created from a template with same name)
+        existing_names = {a.name for a in agents_list}
+        agent_name = agent.name
+
+        # If duplicate name, suffix with session ID
+        if agent_name in existing_names:
+            agent_name = f"{agent.name} (session)"
+
+        agents_list.append(
+            AgentInfo(
+                name=agent_name,
+                description=agent.description or f"Dynamic agent for session {session_id[:8]}",
+                greeting=agent.greeting,
+                tools=agent.tool_names if hasattr(agent, "tool_names") else [],
+                is_entry_point=False,
+                is_session_agent=True,
+                session_id=session_id,
+            )
+        )
+
+    # Sort by name, with entry points first, then static agents, then session agents
+    agents_list.sort(key=lambda a: (a.is_session_agent, not a.is_entry_point, a.name))
 
     return {
         "status": "success",
         "total": len(agents_list),
         "agents": [a.model_dump() for a in agents_list],
+        "static_count": len(agents_registry),
+        "session_count": len(session_agents),
         "response_time_ms": round((time.time() - start) * 1000, 2),
     }
 
@@ -329,9 +369,16 @@ async def list_available_agents() -> dict[str, Any]:
 )
 async def get_default_config() -> dict[str, Any]:
     """Get default scenario configuration for creating new scenarios."""
-    # Get available agents for reference
+    # Get available agents for reference (static + session)
     agents_registry = discover_agents()
+    session_agents = list_session_agents()
+
+    # Combine agent names
     agent_names = list(agents_registry.keys())
+    # session_agents format: {"{session_id}:{agent_name}": agent}
+    for composite_key, agent in session_agents.items():
+        if agent.name not in agent_names:
+            agent_names.append(agent.name)
 
     return {
         "status": "success",

@@ -12,7 +12,6 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
 import BuildRoundedIcon from '@mui/icons-material/BuildRounded';
-import HubRoundedIcon from '@mui/icons-material/HubRounded';
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
@@ -3565,42 +3564,6 @@ function RealTimeVoiceApp() {
             }}
           >
             <BuildRoundedIcon fontSize="small" />
-          </button>
-
-          {/* Scenario Builder Button */}
-          <button
-            onClick={() => {
-              setBuilderInitialMode('scenarios');
-              setShowAgentScenarioBuilder(true);
-            }}
-            title="Scenario Builder"
-            style={{
-              width: '44px',
-              height: '44px',
-              borderRadius: '12px',
-              border: '1px solid rgba(226,232,240,0.6)',
-              background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
-              color: '#8b5cf6',
-              fontSize: '18px',
-              cursor: 'pointer',
-              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-              boxShadow: '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)';
-              e.currentTarget.style.boxShadow = '0 4px 16px rgba(139,92,246,0.2), inset 0 1px 0 rgba(255,255,255,0.8)';
-              e.currentTarget.style.background = 'linear-gradient(135deg, #ede9fe, #ddd6fe)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)';
-              e.currentTarget.style.background = 'linear-gradient(145deg, #ffffff, #fafbfc)';
-            }}
-          >
-            <HubRoundedIcon fontSize="small" />
           </button>
 
           {/* Agent Context Button */}

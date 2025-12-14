@@ -167,6 +167,8 @@ class AgentTemplateInfo(BaseModel):
     voice: dict[str, Any] | None = None
     model: dict[str, Any] | None = None
     is_entry_point: bool = False
+    is_session_agent: bool = False
+    session_id: str | None = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -459,6 +461,38 @@ async def list_agent_templates() -> dict[str, Any]:
 
     # Sort by name, with entry point first
     templates.sort(key=lambda t: (not t.is_entry_point, t.name))
+
+    # Include session agents (custom-created agents)
+    # list_session_agents() returns {"{session_id}:{agent_name}": agent}
+    session_agents = list_session_agents()
+    for composite_key, agent in session_agents.items():
+        try:
+            # Parse the composite key to extract session_id
+            parts = composite_key.split(":", 1)
+            session_id = parts[0] if len(parts) > 1 else composite_key
+            
+            prompt_full = agent.prompt_template or ""
+            prompt_preview = prompt_full[:300] + "..." if len(prompt_full) > 300 else prompt_full
+            
+            templates.append(
+                AgentTemplateInfo(
+                    id=f"session:{composite_key}",
+                    name=agent.name,
+                    description=agent.description or "",
+                    greeting=agent.greeting or "",
+                    prompt_preview=prompt_preview,
+                    prompt_full=prompt_full,
+                    tools=agent.tool_names or [],
+                    voice=agent.voice.to_dict() if agent.voice else None,
+                    model=agent.model.to_dict() if agent.model else None,
+                    is_entry_point=False,
+                    is_session_agent=True,
+                    session_id=session_id,
+                )
+            )
+        except Exception as e:
+            logger.warning("Failed to include session agent %s: %s", agent.name, e)
+            continue
 
     return {
         "status": "success",
