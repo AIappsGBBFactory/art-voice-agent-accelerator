@@ -12,6 +12,7 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
 import BuildRoundedIcon from '@mui/icons-material/BuildRounded';
+import HubRoundedIcon from '@mui/icons-material/HubRounded';
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
@@ -27,6 +28,7 @@ import GraphListView from './graph/GraphListView.jsx';
 import AgentTopologyPanel from './AgentTopologyPanel.jsx';
 import AgentDetailsPanel from './AgentDetailsPanel.jsx';
 import AgentBuilder from './AgentBuilder.jsx';
+import AgentScenarioBuilder from './AgentScenarioBuilder.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import { API_BASE_URL, WS_URL } from '../config/constants.js';
 import { ensureVoiceAppKeyframes, styles } from '../styles/voiceAppStyles.js';
@@ -543,6 +545,8 @@ function RealTimeVoiceApp() {
   const openDemoForm = useCallback(() => setShowDemoForm(true), [setShowDemoForm]);
   const closeDemoForm = useCallback(() => setShowDemoForm(false), [setShowDemoForm]);
   const [showAgentBuilder, setShowAgentBuilder] = useState(false);
+  const [showAgentScenarioBuilder, setShowAgentScenarioBuilder] = useState(false);
+  const [builderInitialMode, setBuilderInitialMode] = useState('agents');
   const [createProfileHovered, setCreateProfileHovered] = useState(false);
   const demoFormCloseTimeoutRef = useRef(null);
   const profileHighlightTimeoutRef = useRef(null);
@@ -3529,7 +3533,10 @@ function RealTimeVoiceApp() {
 
           {/* Agent Builder Button */}
           <button
-            onClick={() => setShowAgentBuilder(true)}
+            onClick={() => {
+              setBuilderInitialMode('agents');
+              setShowAgentScenarioBuilder(true);
+            }}
             title="Agent Builder"
             style={{
               width: '44px',
@@ -3558,6 +3565,42 @@ function RealTimeVoiceApp() {
             }}
           >
             <BuildRoundedIcon fontSize="small" />
+          </button>
+
+          {/* Scenario Builder Button */}
+          <button
+            onClick={() => {
+              setBuilderInitialMode('scenarios');
+              setShowAgentScenarioBuilder(true);
+            }}
+            title="Scenario Builder"
+            style={{
+              width: '44px',
+              height: '44px',
+              borderRadius: '12px',
+              border: '1px solid rgba(226,232,240,0.6)',
+              background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
+              color: '#8b5cf6',
+              fontSize: '18px',
+              cursor: 'pointer',
+              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+              boxShadow: '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 4px 16px rgba(139,92,246,0.2), inset 0 1px 0 rgba(255,255,255,0.8)';
+              e.currentTarget.style.background = 'linear-gradient(135deg, #ede9fe, #ddd6fe)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)';
+              e.currentTarget.style.background = 'linear-gradient(145deg, #ffffff, #fafbfc)';
+            }}
+          >
+            <HubRoundedIcon fontSize="small" />
           </button>
 
           {/* Agent Context Button */}
@@ -4087,6 +4130,107 @@ function RealTimeVoiceApp() {
           };
         });
         // Don't close the dialog on update - user may want to continue editing
+      }}
+    />
+    <AgentScenarioBuilder
+      open={showAgentScenarioBuilder}
+      onClose={() => setShowAgentScenarioBuilder(false)}
+      initialMode={builderInitialMode}
+      sessionId={sessionId}
+      sessionProfile={activeSessionProfile}
+      onAgentCreated={(agentConfig) => {
+        appendLog(`✨ Dynamic agent created: ${agentConfig.name}`);
+        appendSystemMessage(`🤖 Agent "${agentConfig.name}" is now active`, {
+          tone: "success",
+          statusCaption: `Tools: ${agentConfig.tools?.length || 0} · Voice: ${agentConfig.voice?.name || 'default'}`,
+          statusLabel: "Agent Active",
+        });
+        setSelectedAgentName(agentConfig.name);
+        fetchSessionAgentConfig();
+        setAgentInventory((prev) => {
+          if (!prev) return prev;
+          const existing = prev.agents?.find((a) => a.name === agentConfig.name);
+          if (existing) {
+            return {
+              ...prev,
+              agents: prev.agents.map((a) => 
+                a.name === agentConfig.name
+                  ? {
+                      ...a,
+                      description: agentConfig.description,
+                      tools: agentConfig.tools || [],
+                      toolCount: agentConfig.tools?.length || 0,
+                      model: agentConfig.model?.deployment_id || null,
+                      voice: agentConfig.voice?.name || null,
+                    }
+                  : a
+              ),
+            };
+          }
+          return {
+            ...prev,
+            agents: [
+              ...(prev.agents || []),
+              {
+                name: agentConfig.name,
+                description: agentConfig.description,
+                tools: agentConfig.tools || [],
+                toolCount: agentConfig.tools?.length || 0,
+                model: agentConfig.model?.deployment_id || null,
+                voice: agentConfig.voice?.name || null,
+                templateId: agentConfig.name ? agentConfig.name.toLowerCase().replace(/\s+/g, "_") : null,
+              },
+            ],
+          };
+        });
+      }}
+      onAgentUpdated={(agentConfig) => {
+        appendLog(`✏️ Dynamic agent updated: ${agentConfig.name}`);
+        appendSystemMessage(`🤖 Agent "${agentConfig.name}" updated`, {
+          tone: "success",
+          statusCaption: `Tools: ${agentConfig.tools?.length || 0} · Voice: ${agentConfig.voice?.name || 'default'}`,
+          statusLabel: "Agent Updated",
+        });
+        setAgentInventory((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            agents: prev.agents.map((a) => 
+              a.name === agentConfig.name
+                ? {
+                    ...a,
+                    description: agentConfig.description,
+                    tools: agentConfig.tools || [],
+                    toolCount: agentConfig.tools?.length || 0,
+                    model: agentConfig.model?.deployment_id || null,
+                    voice: agentConfig.voice?.name || null,
+                    templateId: agentConfig.name
+                      ? agentConfig.name.toLowerCase().replace(/\s+/g, "_")
+                      : a.templateId,
+                  }
+                : a
+            ),
+          };
+        });
+      }}
+      onScenarioCreated={(scenarioConfig) => {
+        appendLog(`🎭 Scenario created: ${scenarioConfig.name || 'Custom Scenario'}`);
+        appendSystemMessage(`🎭 Scenario "${scenarioConfig.name || 'Custom'}" is now active`, {
+          tone: "success",
+          statusCaption: `Agents: ${scenarioConfig.agents?.length || 0} · Handoffs: ${scenarioConfig.handoffs?.length || 0}`,
+          statusLabel: "Scenario Active",
+        });
+        // Refresh scenario/session configuration
+        fetchSessionAgentConfig();
+      }}
+      onScenarioUpdated={(scenarioConfig) => {
+        appendLog(`✏️ Scenario updated: ${scenarioConfig.name || 'Custom Scenario'}`);
+        appendSystemMessage(`🎭 Scenario "${scenarioConfig.name || 'Custom'}" updated`, {
+          tone: "success",
+          statusCaption: `Agents: ${scenarioConfig.agents?.length || 0} · Handoffs: ${scenarioConfig.handoffs?.length || 0}`,
+          statusLabel: "Scenario Updated",
+        });
+        fetchSessionAgentConfig();
       }}
     />
   </div>
