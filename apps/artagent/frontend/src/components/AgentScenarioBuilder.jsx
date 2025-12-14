@@ -104,16 +104,61 @@ export default function AgentScenarioBuilder({
 }) {
   // Mode state: 'agents' or 'scenarios'
   const [mode, setMode] = useState(initialMode);
+  
+  // Track agent being edited from scenario builder
+  const [editingAgentFromScenario, setEditingAgentFromScenario] = useState(null);
+  const [editingAgentSessionId, setEditingAgentSessionId] = useState(null);
 
   const handleModeChange = useCallback((event, newMode) => {
     if (newMode !== null) {
+      // Clear editing state when switching modes manually
+      if (newMode === 'scenarios') {
+        setEditingAgentFromScenario(null);
+        setEditingAgentSessionId(null);
+      }
       setMode(newMode);
     }
   }, []);
 
   const handleClose = useCallback(() => {
+    // Clear editing state on close
+    setEditingAgentFromScenario(null);
+    setEditingAgentSessionId(null);
     onClose();
   }, [onClose]);
+
+  // Handler for editing an agent from the scenario builder
+  const handleEditAgentFromScenario = useCallback((agent, agentSessionId) => {
+    setEditingAgentFromScenario(agent);
+    setEditingAgentSessionId(agentSessionId || sessionId);
+    setMode('agents');
+  }, [sessionId]);
+
+  // Handler for creating a new agent from scenario builder
+  const handleCreateAgentFromScenario = useCallback(() => {
+    setEditingAgentFromScenario(null);
+    setEditingAgentSessionId(null);
+    setMode('agents');
+  }, []);
+
+  // Wrap agent callbacks to also refresh scenario builder
+  const handleAgentCreatedInternal = useCallback((config) => {
+    if (onAgentCreated) onAgentCreated(config);
+    // Clear editing state after creation
+    setEditingAgentFromScenario(null);
+    setEditingAgentSessionId(null);
+  }, [onAgentCreated]);
+
+  const handleAgentUpdatedInternal = useCallback((config) => {
+    if (onAgentUpdated) onAgentUpdated(config);
+    // Clear editing state after update
+    setEditingAgentFromScenario(null);
+    setEditingAgentSessionId(null);
+  }, [onAgentUpdated]);
+
+  // Determine if we're in agent edit mode (either from prop or from scenario navigation)
+  const isAgentEditMode = agentEditMode || editingAgentFromScenario !== null;
+  const effectiveAgentSessionId = editingAgentSessionId || sessionId;
 
   const getModeTitle = () => {
     if (mode === 'agents') {
@@ -223,16 +268,12 @@ export default function AgentScenarioBuilder({
       <Box sx={styles.content}>
         {mode === 'agents' ? (
           <AgentBuilderContent
-            sessionId={sessionId}
+            sessionId={effectiveAgentSessionId}
             sessionProfile={sessionProfile}
-            onAgentCreated={(config) => {
-              if (onAgentCreated) onAgentCreated(config);
-            }}
-            onAgentUpdated={(config) => {
-              if (onAgentUpdated) onAgentUpdated(config);
-            }}
-            existingConfig={existingAgentConfig}
-            editMode={agentEditMode}
+            onAgentCreated={handleAgentCreatedInternal}
+            onAgentUpdated={handleAgentUpdatedInternal}
+            existingConfig={editingAgentFromScenario || existingAgentConfig}
+            editMode={isAgentEditMode}
           />
         ) : (
           <ScenarioBuilder
@@ -241,6 +282,8 @@ export default function AgentScenarioBuilder({
             onScenarioUpdated={onScenarioUpdated}
             existingConfig={existingScenarioConfig}
             editMode={scenarioEditMode}
+            onEditAgent={handleEditAgentFromScenario}
+            onCreateAgent={handleCreateAgentFromScenario}
           />
         )}
       </Box>
