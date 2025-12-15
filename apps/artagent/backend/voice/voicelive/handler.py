@@ -44,7 +44,7 @@ from apps.artagent.backend.voice.shared import (
     resolve_orchestrator_config,
 )
 from apps.artagent.backend.voice.voicelive.agent_adapter import adapt_unified_agents
-from apps.artagent.backend.voice.voicelive.session_loader import load_user_profile_by_email
+from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VoiceLive Channel Imports (local to voice_channels)
@@ -88,23 +88,9 @@ tracer = trace.get_tracer(__name__)
 
 _DTMF_FLUSH_DELAY_SECONDS = 1.5
 
-_AGENT_LABELS = {
-    "FraudAgent": "Fraud Specialist",
-    "ComplianceDesk": "Compliance Specialist",
-    "AuthAgent": "Auth Agent",
-    "TransferAgency": "Transfer Agency Specialist",
-    "TradingDesk": "Trading Specialist",
-    "EricaConcierge": "Erica",
-    "Concierge": "Concierge",
-    "CardRecommendation": "Card Specialist",
-    "InvestmentAdvisor": "Investment Advisor",
-}
-
-
 def _resolve_agent_label(agent_name: str | None) -> str | None:
-    if not agent_name:
-        return None
-    return _AGENT_LABELS.get(agent_name, agent_name)
+    """Return the agent name as the label (agents define their own display names)."""
+    return agent_name
 
 
 def _safe_primitive(value: Any) -> Any:
