@@ -1391,7 +1391,13 @@ export default function AgentBuilder({
       const key = tmpl.id || tmpl.name;
       if (!key || seen.has(key)) return;
       seen.add(key);
-      merged.push({ ...tmpl, source: 'template' });
+      merged.push({
+        ...tmpl,
+        source: 'template',
+        // Ensure consistent field names
+        voiceName: tmpl.voice?.name || tmpl.voice?.voice_name || null,
+        modelName: tmpl.model?.model_name || tmpl.model?.name || tmpl.model?.deployment || null,
+      });
     });
     (sessionAgents || []).forEach((agent) => {
       const key = agent.id || agent.name || agent.agent_name;
@@ -1401,9 +1407,14 @@ export default function AgentBuilder({
         id: key,
         name: agent.name || agent.agent_name || 'Agent',
         description: agent.description || agent.summary || '',
+        greeting: agent.greeting || '',
         tools: agent.tools || agent.tool_names || agent.toolNames || [],
         is_entry_point: agent.is_entry_point || agent.entry_point || false,
         source: 'session',
+        voiceName: agent.voice?.name || agent.voice?.voice_name || null,
+        modelName: agent.model?.model_name || agent.model?.name || agent.model?.deployment || null,
+        is_session_agent: true,
+        session_id: agent.session_id || null,
       });
     });
     return merged;
@@ -1697,36 +1708,56 @@ export default function AgentBuilder({
                           key={tmpl.id}
                           variant="outlined"
                           sx={{
-                            minWidth: 220,
-                            maxWidth: 260,
-                            flex: '1 1 220px',
+                            minWidth: 280,
+                            maxWidth: 320,
+                            flex: '1 1 280px',
                             display: 'flex',
                             flexDirection: 'column',
-                            height: expandedTemplates[tmpl.id] ? 'auto' : 260,
+                            height: expandedTemplates[tmpl.id] ? 'auto' : 380,
                             borderColor: tmpl.id === selectedTemplate ? '#6366f1' : '#e5e7eb',
                             boxShadow: tmpl.id === selectedTemplate ? '0 6px 18px rgba(99,102,241,0.15)' : 'none',
+                            transition: 'all 0.2s ease',
+                            '&:hover': {
+                              borderColor: '#6366f1',
+                              boxShadow: '0 4px 12px rgba(99,102,241,0.1)',
+                            },
                           }}
                         >
                           <CardContent sx={{ pb: '12px !important', display: 'flex', flexDirection: 'column', height: '100%' }}>
+                            {/* Header with avatar and name */}
                             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-                              <Avatar sx={{ width: 28, height: 28, bgcolor: '#eef2ff', color: '#4338ca' }}>
-                                {tmpl.name?.[0] || 'A'}
+                              <Avatar sx={{ width: 32, height: 32, bgcolor: tmpl.is_entry_point ? '#4338ca' : '#eef2ff', color: tmpl.is_entry_point ? 'white' : '#4338ca' }}>
+                                {tmpl.is_entry_point ? <StarIcon fontSize="small" /> : (tmpl.name?.[0] || 'A')}
                               </Avatar>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                                {tmpl.name}
-                              </Typography>
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.2 }} noWrap>
+                                  {tmpl.name}
+                                </Typography>
+                                {tmpl.source === 'session' && (
+                                  <Typography variant="caption" sx={{ color: '#6366f1', fontWeight: 500 }}>
+                                    Session Agent
+                                  </Typography>
+                                )}
+                              </Box>
+                              {tmpl.is_entry_point && (
+                                <Chip size="small" color="primary" label="Entry" sx={{ height: 20, fontSize: '0.7rem' }} />
+                              )}
                             </Stack>
+
+                            {/* Description */}
                             <Typography
                               variant="body2"
                               color="text.secondary"
                               sx={{
-                                mb: 1,
-                                flexGrow: 1,
+                                mb: 1.5,
+                                minHeight: 40,
+                                fontSize: '0.8rem',
+                                lineHeight: 1.4,
                                 ...(expandedTemplates[tmpl.id]
                                   ? {}
                                   : {
                                       display: '-webkit-box',
-                                      WebkitLineClamp: 3,
+                                      WebkitLineClamp: 2,
                                       WebkitBoxOrient: 'vertical',
                                       overflow: 'hidden',
                                     }),
@@ -1734,22 +1765,111 @@ export default function AgentBuilder({
                             >
                               {tmpl.description || 'No description provided.'}
                             </Typography>
-                            {(tmpl.description || '').length > 140 && (
+                            {(tmpl.description || '').length > 100 && (
                               <Button
                                 size="small"
                                 variant="text"
                                 onClick={() => toggleTemplateExpansion(tmpl.id)}
-                                sx={{ alignSelf: 'flex-start', textTransform: 'none', mb: 1 }}
+                                sx={{ alignSelf: 'flex-start', textTransform: 'none', py: 0, mb: 1, fontSize: '0.75rem' }}
                               >
                                 {expandedTemplates[tmpl.id] ? 'Show less' : 'Show more'}
                               </Button>
                             )}
-                            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 1 }}>
-                              <Chip size="small" label={`${tmpl.tools?.length || 0} tools`} />
-                              {tmpl.is_entry_point && (
-                                <Chip size="small" color="primary" label="Entry" />
-                              )}
+
+                            <Divider sx={{ my: 1 }} />
+
+                            {/* Tools Section */}
+                            <Box sx={{ mb: 1.5 }}>
+                              <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
+                                <BuildIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                  Tools ({tmpl.tools?.length || 0})
+                                </Typography>
+                              </Stack>
+                              <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ gap: 0.5 }}>
+                                {(tmpl.tools || []).slice(0, 4).map((tool, idx) => (
+                                  <Chip
+                                    key={idx}
+                                    size="small"
+                                    label={typeof tool === 'string' ? tool.replace(/_/g, ' ') : tool.name || tool}
+                                    sx={{
+                                      height: 22,
+                                      fontSize: '0.65rem',
+                                      backgroundColor: '#f1f5f9',
+                                      '& .MuiChip-label': { px: 1 },
+                                    }}
+                                  />
+                                ))}
+                                {(tmpl.tools?.length || 0) > 4 && (
+                                  <Chip
+                                    size="small"
+                                    label={`+${tmpl.tools.length - 4} more`}
+                                    sx={{
+                                      height: 22,
+                                      fontSize: '0.65rem',
+                                      backgroundColor: '#e0e7ff',
+                                      color: '#4338ca',
+                                      '& .MuiChip-label': { px: 1 },
+                                    }}
+                                  />
+                                )}
+                                {(!tmpl.tools || tmpl.tools.length === 0) && (
+                                  <Typography variant="caption" color="text.disabled" sx={{ fontStyle: 'italic' }}>
+                                    No tools configured
+                                  </Typography>
+                                )}
+                              </Stack>
+                            </Box>
+
+                            {/* Voice & Model Info */}
+                            <Stack direction="row" spacing={2} sx={{ mb: 1.5 }}>
+                              <Box sx={{ flex: 1 }}>
+                                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.25 }}>
+                                  <RecordVoiceOverIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                  <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                    Voice
+                                  </Typography>
+                                </Stack>
+                                <Typography variant="caption" sx={{ color: tmpl.voiceName ? 'text.primary' : 'text.disabled' }}>
+                                  {tmpl.voiceName || 'Default'}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ flex: 1 }}>
+                                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.25 }}>
+                                  <MemoryIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                  <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                    Model
+                                  </Typography>
+                                </Stack>
+                                <Typography variant="caption" sx={{ color: tmpl.modelName ? 'text.primary' : 'text.disabled' }} noWrap>
+                                  {tmpl.modelName || 'Default'}
+                                </Typography>
+                              </Box>
                             </Stack>
+
+                            {/* Greeting preview if available */}
+                            {tmpl.greeting && (
+                              <Box sx={{ mb: 1.5, p: 1, backgroundColor: '#f8fafc', borderRadius: 1, border: '1px solid #e2e8f0' }}>
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.25 }}>
+                                  Greeting
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    color: 'text.secondary',
+                                    fontStyle: 'italic',
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                  }}
+                                >
+                                  "{tmpl.greeting}"
+                                </Typography>
+                              </Box>
+                            )}
+
+                            {/* Action button */}
                             <Button
                               size="small"
                               fullWidth
@@ -1763,7 +1883,7 @@ export default function AgentBuilder({
                               }}
                               sx={{ mt: 'auto' }}
                             >
-                              Use Template
+                              {tmpl.source === 'session' ? 'Edit Agent' : 'Use Template'}
                             </Button>
                           </CardContent>
                         </Card>
