@@ -279,7 +279,7 @@ class CascadeOrchestratorAdapter:
 
     def _load_agents(self) -> None:
         """Load agents from the unified agent registry with scenario support."""
-        config = resolve_orchestrator_config()
+        config = resolve_orchestrator_config(session_id=self.config.session_id)
         self.agents = config.agents
         self.handoff_map = config.handoff_map
 
@@ -289,8 +289,9 @@ class CascadeOrchestratorAdapter:
             self._active_agent = config.start_agent
 
         logger.info(
-            "Loaded %d agents for cascade adapter",
+            "Loaded %d agents for cascade adapter (session_id=%s)",
             len(self.agents),
+            self.config.session_id or "(none)",
             extra={
                 "scenario": config.scenario_name or "(none)",
                 "start_agent": config.start_agent,
@@ -411,7 +412,7 @@ class CascadeOrchestratorAdapter:
         """
         if not hasattr(self, "_handoff_service") or self._handoff_service is None:
             # Get scenario name from config resolver
-            config = resolve_orchestrator_config()
+            config = resolve_orchestrator_config(session_id=self.config.session_id)
             self._handoff_service = HandoffService(
                 scenario_name=config.scenario_name,
                 handoff_map=self.handoff_map,
@@ -449,6 +450,73 @@ class CascadeOrchestratorAdapter:
             callback: Async function(previous_agent, new_agent) -> None
         """
         self._on_agent_switch = callback
+
+    def update_scenario(
+        self,
+        agents: dict[str, UnifiedAgent],
+        handoff_map: dict[str, str],
+        start_agent: str | None = None,
+        scenario_name: str | None = None,
+    ) -> None:
+        """
+        Update the adapter with a new scenario configuration.
+
+        This is called when the user changes scenarios mid-session via the UI.
+        All agent-related attributes are updated to reflect the new scenario.
+
+        Args:
+            agents: New agents registry
+            handoff_map: New handoff routing map
+            start_agent: Optional new start agent to switch to
+            scenario_name: Optional scenario name for logging
+        """
+        old_agents = list(self.agents.keys())
+        old_active = self._active_agent
+
+        # Update agents registry
+        self.agents = agents
+
+        # Update handoff map
+        self.handoff_map = handoff_map
+
+        # Clear cached HandoffService so it's recreated with new values
+        if hasattr(self, "_handoff_service"):
+            self._handoff_service = None
+
+        # Clear visited agents for fresh scenario experience
+        self._visited_agents.clear()
+
+        # Update config start_agent
+        if start_agent:
+            self.config.start_agent = start_agent
+
+        # Switch to start_agent if provided (always switch for explicit scenario change)
+        if start_agent:
+            self._active_agent = start_agent
+            logger.info(
+                "🔄 Cascade switching to scenario start_agent | from=%s to=%s scenario=%s",
+                old_active,
+                start_agent,
+                scenario_name or "(unknown)",
+            )
+        elif self._active_agent not in agents:
+            # Current agent not in new scenario - switch to first available
+            available = list(agents.keys())
+            if available:
+                self._active_agent = available[0]
+                logger.warning(
+                    "🔄 Cascade current agent not in scenario, switching | from=%s to=%s",
+                    old_active,
+                    self._active_agent,
+                )
+
+        logger.info(
+            "🔄 Cascade scenario updated | old_agents=%s new_agents=%s active=%s scenario=%s",
+            old_agents,
+            list(agents.keys()),
+            self._active_agent,
+            scenario_name or "(unknown)",
+        )
 
     # ─────────────────────────────────────────────────────────────────
     # History Management (Consolidated)
@@ -630,6 +698,12 @@ class CascadeOrchestratorAdapter:
 
                     # Get tools for current agent
                     tools = agent.get_tools()
+                    logger.info(
+                        "🔧 Agent tools loaded | agent=%s tool_count=%d tool_names=%s",
+                        self._active_agent,
+                        len(tools) if tools else 0,
+                        [t.get("function", {}).get("name") for t in tools] if tools else [],
+                    )
 
                     # Process with LLM (streaming) - session scope is preserved
                     response_text, tool_calls = await self._process_llm(
@@ -1032,11 +1106,12 @@ class CascadeOrchestratorAdapter:
         ) as span:
             try:
                 logger.info(
-                    "Starting LLM request (streaming) | agent=%s model=%s temp=%.2f iteration=%d",
+                    "Starting LLM request (streaming) | agent=%s model=%s temp=%.2f iteration=%d tools=%d",
                     self._active_agent,
                     model_name,
                     temperature,
                     _iteration,
+                    len(tools) if tools else 0,
                 )
 
                 # Use asyncio.Queue for thread-safe async communication
@@ -1763,6 +1838,50 @@ class CascadeOrchestratorAdapter:
         history = self._get_conversation_history(cm)
 
         # 3. Build context and process
+
+        # Pull existing history for active agent
+        # IMPORTANT: Make a copy of the history list to avoid reference issues.
+        # get_history() returns a reference to the internal list, so we must copy
+        # it BEFORE appending the new user message. Otherwise, the history list
+        # will include the current user message, and _build_messages() will add
+        # it again, causing duplicate user messages.
+        history = []
+        try:
+            history = list(cm.get_history(self._active_agent) or [])
+        except Exception:
+            history = []
+
+        logger.info(
+            "📜 History before turn | agent=%s history_count=%d transcript=%s",
+            self._active_agent,
+            len(history),
+            transcript[:50] if transcript else "(none)",
+        )
+
+        # Persist user turn into history for continuity
+        # This happens AFTER we copy the history, so it doesn't affect the copy
+        if transcript:
+            try:
+                cm.append_to_history(self._active_agent, "user", transcript)
+            except Exception:
+                logger.debug("Failed to append user turn to history", exc_info=True)
+
+        # Build session context from MemoManager for prompt rendering
+        session_context = {
+            "memo_manager": cm,
+            # Session profile and context for Jinja templates
+            "session_profile": cm.get_value_from_corememory("session_profile"),
+            "caller_name": cm.get_value_from_corememory("caller_name"),
+            "client_id": cm.get_value_from_corememory("client_id"),
+            "customer_intelligence": cm.get_value_from_corememory("customer_intelligence"),
+            "institution_name": cm.get_value_from_corememory("institution_name"),
+            "active_agent": cm.get_value_from_corememory("active_agent"),
+            "previous_agent": cm.get_value_from_corememory("previous_agent"),
+            "visited_agents": cm.get_value_from_corememory("visited_agents"),
+            "handoff_context": cm.get_value_from_corememory("handoff_context"),
+        }
+
+        # Build context
         context = OrchestratorContext(
             session_id=self.config.session_id or "",
             websocket=None,
@@ -1781,9 +1900,11 @@ class CascadeOrchestratorAdapter:
         if result.interrupted:
             return None
 
-        # 5. Fire-and-forget Redis persistence (non-blocking)
-        if hasattr(cm, "_redis_manager") and cm._redis_manager:
-            asyncio.create_task(self._persist_to_redis_background(cm))
+        if result.response_text:
+            try:
+                cm.append_to_history(self._active_agent, "assistant", result.response_text)
+            except Exception:
+                logger.debug("Failed to append assistant turn to history", exc_info=True)
 
         return result.response_text
 
@@ -1860,13 +1981,17 @@ def get_cascade_orchestrator(
     # scenarios (stored in MemoManager) take effect for cascade mode.
     if scenario_name:
         config = resolve_orchestrator_config(
+            session_id=session_id,
             scenario_name=scenario_name,
             start_agent=start_agent,
         )
     elif app_state is not None:
         config = resolve_from_app_state(app_state)
     else:
-        config = resolve_orchestrator_config(start_agent=start_agent)
+        config = resolve_orchestrator_config(
+            session_id=session_id,
+            start_agent=start_agent,
+        )
 
     # Use resolved start_agent unless explicitly overridden
     effective_start_agent = start_agent or config.start_agent

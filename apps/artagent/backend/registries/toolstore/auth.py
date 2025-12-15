@@ -19,8 +19,14 @@ from utils.ml_logging import get_logger
 
 try:  # pragma: no cover - optional dependency during tests
     from src.cosmosdb.manager import CosmosDBMongoCoreManager as _CosmosManagerImpl
+    from src.cosmosdb.config import get_database_name, get_users_collection_name
 except Exception:  # pragma: no cover - handled at runtime
     _CosmosManagerImpl = None
+    # Fallback if config import fails
+    def get_database_name() -> str:
+        return os.getenv("AZURE_COSMOS_DATABASE_NAME", "audioagentdb")
+    def get_users_collection_name() -> str:
+        return os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.cosmosdb.manager import CosmosDBMongoCoreManager
@@ -125,31 +131,27 @@ _MOCK_USERS = {
         "phone_last_4": "3456",
         "email": "m.chen@email.com",
     },
+    # Common test users (seed data profiles)
+    ("alice brown", "1234"): {
+        "client_id": "alice_brown_ab",
+        "full_name": "Alice Brown",
+        "phone_last_4": "9907",
+        "email": "alice.brown@example.com",
+    },
+    ("bob williams", "5432"): {
+        "client_id": "bob_williams_bw",
+        "full_name": "Bob Williams",
+        "phone_last_4": "4441",
+        "email": "bob.williams@example.com",
+    },
 }
 
 _PENDING_MFA: dict[str, str] = {}  # client_id -> code
 _COSMOS_MANAGER: CosmosDBMongoCoreManager | None = None
 _COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
 
-# User profiles are stored in audioagentdb.users (single source of truth)
-_DEFAULT_DEMO_DB = "audioagentdb"
-_DEFAULT_DEMO_USERS_COLLECTION = "users"
-
-
-def _get_demo_database_name() -> str:
-    value = os.getenv("AZURE_COSMOS_DATABASE_NAME")
-    if value:
-        stripped = value.strip()
-        if stripped:
-            return stripped
-    return _DEFAULT_DEMO_DB
-
-
-def _get_demo_users_collection_name() -> str:
-    value = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME")
-    if value and value.strip():
-        return value.strip()
-    return _DEFAULT_DEMO_USERS_COLLECTION
+# User profiles are stored in the shared Cosmos DB config (see src.cosmosdb.config)
+# Functions get_database_name() and get_users_collection_name() imported above
 
 
 def _manager_targets_collection(
@@ -199,8 +201,8 @@ def _get_cosmos_manager() -> CosmosDBMongoCoreManager | None:
 def _get_demo_users_manager() -> CosmosDBMongoCoreManager | None:
     """Return a Cosmos DB manager pointed at the demo users collection."""
     global _COSMOS_USERS_MANAGER
-    database_name = _get_demo_database_name()
-    container_name = _get_demo_users_collection_name()
+    database_name = get_database_name()
+    container_name = get_users_collection_name()
 
     if _COSMOS_USERS_MANAGER is not None:
         if _manager_targets_collection(_COSMOS_USERS_MANAGER, database_name, container_name):
@@ -251,9 +253,13 @@ async def _lookup_user_in_cosmos(
     """Query Cosmos DB for the caller. Returns (record, failure_reason)."""
     cosmos = _get_demo_users_manager()
     if cosmos is None:
-        logger.warning("Cosmos manager unavailable for identity lookup")
+        logger.warning(
+            "⚠️ Cosmos manager unavailable for identity lookup: %s / %s",
+            full_name, ssn_last_4
+        )
         return None, "unavailable"
 
+    # First try: exact match on name + SSN
     name_pattern = f"^{re.escape(full_name)}$"
     query: dict[str, Any] = {
         "verification_codes.ssn4": ssn_last_4,
@@ -261,25 +267,39 @@ async def _lookup_user_in_cosmos(
     }
 
     logger.info(
-        "🔍 Looking up user in Cosmos: db=%s, collection=%s, name='%s', ssn4='%s'",
-        getattr(getattr(cosmos, "database", None), "name", "?"),
-        getattr(getattr(cosmos, "collection", None), "name", "?"),
-        full_name,
-        ssn_last_4,
+        "🔍 Cosmos identity lookup | full_name=%s | ssn_last_4=%s",
+        full_name, ssn_last_4
     )
 
     try:
         document = await asyncio.to_thread(cosmos.read_document, query)
+        if document:
+            logger.info(
+                "✓ Identity verified via Cosmos (exact match): %s",
+                document.get("client_id") or document.get("_id")
+            )
+            return document, None
+
+        # Second try: SSN-only lookup (in case speech-to-text misheard the name)
+        ssn_only_query: dict[str, Any] = {"verification_codes.ssn4": ssn_last_4}
+        document = await asyncio.to_thread(cosmos.read_document, ssn_only_query)
+        if document:
+            actual_name = document.get("full_name", "unknown")
+            logger.warning(
+                "⚠️ SSN matched but name mismatch | input_name=%s | db_name=%s | client_id=%s",
+                full_name, actual_name, document.get("client_id")
+            )
+            # Return the document - the LLM can confirm with user
+            return document, None
+
     except Exception as exc:  # pragma: no cover - network/driver failures
         logger.warning("Cosmos identity lookup failed: %s", exc)
         return None, "error"
 
-    if document:
-        logger.info(
-            "✓ Identity verified via Cosmos: %s", document.get("client_id") or document.get("_id")
-        )
-        return document, None
-
+    logger.warning(
+        "✗ No user found in Cosmos | full_name=%s | ssn_last_4=%s",
+        full_name, ssn_last_4
+    )
     return None, "not_found"
 
 

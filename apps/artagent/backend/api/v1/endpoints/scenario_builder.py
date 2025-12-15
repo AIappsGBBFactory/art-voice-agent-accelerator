@@ -27,6 +27,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -42,12 +43,16 @@ from apps.artagent.backend.registries.scenariostore.loader import (
     list_scenarios,
     load_scenario,
 )
+from apps.artagent.backend.registries.toolstore.registry import get_tool_definition
 from apps.artagent.backend.src.orchestration.session_agents import (
     list_session_agents,
+    list_session_agents_by_session,
 )
 from apps.artagent.backend.src.orchestration.session_scenarios import (
     get_session_scenario,
+    get_session_scenarios,
     list_session_scenarios,
+    list_session_scenarios_by_session,
     remove_session_scenario,
     set_session_scenario,
 )
@@ -104,6 +109,9 @@ class DynamicScenarioConfig(BaseModel):
     description: str = Field(
         default="", max_length=512, description="Scenario description"
     )
+    icon: str = Field(
+        default="🎭", max_length=8, description="Emoji icon for the scenario"
+    )
     agents: list[str] = Field(
         default_factory=list,
         description="List of agent names to include (empty = all agents)",
@@ -147,11 +155,19 @@ class ScenarioTemplateInfo(BaseModel):
     id: str
     name: str
     description: str
+    icon: str = "🎭"
     agents: list[str]
     start_agent: str | None
     handoff_type: str
     handoffs: list[dict[str, Any]]
     global_template_vars: dict[str, Any]
+
+
+class ToolInfo(BaseModel):
+    """Tool information with name and description."""
+    
+    name: str
+    description: str = ""
 
 
 class AgentInfo(BaseModel):
@@ -160,7 +176,9 @@ class AgentInfo(BaseModel):
     name: str
     description: str
     greeting: str | None = None
-    tools: list[str] = []
+    return_greeting: str | None = None
+    tools: list[str] = []  # Keep for backward compatibility
+    tool_details: list[ToolInfo] = []  # Full tool info with descriptions
     is_entry_point: bool = False
     is_session_agent: bool = False  # True if this is a dynamically created session agent
     session_id: str | None = None  # Session ID if this is a session agent
@@ -198,6 +216,7 @@ async def list_scenario_templates() -> dict[str, Any]:
                     id=name,
                     name=scenario.name,
                     description=scenario.description,
+                    icon=scenario.icon,
                     agents=scenario.agents,
                     start_agent=scenario.start_agent,
                     handoff_type=scenario.handoff_type,
@@ -254,6 +273,7 @@ async def get_scenario_template(template_id: str) -> dict[str, Any]:
             "id": template_id,
             "name": scenario.name,
             "description": scenario.description,
+            "icon": scenario.icon,
             "agents": scenario.agents,
             "start_agent": scenario.start_agent,
             "handoff_type": scenario.handoff_type,
@@ -291,26 +311,44 @@ async def get_scenario_template(template_id: str) -> dict[str, Any]:
     description="Get list of all registered agents that can be included in scenarios.",
     tags=["Scenario Builder"],
 )
-async def list_available_agents() -> dict[str, Any]:
+async def list_available_agents(session_id: str | None = None) -> dict[str, Any]:
     """
     List all available agents for scenario configuration.
 
     Returns agent information for building scenario orchestration graphs.
     Includes both static agents from YAML files and dynamic session agents.
+    
+    If session_id is provided, only returns session agents for that specific session.
     """
     start = time.time()
+
+    def get_tool_details(tool_names: list[str]) -> list[ToolInfo]:
+        """Get tool info with descriptions for the given tool names."""
+        details = []
+        for tool_name in tool_names:
+            tool_def = get_tool_definition(tool_name)
+            if tool_def:
+                # Get description from schema or definition
+                desc = tool_def.schema.get("description", "") or tool_def.description
+                details.append(ToolInfo(name=tool_name, description=desc))
+            else:
+                details.append(ToolInfo(name=tool_name, description=""))
+        return details
 
     # Get static agents from registry (YAML files)
     agents_registry = discover_agents()
     agents_list: list[AgentInfo] = []
 
     for name, agent in agents_registry.items():
+        tool_names = agent.tool_names if hasattr(agent, "tool_names") else []
         agents_list.append(
             AgentInfo(
                 name=name,
                 description=agent.description or "",
                 greeting=agent.greeting,
-                tools=agent.tool_names if hasattr(agent, "tool_names") else [],
+                return_greeting=getattr(agent, "return_greeting", None),
+                tools=tool_names,
+                tool_details=get_tool_details(tool_names),
                 is_entry_point=name.lower() == "concierge"
                 or "concierge" in name.lower(),
                 is_session_agent=False,
@@ -318,34 +356,67 @@ async def list_available_agents() -> dict[str, Any]:
             )
         )
 
-    # Get dynamic session agents
-    # list_session_agents() returns {"{session_id}:{agent_name}": agent}
-    session_agents = list_session_agents()
-    for composite_key, agent in session_agents.items():
-        # Parse the composite key to extract session_id
-        parts = composite_key.split(":", 1)
-        session_id = parts[0] if len(parts) > 1 else composite_key
-        
-        # Check if this session agent already exists in static registry
-        # (avoid duplicates if agent was created from a template with same name)
-        existing_names = {a.name for a in agents_list}
-        agent_name = agent.name
+    # Get dynamic session agents - use optimized function if filtering by session
+    session_agents_added = 0
+    if session_id:
+        # Efficient: only get agents for this specific session
+        session_agents_dict = list_session_agents_by_session(session_id)
+        for agent_name, agent in session_agents_dict.items():
+            # Check if this session agent already exists in static registry
+            existing_names = {a.name for a in agents_list}
+            display_name = agent.name
 
-        # If duplicate name, suffix with session ID
-        if agent_name in existing_names:
-            agent_name = f"{agent.name} (session)"
+            # If duplicate name, suffix with (session)
+            if display_name in existing_names:
+                display_name = f"{agent.name} (session)"
 
-        agents_list.append(
-            AgentInfo(
-                name=agent_name,
-                description=agent.description or f"Dynamic agent for session {session_id[:8]}",
-                greeting=agent.greeting,
-                tools=agent.tool_names if hasattr(agent, "tool_names") else [],
-                is_entry_point=False,
-                is_session_agent=True,
-                session_id=session_id,
+            tool_names = agent.tool_names if hasattr(agent, "tool_names") else []
+            agents_list.append(
+                AgentInfo(
+                    name=display_name,
+                    description=agent.description or f"Dynamic agent for session {session_id[:8]}",
+                    greeting=agent.greeting,
+                    return_greeting=getattr(agent, "return_greeting", None),
+                    tools=tool_names,
+                    tool_details=get_tool_details(tool_names),
+                    is_entry_point=False,
+                    is_session_agent=True,
+                    session_id=session_id,
+                )
             )
-        )
+            session_agents_added += 1
+    else:
+        # No filter: get all session agents across all sessions
+        # list_session_agents() returns {"{session_id}:{agent_name}": agent}
+        all_session_agents = list_session_agents()
+        for composite_key, agent in all_session_agents.items():
+            # Parse the composite key to extract session_id
+            parts = composite_key.split(":", 1)
+            agent_session_id = parts[0] if len(parts) > 1 else composite_key
+            
+            # Check if this session agent already exists in static registry
+            existing_names = {a.name for a in agents_list}
+            agent_name = agent.name
+
+            # If duplicate name, suffix with session ID
+            if agent_name in existing_names:
+                agent_name = f"{agent.name} (session)"
+
+            tool_names = agent.tool_names if hasattr(agent, "tool_names") else []
+            agents_list.append(
+                AgentInfo(
+                    name=agent_name,
+                    description=agent.description or f"Dynamic agent for session {agent_session_id[:8]}",
+                    greeting=agent.greeting,
+                    return_greeting=getattr(agent, "return_greeting", None),
+                    tools=tool_names,
+                    tool_details=get_tool_details(tool_names),
+                    is_entry_point=False,
+                    is_session_agent=True,
+                    session_id=agent_session_id,
+                )
+            )
+            session_agents_added += 1
 
     # Sort by name, with entry points first, then static agents, then session agents
     agents_list.sort(key=lambda a: (a.is_session_agent, not a.is_entry_point, a.name))
@@ -355,7 +426,8 @@ async def list_available_agents() -> dict[str, Any]:
         "total": len(agents_list),
         "agents": [a.model_dump() for a in agents_list],
         "static_count": len(agents_registry),
-        "session_count": len(session_agents),
+        "session_count": session_agents_added,
+        "filtered_by_session": session_id,
         "response_time_ms": round((time.time() - start) * 1000, 2),
     }
 
@@ -420,14 +492,16 @@ async def create_dynamic_scenario(
     """
     start = time.time()
 
-    # Validate agents exist
+    # Validate agents exist (include both template agents and session-scoped custom agents)
     agents_registry = discover_agents()
+    session_agents = list_session_agents_by_session(session_id)
+    all_valid_agents = set(agents_registry.keys()) | set(session_agents.keys())
     if config.agents:
-        invalid_agents = [a for a in config.agents if a not in agents_registry]
+        invalid_agents = [a for a in config.agents if a not in all_valid_agents]
         if invalid_agents:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid agents: {invalid_agents}. Available: {list(agents_registry.keys())}",
+                detail=f"Invalid agents: {invalid_agents}. Available: {list(all_valid_agents)}",
             )
 
     # Validate start_agent
@@ -437,10 +511,10 @@ async def create_dynamic_scenario(
                 status_code=400,
                 detail=f"start_agent '{config.start_agent}' must be in agents list",
             )
-        if not config.agents and config.start_agent not in agents_registry:
+        if not config.agents and config.start_agent not in all_valid_agents:
             raise HTTPException(
                 status_code=400,
-                detail=f"start_agent '{config.start_agent}' not found in registry",
+                detail=f"start_agent '{config.start_agent}' not found in registry or session agents",
             )
 
     # Build agent_defaults
@@ -472,6 +546,7 @@ async def create_dynamic_scenario(
     scenario = ScenarioConfig(
         name=config.name,
         description=config.description,
+        icon=config.icon,
         agents=config.agents,
         agent_defaults=agent_defaults,
         global_template_vars=config.global_template_vars,
@@ -481,7 +556,8 @@ async def create_dynamic_scenario(
         handoffs=handoffs,
     )
 
-    # Store in session
+    # Store in session (in-memory cache + Redis persistence)
+    # Note: set_session_scenario now handles Redis persistence automatically
     set_session_scenario(session_id, scenario)
 
     logger.info(
@@ -499,6 +575,7 @@ async def create_dynamic_scenario(
         config={
             "name": config.name,
             "description": config.description,
+            "icon": config.icon,
             "agents": config.agents,
             "start_agent": config.start_agent,
             "handoff_type": config.handoff_type,
@@ -545,6 +622,7 @@ async def get_session_scenario_config(
         config={
             "name": scenario.name,
             "description": scenario.description,
+            "icon": scenario.icon,
             "agents": scenario.agents,
             "start_agent": scenario.start_agent,
             "handoff_type": scenario.handoff_type,
@@ -592,14 +670,16 @@ async def update_session_scenario(
 
     Creates a new scenario if one doesn't exist.
     """
-    # Validate agents exist
+    # Validate agents exist (include both template agents and session-scoped custom agents)
     agents_registry = discover_agents()
+    session_agents = list_session_agents_by_session(session_id)
+    all_valid_agents = set(agents_registry.keys()) | set(session_agents.keys())
     if config.agents:
-        invalid_agents = [a for a in config.agents if a not in agents_registry]
+        invalid_agents = [a for a in config.agents if a not in all_valid_agents]
         if invalid_agents:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid agents: {invalid_agents}. Available: {list(agents_registry.keys())}",
+                detail=f"Invalid agents: {invalid_agents}. Available: {list(all_valid_agents)}",
             )
 
     # Validate start_agent
@@ -609,10 +689,10 @@ async def update_session_scenario(
                 status_code=400,
                 detail=f"start_agent '{config.start_agent}' must be in agents list",
             )
-        if not config.agents and config.start_agent not in agents_registry:
+        if not config.agents and config.start_agent not in all_valid_agents:
             raise HTTPException(
                 status_code=400,
-                detail=f"start_agent '{config.start_agent}' not found in registry",
+                detail=f"start_agent '{config.start_agent}' not found in registry or session agents",
             )
 
     existing = get_session_scenario(session_id)
@@ -647,6 +727,7 @@ async def update_session_scenario(
     scenario = ScenarioConfig(
         name=config.name,
         description=config.description,
+        icon=config.icon,
         agents=config.agents,
         agent_defaults=agent_defaults,
         global_template_vars=config.global_template_vars,
@@ -674,6 +755,7 @@ async def update_session_scenario(
         config={
             "name": config.name,
             "description": config.description,
+            "icon": config.icon,
             "agents": config.agents,
             "start_agent": config.start_agent,
             "handoff_type": config.handoff_type,
@@ -722,6 +804,143 @@ async def reset_session_scenario(
     }
 
 
+@router.post(
+    "/session/{session_id}/active",
+    summary="Set Active Scenario",
+    description="Set the active scenario for a session by name.",
+    tags=["Scenario Builder"],
+)
+async def set_active_scenario_endpoint(
+    session_id: str,
+    scenario_name: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Set the active scenario for a session."""
+    from apps.artagent.backend.src.orchestration.session_scenarios import set_active_scenario
+    
+    success = set_active_scenario(session_id, scenario_name)
+    
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Scenario '{scenario_name}' not found for session '{session_id}'",
+        )
+    
+    logger.info("Active scenario set | session=%s scenario=%s", session_id, scenario_name)
+    
+    return {
+        "status": "success",
+        "message": f"Active scenario set to '{scenario_name}'",
+        "session_id": session_id,
+        "scenario_name": scenario_name,
+    }
+
+
+@router.post(
+    "/session/{session_id}/apply-template",
+    summary="Apply Industry Template",
+    description="Load an industry template from disk and apply it as the session's active scenario.",
+    tags=["Scenario Builder"],
+)
+async def apply_template_to_session(
+    session_id: str,
+    template_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """
+    Apply an industry template (e.g., 'banking', 'insurance') to a session.
+
+    This loads the template from disk, creates a session scenario from it,
+    and sets it as the active scenario. The orchestrator adapter will be
+    updated with the new agents and handoff configuration.
+
+    Args:
+        session_id: The session to apply the template to
+        template_id: The template directory name (e.g., 'banking', 'insurance')
+    """
+    # Load the template from disk
+    scenario = load_scenario(template_id)
+    
+    if not scenario:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template '{template_id}' not found",
+        )
+    
+    # Set the scenario for this session (this triggers the update callback)
+    set_session_scenario(session_id, scenario)
+    
+    logger.info(
+        "Industry template applied | session=%s template=%s start_agent=%s agents=%d",
+        session_id,
+        template_id,
+        scenario.start_agent,
+        len(scenario.agents),
+    )
+    
+    return {
+        "status": "success",
+        "message": f"Applied template '{template_id}' to session",
+        "session_id": session_id,
+        "template_id": template_id,
+        "scenario": {
+            "name": scenario.name,
+            "description": scenario.description,
+            "icon": scenario.icon,
+            "start_agent": scenario.start_agent,
+            "agents": scenario.agents,
+            "handoff_count": len(scenario.handoffs),
+        },
+    }
+
+
+@router.get(
+    "/session/{session_id}/scenarios",
+    summary="List Session Scenarios",
+    description="List all custom scenarios for a specific session.",
+    tags=["Scenario Builder"],
+)
+async def list_scenarios_for_session(
+    session_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """List all custom scenarios for a specific session."""
+    from apps.artagent.backend.src.orchestration.session_scenarios import get_active_scenario_name
+    
+    scenarios = list_session_scenarios_by_session(session_id)
+    active_name = get_active_scenario_name(session_id)
+
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "total": len(scenarios),
+        "active_scenario": active_name,
+        "scenarios": [
+            {
+                "name": scenario.name,
+                "description": scenario.description,
+                "icon": scenario.icon,
+                "agents": scenario.agents,
+                "start_agent": scenario.start_agent,
+                "handoffs": [
+                    {
+                        "from_agent": h.from_agent,
+                        "to_agent": h.to_agent,
+                        "tool": h.tool,
+                        "type": h.type,
+                        "share_context": h.share_context,
+                    }
+                    for h in scenario.handoffs
+                ],
+                "handoff_type": scenario.handoff_type,
+                "global_template_vars": scenario.global_template_vars,
+                "is_active": scenario.name == active_name,
+            }
+            for scenario in scenarios.values()
+        ],
+    }
+
+
 @router.get(
     "/sessions",
     summary="List All Session Scenarios",
@@ -737,13 +956,14 @@ async def list_session_scenarios_endpoint() -> dict[str, Any]:
         "total": len(scenarios),
         "sessions": [
             {
-                "session_id": session_id,
+                "key": key,
+                "session_id": key.split(":")[0] if ":" in key else key,
                 "scenario_name": scenario.name,
                 "agents": scenario.agents,
                 "start_agent": scenario.start_agent,
                 "handoff_count": len(scenario.handoffs),
             }
-            for session_id, scenario in scenarios.items()
+            for key, scenario in scenarios.items()
         ],
     }
 

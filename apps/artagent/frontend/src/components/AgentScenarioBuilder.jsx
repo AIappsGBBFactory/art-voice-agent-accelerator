@@ -9,7 +9,7 @@
  * Users can toggle between modes using a toolbar switch.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Avatar,
   Box,
@@ -104,6 +104,16 @@ export default function AgentScenarioBuilder({
 }) {
   // Mode state: 'agents' or 'scenarios'
   const [mode, setMode] = useState(initialMode);
+  
+  // Refresh key - increments each time dialog opens to force child components to remount
+  const [refreshKey, setRefreshKey] = useState(0);
+  
+  // Increment refresh key when dialog opens
+  useEffect(() => {
+    if (open) {
+      setRefreshKey((prev) => prev + 1);
+    }
+  }, [open]);
   
   // Track agent being edited from scenario builder
   const [editingAgentFromScenario, setEditingAgentFromScenario] = useState(null);
@@ -268,6 +278,7 @@ export default function AgentScenarioBuilder({
       <Box sx={styles.content}>
         {mode === 'agents' ? (
           <AgentBuilderContent
+            key={`agent-builder-${effectiveAgentSessionId}-${refreshKey}`}
             sessionId={effectiveAgentSessionId}
             sessionProfile={sessionProfile}
             onAgentCreated={handleAgentCreatedInternal}
@@ -277,6 +288,7 @@ export default function AgentScenarioBuilder({
           />
         ) : (
           <ScenarioBuilder
+            key={`scenario-builder-${sessionId}-${refreshKey}`}
             sessionId={sessionId}
             onScenarioCreated={onScenarioCreated}
             onScenarioUpdated={onScenarioUpdated}

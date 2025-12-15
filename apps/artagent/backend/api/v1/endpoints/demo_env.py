@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from pymongo.errors import NetworkTimeout, PyMongoError
 from src.cosmosdb.manager import CosmosDBMongoCoreManager
+from src.cosmosdb.config import get_database_name, get_users_collection_name
 from src.stateful.state_managment import MemoManager
 
 __all__ = ["router"]
@@ -736,8 +737,8 @@ def _serialize_demo_user(response: DemoUserResponse) -> dict:
 
 async def _persist_demo_user(response: DemoUserResponse) -> None:
     document = _serialize_demo_user(response)
-    database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME", "financial_services_db")
-    container_name = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
+    database_name = get_database_name()
+    container_name = get_users_collection_name()
 
     def _upsert() -> None:
         manager = CosmosDBMongoCoreManager(
@@ -912,8 +913,8 @@ async def lookup_demo_user(
 ) -> DemoUserLookupResponse:
     """Retrieve the latest synthetic demo profile by email if it exists."""
 
-    database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME", "financial_services_db")
-    container_name = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
+    database_name = get_database_name()
+    container_name = get_users_collection_name()
 
     def _query() -> dict | None:
         manager = CosmosDBMongoCoreManager(

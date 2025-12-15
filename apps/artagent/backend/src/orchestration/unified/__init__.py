@@ -34,9 +34,13 @@ from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
     register_adapter_update_callback,
 )
+from apps.artagent.backend.src.orchestration.session_scenarios import (
+    register_scenario_update_callback,
+)
 from apps.artagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
 )
+from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
 from apps.artagent.backend.voice import (
     CascadeOrchestratorAdapter,
     OrchestratorContext,
@@ -226,6 +230,98 @@ def update_session_agent(session_id: str, agent: UnifiedAgent) -> bool:
 
 # Register the callback so session_agents module can notify us of updates
 register_adapter_update_callback(update_session_agent)
+
+
+def update_session_scenario(session_id: str, scenario) -> bool:
+    """
+    Update the orchestrator adapter when a session scenario changes.
+
+    This is the integration point for Scenario Builder updates.
+    When called, the adapter's agents, handoff_map, and active agent
+    are updated to reflect the new scenario configuration.
+
+    Also updates VoiceLive orchestrators if one is active for the session.
+
+    Args:
+        session_id: The session to update
+        scenario: The ScenarioConfig with updated configuration
+
+    Returns:
+        True if adapter was found and updated, False if no active adapter exists
+    """
+    updated_cascade = False
+    updated_voicelive = False
+
+    # Resolve the new configuration from the scenario
+    config = resolve_orchestrator_config(
+        session_id=session_id,
+        scenario_name=scenario.name,
+    )
+
+    # Update CascadeOrchestratorAdapter if present
+    if session_id in _adapters:
+        adapter = _adapters[session_id]
+
+        # Use the update_scenario method for complete attribute refresh
+        # This clears cached HandoffService, visited_agents, etc.
+        adapter.update_scenario(
+            agents=config.agents,
+            handoff_map=config.handoff_map,
+            start_agent=scenario.start_agent,
+            scenario_name=scenario.name,
+        )
+
+        logger.info(
+            "🔄 Session scenario updated in adapter | session=%s scenario=%s agents=%d handoffs=%d",
+            session_id,
+            scenario.name,
+            len(config.agents),
+            len(config.handoff_map),
+        )
+        updated_cascade = True
+
+    # Update VoiceLive orchestrator if present
+    try:
+        from apps.artagent.backend.voice.voicelive.orchestrator import (
+            get_voicelive_orchestrator,
+        )
+        from apps.artagent.backend.voice.voicelive.agent_adapter import adapt_unified_agents
+
+        voicelive_orch = get_voicelive_orchestrator(session_id)
+        if voicelive_orch:
+            # Adapt agents for VoiceLive format
+            adapted_agents = adapt_unified_agents(config.agents)
+
+            # Update the VoiceLive orchestrator with all attributes
+            voicelive_orch.update_scenario(
+                agents=adapted_agents,
+                handoff_map=config.handoff_map,
+                start_agent=scenario.start_agent,
+                scenario_name=scenario.name,
+            )
+            logger.info(
+                "🔄 Session scenario updated in VoiceLive orchestrator | session=%s scenario=%s",
+                session_id,
+                scenario.name,
+            )
+            updated_voicelive = True
+    except ImportError:
+        logger.debug("VoiceLive module not available for scenario update")
+    except Exception as e:
+        logger.warning("Failed to update VoiceLive orchestrator: %s", e)
+
+    if not updated_cascade and not updated_voicelive:
+        logger.debug(
+            "No active adapter for session %s - scenario will be used when adapter is created",
+            session_id,
+        )
+        return False
+
+    return True
+
+
+# Register the callback so session_scenarios module can notify us of updates
+register_scenario_update_callback(update_session_scenario)
 
 
 async def route_turn(

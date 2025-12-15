@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING, Any
 from apps.artagent.backend.registries.scenariostore.loader import (
     HandoffConfig,
     get_handoff_config,
+    load_scenario,
 )
 from apps.artagent.backend.registries.toolstore.registry import (
     is_handoff_tool as registry_is_handoff_tool,
@@ -290,7 +291,7 @@ class HandoffService:
 
         This is the main method called by orchestrators when a handoff tool
         is detected. It:
-        1. Looks up the target agent
+        1. Looks up the target agent (from handoff_map or tool_args for generic)
         2. Gets handoff config from scenario (discrete/announced, share_context)
         3. Builds system_vars using the shared helper
         4. Returns a complete resolution for the orchestrator to execute
@@ -319,19 +320,51 @@ class HandoffService:
                 await self._switch_to(resolution.target_agent, resolution.system_vars)
         """
         # Step 1: Get target agent
-        target_agent = self.get_handoff_target(tool_name)
-        if not target_agent:
-            logger.warning(
-                "Handoff tool '%s' not found in handoff_map | scenario=%s",
-                tool_name,
-                self._scenario_name,
-            )
-            return HandoffResolution(
-                success=False,
+        # For generic handoff_to_agent, extract target from tool_args/tool_result
+        is_generic_handoff = tool_name == "handoff_to_agent"
+        target_agent: str | None = None
+        handoff_cfg: HandoffConfig | None = None
+
+        if is_generic_handoff:
+            # Generic handoff - extract target from args or result
+            target_agent = self._resolve_generic_handoff_target(
+                tool_args=tool_args,
+                tool_result=tool_result,
                 source_agent=source_agent,
-                tool_name=tool_name,
-                error=f"No target agent configured for handoff tool: {tool_name}",
             )
+            if not target_agent:
+                return HandoffResolution(
+                    success=False,
+                    source_agent=source_agent,
+                    tool_name=tool_name,
+                    error="Generic handoff requires 'target_agent' in tool arguments",
+                )
+
+            # Validate generic handoff is allowed for this target
+            handoff_cfg = self._get_generic_handoff_config(source_agent, target_agent)
+            if not handoff_cfg:
+                return HandoffResolution(
+                    success=False,
+                    source_agent=source_agent,
+                    tool_name=tool_name,
+                    target_agent=target_agent,
+                    error=f"Generic handoff to '{target_agent}' is not allowed in this scenario",
+                )
+        else:
+            # Standard handoff - lookup from handoff_map
+            target_agent = self.get_handoff_target(tool_name)
+            if not target_agent:
+                logger.warning(
+                    "Handoff tool '%s' not found in handoff_map | scenario=%s",
+                    tool_name,
+                    self._scenario_name,
+                )
+                return HandoffResolution(
+                    success=False,
+                    source_agent=source_agent,
+                    tool_name=tool_name,
+                    error=f"No target agent configured for handoff tool: {tool_name}",
+                )
 
         # Validate target agent exists
         if target_agent not in self._agents:
@@ -348,8 +381,9 @@ class HandoffService:
                 error=f"Target agent '{target_agent}' not found in registry",
             )
 
-        # Step 2: Get handoff config from scenario
-        handoff_cfg = self.get_handoff_config(source_agent, tool_name)
+        # Step 2: Get handoff config from scenario (if not already set for generic)
+        if handoff_cfg is None:
+            handoff_cfg = self.get_handoff_config(source_agent, tool_name)
 
         # Step 3: Build system_vars using shared helper
         system_vars = build_handoff_system_vars(
@@ -364,12 +398,13 @@ class HandoffService:
         )
 
         logger.info(
-            "Handoff resolved | %s → %s | tool=%s type=%s share_context=%s",
+            "Handoff resolved | %s → %s | tool=%s type=%s share_context=%s generic=%s",
             source_agent,
             target_agent,
             tool_name,
             handoff_cfg.type,
             handoff_cfg.share_context,
+            is_generic_handoff,
         )
 
         return HandoffResolution(
@@ -382,6 +417,104 @@ class HandoffService:
             share_context=handoff_cfg.share_context,
             handoff_type=handoff_cfg.type,
         )
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # Generic Handoff Helpers
+    # ───────────────────────────────────────────────────────────────────────────
+
+    def _resolve_generic_handoff_target(
+        self,
+        tool_args: dict[str, Any],
+        tool_result: dict[str, Any] | None,
+        source_agent: str,
+    ) -> str | None:
+        """
+        Extract target agent from generic handoff_to_agent tool call.
+
+        Checks tool_args first, then tool_result for target_agent.
+
+        Args:
+            tool_args: Arguments passed to handoff_to_agent
+            tool_result: Result from handoff_to_agent execution (if available)
+            source_agent: For logging context
+
+        Returns:
+            Target agent name, or None if not found
+        """
+        # Check tool_args first (LLM's direct intent)
+        target = tool_args.get("target_agent", "")
+        if isinstance(target, str) and target.strip():
+            return target.strip()
+
+        # Check tool_result (executor may have resolved/normalized target)
+        if tool_result and isinstance(tool_result, dict):
+            target = tool_result.get("target_agent", "")
+            if isinstance(target, str) and target.strip():
+                return target.strip()
+
+        logger.warning(
+            "Generic handoff missing target_agent | source=%s args=%s",
+            source_agent,
+            tool_args,
+        )
+        return None
+
+    def _get_generic_handoff_config(
+        self,
+        source_agent: str,
+        target_agent: str,
+    ) -> HandoffConfig | None:
+        """
+        Get handoff configuration for a generic handoff_to_agent call.
+
+        Validates that the scenario allows generic handoffs and that
+        the target agent is in the allowed list.
+
+        Args:
+            source_agent: Agent initiating the handoff
+            target_agent: Target agent from tool args
+
+        Returns:
+            HandoffConfig if allowed, None otherwise
+        """
+        if not self._scenario_name:
+            # No scenario - generic handoffs not allowed by default
+            logger.debug(
+                "Generic handoff denied - no scenario configured | target=%s",
+                target_agent,
+            )
+            return None
+
+        scenario = load_scenario(self._scenario_name)
+        if not scenario:
+            logger.warning(
+                "Generic handoff denied - scenario '%s' not found",
+                self._scenario_name,
+            )
+            return None
+
+        # Get generic handoff config from scenario
+        generic_cfg = scenario.get_generic_handoff_config(source_agent, target_agent)
+        if not generic_cfg:
+            logger.info(
+                "Generic handoff denied | scenario=%s source=%s target=%s "
+                "enabled=%s allowed_targets=%s",
+                self._scenario_name,
+                source_agent,
+                target_agent,
+                scenario.generic_handoff.enabled,
+                scenario.generic_handoff.allowed_targets or "(all scenario agents)",
+            )
+            return None
+
+        logger.debug(
+            "Generic handoff allowed | %s → %s | type=%s share_context=%s",
+            source_agent,
+            target_agent,
+            generic_cfg.type,
+            generic_cfg.share_context,
+        )
+        return generic_cfg
 
     # ───────────────────────────────────────────────────────────────────────────
     # Greeting Selection

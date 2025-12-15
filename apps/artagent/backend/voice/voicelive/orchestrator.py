@@ -92,6 +92,75 @@ CALL_CENTER_TRIGGER_PHRASES = {
     "transfer me to the call center",
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SESSION ORCHESTRATOR REGISTRY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Module-level registry for VoiceLive orchestrators (per session)
+# This enables scenario updates to reach active VoiceLive sessions
+# Uses standard dict but includes cleanup of stale entries
+_voicelive_orchestrators: dict[str, "LiveOrchestrator"] = {}
+_registry_lock = asyncio.Lock()
+
+
+def register_voicelive_orchestrator(session_id: str, orchestrator: "LiveOrchestrator") -> None:
+    """Register a VoiceLive orchestrator for scenario updates."""
+    # Clean up stale entries first (orchestrators that may have been orphaned)
+    _cleanup_stale_orchestrators()
+    _voicelive_orchestrators[session_id] = orchestrator
+    logger.debug(
+        "Registered VoiceLive orchestrator | session=%s registry_size=%d",
+        session_id,
+        len(_voicelive_orchestrators),
+    )
+
+
+def unregister_voicelive_orchestrator(session_id: str) -> None:
+    """Unregister a VoiceLive orchestrator when session ends."""
+    orchestrator = _voicelive_orchestrators.pop(session_id, None)
+    if orchestrator:
+        logger.debug(
+            "Unregistered VoiceLive orchestrator | session=%s registry_size=%d",
+            session_id,
+            len(_voicelive_orchestrators),
+        )
+
+
+def get_voicelive_orchestrator(session_id: str) -> "LiveOrchestrator | None":
+    """Get the VoiceLive orchestrator for a session."""
+    return _voicelive_orchestrators.get(session_id)
+
+
+def _cleanup_stale_orchestrators() -> int:
+    """
+    Clean up orchestrators that are no longer valid.
+
+    This catches cases where sessions ended without proper cleanup.
+    Returns the number of stale entries removed.
+    """
+    stale_keys = []
+    for session_id, orchestrator in list(_voicelive_orchestrators.items()):
+        # Check if orchestrator is still valid (has connection reference)
+        if orchestrator.conn is None and orchestrator.agents == {}:
+            stale_keys.append(session_id)
+
+    for key in stale_keys:
+        _voicelive_orchestrators.pop(key, None)
+
+    if stale_keys:
+        logger.debug(
+            "Cleaned up %d stale orchestrators from registry | remaining=%d",
+            len(stale_keys),
+            len(_voicelive_orchestrators),
+        )
+
+    return len(stale_keys)
+
+
+def get_orchestrator_registry_size() -> int:
+    """Get current size of orchestrator registry (for monitoring)."""
+    return len(_voicelive_orchestrators)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
@@ -209,6 +278,11 @@ class LiveOrchestrator:
         self._agent_output_tokens: int = 0
         self._agent_start_time: float = time.perf_counter()
         self._agent_response_count: int = 0
+
+        # Throttle session context updates to avoid hot path latency
+        self._last_session_update_time: float = 0.0
+        self._session_update_min_interval: float = 2.0  # Min seconds between updates
+        self._pending_session_update: bool = False
 
         if self.messenger:
             try:
@@ -337,6 +411,158 @@ class LiveOrchestrator:
                 logger.debug("Failed to persist user message history", exc_info=True)
 
         logger.debug("[LiveOrchestrator] Synced state to MemoManager")
+
+    def cleanup(self) -> None:
+        """
+        Clean up orchestrator resources to prevent memory leaks.
+
+        This should be called when the VoiceLive session ends. It:
+        - Cancels all pending greeting tasks
+        - Clears references to agents and connections
+        - Clears user message history deque
+        - Resets all stateful tracking variables
+
+        Note: This method is synchronous and does not await any coroutines.
+        For async cleanup, use the handler's stop() method which calls this.
+        """
+        # Cancel all pending greeting tasks
+        self._cancel_pending_greeting_tasks()
+
+        # Clear agents registry reference
+        self.agents = {}
+        self._handoff_map = {}
+        self._handoff_provider = None
+
+        # Clear connection reference (do not close - handler owns it)
+        self.conn = None
+
+        # Clear messenger reference to break circular refs
+        self.messenger = None
+        self.audio = None
+
+        # Clear memo manager reference (handler/endpoint owns lifecycle)
+        self._memo_manager = None
+
+        # Clear handoff service
+        self._handoff_service = None
+
+        # Clear user message history
+        self._user_message_history.clear()
+        self._last_user_message = None
+        self._last_assistant_message = None
+
+        # Clear pending greeting state
+        self._pending_greeting = None
+        self._pending_greeting_agent = None
+
+        # Reset tracking variables
+        self._active_response_id = None
+        self._system_vars.clear()
+        self.visited_agents.clear()
+
+        logger.debug("[LiveOrchestrator] Cleanup complete")
+
+    def update_scenario(
+        self,
+        agents: dict[str, "VoiceLiveAgentAdapter"],
+        handoff_map: dict[str, str],
+        start_agent: str | None = None,
+        scenario_name: str | None = None,
+    ) -> None:
+        """
+        Update the orchestrator with a new scenario configuration.
+
+        This is called when the user changes scenarios mid-session via the UI.
+        The orchestrator's agents and handoff map are updated to reflect
+        the new scenario without restarting the VoiceLive connection.
+
+        Args:
+            agents: New agents registry adapted for VoiceLive
+            handoff_map: New handoff routing map
+            start_agent: Optional new start agent to switch to
+            scenario_name: Optional scenario name for logging
+        """
+        old_agents = list(self.agents.keys())
+        old_active = self.active
+        needs_session_update = False
+
+        # Update agents registry
+        self.agents = agents
+
+        # Update handoff map
+        self._handoff_map = handoff_map
+
+        # Clear visited agents for fresh scenario experience
+        self.visited_agents.clear()
+
+        # Always switch to start_agent when a new scenario is explicitly selected
+        if start_agent:
+            if start_agent != self.active:
+                self.active = start_agent
+                needs_session_update = True
+                logger.info(
+                    "🔄 VoiceLive switching to scenario start_agent | from=%s to=%s scenario=%s",
+                    old_active,
+                    start_agent,
+                    scenario_name or "(unknown)",
+                )
+            else:
+                # Same agent but scenario changed - still need to update session
+                needs_session_update = True
+        elif self.active not in agents:
+            # Current agent not in new scenario - switch to first available
+            available = list(agents.keys())
+            if available:
+                self.active = available[0]
+                needs_session_update = True
+                logger.warning(
+                    "🔄 VoiceLive current agent not in scenario, switching | from=%s to=%s",
+                    old_active,
+                    self.active,
+                )
+
+        logger.info(
+            "🔄 VoiceLive scenario updated | old_agents=%s new_agents=%s active=%s scenario=%s",
+            old_agents,
+            list(agents.keys()),
+            self.active,
+            scenario_name or "(unknown)",
+        )
+
+        # CRITICAL: Trigger a session update to apply the new agent's instructions
+        # This ensures VoiceLive uses the correct system prompt for the new agent
+        if needs_session_update:
+            self._schedule_scenario_session_update()
+
+    def _schedule_scenario_session_update(self) -> None:
+        """
+        Schedule a session update after scenario change.
+        
+        This runs in the background to avoid blocking the scenario update call.
+        """
+        async def _do_update():
+            try:
+                # Refresh context with new agent
+                self._refresh_session_context()
+                # Update VoiceLive session with new instructions
+                await self._update_session_context()
+                logger.info(
+                    "🔄 VoiceLive session updated for new agent | agent=%s",
+                    self.active,
+                )
+            except Exception:
+                logger.warning("Failed to update session after scenario change", exc_info=True)
+
+        # Schedule on the event loop
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(_do_update(), loop)
+        except RuntimeError:
+            # No running loop - try create_task if we're in an async context
+            try:
+                asyncio.create_task(_do_update())
+            except RuntimeError:
+                logger.warning("Cannot schedule session update - no event loop available")
 
     async def _inject_conversation_history(self) -> None:
         """
@@ -537,6 +763,60 @@ class LiveOrchestrator:
 
         return "\n".join(parts) if parts else ""
 
+    def _schedule_throttled_session_update(self) -> None:
+        """
+        Schedule a throttled session context update in the background.
+
+        This avoids calling session.update() on the hot path,
+        which can add significant latency to each turn.
+        The actual network call is performed in a background task.
+        """
+        now = time.perf_counter()
+        elapsed = now - self._last_session_update_time
+
+        # Only update if enough time has passed OR we have a pending update from transcription
+        if elapsed < self._session_update_min_interval and not self._pending_session_update:
+            logger.debug(
+                "[LiveOrchestrator] Skipping session update - throttled (%.1fs < %.1fs)",
+                elapsed,
+                self._session_update_min_interval,
+            )
+            return
+
+        self._pending_session_update = False
+        self._last_session_update_time = now
+
+        # Refresh context first (fast, local operation)
+        self._refresh_session_context()
+
+        # Schedule the actual session update as a background task
+        # This prevents blocking the event loop
+        async def _do_session_update():
+            try:
+                await self._update_session_context()
+            except Exception:
+                logger.debug("Background session update failed", exc_info=True)
+
+        asyncio.create_task(_do_session_update())
+
+    def _schedule_background_sync(self) -> None:
+        """
+        Schedule MemoManager sync in background to avoid hot path latency.
+
+        The sync is fire-and-forget - failures are logged but don't block.
+        """
+        if not self._memo_manager:
+            return
+
+        def _do_sync():
+            try:
+                self._sync_to_memo_manager()
+            except Exception:
+                logger.debug("Background MemoManager sync failed", exc_info=True)
+
+        # Schedule on next event loop iteration to not block current coroutine
+        asyncio.get_event_loop().call_soon(_do_sync)
+
     # ═══════════════════════════════════════════════════════════════════════════
     # HANDOFF RESOLUTION
     # ═══════════════════════════════════════════════════════════════════════════
@@ -700,9 +980,9 @@ class LiveOrchestrator:
         """Handle user speech started (barge-in)."""
         logger.debug("User speech started → cancel current response")
         
-        # Sync state to MemoManager before barge-in clears state
+        # Sync state to MemoManager in background - don't block barge-in response
         # This ensures any partial response context is preserved
-        self._sync_to_memo_manager()
+        self._schedule_background_sync()
         
         if self.audio:
             await self.audio.stop_playback()
@@ -741,21 +1021,17 @@ class LiveOrchestrator:
             # Add to bounded history for better handoff context
             self._user_message_history.append(user_text)
             
-            # Persist user turn to MemoManager for session continuity
+            # Persist user turn to MemoManager for session continuity (fast, local)
             if self._memo_manager:
                 try:
                     self._memo_manager.append_to_history(self.active, "user", user_text)
                 except Exception:
                     logger.debug("Failed to persist user turn to history", exc_info=True)
             
-            # Re-sync session context from MemoManager at start of each turn
-            # This picks up any external updates (e.g., CRM lookups, tool results)
-            self._refresh_session_context()
-            
-            # Update session instructions with latest context
-            # NOTE: In server VAD mode, this affects the NEXT response, not current
-            # The current response is already being generated from audio
-            await self._update_session_context()
+            # Mark that we need a session update (will be done in throttled fashion)
+            # Don't call _update_session_context here - it's too slow for the hot path
+            # The response_done handler will do a throttled update
+            self._pending_session_update = True
             
             await self._maybe_trigger_call_center_transfer(user_transcript)
 
@@ -853,12 +1129,11 @@ class LiveOrchestrator:
 
         self._emit_model_metrics(event)
 
-        # Sync state to MemoManager at turn boundary
-        self._sync_to_memo_manager()
+        # Sync state to MemoManager in background to avoid hot path latency
+        self._schedule_background_sync()
 
-        # Update session instructions with refreshed context (slots, tool outputs, etc.)
-        # This ensures the model retains awareness of collected information across turns
-        await self._update_session_context()
+        # Schedule throttled session update in background - don't block the hot path
+        self._schedule_throttled_session_update()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # AGENT SWITCHING
@@ -1863,5 +2138,9 @@ __all__ = [
     "LiveOrchestrator",
     "TRANSFER_TOOL_NAMES",
     "CALL_CENTER_TRIGGER_PHRASES",
+    "register_voicelive_orchestrator",
+    "unregister_voicelive_orchestrator",
+    "get_voicelive_orchestrator",
+    "get_orchestrator_registry_size",
 ]
 
