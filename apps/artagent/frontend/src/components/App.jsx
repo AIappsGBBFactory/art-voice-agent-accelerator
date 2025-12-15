@@ -100,6 +100,7 @@ function RealTimeVoiceApp() {
   const [agentInventory, setAgentInventory] = useState(null);
   const [agentDetail, setAgentDetail] = useState(null);
   const [sessionAgentConfig, setSessionAgentConfig] = useState(null);
+  const [sessionScenarioConfig, setSessionScenarioConfig] = useState(null);
   const [showAgentsPanel, setShowAgentsPanel] = useState(false);
   const [selectedAgentName, setSelectedAgentName] = useState(null);
   const [realtimePanelCoords, setRealtimePanelCoords] = useState({ top: 0, left: 0 });
@@ -180,6 +181,24 @@ function RealTimeVoiceApp() {
       [sessId]: { ...prev[sessId], scenario }
     }));
   }, [sessionId]);
+  
+  // Helper to get scenario icon from session config (falls back to scenario type icons)
+  const getSessionScenarioIcon = useCallback(() => {
+    const scenario = getSessionScenario();
+    // First check if we have a custom scenario with an icon in sessionScenarioConfig
+    if (sessionScenarioConfig?.scenarios) {
+      const activeScenario = sessionScenarioConfig.scenarios.find(s => 
+        s.name && `custom_${s.name.replace(/\s+/g, '_').toLowerCase()}` === scenario
+      );
+      if (activeScenario?.icon) {
+        return activeScenario.icon;
+      }
+    }
+    // Fall back to type-based icons
+    if (scenario?.startsWith('custom_')) return '🎭';
+    if (scenario === 'banking') return '🏦';
+    return '🛡️'; // insurance default
+  }, [getSessionScenario, sessionScenarioConfig]);
   // Profile menu state moved to ProfileButton component
   const [editingSessionId, setEditingSessionId] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState(() => getOrCreateSessionId());
@@ -234,6 +253,30 @@ function RealTimeVoiceApp() {
   useEffect(() => {
     fetchSessionAgentConfig();
   }, [fetchSessionAgentConfig]);
+
+  // Fetch all session scenarios (for custom scenarios list)
+  const fetchSessionScenarioConfig = useCallback(async (targetSessionId = sessionId) => {
+    if (!targetSessionId) return;
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/scenario-builder/session/${encodeURIComponent(targetSessionId)}/scenarios`
+      );
+      if (res.status === 404) {
+        setSessionScenarioConfig(null);
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json();
+      // Store the scenarios array
+      setSessionScenarioConfig(data.scenarios && data.scenarios.length > 0 ? data : null);
+    } catch (err) {
+      appendLog(`Session scenarios fetch failed: ${err.message}`);
+    }
+  }, [sessionId, appendLog]);
+
+  useEffect(() => {
+    fetchSessionScenarioConfig();
+  }, [fetchSessionScenarioConfig]);
 
   // Chat width resize listeners (placed after state initialization)
   useEffect(() => {
@@ -1252,6 +1295,8 @@ function RealTimeVoiceApp() {
     const newSessionId = createNewSessionId();
     setSessionId(newSessionId);
     setSessionProfiles({});
+    setSessionAgentConfig(null); // Clear session-specific agent config
+    setSessionScenarioConfig(null); // Clear session-specific scenario config
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       logger.info('🔌 Closing WebSocket for session reset...');
       try {
@@ -3409,9 +3454,11 @@ function RealTimeVoiceApp() {
                 height: '44px',
                 borderRadius: '12px',
                 border: '1px solid rgba(226,232,240,0.6)',
-                background: getSessionScenario() === 'banking' 
-                  ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
-                  : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                background: getSessionScenario()?.startsWith('custom_') 
+                  ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                  : getSessionScenario() === 'banking' 
+                    ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
+                    : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
                 color: '#ffffff',
                 fontSize: '18px',
                 fontWeight: '500',
@@ -3431,7 +3478,7 @@ function RealTimeVoiceApp() {
                 e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.1), inset 0 1px 0 rgba(255,255,255,0.15)';
               }}
             >
-              {getSessionScenario() === 'banking' ? '🏦' : '🛡️'}
+              {getSessionScenarioIcon()}
             </button>
 
             {/* Scenario Selection Menu */}
@@ -3448,16 +3495,38 @@ function RealTimeVoiceApp() {
                 boxShadow: '0 8px 32px rgba(15,23,42,0.12), 0 0 0 1px rgba(226,232,240,0.4), inset 0 1px 0 rgba(255,255,255,0.8)',
                 backdropFilter: 'blur(24px)',
                 WebkitBackdropFilter: 'blur(24px)',
-                minWidth: '180px',
+                minWidth: '200px',
                 zIndex: 1400,
               }}>
+                {/* Built-in Scenarios */}
+                <div style={{
+                  padding: '4px 8px 6px',
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  color: '#94a3b8',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                }}>
+                  Industry Templates
+                </div>
                 {[
                   { id: 'banking', icon: '🏦', label: 'Banking' },
                   { id: 'insurance', icon: '🛡️', label: 'Insurance' },
                 ].map(({ id, icon, label }) => (
                   <button
                     key={id}
-                    onClick={() => {
+                    onClick={async () => {
+                      // Apply industry template to session on backend
+                      try {
+                        await fetch(
+                          `${API_BASE_URL}/api/v1/scenario-builder/session/${sessionId}/apply-template?template_id=${encodeURIComponent(id)}`,
+                          { method: 'POST' }
+                        );
+                        appendLog(`${icon} Applied ${label} template to session ${sessionId}`);
+                      } catch (err) {
+                        appendLog(`Failed to apply template: ${err.message}`);
+                      }
+                      
                       setSessionScenario(id);
                       setShowScenarioMenu(false);
                       appendLog(`${icon} Switched to ${label} for session ${sessionId}`);
@@ -3514,17 +3583,135 @@ function RealTimeVoiceApp() {
                     )}
                   </button>
                 ))}
+
+                {/* Custom Scenarios (show all custom scenarios for the session) */}
+                {sessionScenarioConfig?.scenarios?.length > 0 && (
+                  <>
+                    <div style={{
+                      margin: '8px 0 4px',
+                      borderTop: '1px solid rgba(226,232,240,0.6)',
+                      paddingTop: '8px',
+                    }}>
+                      <div style={{
+                        padding: '4px 8px 6px',
+                        fontSize: '10px',
+                        fontWeight: '600',
+                        color: '#f59e0b',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}>
+                        <span style={{ fontSize: '12px' }}>🎭</span>
+                        Custom Scenarios ({sessionScenarioConfig.scenarios.length})
+                      </div>
+                    </div>
+                    {sessionScenarioConfig.scenarios.map((scenario, index) => {
+                      const scenarioKey = `custom_${scenario.name.replace(/\s+/g, '_').toLowerCase()}`;
+                      const isActive = getSessionScenario() === scenarioKey;
+                      const scenarioIcon = scenario.icon || '🎭';
+                      return (
+                        <button
+                          key={scenarioKey}
+                          onClick={async () => {
+                            // Set active scenario on backend
+                            try {
+                              await fetch(
+                                `${API_BASE_URL}/api/v1/scenario-builder/session/${sessionId}/active?scenario_name=${encodeURIComponent(scenario.name)}`,
+                                { method: 'POST' }
+                              );
+                            } catch (err) {
+                              appendLog(`Failed to set active scenario: ${err.message}`);
+                            }
+                            
+                            setSessionScenario(scenarioKey);
+                            setShowScenarioMenu(false);
+                            appendLog(`${scenarioIcon} Switched to Custom Scenario: ${scenario.name}`);
+                            
+                            if (callActive) {
+                              appendLog(`🔄 Restarting call with custom scenario...`);
+                              terminateACSCall();
+                              setTimeout(() => {
+                                handlePhoneButtonClick();
+                              }, 500);
+                            } else if (recording) {
+                              appendLog(`🔄 Reconnecting with custom scenario...`);
+                              handleMicToggle();
+                              setTimeout(() => {
+                                handleMicToggle();
+                              }, 500);
+                            }
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            borderRadius: '10px',
+                            border: 'none',
+                            background: isActive 
+                              ? 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(217,119,6,0.1))' 
+                              : 'transparent',
+                            color: isActive ? '#d97706' : '#64748b',
+                            fontSize: '13px',
+                            fontWeight: isActive ? '600' : '500',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                            textAlign: 'left',
+                            marginBottom: index < sessionScenarioConfig.scenarios.length - 1 ? '4px' : 0,
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isActive) {
+                              e.currentTarget.style.background = 'rgba(245,158,11,0.06)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isActive) {
+                              e.currentTarget.style.background = 'transparent';
+                            }
+                          }}
+                        >
+                          <span style={{ fontSize: '16px' }}>{scenarioIcon}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ 
+                              overflow: 'hidden', 
+                              textOverflow: 'ellipsis', 
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {scenario.name}
+                            </div>
+                            <div style={{ 
+                              fontSize: '10px', 
+                              color: '#94a3b8',
+                              fontWeight: '400',
+                            }}>
+                              {scenario.agents?.length || 0} agents · {scenario.handoffs?.length || 0} handoffs
+                            </div>
+                          </div>
+                          {isActive && (
+                            <span style={{ fontSize: '14px', color: '#d97706' }}>✓</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+
                 <div style={{
                   marginTop: '8px',
                   padding: '8px 10px 6px',
                   borderRadius: '10px',
                   background: 'rgba(148,163,184,0.08)',
                   color: '#475569',
-                  fontSize: '12px',
+                  fontSize: '11px',
                   lineHeight: 1.4,
                   border: '1px dashed rgba(148,163,184,0.35)',
                 }}>
-                  Scenario is tied to this session. Start a new session to switch cleanly.
+                  {sessionScenarioConfig?.scenarios?.length > 0 
+                    ? 'Switch between scenarios for this session'
+                    : 'Create a custom scenario in the Scenario Builder'}
                 </div>
               </div>
             )}
@@ -3673,18 +3860,22 @@ function RealTimeVoiceApp() {
                     <span style={{
                       padding: "2px 8px",
                       borderRadius: "4px",
-                      background: getSessionScenario() === 'banking' 
-                        ? "rgba(99,102,241,0.1)" 
-                        : "rgba(16,185,129,0.1)",
-                      color: getSessionScenario() === 'banking' 
-                        ? "#6366f1" 
-                        : "#10b981",
+                      background: getSessionScenario()?.startsWith('custom_')
+                        ? "rgba(245,158,11,0.1)"
+                        : getSessionScenario() === 'banking' 
+                          ? "rgba(99,102,241,0.1)" 
+                          : "rgba(14,165,233,0.1)",
+                      color: getSessionScenario()?.startsWith('custom_')
+                        ? "#f59e0b"
+                        : getSessionScenario() === 'banking' 
+                          ? "#6366f1" 
+                          : "#0ea5e9",
                       fontSize: "10px",
                       fontWeight: 600,
                       textTransform: "uppercase",
                       letterSpacing: "0.5px",
                     }}>
-                      {getSessionScenario()}
+                      {getSessionScenario()?.startsWith('custom_') ? getSessionScenario().replace('custom_', '') : getSessionScenario()}
                     </span>
                   </div>
                   <code style={styles.sessionTagValue}>{sessionId}</code>
@@ -4101,6 +4292,12 @@ function RealTimeVoiceApp() {
       initialMode={builderInitialMode}
       sessionId={sessionId}
       sessionProfile={activeSessionProfile}
+      scenarioEditMode={sessionScenarioConfig?.scenarios?.length > 0}
+      existingScenarioConfig={
+        sessionScenarioConfig?.scenarios?.find(s => s.is_active) || 
+        sessionScenarioConfig?.scenarios?.[0] || 
+        null
+      }
       onAgentCreated={(agentConfig) => {
         appendLog(`✨ Dynamic agent created: ${agentConfig.name}`);
         appendSystemMessage(`🤖 Agent "${agentConfig.name}" is now active`, {
@@ -4183,8 +4380,9 @@ function RealTimeVoiceApp() {
           statusCaption: `Agents: ${scenarioConfig.agents?.length || 0} · Handoffs: ${scenarioConfig.handoffs?.length || 0}`,
           statusLabel: "Scenario Active",
         });
-        // Refresh scenario/session configuration
-        fetchSessionAgentConfig();
+        // Refresh scenario configuration and set to custom scenario
+        fetchSessionScenarioConfig();
+        setSessionScenario('custom');
       }}
       onScenarioUpdated={(scenarioConfig) => {
         appendLog(`✏️ Scenario updated: ${scenarioConfig.name || 'Custom Scenario'}`);
@@ -4193,7 +4391,11 @@ function RealTimeVoiceApp() {
           statusCaption: `Agents: ${scenarioConfig.agents?.length || 0} · Handoffs: ${scenarioConfig.handoffs?.length || 0}`,
           statusLabel: "Scenario Updated",
         });
-        fetchSessionAgentConfig();
+        fetchSessionScenarioConfig();
+        // Keep the scenario set to custom if updating
+        if (!getSessionScenario()?.startsWith('custom_')) {
+          setSessionScenario('custom');
+        }
       }}
     />
   </div>

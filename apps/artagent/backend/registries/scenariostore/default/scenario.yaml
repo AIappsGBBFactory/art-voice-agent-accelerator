@@ -3,6 +3,7 @@
 
 name: default
 description: Default configuration with all agents available
+icon: "🎯"
 
 # Empty agents list = include all discovered agents
 agents: []

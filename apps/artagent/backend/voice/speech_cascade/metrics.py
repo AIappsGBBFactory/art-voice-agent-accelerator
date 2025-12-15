@@ -30,8 +30,11 @@ _meter: Meter | None = None
 _stt_recognition_histogram: Histogram | None = None
 _turn_processing_histogram: Histogram | None = None
 _barge_in_histogram: Histogram | None = None
+_tts_synthesis_histogram: Histogram | None = None
+_tts_streaming_histogram: Histogram | None = None
 _turn_counter: Counter | None = None
 _barge_in_counter: Counter | None = None
+_tts_counter: Counter | None = None
 
 
 def _ensure_metrics_initialized() -> None:
@@ -43,6 +46,7 @@ def _ensure_metrics_initialized() -> None:
     """
     global _meter, _stt_recognition_histogram, _turn_processing_histogram
     global _barge_in_histogram, _turn_counter, _barge_in_counter
+    global _tts_synthesis_histogram, _tts_streaming_histogram, _tts_counter
 
     if _meter is not None:
         return
@@ -70,6 +74,20 @@ def _ensure_metrics_initialized() -> None:
         unit="ms",
     )
 
+    # TTS synthesis latency (text to audio bytes)
+    _tts_synthesis_histogram = _meter.create_histogram(
+        name="speech_cascade.tts.synthesis",
+        description="TTS synthesis latency in milliseconds",
+        unit="ms",
+    )
+
+    # TTS streaming latency (audio bytes to playback complete)
+    _tts_streaming_histogram = _meter.create_histogram(
+        name="speech_cascade.tts.streaming",
+        description="TTS streaming/playback latency in milliseconds",
+        unit="ms",
+    )
+
     # Turn counter
     _turn_counter = _meter.create_counter(
         name="speech_cascade.turn.count",
@@ -81,6 +99,13 @@ def _ensure_metrics_initialized() -> None:
     _barge_in_counter = _meter.create_counter(
         name="speech_cascade.barge_in.count",
         description="Number of barge-in events detected",
+        unit="1",
+    )
+
+    # TTS counter
+    _tts_counter = _meter.create_counter(
+        name="speech_cascade.tts.count",
+        description="Number of TTS synthesis operations",
         unit="1",
     )
 
@@ -210,6 +235,102 @@ def record_barge_in(
     )
 
 
+def record_tts_synthesis(
+    latency_ms: float,
+    *,
+    session_id: str,
+    call_connection_id: str | None = None,
+    voice_name: str | None = None,
+    text_length: int | None = None,
+    audio_bytes: int | None = None,
+    transport: str = "browser",
+) -> None:
+    """
+    Record TTS synthesis latency metric.
+
+    :param latency_ms: Synthesis latency in milliseconds
+    :param session_id: Session identifier for correlation
+    :param call_connection_id: Call connection ID
+    :param voice_name: Azure TTS voice used
+    :param text_length: Length of text synthesized
+    :param audio_bytes: Size of audio output in bytes
+    :param transport: Transport type (browser/acs)
+    """
+    _ensure_metrics_initialized()
+
+    attributes = {
+        "session.id": session_id,
+        "metric.type": "tts_synthesis",
+        "tts.transport": transport,
+    }
+    if call_connection_id:
+        attributes["call.connection.id"] = call_connection_id
+    if voice_name:
+        attributes["tts.voice"] = voice_name
+    if text_length is not None:
+        attributes["tts.text_length"] = text_length
+    if audio_bytes is not None:
+        attributes["tts.audio_bytes"] = audio_bytes
+
+    _tts_synthesis_histogram.record(latency_ms, attributes=attributes)
+    _tts_counter.add(1, attributes={"session.id": session_id, "tts.transport": transport})
+
+    logger.debug(
+        "📊 TTS synthesis metric: %.2fms | session=%s voice=%s text_len=%s",
+        latency_ms,
+        session_id,
+        voice_name,
+        text_length,
+    )
+
+
+def record_tts_streaming(
+    latency_ms: float,
+    *,
+    session_id: str,
+    call_connection_id: str | None = None,
+    chunks_sent: int | None = None,
+    audio_bytes: int | None = None,
+    transport: str = "browser",
+    cancelled: bool = False,
+) -> None:
+    """
+    Record TTS streaming/playback latency metric.
+
+    :param latency_ms: Streaming latency in milliseconds
+    :param session_id: Session identifier for correlation
+    :param call_connection_id: Call connection ID
+    :param chunks_sent: Number of audio chunks sent
+    :param audio_bytes: Total audio bytes streamed
+    :param transport: Transport type (browser/acs)
+    :param cancelled: Whether playback was cancelled (barge-in)
+    """
+    _ensure_metrics_initialized()
+
+    attributes = {
+        "session.id": session_id,
+        "metric.type": "tts_streaming",
+        "tts.transport": transport,
+        "tts.cancelled": cancelled,
+    }
+    if call_connection_id:
+        attributes["call.connection.id"] = call_connection_id
+    if chunks_sent is not None:
+        attributes["tts.chunks_sent"] = chunks_sent
+    if audio_bytes is not None:
+        attributes["tts.audio_bytes"] = audio_bytes
+
+    _tts_streaming_histogram.record(latency_ms, attributes=attributes)
+
+    logger.debug(
+        "📊 TTS streaming metric: %.2fms | session=%s chunks=%s cancelled=%s",
+        latency_ms,
+        session_id,
+        chunks_sent,
+        cancelled,
+    )
+
+
 # Accessor functions for histogram/counter access (if needed externally)
 def get_stt_recognition_histogram() -> Histogram | None:
     """Get the STT recognition histogram after ensuring initialization."""
@@ -229,8 +350,22 @@ def get_barge_in_histogram() -> Histogram | None:
     return _barge_in_histogram
 
 
+def get_tts_synthesis_histogram() -> Histogram | None:
+    """Get the TTS synthesis histogram after ensuring initialization."""
+    _ensure_metrics_initialized()
+    return _tts_synthesis_histogram
+
+
+def get_tts_streaming_histogram() -> Histogram | None:
+    """Get the TTS streaming histogram after ensuring initialization."""
+    _ensure_metrics_initialized()
+    return _tts_streaming_histogram
+
+
 __all__ = [
     "record_stt_recognition",
     "record_turn_processing",
     "record_barge_in",
+    "record_tts_synthesis",
+    "record_tts_streaming",
 ]

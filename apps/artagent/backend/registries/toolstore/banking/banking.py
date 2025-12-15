@@ -26,8 +26,14 @@ from .constants import (
 
 try:  # pragma: no cover - optional dependency during tests
     from src.cosmosdb.manager import CosmosDBMongoCoreManager as _CosmosManagerImpl
+    from src.cosmosdb.config import get_database_name, get_users_collection_name
 except Exception:  # pragma: no cover - handled at runtime
     _CosmosManagerImpl = None
+    # Fallback if config import fails
+    def get_database_name() -> str:
+        return os.getenv("AZURE_COSMOS_DATABASE_NAME", "audioagentdb")
+    def get_users_collection_name() -> str:
+        return os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
 
 # Email service for sending card agreements
 try:
@@ -253,29 +259,7 @@ evaluate_card_eligibility_schema: dict[str, Any] = {
 
 _COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
 
-# User profiles are stored in audioagentdb.users (single source of truth)
-_DEFAULT_DEMO_DB = "audioagentdb"
-_DEFAULT_DEMO_USERS_COLLECTION = "users"
-
-
-def _get_demo_database_name() -> str:
-    """Get the database name from environment or use default."""
-    value = os.getenv("AZURE_COSMOS_DATABASE_NAME")
-    if value:
-        stripped = value.strip()
-        if stripped:
-            return stripped
-    return _DEFAULT_DEMO_DB
-
-
-def _get_demo_users_collection_name() -> str:
-    """Get the users collection name from environment or use default."""
-    value = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME")
-    if value:
-        stripped = value.strip()
-        if stripped:
-            return stripped
-    return _DEFAULT_DEMO_USERS_COLLECTION
+# User profiles config imported from src.cosmosdb.config (get_database_name, get_users_collection_name)
 
 
 def _manager_targets_collection(
@@ -307,8 +291,8 @@ def _get_cosmos_manager() -> CosmosDBMongoCoreManager | None:
 def _get_demo_users_manager() -> CosmosDBMongoCoreManager | None:
     """Return a Cosmos DB manager pointed at the demo users collection."""
     global _COSMOS_USERS_MANAGER
-    database_name = _get_demo_database_name()
-    container_name = _get_demo_users_collection_name()
+    database_name = get_database_name()
+    container_name = get_users_collection_name()
 
     if _COSMOS_USERS_MANAGER is not None:
         if _manager_targets_collection(_COSMOS_USERS_MANAGER, database_name, container_name):

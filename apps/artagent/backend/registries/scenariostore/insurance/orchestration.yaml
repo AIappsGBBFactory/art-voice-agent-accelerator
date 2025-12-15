@@ -1,0 +1,92 @@
+# Insurance Customer Service Scenario
+# Optimized for insurance claims, policy management, and customer support
+
+name: insurance
+description: Insurance customer service with claims processing and policy management
+icon: "🛡️"
+
+# Starting agent
+start_agent: AuthAgent
+
+# Agents to include in this scenario
+# Flow: AuthAgent (entry) → PolicyAdvisor OR FNOLAgent
+# Both specialists can handoff to each other and return to AuthAgent
+agents:
+  - AuthAgent
+  - PolicyAdvisor
+  - FNOLAgent
+
+# Handoff behavior - default for unlisted routes
+handoff_type: announced
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Handoff Graph - Directed edges between agents
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#              ┌───────────────┐
+#              │   AuthAgent   │ (Entry Point - Authentication Gate)
+#              └───────┬───────┘
+#                      │
+#            ┌─────────┴─────────┐
+#            │                   │
+#            ▼                   ▼
+#     ┌──────────────┐   ┌────────────────┐
+#     │   Policy     │   │     FNOL       │
+#     │   Advisor    │◄─►│     Agent      │
+#     └──────────────┘   └────────────────┘
+#
+#   (No return to AuthAgent - auth is one-time gate)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+handoffs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # AuthAgent → Specialists (Entry routes)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - from: AuthAgent
+    to: PolicyAdvisor
+    tool: handoff_policy_advisor
+    type: announced           # New agent greets the customer
+    share_context: true
+
+  - from: AuthAgent
+    to: FNOLAgent
+    tool: handoff_fnol_agent
+    type: announced           # New agent greets the customer
+    share_context: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Cross-Specialist Handoffs (expertise-based routing)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - from: PolicyAdvisor
+    to: FNOLAgent
+    tool: handoff_fnol_agent
+    type: announced           # New agent greets the customer
+    share_context: true
+
+  - from: FNOLAgent
+    to: PolicyAdvisor
+    tool: handoff_policy_advisor
+    type: announced           # New agent greets the customer
+    share_context: true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Generic Handoff Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Enables the handoff_to_agent tool for dynamic agent transfers.
+# In insurance, we use announced mode since agents are specialists.
+
+generic_handoff:
+  enabled: true
+  # allowed_targets: []       # Empty = all scenario agents allowed
+  default_type: announced     # Announced - agents greet on arrival (insurance preference)
+  share_context: true         # Always share context for claims continuity
+  require_client_id: false    # Not required for generic handoffs
+
+# Agent defaults applied to all agents
+agent_defaults:
+  company_name: "Insurance Contoso Services"
+  industry: "insurance"
+  compliance_required: true
+  region: "US"
+  claims_processing: true

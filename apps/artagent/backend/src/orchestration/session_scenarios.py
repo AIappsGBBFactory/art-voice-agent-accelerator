@@ -10,12 +10,18 @@ Session scenarios allow runtime customization of:
 - Agent overrides (greetings, template vars)
 - Starting agent
 - Handoff behavior (announced vs discrete)
+
+Storage Structure:
+- _session_scenarios: dict[session_id, dict[scenario_name, ScenarioConfig]]
+  In-memory cache for fast access. Also persisted to Redis via MemoManager.
+- _active_scenario: dict[session_id, scenario_name]
+  Tracks which scenario is currently active for each session.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from utils.ml_logging import get_logger
 
@@ -24,11 +30,24 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Session-scoped dynamic scenarios: session_id -> ScenarioConfig
-_session_scenarios: dict[str, ScenarioConfig] = {}
+# Session-scoped dynamic scenarios: session_id -> {scenario_name -> ScenarioConfig}
+_session_scenarios: dict[str, dict[str, ScenarioConfig]] = {}
+
+# Track the active scenario for each session: session_id -> scenario_name
+_active_scenario: dict[str, str] = {}
 
 # Callback for notifying the orchestrator adapter of scenario updates
 _scenario_update_callback: Callable[[str, ScenarioConfig], bool] | None = None
+
+# Redis manager reference (set by main.py startup)
+_redis_manager: Any = None
+
+
+def set_redis_manager(redis_mgr: Any) -> None:
+    """Set the Redis manager reference for persistence operations."""
+    global _redis_manager
+    _redis_manager = redis_mgr
+    logger.debug("Redis manager set for session_scenarios")
 
 
 def register_scenario_update_callback(
@@ -44,9 +63,208 @@ def register_scenario_update_callback(
     logger.debug("Scenario update callback registered")
 
 
-def get_session_scenario(session_id: str) -> ScenarioConfig | None:
-    """Get dynamic scenario for a session."""
-    return _session_scenarios.get(session_id)
+def _load_scenario_from_redis(session_id: str) -> ScenarioConfig | None:
+    """
+    Load scenario config from Redis via MemoManager.
+    
+    Returns ScenarioConfig if found and successfully parsed, None otherwise.
+    """
+    if not _redis_manager:
+        return None
+    
+    try:
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            HandoffConfig,
+            ScenarioConfig,
+        )
+        from src.stateful.state_managment import MemoManager
+        
+        memo = MemoManager.from_redis(session_id, _redis_manager)
+        scenario_data = memo.get_value_from_corememory("session_scenario_config")
+        
+        if not scenario_data:
+            return None
+        
+        # Parse handoffs
+        handoffs = []
+        for h in scenario_data.get("handoffs", []):
+            handoffs.append(HandoffConfig(
+                from_agent=h.get("from_agent", ""),
+                to_agent=h.get("to_agent", ""),
+                tool=h.get("tool", ""),
+                type=h.get("type", "announced"),
+                share_context=h.get("share_context", True),
+            ))
+        
+        # Create ScenarioConfig
+        scenario = ScenarioConfig(
+            name=scenario_data.get("name", "custom"),
+            description=scenario_data.get("description", ""),
+            icon=scenario_data.get("icon", "🎭"),
+            agents=scenario_data.get("agents", []),
+            start_agent=scenario_data.get("start_agent"),
+            handoff_type=scenario_data.get("handoff_type", "announced"),
+            handoffs=handoffs,
+            global_template_vars=scenario_data.get("global_template_vars", {}),
+        )
+        
+        # Cache in memory
+        if session_id not in _session_scenarios:
+            _session_scenarios[session_id] = {}
+        _session_scenarios[session_id][scenario.name] = scenario
+        _active_scenario[session_id] = scenario.name
+        
+        logger.info(
+            "Loaded scenario from Redis | session=%s scenario=%s start_agent=%s",
+            session_id,
+            scenario.name,
+            scenario.start_agent,
+        )
+        
+        return scenario
+    except Exception as e:
+        logger.warning("Failed to load scenario from Redis: %s", e)
+        return None
+
+
+def get_session_scenario(session_id: str, scenario_name: str | None = None) -> ScenarioConfig | None:
+    """
+    Get dynamic scenario for a session.
+    
+    First checks in-memory cache, then falls back to Redis if not found.
+    
+    Args:
+        session_id: The session ID
+        scenario_name: Optional scenario name. If not provided, returns the active scenario.
+    
+    Returns:
+        The ScenarioConfig if found, None otherwise.
+    """
+    session_scenarios = _session_scenarios.get(session_id, {})
+    
+    # Check in-memory cache first
+    if session_scenarios:
+        if scenario_name:
+            result = session_scenarios.get(scenario_name)
+            if result:
+                return result
+        else:
+            # Return active scenario if set, otherwise first scenario
+            active_name = _active_scenario.get(session_id)
+            if active_name and active_name in session_scenarios:
+                return session_scenarios[active_name]
+            return next(iter(session_scenarios.values()), None)
+    
+    # Not in memory - try loading from Redis
+    redis_scenario = _load_scenario_from_redis(session_id)
+    if redis_scenario:
+        if scenario_name is None or redis_scenario.name == scenario_name:
+            return redis_scenario
+    
+    return None
+
+
+def get_session_scenarios(session_id: str) -> dict[str, ScenarioConfig]:
+    """Get all dynamic scenarios for a session."""
+    return dict(_session_scenarios.get(session_id, {}))
+
+
+def get_active_scenario_name(session_id: str) -> str | None:
+    """Get the name of the currently active scenario for a session."""
+    return _active_scenario.get(session_id)
+
+
+def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> None:
+    """
+    Persist scenario config to Redis via MemoManager.
+    
+    This runs synchronously to ensure data is persisted before returning.
+    Uses non-async methods which queue the persistence operation.
+    """
+    if not _redis_manager:
+        logger.debug("No Redis manager available, skipping persistence")
+        return
+    
+    try:
+        from src.stateful.state_managment import MemoManager
+        
+        memo = MemoManager.from_redis(session_id, _redis_manager)
+        
+        # Convert scenario to dict for JSON serialization
+        scenario_data = {
+            "name": scenario.name,
+            "description": scenario.description,
+            "icon": scenario.icon,
+            "agents": scenario.agents,
+            "start_agent": scenario.start_agent,
+            "handoff_type": scenario.handoff_type,
+            "handoffs": [
+                {
+                    "from_agent": h.from_agent,
+                    "to_agent": h.to_agent,
+                    "tool": h.tool,
+                    "type": h.type,
+                    "share_context": h.share_context,
+                }
+                for h in (scenario.handoffs or [])
+            ],
+            "global_template_vars": scenario.global_template_vars or {},
+        }
+        
+        memo.set_corememory("session_scenario_config", scenario_data)
+        memo.set_corememory("active_scenario_name", scenario.name)
+        
+        # Note: persist_to_redis is async - we'll call it in fire-and-forget mode
+        # The actual persistence will happen on the next await point
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(memo.persist_to_redis_async(_redis_manager))
+        except RuntimeError:
+            # No running loop - skip async persistence
+            logger.debug("No event loop, skipping async Redis persistence")
+        
+        logger.debug("Scenario queued for Redis persistence | session=%s scenario=%s", session_id, scenario.name)
+    except Exception as e:
+        logger.warning("Failed to persist scenario to Redis: %s", e)
+
+
+def _clear_scenario_from_redis(session_id: str) -> None:
+    """Clear scenario config from Redis via MemoManager."""
+    if not _redis_manager:
+        return
+    
+    try:
+        from src.stateful.state_managment import MemoManager
+        
+        memo = MemoManager.from_redis(session_id, _redis_manager)
+        memo.set_corememory("session_scenario_config", None)
+        memo.set_corememory("active_scenario_name", None)
+        
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(memo.persist_to_redis_async(_redis_manager))
+        except RuntimeError:
+            logger.debug("No event loop, skipping async Redis clear")
+        
+        logger.debug("Scenario cleared from Redis | session=%s", session_id)
+    except Exception as e:
+        logger.warning("Failed to clear scenario from Redis: %s", e)
+
+
+def set_active_scenario(session_id: str, scenario_name: str) -> bool:
+    """
+    Set the active scenario for a session.
+    
+    Returns True if the scenario exists and was set as active.
+    """
+    session_scenarios = _session_scenarios.get(session_id, {})
+    if scenario_name in session_scenarios:
+        _active_scenario[session_id] = scenario_name
+        logger.info("Active scenario set | session=%s scenario=%s", session_id, scenario_name)
+        return True
+    return False
 
 
 def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
@@ -54,13 +272,18 @@ def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
     Set dynamic scenario for a session.
 
     This is the single integration point - it both:
-    1. Stores the scenario in the local cache
-    2. Notifies the orchestrator adapter (if callback registered)
+    1. Stores the scenario in the local cache (by name within the session)
+    2. Sets it as the active scenario
+    3. Notifies the orchestrator adapter (if callback registered)
 
     All downstream components (handoff routing, agent overrides) will
     automatically use the updated configuration.
     """
-    _session_scenarios[session_id] = scenario
+    if session_id not in _session_scenarios:
+        _session_scenarios[session_id] = {}
+    
+    _session_scenarios[session_id][scenario.name] = scenario
+    _active_scenario[session_id] = scenario.name
 
     # Notify the orchestrator adapter if callback is registered
     adapter_updated = False
@@ -69,6 +292,9 @@ def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
             adapter_updated = _scenario_update_callback(session_id, scenario)
         except Exception as e:
             logger.warning("Failed to update adapter with scenario: %s", e)
+
+    # Persist to Redis for durability
+    _persist_scenario_to_redis(session_id, scenario)
 
     logger.info(
         "Session scenario set | session=%s scenario=%s start_agent=%s agents=%d handoffs=%d adapter_updated=%s",
@@ -81,24 +307,79 @@ def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
     )
 
 
-def remove_session_scenario(session_id: str) -> bool:
-    """Remove dynamic scenario for a session, returns True if removed."""
-    if session_id in _session_scenarios:
+def remove_session_scenario(session_id: str, scenario_name: str | None = None) -> bool:
+    """
+    Remove dynamic scenario(s) for a session.
+    
+    Args:
+        session_id: The session ID
+        scenario_name: Optional scenario name. If not provided, removes ALL scenarios for the session.
+    
+    Returns:
+        True if removed, False if not found.
+    """
+    if session_id not in _session_scenarios:
+        return False
+    
+    if scenario_name:
+        # Remove specific scenario
+        if scenario_name in _session_scenarios[session_id]:
+            del _session_scenarios[session_id][scenario_name]
+            logger.info("Session scenario removed | session=%s scenario=%s", session_id, scenario_name)
+            
+            # Update active scenario if needed
+            if _active_scenario.get(session_id) == scenario_name:
+                remaining = _session_scenarios[session_id]
+                if remaining:
+                    _active_scenario[session_id] = next(iter(remaining.keys()))
+                else:
+                    del _active_scenario[session_id]
+                    # Clear from Redis when no scenarios remain
+                    _clear_scenario_from_redis(session_id)
+            
+            # Clean up empty session
+            if not _session_scenarios[session_id]:
+                del _session_scenarios[session_id]
+            return True
+        return False
+    else:
+        # Remove all scenarios for session
         del _session_scenarios[session_id]
-        logger.info("Session scenario removed | session=%s", session_id)
+        if session_id in _active_scenario:
+            del _active_scenario[session_id]
+        # Clear from Redis
+        _clear_scenario_from_redis(session_id)
+        logger.info("All session scenarios removed | session=%s", session_id)
         return True
-    return False
 
 
 def list_session_scenarios() -> dict[str, ScenarioConfig]:
-    """Return a copy of all session scenarios."""
-    return dict(_session_scenarios)
+    """
+    Return a flat dict of all session scenarios across all sessions.
+    
+    Key format: "{session_id}:{scenario_name}" to ensure uniqueness.
+    """
+    result: dict[str, ScenarioConfig] = {}
+    for session_id, scenarios in _session_scenarios.items():
+        for scenario_name, scenario in scenarios.items():
+            result[f"{session_id}:{scenario_name}"] = scenario
+    return result
+
+
+def list_session_scenarios_by_session(session_id: str) -> dict[str, ScenarioConfig]:
+    """Return all scenarios for a specific session."""
+    return dict(_session_scenarios.get(session_id, {}))
 
 
 __all__ = [
     "get_session_scenario",
+    "get_session_scenarios",
+    "get_active_scenario_name",
+    "set_active_scenario",
     "set_session_scenario",
+    "set_redis_manager",
     "remove_session_scenario",
     "list_session_scenarios",
+    "list_session_scenarios_by_session",
     "register_scenario_update_callback",
 ]

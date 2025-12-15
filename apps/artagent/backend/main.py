@@ -431,6 +431,16 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             raise RuntimeError(f"Azure Managed Redis initialization failed: {exc}")
 
+        # Set Redis manager for session scenarios (for persistence)
+        from apps.artagent.backend.src.orchestration.session_scenarios import (
+            set_redis_manager,
+        )
+        set_redis_manager(app.state.redis)
+
+        # Ensure scenario update callback is registered by importing unified orchestrator
+        # This enables live scenario updates to propagate to active adapters
+        import apps.artagent.backend.src.orchestration.unified  # noqa: F401
+
         app.state.conn_manager = ThreadSafeConnectionManager(
             max_connections=app_config.connections.max_connections,
             queue_size=app_config.connections.queue_size,

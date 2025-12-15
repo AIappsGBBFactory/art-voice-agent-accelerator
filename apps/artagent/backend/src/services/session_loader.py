@@ -169,17 +169,16 @@ async def load_user_profile_by_email(email: str) -> dict[str, Any] | None:
 
 async def _lookup_cosmos_by_client_id(client_id: str) -> dict[str, Any] | None:
     """Query Cosmos DB for user by client_id or _id."""
-    import os
-
     try:
         from src.cosmosdb.manager import CosmosDBMongoCoreManager
+        from src.cosmosdb.config import get_database_name, get_users_collection_name
     except ImportError:
         logger.debug("CosmosDBMongoCoreManager not available")
         return None
 
-    # Use same defaults as demo_env.py to ensure consistency
-    database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME", "financial_services_db")
-    collection_name = os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
+    # Use shared config to ensure consistency across all modules
+    database_name = get_database_name()
+    collection_name = get_users_collection_name()
 
     try:
         cosmos = CosmosDBMongoCoreManager(

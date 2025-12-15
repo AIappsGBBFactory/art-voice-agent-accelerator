@@ -118,6 +118,28 @@ const styles = {
       color: '#cdd6f4',
       borderRadius: '8px',
     },
+    '& .MuiInputBase-input': {
+      color: '#cdd6f4',
+    },
+    '& .MuiInputBase-input::placeholder': {
+      color: '#6c7086',
+      opacity: 1,
+    },
+    '& .MuiInputLabel-root': {
+      color: '#a6adc8',
+    },
+    '& .MuiInputLabel-root.Mui-focused': {
+      color: '#89b4fa',
+    },
+    '& .MuiOutlinedInput-notchedOutline': {
+      borderColor: '#45475a',
+    },
+    '& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline': {
+      borderColor: '#585b70',
+    },
+    '& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline': {
+      borderColor: '#89b4fa',
+    },
   },
   templateVarChip: {
     fontFamily: 'monospace',
@@ -480,6 +502,86 @@ const TemplateVariableHelper = React.memo(function TemplateVariableHelper({ onIn
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// INLINE VARIABLE PICKER (Collapsed by default, shows under each field)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const InlineVariablePicker = React.memo(function InlineVariablePicker({ onInsert, usedVars = [] }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copiedVar, setCopiedVar] = useState(null);
+  const usedSet = useMemo(() => new Set(usedVars || []), [usedVars]);
+
+  // Common variables for greetings
+  const commonVars = useMemo(() => [
+    { key: 'caller_name', example: '{{ caller_name | default("valued customer") }}' },
+    { key: 'agent_name', example: '{{ agent_name | default("Assistant") }}' },
+    { key: 'institution_name', example: '{{ institution_name | default("our organization") }}' },
+    { key: 'client_id', example: '{{ client_id }}' },
+  ], []);
+
+  const handleInsert = useCallback((varName) => {
+    const textToCopy = `{{ ${varName} }}`;
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedVar(varName);
+    setTimeout(() => setCopiedVar(null), 1500);
+    if (onInsert) onInsert(textToCopy);
+  }, [onInsert]);
+
+  return (
+    <Box sx={{ mt: 0.5 }}>
+      <Button
+        size="small"
+        onClick={() => setExpanded(!expanded)}
+        startIcon={<CodeIcon fontSize="small" />}
+        sx={{ 
+          textTransform: 'none', 
+          fontSize: '12px', 
+          color: '#6366f1',
+          p: 0,
+          minWidth: 'auto',
+          '&:hover': { backgroundColor: 'transparent', textDecoration: 'underline' }
+        }}
+      >
+        {expanded ? 'Hide variables' : 'Insert template variable'}
+      </Button>
+      <Collapse in={expanded} timeout="auto">
+        <Box sx={{ mt: 1, p: 1.5, backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+            Click to copy. Use <code>{'{{ var | default("fallback") }}'}</code> for defaults.
+          </Typography>
+          <Stack direction="row" flexWrap="wrap" gap={0.5}>
+            {commonVars.map((v) => {
+              const isUsed = usedSet.has(v.key);
+              const isCopied = copiedVar === v.key;
+              return (
+                <Tooltip key={v.key} title={v.example} arrow>
+                  <Chip
+                    icon={isCopied ? <CheckIcon fontSize="small" /> : undefined}
+                    label={`{{ ${v.key} }}`}
+                    size="small"
+                    variant={isUsed || isCopied ? 'filled' : 'outlined'}
+                    color={isCopied ? 'success' : isUsed ? 'primary' : 'default'}
+                    onClick={() => handleInsert(v.key)}
+                    sx={{ 
+                      fontSize: '11px', 
+                      height: '24px',
+                      cursor: 'pointer',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                </Tooltip>
+              );
+            })}
+          </Stack>
+          <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#64748b' }}>
+            Conditionals: <code>{'{% if caller_name %}Hi {{ caller_name }}{% endif %}'}</code>
+          </Typography>
+        </Box>
+      </Collapse>
+    </Box>
+  );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // DEFAULT PROMPT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -537,6 +639,7 @@ export default function AgentBuilderContent({
     description: '',
     greeting: '',
     return_greeting: '',
+    handoff_trigger: '',
     prompt: DEFAULT_PROMPT,
     tools: [],
     cascade_model: {
@@ -556,11 +659,22 @@ export default function AgentBuilderContent({
       type: 'azure-standard',
       style: 'chat',
       rate: '+0%',
+      pitch: '+0%',
     },
     speech: {
       vad_silence_timeout_ms: 800,
       use_semantic_segmentation: false,
       candidate_languages: ['en-US'],
+    },
+    session: {
+      modalities: ['TEXT', 'AUDIO'],
+      input_audio_format: 'PCM16',
+      output_audio_format: 'PCM16',
+      turn_detection_type: 'azure_semantic_vad',
+      turn_detection_threshold: 0.5,
+      silence_duration_ms: 700,
+      prefix_padding_ms: 240,
+      tool_choice: 'auto',
     },
     template_vars: {
       institution_name: 'Contoso Financial',
@@ -627,9 +741,14 @@ export default function AgentBuilderContent({
             description: data.config.description || '',
             greeting: data.config.greeting || '',
             return_greeting: data.config.return_greeting || '',
+            handoff_trigger: data.config.handoff_trigger || '',
             prompt: data.config.prompt_full || data.config.prompt || prev.prompt,
             tools: data.config.tools || [],
+            cascade_model: data.config.cascade_model || prev.cascade_model,
+            voicelive_model: data.config.voicelive_model || prev.voicelive_model,
             voice: data.config.voice || prev.voice,
+            speech: data.config.speech || prev.speech,
+            session: data.config.session || prev.session,
           }));
           setIsEditMode(true);
         }
@@ -775,12 +894,14 @@ export default function AgentBuilderContent({
         description: config.description,
         greeting: config.greeting,
         return_greeting: config.return_greeting,
+        handoff_trigger: config.handoff_trigger,
         prompt: config.prompt,
         tools: config.tools,
         cascade_model: config.cascade_model,
         voicelive_model: config.voicelive_model,
         voice: config.voice,
         speech: config.speech,
+        session: config.session,
         template_vars: config.template_vars,
       };
 
@@ -831,12 +952,27 @@ export default function AgentBuilderContent({
         description: '',
         greeting: '',
         return_greeting: '',
+        handoff_trigger: '',
         prompt: DEFAULT_PROMPT,
         tools: [],
         cascade_model: defaults?.model || config.cascade_model,
         voicelive_model: config.voicelive_model,
         voice: defaults?.voice || config.voice,
-        speech: config.speech,
+        speech: {
+          vad_silence_timeout_ms: 800,
+          use_semantic_segmentation: false,
+          candidate_languages: ['en-US'],
+        },
+        session: {
+          modalities: ['TEXT', 'AUDIO'],
+          input_audio_format: 'PCM16',
+          output_audio_format: 'PCM16',
+          turn_detection_type: 'azure_semantic_vad',
+          turn_detection_threshold: 0.5,
+          silence_duration_ms: 700,
+          prefix_padding_ms: 240,
+          tool_choice: 'auto',
+        },
         template_vars: defaults?.template_vars || config.template_vars,
       });
       setSuccess('Reset to defaults');
@@ -901,6 +1037,7 @@ export default function AgentBuilderContent({
         <Tab icon={<BuildIcon />} label="Tools" iconPosition="start" />
         <Tab icon={<RecordVoiceOverIcon />} label="Voice" iconPosition="start" />
         <Tab icon={<TuneIcon />} label="Model" iconPosition="start" />
+        <Tab icon={<HearingIcon />} label="VAD/Session" iconPosition="start" />
       </Tabs>
 
       {/* Content */}
@@ -936,22 +1073,19 @@ export default function AgentBuilderContent({
                         rows={2}
                       />
                       <TextField
-                        label="Greeting"
-                        value={config.greeting}
-                        onChange={(e) => handleConfigChange('greeting', e.target.value)}
+                        label="Handoff Trigger"
+                        value={config.handoff_trigger}
+                        onChange={(e) => handleConfigChange('handoff_trigger', e.target.value)}
                         fullWidth
-                        multiline
-                        rows={2}
-                        helperText="Initial greeting when agent starts"
-                      />
-                      <TextField
-                        label="Return Greeting"
-                        value={config.return_greeting}
-                        onChange={(e) => handleConfigChange('return_greeting', e.target.value)}
-                        fullWidth
-                        multiline
-                        rows={2}
-                        helperText="Greeting when caller returns to this agent"
+                        placeholder={`handoff_${config.name.toLowerCase().replace(/\s+/g, '_')}`}
+                        helperText="Tool name for routing to this agent (auto-generated if empty)"
+                        InputProps={{
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <SwapHorizIcon fontSize="small" color="action" />
+                            </InputAdornment>
+                          ),
+                        }}
                       />
                     </Stack>
                   </CardContent>
@@ -991,9 +1125,50 @@ export default function AgentBuilderContent({
 
             {/* TAB 1: PROMPT */}
             <TabPanel value={activeTab} index={1}>
-              {/* Template Variable Helper */}
-              <TemplateVariableHelper onInsert={handleInsertVariable} usedVars={usedVars} />
+              {/* Greetings */}
+              <Card variant="outlined" sx={{ ...styles.sectionCard, mb: 2 }}>
+                <CardContent>
+                  <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                    👋 Greetings (Jinja2 templates supported)
+                  </Typography>
+                  <Stack spacing={2}>
+                    <Box>
+                      <TextField
+                        label="Initial Greeting"
+                        value={config.greeting}
+                        onChange={(e) => handleConfigChange('greeting', e.target.value)}
+                        fullWidth
+                        multiline
+                        rows={3}
+                        placeholder="Hi {{ caller_name | default('there') }}, I'm {{ agent_name }}. How can I help?"
+                        sx={styles.promptEditor}
+                      />
+                      <InlineVariablePicker 
+                        onInsert={(text) => handleConfigChange('greeting', config.greeting + text)} 
+                        usedVars={extractJinjaVariables(config.greeting)}
+                      />
+                    </Box>
+                    <Box>
+                      <TextField
+                        label="Return Greeting"
+                        value={config.return_greeting}
+                        onChange={(e) => handleConfigChange('return_greeting', e.target.value)}
+                        fullWidth
+                        multiline
+                        rows={3}
+                        placeholder="Welcome back{{ caller_name | default('') | prepend(', ') }}. Is there anything else I can help with?"
+                        sx={styles.promptEditor}
+                      />
+                      <InlineVariablePicker 
+                        onInsert={(text) => handleConfigChange('return_greeting', config.return_greeting + text)} 
+                        usedVars={extractJinjaVariables(config.return_greeting)}
+                      />
+                    </Box>
+                  </Stack>
+                </CardContent>
+              </Card>
 
+              {/* System Prompt */}
               <Card variant="outlined" sx={styles.sectionCard}>
                 <CardContent>
                   <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
@@ -1005,18 +1180,14 @@ export default function AgentBuilderContent({
                     onChange={(e) => handleConfigChange('prompt', e.target.value)}
                     fullWidth
                     multiline
-                    rows={20}
+                    rows={18}
                     placeholder="Enter your system prompt with Jinja2 template syntax..."
                     sx={styles.promptEditor}
                   />
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ display: 'block', mt: 2, lineHeight: 1.6 }}
-                  >
-                    <strong>Tip:</strong> Use Jinja2 syntax like <code>{'{{ variable }}'}</code> for dynamic content 
-                    and <code>{'{% if condition %}...{% endif %}'}</code> for conditional sections.
-                  </Typography>
+                  <InlineVariablePicker 
+                    onInsert={handleInsertVariable} 
+                    usedVars={extractJinjaVariables(config.prompt)}
+                  />
                 </CardContent>
               </Card>
             </TabPanel>
@@ -1093,12 +1264,38 @@ export default function AgentBuilderContent({
                       onChange={(e, v) => v && handleNestedConfigChange('voice', 'name', v.name)}
                       renderInput={(params) => <TextField {...params} label="Voice" />}
                     />
+                    <Stack direction="row" spacing={2}>
+                      <TextField
+                        label="Speaking Rate"
+                        value={config.voice?.rate || '+0%'}
+                        onChange={(e) => handleNestedConfigChange('voice', 'rate', e.target.value)}
+                        fullWidth
+                        helperText="e.g., +10%, -5%, +0%"
+                      />
+                      <TextField
+                        label="Pitch"
+                        value={config.voice?.pitch || '+0%'}
+                        onChange={(e) => handleNestedConfigChange('voice', 'pitch', e.target.value)}
+                        fullWidth
+                        helperText="e.g., +5%, -10%, +0%"
+                      />
+                    </Stack>
                     <TextField
-                      label="Speaking Rate"
-                      value={config.voice?.rate || '+0%'}
-                      onChange={(e) => handleNestedConfigChange('voice', 'rate', e.target.value)}
-                      helperText="e.g., +10%, -5%, +0%"
-                    />
+                      select
+                      label="Voice Style"
+                      value={config.voice?.style || 'chat'}
+                      onChange={(e) => handleNestedConfigChange('voice', 'style', e.target.value)}
+                      fullWidth
+                      SelectProps={{ native: true }}
+                      helperText="Emotional style of the voice"
+                    >
+                      <option value="chat">Chat (conversational)</option>
+                      <option value="cheerful">Cheerful</option>
+                      <option value="empathetic">Empathetic</option>
+                      <option value="calm">Calm</option>
+                      <option value="professional">Professional</option>
+                      <option value="friendly">Friendly</option>
+                    </TextField>
                   </Stack>
                 </CardContent>
               </Card>
@@ -1166,6 +1363,129 @@ export default function AgentBuilderContent({
                         value={config.voicelive_model?.max_tokens ?? 4096}
                         onChange={(e) => handleNestedConfigChange('voicelive_model', 'max_tokens', parseInt(e.target.value))}
                         size="small"
+                      />
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Stack>
+            </TabPanel>
+
+            {/* TAB 5: VAD/SESSION SETTINGS */}
+            <TabPanel value={activeTab} index={5}>
+              <Stack spacing={3}>
+                {/* VoiceLive Session Settings */}
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                      🎧 VoiceLive Session Settings
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                      These settings apply when using VoiceLive mode (Realtime API).
+                    </Typography>
+                    <Stack spacing={2}>
+                      <TextField
+                        select
+                        label="Turn Detection Type"
+                        value={config.session?.turn_detection_type || 'azure_semantic_vad'}
+                        onChange={(e) => handleNestedConfigChange('session', 'turn_detection_type', e.target.value)}
+                        fullWidth
+                        SelectProps={{ native: true }}
+                        helperText="Voice Activity Detection method"
+                      >
+                        <option value="azure_semantic_vad">Azure Semantic VAD</option>
+                        <option value="server_vad">Server VAD</option>
+                        <option value="none">None (manual)</option>
+                      </TextField>
+                      <Box>
+                        <Typography variant="body2" gutterBottom>
+                          VAD Threshold: {config.session?.turn_detection_threshold ?? 0.5}
+                        </Typography>
+                        <Slider
+                          value={config.session?.turn_detection_threshold ?? 0.5}
+                          onChange={(e, v) => handleNestedConfigChange('session', 'turn_detection_threshold', v)}
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          marks={[
+                            { value: 0, label: '0 (Less Sensitive)' },
+                            { value: 0.5, label: '0.5' },
+                            { value: 1, label: '1 (More Sensitive)' },
+                          ]}
+                        />
+                      </Box>
+                      <Stack direction="row" spacing={2}>
+                        <TextField
+                          label="Silence Duration (ms)"
+                          type="number"
+                          value={config.session?.silence_duration_ms ?? 700}
+                          onChange={(e) => handleNestedConfigChange('session', 'silence_duration_ms', parseInt(e.target.value))}
+                          fullWidth
+                          inputProps={{ min: 100, max: 3000, step: 50 }}
+                          helperText="Wait time after speech before responding"
+                        />
+                        <TextField
+                          label="Prefix Padding (ms)"
+                          type="number"
+                          value={config.session?.prefix_padding_ms ?? 240}
+                          onChange={(e) => handleNestedConfigChange('session', 'prefix_padding_ms', parseInt(e.target.value))}
+                          fullWidth
+                          inputProps={{ min: 0, max: 1000, step: 20 }}
+                          helperText="Audio buffer before detected speech"
+                        />
+                      </Stack>
+                      <TextField
+                        select
+                        label="Tool Choice"
+                        value={config.session?.tool_choice || 'auto'}
+                        onChange={(e) => handleNestedConfigChange('session', 'tool_choice', e.target.value)}
+                        fullWidth
+                        SelectProps={{ native: true }}
+                        helperText="How the model selects tools"
+                      >
+                        <option value="auto">Auto (model decides)</option>
+                        <option value="none">None (no tools)</option>
+                        <option value="required">Required (must use tool)</option>
+                      </TextField>
+                    </Stack>
+                  </CardContent>
+                </Card>
+
+                {/* Cascade Speech Settings */}
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
+                      🎙️ Cascade Speech Settings
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                      These settings apply when using Cascade mode (STT → LLM → TTS).
+                    </Typography>
+                    <Stack spacing={2}>
+                      <TextField
+                        label="VAD Silence Timeout (ms)"
+                        type="number"
+                        value={config.speech?.vad_silence_timeout_ms ?? 800}
+                        onChange={(e) => handleNestedConfigChange('speech', 'vad_silence_timeout_ms', parseInt(e.target.value))}
+                        fullWidth
+                        inputProps={{ min: 100, max: 5000, step: 50 }}
+                        helperText="Silence duration before finalizing recognition"
+                      />
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={config.speech?.use_semantic_segmentation ?? false}
+                            onChange={(e) => handleNestedConfigChange('speech', 'use_semantic_segmentation', e.target.checked)}
+                          />
+                        }
+                        label="Use Semantic Segmentation"
+                      />
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={config.speech?.enable_diarization ?? false}
+                            onChange={(e) => handleNestedConfigChange('speech', 'enable_diarization', e.target.checked)}
+                          />
+                        }
+                        label="Enable Speaker Diarization"
                       />
                     </Stack>
                   </CardContent>

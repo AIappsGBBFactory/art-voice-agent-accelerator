@@ -11,8 +11,11 @@
 name: AuthAgent
 description: Handles MFA, identity verification, and security questions
 
-greeting: "I need to verify your identity before we continue. Let's get you authenticated."
-return_greeting: "Let's continue with verification."
+greeting: |
+  {% if institution_name %}Hello, thank you for calling {{ institution_name }}. How can I help you today?
+  {% else %}Hello, thank you for calling. How can I help you today?
+  {% endif %}
+return_greeting: "Welcome back. Let me verify a few details and we'll continue."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Handoff Configuration
@@ -28,6 +31,19 @@ voice:
   name: en-US-ShimmerTurboMultilingualNeural
   type: azure-standard
   rate: "0%"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Configuration (LLM for agent reasoning)
+# ─────────────────────────────────────────────────────────────────────────────
+voicelive_model:
+  deployment_id: gpt-4o-realtime-preview
+  temperature: 0.6                        # Lower for consistent authentication
+  max_tokens: 150
+
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.6
+  max_tokens: 100
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session Configuration (VoiceLive-specific)
@@ -50,6 +66,21 @@ session:
   tool_choice: auto
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Speech Configuration (Cascade Mode Only)
+# ─────────────────────────────────────────────────────────────────────────────
+speech:
+  recognition:
+    language: en-US
+
+  synthesis:
+    voice_name: en-US-ShimmerTurboMultilingualNeural
+
+  vad:
+    threshold: 0.02
+    silence_duration_ms: 700
+    prefix_padding_ms: 200
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Tools (referenced by name from shared registry)
 # ─────────────────────────────────────────────────────────────────────────────
 tools:
@@ -59,17 +90,22 @@ tools:
   - verify_mfa_code
   - resend_mfa_code
   
-  # Handoffs (for tool-based strategy)
-  - handoff_concierge              # Return to concierge (general inquiries)
-  - handoff_claims_specialist      # Transfer to claims specialist (claims/FNOL)
+  # Handoffs - Banking Scenario
+  - handoff_concierge              # Return to BankingConcierge
   - handoff_fraud_agent            # Transfer to fraud if suspicious
   
-  # Escalation (use ONLY after 2+ auth failures or explicit human request)
+  # Handoffs - Insurance Scenario
+  - handoff_policy_advisor         # Transfer to PolicyAdvisor (insurance)
+  - handoff_fnol_agent             # Transfer to FNOLAgent (insurance claims)
+  
+  # Escalation
   - escalate_human
+  - escalate_emergency             # For medical/injury/fire emergencies
 
 template_vars:
-  institution_name: "Skynet"
-  agent_name: "FriendlyBot"
+  institution_name: "{{ institution_name | default('XYMZ Insurance') }}"
+  agent_name: "AuthAgent"
+  industry: "{{ industry | default('insurance') }}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt (inline for simple agent)

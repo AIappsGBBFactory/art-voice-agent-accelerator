@@ -45,6 +45,7 @@ from apps.artagent.backend.voice.shared import (
 )
 from apps.artagent.backend.voice.voicelive.agent_adapter import adapt_unified_agents
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
+from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VoiceLive Channel Imports (local to voice_channels)
@@ -81,7 +82,11 @@ from .metrics import (
 )
 
 # Import LiveOrchestrator from voicelive (canonical location after deprovisioning)
-from .orchestrator import LiveOrchestrator
+from .orchestrator import (
+    LiveOrchestrator,
+    register_voicelive_orchestrator,
+    unregister_voicelive_orchestrator,
+)
 
 logger = get_logger("voicelive.handler")
 tracer = trace.get_tracer(__name__)
@@ -103,16 +108,38 @@ def _safe_primitive(value: Any) -> Any:
     return str(value)
 
 
-def _background_task(coro: Awaitable[Any], *, label: str) -> None:
-    task = asyncio.create_task(coro)
+# Module-level set to track pending background tasks for cleanup
+# This prevents fire-and-forget tasks from causing memory leaks
+_pending_background_tasks: set[asyncio.Task] = set()
 
-    def _log_outcome(t: asyncio.Task) -> None:
+
+def _background_task(coro: Awaitable[Any], *, label: str) -> asyncio.Task:
+    """Create a tracked background task that will be cleaned up on handler stop."""
+    task = asyncio.create_task(coro, name=f"voicelive-bg-{label}")
+    _pending_background_tasks.add(task)
+
+    def _cleanup_task(t: asyncio.Task) -> None:
+        _pending_background_tasks.discard(t)
         try:
             t.result()
+        except asyncio.CancelledError:
+            pass  # Expected during cleanup
         except Exception:
             logger.debug("Background task '%s' failed", label, exc_info=True)
 
-    task.add_done_callback(_log_outcome)
+    task.add_done_callback(_cleanup_task)
+    return task
+
+
+def _cancel_all_background_tasks() -> int:
+    """Cancel all pending background tasks. Returns count of cancelled tasks."""
+    cancelled = 0
+    for task in list(_pending_background_tasks):
+        if not task.done():
+            task.cancel()
+            cancelled += 1
+    _pending_background_tasks.clear()
+    return cancelled
 
 
 def _serialize_session_config(session_obj: Any) -> dict[str, Any] | None:
@@ -804,7 +831,22 @@ class VoiceLiveSDKHandler:
                 # ─────────────────────────────────────────────────────────────
                 agents = None
                 orchestrator_config = None
+                
+                # Resolve scenario from multiple sources (priority order):
+                # 1. websocket.state.scenario (set by browser endpoint)
+                # 2. MemoManager corememory (set by media_handler or call setup)
+                # 3. Session-scoped scenario (from ScenarioBuilder)
                 scenario_name = getattr(self.websocket.state, "scenario", None)
+                if not scenario_name:
+                    memo_mgr = getattr(self.websocket.state, "cm", None)
+                    if memo_mgr and hasattr(memo_mgr, "get_value_from_corememory"):
+                        scenario_name = memo_mgr.get_value_from_corememory("scenario_name", None)
+                        if scenario_name:
+                            logger.debug(
+                                "[VoiceLiveSDK] Resolved scenario from MemoManager | scenario=%s session=%s",
+                                scenario_name,
+                                self.session_id,
+                            )
 
                 # Try to get unified agents from app.state (set in main.py)
                 app_state = getattr(self.websocket, "app", None)
@@ -815,13 +857,17 @@ class VoiceLiveSDKHandler:
                     # Use unified agents - adapt them for VoiceLive
                     unified_agents = app_state.unified_agents
                     agents = adapt_unified_agents(unified_agents)
-                    orchestrator_config = resolve_orchestrator_config(scenario_name=scenario_name)
+                    orchestrator_config = resolve_orchestrator_config(
+                        session_id=self.session_id,
+                        scenario_name=scenario_name,
+                    )
                     span.set_attribute("voicelive.agent_source", "unified")
                     logger.info(
-                        "Using unified agents for VoiceLive | count=%d start_agent=%s scenario=%s",
+                        "Using unified agents for VoiceLive | count=%d start_agent=%s scenario=%s session_id=%s",
                         len(agents),
                         orchestrator_config.start_agent if orchestrator_config else "default",
                         scenario_name or getattr(orchestrator_config, "scenario_name", None) or "(none)",
+                        self.session_id or "(none)",
                     )
                 else:
                     # Fallback to auto-discovery of unified agents
@@ -830,13 +876,17 @@ class VoiceLiveSDKHandler:
                     )
                     discovered_agents = discover_agents()
                     agents = adapt_unified_agents(discovered_agents)
-                    orchestrator_config = resolve_orchestrator_config(scenario_name=scenario_name)
+                    orchestrator_config = resolve_orchestrator_config(
+                        session_id=self.session_id,
+                        scenario_name=scenario_name,
+                    )
                     span.set_attribute("voicelive.agent_source", "discovered")
                     logger.info(
-                        "Discovered unified agents | count=%d start_agent=%s scenario=%s",
+                        "Discovered unified agents | count=%d start_agent=%s scenario=%s session_id=%s",
                         len(agents),
                         orchestrator_config.start_agent if orchestrator_config else "default",
                         scenario_name or getattr(orchestrator_config, "scenario_name", None) or "(none)",
+                        self.session_id or "(none)",
                     )
 
                 span.set_attribute("voicelive.agents_count", len(agents))
@@ -858,9 +908,30 @@ class VoiceLiveSDKHandler:
                         orchestrator_config.start_agent,
                     )
 
+                # ─────────────────────────────────────────────────────────────
+                # Session Agent Check (Agent Builder) - Priority 1
+                # If a session agent exists, inject it into agents and use as start
+                # ─────────────────────────────────────────────────────────────
+                session_agent = get_session_agent(self.session_id)
+                if session_agent:
+                    # Adapt session agent for VoiceLive
+                    session_agent_adapted = adapt_unified_agents({session_agent.name: session_agent})
+                    agents = dict(agents)  # Make mutable copy
+                    agents.update(session_agent_adapted)
+                    span.set_attribute("voicelive.session_agent", session_agent.name)
+                    logger.info(
+                        "Session agent found (Agent Builder) | name=%s voice=%s session_id=%s",
+                        session_agent.name,
+                        session_agent.voice.name if session_agent.voice else "default",
+                        self.session_id,
+                    )
+
                 # Determine effective start agent
+                # Priority: 1. Session agent, 2. Scenario start_agent, 3. Settings default
                 effective_start_agent = DEFAULT_START_AGENT
-                if orchestrator_config and orchestrator_config.start_agent:
+                if session_agent:
+                    effective_start_agent = session_agent.name
+                elif orchestrator_config and orchestrator_config.start_agent:
                     effective_start_agent = orchestrator_config.start_agent
                 elif hasattr(self._settings, "start_agent") and self._settings.start_agent:
                     effective_start_agent = self._settings.start_agent
@@ -904,6 +975,9 @@ class VoiceLiveSDKHandler:
                     memo_manager=memo_manager,
                 )
                 span.set_attribute("voicelive.start_agent", effective_start_agent)
+
+                # Register orchestrator for scenario updates
+                register_voicelive_orchestrator(self.session_id, self._orchestrator)
 
                 # Emit agent inventory to dashboard clients for debugging/visualization
                 try:
@@ -1010,6 +1084,9 @@ class VoiceLiveSDKHandler:
             self._running = False
             self._shutdown.set()
 
+            # Unregister from scenario update callbacks
+            unregister_voicelive_orchestrator(self.session_id)
+
             # Persist session state to Redis before stopping
             try:
                 memo_manager = getattr(self.websocket.state, "cm", None) if self.websocket else None
@@ -1070,12 +1147,35 @@ class VoiceLiveSDKHandler:
                     self._connection_cm = None
                     self._connection = None
 
-            if isinstance(self._credential, DefaultAzureCredential):
+            # Cleanup orchestrator resources (greeting tasks, references)
+            if self._orchestrator:
                 try:
-                    await self._credential.close()
+                    self._orchestrator.cleanup()
+                except Exception:
+                    logger.debug("Failed to cleanup orchestrator", exc_info=True)
+                finally:
+                    self._orchestrator = None
+
+            # Cancel all pending background tasks to prevent memory leaks
+            cancelled_count = _cancel_all_background_tasks()
+            if cancelled_count > 0:
+                logger.debug(
+                    "Cancelled %d background tasks on stop | session=%s",
+                    cancelled_count,
+                    self.session_id,
+                )
+
+            # Close credential - always attempt in finally block
+            credential = self._credential
+            self._credential = None
+            if isinstance(credential, DefaultAzureCredential):
+                try:
+                    await credential.close()
                 except Exception:
                     logger.debug("Failed to close DefaultAzureCredential", exc_info=True)
-            self._credential = None
+
+            # Clear messenger reference to break circular refs
+            self._messenger = None
 
             stop_span.set_status(trace.StatusCode.OK)
             logger.info(
@@ -1188,10 +1288,15 @@ class VoiceLiveSDKHandler:
 
                     self._observe_event(event)
 
+                    # CRITICAL: Forward audio events FIRST before orchestrator processing
+                    # This ensures audio delivery is not blocked by orchestrator network calls
+                    # (session.update, MemoManager sync, etc.)
+                    await self._forward_event_to_acs(event)
+
+                    # Orchestrator handles higher-level logic (handoffs, context, metrics)
+                    # This may involve network calls but should not block audio delivery
                     if self._orchestrator:
                         await self._orchestrator.handle_event(event)
-
-                    await self._forward_event_to_acs(event)
 
                 loop_span.set_attribute("voicelive.total_events", event_count)
                 loop_span.set_status(trace.StatusCode.OK)

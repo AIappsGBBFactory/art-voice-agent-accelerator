@@ -150,8 +150,47 @@ def _get_scenario_agents(scenario_name: str) -> dict[str, Any]:
         return _load_base_agents()
 
 
+def _build_agents_from_session_scenario(scenario: ScenarioConfig) -> dict[str, Any]:
+    """
+    Build agent registry from a session-scoped scenario.
+    
+    Session scenarios specify which agents to include via ScenarioConfig.agents list (list of names).
+    If the list is empty, all base agents are included.
+    
+    Note: We preserve UnifiedAgent objects as-is to maintain compatibility with downstream
+    orchestrator adapters that expect UnifiedAgent instances.
+    """
+    # Start with base agents (dict of UnifiedAgent objects)
+    base_agents = _load_base_agents()
+    
+    # If scenario specifies agent list, filter to only those agents
+    if scenario.agents:
+        # scenario.agents is list[str] of agent names to include
+        filtered_agents = {}
+        for agent_name in scenario.agents:
+            if agent_name in base_agents:
+                # Preserve the UnifiedAgent object directly
+                filtered_agents[agent_name] = base_agents[agent_name]
+            else:
+                # Agent not found in base - log warning but skip
+                logger.warning(
+                    "Scenario agent '%s' not found in base agents, skipping",
+                    agent_name,
+                )
+        base_agents = filtered_agents
+    
+    logger.debug(
+        "Built agents from session scenario | included=%s start_agent=%s",
+        list(base_agents.keys()),
+        scenario.start_agent,
+    )
+    
+    return base_agents
+
+
 def resolve_orchestrator_config(
     *,
+    session_id: str | None = None,
     scenario_name: str | None = None,
     start_agent: str | None = None,
     agents: dict[str, Any] | None = None,
@@ -162,10 +201,12 @@ def resolve_orchestrator_config(
 
     Resolution order:
     1. Explicit parameters (if provided)
-    2. Scenario configuration (if AGENT_SCENARIO env var is set)
-    3. Default values
+    2. Session-scoped scenario (if session_id is provided and session has an active scenario)
+    3. Scenario configuration (if AGENT_SCENARIO env var is set)
+    4. Default values
 
     Args:
+        session_id: Optional session ID to check for session-scoped scenarios
         scenario_name: Override scenario name (defaults to AGENT_SCENARIO env var)
         start_agent: Override start agent (defaults to scenario or DEFAULT_START_AGENT)
         agents: Override agent registry (defaults to scenario-aware loading)
@@ -176,7 +217,94 @@ def resolve_orchestrator_config(
     """
     result = OrchestratorConfigResult()
 
-    # Determine scenario name
+    # Check for session-scoped scenario first
+    session_scenario = None
+    if session_id:
+        logger.info(
+            "Checking for session-scoped scenario | session_id=%s scenario_name=%s",
+            session_id,
+            scenario_name,
+        )
+        try:
+            from apps.artagent.backend.src.orchestration.session_scenarios import (
+                get_session_scenario,
+                list_session_scenarios_by_session,
+            )
+            # Debug: log what scenarios are stored for this session
+            stored_scenarios = list_session_scenarios_by_session(session_id)
+            if stored_scenarios:
+                logger.info(
+                    "Session has stored scenarios | session_id=%s scenarios=%s",
+                    session_id,
+                    list(stored_scenarios.keys()),
+                )
+                
+                # Priority 1: Try to get the active session scenario (ignore URL scenario_name)
+                # This ensures custom scenarios created via ScenarioBuilder take precedence
+                session_scenario = get_session_scenario(session_id, None)  # Get active scenario
+                
+                # Priority 2: If no active scenario but scenario_name matches a stored one
+                if not session_scenario and scenario_name:
+                    session_scenario = get_session_scenario(session_id, scenario_name)
+                
+            else:
+                logger.info("No stored scenarios for session | session_id=%s", session_id)
+            
+            if session_scenario:
+                logger.info(
+                    "Found session-scoped scenario | session=%s scenario_name=%s start_agent=%s agents=%s",
+                    session_id,
+                    session_scenario.name,
+                    session_scenario.start_agent,
+                    session_scenario.agents,  # agents is list[str]
+                )
+        except ImportError as e:
+            logger.warning("Failed to import session_scenarios: %s", e)
+    else:
+        logger.info("No session_id provided, skipping session scenario lookup")
+
+    # Use session scenario if available
+    if session_scenario:
+        result.scenario = session_scenario
+        result.scenario_name = getattr(session_scenario, "name", "custom")
+        result.template_vars = session_scenario.global_template_vars.copy()
+        
+        # Use session scenario start_agent if not explicitly overridden
+        if start_agent is None and session_scenario.start_agent:
+            result.start_agent = session_scenario.start_agent
+        
+        # Build agents from session scenario
+        if agents is None:
+            result.agents = _build_agents_from_session_scenario(session_scenario)
+        
+        # Build handoff map from session scenario
+        if handoff_map is None:
+            result.handoff_map = session_scenario.build_handoff_map()
+            logger.debug(
+                "Built handoff_map from session scenario: %s",
+                result.handoff_map,
+            )
+        
+        logger.info(
+            "Resolved config with session scenario",
+            extra={
+                "session_id": session_id,
+                "start_agent": result.start_agent,
+                "agent_count": len(result.agents),
+            },
+        )
+        
+        # Apply explicit overrides
+        if agents is not None:
+            result.agents = agents
+        if start_agent is not None:
+            result.start_agent = start_agent
+        if handoff_map is not None:
+            result.handoff_map = handoff_map
+        
+        return result
+
+    # Determine scenario name from parameter or environment
     effective_scenario = scenario_name or os.getenv(SCENARIO_ENV_VAR, "").strip()
 
     if effective_scenario:

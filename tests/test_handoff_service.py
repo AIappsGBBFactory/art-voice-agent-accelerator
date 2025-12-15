@@ -445,3 +445,810 @@ class TestHandoffResolution:
         assert resolution.share_context is True
         assert resolution.handoff_type == "announced"
         assert resolution.error is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GENERIC HANDOFF TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestGenericHandoff:
+    """Tests for generic handoff_to_agent functionality."""
+
+    @pytest.fixture
+    def mock_agents_for_generic(self):
+        """Create agents for generic handoff testing."""
+        return {
+            "Concierge": MagicMock(name="Concierge"),
+            "FraudAgent": MagicMock(name="FraudAgent"),
+            "InvestmentAdvisor": MagicMock(name="InvestmentAdvisor"),
+            "CardRecommendation": MagicMock(name="CardRecommendation"),
+        }
+
+    @pytest.fixture
+    def service_with_generic(self, mock_agents_for_generic):
+        """Create service with generic handoff enabled."""
+        return HandoffService(
+            scenario_name="banking",
+            handoff_map={},  # No explicit mappings
+            agents=mock_agents_for_generic,
+        )
+
+    def test_generic_handoff_with_scenario_enabled(self, mock_agents_for_generic):
+        """Should resolve generic handoff when scenario allows it."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            HandoffConfig,
+            ScenarioConfig,
+        )
+
+        # Create a mock scenario with generic handoffs enabled
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent", "InvestmentAdvisor"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                allowed_targets=[],  # All scenario agents allowed
+                default_type="discrete",
+                share_context=True,
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_for_generic,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "FraudAgent", "reason": "fraud inquiry"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+
+            assert resolution.success is True
+            assert resolution.target_agent == "FraudAgent"
+            assert resolution.handoff_type == "discrete"
+            assert resolution.share_context is True
+
+    def test_generic_handoff_fails_when_disabled(self, mock_agents_for_generic):
+        """Should fail if scenario has generic handoffs disabled."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(enabled=False),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_for_generic,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "FraudAgent", "reason": "test"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+
+            assert resolution.success is False
+            assert "not allowed" in resolution.error
+
+    def test_generic_handoff_with_allowed_targets(self, mock_agents_for_generic):
+        """Should only allow targets in allowed_targets list."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent", "InvestmentAdvisor"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                allowed_targets=["FraudAgent"],  # Only FraudAgent allowed
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_for_generic,
+            )
+
+            # Should succeed for allowed target
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "FraudAgent", "reason": "test"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+            assert resolution.success is True
+
+            # Should fail for non-allowed target
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "InvestmentAdvisor", "reason": "test"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+            assert resolution.success is False
+            assert "not allowed" in resolution.error
+
+    def test_generic_handoff_missing_target_agent(self, mock_agents_for_generic):
+        """Should fail if target_agent not provided."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(enabled=True),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_for_generic,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"reason": "test"},  # Missing target_agent
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+
+            assert resolution.success is False
+            assert "target_agent" in resolution.error
+
+    def test_generic_handoff_target_not_in_registry(self, mock_agents_for_generic):
+        """Should fail if target agent not in agent registry."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent", "NonExistent"],
+            generic_handoff=GenericHandoffConfig(enabled=True),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_for_generic,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "NonExistent", "reason": "test"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+
+            assert resolution.success is False
+            assert "not found in registry" in resolution.error
+
+    def test_generic_handoff_no_scenario(self, mock_agents_for_generic):
+        """Should fail if no scenario configured."""
+        service = HandoffService(
+            scenario_name=None,  # No scenario
+            handoff_map={},
+            agents=mock_agents_for_generic,
+        )
+
+        resolution = service.resolve_handoff(
+            tool_name="handoff_to_agent",
+            tool_args={"target_agent": "FraudAgent", "reason": "test"},
+            source_agent="Concierge",
+            current_system_vars={},
+        )
+
+        assert resolution.success is False
+        assert "not allowed" in resolution.error
+
+    def test_generic_handoff_extracts_target_from_tool_result(
+        self, mock_agents_for_generic
+    ):
+        """Should extract target from tool_result if not in args."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(enabled=True),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_for_generic,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"reason": "test"},  # No target in args
+                source_agent="Concierge",
+                current_system_vars={},
+                tool_result={"target_agent": "FraudAgent"},  # Target in result
+            )
+
+            assert resolution.success is True
+            assert resolution.target_agent == "FraudAgent"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GENERIC HANDOFF BEHAVIOR TESTS (DISCRETE vs ANNOUNCED)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestGenericHandoffBehavior:
+    """Tests for generic handoff discrete/announced behavior based on scenario config."""
+
+    @pytest.fixture
+    def mock_agents_with_greetings(self):
+        """Create agents with greeting templates."""
+        concierge = MagicMock(name="Concierge")
+        concierge.render_greeting.return_value = "Hello! I'm your concierge."
+        concierge.render_return_greeting.return_value = "Welcome back to concierge!"
+
+        fraud_agent = MagicMock(name="FraudAgent")
+        fraud_agent.render_greeting.return_value = "Hi, I'm the fraud specialist."
+        fraud_agent.render_return_greeting.return_value = "Welcome back! Let me continue with fraud."
+
+        investment = MagicMock(name="InvestmentAdvisor")
+        investment.render_greeting.return_value = "Hello, I'm your investment advisor."
+        investment.render_return_greeting.return_value = "Welcome back to investments!"
+
+        return {
+            "Concierge": concierge,
+            "FraudAgent": fraud_agent,
+            "InvestmentAdvisor": investment,
+        }
+
+    def test_discrete_handoff_no_greeting(self, mock_agents_with_greetings):
+        """Discrete handoff should have greet_on_switch=False."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                default_type="discrete",  # DISCRETE handoff
+                share_context=True,
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_with_greetings,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "FraudAgent", "reason": "fraud inquiry"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+
+            # Discrete handoffs should NOT greet
+            assert resolution.success is True
+            assert resolution.handoff_type == "discrete"
+            assert resolution.greet_on_switch is False
+            assert resolution.is_discrete is True
+            assert resolution.is_announced is False
+
+            # Greeting selection should return None for discrete
+            greeting = service.select_greeting(
+                agent=mock_agents_with_greetings["FraudAgent"],
+                is_first_visit=True,
+                greet_on_switch=resolution.greet_on_switch,
+                system_vars=resolution.system_vars,
+            )
+            assert greeting is None
+
+    def test_announced_handoff_with_greeting(self, mock_agents_with_greetings):
+        """Announced handoff should have greet_on_switch=True and return greeting."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                default_type="announced",  # ANNOUNCED handoff
+                share_context=True,
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_with_greetings,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "FraudAgent", "reason": "fraud inquiry"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+
+            # Announced handoffs SHOULD greet
+            assert resolution.success is True
+            assert resolution.handoff_type == "announced"
+            assert resolution.greet_on_switch is True
+            assert resolution.is_discrete is False
+            assert resolution.is_announced is True
+
+            # Greeting selection should return agent's greeting
+            greeting = service.select_greeting(
+                agent=mock_agents_with_greetings["FraudAgent"],
+                is_first_visit=True,
+                greet_on_switch=resolution.greet_on_switch,
+                system_vars=resolution.system_vars,
+            )
+            assert greeting == "Hi, I'm the fraud specialist."
+
+    def test_share_context_true_includes_context(self, mock_agents_with_greetings):
+        """share_context=True should include context in system_vars."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                default_type="discrete",
+                share_context=True,  # Share context
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_with_greetings,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "FraudAgent", "reason": "fraud detected"},
+                source_agent="Concierge",
+                current_system_vars={
+                    "client_id": "12345",
+                    "session_profile": {"name": "John"},
+                },
+                user_last_utterance="I think someone stole my card",
+            )
+
+            assert resolution.success is True
+            assert resolution.share_context is True
+
+            # System vars should include handoff context
+            system_vars = resolution.system_vars
+            assert system_vars.get("is_handoff") is True
+            assert system_vars.get("share_context") is True
+            assert system_vars.get("previous_agent") == "Concierge"
+            assert system_vars.get("active_agent") == "FraudAgent"
+
+    def test_share_context_false_limits_context(self, mock_agents_with_greetings):
+        """share_context=False should be reflected in resolution."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                default_type="announced",
+                share_context=False,  # Don't share context
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_with_greetings,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "FraudAgent", "reason": "test"},
+                source_agent="Concierge",
+                current_system_vars={"sensitive_data": "secret"},
+            )
+
+            assert resolution.success is True
+            assert resolution.share_context is False
+            assert resolution.system_vars.get("share_context") is False
+
+    def test_return_greeting_for_revisit(self, mock_agents_with_greetings):
+        """Should use return_greeting for non-first visits in announced mode."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                default_type="announced",
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_with_greetings,
+            )
+
+            resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "FraudAgent", "reason": "followup"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+
+            # First visit greeting
+            first_greeting = service.select_greeting(
+                agent=mock_agents_with_greetings["FraudAgent"],
+                is_first_visit=True,
+                greet_on_switch=resolution.greet_on_switch,
+                system_vars=resolution.system_vars,
+            )
+            assert first_greeting == "Hi, I'm the fraud specialist."
+
+            # Return visit greeting
+            return_greeting = service.select_greeting(
+                agent=mock_agents_with_greetings["FraudAgent"],
+                is_first_visit=False,  # Not first visit
+                greet_on_switch=resolution.greet_on_switch,
+                system_vars=resolution.system_vars,
+            )
+            assert return_greeting == "Welcome back! Let me continue with fraud."
+
+    def test_explicit_greeting_override(self, mock_agents_with_greetings):
+        """Explicit greeting in system_vars should override agent greeting."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                default_type="announced",
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={},
+                agents=mock_agents_with_greetings,
+            )
+
+            # Custom greeting should override agent's greeting
+            custom_greeting = "Custom greeting from handoff context"
+            greeting = service.select_greeting(
+                agent=mock_agents_with_greetings["FraudAgent"],
+                is_first_visit=True,
+                greet_on_switch=True,
+                system_vars={"greeting": custom_greeting},
+            )
+            assert greeting == custom_greeting
+
+    def test_mixed_scenario_explicit_vs_generic_handoffs(self, mock_agents_with_greetings):
+        """Scenario with both explicit and generic handoffs should work correctly."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            HandoffConfig,
+            ScenarioConfig,
+        )
+
+        mock_scenario = ScenarioConfig(
+            name="test_scenario",
+            agents=["Concierge", "FraudAgent", "InvestmentAdvisor"],
+            handoffs=[
+                # Explicit handoff: Concierge -> FraudAgent (announced)
+                HandoffConfig(
+                    from_agent="Concierge",
+                    to_agent="FraudAgent",
+                    tool="handoff_fraud",
+                    type="announced",
+                    share_context=True,
+                ),
+            ],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                default_type="discrete",  # Generic defaults to discrete
+            ),
+        )
+
+        with patch(
+            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
+        ) as mock_load:
+            mock_load.return_value = mock_scenario
+
+            service = HandoffService(
+                scenario_name="test_scenario",
+                handoff_map={"handoff_fraud": "FraudAgent"},
+                agents=mock_agents_with_greetings,
+            )
+
+            # Explicit handoff should use its config (announced)
+            with patch(
+                "apps.artagent.backend.voice.shared.handoff_service.get_handoff_config"
+            ) as mock_config:
+                mock_config.return_value = MagicMock(
+                    type="announced",
+                    share_context=True,
+                    greet_on_switch=True,
+                )
+
+                explicit_resolution = service.resolve_handoff(
+                    tool_name="handoff_fraud",
+                    tool_args={"reason": "fraud detected"},
+                    source_agent="Concierge",
+                    current_system_vars={},
+                )
+
+                assert explicit_resolution.success is True
+                assert explicit_resolution.handoff_type == "announced"
+                assert explicit_resolution.greet_on_switch is True
+
+            # Generic handoff should use generic config (discrete)
+            generic_resolution = service.resolve_handoff(
+                tool_name="handoff_to_agent",
+                tool_args={"target_agent": "InvestmentAdvisor", "reason": "investment inquiry"},
+                source_agent="Concierge",
+                current_system_vars={},
+            )
+
+            assert generic_resolution.success is True
+            assert generic_resolution.handoff_type == "discrete"
+            assert generic_resolution.greet_on_switch is False
+
+
+class TestGenericHandoffConfigDataclass:
+    """Tests for GenericHandoffConfig dataclass and methods."""
+
+    def test_from_dict_with_all_fields(self):
+        """Should parse all fields from dictionary."""
+        from apps.artagent.backend.registries.scenariostore.loader import GenericHandoffConfig
+
+        data = {
+            "enabled": True,
+            "allowed_targets": ["Agent1", "Agent2"],
+            "require_client_id": True,
+            "default_type": "discrete",
+            "share_context": False,
+        }
+
+        config = GenericHandoffConfig.from_dict(data)
+
+        assert config.enabled is True
+        assert config.allowed_targets == ["Agent1", "Agent2"]
+        assert config.require_client_id is True
+        assert config.default_type == "discrete"
+        assert config.share_context is False
+
+    def test_from_dict_with_defaults(self):
+        """Should use defaults for missing fields."""
+        from apps.artagent.backend.registries.scenariostore.loader import GenericHandoffConfig
+
+        config = GenericHandoffConfig.from_dict({})
+
+        assert config.enabled is False
+        assert config.allowed_targets == []
+        assert config.require_client_id is False
+        assert config.default_type == "announced"
+        assert config.share_context is True
+
+    def test_from_dict_with_none(self):
+        """Should handle None input."""
+        from apps.artagent.backend.registries.scenariostore.loader import GenericHandoffConfig
+
+        config = GenericHandoffConfig.from_dict(None)
+
+        assert config.enabled is False
+        assert config.allowed_targets == []
+
+    def test_is_target_allowed_when_disabled(self):
+        """Should return False when disabled."""
+        from apps.artagent.backend.registries.scenariostore.loader import GenericHandoffConfig
+
+        config = GenericHandoffConfig(enabled=False)
+
+        assert config.is_target_allowed("AnyAgent", ["AnyAgent"]) is False
+
+    def test_is_target_allowed_with_allowed_targets(self):
+        """Should check against allowed_targets list."""
+        from apps.artagent.backend.registries.scenariostore.loader import GenericHandoffConfig
+
+        config = GenericHandoffConfig(
+            enabled=True,
+            allowed_targets=["AllowedAgent"],
+        )
+
+        assert config.is_target_allowed("AllowedAgent", []) is True
+        assert config.is_target_allowed("NotAllowedAgent", []) is False
+
+    def test_is_target_allowed_with_empty_allowed_targets(self):
+        """Should allow any scenario agent when allowed_targets is empty."""
+        from apps.artagent.backend.registries.scenariostore.loader import GenericHandoffConfig
+
+        config = GenericHandoffConfig(
+            enabled=True,
+            allowed_targets=[],  # Empty = all scenario agents
+        )
+
+        scenario_agents = ["Agent1", "Agent2", "Agent3"]
+
+        assert config.is_target_allowed("Agent1", scenario_agents) is True
+        assert config.is_target_allowed("Agent2", scenario_agents) is True
+        assert config.is_target_allowed("NotInScenario", scenario_agents) is False
+
+
+class TestScenarioConfigGenericHandoff:
+    """Tests for ScenarioConfig.get_generic_handoff_config method."""
+
+    def test_get_generic_handoff_config_enabled(self):
+        """Should return HandoffConfig when generic handoffs are enabled."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        scenario = ScenarioConfig(
+            name="test",
+            agents=["Agent1", "Agent2"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                default_type="discrete",
+                share_context=False,
+            ),
+        )
+
+        config = scenario.get_generic_handoff_config("Agent1", "Agent2")
+
+        assert config is not None
+        assert config.from_agent == "Agent1"
+        assert config.to_agent == "Agent2"
+        assert config.tool == "handoff_to_agent"
+        assert config.type == "discrete"
+        assert config.share_context is False
+
+    def test_get_generic_handoff_config_disabled(self):
+        """Should return None when generic handoffs are disabled."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        scenario = ScenarioConfig(
+            name="test",
+            agents=["Agent1", "Agent2"],
+            generic_handoff=GenericHandoffConfig(enabled=False),
+        )
+
+        config = scenario.get_generic_handoff_config("Agent1", "Agent2")
+
+        assert config is None
+
+    def test_get_generic_handoff_config_target_not_allowed(self):
+        """Should return None when target is not in allowed_targets."""
+        from apps.artagent.backend.registries.scenariostore.loader import (
+            GenericHandoffConfig,
+            ScenarioConfig,
+        )
+
+        scenario = ScenarioConfig(
+            name="test",
+            agents=["Agent1", "Agent2", "Agent3"],
+            generic_handoff=GenericHandoffConfig(
+                enabled=True,
+                allowed_targets=["Agent2"],  # Only Agent2 allowed
+            ),
+        )
+
+        # Agent2 is allowed
+        config = scenario.get_generic_handoff_config("Agent1", "Agent2")
+        assert config is not None
+
+        # Agent3 is not allowed
+        config = scenario.get_generic_handoff_config("Agent1", "Agent3")
+        assert config is None
+
+

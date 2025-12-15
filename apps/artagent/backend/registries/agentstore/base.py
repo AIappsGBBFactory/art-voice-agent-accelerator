@@ -74,6 +74,7 @@ class VoiceConfig:
     type: str = "azure-standard"
     style: str = "chat"
     rate: str = "+0%"
+    pitch: str = "+0%"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VoiceConfig:
@@ -85,6 +86,7 @@ class VoiceConfig:
             type=data.get("type", cls.type),
             style=data.get("style", cls.style),
             rate=data.get("rate", cls.rate),
+            pitch=data.get("pitch", cls.pitch),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +96,7 @@ class VoiceConfig:
             "type": self.type,
             "style": self.style,
             "rate": self.rate,
+            "pitch": self.pitch,
         }
 
 

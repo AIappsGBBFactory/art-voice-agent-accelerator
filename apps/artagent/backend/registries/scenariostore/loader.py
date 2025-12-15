@@ -112,11 +112,72 @@ class AgentOverride:
 
 
 @dataclass
+class GenericHandoffConfig:
+    """Configuration for generic handoff behavior in a scenario.
+
+    Controls whether the generic `handoff_to_agent` tool is enabled and
+    how it behaves. This allows scenarios to enable dynamic agent transfers
+    without requiring explicit handoff tool definitions for every agent pair.
+
+    Attributes:
+        enabled: Whether generic handoffs are allowed in this scenario
+        allowed_targets: List of agent names that can be targeted. If empty,
+                         all agents in the scenario are valid targets.
+        require_client_id: Whether client_id is required for generic handoffs
+        default_type: Default handoff type ("discrete" or "announced")
+        share_context: Whether to share conversation context by default
+    """
+
+    enabled: bool = False
+    allowed_targets: list[str] = field(default_factory=list)
+    require_client_id: bool = False
+    default_type: str = "announced"  # "discrete" or "announced"
+    share_context: bool = True
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> GenericHandoffConfig:
+        """Create from dictionary."""
+        if not data:
+            return cls()
+
+        return cls(
+            enabled=data.get("enabled", False),
+            allowed_targets=data.get("allowed_targets", []),
+            require_client_id=data.get("require_client_id", False),
+            default_type=data.get("default_type", "announced"),
+            share_context=data.get("share_context", True),
+        )
+
+    def is_target_allowed(self, target_agent: str, scenario_agents: list[str]) -> bool:
+        """Check if a target agent is allowed for generic handoffs.
+
+        Args:
+            target_agent: The agent name to check
+            scenario_agents: List of all agents in the scenario
+
+        Returns:
+            True if the target is allowed
+        """
+        if not self.enabled:
+            return False
+
+        # If allowed_targets is specified, check against it
+        if self.allowed_targets:
+            return target_agent in self.allowed_targets
+
+        # Otherwise, any agent in the scenario is valid
+        return target_agent in scenario_agents if scenario_agents else True
+
+
+@dataclass
 class ScenarioConfig:
     """Complete scenario configuration."""
 
     name: str
     description: str = ""
+
+    # Icon emoji for the scenario (shown in UI)
+    icon: str = "🎭"
 
     # Which agents to include (if empty, include all)
     agents: list[str] = field(default_factory=list)
@@ -141,6 +202,9 @@ class ScenarioConfig:
     # Handoff configurations - list of directed edges (from → to via tool)
     handoffs: list[HandoffConfig] = field(default_factory=list)
 
+    # Generic handoff configuration - enables dynamic agent transfers
+    generic_handoff: GenericHandoffConfig = field(default_factory=GenericHandoffConfig)
+
     @classmethod
     def from_dict(cls, name: str, data: dict[str, Any]) -> ScenarioConfig:
         """Create from dictionary."""
@@ -157,9 +221,15 @@ class ScenarioConfig:
                 if isinstance(h, dict) and h.get("from") and h.get("to"):
                     handoffs.append(HandoffConfig.from_dict(h))
 
+        # Parse generic handoff configuration
+        generic_handoff = GenericHandoffConfig.from_dict(
+            data.get("generic_handoff")
+        )
+
         return cls(
             name=name,
             description=data.get("description", ""),
+            icon=data.get("icon", "🎭"),
             agents=data.get("agents", []),
             agent_defaults=agent_defaults,
             global_template_vars=data.get("template_vars", {}),
@@ -167,6 +237,7 @@ class ScenarioConfig:
             start_agent=data.get("start_agent"),
             handoff_type=data.get("handoff_type", "announced"),
             handoffs=handoffs,
+            generic_handoff=generic_handoff,
         )
 
     def get_handoff_config(
@@ -220,6 +291,38 @@ class ScenarioConfig:
                 # This is fine since tool→agent mapping should be consistent
                 handoff_map[h.tool] = h.to_agent
         return handoff_map
+
+    def get_generic_handoff_config(
+        self,
+        from_agent: str,
+        target_agent: str,
+    ) -> HandoffConfig | None:
+        """
+        Get handoff config for a generic handoff_to_agent call.
+
+        Returns a HandoffConfig if the generic handoff is allowed,
+        or None if generic handoffs are disabled or target is not allowed.
+
+        Args:
+            from_agent: The agent initiating the handoff
+            target_agent: The target agent from handoff_to_agent args
+
+        Returns:
+            HandoffConfig for the generic handoff, or None if not allowed
+        """
+        if not self.generic_handoff.enabled:
+            return None
+
+        if not self.generic_handoff.is_target_allowed(target_agent, self.agents):
+            return None
+
+        return HandoffConfig(
+            from_agent=from_agent,
+            to_agent=target_agent,
+            tool="handoff_to_agent",
+            type=self.generic_handoff.default_type,
+            share_context=self.generic_handoff.share_context,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -466,4 +569,5 @@ __all__ = [
     "ScenarioConfig",
     "AgentOverride",
     "HandoffConfig",
+    "GenericHandoffConfig",
 ]

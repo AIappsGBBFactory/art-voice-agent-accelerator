@@ -312,19 +312,31 @@ class MediaHandler:
         handler._setup_websocket_state(memory_manager, tts_client, stt_client)
 
         # Initialize active agent in memory for this session
-        # Priority: 1. Session agent (Agent Builder), 2. Unified agent (from disk)
+        # Priority: 1. Session agent (Agent Builder), 2. Session scenario (ScenarioBuilder),
+        #           3. URL scenario param, 4. Unified agent (from disk)
         scenario_start_agent = None
-        if config.scenario:
-            try:
-                scenario_cfg = resolve_orchestrator_config(scenario_name=config.scenario)
-                scenario_start_agent = scenario_cfg.start_agent or scenario_start_agent
-            except Exception as exc:
-                logger.warning(
-                    "[%s] Failed to resolve scenario start_agent for '%s': %s",
+        try:
+            # Always call resolve_orchestrator_config with session_id to check for
+            # session-scoped scenarios (created via ScenarioBuilder). The resolver
+            # will also check for URL-based scenarios if scenario_name is provided.
+            scenario_cfg = resolve_orchestrator_config(
+                session_id=config.session_id,
+                scenario_name=config.scenario,  # May be None, that's fine
+            )
+            scenario_start_agent = scenario_cfg.start_agent or scenario_start_agent
+            if scenario_start_agent:
+                logger.info(
+                    "[%s] Resolved start_agent from scenario: %s (scenario=%s)",
                     handler._session_short,
-                    config.scenario,
-                    exc,
+                    scenario_start_agent,
+                    scenario_cfg.scenario_name,
                 )
+        except Exception as exc:
+            logger.warning(
+                "[%s] Failed to resolve scenario start_agent: %s",
+                handler._session_short,
+                exc,
+            )
 
         session_agent = get_session_agent(config.session_id)
         if session_agent:

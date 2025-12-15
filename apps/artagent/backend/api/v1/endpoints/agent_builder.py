@@ -94,6 +94,7 @@ class VoiceConfigSchema(BaseModel):
     type: str = "azure-standard"
     style: str = "chat"
     rate: str = "+0%"
+    pitch: str = Field(default="+0%", description="Voice pitch: -50% to +50%")
 
 
 class SpeechConfigSchema(BaseModel):
@@ -118,6 +119,31 @@ class SpeechConfigSchema(BaseModel):
     )
 
 
+class SessionConfigSchema(BaseModel):
+    """VoiceLive session configuration schema."""
+
+    modalities: list[str] = Field(
+        default_factory=lambda: ["TEXT", "AUDIO"],
+        description="Session modalities (TEXT, AUDIO)",
+    )
+    input_audio_format: str = Field(default="PCM16", description="Input audio format")
+    output_audio_format: str = Field(default="PCM16", description="Output audio format")
+    turn_detection_type: str = Field(
+        default="azure_semantic_vad",
+        description="Turn detection type (azure_semantic_vad, server_vad, none)",
+    )
+    turn_detection_threshold: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="VAD threshold"
+    )
+    silence_duration_ms: int = Field(
+        default=700, ge=100, le=3000, description="Silence duration before turn ends"
+    )
+    prefix_padding_ms: int = Field(
+        default=240, ge=0, le=1000, description="Audio prefix padding"
+    )
+    tool_choice: str = Field(default="auto", description="Tool choice mode (auto, none, required)")
+
+
 class DynamicAgentConfig(BaseModel):
     """Configuration for creating a dynamic agent."""
 
@@ -126,6 +152,9 @@ class DynamicAgentConfig(BaseModel):
     greeting: str = Field(default="", max_length=1024, description="Initial greeting message")
     return_greeting: str = Field(
         default="", max_length=1024, description="Return greeting when caller comes back"
+    )
+    handoff_trigger: str = Field(
+        default="", max_length=128, description="Tool name that routes to this agent (e.g., handoff_my_agent)"
     )
     prompt: str = Field(..., min_length=10, description="System prompt for the agent")
     tools: list[str] = Field(default_factory=list, description="List of tool names to enable")
@@ -140,6 +169,9 @@ class DynamicAgentConfig(BaseModel):
     )
     voice: VoiceConfigSchema | None = None
     speech: SpeechConfigSchema | None = None
+    session: SessionConfigSchema | None = Field(
+        default=None, description="VoiceLive session settings (VAD, modalities, etc.)"
+    )
     template_vars: dict[str, Any] | None = None
 
 
@@ -666,6 +698,7 @@ async def create_dynamic_agent(
         type=config.voice.type if config.voice else "azure-standard",
         style=config.voice.style if config.voice else "chat",
         rate=config.voice.rate if config.voice else "+0%",
+        pitch=config.voice.pitch if config.voice else "+0%",
     )
 
     # Build speech config (STT / VAD settings)
@@ -679,18 +712,40 @@ async def create_dynamic_agent(
         speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
     )
 
+    # Determine handoff trigger (use explicit config or auto-generate)
+    handoff_trigger = config.handoff_trigger.strip() if config.handoff_trigger else ""
+    if not handoff_trigger:
+        handoff_trigger = f"handoff_{config.name.lower().replace(' ', '_')}"
+
+    # Build session config dict for VoiceLive (if provided)
+    session_dict = {}
+    if config.session:
+        session_dict = {
+            "modalities": config.session.modalities,
+            "input_audio_format": config.session.input_audio_format,
+            "output_audio_format": config.session.output_audio_format,
+            "turn_detection": {
+                "type": config.session.turn_detection_type,
+                "threshold": config.session.turn_detection_threshold,
+                "silence_duration_ms": config.session.silence_duration_ms,
+                "prefix_padding_ms": config.session.prefix_padding_ms,
+            },
+            "tool_choice": config.session.tool_choice,
+        }
+
     # Create the agent with mode-specific models
     agent = UnifiedAgent(
         name=config.name,
         description=config.description,
         greeting=config.greeting,
         return_greeting=config.return_greeting,
-        handoff=HandoffConfig(trigger=f"handoff_{config.name.lower().replace(' ', '_')}"),
+        handoff=HandoffConfig(trigger=handoff_trigger),
         model=model_config,
         cascade_model=cascade_model,
         voicelive_model=voicelive_model,
         voice=voice_config,
         speech=speech_config,
+        session=session_dict,
         prompt_template=config.prompt,
         tool_names=config.tools,
         template_vars=config.template_vars or {},
@@ -720,6 +775,7 @@ async def create_dynamic_agent(
             "description": config.description,
             "greeting": config.greeting,
             "return_greeting": config.return_greeting,
+            "handoff_trigger": handoff_trigger,
             "prompt_preview": (
                 config.prompt[:200] + "..." if len(config.prompt) > 200 else config.prompt
             ),
@@ -729,6 +785,7 @@ async def create_dynamic_agent(
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
             "speech": speech_config.to_dict(),
+            "session": session_dict,
         },
         created_at=time.time(),
     )
@@ -763,6 +820,7 @@ async def get_session_agent_config(
             "description": agent.description,
             "greeting": agent.greeting,
             "return_greeting": agent.return_greeting,
+            "handoff_trigger": agent.handoff.trigger if agent.handoff else "",
             "prompt_preview": (
                 agent.prompt_template[:200] + "..."
                 if len(agent.prompt_template) > 200
@@ -771,7 +829,11 @@ async def get_session_agent_config(
             "prompt_full": agent.prompt_template,
             "tools": agent.tool_names,
             "model": agent.model.to_dict(),
+            "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else agent.model.to_dict(),
+            "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else agent.model.to_dict(),
             "voice": agent.voice.to_dict(),
+            "speech": agent.speech.to_dict() if agent.speech else {},
+            "session": agent.session or {},
             "template_vars": agent.template_vars,
         },
         created_at=agent.metadata.get("created_at"),
@@ -862,6 +924,7 @@ async def update_session_agent(
         type=config.voice.type if config.voice else "azure-standard",
         style=config.voice.style if config.voice else "chat",
         rate=config.voice.rate if config.voice else "+0%",
+        pitch=config.voice.pitch if config.voice else "+0%",
     )
 
     # Build speech config (STT / VAD settings)
@@ -875,18 +938,40 @@ async def update_session_agent(
         speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
     )
 
+    # Determine handoff trigger (use explicit config or auto-generate)
+    handoff_trigger = config.handoff_trigger.strip() if config.handoff_trigger else ""
+    if not handoff_trigger:
+        handoff_trigger = f"handoff_{config.name.lower().replace(' ', '_')}"
+
+    # Build session config dict for VoiceLive (if provided)
+    session_dict = {}
+    if config.session:
+        session_dict = {
+            "modalities": config.session.modalities,
+            "input_audio_format": config.session.input_audio_format,
+            "output_audio_format": config.session.output_audio_format,
+            "turn_detection": {
+                "type": config.session.turn_detection_type,
+                "threshold": config.session.turn_detection_threshold,
+                "silence_duration_ms": config.session.silence_duration_ms,
+                "prefix_padding_ms": config.session.prefix_padding_ms,
+            },
+            "tool_choice": config.session.tool_choice,
+        }
+
     # Create updated agent with mode-specific models
     agent = UnifiedAgent(
         name=config.name,
         description=config.description,
         greeting=config.greeting,
         return_greeting=config.return_greeting,
-        handoff=HandoffConfig(trigger=f"handoff_{config.name.lower().replace(' ', '_')}"),
+        handoff=HandoffConfig(trigger=handoff_trigger),
         model=model_config,
         cascade_model=cascade_model,
         voicelive_model=voicelive_model,
         voice=voice_config,
         speech=speech_config,
+        session=session_dict,
         prompt_template=config.prompt,
         tool_names=config.tools,
         template_vars=config.template_vars or {},
@@ -915,6 +1000,7 @@ async def update_session_agent(
             "description": config.description,
             "greeting": config.greeting,
             "return_greeting": config.return_greeting,
+            "handoff_trigger": handoff_trigger,
             "prompt_preview": config.prompt[:200] + "...",
             "tools": config.tools,
             "cascade_model": cascade_model.to_dict(),
@@ -922,6 +1008,7 @@ async def update_session_agent(
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
             "speech": speech_config.to_dict(),
+            "session": session_dict,
         },
         created_at=created_at,
         modified_at=time.time(),
