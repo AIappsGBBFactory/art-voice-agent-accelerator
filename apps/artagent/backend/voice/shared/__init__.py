@@ -5,6 +5,7 @@ Voice Shared Modules
 Shared data classes and configuration utilities for voice channel orchestrators.
 
 Contents:
+    - VoiceSessionContext: Typed session context for voice handlers (Phase 1)
     - OrchestratorContext: Context passed to orchestrator for each turn
     - OrchestratorResult: Result from an orchestrator turn
     - resolve_orchestrator_config: Scenario-aware configuration resolution
@@ -15,6 +16,8 @@ Contents:
 
 Usage:
     from apps.artagent.backend.voice.shared import (
+        VoiceSessionContext,
+        TransportType,
         OrchestratorContext,
         OrchestratorResult,
         resolve_orchestrator_config,
@@ -23,6 +26,13 @@ Usage:
         sync_state_to_memo,
     )
 """
+
+# Voice Session Context (Phase 1 - typed replacement for websocket.state)
+from .context import (
+    BargeInController,
+    TransportType,
+    VoiceSessionContext,
+)
 
 # Shared dataclasses
 from .base import (
@@ -48,7 +58,18 @@ from .session_state import (
     sync_state_to_memo,
 )
 
+# Handoff service (unified handoff resolution)
+from .handoff_service import (
+    HandoffResolution,
+    HandoffService,
+    create_handoff_service,
+)
+
 __all__ = [
+    # Voice Session Context (Phase 1)
+    "VoiceSessionContext",
+    "TransportType",
+    "BargeInController",
     # Context/Result (shared data classes)
     "OrchestratorContext",
     "OrchestratorResult",
@@ -64,4 +85,8 @@ __all__ = [
     "SessionState",
     "sync_state_from_memo",
     "sync_state_to_memo",
+    # Handoff Service
+    "HandoffService",
+    "HandoffResolution",
+    "create_handoff_service",
 ]
