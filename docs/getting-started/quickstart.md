@@ -6,13 +6,13 @@ Use this guided flow with screenshots to create and run your first agent.
     - Navigate to the Agent Builder home screen.
     - You should see the initial landing page like below.
 
-    ![Agent Builder - Initial](../assets/01-agent-builder-initial.png)
+![Agent Builder - Initial](../assets/screenshots/01-agent-builder-initial.png)
 
 2) Choose a Template
     - Pick a starter template to accelerate setup (recommended for first-time use).
     - Confirm the template details and proceed.
 
-    ![Template Selected](../assets/02-template-selected.png)
+![Template Selected](../assets/screenshots/02-template-selected.png)
 
 3) Configure Basics
     - Enter a name and short description for your agent.
