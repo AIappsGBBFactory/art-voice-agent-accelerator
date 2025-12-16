@@ -2,7 +2,7 @@
 
 > **📘 Full Documentation:** For detailed solutions with step-by-step commands, see the [complete troubleshooting guide](docs/operations/troubleshooting.md).
 
-Quick solutions for the most common issues when deploying and running the Real-Time Voice Agent.
+Quick solutions for the most common issues when deploying and running the ART Voice Agent Accelerator.
 
 ---
 

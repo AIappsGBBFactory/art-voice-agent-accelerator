@@ -343,6 +343,43 @@ handoff_fnol_agent_schema: dict[str, Any] = {
     },
 }
 
+handoff_subro_agent_schema: dict[str, Any] = {
+    "name": "handoff_subro_agent",
+    "description": (
+        "Transfer to Subrogation Agent for B2B Claimant Carrier inquiries. "
+        "Use when caller is from another insurance company asking about subrogation "
+        "demand status, liability, coverage, or limits on a claim. "
+        "Requires: claim_number, cc_company (their insurance company), caller_name."
+        + SILENT_HANDOFF_NOTE
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "claim_number": {
+                "type": "string",
+                "description": "The claim number from verify_cc_caller",
+            },
+            "cc_company": {
+                "type": "string",
+                "description": "Claimant Carrier company name from verify_cc_caller",
+            },
+            "caller_name": {
+                "type": "string",
+                "description": "Name of the CC representative from verify_cc_caller",
+            },
+            "claimant_name": {
+                "type": "string",
+                "description": "Name of the claimant (their insured) if known",
+            },
+            "inquiry_type": {
+                "type": "string",
+                "description": "Type of inquiry (demand_status, liability, coverage, limits, payment, other)",
+            },
+        },
+        "required": ["claim_number", "cc_company", "caller_name"],
+    },
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTORS
@@ -681,6 +718,44 @@ async def handoff_fnol_agent(args: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+async def handoff_subro_agent(args: dict[str, Any]) -> dict[str, Any]:
+    """Transfer to Subrogation Agent for B2B Claimant Carrier inquiries."""
+    claim_number = (args.get("claim_number") or "").strip()
+    cc_company = (args.get("cc_company") or "").strip()
+    caller_name = (args.get("caller_name") or "").strip()
+    claimant_name = (args.get("claimant_name") or "").strip()
+    inquiry_type = (args.get("inquiry_type") or "").strip()
+
+    if not claim_number:
+        return {"success": False, "message": "claim_number is required."}
+    if not cc_company:
+        return {"success": False, "message": "cc_company is required."}
+    if not caller_name:
+        return {"success": False, "message": "caller_name is required."}
+
+    logger.info(
+        "📋 Handoff to SubroAgent | claim=%s cc=%s caller=%s inquiry=%s",
+        claim_number, cc_company, caller_name, inquiry_type
+    )
+
+    return _build_handoff_payload(
+        target_agent="SubroAgent",
+        message="I'll connect you with our subrogation specialist.",
+        summary=f"Subro inquiry: {inquiry_type or 'demand status'}",
+        context={
+            "claim_number": claim_number,
+            "cc_company": cc_company,
+            "caller_name": caller_name,
+            "claimant_name": claimant_name,
+            "inquiry_type": inquiry_type,
+            "handoff_timestamp": _utc_now(),
+            "previous_agent": "AuthAgent",
+            "is_b2b": True,
+        },
+        extra={"should_interrupt_playback": True},
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # REGISTRATION
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -771,4 +846,11 @@ register_tool(
     handoff_fnol_agent,
     is_handoff=True,
     tags={"handoff", "insurance", "claims"},
+)
+register_tool(
+    "handoff_subro_agent",
+    handoff_subro_agent_schema,
+    handoff_subro_agent,
+    is_handoff=True,
+    tags={"handoff", "insurance", "subro", "b2b"},
 )
