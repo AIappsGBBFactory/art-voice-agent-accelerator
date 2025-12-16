@@ -280,7 +280,8 @@ class CascadeOrchestratorAdapter:
 
     def _load_agents(self) -> None:
         """Load agents from the unified agent registry with scenario support."""
-        config = resolve_orchestrator_config(session_id=self.config.session_id)
+        # Use cached orchestrator config (this also populates the cache for future use)
+        config = self._orchestrator_config
         self.agents = config.agents
         self.handoff_map = config.handoff_map
 
@@ -399,20 +400,42 @@ class CascadeOrchestratorAdapter:
         return self._current_memo_manager
 
     @property
+    def _orchestrator_config(self):
+        """
+        Get cached orchestrator config for scenario resolution.
+
+        Lazily resolves and caches the config on first access to avoid
+        repeated calls to resolve_orchestrator_config() during the session.
+
+        The config is cached per-instance (session lifetime), which is appropriate
+        because scenario changes during a call would be disruptive anyway.
+        """
+        if not hasattr(self, "_cached_orchestrator_config"):
+            self._cached_orchestrator_config = resolve_orchestrator_config(
+                session_id=self.config.session_id
+            )
+            logger.debug(
+                "Cached orchestrator config | scenario=%s session=%s",
+                self._cached_orchestrator_config.scenario_name,
+                self.config.session_id,
+            )
+        return self._cached_orchestrator_config
+
+    @property
     def handoff_service(self) -> HandoffService:
         """
         Get the HandoffService for consistent handoff resolution.
 
         Lazily initialized on first access using current orchestrator state.
-        Uses scenario config for handoff behavior (discrete/announced).
+        Uses cached scenario config for handoff behavior (discrete/announced).
 
         For session-scoped scenarios (from Scenario Builder), passes the
         ScenarioConfig object directly so HandoffService can use it without
         trying to load from YAML files.
         """
         if not hasattr(self, "_handoff_service") or self._handoff_service is None:
-            # Get scenario from config resolver (supports session-scoped scenarios)
-            config = resolve_orchestrator_config(session_id=self.config.session_id)
+            # Use cached orchestrator config for scenario resolution
+            config = self._orchestrator_config
             self._handoff_service = HandoffService(
                 scenario_name=config.scenario_name,
                 handoff_map=self.handoff_map,
@@ -474,8 +497,8 @@ class CascadeOrchestratorAdapter:
             return tools
 
         # Check scenario configuration for automatic handoff tool injection
-        # Use already-resolved scenario (supports both file-based and session-scoped)
-        config = resolve_orchestrator_config(session_id=self.config.session_id)
+        # Use cached orchestrator config (supports both file-based and session-scoped)
+        config = self._orchestrator_config
         scenario = config.scenario
         if not scenario:
             return tools
@@ -1077,8 +1100,8 @@ class CascadeOrchestratorAdapter:
         system_content = agent.render_prompt(context.metadata)
         
         # Inject handoff instructions from scenario configuration
-        # Use the already-resolved scenario (supports both file-based and session-scoped)
-        config = resolve_orchestrator_config(session_id=self.config.session_id)
+        # Use cached orchestrator config (supports both file-based and session-scoped)
+        config = self._orchestrator_config
         if config.scenario and agent.name:
             # Use scenario.build_handoff_instructions directly (works for session scenarios)
             handoff_instructions = config.scenario.build_handoff_instructions(agent.name)

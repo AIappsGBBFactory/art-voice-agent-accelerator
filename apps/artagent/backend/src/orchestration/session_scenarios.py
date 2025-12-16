@@ -74,6 +74,8 @@ def _load_scenario_from_redis(session_id: str) -> ScenarioConfig | None:
     
     try:
         from apps.artagent.backend.registries.scenariostore.loader import (
+            AgentOverride,
+            GenericHandoffConfig,
             HandoffConfig,
             ScenarioConfig,
         )
@@ -94,19 +96,45 @@ def _load_scenario_from_redis(session_id: str) -> ScenarioConfig | None:
                 tool=h.get("tool", ""),
                 type=h.get("type", "announced"),
                 share_context=h.get("share_context", True),
-                handoff_condition=h.get("handoff_condition", ""),  # Include handoff condition
+                handoff_condition=h.get("handoff_condition", ""),
             ))
         
-        # Create ScenarioConfig
+        # Parse agent_defaults
+        agent_defaults = None
+        agent_defaults_data = scenario_data.get("agent_defaults")
+        if agent_defaults_data:
+            agent_defaults = AgentOverride(
+                greeting=agent_defaults_data.get("greeting"),
+                return_greeting=agent_defaults_data.get("return_greeting"),
+                description=agent_defaults_data.get("description"),
+                template_vars=agent_defaults_data.get("template_vars", {}),
+                voice_name=agent_defaults_data.get("voice_name"),
+                voice_rate=agent_defaults_data.get("voice_rate"),
+            )
+        
+        # Parse generic_handoff
+        generic_handoff_data = scenario_data.get("generic_handoff", {})
+        generic_handoff = GenericHandoffConfig(
+            enabled=generic_handoff_data.get("enabled", False),
+            allowed_targets=generic_handoff_data.get("allowed_targets", []),
+            require_client_id=generic_handoff_data.get("require_client_id", False),
+            default_type=generic_handoff_data.get("default_type", "announced"),
+            share_context=generic_handoff_data.get("share_context", True),
+        )
+        
+        # Create ScenarioConfig with all fields
         scenario = ScenarioConfig(
             name=scenario_data.get("name", "custom"),
             description=scenario_data.get("description", ""),
             icon=scenario_data.get("icon", "🎭"),
             agents=scenario_data.get("agents", []),
+            agent_defaults=agent_defaults,
+            global_template_vars=scenario_data.get("global_template_vars", {}),
+            tools=scenario_data.get("tools", []),
             start_agent=scenario_data.get("start_agent"),
             handoff_type=scenario_data.get("handoff_type", "announced"),
             handoffs=handoffs,
-            global_template_vars=scenario_data.get("global_template_vars", {}),
+            generic_handoff=generic_handoff,
         )
         
         # Cache in memory
@@ -116,10 +144,11 @@ def _load_scenario_from_redis(session_id: str) -> ScenarioConfig | None:
         _active_scenario[session_id] = scenario.name
         
         logger.info(
-            "Loaded scenario from Redis | session=%s scenario=%s start_agent=%s",
+            "Loaded scenario from Redis | session=%s scenario=%s start_agent=%s agents=%d",
             session_id,
             scenario.name,
             scenario.start_agent,
+            len(scenario.agents),
         )
         
         return scenario
@@ -166,21 +195,46 @@ def get_session_scenario(session_id: str, scenario_name: str | None = None) -> S
 
 
 def get_session_scenarios(session_id: str) -> dict[str, ScenarioConfig]:
-    """Get all dynamic scenarios for a session."""
-    return dict(_session_scenarios.get(session_id, {}))
+    """
+    Get all dynamic scenarios for a session.
+    
+    Falls back to Redis if memory cache is empty.
+    """
+    scenarios = _session_scenarios.get(session_id, {})
+    
+    # Fall back to Redis if memory cache is empty
+    if not scenarios:
+        scenario = _load_scenario_from_redis(session_id)
+        if scenario:
+            scenarios = _session_scenarios.get(session_id, {})
+    
+    return dict(scenarios)
 
 
 def get_active_scenario_name(session_id: str) -> str | None:
-    """Get the name of the currently active scenario for a session."""
-    return _active_scenario.get(session_id)
+    """
+    Get the name of the currently active scenario for a session.
+    
+    Falls back to Redis if not found in memory cache.
+    """
+    active_name = _active_scenario.get(session_id)
+    
+    # Fall back to Redis if not in memory
+    if not active_name:
+        scenario = _load_scenario_from_redis(session_id)
+        if scenario:
+            # _load_scenario_from_redis sets _active_scenario
+            active_name = _active_scenario.get(session_id)
+    
+    return active_name
 
 
 def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> None:
     """
     Persist scenario config to Redis via MemoManager.
     
-    This runs synchronously to ensure data is persisted before returning.
-    Uses non-async methods which queue the persistence operation.
+    Converts ScenarioConfig to a serializable dict and stores in Redis.
+    Uses asyncio to schedule persistence but logs if it fails.
     """
     if not _redis_manager:
         logger.debug("No Redis manager available, skipping persistence")
@@ -191,12 +245,36 @@ def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> Non
         
         memo = MemoManager.from_redis(session_id, _redis_manager)
         
-        # Convert scenario to dict for JSON serialization
+        # Serialize agent_defaults if present
+        agent_defaults_data = None
+        if scenario.agent_defaults:
+            agent_defaults_data = {
+                "greeting": scenario.agent_defaults.greeting,
+                "return_greeting": scenario.agent_defaults.return_greeting,
+                "description": scenario.agent_defaults.description,
+                "template_vars": scenario.agent_defaults.template_vars or {},
+                "voice_name": scenario.agent_defaults.voice_name,
+                "voice_rate": scenario.agent_defaults.voice_rate,
+            }
+        
+        # Serialize generic_handoff config
+        generic_handoff_data = {
+            "enabled": scenario.generic_handoff.enabled,
+            "allowed_targets": scenario.generic_handoff.allowed_targets,
+            "require_client_id": scenario.generic_handoff.require_client_id,
+            "default_type": scenario.generic_handoff.default_type,
+            "share_context": scenario.generic_handoff.share_context,
+        }
+        
+        # Convert scenario to dict for JSON serialization (all fields)
         scenario_data = {
             "name": scenario.name,
             "description": scenario.description,
             "icon": scenario.icon,
             "agents": scenario.agents,
+            "agent_defaults": agent_defaults_data,
+            "global_template_vars": scenario.global_template_vars or {},
+            "tools": scenario.tools or [],
             "start_agent": scenario.start_agent,
             "handoff_type": scenario.handoff_type,
             "handoffs": [
@@ -206,29 +284,53 @@ def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> Non
                     "tool": h.tool,
                     "type": h.type,
                     "share_context": h.share_context,
-                    "handoff_condition": h.handoff_condition,  # Include handoff condition
+                    "handoff_condition": h.handoff_condition,
                 }
                 for h in (scenario.handoffs or [])
             ],
-            "global_template_vars": scenario.global_template_vars or {},
+            "generic_handoff": generic_handoff_data,
         }
         
         memo.set_corememory("session_scenario_config", scenario_data)
         memo.set_corememory("active_scenario_name", scenario.name)
         
-        # Note: persist_to_redis is async - we'll call it in fire-and-forget mode
-        # The actual persistence will happen on the next await point
+        # Schedule async persistence with proper error handling
         import asyncio
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(memo.persist_to_redis_async(_redis_manager))
+            task = loop.create_task(_persist_async(memo, session_id, scenario.name))
+            # Add callback to log errors
+            task.add_done_callback(_log_persistence_result)
         except RuntimeError:
             # No running loop - skip async persistence
             logger.debug("No event loop, skipping async Redis persistence")
         
-        logger.debug("Scenario queued for Redis persistence | session=%s scenario=%s", session_id, scenario.name)
+        logger.debug(
+            "Scenario queued for Redis persistence | session=%s scenario=%s fields=%d",
+            session_id,
+            scenario.name,
+            len(scenario_data),
+        )
     except Exception as e:
         logger.warning("Failed to persist scenario to Redis: %s", e)
+
+
+async def _persist_async(memo, session_id: str, scenario_name: str) -> None:
+    """Async helper to persist MemoManager to Redis."""
+    try:
+        await memo.persist_to_redis_async(_redis_manager)
+        logger.debug("Scenario persisted to Redis | session=%s scenario=%s", session_id, scenario_name)
+    except Exception as e:
+        logger.error("Failed to persist scenario to Redis | session=%s error=%s", session_id, e)
+        raise
+
+
+def _log_persistence_result(task) -> None:
+    """Callback to log persistence task result."""
+    if task.cancelled():
+        logger.warning("Scenario persistence task was cancelled")
+    elif task.exception():
+        logger.error("Scenario persistence failed: %s", task.exception())
 
 
 def _clear_scenario_from_redis(session_id: str) -> None:
@@ -271,15 +373,15 @@ def set_active_scenario(session_id: str, scenario_name: str) -> bool:
 
 def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
     """
-    Set dynamic scenario for a session.
+    Set dynamic scenario for a session (sync version).
 
     This is the single integration point - it both:
     1. Stores the scenario in the local cache (by name within the session)
     2. Sets it as the active scenario
     3. Notifies the orchestrator adapter (if callback registered)
+    4. Schedules async persistence to Redis
 
-    All downstream components (handoff routing, agent overrides) will
-    automatically use the updated configuration.
+    For guaranteed persistence, use set_session_scenario_async() in async contexts.
     """
     if session_id not in _session_scenarios:
         _session_scenarios[session_id] = {}
@@ -295,7 +397,7 @@ def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
         except Exception as e:
             logger.warning("Failed to update adapter with scenario: %s", e)
 
-    # Persist to Redis for durability
+    # Persist to Redis for durability (async, fire-and-forget)
     _persist_scenario_to_redis(session_id, scenario)
 
     logger.info(
@@ -307,6 +409,120 @@ def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
         len(scenario.handoffs),
         adapter_updated,
     )
+
+
+async def set_session_scenario_async(session_id: str, scenario: ScenarioConfig) -> None:
+    """
+    Set dynamic scenario for a session (async version with guaranteed persistence).
+
+    Use this in async contexts (e.g., FastAPI endpoints) to ensure the scenario
+    is persisted to Redis before returning to the caller.
+
+    This prevents data loss on browser refresh or server restart.
+    """
+    if session_id not in _session_scenarios:
+        _session_scenarios[session_id] = {}
+    
+    _session_scenarios[session_id][scenario.name] = scenario
+    _active_scenario[session_id] = scenario.name
+
+    # Notify the orchestrator adapter if callback is registered
+    adapter_updated = False
+    if _scenario_update_callback:
+        try:
+            adapter_updated = _scenario_update_callback(session_id, scenario)
+        except Exception as e:
+            logger.warning("Failed to update adapter with scenario: %s", e)
+
+    # Persist to Redis with await to guarantee completion
+    await _persist_scenario_to_redis_async(session_id, scenario)
+
+    logger.info(
+        "Session scenario set (async) | session=%s scenario=%s start_agent=%s agents=%d handoffs=%d adapter_updated=%s",
+        session_id,
+        scenario.name,
+        scenario.start_agent,
+        len(scenario.agents),
+        len(scenario.handoffs),
+        adapter_updated,
+    )
+
+
+async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioConfig) -> None:
+    """
+    Async version of scenario persistence to Redis.
+    
+    Awaits the persistence to ensure data is written before returning.
+    """
+    if not _redis_manager:
+        logger.debug("No Redis manager available, skipping persistence")
+        return
+    
+    try:
+        from src.stateful.state_managment import MemoManager
+        
+        memo = MemoManager.from_redis(session_id, _redis_manager)
+        
+        # Serialize agent_defaults if present
+        agent_defaults_data = None
+        if scenario.agent_defaults:
+            agent_defaults_data = {
+                "greeting": scenario.agent_defaults.greeting,
+                "return_greeting": scenario.agent_defaults.return_greeting,
+                "description": scenario.agent_defaults.description,
+                "template_vars": scenario.agent_defaults.template_vars or {},
+                "voice_name": scenario.agent_defaults.voice_name,
+                "voice_rate": scenario.agent_defaults.voice_rate,
+            }
+        
+        # Serialize generic_handoff config
+        generic_handoff_data = {
+            "enabled": scenario.generic_handoff.enabled,
+            "allowed_targets": scenario.generic_handoff.allowed_targets,
+            "require_client_id": scenario.generic_handoff.require_client_id,
+            "default_type": scenario.generic_handoff.default_type,
+            "share_context": scenario.generic_handoff.share_context,
+        }
+        
+        # Convert scenario to dict for JSON serialization (all fields)
+        scenario_data = {
+            "name": scenario.name,
+            "description": scenario.description,
+            "icon": scenario.icon,
+            "agents": scenario.agents,
+            "agent_defaults": agent_defaults_data,
+            "global_template_vars": scenario.global_template_vars or {},
+            "tools": scenario.tools or [],
+            "start_agent": scenario.start_agent,
+            "handoff_type": scenario.handoff_type,
+            "handoffs": [
+                {
+                    "from_agent": h.from_agent,
+                    "to_agent": h.to_agent,
+                    "tool": h.tool,
+                    "type": h.type,
+                    "share_context": h.share_context,
+                    "handoff_condition": h.handoff_condition,
+                }
+                for h in (scenario.handoffs or [])
+            ],
+            "generic_handoff": generic_handoff_data,
+        }
+        
+        memo.set_corememory("session_scenario_config", scenario_data)
+        memo.set_corememory("active_scenario_name", scenario.name)
+        
+        # Await persistence to ensure completion
+        await memo.persist_to_redis_async(_redis_manager)
+        
+        logger.debug(
+            "Scenario persisted to Redis (async) | session=%s scenario=%s",
+            session_id,
+            scenario.name,
+        )
+    except Exception as e:
+        logger.error("Failed to persist scenario to Redis: %s", e)
+        raise
 
 
 def remove_session_scenario(session_id: str, scenario_name: str | None = None) -> bool:
@@ -369,8 +585,26 @@ def list_session_scenarios() -> dict[str, ScenarioConfig]:
 
 
 def list_session_scenarios_by_session(session_id: str) -> dict[str, ScenarioConfig]:
-    """Return all scenarios for a specific session."""
-    return dict(_session_scenarios.get(session_id, {}))
+    """
+    Return all scenarios for a specific session.
+    
+    Falls back to Redis if memory cache is empty.
+    """
+    scenarios = _session_scenarios.get(session_id, {})
+    
+    # Fall back to Redis if memory cache is empty
+    if not scenarios:
+        scenario = _load_scenario_from_redis(session_id)
+        if scenario:
+            # _load_scenario_from_redis already populates memory cache
+            scenarios = _session_scenarios.get(session_id, {})
+            logger.debug(
+                "Loaded session scenarios from Redis | session=%s count=%d",
+                session_id,
+                len(scenarios),
+            )
+    
+    return dict(scenarios)
 
 
 __all__ = [
@@ -379,6 +613,7 @@ __all__ = [
     "get_active_scenario_name",
     "set_active_scenario",
     "set_session_scenario",
+    "set_session_scenario_async",
     "set_redis_manager",
     "remove_session_scenario",
     "list_session_scenarios",
