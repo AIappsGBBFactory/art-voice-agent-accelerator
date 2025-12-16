@@ -52,7 +52,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from apps.artagent.backend.registries.toolstore.registry import is_handoff_tool
 from apps.artagent.backend.voice.shared.base import (
     OrchestratorContext,
     OrchestratorResult,
@@ -480,7 +479,7 @@ class CascadeOrchestratorAdapter:
             # Keep handoff_to_agent, filter out other handoff_* patterns
             if func_name == "handoff_to_agent":
                 filtered_tools.append(tool)
-            elif is_handoff_tool(func_name):
+            elif self.handoff_service.is_handoff(func_name):
                 logger.debug(
                     "Filtering explicit handoff tool | tool=%s agent=%s reason=using_centralized_handoff",
                     func_name,
@@ -819,7 +818,7 @@ class CascadeOrchestratorAdapter:
                     handoff_greeting = None  # Store greeting for fallback
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("name", "")
-                        if is_handoff_tool(tool_name):
+                        if self.handoff_service.is_handoff(tool_name):
                             # Parse arguments first - they come as JSON string from streaming
                             raw_args = tool_call.get("arguments", "{}")
                             if isinstance(raw_args, str):
@@ -1491,9 +1490,9 @@ class CascadeOrchestratorAdapter:
 
                 # Process tool calls if any
                 non_handoff_tools = [
-                    tc for tc in tool_calls if not is_handoff_tool(tc.get("name", ""))
+                    tc for tc in tool_calls if not self.handoff_service.is_handoff(tc.get("name", ""))
                 ]
-                handoff_tools = [tc for tc in tool_calls if is_handoff_tool(tc.get("name", ""))]
+                handoff_tools = [tc for tc in tool_calls if self.handoff_service.is_handoff(tc.get("name", ""))]
 
                 all_tool_calls.extend(tool_calls)
 

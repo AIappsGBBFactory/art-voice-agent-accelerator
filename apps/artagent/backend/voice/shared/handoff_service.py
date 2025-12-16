@@ -66,10 +66,7 @@ from apps.artagent.backend.registries.scenariostore.loader import (
 from apps.artagent.backend.registries.toolstore.registry import (
     is_handoff_tool as registry_is_handoff_tool,
 )
-from apps.artagent.backend.voice.handoffs.context import (
-    build_handoff_system_vars,
-    sanitize_handoff_context,
-)
+from apps.artagent.backend.voice.handoffs.context import build_handoff_system_vars
 
 if TYPE_CHECKING:
     from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
@@ -214,11 +211,6 @@ class HandoffService:
     def handoff_map(self) -> dict[str, str]:
         """Get the current handoff map (tool→agent)."""
         return self._handoff_map
-
-    @property
-    def available_agents(self) -> list[str]:
-        """Get list of available agent names."""
-        return list(self._agents.keys())
 
     def _get_scenario(self) -> ScenarioConfig | None:
         """

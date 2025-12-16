@@ -17,9 +17,56 @@ Both orchestrators:
 
 - Use the same `UnifiedAgent` configurations from `apps/artagent/backend/agents/`
 - Share the centralized tool registry
-- Support multi-agent handoffs
+- Support multi-agent handoffs via **scenario-driven routing**
+- Use the unified **HandoffService** for consistent handoff behavior
 - Integrate with `MemoManager` for session state
 - Emit OpenTelemetry spans for observability
+
+---
+
+## Scenario-Based Orchestration
+
+Handoff routing is defined at the **scenario level**, not embedded in agents. This enables the same agents to behave differently in different use cases.
+
+```mermaid
+flowchart LR
+    subgraph Scenario["Scenario Configuration"]
+        S[scenario.yaml]
+    end
+    
+    subgraph Service["Handoff Resolution"]
+        HS[HandoffService]
+    end
+    
+    subgraph Orchestrators["Orchestrators"]
+        CO[CascadeOrchestrator]
+        LO[LiveOrchestrator]
+    end
+    
+    subgraph Agents["Agent Layer"]
+        A1[Agent A]
+        A2[Agent B]
+    end
+    
+    S --> HS
+    HS --> CO
+    HS --> LO
+    CO --> A1
+    CO --> A2
+    LO --> A1
+    LO --> A2
+```
+
+### Key Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **Modularity** | Agents focus on capabilities; scenarios handle orchestration |
+| **Reusability** | Same agent behaves differently in banking vs. insurance |
+| **Contextual Behavior** | Handoff can be "announced" or "discrete" per scenario |
+| **Session Scenarios** | Scenario Builder creates session-scoped scenarios at runtime |
+
+For full details, see [Scenario-Based Orchestration](industry-scenarios.md).
 
 ---
 
@@ -190,7 +237,39 @@ The `LiveOrchestrator.handle_event()` method routes events:
 
 ## Handoff Strategies
 
-Both orchestrators support multi-agent handoffs but use different mechanisms:
+Both orchestrators now use the unified **HandoffService** for consistent handoff behavior. The service:
+
+- Resolves handoff targets from scenario configuration
+- Applies scenario-defined handoff types (`announced` vs `discrete`)
+- Builds consistent `system_vars` for agent context
+- Selects appropriate greetings based on handoff mode
+
+### Unified Resolution Flow
+
+```python
+# Both orchestrators use the same pattern
+resolution = handoff_service.resolve_handoff(
+    tool_name="handoff_fraud_agent",
+    tool_args=args,
+    source_agent=current_agent,
+    current_system_vars=system_vars,
+)
+
+if resolution.success:
+    await self._switch_to(resolution.target_agent, resolution.system_vars)
+    
+    if resolution.greet_on_switch:
+        greeting = handoff_service.select_greeting(agent, ...)
+```
+
+### Handoff Types
+
+| Type | Behavior | Scenario Config |
+|------|----------|-----------------|
+| `announced` | Target agent greets the user | `type: announced` |
+| `discrete` | Target agent continues naturally | `type: discrete` |
+
+For detailed HandoffService documentation, see [Handoff Service](handoff-service.md).
 
 ### State-Based (SpeechCascade)
 
@@ -198,11 +277,11 @@ Handoffs are executed by updating `MemoManager` state:
 
 ```python
 # In tool execution
-if is_handoff_tool(tool_name):
-    result = await execute_tool(tool_name, args)
-    if result.get("handoff"):
-        self._pending_handoff = result["target_agent"]
-        memo_manager.set_corememory("pending_handoff", result)
+if handoff_service.is_handoff(tool_name):
+    resolution = handoff_service.resolve_handoff(...)
+    if resolution.success:
+        self._pending_handoff = resolution
+        memo_manager.set_corememory("pending_handoff", resolution.target_agent)
 
 # End of turn
 if self._pending_handoff:
@@ -215,17 +294,23 @@ Handoffs are immediate upon tool call completion:
 
 ```python
 async def _execute_tool_call(self, call_id, name, args_json):
+    if handoff_service.is_handoff(name):
+        resolution = handoff_service.resolve_handoff(
+            tool_name=name,
+            tool_args=json.loads(args_json),
+            source_agent=self._active_agent_name,
+            current_system_vars=self._system_vars,
+        )
+        
+        if resolution.success:
+            await self._switch_to(
+                resolution.target_agent,
+                resolution.system_vars,
+            )
+            return
+    
+    # Execute non-handoff tool
     result = await execute_tool(name, json.loads(args_json))
-    
-    if result.get("handoff"):
-        target = result["target_agent"]
-        await self._switch_to(target, self._system_vars)
-        # Agent switch triggers new session config
-    
-    # Return result to model
-    await self.conn.conversation.item.create(
-        FunctionCallOutputItem(call_id=call_id, output=json.dumps(result))
-    )
 ```
 
 ---
@@ -296,14 +381,17 @@ flowchart TD
 
 ## Deep Dive Documentation
 
+- **[Scenario-Based Orchestration](industry-scenarios.md)** — Industry scenario architecture and selection
+- **[Handoff Service](handoff-service.md)** — Unified handoff resolution layer
 - **[Cascade Orchestrator](cascade.md)** — Detailed guide to `CascadeOrchestratorAdapter`
 - **[VoiceLive Orchestrator](voicelive.md)** — Detailed guide to `LiveOrchestrator`
+- **[Scenario System Flow](scenario-system-flow.md)** — End-to-end scenario selection flow
 
 ---
 
 ## Related Documentation
 
 - [Agent Framework](../agents/README.md) — Unified agent configuration
-- [Streaming Modes](../speech/README.md) — Audio processing comparison
 - [Handoff Strategies](../agents/handoffs.md) — Multi-agent routing patterns
+- [Streaming Modes](../speech/README.md) — Audio processing comparison
 - [Session Management](../data/README.md) — State persistence

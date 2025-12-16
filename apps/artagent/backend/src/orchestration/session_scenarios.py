@@ -63,98 +63,161 @@ def register_scenario_update_callback(
     logger.debug("Scenario update callback registered")
 
 
+def _parse_scenario_data(scenario_data: dict) -> ScenarioConfig:
+    """
+    Parse a scenario data dict into a ScenarioConfig object.
+    
+    Helper function to avoid code duplication.
+    """
+    from apps.artagent.backend.registries.scenariostore.loader import (
+        AgentOverride,
+        GenericHandoffConfig,
+        HandoffConfig,
+        ScenarioConfig,
+    )
+    
+    # Parse handoffs
+    handoffs = []
+    for h in scenario_data.get("handoffs", []):
+        handoffs.append(HandoffConfig(
+            from_agent=h.get("from_agent", ""),
+            to_agent=h.get("to_agent", ""),
+            tool=h.get("tool", ""),
+            type=h.get("type", "announced"),
+            share_context=h.get("share_context", True),
+            handoff_condition=h.get("handoff_condition", ""),
+        ))
+    
+    # Parse agent_defaults
+    agent_defaults = None
+    agent_defaults_data = scenario_data.get("agent_defaults")
+    if agent_defaults_data:
+        agent_defaults = AgentOverride(
+            greeting=agent_defaults_data.get("greeting"),
+            return_greeting=agent_defaults_data.get("return_greeting"),
+            description=agent_defaults_data.get("description"),
+            template_vars=agent_defaults_data.get("template_vars", {}),
+            voice_name=agent_defaults_data.get("voice_name"),
+            voice_rate=agent_defaults_data.get("voice_rate"),
+        )
+    
+    # Parse generic_handoff
+    generic_handoff_data = scenario_data.get("generic_handoff", {})
+    generic_handoff = GenericHandoffConfig(
+        enabled=generic_handoff_data.get("enabled", False),
+        allowed_targets=generic_handoff_data.get("allowed_targets", []),
+        require_client_id=generic_handoff_data.get("require_client_id", False),
+        default_type=generic_handoff_data.get("default_type", "announced"),
+        share_context=generic_handoff_data.get("share_context", True),
+    )
+    
+    # Create ScenarioConfig with all fields
+    return ScenarioConfig(
+        name=scenario_data.get("name", "custom"),
+        description=scenario_data.get("description", ""),
+        icon=scenario_data.get("icon", "🎭"),
+        agents=scenario_data.get("agents", []),
+        agent_defaults=agent_defaults,
+        global_template_vars=scenario_data.get("global_template_vars", {}),
+        tools=scenario_data.get("tools", []),
+        start_agent=scenario_data.get("start_agent"),
+        handoff_type=scenario_data.get("handoff_type", "announced"),
+        handoffs=handoffs,
+        generic_handoff=generic_handoff,
+    )
+
+
+def _load_scenarios_from_redis(session_id: str) -> dict[str, ScenarioConfig]:
+    """
+    Load ALL scenarios for a session from Redis via MemoManager.
+    
+    Supports both new format (session_scenarios_all) and legacy format (session_scenario_config).
+    
+    Returns dict of scenario_name -> ScenarioConfig.
+    """
+    if not _redis_manager:
+        return {}
+    
+    try:
+        from src.stateful.state_managment import MemoManager
+        
+        memo = MemoManager.from_redis(session_id, _redis_manager)
+        
+        # Try new multi-scenario format first
+        all_scenarios_data = memo.get_value_from_corememory("session_scenarios_all")
+        active_name = memo.get_value_from_corememory("active_scenario_name")
+        
+        if all_scenarios_data and isinstance(all_scenarios_data, dict):
+            # New format: dict of {scenario_name: scenario_data}
+            loaded_scenarios: dict[str, ScenarioConfig] = {}
+            for scenario_name, scenario_data in all_scenarios_data.items():
+                try:
+                    scenario = _parse_scenario_data(scenario_data)
+                    loaded_scenarios[scenario_name] = scenario
+                except Exception as e:
+                    logger.warning("Failed to parse scenario '%s': %s", scenario_name, e)
+            
+            if loaded_scenarios:
+                # Cache in memory
+                _session_scenarios[session_id] = loaded_scenarios
+                
+                # Set active scenario
+                if active_name and active_name in loaded_scenarios:
+                    _active_scenario[session_id] = active_name
+                else:
+                    # Default to first scenario
+                    _active_scenario[session_id] = next(iter(loaded_scenarios.keys()))
+                
+                logger.info(
+                    "Loaded %d scenarios from Redis | session=%s active=%s",
+                    len(loaded_scenarios),
+                    session_id,
+                    _active_scenario.get(session_id),
+                )
+                return loaded_scenarios
+        
+        # Fall back to legacy single-scenario format
+        legacy_data = memo.get_value_from_corememory("session_scenario_config")
+        if legacy_data:
+            scenario = _parse_scenario_data(legacy_data)
+            
+            # Cache in memory
+            if session_id not in _session_scenarios:
+                _session_scenarios[session_id] = {}
+            _session_scenarios[session_id][scenario.name] = scenario
+            _active_scenario[session_id] = scenario.name
+            
+            logger.info(
+                "Loaded scenario from Redis (legacy format) | session=%s scenario=%s",
+                session_id,
+                scenario.name,
+            )
+            return {scenario.name: scenario}
+        
+        return {}
+    except Exception as e:
+        logger.warning("Failed to load scenarios from Redis: %s", e)
+        return {}
+
+
 def _load_scenario_from_redis(session_id: str) -> ScenarioConfig | None:
     """
     Load scenario config from Redis via MemoManager.
     
-    Returns ScenarioConfig if found and successfully parsed, None otherwise.
+    Returns the active ScenarioConfig if found, None otherwise.
+    Delegates to _load_scenarios_from_redis for actual loading.
     """
-    if not _redis_manager:
+    scenarios = _load_scenarios_from_redis(session_id)
+    if not scenarios:
         return None
     
-    try:
-        from apps.artagent.backend.registries.scenariostore.loader import (
-            AgentOverride,
-            GenericHandoffConfig,
-            HandoffConfig,
-            ScenarioConfig,
-        )
-        from src.stateful.state_managment import MemoManager
-        
-        memo = MemoManager.from_redis(session_id, _redis_manager)
-        scenario_data = memo.get_value_from_corememory("session_scenario_config")
-        
-        if not scenario_data:
-            return None
-        
-        # Parse handoffs
-        handoffs = []
-        for h in scenario_data.get("handoffs", []):
-            handoffs.append(HandoffConfig(
-                from_agent=h.get("from_agent", ""),
-                to_agent=h.get("to_agent", ""),
-                tool=h.get("tool", ""),
-                type=h.get("type", "announced"),
-                share_context=h.get("share_context", True),
-                handoff_condition=h.get("handoff_condition", ""),
-            ))
-        
-        # Parse agent_defaults
-        agent_defaults = None
-        agent_defaults_data = scenario_data.get("agent_defaults")
-        if agent_defaults_data:
-            agent_defaults = AgentOverride(
-                greeting=agent_defaults_data.get("greeting"),
-                return_greeting=agent_defaults_data.get("return_greeting"),
-                description=agent_defaults_data.get("description"),
-                template_vars=agent_defaults_data.get("template_vars", {}),
-                voice_name=agent_defaults_data.get("voice_name"),
-                voice_rate=agent_defaults_data.get("voice_rate"),
-            )
-        
-        # Parse generic_handoff
-        generic_handoff_data = scenario_data.get("generic_handoff", {})
-        generic_handoff = GenericHandoffConfig(
-            enabled=generic_handoff_data.get("enabled", False),
-            allowed_targets=generic_handoff_data.get("allowed_targets", []),
-            require_client_id=generic_handoff_data.get("require_client_id", False),
-            default_type=generic_handoff_data.get("default_type", "announced"),
-            share_context=generic_handoff_data.get("share_context", True),
-        )
-        
-        # Create ScenarioConfig with all fields
-        scenario = ScenarioConfig(
-            name=scenario_data.get("name", "custom"),
-            description=scenario_data.get("description", ""),
-            icon=scenario_data.get("icon", "🎭"),
-            agents=scenario_data.get("agents", []),
-            agent_defaults=agent_defaults,
-            global_template_vars=scenario_data.get("global_template_vars", {}),
-            tools=scenario_data.get("tools", []),
-            start_agent=scenario_data.get("start_agent"),
-            handoff_type=scenario_data.get("handoff_type", "announced"),
-            handoffs=handoffs,
-            generic_handoff=generic_handoff,
-        )
-        
-        # Cache in memory
-        if session_id not in _session_scenarios:
-            _session_scenarios[session_id] = {}
-        _session_scenarios[session_id][scenario.name] = scenario
-        _active_scenario[session_id] = scenario.name
-        
-        logger.info(
-            "Loaded scenario from Redis | session=%s scenario=%s start_agent=%s agents=%d",
-            session_id,
-            scenario.name,
-            scenario.start_agent,
-            len(scenario.agents),
-        )
-        
-        return scenario
-    except Exception as e:
-        logger.warning("Failed to load scenario from Redis: %s", e)
-        return None
+    # Return the active scenario
+    active_name = _active_scenario.get(session_id)
+    if active_name and active_name in scenarios:
+        return scenarios[active_name]
+    
+    # Return first scenario as fallback
+    return next(iter(scenarios.values()), None)
 
 
 def get_session_scenario(session_id: str, scenario_name: str | None = None) -> ScenarioConfig | None:
@@ -204,9 +267,8 @@ def get_session_scenarios(session_id: str) -> dict[str, ScenarioConfig]:
     
     # Fall back to Redis if memory cache is empty
     if not scenarios:
-        scenario = _load_scenario_from_redis(session_id)
-        if scenario:
-            scenarios = _session_scenarios.get(session_id, {})
+        # Use the multi-scenario loader to get all scenarios
+        scenarios = _load_scenarios_from_redis(session_id)
     
     return dict(scenarios)
 
@@ -229,11 +291,59 @@ def get_active_scenario_name(session_id: str) -> str | None:
     return active_name
 
 
+def _serialize_scenario(scenario: ScenarioConfig) -> dict:
+    """Serialize a ScenarioConfig to a dict for JSON storage."""
+    # Serialize agent_defaults if present
+    agent_defaults_data = None
+    if scenario.agent_defaults:
+        agent_defaults_data = {
+            "greeting": scenario.agent_defaults.greeting,
+            "return_greeting": scenario.agent_defaults.return_greeting,
+            "description": scenario.agent_defaults.description,
+            "template_vars": scenario.agent_defaults.template_vars or {},
+            "voice_name": scenario.agent_defaults.voice_name,
+            "voice_rate": scenario.agent_defaults.voice_rate,
+        }
+    
+    # Serialize generic_handoff config
+    generic_handoff_data = {
+        "enabled": scenario.generic_handoff.enabled,
+        "allowed_targets": scenario.generic_handoff.allowed_targets,
+        "require_client_id": scenario.generic_handoff.require_client_id,
+        "default_type": scenario.generic_handoff.default_type,
+        "share_context": scenario.generic_handoff.share_context,
+    }
+    
+    return {
+        "name": scenario.name,
+        "description": scenario.description,
+        "icon": scenario.icon,
+        "agents": scenario.agents,
+        "agent_defaults": agent_defaults_data,
+        "global_template_vars": scenario.global_template_vars or {},
+        "tools": scenario.tools or [],
+        "start_agent": scenario.start_agent,
+        "handoff_type": scenario.handoff_type,
+        "handoffs": [
+            {
+                "from_agent": h.from_agent,
+                "to_agent": h.to_agent,
+                "tool": h.tool,
+                "type": h.type,
+                "share_context": h.share_context,
+                "handoff_condition": h.handoff_condition,
+            }
+            for h in (scenario.handoffs or [])
+        ],
+        "generic_handoff": generic_handoff_data,
+    }
+
+
 def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> None:
     """
-    Persist scenario config to Redis via MemoManager.
+    Persist ALL scenarios for a session to Redis via MemoManager.
     
-    Converts ScenarioConfig to a serializable dict and stores in Redis.
+    Stores all scenarios in 'session_scenarios_all' dict, indexed by name.
     Uses asyncio to schedule persistence but logs if it fails.
     """
     if not _redis_manager:
@@ -245,54 +355,22 @@ def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> Non
         
         memo = MemoManager.from_redis(session_id, _redis_manager)
         
-        # Serialize agent_defaults if present
-        agent_defaults_data = None
-        if scenario.agent_defaults:
-            agent_defaults_data = {
-                "greeting": scenario.agent_defaults.greeting,
-                "return_greeting": scenario.agent_defaults.return_greeting,
-                "description": scenario.agent_defaults.description,
-                "template_vars": scenario.agent_defaults.template_vars or {},
-                "voice_name": scenario.agent_defaults.voice_name,
-                "voice_rate": scenario.agent_defaults.voice_rate,
-            }
+        # Build dict of ALL scenarios for this session
+        session_scenarios = _session_scenarios.get(session_id, {})
+        all_scenarios_data = {}
+        for name, sc in session_scenarios.items():
+            all_scenarios_data[name] = _serialize_scenario(sc)
         
-        # Serialize generic_handoff config
-        generic_handoff_data = {
-            "enabled": scenario.generic_handoff.enabled,
-            "allowed_targets": scenario.generic_handoff.allowed_targets,
-            "require_client_id": scenario.generic_handoff.require_client_id,
-            "default_type": scenario.generic_handoff.default_type,
-            "share_context": scenario.generic_handoff.share_context,
-        }
+        # Ensure the current scenario is included
+        if scenario.name not in all_scenarios_data:
+            all_scenarios_data[scenario.name] = _serialize_scenario(scenario)
         
-        # Convert scenario to dict for JSON serialization (all fields)
-        scenario_data = {
-            "name": scenario.name,
-            "description": scenario.description,
-            "icon": scenario.icon,
-            "agents": scenario.agents,
-            "agent_defaults": agent_defaults_data,
-            "global_template_vars": scenario.global_template_vars or {},
-            "tools": scenario.tools or [],
-            "start_agent": scenario.start_agent,
-            "handoff_type": scenario.handoff_type,
-            "handoffs": [
-                {
-                    "from_agent": h.from_agent,
-                    "to_agent": h.to_agent,
-                    "tool": h.tool,
-                    "type": h.type,
-                    "share_context": h.share_context,
-                    "handoff_condition": h.handoff_condition,
-                }
-                for h in (scenario.handoffs or [])
-            ],
-            "generic_handoff": generic_handoff_data,
-        }
-        
-        memo.set_corememory("session_scenario_config", scenario_data)
+        # Store all scenarios and active name
+        memo.set_corememory("session_scenarios_all", all_scenarios_data)
         memo.set_corememory("active_scenario_name", scenario.name)
+        
+        # Also store legacy format for backward compatibility
+        memo.set_corememory("session_scenario_config", _serialize_scenario(scenario))
         
         # Schedule async persistence with proper error handling
         import asyncio
@@ -306,13 +384,13 @@ def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> Non
             logger.debug("No event loop, skipping async Redis persistence")
         
         logger.debug(
-            "Scenario queued for Redis persistence | session=%s scenario=%s fields=%d",
+            "All scenarios queued for Redis persistence | session=%s count=%d active=%s",
             session_id,
+            len(all_scenarios_data),
             scenario.name,
-            len(scenario_data),
         )
     except Exception as e:
-        logger.warning("Failed to persist scenario to Redis: %s", e)
+        logger.warning("Failed to persist scenarios to Redis: %s", e)
 
 
 async def _persist_async(memo, session_id: str, scenario_name: str) -> None:
@@ -334,7 +412,7 @@ def _log_persistence_result(task) -> None:
 
 
 def _clear_scenario_from_redis(session_id: str) -> None:
-    """Clear scenario config from Redis via MemoManager."""
+    """Clear ALL scenario config from Redis via MemoManager."""
     if not _redis_manager:
         return
     
@@ -342,6 +420,8 @@ def _clear_scenario_from_redis(session_id: str) -> None:
         from src.stateful.state_managment import MemoManager
         
         memo = MemoManager.from_redis(session_id, _redis_manager)
+        # Clear both new and legacy format keys
+        memo.set_corememory("session_scenarios_all", None)
         memo.set_corememory("session_scenario_config", None)
         memo.set_corememory("active_scenario_name", None)
         
@@ -352,9 +432,9 @@ def _clear_scenario_from_redis(session_id: str) -> None:
         except RuntimeError:
             logger.debug("No event loop, skipping async Redis clear")
         
-        logger.debug("Scenario cleared from Redis | session=%s", session_id)
+        logger.debug("All scenarios cleared from Redis | session=%s", session_id)
     except Exception as e:
-        logger.warning("Failed to clear scenario from Redis: %s", e)
+        logger.warning("Failed to clear scenarios from Redis: %s", e)
 
 
 def set_active_scenario(session_id: str, scenario_name: str) -> bool:
@@ -452,6 +532,7 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
     """
     Async version of scenario persistence to Redis.
     
+    Persists ALL scenarios for the session to ensure no data loss.
     Awaits the persistence to ensure data is written before returning.
     """
     if not _redis_manager:
@@ -463,61 +544,30 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
         
         memo = MemoManager.from_redis(session_id, _redis_manager)
         
-        # Serialize agent_defaults if present
-        agent_defaults_data = None
-        if scenario.agent_defaults:
-            agent_defaults_data = {
-                "greeting": scenario.agent_defaults.greeting,
-                "return_greeting": scenario.agent_defaults.return_greeting,
-                "description": scenario.agent_defaults.description,
-                "template_vars": scenario.agent_defaults.template_vars or {},
-                "voice_name": scenario.agent_defaults.voice_name,
-                "voice_rate": scenario.agent_defaults.voice_rate,
-            }
+        # Build dict of ALL scenarios for this session
+        session_scenarios = _session_scenarios.get(session_id, {})
+        all_scenarios_data = {}
+        for name, sc in session_scenarios.items():
+            all_scenarios_data[name] = _serialize_scenario(sc)
         
-        # Serialize generic_handoff config
-        generic_handoff_data = {
-            "enabled": scenario.generic_handoff.enabled,
-            "allowed_targets": scenario.generic_handoff.allowed_targets,
-            "require_client_id": scenario.generic_handoff.require_client_id,
-            "default_type": scenario.generic_handoff.default_type,
-            "share_context": scenario.generic_handoff.share_context,
-        }
+        # Ensure the current scenario is included
+        if scenario.name not in all_scenarios_data:
+            all_scenarios_data[scenario.name] = _serialize_scenario(scenario)
         
-        # Convert scenario to dict for JSON serialization (all fields)
-        scenario_data = {
-            "name": scenario.name,
-            "description": scenario.description,
-            "icon": scenario.icon,
-            "agents": scenario.agents,
-            "agent_defaults": agent_defaults_data,
-            "global_template_vars": scenario.global_template_vars or {},
-            "tools": scenario.tools or [],
-            "start_agent": scenario.start_agent,
-            "handoff_type": scenario.handoff_type,
-            "handoffs": [
-                {
-                    "from_agent": h.from_agent,
-                    "to_agent": h.to_agent,
-                    "tool": h.tool,
-                    "type": h.type,
-                    "share_context": h.share_context,
-                    "handoff_condition": h.handoff_condition,
-                }
-                for h in (scenario.handoffs or [])
-            ],
-            "generic_handoff": generic_handoff_data,
-        }
-        
-        memo.set_corememory("session_scenario_config", scenario_data)
+        # Store all scenarios and active name
+        memo.set_corememory("session_scenarios_all", all_scenarios_data)
         memo.set_corememory("active_scenario_name", scenario.name)
+        
+        # Also store legacy format for backward compatibility
+        memo.set_corememory("session_scenario_config", _serialize_scenario(scenario))
         
         # Await persistence to ensure completion
         await memo.persist_to_redis_async(_redis_manager)
         
         logger.debug(
-            "Scenario persisted to Redis (async) | session=%s scenario=%s",
+            "All scenarios persisted to Redis (async) | session=%s count=%d active=%s",
             session_id,
+            len(all_scenarios_data),
             scenario.name,
         )
     except Exception as e:
@@ -594,10 +644,9 @@ def list_session_scenarios_by_session(session_id: str) -> dict[str, ScenarioConf
     
     # Fall back to Redis if memory cache is empty
     if not scenarios:
-        scenario = _load_scenario_from_redis(session_id)
-        if scenario:
-            # _load_scenario_from_redis already populates memory cache
-            scenarios = _session_scenarios.get(session_id, {})
+        # Use the multi-scenario loader to get all scenarios
+        scenarios = _load_scenarios_from_redis(session_id)
+        if scenarios:
             logger.debug(
                 "Loaded session scenarios from Redis | session=%s count=%d",
                 session_id,

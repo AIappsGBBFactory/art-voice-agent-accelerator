@@ -480,6 +480,10 @@ async def route_turn(
                 except Exception:
                     pass
 
+                # Update TTSPlayback active agent for correct voice resolution on greetings
+                if hasattr(ws.state, "tts_playback") and ws.state.tts_playback:
+                    ws.state.tts_playback.set_active_agent(new_agent)
+
                 # Get new agent's voice configuration for TTS updates
                 # Adapter.agents contains session agent overrides from Agent Builder
                 new_agent_config = adapter.agents.get(new_agent)
