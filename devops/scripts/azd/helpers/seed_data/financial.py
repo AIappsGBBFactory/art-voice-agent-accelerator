@@ -57,6 +57,22 @@ MERCHANT_PATTERNS = {
         "amounts": (25, 3000),
         "locations": ["New York, NY", "Boston, MA", "Miami, FL", "Chicago, IL"],
     },
+    "jin_lee_cfs": {
+        "common_merchants": [
+            "Microsoft Store",
+            "Amazon Web Services",
+            "GitHub",
+            "Azure",
+            "Starbucks",
+            "REI",
+            "Alaska Airlines",
+            "Costco",
+            "Trader Joe's",
+            "Steam",
+        ],
+        "amounts": (25, 2000),
+        "locations": ["Seattle, WA", "Bellevue, WA", "Portland, OR", "Vancouver, WA"],
+    },
 }
 
 
@@ -394,6 +410,104 @@ def _build_users(anchor: datetime) -> Sequence[dict]:
                         "priority": "medium",
                     }
                 ],
+            },
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "last_login": None,
+            "login_attempts": 0,
+        },
+        {
+            "_id": "jin_lee_cfs",
+            "client_id": "jin_lee_cfs",
+            "full_name": "Jin Lee",
+            "institution_name": "Contoso Financial Services",
+            "company_code": "CFS-83601",
+            "company_code_last4": "3601",
+            "client_type": "individual",
+            "authorization_level": "primary",
+            "max_transaction_limit": 5_000_000,
+            "mfa_required_threshold": 2_500,
+            "contact_info": {
+                "email": "jinle@microsoft.com",
+                "phone": "+14258360123",
+                "preferred_mfa_method": "sms",
+            },
+            "verification_codes": {"ssn4": "8360", "employee_id4": "7942", "phone4": "0123"},
+            "mfa_settings": {
+                "enabled": True,
+                "secret_key": "JL8xR3tP5xY8wQ1aZ7vN2bC6dF4gH0jKm9Yz2Wq",
+                "code_expiry_minutes": 5,
+                "max_attempts": 3,
+            },
+            "compliance": {
+                "kyc_verified": True,
+                "aml_cleared": True,
+                "last_review_date": "2024-11-01",
+                "risk_rating": "low",
+            },
+            "customer_intelligence": {
+                "relationship_context": {
+                    "relationship_tier": "Gold",
+                    "client_since": "2022-06-15",
+                    "relationship_duration_years": 2.5,
+                    "lifetime_value": 450_000,
+                    "satisfaction_score": 92,
+                    "previous_interactions": 18,
+                },
+                "account_status": {
+                    "current_balance": 125_000,
+                    "ytd_transaction_volume": 850_000,
+                    "account_health_score": 94,
+                    "last_login": "2025-01-10",
+                    "login_frequency": "weekly",
+                },
+                "spending_patterns": {
+                    "avg_monthly_spend": 15_000,
+                    "common_merchants": ["Tech Stores", "Travel", "Software Services"],
+                    "preferred_transaction_times": ["10-12 PM", "3-5 PM"],
+                    "risk_tolerance": "Moderate",
+                    "usual_spending_range": "$500 - $5,000",
+                },
+                "memory_score": {
+                    "communication_style": "Clear/Technical",
+                    "personality_traits": {
+                        "patience_level": "High",
+                        "detail_preference": "Technical details appreciated",
+                        "urgency_style": "Methodical approach",
+                    },
+                    "preferred_resolution_style": "Thorough explanation with options",
+                },
+                "fraud_context": {
+                    "risk_profile": "Low Risk",
+                    "typical_transaction_behavior": {
+                        "usual_spending_range": "$500 - $5,000",
+                        "common_locations": ["Seattle", "Bellevue", "Portland"],
+                        "typical_merchants": ["Tech vendors", "Cloud services", "Travel"],
+                    },
+                    "security_preferences": {
+                        "preferred_verification": "SMS",
+                        "notification_urgency": "Standard",
+                        "card_replacement_speed": "Standard",
+                    },
+                    "fraud_history": {
+                        "previous_cases": 0,
+                        "false_positive_rate": 3,
+                        "security_awareness_score": 95,
+                    },
+                },
+                "conversation_context": {
+                    "known_preferences": [
+                        "Appreciates technical accuracy",
+                        "Values clear step-by-step guidance",
+                        "Prefers self-service options when available",
+                    ],
+                    "suggested_talking_points": [
+                        "Your account security practices are excellent",
+                        "As a gold member, you have access to priority support",
+                        "Your technical background means we can provide detailed explanations",
+                    ],
+                },
+                "active_alerts": [],
             },
             "created_at": timestamp,
             "updated_at": timestamp,

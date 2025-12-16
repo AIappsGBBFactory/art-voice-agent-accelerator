@@ -28,7 +28,7 @@ const workletSource = `
         if (e.data?.type === 'push') {
           // payload is Float32Array
           this.queue.push(e.data.payload);
-          console.log('AudioWorklet: Received audio chunk, queue length:', this.queue.length);
+          console.debug('AudioWorklet: Received audio chunk, queue length:', this.queue.length);
         } else if (e.data?.type === 'clear') {
           // Clear all queued audio data for immediate interruption
           this.queue = [];
@@ -215,7 +215,7 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
       setAudioLevel(level);
 
       // Debug: Log a sample of mic data
-      console.log("Mic data sample:", float32.slice(0, 10)); // Should show non-zero values if your mic is hot
+      console.debug("Mic data sample:", float32.slice(0, 10)); // Should show non-zero values if your mic is hot
 
       const int16 = new Int16Array(float32.length);
       for (let i = 0; i < float32.length; i++) {
@@ -223,14 +223,14 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
       }
 
       // Debug: Show size before send
-      console.log("Sending int16 PCM buffer, length:", int16.length);
+      console.debug("Sending int16 PCM buffer, length:", int16.length);
 
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(int16.buffer);
         // Debug: Confirm data sent
-        console.log("PCM audio chunk sent to backend!");
+        console.debug("PCM audio chunk sent to backend!");
       } else {
-        console.log("WebSocket not open, did not send audio.");
+        console.warn("WebSocket not open, did not send audio.");
       }
     };
 
@@ -304,12 +304,12 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     if (typeof event.data === "string") {
       try {
         const msg = JSON.parse(event.data);
-        console.log("📨 WebSocket message received:", msg.type || "unknown", msg);
+        console.debug("📨 WebSocket message received:", msg.type || "unknown", msg);
       } catch (error) {
-        console.log("📨 Non-JSON WebSocket message:", event.data, error);
+        console.debug("📨 Non-JSON WebSocket message:", event.data, error);
       }
     } else {
-      console.log("📨 Binary WebSocket message received, length:", event.data.byteLength);
+      console.debug("📨 Binary WebSocket message received, length:", event.data.byteLength);
     }
 
     if (typeof event.data !== "string") {
@@ -335,7 +335,7 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     // Handle audio_data messages from backend TTS
     if (payload.type === "audio_data" && payload.data) {
       try {
-        console.log("🔊 Received audio_data message:", {
+        console.debug("🔊 Received audio_data message:", {
           frame_index: payload.frame_index,
           total_frames: payload.total_frames,
           sample_rate: payload.sample_rate,
@@ -352,8 +352,8 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
         const float32 = new Float32Array(int16.length);
         for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x8000;
 
-        console.log(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`);
-        console.log("🔊 Audio data preview:", float32.slice(0, 10));
+        console.debug(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`);
+        console.debug("🔊 Audio data preview:", float32.slice(0, 10));
 
         // Push to the worklet queue
         if (pcmSinkRef.current) {

@@ -32,7 +32,7 @@ voice:
 # Model Configuration (LLM for agent reasoning)
 # ─────────────────────────────────────────────────────────────────────────────
 voicelive_model:
-  deployment_id: gpt-4o-realtime-preview
+  deployment_id: gpt-realtime
   temperature: 0.7
 
 cascade_model:

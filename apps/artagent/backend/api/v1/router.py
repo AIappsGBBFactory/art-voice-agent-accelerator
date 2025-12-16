@@ -11,7 +11,7 @@ tag definitions and descriptions.
 
 from fastapi import APIRouter
 
-from .endpoints import agent_builder, browser, calls, health, media, metrics, scenarios
+from .endpoints import agent_builder, browser, calls, health, media, metrics, scenario_builder, scenarios
 
 # Create v1 router
 v1_router = APIRouter(prefix="/api/v1")
@@ -23,4 +23,5 @@ v1_router.include_router(media.router, prefix="/media")
 v1_router.include_router(browser.router, prefix="/browser")
 v1_router.include_router(metrics.router, prefix="/metrics")
 v1_router.include_router(agent_builder.router, prefix="/agent-builder")
+v1_router.include_router(scenario_builder.router, prefix="/scenario-builder")
 v1_router.include_router(scenarios.router)

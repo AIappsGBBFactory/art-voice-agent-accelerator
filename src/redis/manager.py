@@ -100,7 +100,7 @@ class AzureRedisManager:
         self._auth_expires_at = 0  # For AAD token refresh tracking
 
         # Build initial client and, if using AAD, start a refresh thread
-        self.logger.info("Redis cluster mode enabled: %s", self.use_cluster)
+        self.logger.debug("Redis cluster mode enabled: %s", self.use_cluster)
         self._create_client()
         if not self.access_key:
             t = threading.Thread(target=self._refresh_loop, daemon=True)
@@ -114,14 +114,14 @@ class AzureRedisManager:
         This method is idempotent and can be called multiple times safely.
         """
         try:
-            self.logger.info(f"Validating Redis connection to {self.host}:{self.port}")
+            self.logger.debug(f"Validating Redis connection to {self.host}:{self.port}")
 
             # Validate connection with health check
             loop = asyncio.get_event_loop()
             ping_result = await loop.run_in_executor(None, self._health_check)
 
             if ping_result:
-                self.logger.info("✅ Redis connection validated successfully")
+                self.logger.debug("✅ Redis connection validated successfully")
             else:
                 raise ConnectionError("Redis health check failed")
 
@@ -209,6 +209,32 @@ class AzureRedisManager:
                 if attempt >= retries:
                     break
                 self._create_client()
+            except RedisClusterException as cluster_err:
+                # Handle cluster connection failures (e.g., "Redis Cluster cannot be connected")
+                last_exc = cluster_err
+                self.logger.warning(
+                    "Redis cluster error on %s (attempt %d/%d): %s",
+                    command_name,
+                    attempt + 1,
+                    retries + 1,
+                    cluster_err,
+                )
+                if attempt >= retries:
+                    break
+                self._create_client()
+            except OSError as os_err:
+                # Handle "I/O operation on closed file" and similar socket errors
+                last_exc = os_err
+                self.logger.warning(
+                    "Redis I/O error on %s (attempt %d/%d): %s",
+                    command_name,
+                    attempt + 1,
+                    retries + 1,
+                    os_err,
+                )
+                if attempt >= retries:
+                    break
+                self._create_client()
             except Exception as exc:  # pragma: no cover - safeguard
                 last_exc = exc
                 self.logger.error("Unexpected Redis error on %s: %s", command_name, exc)
@@ -255,19 +281,19 @@ class AzureRedisManager:
                 cluster_kwargs.setdefault("ssl_cert_reqs", None)
                 cluster_kwargs.setdefault("ssl_check_hostname", False)
                 self.redis_client = RedisCluster(**cluster_kwargs)
-                self.logger.info(
+                self.logger.debug(
                     "Azure Redis connection initialized in cluster mode (use_cluster=%s).",
                     self.use_cluster,
                 )
             else:
                 standalone_kwargs = {**common_kwargs, "db": self.db, **auth_kwargs}
                 self.redis_client = redis.Redis(**standalone_kwargs)
-                self.logger.info("Azure Redis connection initialized in standalone mode.")
+                self.logger.debug("Azure Redis connection initialized in standalone mode.")
         except RedisClusterException as exc:
             self.logger.warning("Redis cluster initialization failed (will try standalone): %s", exc)
             if not self.use_cluster:
                 raise
-            self.logger.info("Falling back to standalone Redis client.")
+            self.logger.debug("Falling back to standalone Redis client.")
             standalone_kwargs = {**common_kwargs, "db": self.db, **auth_kwargs}
             self.redis_client = redis.Redis(**standalone_kwargs)
             self.use_cluster = False
@@ -276,7 +302,7 @@ class AzureRedisManager:
             raise
 
         if not self.access_key:
-            self.logger.info(
+            self.logger.debug(
                 "Azure Redis connection initialized with AAD token (expires at %s).",
                 getattr(self, "token_expiry", "unknown"),
             )

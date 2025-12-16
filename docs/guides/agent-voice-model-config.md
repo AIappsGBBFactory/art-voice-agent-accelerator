@@ -106,7 +106,7 @@ Use **`model:`** for VoiceLive AND **`llm:`** for Cascade:
 
 # ✅ ADVANCED: Different model per mode
 model:
-  deployment_id: gpt-4o-realtime-preview  # VoiceLive mode uses this
+  deployment_id: gpt-realtime  # VoiceLive mode uses this
   temperature: 0.7
   max_tokens: 150
 
@@ -142,7 +142,7 @@ If ONLY "llm:" is defined:
 **VoiceLive Mode** (`ACS_STREAMING_MODE=voice_live`):
 - Reads from `model:` section
 - Uses Azure OpenAI Realtime API
-- Best with: `gpt-4o-realtime-preview` or `gpt-4o`
+- Best with: `gpt-realtime` or `gpt-4o`
 - Handles STT, TTS, and turn detection automatically
 
 **Cascade Mode** (`ACS_STREAMING_MODE=media`):
@@ -157,7 +157,7 @@ If ONLY "llm:" is defined:
 ```yaml
 # Use expensive model only in VoiceLive, cheaper in Cascade
 model:
-  deployment_id: gpt-4o-realtime-preview  # VoiceLive (premium)
+  deployment_id: gpt-realtime  # VoiceLive (premium)
   temperature: 0.7
 
 llm:
@@ -298,7 +298,7 @@ voice:
 # Model Configuration (Used by BOTH modes)
 # ─────────────────────────────────────────────────────────────────────────────
 model:
-  deployment_id: gpt-4o-realtime-preview # Works in VoiceLive & Cascade
+  deployment_id: gpt-realtime # Works in VoiceLive & Cascade
   temperature: 0.7                       # Balanced creativity
   top_p: 0.9                            # Nucleus sampling
   max_tokens: 150                       # Response length limit
@@ -574,7 +574,7 @@ model:
 
 # Option 2: Different models per mode
 model:
-  deployment_id: gpt-4o-realtime-preview  # VoiceLive uses this
+  deployment_id: gpt-realtime  # VoiceLive uses this
   temperature: 0.7
   
 llm:

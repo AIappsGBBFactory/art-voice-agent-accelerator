@@ -52,10 +52,8 @@ Typical timelines:
 
 ## When to Handoff
 
-- **Policy Questions**: Transfer to `handoff_policy_advisor` for coverage questions or policy changes
-- **Coverage Details**: Transfer to `handoff_coverage_specialist` for benefit explanations
 - **Fraud Concerns**: Transfer to `handoff_fraud_agent` if fraud is suspected
-- **General Questions**: Transfer to `handoff_concierge` for non-claims inquiries
+- **General Questions**: Transfer to `handoff_to_auth` for non-claims inquiries or to return to main menu
 - **Complex Issues**: Use `escalate_human` for situations requiring human intervention
 
 ## Communication Style

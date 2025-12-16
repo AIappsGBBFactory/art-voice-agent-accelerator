@@ -935,7 +935,7 @@ class StreamingSpeechRecognizerFromBytes:
             Call speech_recognizer.start_continuous_recognition_async() after
             this method to begin processing audio.
         """
-        logger.info(
+        logger.debug(
             "Speech-SDK prepare_start – format=%s  neuralFE=%s  diar=%s",
             self.audio_format,
             self._enable_neural_fe,
@@ -1045,7 +1045,7 @@ class StreamingSpeechRecognizerFromBytes:
         self.speech_recognizer.canceled.connect(self._on_canceled)
         self.speech_recognizer.session_stopped.connect(self._on_session_stopped)
 
-        logger.info(
+        logger.debug(
             "Speech-SDK ready " "(neuralFE=%s, diarisation=%s, speakers=%s)",
             self._enable_neural_fe,
             self._enable_diarisation,
@@ -1079,7 +1079,7 @@ class StreamingSpeechRecognizerFromBytes:
 
             # Verify the recognizer was created successfully
             if self.speech_recognizer is not None and self.push_stream is not None:
-                logger.info("STT connection warmed successfully (recognizer pre-configured)")
+                logger.debug("STT connection warmed successfully (recognizer pre-configured)")
                 return True
             else:
                 logger.warning("STT warmup: recognizer or push_stream not created")

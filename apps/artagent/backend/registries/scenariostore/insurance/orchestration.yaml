@@ -3,6 +3,7 @@
 
 name: insurance
 description: Insurance customer service with claims processing and policy management
+icon: "🛡️"
 
 # Starting agent
 start_agent: AuthAgent
@@ -68,6 +69,19 @@ handoffs:
     tool: handoff_policy_advisor
     type: announced           # New agent greets the customer
     share_context: true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Generic Handoff Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Enables the handoff_to_agent tool for dynamic agent transfers.
+# In insurance, we use announced mode since agents are specialists.
+
+generic_handoff:
+  enabled: true
+  # allowed_targets: []       # Empty = all scenario agents allowed
+  default_type: announced     # Announced - agents greet on arrival (insurance preference)
+  share_context: true         # Always share context for claims continuity
+  require_client_id: false    # Not required for generic handoffs
 
 # Agent defaults applied to all agents
 agent_defaults:

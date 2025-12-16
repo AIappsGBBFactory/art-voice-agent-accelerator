@@ -76,46 +76,46 @@ trigger_config_refresh() {
 # Task 1: Cosmos DB Initialization
 # ============================================================================
 
-task_cosmos_init() {
-    header "🗄️  Task 1: Cosmos DB Initialization"
+# task_cosmos_init() {
+#     header "🗄️  Task 1: Cosmos DB Initialization"
     
-    local db_init
-    db_init=$(azd_get "DB_INITIALIZED" "false")
+#     local db_init
+#     db_init=$(azd_get "DB_INITIALIZED" "false")
     
-    if [[ "$db_init" == "true" ]]; then
-        info "Already initialized, skipping"
-        footer
-        return 0
-    fi
+#     if [[ "$db_init" == "true" ]]; then
+#         info "Already initialized, skipping"
+#         footer
+#         return 0
+#     fi
     
-    local conn_string
-    conn_string=$(azd_get "AZURE_COSMOS_CONNECTION_STRING")
+#     local conn_string
+#     conn_string=$(azd_get "AZURE_COSMOS_CONNECTION_STRING")
     
-    if [[ -z "$conn_string" ]]; then
-        warn "AZURE_COSMOS_CONNECTION_STRING not set"
-        footer
-        return 1
-    fi
+#     if [[ -z "$conn_string" ]]; then
+#         warn "AZURE_COSMOS_CONNECTION_STRING not set"
+#         footer
+#         return 1
+#     fi
     
-    export AZURE_COSMOS_CONNECTION_STRING="$conn_string"
-    export AZURE_COSMOS_DATABASE_NAME="$(azd_get "AZURE_COSMOS_DATABASE_NAME" "audioagentdb")"
-    export AZURE_COSMOS_COLLECTION_NAME="$(azd_get "AZURE_COSMOS_COLLECTION_NAME" "audioagentcollection")"
+#     export AZURE_COSMOS_CONNECTION_STRING="$conn_string"
+#     export AZURE_COSMOS_DATABASE_NAME="$(azd_get "AZURE_COSMOS_DATABASE_NAME" "audioagentdb")"
+#     export AZURE_COSMOS_COLLECTION_NAME="$(azd_get "AZURE_COSMOS_COLLECTION_NAME" "audioagentcollection")"
     
-    if [[ -f "$HELPERS_DIR/requirements-cosmos.txt" ]]; then
-        log "Installing Python dependencies..."
-        pip3 install -q -r "$HELPERS_DIR/requirements-cosmos.txt" 2>/dev/null || true
-    fi
+#     if [[ -f "$HELPERS_DIR/requirements-cosmos.txt" ]]; then
+#         log "Installing Python dependencies..."
+#         pip3 install -q -r "$HELPERS_DIR/requirements-cosmos.txt" 2>/dev/null || true
+#     fi
     
-    log "Running initialization script..."
-    if python3 "$HELPERS_DIR/cosmos_init.py" 2>/dev/null; then
-        success "Cosmos DB initialized"
-        azd_set "DB_INITIALIZED" "true"
-    else
-        fail "Initialization failed"
-    fi
+#     log "Running initialization script..."
+#     if python3 "$HELPERS_DIR/cosmos_init.py" 2>/dev/null; then
+#         success "Cosmos DB initialized"
+#         azd_set "DB_INITIALIZED" "true"
+#     else
+#         fail "Initialization failed"
+#     fi
     
-    footer
-}
+#     footer
+# }
 
 # ============================================================================
 # Task 2: ACS Phone Number Configuration
@@ -396,7 +396,7 @@ main() {
     is_ci && info "CI/CD mode" || info "Interactive mode"
     footer
     
-    task_cosmos_init || true
+    # task_cosmos_init || true
     task_phone_number || true
     task_update_urls || true
     task_sync_appconfig || true

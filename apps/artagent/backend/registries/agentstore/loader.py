@@ -129,9 +129,6 @@ def load_agent(
     defaults: dict[str, Any],
 ) -> UnifiedAgent:
     """Load a single agent from its agent.yaml file."""
-    from src.enums.stream_modes import StreamMode
-    from config import ACS_STREAMING_MODE
-    
     with open(agent_file) as f:
         raw = yaml.safe_load(f) or {}
 
@@ -141,35 +138,54 @@ def load_agent(
     identity = _extract_agent_identity(raw, agent_dir)
 
     # =========================================================================
-    # MODEL CONFIGURATION - Support mode-specific models
+    # MODEL CONFIGURATION - Store BOTH mode-specific models
     # =========================================================================
-    # Priority:
-    #   - voicelive_model (if in voice_live mode)
-    #   - cascade_model (if in media/cascade mode)
-    #   - model (fallback for both modes)
+    # We store cascade_model and voicelive_model separately so orchestrators
+    # can pick the right one at runtime (important for handoffs where mode
+    # might differ from the global ACS_STREAMING_MODE setting).
     # =========================================================================
     
-    # Determine which model config to use based on streaming mode
-    mode_specific_key = None
-    if ACS_STREAMING_MODE == StreamMode.VOICE_LIVE:
-        mode_specific_key = "voicelive_model"
-    elif ACS_STREAMING_MODE == StreamMode.MEDIA:
-        mode_specific_key = "cascade_model"
+    # Parse the generic "model" as base/fallback
+    model_defaults = defaults.get("model", {})
+    model_raw = _deep_merge(model_defaults, raw.get("model", {}))
     
-    # Try mode-specific config first, then fall back to generic "model"
-    model_raw = {}
-    if mode_specific_key and mode_specific_key in raw:
-        model_raw = _deep_merge(defaults.get("model", {}), raw[mode_specific_key])
+    # Parse mode-specific models from defaults first, then override with agent-specific
+    cascade_defaults = defaults.get("cascade_model", model_defaults)
+    voicelive_defaults = defaults.get("voicelive_model", model_defaults)
+    
+    # Agent can define cascade_model to override defaults
+    if "cascade_model" in raw:
+        cascade_model_raw = _deep_merge(cascade_defaults, raw["cascade_model"])
         logger.debug(
-            f"Using {mode_specific_key} for agent {identity['name']}: "
-            f"deployment_id={raw[mode_specific_key].get('deployment_id')}"
+            f"Loaded cascade_model for agent {identity['name']}: "
+            f"deployment_id={raw['cascade_model'].get('deployment_id')}"
+        )
+    elif "cascade_model" in defaults:
+        # Use defaults if agent doesn't override
+        cascade_model_raw = cascade_defaults
+        logger.debug(
+            f"Using default cascade_model for agent {identity['name']}: "
+            f"deployment_id={cascade_defaults.get('deployment_id')}"
         )
     else:
-        model_raw = _deep_merge(defaults.get("model", {}), raw.get("model", {}))
-        if mode_specific_key:
-            logger.debug(
-                f"No {mode_specific_key} found, using generic 'model' for agent {identity['name']}"
-            )
+        cascade_model_raw = None
+    
+    # Agent can define voicelive_model to override defaults
+    if "voicelive_model" in raw:
+        voicelive_model_raw = _deep_merge(voicelive_defaults, raw["voicelive_model"])
+        logger.debug(
+            f"Loaded voicelive_model for agent {identity['name']}: "
+            f"deployment_id={raw['voicelive_model'].get('deployment_id')}"
+        )
+    elif "voicelive_model" in defaults:
+        # Use defaults if agent doesn't override
+        voicelive_model_raw = voicelive_defaults
+        logger.debug(
+            f"Using default voicelive_model for agent {identity['name']}: "
+            f"deployment_id={voicelive_defaults.get('deployment_id')}"
+        )
+    else:
+        voicelive_model_raw = None
     
     # Merge with defaults for voice, speech, session
     voice_raw = _deep_merge(defaults.get("voice", {}), raw.get("voice", {}))
@@ -194,6 +210,8 @@ def load_agent(
         return_greeting=identity["return_greeting"],
         handoff=handoff,
         model=ModelConfig.from_dict(model_raw),
+        cascade_model=ModelConfig.from_dict(cascade_model_raw) if cascade_model_raw else None,
+        voicelive_model=ModelConfig.from_dict(voicelive_model_raw) if voicelive_model_raw else None,
         voice=VoiceConfig.from_dict(voice_raw),
         speech=SpeechConfig.from_dict(speech_raw),
         session=session_raw,
@@ -241,7 +259,7 @@ def discover_agents(agents_dir: Path = AGENTS_DIR) -> dict[str, UnifiedAgent]:
             except Exception as e:
                 logger.error("Failed to load agent from %s: %s", item, e)
 
-    logger.info("Discovered %d agents: %s", len(agents), list(agents.keys()))
+    logger.debug("Discovered %d agents: %s", len(agents), list(agents.keys()))
     return agents
 
 

@@ -241,7 +241,7 @@ class ThreadSafeConnectionManager:
         # Example: { call_id: { "lva_agent": <agent>, "pool": <pool>, "session_id": str, ... } }
         self._call_context: dict[str, Any] = {}
 
-        logger.info(
+        logger.debug(
             f"ConnectionManager initialized: max_connections={max_connections}, "
             f"queue_size={queue_size}, limits_enabled={enable_connection_limits}"
         )
@@ -276,7 +276,7 @@ class ThreadSafeConnectionManager:
         self._distributed_channel_prefix = prefix.rstrip(":")
         self._redis_listener_stop = asyncio.Event()
         self._redis_listener_task = asyncio.create_task(self._redis_listener_loop())
-        logger.info(
+        logger.debug(
             "Distributed session bus enabled",
             extra={
                 "node_id": self._node_id,
