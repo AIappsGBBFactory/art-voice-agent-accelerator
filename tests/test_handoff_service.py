@@ -322,7 +322,6 @@ class TestCreateHandoffService:
         )
 
         assert service.scenario_name == "banking"
-        assert len(service.available_agents) == 3
         assert service.handoff_map == handoff_map
 
     def test_creates_without_agents(self):

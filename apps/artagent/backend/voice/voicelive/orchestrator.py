@@ -46,7 +46,6 @@ from typing import TYPE_CHECKING, Any
 from apps.artagent.backend.registries.toolstore import (
     execute_tool,
     initialize_tools,
-    is_handoff_tool,
 )
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
@@ -1378,7 +1377,7 @@ class LiveOrchestrator:
                 "voicelive.agent_name": self.active,
                 "voicelive.is_acs": self._transport == "acs",
                 "voicelive.args_length": len(args_json) if args_json else 0,
-                "voicelive.tool.is_handoff": is_handoff_tool(name),
+                "voicelive.tool.is_handoff": self.handoff_service.is_handoff(name),
                 "voicelive.tool.is_transfer": name in TRANSFER_TOOL_NAMES,
             },
         ) as tool_span:
@@ -1410,7 +1409,7 @@ class LiveOrchestrator:
 
             # Use full message history for better handoff context
             last_user_message = (self._last_user_message or "").strip()
-            if is_handoff_tool(name):
+            if self.handoff_service.is_handoff(name):
                 # Build conversation summary from message history
                 if self._user_message_history:
                     # Use last message for immediate context
@@ -1582,7 +1581,7 @@ class LiveOrchestrator:
                 return False
 
             # Handle handoff tools using unified HandoffService
-            if is_handoff_tool(name):
+            if self.handoff_service.is_handoff(name):
                 # Use HandoffService for consistent resolution across orchestrators
                 resolution = self.handoff_service.resolve_handoff(
                     tool_name=name,

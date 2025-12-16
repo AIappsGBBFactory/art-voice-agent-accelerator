@@ -67,8 +67,11 @@ nav:
       - Handoff Strategies: architecture/agents/handoffs.md
     - Orchestration:
       - Overview: architecture/orchestration/README.md
+      - Scenario-Based Orchestration: architecture/orchestration/industry-scenarios.md
+      - Scenario System Flow: architecture/orchestration/scenario-system-flow.md
       - Cascade Orchestrator: architecture/orchestration/cascade.md
       - VoiceLive Orchestrator: architecture/orchestration/voicelive.md
+      - Handoff Service: architecture/orchestration/handoff-service.md
     - Speech:
       - Streaming Modes: architecture/speech/README.md
       - Recognition: architecture/speech/recognition.md

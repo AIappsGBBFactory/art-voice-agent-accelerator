@@ -403,6 +403,8 @@ class MediaHandler:
 
         # Expose speech_cascade on websocket.state for orchestrator TTS callbacks
         handler._websocket.state.speech_cascade = handler.speech_cascade
+        # Expose tts_playback for voice configuration updates on agent switch
+        handler._websocket.state.tts_playback = handler._tts_playback
 
         # Persist
         await memory_manager.persist_to_redis_async(redis_mgr)

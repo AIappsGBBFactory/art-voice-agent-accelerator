@@ -81,19 +81,43 @@ class TTSPlayback:
         self._cancel_event = cancel_event or asyncio.Event()
         self._tts_lock = asyncio.Lock()
         self._is_playing = False
+        self._active_agent: str | None = None  # Track current agent for voice lookup
+
+    def set_active_agent(self, agent_name: str | None) -> None:
+        """
+        Set the current active agent for voice resolution.
+
+        Call this when agent switches occur to ensure TTS uses the correct voice.
+
+        Args:
+            agent_name: Name of the active agent, or None to reset.
+        """
+        self._active_agent = agent_name
+        if agent_name:
+            logger.debug(
+                "[%s] Active agent set for TTS: %s",
+                self._session_short,
+                agent_name,
+            )
 
     @property
     def is_playing(self) -> bool:
         """Check if TTS is currently playing."""
         return self._is_playing
 
-    def get_agent_voice(self) -> tuple[str, str | None, str | None]:
+    def get_agent_voice(self, agent_name: str | None = None) -> tuple[str, str | None, str | None]:
         """
-        Get voice configuration from the active agent.
+        Get voice configuration from the specified or active agent.
 
         Priority:
-        1. Session agent (Agent Builder override)
-        2. Start agent from unified agents (loaded from YAML)
+        1. Explicitly provided agent_name parameter
+        2. Currently active agent (set via set_active_agent)
+        3. Session agent (Agent Builder override)
+        4. Start agent from unified agents (loaded from YAML)
+
+        Args:
+            agent_name: Optional agent name to look up voice for.
+                        If not provided, uses the active agent.
 
         Returns:
             Tuple of (voice_name, voice_style, voice_rate).
@@ -102,7 +126,23 @@ class TTSPlayback:
         # Import here to avoid circular imports
         from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
 
-        # Try session agent first (Agent Builder override)
+        # Determine which agent to get voice for
+        target_agent = agent_name or self._active_agent
+
+        # If we have a target agent, look it up in unified_agents
+        if target_agent:
+            unified_agents = getattr(self._app_state, "unified_agents", {})
+            agent = unified_agents.get(target_agent)
+            if agent and hasattr(agent, "voice") and agent.voice and agent.voice.name:
+                logger.debug(
+                    "[%s] Voice from agent '%s': %s",
+                    self._session_short,
+                    target_agent,
+                    agent.voice.name,
+                )
+                return (agent.voice.name, agent.voice.style, agent.voice.rate)
+
+        # Try session agent (Agent Builder override)
         session_agent = get_session_agent(self._session_id)
         if session_agent and hasattr(session_agent, "voice") and session_agent.voice:
             voice = session_agent.voice
