@@ -120,6 +120,16 @@ Pick one of three ways to run the voice inference layer—the rest of the framew
 
 ## **Getting Started**
 
+### 📋 Prerequisites
+
+| Requirement | Quick Check |
+|------------|-------------|
+| Azure CLI | `az --version` |
+| Azure Developer CLI | `azd version` |
+| Docker | `docker --version` |
+| Azure Subscription | `az account show` |
+| Contributor Access | Required for resource creation |
+
 ### ⚡ Fastest Path (15 minutes)
 
 ```bash
@@ -134,17 +144,11 @@ azd auth login
 azd up   # ~15 min for complete infra and code deployment
 ```
 
+> [!NOTE]
+> If you encounter any issues, please refer to [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
 **Done!** Your voice agent is running. Open the frontend URL shown in the output.
 
-### 📋 Prerequisites
-
-| Requirement | Quick Check |
-|------------|-------------|
-| Azure CLI | `az --version` |
-| Azure Developer CLI | `azd version` |
-| Docker | `docker --version` |
-| Azure Subscription | `az account show` |
-| Contributor Access | Required for resource creation |
 
 ### 🗺️ Repository Structure
 
