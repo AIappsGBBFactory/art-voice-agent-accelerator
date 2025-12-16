@@ -1,41 +1,3 @@
-## Step-by-Step: Build Your First Agent
-
-Use this guided flow with screenshots to create and run your first agent.
-
-1) Open the Agent Builder
-    - Navigate to the Agent Builder home screen.
-    - You should see the initial landing page like below.
-
-![Agent Builder - Initial](../assets/screenshots/01-agent-builder-initial.png)
-
-2) Choose a Template
-    - Pick a starter template to accelerate setup (recommended for first-time use).
-    - Confirm the template details and proceed.
-
-![Template Selected](../assets/screenshots/02-template-selected.png)
-
-3) Configure Basics
-    - Enter a name and short description for your agent.
-    - Keep defaults for optional fields on your first run; you can refine later.
-
-4) Create the Agent
-    - Click Create (or equivalent action) to scaffold your agent from the template.
-    - Wait for confirmation that resources and defaults are ready.
-
-5) Verify the Entry Screen
-    - After creation, you’ll land on the agent’s entry or overview page.
-    - Use this page to review configuration, flows, and next steps.
-
-6) Run a Simple Test
-    - Follow the prompts in the UI (or the Local Development guide) to start your agent.
-    - Validate you can reach the agent’s health/status endpoints before moving on.
-
-7) Iterate
-    - Tweak prompts/parameters, then re-run and observe results.
-    - Commit changes as you validate behavior.
-
-Tip: If images don’t render in your local doc viewer, verify relative paths from the `docs/getting-started` folder or open the repository in VS Code’s Markdown preview.
-
 # :material-rocket-launch: Quickstart
 
 !!! success "From Zero to Running Voice Agent in 15 Minutes"
@@ -129,25 +91,106 @@ You'll be prompted for:
 
 ### Deployment Hooks
 
-The deployment runs automated pre-provisioning and post-provisioning scripts:
+The deployment runs automated scripts before and after provisioning Azure resources. Expand the sections below to see exactly what each script creates and configures.
 
-**Pre-Provisioning (`preprovision.sh`):**
+??? abstract "Pre-Provisioning Script (`preprovision.sh`)"
+    
+    This script runs **before** Azure resources are created to validate your environment and set up prerequisites.
+    
+    === ":material-check-circle: Validation Checks"
+        
+        | Check | Description |
+        |-------|-------------|
+        | CLI Tools | Validates `az`, `azd`, `jq`, and `docker` are installed |
+        | Azure Auth | Confirms you're logged into Azure CLI |
+        | Subscription | Sets `ARM_SUBSCRIPTION_ID` for Terraform |
+    
+    === ":material-package-variant: Extensions Installed"
+        
+        The script automatically installs these Azure CLI extensions:
+        
+        ```bash
+        az extension add --name quota --upgrade
+        az extension add --name redisenterprise --upgrade  
+        az extension add --name cosmosdb-preview --upgrade
+        ```
+    
+    === ":material-cloud-check: Resource Providers"
+        
+        Registers required Azure resource providers:
+        
+        - `Microsoft.Compute`
+        - `Microsoft.ContainerService`
+        - `Microsoft.CognitiveServices`
+        - `Microsoft.Communication`
+        - `Microsoft.DocumentDB`
+        - `Microsoft.Cache`
+        - `Microsoft.Storage`
+        - `Microsoft.App`
+        - `Microsoft.OperationalInsights`
+    
+    === ":material-map-marker-check: Region Availability"
+        
+        Verifies the selected Azure region supports:
+        
+        - Azure OpenAI
+        - Azure Speech Services
+        - Azure Communication Services
+        - Container Apps
+    
+    === ":material-database-cog: Terraform State"
+        
+        Sets up remote state storage in Azure for Terraform:
+        
+        - Creates a storage account for state files
+        - Configures state locking with blob leases
 
-- ✅ Validates required CLI tools (az, azd, jq, docker)
-- ✅ Installs Azure CLI extensions (quota, redisenterprise, cosmosdb-preview)
-- ✅ Checks Azure authentication
-- ✅ Configures ARM_SUBSCRIPTION_ID
-- ✅ Registers required Azure resource providers
-- ✅ Checks regional service availability
-- ✅ Sets up Terraform remote state storage
-
-**Post-Provisioning (`postprovision.sh`):**
-
-- ✅ Initializes Cosmos DB database
-- ✅ Configures phone number (interactive prompt)
-- ✅ Updates App Configuration URLs
-- ✅ Syncs app settings
-- ✅ Generates `.env.local` for local development
+??? abstract "Post-Provisioning Script (`postprovision.sh`)"
+    
+    This script runs **after** Azure resources are created to configure your application.
+    
+    === ":material-database-plus: Cosmos DB Initialization"
+        
+        Creates the initial database structure:
+        
+        | Container | Purpose |
+        |-----------|---------|
+        | `sessions` | Active call session data |
+        | `transcripts` | Conversation transcripts |
+        | `profiles` | User/agent profiles |
+        | `scenarios` | Agent scenario configurations |
+    
+    === ":material-phone-plus: Phone Number Configuration"
+        
+        !!! note "Interactive Prompt"
+            You'll be asked if you want to configure a phone number for PSTN calls.
+        
+        - **Yes**: Guides you through phone number purchase/assignment
+        - **No**: Skip for browser-only voice (you can add later)
+    
+    === ":material-cog-sync: App Configuration Sync"
+        
+        Updates Azure App Configuration with:
+        
+        - Backend and frontend URLs
+        - Service endpoints
+        - Feature flags
+        - Connection strings (references to Key Vault)
+    
+    === ":material-file-document-edit: Local Development File"
+        
+        Generates `.env.local` with all required environment variables:
+        
+        ```bash
+        # Generated by postprovision.sh
+        AZURE_OPENAI_ENDPOINT=https://...
+        AZURE_SPEECH_REGION=eastus
+        COSMOS_DB_ENDPOINT=https://...
+        # ... additional variables
+        ```
+        
+        !!! tip "Ready for Local Dev"
+            This file enables immediate local development without manual configuration.
 
 ### Deployment Output
 
@@ -219,56 +262,129 @@ SUCCESS: Your application was deployed to Azure!
 
 ---
 
-## :material-scenario: Configure Your First Scenario
+## :material-movie: Build Your First Agent
 
-Once your agent is deployed, create a scenario to define what conversations your agent can handle. Follow these steps:
+Once your deployment is complete, use the Agent Builder to create and run your first agent.
 
-1) **Access the Scenario Builder**
-   - From the agent home, navigate to the "Scenarios" or "Flows" section.
-   - Click "Create New Scenario" or "Add Scenario".
+=== "Step 1: Open Agent Builder"
 
-   ![Scenario Home](../assets/scenario-01-home.png)
+    Navigate to the Agent Builder home screen. You should see the initial landing page.
+    
+    <figure markdown="span">
+      ![Agent Builder - Initial](../assets/01-agent-builder-initial.png){ loading=lazy }
+      <figcaption>Agent Builder landing page</figcaption>
+    </figure>
 
-2) **Open the Scenario Builder**
-   - The scenario builder interface appears, showing available tools and configuration options.
-   - Start with a blank scenario or use a pre-built template.
+=== "Step 2: Choose Template"
 
-   ![Scenario Builder](../assets/scenario-02-builder.png)
+    Pick a starter template to accelerate setup (recommended for first-time use). Confirm the template details and proceed.
+    
+    <figure markdown="span">
+      ![Template Selected](../assets/02-template-selected.png){ loading=lazy }
+      <figcaption>Selecting a template</figcaption>
+    </figure>
 
-3) **Define the Knowledge Base (KB)**
-   - Set up a general knowledge base or attach specific documents/instructions.
-   - This KB acts as context for the agent's responses during conversations.
-   - You can upload FAQs, product docs, or policy documents.
+=== "Step 3: Configure Basics"
 
-   ![Knowledge Base Setup](../assets/scenario-03-kb.png)
+    Enter a name and short description for your agent. Keep defaults for optional fields on your first run; you can refine later.
+    
+    !!! tip "Naming Convention"
+        Use descriptive names like `insurance-claims-agent` or `customer-support-v1`.
 
-4) **Configure Conversation Flow**
-   - Define how the agent should greet users (e.g., "Hello, how can I help?").
-   - Set up handoff rules (e.g., "Transfer to human agent if request is unresolved").
-   - Add any business logic or decision trees specific to your use case.
+=== "Step 4: Create Agent"
 
-5) **Add Connected Authentication (Optional)**
-   - Integrate backend systems for identity verification and account lookups.
-   - The agent can now authenticate users and securely access customer data.
+    Click **Create** to scaffold your agent from the template. Wait for confirmation that resources and defaults are ready.
+    
+    !!! info "Updating Existing Agents"
+        If you create an agent with the same name as an existing one, it will **update** the existing agent rather than creating a duplicate.
 
-   ![Connected Auth Setup](../assets/scenario-04-auth.png)
+=== "Step 5: Verify & Test"
 
-6) **Configure Parallel Processing & Fraud Detection (Optional)**
-   - Set up parallel workflows to handle multiple tasks simultaneously.
-   - Add fraud detection rules or business validation logic that runs alongside conversations.
+    After creation, you'll land on the agent's overview page. Follow the prompts to start your agent and validate the health/status endpoints.
+    
+    !!! success "Ready to Iterate"
+        Tweak prompts and parameters, then re-run and observe results. Commit changes as you validate behavior.
 
-   ![Parallel Fraud Detection](../assets/scenario-05-fraud.png)
+!!! tip "Images not rendering?"
+    Verify relative paths from `docs/getting-started` or open the repo in VS Code's Markdown preview.
 
-7) **Test the Scenario**
-    - In the main UI, click the person icon to start a conversation (Speech Cascade or Voice Live).
-    - Expect the start agent to greet you; continue the dialog to verify KB responses and routing.
-    - Refine the KB, prompts, or routing rules as needed.
+---
 
-8) **Publish the Scenario**
-   - Once satisfied, publish the scenario to make it live.
-   - Your agent will now use this scenario for incoming calls or messages.
+## :material-script-text: Configure Your First Scenario
 
-Tip: Start simple. A basic greeting + KB + handoff rule covers most first-time scenarios. Add connected auth and fraud detection as you scale and iterate.
+Scenarios define what conversations your agent can handle. Create one to customize your agent's behavior.
+
+=== "Step 1: Access Scenarios"
+
+    From the agent home, go to **Scenarios** or **Flows** and click **Create New Scenario**.
+    
+    <figure markdown="span">
+      ![Scenario Home](../assets/scenario-01-home.png){ loading=lazy }
+      <figcaption>Scenario management home</figcaption>
+    </figure>
+
+=== "Step 2: Open Builder"
+
+    The scenario builder interface appears with tools and configuration options. Start with a blank scenario or use a pre-built template.
+    
+    <figure markdown="span">
+      ![Scenario Builder](../assets/scenario-02-builder.png){ loading=lazy }
+      <figcaption>Scenario builder interface</figcaption>
+    </figure>
+
+=== "Step 3: Define Knowledge Base"
+
+    Add a general knowledge base or attach specific documents/instructions. This context powers the agent's responses.
+    
+    <figure markdown="span">
+      ![Knowledge Base Setup](../assets/scenario-03-kb.png){ loading=lazy }
+      <figcaption>Configuring the knowledge base</figcaption>
+    </figure>
+
+=== "Step 4: Configure Flow"
+
+    Set greetings, decision logic, and handoff rules (e.g., transfer to human if unresolved).
+    
+    | Component | Purpose |
+    |-----------|---------|
+    | **Greeting** | Initial message when call connects |
+    | **Decision Logic** | Routes based on caller intent |
+    | **Handoff Rules** | Escalation to human agents |
+
+=== "Step 5: Connected Auth (Optional)"
+
+    Integrate backend systems for identity verification and account lookups.
+    
+    <figure markdown="span">
+      ![Connected Auth Setup](../assets/scenario-04-auth.png){ loading=lazy }
+      <figcaption>Connected authentication setup</figcaption>
+    </figure>
+
+=== "Step 6: Fraud Detection (Optional)"
+
+    Run parallel workflows for validation or fraud checks alongside the conversation.
+    
+    <figure markdown="span">
+      ![Parallel Fraud Detection](../assets/scenario-05-fraud.png){ loading=lazy }
+      <figcaption>Parallel processing configuration</figcaption>
+    </figure>
+
+=== "Step 7: Create & Test"
+
+    Click **Create Scenario** to save your configuration. Then start a voice conversation to test:
+    
+    | Mode | Description |
+    |------|-------------|
+    | **VoiceLive** | Real-time streaming with lowest latency |
+    | **Speech Cascade** | Traditional STT → LLM → TTS pipeline |
+    
+    Verify the agent greets you and responds correctly using the KB.
+    
+    !!! info "Updating Existing Scenarios"
+        If you create a scenario with the same name as an existing one, it will **update** the existing scenario rather than creating a duplicate. This makes it easy to iterate on your configurations.
+
+!!! tip "Start Simple"
+    Begin with a greeting + KB + handoff rule. Add connected auth and fraud detection as you scale and iterate.
 
 ---
 

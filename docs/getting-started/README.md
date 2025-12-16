@@ -1,11 +1,3 @@
-## User Flows at a Glance
-
-Start with the Quickstart’s step-by-step guide that includes screenshots captured via Playwright MCP:
-
-- See [Quickstart: Step-by-Step](quickstart.md#step-by-step-build-your-first-agent) for a guided flow.
-- The guide shows the Agent Builder landing page, template selection, and the post-creation entry screen.
-
-For additional visuals, screenshots are stored in `docs/assets/` and used throughout the guides.
 
 # :material-rocket: Getting Started
 
