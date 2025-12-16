@@ -312,19 +312,31 @@ class MediaHandler:
         handler._setup_websocket_state(memory_manager, tts_client, stt_client)
 
         # Initialize active agent in memory for this session
-        # Priority: 1. Session agent (Agent Builder), 2. Unified agent (from disk)
+        # Priority: 1. Session agent (Agent Builder), 2. Session scenario (ScenarioBuilder),
+        #           3. URL scenario param, 4. Unified agent (from disk)
         scenario_start_agent = None
-        if config.scenario:
-            try:
-                scenario_cfg = resolve_orchestrator_config(scenario_name=config.scenario)
-                scenario_start_agent = scenario_cfg.start_agent or scenario_start_agent
-            except Exception as exc:
-                logger.warning(
-                    "[%s] Failed to resolve scenario start_agent for '%s': %s",
+        try:
+            # Always call resolve_orchestrator_config with session_id to check for
+            # session-scoped scenarios (created via ScenarioBuilder). The resolver
+            # will also check for URL-based scenarios if scenario_name is provided.
+            scenario_cfg = resolve_orchestrator_config(
+                session_id=config.session_id,
+                scenario_name=config.scenario,  # May be None, that's fine
+            )
+            scenario_start_agent = scenario_cfg.start_agent or scenario_start_agent
+            if scenario_start_agent:
+                logger.info(
+                    "[%s] Resolved start_agent from scenario: %s (scenario=%s)",
                     handler._session_short,
-                    config.scenario,
-                    exc,
+                    scenario_start_agent,
+                    scenario_cfg.scenario_name,
                 )
+        except Exception as exc:
+            logger.warning(
+                "[%s] Failed to resolve scenario start_agent: %s",
+                handler._session_short,
+                exc,
+            )
 
         session_agent = get_session_agent(config.session_id)
         if session_agent:
@@ -391,6 +403,8 @@ class MediaHandler:
 
         # Expose speech_cascade on websocket.state for orchestrator TTS callbacks
         handler._websocket.state.speech_cascade = handler.speech_cascade
+        # Expose tts_playback for voice configuration updates on agent switch
+        handler._websocket.state.tts_playback = handler._tts_playback
 
         # Persist
         await memory_manager.persist_to_redis_async(redis_mgr)
@@ -951,7 +965,7 @@ class MediaHandler:
             logger.error("[%s] TTS failed: %s", self._session_short, e)
 
     def _record_greeting(self, text: str) -> None:
-        """Record greeting in memory."""
+        """Record greeting in memory (with duplicate prevention)."""
         if not self.memory_manager:
             return
         try:
@@ -960,6 +974,20 @@ class MediaHandler:
             agent_name = agent_name or self.memory_manager.get_value_from_corememory(
                 "active_agent", "System"
             )
+            
+            # Check if this exact greeting is already in history to prevent duplicates
+            existing_history = self.memory_manager.get_history(agent_name) or []
+            normalized_text = text.strip()
+            
+            # Check last few messages to avoid duplicate greetings
+            for msg in existing_history[-3:]:  # Check last 3 messages
+                if msg.get("role") == "assistant" and msg.get("content", "").strip() == normalized_text:
+                    logger.debug(
+                        "[%s] Skipping duplicate greeting in history",
+                        getattr(self, "_session_short", ""),
+                    )
+                    return  # Already recorded, skip
+            
             self.memory_manager.append_to_history(agent_name, "assistant", text)
             self.memory_manager.update_corememory("greeting_sent", True)
         except Exception as e:

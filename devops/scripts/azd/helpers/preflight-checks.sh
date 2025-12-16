@@ -1050,11 +1050,28 @@ run_preflight_checks() {
     header "✅ Running Preflight Checks"
     
     local failed=0
-    local skip_azure_checks="${PREFLIGHT_LIVE_CHECKS:-true}"
-    
+    local skip_azure_checks="${PREFLIGHT_LIVE_CHECKS:-}"
+
     # In CI mode without explicit PREFLIGHT_LIVE_CHECKS, skip Azure auth checks
     if [[ "${CI:-}" == "true" && "${PREFLIGHT_LIVE_CHECKS:-}" != "true" ]]; then
         skip_azure_checks="false"
+    elif [[ -z "$skip_azure_checks" ]]; then
+        if [[ -t 0 ]]; then
+            read -r -p "Run Azure preflight checks now? [y/N]: " _run_preflight_choice
+            if [[ "$_run_preflight_choice" =~ ^[Yy]$ ]]; then
+                skip_azure_checks="true"
+                export PREFLIGHT_LIVE_CHECKS="true"
+            else
+                skip_azure_checks="false"
+                export PREFLIGHT_LIVE_CHECKS="false"
+            fi
+        else
+            skip_azure_checks="true"
+        fi
+    fi
+
+    if [[ -z "$skip_azure_checks" ]]; then
+        skip_azure_checks="${PREFLIGHT_LIVE_CHECKS:-true}"
     fi
     
     # 1. Check required tools

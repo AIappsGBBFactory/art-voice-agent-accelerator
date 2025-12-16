@@ -285,6 +285,43 @@ handoff_general_kb_schema: dict[str, Any] = {
     },
 }
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GENERIC HANDOFF SCHEMA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+handoff_to_agent_schema: dict[str, Any] = {
+    "name": "handoff_to_agent",
+    "description": (
+        "Generic handoff tool to transfer to any available agent. "
+        "Use when there is no specific handoff tool for the target agent. "
+        "The target_agent must be a valid agent name in the current scenario."
+        + SILENT_HANDOFF_NOTE
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "target_agent": {
+                "type": "string",
+                "description": "The name of the agent to transfer to (e.g., 'FraudAgent', 'InvestmentAdvisor')",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Brief reason for the handoff - why is this transfer needed?",
+            },
+            "context": {
+                "type": "string",
+                "description": "Summary of conversation context to pass to the target agent",
+            },
+            "client_id": {
+                "type": "string",
+                "description": "Customer identifier if available",
+            },
+        },
+        "required": ["target_agent", "reason"],
+    },
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # INSURANCE HANDOFF SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -602,6 +639,85 @@ async def handoff_general_kb(args: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+async def handoff_claims_specialist(args: dict[str, Any]) -> dict[str, Any]:
+    """Transfer to Claims Specialist for claims processing and FNOL."""
+    client_id = (args.get("client_id") or "").strip()
+    reason = (args.get("reason") or "claims_inquiry").strip()
+    incident_summary = (args.get("incident_summary") or "").strip()
+
+    logger.info("📋 Handoff to ClaimsSpecialist | client=%s reason=%s", client_id, reason)
+
+    return _build_handoff_payload(
+        target_agent="ClaimsSpecialist",
+        message="",  # Silent handoff - claims specialist will greet
+        summary=f"Claims handoff: {reason}",
+        context={
+            "client_id": client_id,
+            "reason": reason,
+            "incident_summary": incident_summary,
+            "handoff_timestamp": _utc_now(),
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GENERIC HANDOFF EXECUTOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def handoff_to_agent(args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Generic handoff to any target agent.
+
+    This tool enables dynamic agent transfers without requiring a dedicated
+    handoff tool for each agent pair. The target agent must be valid within
+    the current scenario's allowed targets.
+
+    Args:
+        args: Dictionary containing:
+            - target_agent (required): Name of the agent to transfer to
+            - reason (required): Why this handoff is needed
+            - context: Conversation context to pass along
+            - client_id: Customer identifier if available
+
+    Returns:
+        Standard handoff payload with target_agent set dynamically.
+    """
+    target_agent = (args.get("target_agent") or "").strip()
+    reason = (args.get("reason") or "").strip()
+    context_summary = (args.get("context") or "").strip()
+    client_id = (args.get("client_id") or "").strip()
+
+    if not target_agent:
+        return {"success": False, "message": "target_agent is required."}
+    if not reason:
+        return {"success": False, "message": "reason is required."}
+
+    logger.info(
+        "🔀 Generic handoff to %s | reason=%s client=%s",
+        target_agent,
+        reason,
+        client_id or "(no client_id)",
+    )
+
+    context: dict[str, Any] = {
+        "reason": reason,
+        "handoff_timestamp": _utc_now(),
+    }
+
+    if context_summary:
+        context["context_summary"] = context_summary
+    if client_id:
+        context["client_id"] = client_id
+
+    return _build_handoff_payload(
+        target_agent=target_agent,
+        message="",  # Silent - target agent will provide greeting if configured
+        summary=f"Generic handoff: {reason}",
+        context=context,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # INSURANCE HANDOFF EXECUTORS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -771,4 +887,13 @@ register_tool(
     handoff_fnol_agent,
     is_handoff=True,
     tags={"handoff", "insurance", "claims"},
+)
+
+# Generic handoff tool - enables dynamic routing without explicit handoff tools
+register_tool(
+    "handoff_to_agent",
+    handoff_to_agent_schema,
+    handoff_to_agent,
+    is_handoff=True,
+    tags={"handoff", "generic"},
 )

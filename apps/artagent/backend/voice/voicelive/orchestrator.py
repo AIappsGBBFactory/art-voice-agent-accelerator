@@ -12,10 +12,10 @@ Architecture:
     VoiceLiveSDKHandler
            │
            ▼
-    LiveOrchestrator ─► VoiceLiveAgentAdapter registry
+    LiveOrchestrator ─► UnifiedAgent registry
            │                    │
-           ├─► handle_event()   └─► apply_session()
-           │                        trigger_response()
+           ├─► handle_event()   └─► apply_voicelive_session()
+           │                        trigger_voicelive_response()
            └─► _execute_tool_call() ───► shared tool registry
 
 Usage:
@@ -27,7 +27,7 @@ Usage:
 
     orchestrator = LiveOrchestrator(
         conn=voicelive_connection,
-        agents=adapted_agents,
+        agents=unified_agents,  # dict[str, UnifiedAgent]
         handoff_map=handoff_map,
         start_agent="Concierge",
     )
@@ -46,11 +46,11 @@ from typing import TYPE_CHECKING, Any
 from apps.artagent.backend.registries.toolstore import (
     execute_tool,
     initialize_tools,
-    is_handoff_tool,
 )
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
 from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
 from apps.artagent.backend.voice.shared.session_state import (
     sync_state_from_memo,
     sync_state_to_memo,
@@ -66,10 +66,9 @@ from azure.ai.voicelive.models import (
 from opentelemetry import trace
 
 if TYPE_CHECKING:
-    from apps.artagent.backend.registries.agentstore.session_manager import HandoffProvider
     from src.stateful.state_managment import MemoManager
 
-    from .agent_adapter import VoiceLiveAgentAdapter
+from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 
 from apps.artagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
@@ -91,6 +90,75 @@ CALL_CENTER_TRIGGER_PHRASES = {
     "transfer to call center",
     "transfer me to the call center",
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SESSION ORCHESTRATOR REGISTRY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Module-level registry for VoiceLive orchestrators (per session)
+# This enables scenario updates to reach active VoiceLive sessions
+# Uses standard dict but includes cleanup of stale entries
+_voicelive_orchestrators: dict[str, "LiveOrchestrator"] = {}
+_registry_lock = asyncio.Lock()
+
+
+def register_voicelive_orchestrator(session_id: str, orchestrator: "LiveOrchestrator") -> None:
+    """Register a VoiceLive orchestrator for scenario updates."""
+    # Clean up stale entries first (orchestrators that may have been orphaned)
+    _cleanup_stale_orchestrators()
+    _voicelive_orchestrators[session_id] = orchestrator
+    logger.debug(
+        "Registered VoiceLive orchestrator | session=%s registry_size=%d",
+        session_id,
+        len(_voicelive_orchestrators),
+    )
+
+
+def unregister_voicelive_orchestrator(session_id: str) -> None:
+    """Unregister a VoiceLive orchestrator when session ends."""
+    orchestrator = _voicelive_orchestrators.pop(session_id, None)
+    if orchestrator:
+        logger.debug(
+            "Unregistered VoiceLive orchestrator | session=%s registry_size=%d",
+            session_id,
+            len(_voicelive_orchestrators),
+        )
+
+
+def get_voicelive_orchestrator(session_id: str) -> "LiveOrchestrator | None":
+    """Get the VoiceLive orchestrator for a session."""
+    return _voicelive_orchestrators.get(session_id)
+
+
+def _cleanup_stale_orchestrators() -> int:
+    """
+    Clean up orchestrators that are no longer valid.
+
+    This catches cases where sessions ended without proper cleanup.
+    Returns the number of stale entries removed.
+    """
+    stale_keys = []
+    for session_id, orchestrator in list(_voicelive_orchestrators.items()):
+        # Check if orchestrator is still valid (has connection reference)
+        if orchestrator.conn is None and orchestrator.agents == {}:
+            stale_keys.append(session_id)
+
+    for key in stale_keys:
+        _voicelive_orchestrators.pop(key, None)
+
+    if stale_keys:
+        logger.debug(
+            "Cleaned up %d stale orchestrators from registry | remaining=%d",
+            len(stale_keys),
+            len(_voicelive_orchestrators),
+        )
+
+    return len(stale_keys)
+
+
+def get_orchestrator_registry_size() -> int:
+    """Get current size of orchestrator registry (for monitoring)."""
+    return len(_voicelive_orchestrators)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -160,7 +228,7 @@ class LiveOrchestrator:
     def __init__(
         self,
         conn,
-        agents: dict[str, VoiceLiveAgentAdapter],
+        agents: dict[str, UnifiedAgent],
         handoff_map: dict[str, str] | None = None,
         start_agent: str = "Concierge",
         audio_processor=None,
@@ -170,12 +238,9 @@ class LiveOrchestrator:
         transport: str = "acs",
         model_name: str | None = None,
         memo_manager: MemoManager | None = None,
-        handoff_provider: HandoffProvider | None = None,
     ):
         self.conn = conn
         self.agents = agents
-        # Prefer handoff_provider for live lookups; fallback to static handoff_map
-        self._handoff_provider = handoff_provider
         self._handoff_map = handoff_map or {}
         self.active = start_agent
         self.audio = audio_processor
@@ -199,21 +264,17 @@ class LiveOrchestrator:
         # MemoManager for session state continuity (consistent with CascadeOrchestratorAdapter)
         self._memo_manager: MemoManager | None = memo_manager
 
-        # Track agent at last SESSION_UPDATED to avoid duplicate UI broadcasts
-        self._last_session_updated_agent: str | None = None
-        # Flag to indicate a context-only session update (don't reset audio/cancel response)
-        self._context_update_in_progress: bool = False
+        # Unified metrics tracking (tokens, TTFT, turn count)
+        self._metrics = OrchestratorMetrics(
+            agent_name=start_agent,
+            call_connection_id=call_connection_id,
+            session_id=getattr(messenger, "session_id", None) if messenger else None,
+        )
 
-        # LLM TTFT tracking
-        self._llm_turn_start_time: float | None = None
-        self._llm_first_token_time: float | None = None
-        self._llm_turn_number: int = 0
-
-        # Per-agent token usage tracking
-        self._agent_input_tokens: int = 0
-        self._agent_output_tokens: int = 0
-        self._agent_start_time: float = time.perf_counter()
-        self._agent_response_count: int = 0
+        # Throttle session context updates to avoid hot path latency
+        self._last_session_update_time: float = 0.0
+        self._session_update_min_interval: float = 2.0  # Min seconds between updates
+        self._pending_session_update: bool = False
 
         if self.messenger:
             try:
@@ -242,6 +303,45 @@ class LiveOrchestrator:
     def memo_manager(self) -> MemoManager | None:
         """Return the current MemoManager instance."""
         return self._memo_manager
+
+    @property
+    def _session_id(self) -> str | None:
+        """
+        Get the session ID from memo_manager or messenger.
+
+        Cached property to avoid repeated attribute access.
+        """
+        if self._memo_manager:
+            session_id = getattr(self._memo_manager, "session_id", None)
+            if session_id:
+                return session_id
+        if self.messenger:
+            return getattr(self.messenger, "session_id", None)
+        return None
+
+    @property
+    def _orchestrator_config(self):
+        """
+        Get cached orchestrator config for scenario resolution.
+
+        Lazily resolves and caches the config on first access to avoid
+        repeated calls to resolve_orchestrator_config() during the session.
+
+        The config is cached per-instance (session lifetime), which is appropriate
+        because scenario changes during a call would be disruptive anyway.
+        """
+        if not hasattr(self, "_cached_orchestrator_config"):
+            from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+
+            self._cached_orchestrator_config = resolve_orchestrator_config(
+                session_id=self._session_id
+            )
+            logger.debug(
+                "[LiveOrchestrator] Cached orchestrator config | scenario=%s session=%s",
+                self._cached_orchestrator_config.scenario_name,
+                self._session_id,
+            )
+        return self._cached_orchestrator_config
 
     def _sync_from_memo_manager(self) -> None:
         """
@@ -342,6 +442,160 @@ class LiveOrchestrator:
                 logger.debug("Failed to persist user message history", exc_info=True)
 
         logger.debug("[LiveOrchestrator] Synced state to MemoManager")
+
+    def cleanup(self) -> None:
+        """
+        Clean up orchestrator resources to prevent memory leaks.
+
+        This should be called when the VoiceLive session ends. It:
+        - Cancels all pending greeting tasks
+        - Clears references to agents and connections
+        - Clears user message history deque
+        - Resets all stateful tracking variables
+
+        Note: This method is synchronous and does not await any coroutines.
+        For async cleanup, use the handler's stop() method which calls this.
+        """
+        # Cancel all pending greeting tasks
+        self._cancel_pending_greeting_tasks()
+
+        # Clear agents registry reference
+        self.agents = {}
+        self._handoff_map = {}
+
+        # Clear connection reference (do not close - handler owns it)
+        self.conn = None
+
+        # Clear messenger reference to break circular refs
+        self.messenger = None
+        self.audio = None
+
+        # Clear memo manager reference (handler/endpoint owns lifecycle)
+        self._memo_manager = None
+
+        # Clear handoff service
+        self._handoff_service = None
+
+        # Clear user message history
+        self._user_message_history.clear()
+        self._last_user_message = None
+        self._last_assistant_message = None
+
+        # Clear pending greeting state
+        self._pending_greeting = None
+        self._pending_greeting_agent = None
+
+        # Reset tracking variables
+        self._active_response_id = None
+        self._system_vars.clear()
+        self.visited_agents.clear()
+
+        logger.debug("[LiveOrchestrator] Cleanup complete")
+
+    def update_scenario(
+        self,
+        agents: dict[str, UnifiedAgent],
+        handoff_map: dict[str, str],
+        start_agent: str | None = None,
+        scenario_name: str | None = None,
+    ) -> None:
+        """
+        Update the orchestrator with a new scenario configuration.
+
+        This is called when the user changes scenarios mid-session via the UI.
+        The orchestrator's agents and handoff map are updated to reflect
+        the new scenario without restarting the VoiceLive connection.
+
+        Args:
+            agents: New UnifiedAgent registry (no adapter needed)
+            handoff_map: New handoff routing map
+            start_agent: Optional new start agent to switch to
+            scenario_name: Optional scenario name for logging
+        """
+        old_agents = list(self.agents.keys())
+        old_active = self.active
+        needs_session_update = False
+
+        # Update agents registry
+        self.agents = agents
+
+        # Update handoff map
+        self._handoff_map = handoff_map
+
+        # Clear cached HandoffService so it's recreated with new scenario
+        self._handoff_service = None
+
+        # Clear visited agents for fresh scenario experience
+        self.visited_agents.clear()
+
+        # Always switch to start_agent when a new scenario is explicitly selected
+        if start_agent:
+            if start_agent != self.active:
+                self.active = start_agent
+                needs_session_update = True
+                logger.info(
+                    "🔄 VoiceLive switching to scenario start_agent | from=%s to=%s scenario=%s",
+                    old_active,
+                    start_agent,
+                    scenario_name or "(unknown)",
+                )
+            else:
+                # Same agent but scenario changed - still need to update session
+                needs_session_update = True
+        elif self.active not in agents:
+            # Current agent not in new scenario - switch to first available
+            available = list(agents.keys())
+            if available:
+                self.active = available[0]
+                needs_session_update = True
+                logger.warning(
+                    "🔄 VoiceLive current agent not in scenario, switching | from=%s to=%s",
+                    old_active,
+                    self.active,
+                )
+
+        logger.info(
+            "🔄 VoiceLive scenario updated | old_agents=%s new_agents=%s active=%s scenario=%s",
+            old_agents,
+            list(agents.keys()),
+            self.active,
+            scenario_name or "(unknown)",
+        )
+
+        # CRITICAL: Trigger a session update to apply the new agent's instructions
+        # This ensures VoiceLive uses the correct system prompt for the new agent
+        if needs_session_update:
+            self._schedule_scenario_session_update()
+
+    def _schedule_scenario_session_update(self) -> None:
+        """
+        Schedule a session update after scenario change.
+        
+        This runs in the background to avoid blocking the scenario update call.
+        """
+        async def _do_update():
+            try:
+                # Refresh context with new agent
+                self._refresh_session_context()
+                # Update VoiceLive session with new instructions
+                await self._update_session_context()
+                logger.info(
+                    "🔄 VoiceLive session updated for new agent | agent=%s",
+                    self.active,
+                )
+            except Exception:
+                logger.warning("Failed to update session after scenario change", exc_info=True)
+
+        # Schedule on the event loop
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(_do_update(), loop)
+        except RuntimeError:
+            # No running loop - try create_task if we're in an async context
+            try:
+                asyncio.create_task(_do_update())
+            except RuntimeError:
+                logger.warning("Cannot schedule session update - no event loop available")
 
     async def _inject_conversation_history(self) -> None:
         """
@@ -474,6 +728,27 @@ class LiveOrchestrator:
             # Render base instructions from agent prompt template
             base_instructions = agent._agent.render_prompt(context_vars) or ""
 
+            # Inject handoff instructions from scenario configuration
+            # Use the cached orchestrator config (supports both file-based and session-scoped)
+            config = self._orchestrator_config
+            if config.scenario and agent._agent.name:
+                # Use scenario.build_handoff_instructions directly (works for session scenarios)
+                handoff_instructions = config.scenario.build_handoff_instructions(agent._agent.name)
+                if handoff_instructions:
+                    base_instructions = f"{base_instructions}\n\n{handoff_instructions}" if base_instructions else handoff_instructions
+                    logger.info(
+                        "[LiveOrchestrator] Injected handoff instructions | agent=%s scenario=%s len=%d",
+                        agent._agent.name,
+                        config.scenario_name,
+                        len(handoff_instructions),
+                    )
+            else:
+                logger.debug(
+                    "[LiveOrchestrator] No scenario or agent name for handoff instructions | scenario=%s agent=%s",
+                    config.scenario_name if config.scenario else None,
+                    agent._agent.name if hasattr(agent, '_agent') else None,
+                )
+
             # Build conversation recap to append to instructions
             # This is critical for realtime models which tend to forget context
             conversation_recap = self._build_conversation_recap()
@@ -487,18 +762,12 @@ class LiveOrchestrator:
             if not updated_instructions:
                 return
 
-            # Update session with new instructions (context-only update)
+            # Update session with new instructions
             from azure.ai.voicelive.models import RequestSession
 
-            # Mark this as a context-only update so _handle_session_updated doesn't
-            # broadcast to UI or cancel responses
-            self._context_update_in_progress = True
-            try:
-                await self.conn.session.update(
-                    session=RequestSession(instructions=updated_instructions)
-                )
-            finally:
-                self._context_update_in_progress = False
+            await self.conn.session.update(
+                session=RequestSession(instructions=updated_instructions)
+            )
 
             logger.debug(
                 "[LiveOrchestrator] Updated session | agent=%s history_len=%d slots=%s",
@@ -548,6 +817,60 @@ class LiveOrchestrator:
 
         return "\n".join(parts) if parts else ""
 
+    def _schedule_throttled_session_update(self) -> None:
+        """
+        Schedule a throttled session context update in the background.
+
+        This avoids calling session.update() on the hot path,
+        which can add significant latency to each turn.
+        The actual network call is performed in a background task.
+        """
+        now = time.perf_counter()
+        elapsed = now - self._last_session_update_time
+
+        # Only update if enough time has passed OR we have a pending update from transcription
+        if elapsed < self._session_update_min_interval and not self._pending_session_update:
+            logger.debug(
+                "[LiveOrchestrator] Skipping session update - throttled (%.1fs < %.1fs)",
+                elapsed,
+                self._session_update_min_interval,
+            )
+            return
+
+        self._pending_session_update = False
+        self._last_session_update_time = now
+
+        # Refresh context first (fast, local operation)
+        self._refresh_session_context()
+
+        # Schedule the actual session update as a background task
+        # This prevents blocking the event loop
+        async def _do_session_update():
+            try:
+                await self._update_session_context()
+            except Exception:
+                logger.debug("Background session update failed", exc_info=True)
+
+        asyncio.create_task(_do_session_update())
+
+    def _schedule_background_sync(self) -> None:
+        """
+        Schedule MemoManager sync in background to avoid hot path latency.
+
+        The sync is fire-and-forget - failures are logged but don't block.
+        """
+        if not self._memo_manager:
+            return
+
+        def _do_sync():
+            try:
+                self._sync_to_memo_manager()
+            except Exception:
+                logger.debug("Background MemoManager sync failed", exc_info=True)
+
+        # Schedule on next event loop iteration to not block current coroutine
+        asyncio.get_event_loop().call_soon(_do_sync)
+
     # ═══════════════════════════════════════════════════════════════════════════
     # HANDOFF RESOLUTION
     # ═══════════════════════════════════════════════════════════════════════════
@@ -557,19 +880,19 @@ class LiveOrchestrator:
         """
         Get or create the HandoffService for unified handoff resolution.
 
-        The service is lazily created on first access and caches the scenario name
-        from MemoManager if available.
+        The service is lazily created on first access and uses the cached
+        orchestrator config (supports both file-based and session-scoped scenarios).
         """
         if self._handoff_service is None:
-            scenario_name = None
-            if self._memo_manager:
-                scenario_name = self._memo_manager.get_value_from_corememory("scenario_name", None)
+            # Use cached orchestrator config for scenario resolution
+            config = self._orchestrator_config
 
             self._handoff_service = HandoffService(
-                scenario_name=scenario_name,
+                scenario_name=config.scenario_name,
                 handoff_map=self.handoff_map,
                 agents=self.agents,
                 memo_manager=self._memo_manager,
+                scenario=config.scenario,  # Pass scenario object for session-scoped scenarios
             )
         return self._handoff_service
 
@@ -577,22 +900,14 @@ class LiveOrchestrator:
         """
         Get the target agent for a handoff tool.
 
-        Prefers HandoffProvider (live lookup) over static handoff_map.
-        This allows session-level handoff_map updates to take effect.
+        Uses the static handoff_map. For runtime resolution with
+        scenario context, use HandoffService directly.
         """
-        if self._handoff_provider:
-            return self._handoff_provider.get_handoff_target(tool_name)
         return self._handoff_map.get(tool_name)
 
     @property
     def handoff_map(self) -> dict[str, str]:
-        """
-        Get the current handoff map (for backward compatibility).
-
-        Returns a copy if using HandoffProvider, or the static map.
-        """
-        if self._handoff_provider:
-            return self._handoff_provider.handoff_map
+        """Get the current handoff map."""
         return self._handoff_map
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -664,71 +979,35 @@ class LiveOrchestrator:
     # ═══════════════════════════════════════════════════════════════════════════
 
     async def _handle_session_updated(self, event) -> None:
-        """Handle SESSION_UPDATED event.
-        
-        This is called for ALL session.update() calls, including:
-        - Full agent switches (apply_session)
-        - Context-only updates (_update_session_context)
-        
-        We only broadcast to UI and reset audio for actual agent switches,
-        not for routine context refreshes.
-        """
+        """Handle SESSION_UPDATED event."""
         session_obj = getattr(event, "session", None)
         session_id = getattr(session_obj, "id", "unknown") if session_obj else "unknown"
         voice_info = getattr(session_obj, "voice", None) if session_obj else None
-        
-        # Check if this is a context-only update (instructions refresh)
-        if self._context_update_in_progress:
-            logger.debug(
-                "Session updated (context refresh) | agent=%s session=%s",
-                self.active,
-                session_id,
-            )
-            # Don't broadcast to UI, don't reset audio, don't cancel responses
-            return
-        
-        # Check if agent actually changed since last broadcast
-        agent_changed = self._last_session_updated_agent != self.active
-        self._last_session_updated_agent = self.active
-        
-        if agent_changed:
-            logger.info(
-                "Session ready (agent switch) | agent=%s session=%s voice=%s",
-                self.active,
-                session_id,
-                voice_info,
-            )
-        else:
-            logger.debug(
-                "Session ready (no agent change) | agent=%s session=%s",
-                self.active,
-                session_id,
-            )
-        
-        # NOTE: We do NOT broadcast session_updated here because set_active_agent()
-        # already emits an agent_change envelope in _switch_to(). The frontend treats
-        # both events the same way, so emitting both causes duplicate UI updates.
-        # The session_updated event was previously causing the "SESSION UPDATED" spam
-        # in the UI even when only routine context updates occurred.
-        #
-        # If you need to broadcast session config changes (voice, VAD settings, etc.)
-        # to the UI, consider a separate mechanism that doesn't overlap with agent_change.
+        logger.info("Session ready: %s | voice=%s", session_id, voice_info)
 
-        # Only reset audio state for agent switches (not context refreshes)
-        if agent_changed:
-            if self.audio:
-                await self.audio.stop_playback()
+        if self.messenger:
             try:
-                await self.conn.response.cancel()
+                await self.messenger.send_session_update(
+                    agent_name=self.active,
+                    session_obj=session_obj,
+                    transport=self._transport,
+                )
             except Exception:
-                logger.debug("response.cancel() failed during session_ready", exc_info=True)
-            if self.audio:
-                await self.audio.start_capture()
+                logger.debug("Failed to emit session update envelope", exc_info=True)
+
+        if self.audio:
+            await self.audio.stop_playback()
+        try:
+            await self.conn.response.cancel()
+        except Exception:
+            logger.debug("response.cancel() failed during session_ready", exc_info=True)
+        if self.audio:
+            await self.audio.start_capture()
 
         if self._pending_greeting and self._pending_greeting_agent == self.active:
             self._cancel_pending_greeting_tasks()
             try:
-                await self.agents[self.active].trigger_response(
+                await self.agents[self.active].trigger_voicelive_response(
                     self.conn,
                     say=self._pending_greeting,
                 )
@@ -747,9 +1026,9 @@ class LiveOrchestrator:
         """Handle user speech started (barge-in)."""
         logger.debug("User speech started → cancel current response")
         
-        # Sync state to MemoManager before barge-in clears state
+        # Sync state to MemoManager in background - don't block barge-in response
         # This ensures any partial response context is preserved
-        self._sync_to_memo_manager()
+        self._schedule_background_sync()
         
         if self.audio:
             await self.audio.stop_playback()
@@ -774,9 +1053,8 @@ class LiveOrchestrator:
         if self.audio:
             await self.audio.start_playback()
 
-        self._llm_turn_number += 1
-        self._llm_turn_start_time = time.perf_counter()
-        self._llm_first_token_time = None
+        # Start new turn (increments turn count, resets TTFT tracking)
+        self._metrics.start_turn()
 
     async def _handle_transcription_completed(self, event) -> None:
         """Handle user transcription completed."""
@@ -788,21 +1066,17 @@ class LiveOrchestrator:
             # Add to bounded history for better handoff context
             self._user_message_history.append(user_text)
             
-            # Persist user turn to MemoManager for session continuity
+            # Persist user turn to MemoManager for session continuity (fast, local)
             if self._memo_manager:
                 try:
                     self._memo_manager.append_to_history(self.active, "user", user_text)
                 except Exception:
                     logger.debug("Failed to persist user turn to history", exc_info=True)
             
-            # Re-sync session context from MemoManager at start of each turn
-            # This picks up any external updates (e.g., CRM lookups, tool results)
-            self._refresh_session_context()
-            
-            # Update session instructions with latest context
-            # NOTE: In server VAD mode, this affects the NEXT response, not current
-            # The current response is already being generated from audio
-            await self._update_session_context()
+            # Mark that we need a session update (will be done in throttled fashion)
+            # Don't call _update_session_context here - it's too slow for the hot path
+            # The response_done handler will do a throttled update
+            self._pending_session_update = True
             
             await self._maybe_trigger_call_center_transfer(user_transcript)
 
@@ -819,17 +1093,15 @@ class LiveOrchestrator:
         """Handle assistant transcript delta (streaming)."""
         transcript_delta = getattr(event, "delta", "") or getattr(event, "transcript", "")
 
-        # Track LLM TTFT
-        if self._llm_turn_start_time and self._llm_first_token_time is None and transcript_delta:
-            self._llm_first_token_time = time.perf_counter()
-            ttft_ms = (self._llm_first_token_time - self._llm_turn_start_time) * 1000
-
+        # Track LLM TTFT via metrics
+        ttft_ms = self._metrics.record_first_token() if transcript_delta else None
+        if ttft_ms is not None:
             session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
             with tracer.start_as_current_span(
                 "voicelive.llm.ttft",
                 kind=trace.SpanKind.INTERNAL,
                 attributes={
-                    SpanAttr.TURN_NUMBER.value: self._llm_turn_number,
+                    SpanAttr.TURN_NUMBER.value: self._metrics.turn_count,
                     SpanAttr.TURN_LLM_TTFB_MS.value: ttft_ms,
                     SpanAttr.SESSION_ID.value: session_id or "",
                     SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id or "",
@@ -839,7 +1111,7 @@ class LiveOrchestrator:
                 ttft_span.add_event("llm.first_token", {"ttft_ms": ttft_ms})
                 logger.info(
                     "[Orchestrator] LLM TTFT | turn=%d ttft_ms=%.2f agent=%s",
-                    self._llm_turn_number,
+                    self._metrics.turn_count,
                     ttft_ms,
                     self.active,
                 )
@@ -900,12 +1172,11 @@ class LiveOrchestrator:
 
         self._emit_model_metrics(event)
 
-        # Sync state to MemoManager at turn boundary
-        self._sync_to_memo_manager()
+        # Sync state to MemoManager in background to avoid hot path latency
+        self._schedule_background_sync()
 
-        # Update session instructions with refreshed context (slots, tool outputs, etc.)
-        # This ensures the model retains awareness of collected information across turns
-        await self._update_session_context()
+        # Schedule throttled session update in background - don't block the hot path
+        self._schedule_throttled_session_update()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # AGENT SWITCHING
@@ -917,7 +1188,7 @@ class LiveOrchestrator:
         agent = self.agents[agent_name]
 
         # Emit invoke_agent summary span for the outgoing agent
-        if previous_agent != agent_name and self._agent_response_count > 0:
+        if previous_agent != agent_name and self._metrics._response_count > 0:
             self._emit_agent_summary_span(previous_agent)
 
         with tracer.start_as_current_span(
@@ -1029,7 +1300,7 @@ class LiveOrchestrator:
                     session_id = (
                         getattr(self.messenger, "session_id", None) if self.messenger else None
                     )
-                    await agent.apply_session(
+                    await agent.apply_voicelive_session(
                         self.conn,
                         system_vars=system_vars,
                         say=None,
@@ -1047,11 +1318,8 @@ class LiveOrchestrator:
                 if self._pending_greeting and self._pending_greeting_agent == agent_name:
                     self._schedule_greeting_fallback(agent_name)
 
-                # Reset token counters for the new agent
-                self._agent_input_tokens = 0
-                self._agent_output_tokens = 0
-                self._agent_start_time = time.perf_counter()
-                self._agent_response_count = 0
+                # Reset metrics for the new agent (captures summary of previous)
+                self._metrics.reset_for_agent_switch(agent_name)
 
                 switch_span.set_status(trace.StatusCode.OK)
             except Exception as ex:
@@ -1109,7 +1377,7 @@ class LiveOrchestrator:
                 "voicelive.agent_name": self.active,
                 "voicelive.is_acs": self._transport == "acs",
                 "voicelive.args_length": len(args_json) if args_json else 0,
-                "voicelive.tool.is_handoff": is_handoff_tool(name),
+                "voicelive.tool.is_handoff": self.handoff_service.is_handoff(name),
                 "voicelive.tool.is_transfer": name in TRANSFER_TOOL_NAMES,
             },
         ) as tool_span:
@@ -1141,7 +1409,7 @@ class LiveOrchestrator:
 
             # Use full message history for better handoff context
             last_user_message = (self._last_user_message or "").strip()
-            if is_handoff_tool(name):
+            if self.handoff_service.is_handoff(name):
                 # Build conversation summary from message history
                 if self._user_message_history:
                     # Use last message for immediate context
@@ -1313,7 +1581,7 @@ class LiveOrchestrator:
                 return False
 
             # Handle handoff tools using unified HandoffService
-            if is_handoff_tool(name):
+            if self.handoff_service.is_handoff(name):
                 # Use HandoffService for consistent resolution across orchestrators
                 resolution = self.handoff_service.resolve_handoff(
                     tool_name=name,
@@ -1550,7 +1818,7 @@ class LiveOrchestrator:
     def _select_pending_greeting(
         self,
         *,
-        agent: VoiceLiveAgentAdapter,
+        agent: UnifiedAgent,
         agent_name: str,
         system_vars: dict,
         is_first_visit: bool,
@@ -1610,7 +1878,7 @@ class LiveOrchestrator:
                         "[GreetingFallback] Triggering fallback introduction for %s", agent_name
                     )
                     try:
-                        await self.agents[agent_name].trigger_response(
+                        await self.agents[agent_name].trigger_voicelive_response(
                             self.conn,
                             say=self._pending_greeting,
                         )
@@ -1756,7 +2024,8 @@ class LiveOrchestrator:
             return
 
         session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
-        agent_duration_ms = (time.perf_counter() - self._agent_start_time) * 1000
+        # Use metrics for duration and token tracking
+        agent_duration_ms = self._metrics.duration_ms
 
         with tracer.start_as_current_span(
             f"invoke_agent {agent_name}",
@@ -1773,10 +2042,10 @@ class LiveOrchestrator:
                 "gen_ai.agent.description": getattr(
                     agent, "description", f"VoiceLive agent: {agent_name}"
                 ),
-                SpanAttr.GENAI_USAGE_INPUT_TOKENS.value: self._agent_input_tokens,
-                SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value: self._agent_output_tokens,
+                SpanAttr.GENAI_USAGE_INPUT_TOKENS.value: self._metrics.input_tokens,
+                SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value: self._metrics.output_tokens,
                 "voicelive.agent_name": agent_name,
-                "voicelive.response_count": self._agent_response_count,
+                "voicelive.response_count": self._metrics._response_count,
                 "voicelive.duration_ms": agent_duration_ms,
             },
         ) as agent_span:
@@ -1784,18 +2053,18 @@ class LiveOrchestrator:
                 "gen_ai.agent.session_complete",
                 {
                     "agent": agent_name,
-                    "input_tokens": self._agent_input_tokens,
-                    "output_tokens": self._agent_output_tokens,
-                    "response_count": self._agent_response_count,
+                    "input_tokens": self._metrics.input_tokens,
+                    "output_tokens": self._metrics.output_tokens,
+                    "response_count": self._metrics._response_count,
                     "duration_ms": agent_duration_ms,
                 },
             )
             logger.debug(
                 "[Agent Summary] %s complete | tokens=%d/%d responses=%d duration=%.1fms",
                 agent_name,
-                self._agent_input_tokens,
-                self._agent_output_tokens,
-                self._agent_response_count,
+                self._metrics.input_tokens,
+                self._metrics.output_tokens,
+                self._metrics._response_count,
                 agent_duration_ms,
             )
 
@@ -1808,29 +2077,26 @@ class LiveOrchestrator:
         response_id = getattr(response, "id", None)
 
         usage = getattr(response, "usage", None)
-        input_tokens = None
-        output_tokens = None
+        input_tokens = 0
+        output_tokens = 0
 
         if usage:
             input_tokens = getattr(usage, "input_tokens", None) or getattr(
                 usage, "prompt_tokens", None
-            )
+            ) or 0
             output_tokens = getattr(usage, "output_tokens", None) or getattr(
                 usage, "completion_tokens", None
-            )
+            ) or 0
 
-        if input_tokens:
-            self._agent_input_tokens += input_tokens
-        if output_tokens:
-            self._agent_output_tokens += output_tokens
-        self._agent_response_count += 1
+        # Track tokens and response via unified metrics
+        self._metrics.add_tokens(input_tokens=input_tokens, output_tokens=output_tokens)
+        self._metrics.record_response()
 
         model = self._model_name
         status = getattr(response, "status", None)
 
-        turn_duration_ms = None
-        if self._llm_turn_start_time:
-            turn_duration_ms = (time.perf_counter() - self._llm_turn_start_time) * 1000
+        # Get TTFT from metrics if available
+        turn_duration_ms = self._metrics.current_ttft_ms
 
         session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
         span_name = model if model else "gpt-4o-realtime"
@@ -1866,8 +2132,9 @@ class LiveOrchestrator:
                     SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, turn_duration_ms
                 )
 
-            if self._llm_turn_start_time and self._llm_first_token_time:
-                ttft_ms = (self._llm_first_token_time - self._llm_turn_start_time) * 1000
+            # Set TTFT if available from metrics
+            ttft_ms = self._metrics.current_ttft_ms
+            if ttft_ms is not None:
                 model_span.set_attribute(SpanAttr.GENAI_SERVER_TIME_TO_FIRST_TOKEN.value, ttft_ms)
 
             model_span.add_event(
@@ -1878,7 +2145,7 @@ class LiveOrchestrator:
                     "input_tokens": input_tokens or 0,
                     "output_tokens": output_tokens or 0,
                     "agent": self.active,
-                    "turn_number": self._llm_turn_number,
+                    "turn_number": self._metrics.turn_count,
                 },
             )
 
@@ -1910,5 +2177,9 @@ __all__ = [
     "LiveOrchestrator",
     "TRANSFER_TOOL_NAMES",
     "CALL_CENTER_TRIGGER_PHRASES",
+    "register_voicelive_orchestrator",
+    "unregister_voicelive_orchestrator",
+    "get_voicelive_orchestrator",
+    "get_orchestrator_registry_size",
 ]
 

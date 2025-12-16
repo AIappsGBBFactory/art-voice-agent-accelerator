@@ -313,6 +313,7 @@ class SessionAgentManager:
         self._memo = memo_manager
         self._redis = redis_mgr
         self._auto_persist = auto_persist
+        self._custom_agents: dict[str, UnifiedAgent] = {}  # Custom agents created at runtime
         self._registry: SessionAgentRegistry = self._init_registry()
 
         logger.info(
@@ -366,7 +367,7 @@ class SessionAgentManager:
         Get agent with session overrides applied.
 
         Returns a new UnifiedAgent instance with:
-        - Base agent properties
+        - Base agent properties (or custom agent if dynamically created)
         - Session-specific overrides merged in
 
         Args:
@@ -378,6 +379,11 @@ class SessionAgentManager:
         Raises:
             ValueError: If agent name is unknown
         """
+        # Check custom agents first (dynamically created)
+        if name in self._custom_agents:
+            return self._custom_agents[name]
+        
+        # Then check base agents (from YAML)
         base = self._base_agents.get(name)
         if not base:
             raise ValueError(f"Unknown agent: {name}")
@@ -429,15 +435,17 @@ class SessionAgentManager:
 
     def set_active_agent(self, name: str) -> None:
         """Set the currently active agent."""
-        if name not in self._base_agents:
+        if name not in self._base_agents and name not in self._custom_agents:
             raise ValueError(f"Unknown agent: {name}")
         self._registry.active_agent = name
         self._mark_dirty()
         logger.debug("Active agent set | session=%s agent=%s", self.session_id, name)
 
     def list_agents(self) -> list[str]:
-        """List all available agent names."""
-        return list(self._base_agents.keys())
+        """List all available agent names (base + custom)."""
+        all_agents = set(self._base_agents.keys())
+        all_agents.update(self._custom_agents.keys())
+        return list(all_agents)
 
     def get_base_agent(self, name: str) -> UnifiedAgent | None:
         """Get base agent without overrides (for comparison)."""
@@ -712,8 +720,102 @@ class SessionAgentManager:
             experiment_id=old_experiment,
             variant=old_variant,
         )
+        # Keep custom agents
+        for name, agent in self._custom_agents.items():
+            self._registry.agents[name] = SessionAgentConfig(base_agent_name=name)
         self._mark_dirty()
         logger.info("All agents reset to base | session=%s", self.session_id)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Custom Agent Registration
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def register_custom_agent(
+        self,
+        agent: UnifiedAgent,
+        *,
+        source: Literal["session", "api", "admin", "websocket"] = "api",
+    ) -> None:
+        """
+        Register a custom agent created at runtime (not from YAML).
+
+        This adds an entirely new agent to the session, not an override
+        of an existing base agent. The agent is stored separately from
+        base agents and can be listed, retrieved, and modified.
+
+        Args:
+            agent: The UnifiedAgent to register
+            source: Origin of the agent creation
+        """
+        name = agent.name
+        
+        # Store in custom agents dict
+        self._custom_agents[name] = agent
+        
+        # Create a session config for tracking
+        config = SessionAgentConfig(
+            base_agent_name=name,
+            created_at=time.time(),
+            source=source,
+        )
+        self._registry.agents[name] = config
+        
+        # Register handoff if configured
+        if agent.handoff and agent.handoff.trigger:
+            self._registry.handoff_map[agent.handoff.trigger] = name
+        
+        self._mark_dirty()
+        logger.info(
+            "Custom agent registered | session=%s agent=%s tools=%d source=%s",
+            self.session_id,
+            name,
+            len(agent.tool_names) if agent.tool_names else 0,
+            source,
+        )
+
+    def unregister_custom_agent(self, agent_name: str) -> bool:
+        """
+        Remove a custom agent from the session.
+
+        Args:
+            agent_name: Name of the custom agent to remove
+
+        Returns:
+            True if removed, False if not found
+        """
+        if agent_name not in self._custom_agents:
+            return False
+        
+        agent = self._custom_agents.pop(agent_name)
+        
+        # Remove from registry
+        if agent_name in self._registry.agents:
+            del self._registry.agents[agent_name]
+        
+        # Remove handoff mapping
+        if agent.handoff and agent.handoff.trigger:
+            self._registry.handoff_map.pop(agent.handoff.trigger, None)
+        
+        self._mark_dirty()
+        logger.info(
+            "Custom agent unregistered | session=%s agent=%s",
+            self.session_id,
+            agent_name,
+        )
+        return True
+
+    def list_custom_agents(self) -> dict[str, UnifiedAgent]:
+        """
+        Get all custom agents registered in this session.
+
+        Returns:
+            Dict of agent_name → UnifiedAgent for custom agents only
+        """
+        return dict(self._custom_agents)
+
+    def is_custom_agent(self, agent_name: str) -> bool:
+        """Check if an agent is a custom (dynamically created) agent."""
+        return agent_name in self._custom_agents
 
     # ─────────────────────────────────────────────────────────────────────────
     # Experiment Support
@@ -828,7 +930,7 @@ class SessionAgentManager:
 
     def _ensure_config(self, agent_name: str) -> SessionAgentConfig:
         """Ensure agent has a config entry, creating if needed."""
-        if agent_name not in self._base_agents:
+        if agent_name not in self._base_agents and agent_name not in self._custom_agents:
             raise ValueError(f"Unknown agent: {agent_name}")
 
         if agent_name not in self._registry.agents:

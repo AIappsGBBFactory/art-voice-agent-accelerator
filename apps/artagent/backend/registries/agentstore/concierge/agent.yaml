@@ -62,14 +62,14 @@ voice:
 #   # presence_penalty: 0.0                # Encourage topic diversity: 0.0 to 2.0
 
 voicelive_model:
-  deployment_id: gpt-4o-realtime-preview  # VoiceLive mode uses this
+  deployment_id: gpt-realtime  # VoiceLive mode uses this
   temperature: 0.7
-  max_tokens: 250
+  max_tokens: 2048
 
 cascade_model:
   deployment_id: gpt-4o                   # Cascade mode uses this
   temperature: 0.8                        # Can have different parameters!
-  max_tokens: 100
+  max_tokens: 2048
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session Configuration (VoiceLive Mode Only)

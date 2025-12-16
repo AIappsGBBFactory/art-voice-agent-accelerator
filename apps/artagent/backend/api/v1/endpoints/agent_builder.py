@@ -94,6 +94,7 @@ class VoiceConfigSchema(BaseModel):
     type: str = "azure-standard"
     style: str = "chat"
     rate: str = "+0%"
+    pitch: str = Field(default="+0%", description="Voice pitch: -50% to +50%")
 
 
 class SpeechConfigSchema(BaseModel):
@@ -118,6 +119,31 @@ class SpeechConfigSchema(BaseModel):
     )
 
 
+class SessionConfigSchema(BaseModel):
+    """VoiceLive session configuration schema."""
+
+    modalities: list[str] = Field(
+        default_factory=lambda: ["TEXT", "AUDIO"],
+        description="Session modalities (TEXT, AUDIO)",
+    )
+    input_audio_format: str = Field(default="PCM16", description="Input audio format")
+    output_audio_format: str = Field(default="PCM16", description="Output audio format")
+    turn_detection_type: str = Field(
+        default="azure_semantic_vad",
+        description="Turn detection type (azure_semantic_vad, server_vad, none)",
+    )
+    turn_detection_threshold: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="VAD threshold"
+    )
+    silence_duration_ms: int = Field(
+        default=700, ge=100, le=3000, description="Silence duration before turn ends"
+    )
+    prefix_padding_ms: int = Field(
+        default=240, ge=0, le=1000, description="Audio prefix padding"
+    )
+    tool_choice: str = Field(default="auto", description="Tool choice mode (auto, none, required)")
+
+
 class DynamicAgentConfig(BaseModel):
     """Configuration for creating a dynamic agent."""
 
@@ -127,11 +153,25 @@ class DynamicAgentConfig(BaseModel):
     return_greeting: str = Field(
         default="", max_length=1024, description="Return greeting when caller comes back"
     )
+    handoff_trigger: str = Field(
+        default="", max_length=128, description="Tool name that routes to this agent (e.g., handoff_my_agent)"
+    )
     prompt: str = Field(..., min_length=10, description="System prompt for the agent")
     tools: list[str] = Field(default_factory=list, description="List of tool names to enable")
-    model: ModelConfigSchema | None = None
+    cascade_model: ModelConfigSchema | None = Field(
+        default=None, description="Model config for cascade mode (STT→LLM→TTS)"
+    )
+    voicelive_model: ModelConfigSchema | None = Field(
+        default=None, description="Model config for voicelive mode (realtime API)"
+    )
+    model: ModelConfigSchema | None = Field(
+        default=None, description="Legacy: fallback model config (use cascade_model/voicelive_model instead)"
+    )
     voice: VoiceConfigSchema | None = None
     speech: SpeechConfigSchema | None = None
+    session: SessionConfigSchema | None = Field(
+        default=None, description="VoiceLive session settings (VAD, modalities, etc.)"
+    )
     template_vars: dict[str, Any] | None = None
 
 
@@ -159,6 +199,8 @@ class AgentTemplateInfo(BaseModel):
     voice: dict[str, Any] | None = None
     model: dict[str, Any] | None = None
     is_entry_point: bool = False
+    is_session_agent: bool = False
+    session_id: str | None = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -452,6 +494,38 @@ async def list_agent_templates() -> dict[str, Any]:
     # Sort by name, with entry point first
     templates.sort(key=lambda t: (not t.is_entry_point, t.name))
 
+    # Include session agents (custom-created agents)
+    # list_session_agents() returns {"{session_id}:{agent_name}": agent}
+    session_agents = list_session_agents()
+    for composite_key, agent in session_agents.items():
+        try:
+            # Parse the composite key to extract session_id
+            parts = composite_key.split(":", 1)
+            session_id = parts[0] if len(parts) > 1 else composite_key
+            
+            prompt_full = agent.prompt_template or ""
+            prompt_preview = prompt_full[:300] + "..." if len(prompt_full) > 300 else prompt_full
+            
+            templates.append(
+                AgentTemplateInfo(
+                    id=f"session:{composite_key}",
+                    name=agent.name,
+                    description=agent.description or "",
+                    greeting=agent.greeting or "",
+                    prompt_preview=prompt_preview,
+                    prompt_full=prompt_full,
+                    tools=agent.tool_names or [],
+                    voice=agent.voice.to_dict() if agent.voice else None,
+                    model=agent.model.to_dict() if agent.model else None,
+                    is_entry_point=False,
+                    is_session_agent=True,
+                    session_id=session_id,
+                )
+            )
+        except Exception as e:
+            logger.warning("Failed to include session agent %s: %s", agent.name, e)
+            continue
+
     return {
         "status": "success",
         "total": len(templates),
@@ -562,13 +636,61 @@ async def create_dynamic_agent(
             detail=f"Invalid tools: {', '.join(invalid_tools)}. Use GET /tools to see available tools.",
         )
 
-    # Build model config
-    model_config = ModelConfig(
-        deployment_id=config.model.deployment_id if config.model else "gpt-4o",
-        temperature=config.model.temperature if config.model else 0.7,
-        top_p=config.model.top_p if config.model else 0.9,
-        max_tokens=config.model.max_tokens if config.model else 4096,
-    )
+    # Build model configs for each orchestration mode
+    # Priority: explicit mode-specific config > legacy model config > defaults
+    
+    # Cascade model (for STT→LLM→TTS mode)
+    if config.cascade_model:
+        cascade_model = ModelConfig(
+            deployment_id=config.cascade_model.deployment_id,
+            temperature=config.cascade_model.temperature,
+            top_p=config.cascade_model.top_p,
+            max_tokens=config.cascade_model.max_tokens,
+        )
+    elif config.model:
+        # Fallback: use legacy model, but swap realtime for gpt-4o
+        base_id = config.model.deployment_id
+        cascade_model = ModelConfig(
+            deployment_id="gpt-4o" if "realtime" in base_id.lower() else base_id,
+            temperature=config.model.temperature,
+            top_p=config.model.top_p,
+            max_tokens=config.model.max_tokens,
+        )
+    else:
+        cascade_model = ModelConfig(
+            deployment_id="gpt-4o",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=4096,
+        )
+    
+    # VoiceLive model (for realtime API mode)
+    if config.voicelive_model:
+        voicelive_model = ModelConfig(
+            deployment_id=config.voicelive_model.deployment_id,
+            temperature=config.voicelive_model.temperature,
+            top_p=config.voicelive_model.top_p,
+            max_tokens=config.voicelive_model.max_tokens,
+        )
+    elif config.model:
+        # Fallback: use legacy model, but ensure realtime for voicelive
+        base_id = config.model.deployment_id
+        voicelive_model = ModelConfig(
+            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-realtime",
+            temperature=config.model.temperature,
+            top_p=config.model.top_p,
+            max_tokens=config.model.max_tokens,
+        )
+    else:
+        voicelive_model = ModelConfig(
+            deployment_id="gpt-realtime",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=4096,
+        )
+    
+    # Default model uses cascade config
+    model_config = cascade_model
 
     # Build voice config
     voice_config = VoiceConfig(
@@ -576,6 +698,7 @@ async def create_dynamic_agent(
         type=config.voice.type if config.voice else "azure-standard",
         style=config.voice.style if config.voice else "chat",
         rate=config.voice.rate if config.voice else "+0%",
+        pitch=config.voice.pitch if config.voice else "+0%",
     )
 
     # Build speech config (STT / VAD settings)
@@ -589,16 +712,40 @@ async def create_dynamic_agent(
         speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
     )
 
-    # Create the agent
+    # Determine handoff trigger (use explicit config or auto-generate)
+    handoff_trigger = config.handoff_trigger.strip() if config.handoff_trigger else ""
+    if not handoff_trigger:
+        handoff_trigger = f"handoff_{config.name.lower().replace(' ', '_')}"
+
+    # Build session config dict for VoiceLive (if provided)
+    session_dict = {}
+    if config.session:
+        session_dict = {
+            "modalities": config.session.modalities,
+            "input_audio_format": config.session.input_audio_format,
+            "output_audio_format": config.session.output_audio_format,
+            "turn_detection": {
+                "type": config.session.turn_detection_type,
+                "threshold": config.session.turn_detection_threshold,
+                "silence_duration_ms": config.session.silence_duration_ms,
+                "prefix_padding_ms": config.session.prefix_padding_ms,
+            },
+            "tool_choice": config.session.tool_choice,
+        }
+
+    # Create the agent with mode-specific models
     agent = UnifiedAgent(
         name=config.name,
         description=config.description,
         greeting=config.greeting,
         return_greeting=config.return_greeting,
-        handoff=HandoffConfig(trigger=f"handoff_{config.name.lower().replace(' ', '_')}"),
+        handoff=HandoffConfig(trigger=handoff_trigger),
         model=model_config,
+        cascade_model=cascade_model,
+        voicelive_model=voicelive_model,
         voice=voice_config,
         speech=speech_config,
+        session=session_dict,
         prompt_template=config.prompt,
         tool_names=config.tools,
         template_vars=config.template_vars or {},
@@ -628,13 +775,17 @@ async def create_dynamic_agent(
             "description": config.description,
             "greeting": config.greeting,
             "return_greeting": config.return_greeting,
+            "handoff_trigger": handoff_trigger,
             "prompt_preview": (
                 config.prompt[:200] + "..." if len(config.prompt) > 200 else config.prompt
             ),
             "tools": config.tools,
+            "cascade_model": cascade_model.to_dict(),
+            "voicelive_model": voicelive_model.to_dict(),
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
             "speech": speech_config.to_dict(),
+            "session": session_dict,
         },
         created_at=time.time(),
     )
@@ -669,6 +820,7 @@ async def get_session_agent_config(
             "description": agent.description,
             "greeting": agent.greeting,
             "return_greeting": agent.return_greeting,
+            "handoff_trigger": agent.handoff.trigger if agent.handoff else "",
             "prompt_preview": (
                 agent.prompt_template[:200] + "..."
                 if len(agent.prompt_template) > 200
@@ -677,7 +829,11 @@ async def get_session_agent_config(
             "prompt_full": agent.prompt_template,
             "tools": agent.tool_names,
             "model": agent.model.to_dict(),
+            "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else agent.model.to_dict(),
+            "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else agent.model.to_dict(),
             "voice": agent.voice.to_dict(),
+            "speech": agent.speech.to_dict() if agent.speech else {},
+            "session": agent.session or {},
             "template_vars": agent.template_vars,
         },
         created_at=agent.metadata.get("created_at"),
@@ -714,19 +870,61 @@ async def update_session_agent(
     existing = get_session_agent(session_id)
     created_at = existing.metadata.get("created_at") if existing else time.time()
 
-    # Build configs
-    model_config = ModelConfig(
-        deployment_id=config.model.deployment_id if config.model else "gpt-4o",
-        temperature=config.model.temperature if config.model else 0.7,
-        top_p=config.model.top_p if config.model else 0.9,
-        max_tokens=config.model.max_tokens if config.model else 4096,
-    )
+    # Build model configs for each orchestration mode
+    if config.cascade_model:
+        cascade_model = ModelConfig(
+            deployment_id=config.cascade_model.deployment_id,
+            temperature=config.cascade_model.temperature,
+            top_p=config.cascade_model.top_p,
+            max_tokens=config.cascade_model.max_tokens,
+        )
+    elif config.model:
+        base_id = config.model.deployment_id
+        cascade_model = ModelConfig(
+            deployment_id="gpt-4o" if "realtime" in base_id.lower() else base_id,
+            temperature=config.model.temperature,
+            top_p=config.model.top_p,
+            max_tokens=config.model.max_tokens,
+        )
+    else:
+        cascade_model = ModelConfig(
+            deployment_id="gpt-4o",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=4096,
+        )
+    
+    if config.voicelive_model:
+        voicelive_model = ModelConfig(
+            deployment_id=config.voicelive_model.deployment_id,
+            temperature=config.voicelive_model.temperature,
+            top_p=config.voicelive_model.top_p,
+            max_tokens=config.voicelive_model.max_tokens,
+        )
+    elif config.model:
+        base_id = config.model.deployment_id
+        voicelive_model = ModelConfig(
+            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-realtime",
+            temperature=config.model.temperature,
+            top_p=config.model.top_p,
+            max_tokens=config.model.max_tokens,
+        )
+    else:
+        voicelive_model = ModelConfig(
+            deployment_id="gpt-realtime",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=4096,
+        )
+    
+    model_config = cascade_model  # Default fallback
 
     voice_config = VoiceConfig(
         name=config.voice.name if config.voice else "en-US-AvaMultilingualNeural",
         type=config.voice.type if config.voice else "azure-standard",
         style=config.voice.style if config.voice else "chat",
         rate=config.voice.rate if config.voice else "+0%",
+        pitch=config.voice.pitch if config.voice else "+0%",
     )
 
     # Build speech config (STT / VAD settings)
@@ -740,16 +938,40 @@ async def update_session_agent(
         speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
     )
 
-    # Create updated agent
+    # Determine handoff trigger (use explicit config or auto-generate)
+    handoff_trigger = config.handoff_trigger.strip() if config.handoff_trigger else ""
+    if not handoff_trigger:
+        handoff_trigger = f"handoff_{config.name.lower().replace(' ', '_')}"
+
+    # Build session config dict for VoiceLive (if provided)
+    session_dict = {}
+    if config.session:
+        session_dict = {
+            "modalities": config.session.modalities,
+            "input_audio_format": config.session.input_audio_format,
+            "output_audio_format": config.session.output_audio_format,
+            "turn_detection": {
+                "type": config.session.turn_detection_type,
+                "threshold": config.session.turn_detection_threshold,
+                "silence_duration_ms": config.session.silence_duration_ms,
+                "prefix_padding_ms": config.session.prefix_padding_ms,
+            },
+            "tool_choice": config.session.tool_choice,
+        }
+
+    # Create updated agent with mode-specific models
     agent = UnifiedAgent(
         name=config.name,
         description=config.description,
         greeting=config.greeting,
         return_greeting=config.return_greeting,
-        handoff=HandoffConfig(trigger=f"handoff_{config.name.lower().replace(' ', '_')}"),
+        handoff=HandoffConfig(trigger=handoff_trigger),
         model=model_config,
+        cascade_model=cascade_model,
+        voicelive_model=voicelive_model,
         voice=voice_config,
         speech=speech_config,
+        session=session_dict,
         prompt_template=config.prompt,
         tool_names=config.tools,
         template_vars=config.template_vars or {},
@@ -778,11 +1000,15 @@ async def update_session_agent(
             "description": config.description,
             "greeting": config.greeting,
             "return_greeting": config.return_greeting,
+            "handoff_trigger": handoff_trigger,
             "prompt_preview": config.prompt[:200] + "...",
             "tools": config.tools,
+            "cascade_model": cascade_model.to_dict(),
+            "voicelive_model": voicelive_model.to_dict(),
             "model": model_config.to_dict(),
             "voice": voice_config.to_dict(),
             "speech": speech_config.to_dict(),
+            "session": session_dict,
         },
         created_at=created_at,
         modified_at=time.time(),

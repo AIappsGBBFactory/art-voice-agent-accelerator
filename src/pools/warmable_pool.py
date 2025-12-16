@@ -100,7 +100,7 @@ class WarmableResourcePool(Generic[T]):
         If enable_background_warmup, starts background maintenance task.
         """
         if self._warm_pool_size > 0:
-            logger.info(f"[{self._name}] Pre-warming {self._warm_pool_size} resources...")
+            logger.debug(f"[{self._name}] Pre-warming {self._warm_pool_size} resources...")
             await self._fill_warm_pool()
 
         if self._enable_background_warmup and self._warm_pool_size > 0:
@@ -108,12 +108,12 @@ class WarmableResourcePool(Generic[T]):
                 self._background_warmup_loop(),
                 name=f"{self._name}-warmup",
             )
-            logger.info(
+            logger.debug(
                 f"[{self._name}] Started background warmup (interval={self._warmup_interval_sec}s)"
             )
 
         self._ready.set()
-        logger.info(
+        logger.debug(
             f"[{self._name}] Pool ready (warm_size={self._warm_queue.qsize()}, "
             f"session_awareness={self._session_awareness})"
         )
@@ -143,7 +143,7 @@ class WarmableResourcePool(Generic[T]):
             self._metrics.warm_pool_size = 0
 
         self._ready.clear()
-        logger.info(f"[{self._name}] Pool shutdown complete")
+        logger.debug(f"[{self._name}] Pool shutdown complete")
 
     async def acquire(self, timeout: float | None = None) -> T:
         """

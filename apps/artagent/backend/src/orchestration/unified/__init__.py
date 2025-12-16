@@ -34,9 +34,13 @@ from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
     register_adapter_update_callback,
 )
+from apps.artagent.backend.src.orchestration.session_scenarios import (
+    register_scenario_update_callback,
+)
 from apps.artagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
 )
+from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
 from apps.artagent.backend.voice import (
     CascadeOrchestratorAdapter,
     OrchestratorContext,
@@ -228,6 +232,145 @@ def update_session_agent(session_id: str, agent: UnifiedAgent) -> bool:
 register_adapter_update_callback(update_session_agent)
 
 
+def update_session_scenario(session_id: str, scenario) -> bool:
+    """
+    Update the orchestrator adapter when a session scenario changes.
+
+    This is the integration point for Scenario Builder updates.
+    When called, the adapter's agents, handoff_map, and active agent
+    are updated to reflect the new scenario configuration.
+
+    Also updates VoiceLive orchestrators if one is active for the session.
+    Additionally, updates the system prompts with handoff instructions in MemoManager.
+
+    Args:
+        session_id: The session to update
+        scenario: The ScenarioConfig with updated configuration
+
+    Returns:
+        True if adapter was found and updated, False if no active adapter exists
+    """
+    updated_cascade = False
+    updated_voicelive = False
+    updated_memo = False
+
+    # Resolve the new configuration from the scenario
+    config = resolve_orchestrator_config(
+        session_id=session_id,
+        scenario_name=scenario.name,
+    )
+
+    # Update system prompts with handoff instructions in MemoManager
+    # This ensures agents have handoff instructions immediately, not just on next turn
+    try:
+        from apps.artagent.backend.src.orchestration.session_scenarios import _redis_manager
+        if _redis_manager:
+            memo = MemoManager.from_redis(session_id, _redis_manager)
+            
+            # For each agent in the scenario, update their system prompt with handoff instructions
+            for agent_name in scenario.agents:
+                agent = config.agents.get(agent_name)
+                if agent:
+                    # Build the base system prompt from the agent
+                    base_prompt = agent.render_prompt({}) or ""
+                    
+                    # Build handoff instructions from the scenario
+                    handoff_instructions = scenario.build_handoff_instructions(agent_name)
+                    
+                    if handoff_instructions:
+                        full_prompt = f"{base_prompt}\n\n{handoff_instructions}" if base_prompt else handoff_instructions
+                    else:
+                        full_prompt = base_prompt
+                    
+                    # Update the agent's system prompt in MemoManager
+                    if full_prompt:
+                        memo.ensure_system_prompt(agent_name, full_prompt)
+                        logger.debug(
+                            "Updated system prompt with handoff instructions | agent=%s handoff_len=%d",
+                            agent_name,
+                            len(handoff_instructions) if handoff_instructions else 0,
+                        )
+            
+            # Persist updates to Redis
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(memo.persist_to_redis_async(_redis_manager))
+            except RuntimeError:
+                # No running loop - use sync persist
+                pass
+            
+            updated_memo = True
+            logger.info(
+                "🔄 Updated system prompts with handoff instructions | session=%s agents=%s",
+                session_id,
+                scenario.agents,
+            )
+    except Exception as e:
+        logger.warning("Failed to update system prompts in MemoManager: %s", e)
+
+    # Update CascadeOrchestratorAdapter if present
+    if session_id in _adapters:
+        adapter = _adapters[session_id]
+
+        # Use the update_scenario method for complete attribute refresh
+        # This clears cached HandoffService, visited_agents, etc.
+        adapter.update_scenario(
+            agents=config.agents,
+            handoff_map=config.handoff_map,
+            start_agent=scenario.start_agent,
+            scenario_name=scenario.name,
+        )
+
+        logger.info(
+            "🔄 Session scenario updated in adapter | session=%s scenario=%s agents=%d handoffs=%d",
+            session_id,
+            scenario.name,
+            len(config.agents),
+            len(config.handoff_map),
+        )
+        updated_cascade = True
+
+    # Update VoiceLive orchestrator if present
+    try:
+        from apps.artagent.backend.voice.voicelive.orchestrator import (
+            get_voicelive_orchestrator,
+        )
+
+        voicelive_orch = get_voicelive_orchestrator(session_id)
+        if voicelive_orch:
+            # Pass UnifiedAgent dict directly (no adapter needed)
+            voicelive_orch.update_scenario(
+                agents=config.agents,
+                handoff_map=config.handoff_map,
+                start_agent=scenario.start_agent,
+                scenario_name=scenario.name,
+            )
+            logger.info(
+                "🔄 Session scenario updated in VoiceLive orchestrator | session=%s scenario=%s",
+                session_id,
+                scenario.name,
+            )
+            updated_voicelive = True
+    except ImportError:
+        logger.debug("VoiceLive module not available for scenario update")
+    except Exception as e:
+        logger.warning("Failed to update VoiceLive orchestrator: %s", e)
+
+    if not updated_cascade and not updated_voicelive and not updated_memo:
+        logger.debug(
+            "No active adapter for session %s - scenario will be used when adapter is created",
+            session_id,
+        )
+        return False
+
+    return True
+
+
+# Register the callback so session_scenarios module can notify us of updates
+register_scenario_update_callback(update_session_scenario)
+
+
 async def route_turn(
     cm: MemoManager,
     transcript: str,
@@ -337,6 +480,10 @@ async def route_turn(
                 except Exception:
                     pass
 
+                # Update TTSPlayback active agent for correct voice resolution on greetings
+                if hasattr(ws.state, "tts_playback") and ws.state.tts_playback:
+                    ws.state.tts_playback.set_active_agent(new_agent)
+
                 # Get new agent's voice configuration for TTS updates
                 # Adapter.agents contains session agent overrides from Agent Builder
                 new_agent_config = adapter.agents.get(new_agent)
@@ -418,9 +565,9 @@ async def route_turn(
                     voice_style = agent_config.voice.style
                     voice_rate = agent_config.voice.rate
 
-                # Queue TTS via speech cascade with agent's voice configuration
+                # Play TTS immediately (bypass queue which is blocked during orchestration)
                 if hasattr(ws.state, "speech_cascade") and ws.state.speech_cascade:
-                    ws.state.speech_cascade.queue_tts(
+                    await ws.state.speech_cascade.play_tts_immediate(
                         text,
                         voice_name=voice_name,
                         voice_style=voice_style,

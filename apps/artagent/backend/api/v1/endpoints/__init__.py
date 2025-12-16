@@ -30,8 +30,9 @@ Key Files:
 - browser.py: Web browser - receives raw PCM audio from mic
 - Both use the same MediaHandler with different transport modes
 - agent_builder.py: REST API for creating dynamic agents at runtime
+- scenario_builder.py: REST API for creating dynamic scenarios at runtime
 """
 
-from . import agent_builder, browser, calls, health, media
+from . import agent_builder, browser, calls, health, media, scenario_builder
 
-__all__ = ["health", "calls", "media", "browser", "agent_builder"]
+__all__ = ["health", "calls", "media", "browser", "agent_builder", "scenario_builder"]
