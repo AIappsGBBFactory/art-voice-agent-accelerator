@@ -222,6 +222,83 @@ SUCCESS: Your application was deployed to Azure!
 
 ---
 
+## :material-account-plus: Create a Demo Profile
+
+Before testing personalized conversations, create a demo profile with synthetic customer data that agents use for context-aware interactions.
+
+=== "Step 1: Open Profile Dialog"
+
+    From the home screen, click the **:material-lightning-bolt: Create Demo Profile** button in the top navigation.
+    
+    <figure markdown="span">
+      ![Home Screen](../assets/01-.png){ loading=lazy }
+      <figcaption>Click "Create Demo Profile" button</figcaption>
+    </figure>
+
+=== "Step 2: Fill Profile Form"
+
+    The **Create Demo Access** dialog appears. Fill in the required fields:
+    
+    <figure markdown="span">
+      ![Create Demo Profile Form](../assets/02-create-demo-profile-form.png){ loading=lazy }
+      <figcaption>Create Demo Access dialog</figcaption>
+    </figure>
+    
+    | Field | Description |
+    |-------|-------------|
+    | **Full Name** | Your display name for the demo |
+    | **Email Address** | Use a real email if testing MFA verification |
+    | **Verification Method** | Choose Email or SMS for MFA codes |
+
+=== "Step 3: Complete Form"
+
+    Enter your details and select your preferred verification method.
+    
+    <figure markdown="span">
+      ![Form Filled](../assets/03-form-filled.png){ loading=lazy }
+      <figcaption>Completed profile form</figcaption>
+    </figure>
+    
+    !!! warning "Use Real Email for MFA Testing"
+        If you want to test multi-factor authentication tools, provide your actual email address. The system sends real 6-digit verification codes you'll read back to the agent.
+
+=== "Step 4: View Profile"
+
+    Click **Create Demo Profile** to generate your synthetic customer data. The profile panel shows your generated data including verification tokens and MFA settings.
+    
+    <figure markdown="span">
+      ![Profile Created](../assets/04-profile-created.png){ loading=lazy }
+      <figcaption>Profile created with verification tokens</figcaption>
+    </figure>
+    
+    !!! info "Profile Expiration"
+        Demo profiles automatically expire after **24 hours**. All data is synthetic and safe for demos.
+
+=== "Step 5: Reset Session (Optional)"
+
+    To start a fresh conversation, click the **reset button** :material-refresh: in the bottom toolbar.
+    
+    <figure markdown="span">
+      ![Session Reset](../assets/05-session-reset.png){ loading=lazy }
+      <figcaption>Reset conversation and start fresh</figcaption>
+    </figure>
+
+=== "Lookup Existing Profile"
+
+    Already created a profile? Switch to the **Lookup by Email** tab and enter the email used during creation.
+    
+    <figure markdown="span">
+      ![Lookup by Email Tab](../assets/06-lookup-by-email-tab.png){ loading=lazy }
+      <figcaption>Lookup by Email tab</figcaption>
+    </figure>
+    
+    <figure markdown="span">
+      ![Lookup Email Entered](../assets/07-lookup-email-entered.png){ loading=lazy }
+      <figcaption>Enter email to find existing profile</figcaption>
+    </figure>
+
+---
+
 ## :material-help-circle: Quick Troubleshooting
 
 ??? failure "Deployment failed with permission error"
@@ -268,11 +345,16 @@ Once your deployment is complete, use the Agent Builder to create and run your f
 
 === "Step 1: Open Agent Builder"
 
-    Navigate to the Agent Builder home screen. You should see the initial landing page.
+    From the home screen, click the **wrench icon** :material-wrench: on the left toolbar to open the Agent Editor.
+    
+    <figure markdown="span">
+      ![Home Screen](../assets/01-.png){ loading=lazy }
+      <figcaption>Home screen - click the wrench icon on the left toolbar</figcaption>
+    </figure>
     
     <figure markdown="span">
       ![Agent Builder - Initial](../assets/01-agent-builder-initial.png){ loading=lazy }
-      <figcaption>Agent Builder landing page</figcaption>
+      <figcaption>Agent Builder interface</figcaption>
     </figure>
 
 === "Step 2: Choose Template"
@@ -316,11 +398,11 @@ Scenarios define what conversations your agent can handle. Create one to customi
 
 === "Step 1: Access Scenarios"
 
-    From the agent home, go to **Scenarios** or **Flows** and click **Create New Scenario**.
+    From the Agent Builder, select **Scenario** from the tabs at the top of the window. Then click **Create New Scenario** or select an existing one to edit.
     
     <figure markdown="span">
       ![Scenario Home](../assets/scenario-01-home.png){ loading=lazy }
-      <figcaption>Scenario management home</figcaption>
+      <figcaption>Select Scenario tab at the top of the Agent Builder</figcaption>
     </figure>
 
 === "Step 2: Open Builder"
