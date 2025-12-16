@@ -5,81 +5,62 @@ VoiceLive Latency Metrics
 OpenTelemetry metrics for tracking VoiceLive turn latencies.
 These metrics show up in Application Insights Performance view for analysis.
 
-IMPORTANT: Metrics are initialized lazily to ensure the MeterProvider is configured
-before creating instruments. Call get_meter() only after configure_azure_monitor().
+Uses the shared metrics factory for lazy initialization, ensuring proper
+MeterProvider configuration before instrument creation.
 """
 
 from __future__ import annotations
 
-from opentelemetry import metrics
-from opentelemetry.metrics import Counter, Histogram, Meter
+from apps.artagent.backend.voice.shared.metrics_factory import (
+    LazyCounter,
+    LazyHistogram,
+    LazyMeter,
+    build_session_attributes,
+)
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.metrics")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LAZY METER INITIALIZATION
+# LAZY METER INITIALIZATION (via shared factory)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_meter: Meter | None = None
-_llm_ttft_histogram: Histogram | None = None
-_tts_ttfb_histogram: Histogram | None = None
-_stt_latency_histogram: Histogram | None = None
-_turn_duration_histogram: Histogram | None = None
-_turn_counter: Counter | None = None
+_meter = LazyMeter("voicelive.turn.latency", version="1.0.0")
 
+# LLM Time-To-First-Token (from turn start to first LLM token)
+_llm_ttft_histogram: LazyHistogram = _meter.histogram(
+    name="voicelive.llm.ttft",
+    description="LLM Time-To-First-Token in milliseconds",
+    unit="ms",
+)
 
-def _ensure_metrics_initialized() -> None:
-    """
-    Initialize metrics instruments lazily.
+# TTS Time-To-First-Byte (from VAD end to first audio byte - end-to-end latency)
+_tts_ttfb_histogram: LazyHistogram = _meter.histogram(
+    name="voicelive.tts.ttfb",
+    description="TTS Time-To-First-Byte (E2E latency from VAD end to first audio) in milliseconds",
+    unit="ms",
+)
 
-    This must be called after configure_azure_monitor() has been invoked,
-    otherwise the instruments will use a no-op meter.
-    """
-    global _meter, _llm_ttft_histogram, _tts_ttfb_histogram
-    global _stt_latency_histogram, _turn_duration_histogram, _turn_counter
+# STT latency (from VAD end to transcript completion)
+_stt_latency_histogram: LazyHistogram = _meter.histogram(
+    name="voicelive.stt.latency",
+    description="STT latency from VAD end to transcript completion in milliseconds",
+    unit="ms",
+)
 
-    if _meter is not None:
-        return
+# Total turn duration
+_turn_duration_histogram: LazyHistogram = _meter.histogram(
+    name="voicelive.turn.duration",
+    description="Total turn duration in milliseconds",
+    unit="ms",
+)
 
-    _meter = metrics.get_meter("voicelive.turn.latency", version="1.0.0")
-
-    # LLM Time-To-First-Token (from turn start to first LLM token)
-    _llm_ttft_histogram = _meter.create_histogram(
-        name="voicelive.llm.ttft",
-        description="LLM Time-To-First-Token in milliseconds",
-        unit="ms",
-    )
-
-    # TTS Time-To-First-Byte (from VAD end to first audio byte - end-to-end latency)
-    _tts_ttfb_histogram = _meter.create_histogram(
-        name="voicelive.tts.ttfb",
-        description="TTS Time-To-First-Byte (E2E latency from VAD end to first audio) in milliseconds",
-        unit="ms",
-    )
-
-    # STT latency (from VAD end to transcript completion)
-    _stt_latency_histogram = _meter.create_histogram(
-        name="voicelive.stt.latency",
-        description="STT latency from VAD end to transcript completion in milliseconds",
-        unit="ms",
-    )
-
-    # Total turn duration
-    _turn_duration_histogram = _meter.create_histogram(
-        name="voicelive.turn.duration",
-        description="Total turn duration in milliseconds",
-        unit="ms",
-    )
-
-    # Turn counter
-    _turn_counter = _meter.create_counter(
-        name="voicelive.turn.count",
-        description="Number of conversation turns processed",
-        unit="1",
-    )
-
-    logger.info("VoiceLive latency metrics initialized")
+# Turn counter
+_turn_counter: LazyCounter = _meter.counter(
+    name="voicelive.turn.count",
+    description="Number of conversation turns processed",
+    unit="1",
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -102,15 +83,12 @@ def record_llm_ttft(
     :param turn_number: Turn number within the conversation
     :param agent_name: Optional agent name handling the turn
     """
-    _ensure_metrics_initialized()
-
-    attributes = {
-        "session.id": session_id,
-        "turn.number": turn_number,
-        "metric.type": "llm_ttft",
-    }
-    if agent_name:
-        attributes["agent.name"] = agent_name
+    attributes = build_session_attributes(
+        session_id,
+        turn_number=turn_number,
+        agent_name=agent_name,
+        metric_type="llm_ttft",
+    )
 
     _llm_ttft_histogram.record(ttft_ms, attributes=attributes)
     logger.info(
@@ -139,16 +117,13 @@ def record_tts_ttfb(
     :param reference: Timing reference point (vad_end or turn_start)
     :param agent_name: Optional agent name handling the turn
     """
-    _ensure_metrics_initialized()
-
-    attributes = {
-        "session.id": session_id,
-        "turn.number": turn_number,
-        "metric.type": "tts_ttfb",
-        "latency.reference": reference,
-    }
-    if agent_name:
-        attributes["agent.name"] = agent_name
+    attributes = build_session_attributes(
+        session_id,
+        turn_number=turn_number,
+        agent_name=agent_name,
+        metric_type="tts_ttfb",
+    )
+    attributes["latency.reference"] = reference
 
     _tts_ttfb_histogram.record(ttfb_ms, attributes=attributes)
     logger.info(
@@ -174,13 +149,11 @@ def record_stt_latency(
     :param session_id: Session identifier for correlation
     :param turn_number: Turn number within the conversation
     """
-    _ensure_metrics_initialized()
-
-    attributes = {
-        "session.id": session_id,
-        "turn.number": turn_number,
-        "metric.type": "stt_latency",
-    }
+    attributes = build_session_attributes(
+        session_id,
+        turn_number=turn_number,
+        metric_type="stt_latency",
+    )
 
     _stt_latency_histogram.record(latency_ms, attributes=attributes)
     logger.info(
@@ -216,14 +189,11 @@ def record_turn_complete(
     :param tts_ttfb_ms: Optional TTS TTFB for the turn
     :param agent_name: Optional agent name handling the turn
     """
-    _ensure_metrics_initialized()
-
-    base_attributes = {
-        "session.id": session_id,
-        "turn.number": turn_number,
-    }
-    if agent_name:
-        base_attributes["agent.name"] = agent_name
+    base_attributes = build_session_attributes(
+        session_id,
+        turn_number=turn_number,
+        agent_name=agent_name,
+    )
 
     # Record turn duration
     _turn_duration_histogram.record(
@@ -247,37 +217,6 @@ def record_turn_complete(
         session_id,
         turn_number,
     )
-
-
-# Accessor functions for histogram/counter access (if needed externally)
-def get_llm_ttft_histogram() -> Histogram | None:
-    """Get the LLM TTFT histogram after ensuring initialization."""
-    _ensure_metrics_initialized()
-    return _llm_ttft_histogram
-
-
-def get_tts_ttfb_histogram() -> Histogram | None:
-    """Get the TTS TTFB histogram after ensuring initialization."""
-    _ensure_metrics_initialized()
-    return _tts_ttfb_histogram
-
-
-def get_stt_latency_histogram() -> Histogram | None:
-    """Get the STT latency histogram after ensuring initialization."""
-    _ensure_metrics_initialized()
-    return _stt_latency_histogram
-
-
-def get_turn_duration_histogram() -> Histogram | None:
-    """Get the turn duration histogram after ensuring initialization."""
-    _ensure_metrics_initialized()
-    return _turn_duration_histogram
-
-
-def get_turn_counter() -> Counter | None:
-    """Get the turn counter after ensuring initialization."""
-    _ensure_metrics_initialized()
-    return _turn_counter
 
 
 __all__ = [

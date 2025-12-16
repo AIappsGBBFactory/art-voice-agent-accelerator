@@ -54,7 +54,7 @@ from apps.artagent.backend.src.orchestration.session_scenarios import (
     list_session_scenarios,
     list_session_scenarios_by_session,
     remove_session_scenario,
-    set_session_scenario,
+    set_session_scenario_async,
 )
 from utils.ml_logging import get_logger
 
@@ -565,8 +565,8 @@ async def create_dynamic_scenario(
     )
 
     # Store in session (in-memory cache + Redis persistence)
-    # Note: set_session_scenario now handles Redis persistence automatically
-    set_session_scenario(session_id, scenario)
+    # Use async version to ensure persistence completes before returning
+    await set_session_scenario_async(session_id, scenario)
 
     logger.info(
         "Dynamic scenario created | session=%s name=%s agents=%d handoffs=%d",
@@ -748,8 +748,8 @@ async def update_session_scenario(
         handoffs=handoffs,
     )
 
-    # Store in session
-    set_session_scenario(session_id, scenario)
+    # Store in session (async to ensure Redis persistence)
+    await set_session_scenario_async(session_id, scenario)
 
     logger.info(
         "Dynamic scenario updated | session=%s name=%s agents=%d handoffs=%d",
@@ -879,8 +879,8 @@ async def apply_template_to_session(
             detail=f"Template '{template_id}' not found",
         )
     
-    # Set the scenario for this session (this triggers the update callback)
-    set_session_scenario(session_id, scenario)
+    # Set the scenario for this session (async to ensure Redis persistence)
+    await set_session_scenario_async(session_id, scenario)
     
     logger.info(
         "Industry template applied | session=%s template=%s start_agent=%s agents=%d",

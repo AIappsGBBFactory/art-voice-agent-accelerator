@@ -305,6 +305,45 @@ class LiveOrchestrator:
         """Return the current MemoManager instance."""
         return self._memo_manager
 
+    @property
+    def _session_id(self) -> str | None:
+        """
+        Get the session ID from memo_manager or messenger.
+
+        Cached property to avoid repeated attribute access.
+        """
+        if self._memo_manager:
+            session_id = getattr(self._memo_manager, "session_id", None)
+            if session_id:
+                return session_id
+        if self.messenger:
+            return getattr(self.messenger, "session_id", None)
+        return None
+
+    @property
+    def _orchestrator_config(self):
+        """
+        Get cached orchestrator config for scenario resolution.
+
+        Lazily resolves and caches the config on first access to avoid
+        repeated calls to resolve_orchestrator_config() during the session.
+
+        The config is cached per-instance (session lifetime), which is appropriate
+        because scenario changes during a call would be disruptive anyway.
+        """
+        if not hasattr(self, "_cached_orchestrator_config"):
+            from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+
+            self._cached_orchestrator_config = resolve_orchestrator_config(
+                session_id=self._session_id
+            )
+            logger.debug(
+                "[LiveOrchestrator] Cached orchestrator config | scenario=%s session=%s",
+                self._cached_orchestrator_config.scenario_name,
+                self._session_id,
+            )
+        return self._cached_orchestrator_config
+
     def _sync_from_memo_manager(self) -> None:
         """
         Sync orchestrator state from MemoManager.
@@ -691,9 +730,8 @@ class LiveOrchestrator:
             base_instructions = agent._agent.render_prompt(context_vars) or ""
 
             # Inject handoff instructions from scenario configuration
-            # Use the already-resolved scenario (supports both file-based and session-scoped)
-            from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
-            config = resolve_orchestrator_config(session_id=self._session_id)
+            # Use the cached orchestrator config (supports both file-based and session-scoped)
+            config = self._orchestrator_config
             if config.scenario and agent._agent.name:
                 # Use scenario.build_handoff_instructions directly (works for session scenarios)
                 handoff_instructions = config.scenario.build_handoff_instructions(agent._agent.name)
@@ -843,33 +881,19 @@ class LiveOrchestrator:
         """
         Get or create the HandoffService for unified handoff resolution.
 
-        The service is lazily created on first access and uses the scenario
-        from the config resolver (supports both file-based and session-scoped).
+        The service is lazily created on first access and uses the cached
+        orchestrator config (supports both file-based and session-scoped scenarios).
         """
         if self._handoff_service is None:
-            from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
-
-            # Get session_id from memo_manager or messenger
-            session_id = None
-            if self._memo_manager:
-                session_id = getattr(self._memo_manager, "session_id", None)
-            if not session_id and self.messenger:
-                session_id = getattr(self.messenger, "session_id", None)
-
-            # Resolve config (includes session-scoped scenarios)
-            scenario_name = None
-            scenario = None
-            if session_id:
-                config = resolve_orchestrator_config(session_id=session_id)
-                scenario_name = config.scenario_name
-                scenario = config.scenario
+            # Use cached orchestrator config for scenario resolution
+            config = self._orchestrator_config
 
             self._handoff_service = HandoffService(
-                scenario_name=scenario_name,
+                scenario_name=config.scenario_name,
                 handoff_map=self.handoff_map,
                 agents=self.agents,
                 memo_manager=self._memo_manager,
-                scenario=scenario,  # Pass scenario object for session-scoped scenarios
+                scenario=config.scenario,  # Pass scenario object for session-scoped scenarios
             )
         return self._handoff_service
 
