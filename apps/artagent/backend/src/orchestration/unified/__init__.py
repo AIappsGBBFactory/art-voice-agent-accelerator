@@ -241,6 +241,7 @@ def update_session_scenario(session_id: str, scenario) -> bool:
     are updated to reflect the new scenario configuration.
 
     Also updates VoiceLive orchestrators if one is active for the session.
+    Additionally, updates the system prompts with handoff instructions in MemoManager.
 
     Args:
         session_id: The session to update
@@ -251,12 +252,62 @@ def update_session_scenario(session_id: str, scenario) -> bool:
     """
     updated_cascade = False
     updated_voicelive = False
+    updated_memo = False
 
     # Resolve the new configuration from the scenario
     config = resolve_orchestrator_config(
         session_id=session_id,
         scenario_name=scenario.name,
     )
+
+    # Update system prompts with handoff instructions in MemoManager
+    # This ensures agents have handoff instructions immediately, not just on next turn
+    try:
+        from apps.artagent.backend.src.orchestration.session_scenarios import _redis_manager
+        if _redis_manager:
+            memo = MemoManager.from_redis(session_id, _redis_manager)
+            
+            # For each agent in the scenario, update their system prompt with handoff instructions
+            for agent_name in scenario.agents:
+                agent = config.agents.get(agent_name)
+                if agent:
+                    # Build the base system prompt from the agent
+                    base_prompt = agent.render_prompt({}) or ""
+                    
+                    # Build handoff instructions from the scenario
+                    handoff_instructions = scenario.build_handoff_instructions(agent_name)
+                    
+                    if handoff_instructions:
+                        full_prompt = f"{base_prompt}\n\n{handoff_instructions}" if base_prompt else handoff_instructions
+                    else:
+                        full_prompt = base_prompt
+                    
+                    # Update the agent's system prompt in MemoManager
+                    if full_prompt:
+                        memo.ensure_system_prompt(agent_name, full_prompt)
+                        logger.debug(
+                            "Updated system prompt with handoff instructions | agent=%s handoff_len=%d",
+                            agent_name,
+                            len(handoff_instructions) if handoff_instructions else 0,
+                        )
+            
+            # Persist updates to Redis
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(memo.persist_to_redis_async(_redis_manager))
+            except RuntimeError:
+                # No running loop - use sync persist
+                pass
+            
+            updated_memo = True
+            logger.info(
+                "🔄 Updated system prompts with handoff instructions | session=%s agents=%s",
+                session_id,
+                scenario.agents,
+            )
+    except Exception as e:
+        logger.warning("Failed to update system prompts in MemoManager: %s", e)
 
     # Update CascadeOrchestratorAdapter if present
     if session_id in _adapters:
@@ -285,16 +336,12 @@ def update_session_scenario(session_id: str, scenario) -> bool:
         from apps.artagent.backend.voice.voicelive.orchestrator import (
             get_voicelive_orchestrator,
         )
-        from apps.artagent.backend.voice.voicelive.agent_adapter import adapt_unified_agents
 
         voicelive_orch = get_voicelive_orchestrator(session_id)
         if voicelive_orch:
-            # Adapt agents for VoiceLive format
-            adapted_agents = adapt_unified_agents(config.agents)
-
-            # Update the VoiceLive orchestrator with all attributes
+            # Pass UnifiedAgent dict directly (no adapter needed)
             voicelive_orch.update_scenario(
-                agents=adapted_agents,
+                agents=config.agents,
                 handoff_map=config.handoff_map,
                 start_agent=scenario.start_agent,
                 scenario_name=scenario.name,
@@ -310,7 +357,7 @@ def update_session_scenario(session_id: str, scenario) -> bool:
     except Exception as e:
         logger.warning("Failed to update VoiceLive orchestrator: %s", e)
 
-    if not updated_cascade and not updated_voicelive:
+    if not updated_cascade and not updated_voicelive and not updated_memo:
         logger.debug(
             "No active adapter for session %s - scenario will be used when adapter is created",
             session_id,

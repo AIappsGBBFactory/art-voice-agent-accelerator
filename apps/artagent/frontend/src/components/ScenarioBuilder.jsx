@@ -484,23 +484,25 @@ function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorI
 
 function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete }) {
   const [type, setType] = useState(handoff?.type || 'announced');
-  const [tool, setTool] = useState(handoff?.tool || '');
   const [shareContext, setShareContext] = useState(handoff?.share_context !== false);
+  const [handoffCondition, setHandoffCondition] = useState(handoff?.handoff_condition || '');
 
   useEffect(() => {
     if (handoff) {
       setType(handoff.type || 'announced');
-      setTool(handoff.tool || `handoff_${(handoff.to_agent || '').toLowerCase().replace(/\s+/g, '_')}`);
       setShareContext(handoff.share_context !== false);
+      setHandoffCondition(handoff.handoff_condition || '');
     }
   }, [handoff]);
 
   const handleSave = () => {
+    // Always use the centralized handoff_to_agent tool
     onSave({
       ...handoff,
       type,
-      tool,
+      tool: 'handoff_to_agent',  // Standardized - always use generic handoff
       share_context: shareContext,
+      handoff_condition: handoffCondition,
     });
     onClose();
   };
@@ -515,6 +517,24 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
       </DialogTitle>
       <DialogContent>
         <Stack spacing={3} sx={{ mt: 1 }}>
+          {/* Handoff Condition - when to trigger */}
+          <Box>
+            <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <AutoFixHighIcon sx={{ fontSize: 16, color: '#6366f1' }} />
+              Handoff Condition
+            </Typography>
+            <TextField
+              value={handoffCondition}
+              onChange={(e) => setHandoffCondition(e.target.value)}
+              size="small"
+              fullWidth
+              multiline
+              rows={4}
+              placeholder={`Transfer to ${handoff.to_agent} when the customer:\n- Asks about [specific topic or service]\n- Expresses [intent or need]\n- Mentions [keywords or phrases]`}
+              helperText="Describe when this handoff should be triggered. This will be injected into the source agent's system prompt automatically."
+            />
+          </Box>
+
           {/* Type selector */}
           <Box>
             <Typography variant="subtitle2" gutterBottom>
@@ -542,16 +562,6 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
                 : 'Silent handoff - agent continues conversation naturally'}
             </Typography>
           </Box>
-
-          {/* Tool name */}
-          <TextField
-            label="Handoff Tool Name"
-            value={tool}
-            onChange={(e) => setTool(e.target.value)}
-            size="small"
-            fullWidth
-            helperText="The function name the LLM calls to trigger this handoff"
-          />
 
           {/* Share context */}
           <FormControlLabel
@@ -1706,6 +1716,7 @@ export default function ScenarioBuilder({
       tool: `handoff_${targetAgent.name.toLowerCase().replace(/\s+/g, '_')}`,
       type: config.handoff_type,
       share_context: true,
+      handoff_condition: '', // User can define when to trigger this handoff
     };
 
     setConfig((prev) => ({
@@ -2397,27 +2408,34 @@ export default function ScenarioBuilder({
               <Stack spacing={0.5}>
                 {config.handoffs.map((h, i) => {
                   const handoffColor = connectionColors[i % connectionColors.length];
+                  const hasCondition = h.handoff_condition && h.handoff_condition.trim().length > 0;
                   return (
-                    <Chip
+                    <Tooltip
                       key={i}
-                      label={`${h.from_agent} → ${h.to_agent}`}
-                      size="small"
-                      variant="outlined"
-                      icon={h.type === 'announced' ? <VolumeUpIcon sx={{ color: `${handoffColor} !important` }} /> : <VolumeOffIcon sx={{ color: `${handoffColor} !important` }} />}
-                      onClick={() => setEditingHandoff(h)}
-                      onDelete={() => handleDeleteHandoff(h)}
-                      sx={{
-                        justifyContent: 'flex-start',
-                        height: 28,
-                        fontSize: 11,
-                        borderColor: handoffColor,
-                        borderWidth: 2,
-                        '&:hover': {
+                      title={hasCondition ? `Condition: ${h.handoff_condition}` : 'No handoff condition defined'}
+                      placement="left"
+                      arrow
+                    >
+                      <Chip
+                        label={`${h.from_agent} → ${h.to_agent}${hasCondition ? ' 📋' : ''}`}
+                        size="small"
+                        variant="outlined"
+                        icon={h.type === 'announced' ? <VolumeUpIcon sx={{ color: `${handoffColor} !important` }} /> : <VolumeOffIcon sx={{ color: `${handoffColor} !important` }} />}
+                        onClick={() => setEditingHandoff(h)}
+                        onDelete={() => handleDeleteHandoff(h)}
+                        sx={{
+                          justifyContent: 'flex-start',
+                          height: 28,
+                          fontSize: 11,
                           borderColor: handoffColor,
-                          backgroundColor: `${handoffColor}15`,
-                        },
-                      }}
-                    />
+                          borderWidth: hasCondition ? 3 : 2,
+                          '&:hover': {
+                            borderColor: handoffColor,
+                            backgroundColor: `${handoffColor}15`,
+                          },
+                        }}
+                      />
+                    </Tooltip>
                   );
                 })}
               </Stack>

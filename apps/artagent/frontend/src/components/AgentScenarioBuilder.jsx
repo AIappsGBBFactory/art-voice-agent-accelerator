@@ -21,6 +21,7 @@ import {
   IconButton,
   LinearProgress,
   Stack,
+  Chip,
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
@@ -77,6 +78,14 @@ const styles = {
   content: {
     height: 'calc(100% - 72px)', // Subtract header height
     overflow: 'hidden',
+  },
+  betaChip: {
+    color: 'white',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderColor: 'rgba(255,255,255,0.3)',
+    fontWeight: 700,
+    letterSpacing: '0.5px',
+    height: 22,
   },
 };
 
@@ -210,9 +219,17 @@ export default function AgentScenarioBuilder({
               )}
             </Avatar>
             <Box>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                {mode === 'agents' ? 'Agent Builder' : 'Scenario Builder'}
-              </Typography>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                  {mode === 'agents' ? 'Agent Builder' : 'Scenario Builder'}
+                </Typography>
+                <Chip
+                  label="BETA"
+                  size="small"
+                  variant="outlined"
+                  sx={styles.betaChip}
+                />
+              </Stack>
               <Typography variant="caption" sx={{ opacity: 0.8 }}>
                 {getModeDescription()}
               </Typography>

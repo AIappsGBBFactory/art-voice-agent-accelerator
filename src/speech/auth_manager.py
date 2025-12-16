@@ -76,7 +76,7 @@ class SpeechTokenManager:
         try:
             self.get_token(force_refresh=True)
             self._warmed = True
-            logger.info("Speech token pre-fetched successfully")
+            logger.debug("Speech token pre-fetched successfully")
             return True
         except Exception as e:
             logger.warning("Speech token pre-fetch failed: %s", e)

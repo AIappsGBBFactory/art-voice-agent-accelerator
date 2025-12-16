@@ -81,6 +81,11 @@ class HandoffConfigSchema(BaseModel):
     share_context: bool = Field(
         default=True, description="Whether to pass conversation context"
     )
+    handoff_condition: str = Field(
+        default="",
+        description="User-defined condition describing when to trigger this handoff. "
+        "This text is injected into the source agent's system prompt.",
+    )
 
 
 class AgentOverrideSchema(BaseModel):
@@ -227,6 +232,7 @@ async def list_scenario_templates() -> dict[str, Any]:
                             "tool": h.tool,
                             "type": h.type,
                             "share_context": h.share_context,
+                            "handoff_condition": h.handoff_condition,
                         }
                         for h in scenario.handoffs
                     ],
@@ -284,6 +290,7 @@ async def get_scenario_template(template_id: str) -> dict[str, Any]:
                     "tool": h.tool,
                     "type": h.type,
                     "share_context": h.share_context,
+                    "handoff_condition": h.handoff_condition,
                 }
                 for h in scenario.handoffs
             ],
@@ -539,6 +546,7 @@ async def create_dynamic_scenario(
                 tool=h.tool,
                 type=h.type,
                 share_context=h.share_context,
+                handoff_condition=h.handoff_condition,
             )
         )
 
@@ -586,6 +594,7 @@ async def create_dynamic_scenario(
                     "tool": h.tool,
                     "type": h.type,
                     "share_context": h.share_context,
+                    "handoff_condition": h.handoff_condition,
                 }
                 for h in handoffs
             ],
@@ -633,6 +642,7 @@ async def get_session_scenario_config(
                     "tool": h.tool,
                     "type": h.type,
                     "share_context": h.share_context,
+                    "handoff_condition": h.handoff_condition,
                 }
                 for h in scenario.handoffs
             ],
@@ -720,6 +730,7 @@ async def update_session_scenario(
                 tool=h.tool,
                 type=h.type,
                 share_context=h.share_context,
+                handoff_condition=h.handoff_condition,
             )
         )
 
@@ -766,6 +777,7 @@ async def update_session_scenario(
                     "tool": h.tool,
                     "type": h.type,
                     "share_context": h.share_context,
+                    "handoff_condition": h.handoff_condition,
                 }
                 for h in handoffs
             ],
@@ -929,6 +941,7 @@ async def list_scenarios_for_session(
                         "tool": h.tool,
                         "type": h.type,
                         "share_context": h.share_context,
+                        "handoff_condition": h.handoff_condition,
                     }
                     for h in scenario.handoffs
                 ],

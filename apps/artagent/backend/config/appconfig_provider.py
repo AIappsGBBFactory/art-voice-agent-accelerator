@@ -64,10 +64,10 @@ def _find_project_root(start: Path) -> Path | None:
 
 
 def _get_dotenv_local_keys() -> set[str]:
-    """Return env var names explicitly declared in a .env.local file.
+    """Return env var names declared in local env files (.env.local or .env).
 
-    These keys are treated as user-intentional local overrides and should not be
-    overwritten by App Configuration.
+    These keys are treated as user-intentional overrides and should not be
+    overwritten by App Configuration when running locally.
     """
 
     global _dotenv_local_keys_cache
@@ -84,9 +84,12 @@ def _get_dotenv_local_keys() -> set[str]:
     backend_dir = Path(__file__).resolve().parents[1]  # .../backend
     project_root = _find_project_root(backend_dir)
 
-    candidates: list[Path] = [backend_dir / ".env.local"]
+    candidates: list[Path] = [
+        backend_dir / ".env.local",
+        backend_dir / ".env",
+    ]
     if project_root is not None:
-        candidates.append(project_root / ".env.local")
+        candidates.extend([project_root / ".env.local", project_root / ".env"])
 
     for path in candidates:
         if not path.exists():
@@ -222,84 +225,56 @@ def _load_config_from_appconfig() -> dict[str, Any] | None:
     global _config
 
     if not APPCONFIG_ENABLED:
-        _log("   App Configuration not enabled (AZURE_APPCONFIG_ENDPOINT not set)")
+        return None
+
+    # Validate endpoint format
+    if not APPCONFIG_ENDPOINT.endswith(".azconfig.io"):
+        _log(f"⚠️  Invalid App Config endpoint: {APPCONFIG_ENDPOINT}")
         return None
 
     try:
         from azure.appconfiguration.provider import SettingSelector, load
         from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
-        _log(f"   Connecting to: {APPCONFIG_ENDPOINT}")
-        _log(f"   Using label: {APPCONFIG_LABEL}")
-
-        # Use ManagedIdentityCredential if AZURE_CLIENT_ID is set (user-assigned MI)
+        # Choose credential based on AZURE_CLIENT_ID
         azure_client_id = os.getenv("AZURE_CLIENT_ID")
         if azure_client_id:
-            _log(f"   Using ManagedIdentityCredential with client_id: {azure_client_id[:8]}...")
             credential = ManagedIdentityCredential(client_id=azure_client_id)
         else:
-            _log("   Using DefaultAzureCredential")
             credential = DefaultAzureCredential()
 
-        # Use SettingSelector to filter by label
-        selects = [
-            SettingSelector(key_filter="*", label_filter=APPCONFIG_LABEL),
-        ]
-
-        # Load configuration using the provider with retry
+        # Load with retry (exponential backoff)
         import time
+        last_error = None
 
-        max_retries = 3
-        retry_delay = 2
-
-        for attempt in range(1, max_retries + 1):
+        for attempt in range(1, 4):
             try:
-                _log(f"   Calling load() (attempt {attempt}/{max_retries})...")
                 config = load(
                     endpoint=APPCONFIG_ENDPOINT,
                     credential=credential,
-                    selects=selects,
-                    # Pass credential for Key Vault reference resolution
+                    selects=[SettingSelector(key_filter="*", label_filter=APPCONFIG_LABEL)],
                     keyvault_credential=credential,
+                    replica_discovery_enabled=False,  # Avoid DNS SRV lookup issues
                 )
 
-                # Convert to dict for easier access
                 config_dict = dict(config)
-                _log(f"   ✅ Loaded {len(config_dict)} configuration keys")
-
-                # Log all keys for debugging
-                if not config_dict:
-                    _log("   ⚠️  No keys loaded from App Configuration!")
-
-                # Log some sample keys (first 5)
-                sample_keys = list(config_dict.keys())[:5]
-                for key in sample_keys:
-                    value = config_dict[key]
-                    display_value = str(value)[:30] + "..." if len(str(value)) > 30 else str(value)
-                    _log(f"      {key}: {display_value}")
 
                 with _config_lock:
                     _config = config_dict
-
                 return config_dict
 
-            except Exception as retry_error:
-                _log(f"   ⚠️  Attempt {attempt} failed: {retry_error}")
-                if attempt < max_retries:
-                    _log(f"   Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    raise
+            except Exception as e:
+                last_error = e
+                if attempt < 3:
+                    time.sleep(2 ** attempt)  # 2, 4 seconds
 
-    except ImportError as e:
-        _log(f"   ❌ azure-appconfiguration-provider not installed: {e}")
+        raise last_error
+
+    except ImportError:
+        _log("❌ azure-appconfiguration-provider not installed")
         return None
     except Exception as e:
-        _log(f"   ❌ Failed to load from App Configuration: {e}")
-        import traceback
-
-        traceback.print_exc(file=sys.stderr)
+        _log(f"❌ App Config load failed: {e}")
         return None
 
 
@@ -318,69 +293,27 @@ def sync_appconfig_to_env(config_dict: dict[str, Any] | None = None) -> dict[str
             config_dict = _config
 
     if not config_dict:
-        _log("   No configuration to sync")
         return {}
 
     synced: dict[str, str] = {}
-    overridden: list[str] = []
-    skipped_dotenv: list[str] = []
-    not_found: list[str] = []
-
-    # Log all available keys for diagnostics
-    _log(f"   Available config keys ({len(config_dict)}):")
-    for k in sorted(config_dict.keys()):
-        v = config_dict[k]
-        display_v = str(v)[:40] + "..." if len(str(v)) > 40 else str(v)
-        _log(f"      {k}: {display_v}")
+    skipped_local = 0
 
     for appconfig_key, env_var_name in APPCONFIG_KEY_MAP.items():
-        # Check if key exists in loaded config
-        # Try exact match first, then with colon separator (App Config sometimes uses colons)
-        value = None
-        matched_key = None
-
-        if appconfig_key in config_dict:
-            value = str(config_dict[appconfig_key])
-            matched_key = appconfig_key
-        else:
-            # Try alternative key format (colons instead of slashes)
-            alt_key = appconfig_key.replace("/", ":")
-            if alt_key in config_dict:
-                value = str(config_dict[alt_key])
-                matched_key = alt_key
+        # Try exact match, then colon format
+        value = config_dict.get(appconfig_key) or config_dict.get(appconfig_key.replace("/", ":"))
 
         if value is not None:
-            # Precedence: .env.local > AppConfig > ambient env vars
-            # If user explicitly set the env var via .env.local, never overwrite.
+            # Skip if explicitly set in .env.local
             if _env_override_allowed_when_appconfig_loaded(env_var_name):
-                skipped_dotenv.append(env_var_name)
+                skipped_local += 1
                 continue
+            os.environ[env_var_name] = str(value)
+            synced[env_var_name] = str(value)
 
-            if env_var_name in os.environ:
-                overridden.append(env_var_name)
-            os.environ[env_var_name] = value
-            synced[env_var_name] = value
-        else:
-            # Track keys we expected but didn't find
-            if env_var_name in ["AZURE_OPENAI_ENDPOINT", "AZURE_SPEECH_ENDPOINT", "ACS_ENDPOINT"]:
-                not_found.append(f"{appconfig_key} -> {env_var_name}")
-
-    if synced:
-        _log(f"   ✅ Synced {len(synced)} values to environment variables")
-        # Log which critical vars were synced
-        critical_synced = [
-            k
-            for k in synced
-            if k in ["AZURE_OPENAI_ENDPOINT", "AZURE_SPEECH_ENDPOINT", "ACS_ENDPOINT"]
-        ]
-        if critical_synced:
-            _log(f"   ✅ Critical vars synced: {critical_synced}")
-    if overridden:
-        _log(f"   ♻️  Overrode {len(overridden)} pre-set env vars (App Config takes precedence)")
-    if skipped_dotenv:
-        _log(f"   🧾 Skipped {len(skipped_dotenv)} vars (explicitly set in .env.local)")
-    if not_found:
-        _log(f"   ⚠️  Critical keys not found in App Config: {not_found}")
+    # Single summary line
+    endpoint_name = APPCONFIG_ENDPOINT.split("//")[-1].split(".")[0] if APPCONFIG_ENDPOINT else "unknown"
+    local_note = f", {skipped_local} local overrides" if skipped_local else ""
+    _log(f"   App Config ({endpoint_name}): {len(synced)} keys synced{local_note}")
 
     return synced
 
@@ -389,46 +322,21 @@ def bootstrap_appconfig() -> bool:
     """
     Bootstrap App Configuration at application startup.
 
-    This function should be called at the very beginning of main.py,
-    BEFORE any other imports that depend on environment variables.
-
-    It performs:
-    1. Loads all config from App Configuration using the provider
-    2. Syncs values to environment variables
+    Call this BEFORE any other imports that depend on environment variables.
 
     Returns:
         True if App Config loaded successfully, False otherwise
     """
-    _log("🔧 Bootstrapping App Configuration...")
-    _log(f"   AZURE_APPCONFIG_ENDPOINT: {APPCONFIG_ENDPOINT or '<not set>'}")
-    _log(f"   AZURE_APPCONFIG_LABEL: {APPCONFIG_LABEL}")
-    client_id = os.getenv("AZURE_CLIENT_ID", "")
-    _log(f"   AZURE_CLIENT_ID: {client_id[:20] + '...' if client_id else '<not set>'}")
-
     if not APPCONFIG_ENABLED:
-        _log("ℹ️  App Configuration not configured, using environment variables")
+        _log("   App Config: Not configured (using env vars)")
         return False
 
-    # Load configuration
     config_dict = _load_config_from_appconfig()
-
     if not config_dict:
-        _log("⚠️  Failed to load App Configuration, falling back to environment variables")
+        _log("⚠️  App Config: Failed to load (using env vars)")
         return False
 
-    # Sync to environment
-    synced = sync_appconfig_to_env(config_dict)
-
-    # Log critical vars status
-    _log("📋 Critical environment variables after sync:")
-    critical_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_SPEECH_ENDPOINT", "ACS_ENDPOINT"]
-    for var in critical_vars:
-        value = os.getenv(var, "")
-        status = "✓" if value else "✗"
-        display = value[:50] + "..." if len(value) > 50 else value
-        _log(f"   {status} {var}: {display or '<not set>'}")
-
-    _log("✅ App Configuration bootstrap complete")
+    sync_appconfig_to_env(config_dict)
     return True
 
 

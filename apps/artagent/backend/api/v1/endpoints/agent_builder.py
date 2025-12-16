@@ -676,14 +676,14 @@ async def create_dynamic_agent(
         # Fallback: use legacy model, but ensure realtime for voicelive
         base_id = config.model.deployment_id
         voicelive_model = ModelConfig(
-            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-4o-realtime-preview",
+            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-realtime",
             temperature=config.model.temperature,
             top_p=config.model.top_p,
             max_tokens=config.model.max_tokens,
         )
     else:
         voicelive_model = ModelConfig(
-            deployment_id="gpt-4o-realtime-preview",
+            deployment_id="gpt-realtime",
             temperature=0.7,
             top_p=0.9,
             max_tokens=4096,
@@ -904,14 +904,14 @@ async def update_session_agent(
     elif config.model:
         base_id = config.model.deployment_id
         voicelive_model = ModelConfig(
-            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-4o-realtime-preview",
+            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-realtime",
             temperature=config.model.temperature,
             top_p=config.model.top_p,
             max_tokens=config.model.max_tokens,
         )
     else:
         voicelive_model = ModelConfig(
-            deployment_id="gpt-4o-realtime-preview",
+            deployment_id="gpt-realtime",
             temperature=0.7,
             top_p=0.9,
             max_tokens=4096,

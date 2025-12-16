@@ -259,7 +259,7 @@ def discover_agents(agents_dir: Path = AGENTS_DIR) -> dict[str, UnifiedAgent]:
             except Exception as e:
                 logger.error("Failed to load agent from %s: %s", item, e)
 
-    logger.info("Discovered %d agents: %s", len(agents), list(agents.keys()))
+    logger.debug("Discovered %d agents: %s", len(agents), list(agents.keys()))
     return agents
 
 

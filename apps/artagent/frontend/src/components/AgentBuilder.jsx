@@ -358,7 +358,7 @@ const CASCADE_MODEL_OPTIONS = [
 // Models for VoiceLive mode (realtime API)
 const VOICELIVE_MODEL_OPTIONS = [
   {
-    id: 'gpt-4o-realtime-preview',
+    id: 'gpt-realtime',
     name: 'GPT-4o Realtime Preview',
     description: 'Low-latency realtime voice model',
     tier: 'recommended',
@@ -798,7 +798,7 @@ export default function AgentBuilder({
       max_tokens: 4096,
     },
     voicelive_model: {
-      deployment_id: 'gpt-4o-realtime-preview',
+      deployment_id: 'gpt-realtime',
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 4096,
@@ -1157,7 +1157,7 @@ export default function AgentBuilder({
       // Build cascade_model and voicelive_model from template's model or use defaults
       const templateModel = template.model || {};
       const cascadeDefaults = { deployment_id: 'gpt-4o', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
-      const voiceliveDefaults = { deployment_id: 'gpt-4o-realtime-preview', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
+      const voiceliveDefaults = { deployment_id: 'gpt-realtime', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
       
       setConfig(prev => ({
         ...prev,
@@ -1211,7 +1211,7 @@ export default function AgentBuilder({
           max_tokens: config.cascade_model?.max_tokens ?? 4096,
         },
         voicelive_model: {
-          deployment_id: config.voicelive_model?.deployment_id || 'gpt-4o-realtime-preview',
+          deployment_id: config.voicelive_model?.deployment_id || 'gpt-realtime',
           temperature: config.voicelive_model?.temperature ?? 0.7,
           top_p: config.voicelive_model?.top_p ?? 0.9,
           max_tokens: config.voicelive_model?.max_tokens ?? 4096,
@@ -2653,7 +2653,7 @@ export default function AgentBuilder({
                       Uses Realtime API for ultra-low latency. Audio streams directly to/from the model.
                     </Typography>
                     <ModelSelector
-                      value={config.voicelive_model?.deployment_id || 'gpt-4o-realtime-preview'}
+                      value={config.voicelive_model?.deployment_id || 'gpt-realtime'}
                       onChange={(v) => handleNestedConfigChange('voicelive_model', 'deployment_id', v)}
                       modelOptions={VOICELIVE_MODEL_OPTIONS}
                       title="VoiceLive Model Deployment"

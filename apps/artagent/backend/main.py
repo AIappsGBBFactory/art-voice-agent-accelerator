@@ -15,6 +15,7 @@ Configuration Loading Order:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -47,6 +48,7 @@ def _load_dotenv_local():
 
     env_files = [
         backend_dir / ".env.local",
+        backend_dir / ".env",
         project_root / ".env.local",
         project_root / ".env",
     ]
@@ -60,16 +62,11 @@ def _load_dotenv_local():
 
 loaded_env_file = _load_dotenv_local()
 
-log("=" * 60)
-log("🚀 Backend Startup - App Config Integration v4")
+log("")
+log("🚀 Backend Startup")
+log("─" * 40)
 if loaded_env_file:
-    log(f"📁 Loaded .env from: {loaded_env_file}")
-log(f"   AZURE_APPCONFIG_ENDPOINT: {os.getenv('AZURE_APPCONFIG_ENDPOINT', '<not set>')}")
-log(f"   AZURE_APPCONFIG_LABEL: {os.getenv('AZURE_APPCONFIG_LABEL', '<not set>')}")
-log(
-    f"   AZURE_CLIENT_ID: {(os.getenv('AZURE_CLIENT_ID', '')[:20] + '...') if os.getenv('AZURE_CLIENT_ID') else '<not set>'}"
-)
-log("=" * 60)
+    log(f"   Config: {loaded_env_file.name}")
 
 # Add parent directories to sys.path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -80,56 +77,28 @@ sys.path.insert(0, os.path.dirname(__file__))
 # ============================================================================
 # Load App Configuration values into environment variables BEFORE any other
 # imports that read from os.getenv() at module load time (settings.py, etc.)
-log("🔄 Starting App Configuration bootstrap...")
 try:
     from config.appconfig_provider import bootstrap_appconfig
-
-    log("   Imported bootstrap_appconfig successfully")
-    result = bootstrap_appconfig()
-    log(f"   Bootstrap returned: {result}")
+    bootstrap_appconfig()
 except Exception as e:
-    log(f"❌ CRITICAL: App Configuration bootstrap failed: {e}")
-    log("   Continuing with environment variables only...")
-    import traceback
-
-    traceback.print_exc(file=sys.stderr)
-
-# Log critical env vars after bootstrap
-log("📋 Critical environment variables after bootstrap:")
-log(
-    f"   AZURE_OPENAI_ENDPOINT: {os.getenv('AZURE_OPENAI_ENDPOINT', '<NOT SET>')[:60] if os.getenv('AZURE_OPENAI_ENDPOINT') else '<NOT SET>'}"
-)
-log(
-    f"   AZURE_SPEECH_ENDPOINT: {os.getenv('AZURE_SPEECH_ENDPOINT', '<NOT SET>')[:60] if os.getenv('AZURE_SPEECH_ENDPOINT') else '<NOT SET>'}"
-)
-log(
-    f"   ACS_ENDPOINT: {os.getenv('ACS_ENDPOINT', '<NOT SET>')[:60] if os.getenv('ACS_ENDPOINT') else '<NOT SET>'}"
-)
+    log(f"❌ App Configuration failed: {e}")
+    log("   Using environment variables only")
 
 # ============================================================================
 # Now safe to import modules that depend on environment variables
 # ============================================================================
-log("📦 Importing WarmableResourcePool...")
 from src.pools.warmable_pool import WarmableResourcePool
-
-log("📦 Importing setup_azure_monitor...")
 from utils.telemetry_config import setup_azure_monitor
 
-# ---------------- Monitoring ------------------------------------------------
-# setup_azure_monitor configures loggers, metrics, and Azure Monitor export
-# OpenAI spans are created manually in aoai/manager.py
-# NOTE: Use empty string for logger_name to capture ALL loggers, not just a specific hierarchy
-# Our loggers use various names (voicelive.*, agents.*, api.*, etc.) that aren't children of any single root
-log("🔧 Setting up Azure Monitor...")
+# Setup monitoring (configures loggers, metrics, Azure Monitor export)
 setup_azure_monitor(logger_name="")
-log("✅ Azure Monitor setup complete")
 
-# Initialize OpenAI client AFTER telemetry is configured
-log("🔧 Initializing OpenAI client...")
+# Initialize OpenAI client
 from src.aoai.client import _init_client as _init_aoai_client
-
 _init_aoai_client()
-log("✅ OpenAI client initialized")
+
+log("✅ Initialization complete")
+log("─" * 40)
 
 from utils.ml_logging import get_logger
 
@@ -369,27 +338,80 @@ async def lifespan(app: FastAPI):
     def add_step(name: str, start: StepCallable, shutdown: StepCallable | None = None) -> None:
         startup_steps.append((name, start, shutdown))
 
+    class WarningTracker(logging.Handler):
+        """In-memory handler to flag warnings emitted during a startup step."""
+
+        def __init__(self):
+            super().__init__(level=logging.WARNING)
+            self.seen_warning = False
+
+        def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - signaling only
+            if record.levelno >= logging.WARNING:
+                self.seen_warning = True
+
+    class StartupTicker:
+        """Single-line ticker similar to pytest's dot runner."""
+
+        def __init__(self, total: int):
+            self.total = total
+            self.symbols: list[str] = ["·"] * total
+
+        def _render(self, label: str) -> None:
+            bar = "".join(self.symbols)
+            sys.stderr.write(f"\r[startup] [{bar}] {label:<24}")
+            sys.stderr.flush()
+
+        def mark_running(self, index: int, name: str) -> None:
+            self.symbols[index] = "…"
+            self._render(f"{name}…")
+
+        def mark_done(self, index: int, symbol: str, label: str) -> None:
+            self.symbols[index] = symbol
+            self._render(label)
+
+        def finalize(self, total_duration: float) -> None:
+            self._render(f"done in {total_duration:.2f}s")
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
     async def run_steps(steps: list[LifecycleStep], phase: str) -> None:
-        for name, start_fn, shutdown_fn in steps:
+        total_steps = len(steps)
+        ticker = StartupTicker(total_steps)
+        phase_start = time.perf_counter()
+
+        for index, (name, start_fn, shutdown_fn) in enumerate(steps):
+            ticker.mark_running(index, f"{phase}: {name}")
             stage_span_name = f"{phase}.{name}"
+            warning_tracker = WarningTracker()
+            root_logger = logging.getLogger()
+            root_logger.addHandler(warning_tracker)
             with tracer.start_as_current_span(stage_span_name) as step_span:
                 step_start = time.perf_counter()
-                logger.info(f"{phase} stage started", extra={"stage": name})
+                logger.debug(f"{phase} stage started", extra={"stage": name})
                 try:
                     await start_fn()
                 except Exception as exc:  # pragma: no cover - defensive path
                     step_span.record_exception(exc)
                     step_span.set_status(Status(StatusCode.ERROR, str(exc)))
                     logger.error(f"{phase} stage failed", extra={"stage": name, "error": str(exc)})
+                    ticker.mark_done(index, "E", f"{name} failed")
+                    root_logger.removeHandler(warning_tracker)
                     raise
+                finally:
+                    warning_seen = getattr(warning_tracker, "seen_warning", False)
+                    root_logger.removeHandler(warning_tracker)
                 step_duration = time.perf_counter() - step_start
                 step_span.set_attribute("duration_sec", step_duration)
                 rounded = round(step_duration, 2)
-                logger.info(
+                logger.debug(
                     f"{phase} stage completed", extra={"stage": name, "duration_sec": rounded}
                 )
                 executed_steps.append((name, start_fn, shutdown_fn))
                 startup_results.append((name, rounded))
+                status_symbol = "W" if warning_seen else "."
+                ticker.mark_done(index, status_symbol, f"{name} ({rounded:.2f}s)")
+
+        ticker.finalize(time.perf_counter() - phase_start)
 
     async def run_shutdown(steps: list[LifecycleStep]) -> None:
         for name, _, shutdown_fn in reversed(steps):
@@ -398,7 +420,7 @@ async def lifespan(app: FastAPI):
             stage_span_name = f"shutdown.{name}"
             with tracer.start_as_current_span(stage_span_name) as step_span:
                 step_start = time.perf_counter()
-                logger.info("shutdown stage started", extra={"stage": name})
+                logger.debug("shutdown stage started", extra={"stage": name})
                 try:
                     await shutdown_fn()
                 except Exception as exc:  # pragma: no cover - defensive path
@@ -408,13 +430,13 @@ async def lifespan(app: FastAPI):
                     continue
                 step_duration = time.perf_counter() - step_start
                 step_span.set_attribute("duration_sec", step_duration)
-                logger.info(
+                logger.debug(
                     "shutdown stage completed",
                     extra={"stage": name, "duration_sec": round(step_duration, 2)},
                 )
 
     app_config = AppConfig()
-    logger.info(
+    logger.debug(
         "Configuration loaded",
         extra={
             "tts_pool": app_config.speech_pools.tts_pool_size,
@@ -453,7 +475,7 @@ async def lifespan(app: FastAPI):
         app.state.session_manager = ThreadSafeSessionManager()
         app.state.session_metrics = ThreadSafeSessionMetrics()
         app.state.greeted_call_ids = set()
-        logger.info(
+        logger.debug(
             "core state ready",
             extra={
                 "max_connections": app_config.connections.max_connections,
@@ -465,7 +487,7 @@ async def lifespan(app: FastAPI):
     async def stop_core_state() -> None:
         if hasattr(app.state, "conn_manager"):
             await app.state.conn_manager.stop()
-            logger.info("connection manager stopped")
+            logger.debug("connection manager stopped")
 
     add_step("core", start_core_state, stop_core_state)
 
@@ -475,7 +497,7 @@ async def lifespan(app: FastAPI):
 
             key = os.getenv("AZURE_SPEECH_KEY")
             region = os.getenv("AZURE_SPEECH_REGION")
-            logger.info(
+            logger.debug(
                 f"Creating TTS synthesizer (key={'set' if key else 'MISSING'}, "
                 f"region={region or 'MISSING'})"
             )
@@ -487,7 +509,7 @@ async def lifespan(app: FastAPI):
                     "(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION)"
                 )
             else:
-                logger.info("TTS synthesizer initialized successfully")
+                logger.debug("TTS synthesizer initialized successfully")
             return synth
 
         async def make_stt() -> StreamingSpeechRecognizerFromBytes:
@@ -539,14 +561,14 @@ async def lifespan(app: FastAPI):
                 return False
 
         if WARM_POOL_ENABLED:
-            logger.info(
+            logger.debug(
                 "Initializing warm speech pools (TTS=%d, STT=%d, background=%s)",
                 WARM_POOL_TTS_SIZE,
                 WARM_POOL_STT_SIZE,
                 WARM_POOL_BACKGROUND_REFRESH,
             )
         else:
-            logger.info("Initializing speech pools (warm pool disabled, on-demand mode)")
+            logger.debug("Initializing speech pools (warm pool disabled, on-demand mode)")
 
         # Use WarmableResourcePool for both modes. When warm_pool_size=0,
         # it behaves identically to OnDemandResourcePool.
@@ -576,7 +598,7 @@ async def lifespan(app: FastAPI):
         # Log pool status
         tts_snapshot = app.state.tts_pool.snapshot()
         stt_snapshot = app.state.stt_pool.snapshot()
-        logger.info(
+        logger.debug(
             "Speech pools ready (TTS warm=%s, STT warm=%s)",
             tts_snapshot.get("warm_pool_size", 0),
             stt_snapshot.get("warm_pool_size", 0),
@@ -590,7 +612,7 @@ async def lifespan(app: FastAPI):
             shutdown_tasks.append(app.state.stt_pool.shutdown())
         if shutdown_tasks:
             await asyncio.gather(*shutdown_tasks, return_exceptions=True)
-            logger.info("speech pools shutdown complete")
+            logger.debug("speech pools shutdown complete")
 
     add_step("speech", start_speech_pools, stop_speech_pools)
 
@@ -603,7 +625,7 @@ async def lifespan(app: FastAPI):
         app.state.aoai_client_manager = aoai_manager
         # Expose the underlying client for legacy call-sites while we migrate.
         app.state.aoai_client = await aoai_manager.get_client()
-        logger.info("Azure OpenAI client attached", extra={"manager_enabled": True})
+        logger.debug("Azure OpenAI client attached", extra={"manager_enabled": True})
 
     add_step("aoai", start_aoai_client)
 
@@ -688,7 +710,7 @@ async def lifespan(app: FastAPI):
                     name, success = result
                     warmup_results_dict[name] = success
                     if success:
-                        logger.info("Warmup completed: %s", name)
+                        logger.debug("Warmup completed: %s", name)
                     else:
                         logger.warning("Warmup failed (non-blocking): %s", name)
 
@@ -752,7 +774,7 @@ async def lifespan(app: FastAPI):
                 if not names:
                     return
                 added = await app.state.speech_phrase_manager.add_phrases(names)
-                logger.info(
+                logger.debug(
                     "Hydrated speech phrase list with %s entries from Cosmos",
                     added,
                 )
@@ -764,7 +786,7 @@ async def lifespan(app: FastAPI):
 
         await hydrate_from_cosmos()
 
-        logger.info("external services ready")
+        logger.debug("external services ready")
 
     add_step("services", start_external_services)
 
@@ -792,7 +814,7 @@ async def lifespan(app: FastAPI):
                 app.state.start_agent = start_agent
                 # Use scenario's handoff routes as the source of truth
                 app.state.scenario_handoff_map = scenario.build_handoff_map()
-                logger.info(
+                logger.debug(
                     "Loaded scenario: %s",
                     scenario_name,
                     extra={
@@ -830,7 +852,7 @@ async def lifespan(app: FastAPI):
         app.state.handoff_map = handoff_map
         app.state.agent_summaries = agent_summaries
 
-        logger.info(
+        logger.debug(
             "Unified agents loaded",
             extra={
                 "agent_count": len(unified_agents),
@@ -850,7 +872,7 @@ async def lifespan(app: FastAPI):
 
     async def start_event_handlers() -> None:
         unified_tool_count = initialize_unified_tools()
-        logger.info(
+        logger.debug(
             "Unified tool registry initialized",
             extra={"tool_count": unified_tool_count},
         )
@@ -859,7 +881,7 @@ async def lifespan(app: FastAPI):
         register_default_handlers()
 
         orchestrator_preset = os.getenv("ORCHESTRATOR_PRESET", "production")
-        logger.info("event handlers registered", extra={"orchestrator_preset": orchestrator_preset})
+        logger.debug("event handlers registered", extra={"orchestrator_preset": orchestrator_preset})
 
     add_step("events", start_event_handlers)
 
@@ -882,8 +904,7 @@ async def lifespan(app: FastAPI):
             }
         )
         duration_rounded = round(startup_duration, 2)
-        logger.info("startup complete", extra={"duration_sec": duration_rounded})
-        logger.info(f"startup duration: {duration_rounded}s")
+        logger.info(f"✅ Startup complete ({duration_rounded}s)")
 
     logger.info(_build_startup_dashboard(app_config, app, startup_results))
 
@@ -911,11 +932,11 @@ def create_app() -> FastAPI:
 
         tags = get_tags()
         description = get_description()
-        logger.info(f"📚 API documentation enabled for environment: {ENVIRONMENT}")
+        logger.debug(f"API documentation enabled for environment: {ENVIRONMENT}")
     else:
         tags = None
         description = "Real-Time Voice Agent API"
-        logger.info(f"📚 API documentation disabled for environment: {ENVIRONMENT}")
+        logger.debug(f"API documentation disabled for environment: {ENVIRONMENT}")
 
     app = FastAPI(
         title="Real-Time Voice Agent API",

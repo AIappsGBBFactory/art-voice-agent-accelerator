@@ -54,6 +54,8 @@ const STREAM_MODE_FALLBACK = 'voice_live';
 const REALTIME_STREAM_MODE_STORAGE_KEY = 'artagent.realtimeStreamingMode';
 const REALTIME_STREAM_MODE_FALLBACK = 'realtime';
 const PANEL_MARGIN = 16;
+// Avoid noisy logging in hot-path streaming handlers unless explicitly enabled
+const ENABLE_VERBOSE_STREAM_LOGS = false;
 
 // Infer template id from config path (e.g., /agents/concierge/agent.yaml -> concierge)
 const deriveTemplateId = (configPath) => {
@@ -1005,6 +1007,9 @@ function RealTimeVoiceApp() {
     [appendLog, cancelOutputLevelDecay],
   );
   const metricsRef = useRef(createMetricsState());
+  // Throttle hot-path UI updates for streaming text
+  const lastSttPartialUpdateRef = useRef(0);
+  const lastAssistantStreamUpdateRef = useRef(0);
 
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
@@ -1592,19 +1597,13 @@ function RealTimeVoiceApp() {
     [publishMetricsSummary],
   );
 
-  useEffect(()=>{
-    if(messageContainerRef.current) {
-      messageContainerRef.current.scrollTo({
-        top: messageContainerRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
-    } else if(chatRef.current) {
-      chatRef.current.scrollTo({
-        top: chatRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
-    }
-  },[messages]);
+  useEffect(() => {
+    const target = messageContainerRef.current || chatRef.current;
+    if (!target) return;
+    // Use instant scrolling while streaming to reduce layout thrash
+    const behavior = recording ? "auto" : "smooth";
+    target.scrollTo({ top: target.scrollHeight, behavior });
+  }, [messages, recording]);
 
   useEffect(() => {
     return () => {
@@ -1953,17 +1952,19 @@ function RealTimeVoiceApp() {
     };
 
     const handleSocketMessage = async (event) => {
-      // Log all incoming messages for debugging
-      if (typeof event.data === "string") {
-        try {
-          const msg = JSON.parse(event.data);
-          logger.debug("📨 WebSocket message received:", msg.type || "unknown", msg);
-        } catch (e) {
-          logger.debug("📨 Non-JSON WebSocket message:", event.data);
-          logger.debug(e)
+      // Optional verbose tracing; disabled by default for perf
+      if (ENABLE_VERBOSE_STREAM_LOGS) {
+        if (typeof event.data === "string") {
+          try {
+            const msg = JSON.parse(event.data);
+            logger.debug("📨 WebSocket message received:", msg.type || "unknown", msg);
+          } catch (e) {
+            logger.debug("📨 Non-JSON WebSocket message:", event.data);
+            logger.debug(e);
+          }
+        } else {
+          logger.debug("📨 Binary WebSocket message received, length:", event.data.byteLength);
         }
-      } else {
-        logger.debug("📨 Binary WebSocket message received, length:", event.data.byteLength);
       }
 
       if (typeof event.data !== "string") {
@@ -2363,54 +2364,63 @@ function RealTimeVoiceApp() {
           }
         }
 
+        const now = (typeof performance !== "undefined" && performance.now)
+          ? performance.now()
+          : Date.now();
+        const throttleMs = 90;
+
         if (partialText) {
-          const turnId =
-            partialData.turn_id ||
-            partialData.turnId ||
-            partialData.response_id ||
-            partialData.responseId ||
-            null;
-          let registeredTurn = false;
+          const shouldUpdateUi = now - lastSttPartialUpdateRef.current >= throttleMs;
+          if (shouldUpdateUi) {
+            lastSttPartialUpdateRef.current = now;
+            const turnId =
+              partialData.turn_id ||
+              partialData.turnId ||
+              partialData.response_id ||
+              partialData.responseId ||
+              null;
+            let registeredTurn = false;
 
-          setMessages((prev) => {
-            const last = prev.at(-1);
-            if (
-              last?.speaker === "User" &&
-              last?.streaming &&
-              (!turnId || last.turnId === turnId)
-            ) {
-              if (last.text === partialText) {
-                return prev;
+            setMessages((prev) => {
+              const last = prev.at(-1);
+              if (
+                last?.speaker === "User" &&
+                last?.streaming &&
+                (!turnId || last.turnId === turnId)
+              ) {
+                if (last.text === partialText) {
+                  return prev;
+                }
+                const updated = prev.slice();
+                updated[updated.length - 1] = {
+                  ...last,
+                  text: partialText,
+                  streamingType: "stt_partial",
+                  sequence: partialData.sequence,
+                  language: partialData.language || last.language,
+                  turnId: turnId ?? last.turnId,
+                };
+                return updated;
               }
-              const updated = prev.slice();
-              updated[updated.length - 1] = {
-                ...last,
-                text: partialText,
-                streamingType: "stt_partial",
-                sequence: partialData.sequence,
-                language: partialData.language || last.language,
-                turnId: turnId ?? last.turnId,
-              };
-              return updated;
+
+              registeredTurn = true;
+              return [
+                ...prev,
+                {
+                  speaker: "User",
+                  text: partialText,
+                  streaming: true,
+                  streamingType: "stt_partial",
+                  sequence: partialData.sequence,
+                  language: partialData.language,
+                  turnId: turnId ?? undefined,
+                },
+              ];
+            });
+
+            if (registeredTurn) {
+              registerUserTurn(partialText);
             }
-
-            registeredTurn = true;
-            return [
-              ...prev,
-              {
-                speaker: "User",
-                text: partialText,
-                streaming: true,
-                streamingType: "stt_partial",
-                sequence: partialData.sequence,
-                language: partialData.language,
-                turnId: turnId ?? undefined,
-              },
-            ];
-          });
-
-          if (registeredTurn) {
-            registerUserTurn(partialText);
           }
         }
 
@@ -2551,13 +2561,15 @@ function RealTimeVoiceApp() {
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data") {
         try {
-          logger.debug("🔊 Received audio_data message:", {
-            frame_index: payload.frame_index,
-            total_frames: payload.total_frames,
-            sample_rate: payload.sample_rate,
-            data_length: payload.data ? payload.data.length : 0,
-            is_final: payload.is_final
-          });
+          if (ENABLE_VERBOSE_STREAM_LOGS) {
+            logger.debug("🔊 Received audio_data message:", {
+              frame_index: payload.frame_index,
+              total_frames: payload.total_frames,
+              sample_rate: payload.sample_rate,
+              data_length: payload.data ? payload.data.length : 0,
+              is_final: payload.is_final,
+            });
+          }
 
           const hasData = typeof payload.data === "string" && payload.data.length > 0;
 
@@ -2614,8 +2626,12 @@ function RealTimeVoiceApp() {
           const float32 = new Float32Array(int16.length);
           for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x8000;
 
-          logger.debug(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`);
-          logger.debug("🔊 Audio data preview:", float32.slice(0, 10));
+          if (ENABLE_VERBOSE_STREAM_LOGS) {
+            logger.debug(
+              `🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`,
+            );
+            logger.debug("🔊 Audio data preview:", float32.slice(0, 10));
+          }
 
           // Push to the worklet queue
           if (pcmSinkRef.current) {
@@ -2624,18 +2640,22 @@ function RealTimeVoiceApp() {
             const sourceRate = payload.sample_rate;
             if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
               samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
-              if (!resampleWarningRef.current) {
+              if (!resampleWarningRef.current && ENABLE_VERBOSE_STREAM_LOGS) {
                 appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
                 resampleWarningRef.current = true;
               }
             }
             pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
             updateOutputLevelMeter(samples);
-            appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
+            if (ENABLE_VERBOSE_STREAM_LOGS) {
+              appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
+            }
           } else {
             if (!audioInitFailedRef.current) {
               logger.warn("Audio playback not initialized, attempting init...");
-              appendLog("⚠️ Audio playback not ready, initializing...");
+              if (ENABLE_VERBOSE_STREAM_LOGS) {
+                appendLog("⚠️ Audio playback not ready, initializing...");
+              }
               // Try to initialize if not done yet
               await initializeAudioPlayback();
               if (pcmSinkRef.current) {
@@ -2644,17 +2664,21 @@ function RealTimeVoiceApp() {
                 const sourceRate = payload.sample_rate;
                 if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
                   samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
-                  if (!resampleWarningRef.current) {
+                  if (!resampleWarningRef.current && ENABLE_VERBOSE_STREAM_LOGS) {
                     appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
                     resampleWarningRef.current = true;
                   }
                 }
                 pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
                 updateOutputLevelMeter(samples);
-                appendLog("🔊 TTS audio playing (after init)");
+                if (ENABLE_VERBOSE_STREAM_LOGS) {
+                  appendLog("🔊 TTS audio playing (after init)");
+                }
               } else {
                 logger.error("Failed to initialize audio playback");
-                appendLog("❌ Audio init failed");
+                if (ENABLE_VERBOSE_STREAM_LOGS) {
+                  appendLog("❌ Audio init failed");
+                }
               }
             }
             // If init already failed, silently skip audio frames
@@ -2799,6 +2823,11 @@ function RealTimeVoiceApp() {
         const streamGeneration = assistantStreamGenerationRef.current;
         registerAssistantStreaming(streamingSpeaker);
         setActiveSpeaker(streamingSpeaker);
+        const now = (typeof performance !== "undefined" && performance.now)
+          ? performance.now()
+          : Date.now();
+        const throttleMs = 90;
+        const shouldUpdateUi = now - lastAssistantStreamUpdateRef.current >= throttleMs;
         const turnId =
           payload.turn_id ||
           payload.turnId ||
@@ -2806,64 +2835,67 @@ function RealTimeVoiceApp() {
           payload.responseId ||
           null;
 
-        if (turnId) {
-          updateTurnMessage(
-            turnId,
-            (current) => {
-              const previousText =
-                current?.streamGeneration === streamGeneration
-                  ? current?.text ?? ""
-                  : "";
-              return {
-                speaker: streamingSpeaker,
-                text: `${previousText}${txt}`,
-                streaming: true,
-                streamGeneration,
-                cancelled: false,
-                cancelReason: undefined,
-              };
-            },
-            {
-              initial: () => ({
-                speaker: streamingSpeaker,
-                text: txt,
-                streaming: true,
-                streamGeneration,
-                turnId,
-                cancelled: false,
-              }),
-            },
-          );
-        } else {
-          setMessages((prev) => {
-            const latest = prev.at(-1);
-            if (
-              latest?.streaming &&
-              latest?.speaker === streamingSpeaker &&
-              latest?.streamGeneration === streamGeneration
-            ) {
-              return prev.map((m, i) =>
-                i === prev.length - 1
-                  ? {
-                      ...m,
-                      text: m.text + txt,
-                      cancelled: false,
-                      cancelReason: undefined,
-                    }
-                  : m,
-              );
-            }
-            return [
-              ...prev,
-              {
-                speaker: streamingSpeaker,
-                text: txt,
-                streaming: true,
-                streamGeneration,
-                cancelled: false,
+        if (shouldUpdateUi) {
+          lastAssistantStreamUpdateRef.current = now;
+          if (turnId) {
+            updateTurnMessage(
+              turnId,
+              (current) => {
+                const previousText =
+                  current?.streamGeneration === streamGeneration
+                    ? current?.text ?? ""
+                    : "";
+                return {
+                  speaker: streamingSpeaker,
+                  text: `${previousText}${txt}`,
+                  streaming: true,
+                  streamGeneration,
+                  cancelled: false,
+                  cancelReason: undefined,
+                };
               },
-            ];
-          });
+              {
+                initial: () => ({
+                  speaker: streamingSpeaker,
+                  text: txt,
+                  streaming: true,
+                  streamGeneration,
+                  turnId,
+                  cancelled: false,
+                }),
+              },
+            );
+          } else {
+            setMessages((prev) => {
+              const latest = prev.at(-1);
+              if (
+                latest?.streaming &&
+                latest?.speaker === streamingSpeaker &&
+                latest?.streamGeneration === streamGeneration
+              ) {
+                return prev.map((m, i) =>
+                  i === prev.length - 1
+                    ? {
+                        ...m,
+                        text: m.text + txt,
+                        cancelled: false,
+                        cancelReason: undefined,
+                      }
+                    : m,
+                );
+              }
+              return [
+                ...prev,
+                {
+                  speaker: streamingSpeaker,
+                  text: txt,
+                  streaming: true,
+                  streamGeneration,
+                  cancelled: false,
+                },
+              ];
+            });
+          }
         }
         const pending = metricsRef.current?.pendingBargeIn;
         if (pending) {

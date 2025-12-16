@@ -60,6 +60,13 @@ if [[ -z "$ENDPOINT" ]]; then
     exit 1
 fi
 
+# Validate endpoint format
+if [[ ! "$ENDPOINT" =~ \.azconfig\.io$ ]]; then
+    fail "Invalid App Configuration endpoint format: $ENDPOINT"
+    fail "Expected format: https://<name>.azconfig.io"
+    exit 1
+fi
+
 if [[ ! -f "$CONFIG_FILE" ]]; then
     fail "Config file not found: $CONFIG_FILE"
     exit 1
@@ -227,11 +234,14 @@ else
         [[ -n "$label" ]] && cmd_args+=(--label "$label")
         [[ -n "$ct" ]] && cmd_args+=(--content-type "$ct")
         
-        if az appconfig kv set "${cmd_args[@]}" 2>/dev/null; then
+        if output=$(az appconfig kv set "${cmd_args[@]}" 2>&1); then
             imported=$((imported + 1))
         else
             errors=$((errors + 1))
             warn "Failed to set: $key"
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && warn "  ↳ $line"
+            done <<< "$output"
         fi
     done
     

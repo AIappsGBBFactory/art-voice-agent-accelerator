@@ -12,10 +12,10 @@ Architecture:
     VoiceLiveSDKHandler
            │
            ▼
-    LiveOrchestrator ─► VoiceLiveAgentAdapter registry
+    LiveOrchestrator ─► UnifiedAgent registry
            │                    │
-           ├─► handle_event()   └─► apply_session()
-           │                        trigger_response()
+           ├─► handle_event()   └─► apply_voicelive_session()
+           │                        trigger_voicelive_response()
            └─► _execute_tool_call() ───► shared tool registry
 
 Usage:
@@ -27,7 +27,7 @@ Usage:
 
     orchestrator = LiveOrchestrator(
         conn=voicelive_connection,
-        agents=adapted_agents,
+        agents=unified_agents,  # dict[str, UnifiedAgent]
         handoff_map=handoff_map,
         start_agent="Concierge",
     )
@@ -51,6 +51,7 @@ from apps.artagent.backend.registries.toolstore import (
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
 from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
 from apps.artagent.backend.voice.shared.session_state import (
     sync_state_from_memo,
     sync_state_to_memo,
@@ -66,10 +67,9 @@ from azure.ai.voicelive.models import (
 from opentelemetry import trace
 
 if TYPE_CHECKING:
-    from apps.artagent.backend.registries.agentstore.session_manager import HandoffProvider
     from src.stateful.state_managment import MemoManager
 
-    from .agent_adapter import VoiceLiveAgentAdapter
+from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 
 from apps.artagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
@@ -229,7 +229,7 @@ class LiveOrchestrator:
     def __init__(
         self,
         conn,
-        agents: dict[str, VoiceLiveAgentAdapter],
+        agents: dict[str, UnifiedAgent],
         handoff_map: dict[str, str] | None = None,
         start_agent: str = "Concierge",
         audio_processor=None,
@@ -239,12 +239,9 @@ class LiveOrchestrator:
         transport: str = "acs",
         model_name: str | None = None,
         memo_manager: MemoManager | None = None,
-        handoff_provider: HandoffProvider | None = None,
     ):
         self.conn = conn
         self.agents = agents
-        # Prefer handoff_provider for live lookups; fallback to static handoff_map
-        self._handoff_provider = handoff_provider
         self._handoff_map = handoff_map or {}
         self.active = start_agent
         self.audio = audio_processor
@@ -268,16 +265,12 @@ class LiveOrchestrator:
         # MemoManager for session state continuity (consistent with CascadeOrchestratorAdapter)
         self._memo_manager: MemoManager | None = memo_manager
 
-        # LLM TTFT tracking
-        self._llm_turn_start_time: float | None = None
-        self._llm_first_token_time: float | None = None
-        self._llm_turn_number: int = 0
-
-        # Per-agent token usage tracking
-        self._agent_input_tokens: int = 0
-        self._agent_output_tokens: int = 0
-        self._agent_start_time: float = time.perf_counter()
-        self._agent_response_count: int = 0
+        # Unified metrics tracking (tokens, TTFT, turn count)
+        self._metrics = OrchestratorMetrics(
+            agent_name=start_agent,
+            call_connection_id=call_connection_id,
+            session_id=getattr(messenger, "session_id", None) if messenger else None,
+        )
 
         # Throttle session context updates to avoid hot path latency
         self._last_session_update_time: float = 0.0
@@ -431,7 +424,6 @@ class LiveOrchestrator:
         # Clear agents registry reference
         self.agents = {}
         self._handoff_map = {}
-        self._handoff_provider = None
 
         # Clear connection reference (do not close - handler owns it)
         self.conn = None
@@ -464,7 +456,7 @@ class LiveOrchestrator:
 
     def update_scenario(
         self,
-        agents: dict[str, "VoiceLiveAgentAdapter"],
+        agents: dict[str, UnifiedAgent],
         handoff_map: dict[str, str],
         start_agent: str | None = None,
         scenario_name: str | None = None,
@@ -477,7 +469,7 @@ class LiveOrchestrator:
         the new scenario without restarting the VoiceLive connection.
 
         Args:
-            agents: New agents registry adapted for VoiceLive
+            agents: New UnifiedAgent registry (no adapter needed)
             handoff_map: New handoff routing map
             start_agent: Optional new start agent to switch to
             scenario_name: Optional scenario name for logging
@@ -491,6 +483,9 @@ class LiveOrchestrator:
 
         # Update handoff map
         self._handoff_map = handoff_map
+
+        # Clear cached HandoffService so it's recreated with new scenario
+        self._handoff_service = None
 
         # Clear visited agents for fresh scenario experience
         self.visited_agents.clear()
@@ -695,6 +690,28 @@ class LiveOrchestrator:
             # Render base instructions from agent prompt template
             base_instructions = agent._agent.render_prompt(context_vars) or ""
 
+            # Inject handoff instructions from scenario configuration
+            # Use the already-resolved scenario (supports both file-based and session-scoped)
+            from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+            config = resolve_orchestrator_config(session_id=self._session_id)
+            if config.scenario and agent._agent.name:
+                # Use scenario.build_handoff_instructions directly (works for session scenarios)
+                handoff_instructions = config.scenario.build_handoff_instructions(agent._agent.name)
+                if handoff_instructions:
+                    base_instructions = f"{base_instructions}\n\n{handoff_instructions}" if base_instructions else handoff_instructions
+                    logger.info(
+                        "[LiveOrchestrator] Injected handoff instructions | agent=%s scenario=%s len=%d",
+                        agent._agent.name,
+                        config.scenario_name,
+                        len(handoff_instructions),
+                    )
+            else:
+                logger.debug(
+                    "[LiveOrchestrator] No scenario or agent name for handoff instructions | scenario=%s agent=%s",
+                    config.scenario_name if config.scenario else None,
+                    agent._agent.name if hasattr(agent, '_agent') else None,
+                )
+
             # Build conversation recap to append to instructions
             # This is critical for realtime models which tend to forget context
             conversation_recap = self._build_conversation_recap()
@@ -826,19 +843,33 @@ class LiveOrchestrator:
         """
         Get or create the HandoffService for unified handoff resolution.
 
-        The service is lazily created on first access and caches the scenario name
-        from MemoManager if available.
+        The service is lazily created on first access and uses the scenario
+        from the config resolver (supports both file-based and session-scoped).
         """
         if self._handoff_service is None:
-            scenario_name = None
+            from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+
+            # Get session_id from memo_manager or messenger
+            session_id = None
             if self._memo_manager:
-                scenario_name = self._memo_manager.get_value_from_corememory("scenario_name", None)
+                session_id = getattr(self._memo_manager, "session_id", None)
+            if not session_id and self.messenger:
+                session_id = getattr(self.messenger, "session_id", None)
+
+            # Resolve config (includes session-scoped scenarios)
+            scenario_name = None
+            scenario = None
+            if session_id:
+                config = resolve_orchestrator_config(session_id=session_id)
+                scenario_name = config.scenario_name
+                scenario = config.scenario
 
             self._handoff_service = HandoffService(
                 scenario_name=scenario_name,
                 handoff_map=self.handoff_map,
                 agents=self.agents,
                 memo_manager=self._memo_manager,
+                scenario=scenario,  # Pass scenario object for session-scoped scenarios
             )
         return self._handoff_service
 
@@ -846,22 +877,14 @@ class LiveOrchestrator:
         """
         Get the target agent for a handoff tool.
 
-        Prefers HandoffProvider (live lookup) over static handoff_map.
-        This allows session-level handoff_map updates to take effect.
+        Uses the static handoff_map. For runtime resolution with
+        scenario context, use HandoffService directly.
         """
-        if self._handoff_provider:
-            return self._handoff_provider.get_handoff_target(tool_name)
         return self._handoff_map.get(tool_name)
 
     @property
     def handoff_map(self) -> dict[str, str]:
-        """
-        Get the current handoff map (for backward compatibility).
-
-        Returns a copy if using HandoffProvider, or the static map.
-        """
-        if self._handoff_provider:
-            return self._handoff_provider.handoff_map
+        """Get the current handoff map."""
         return self._handoff_map
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -961,7 +984,7 @@ class LiveOrchestrator:
         if self._pending_greeting and self._pending_greeting_agent == self.active:
             self._cancel_pending_greeting_tasks()
             try:
-                await self.agents[self.active].trigger_response(
+                await self.agents[self.active].trigger_voicelive_response(
                     self.conn,
                     say=self._pending_greeting,
                 )
@@ -1007,9 +1030,8 @@ class LiveOrchestrator:
         if self.audio:
             await self.audio.start_playback()
 
-        self._llm_turn_number += 1
-        self._llm_turn_start_time = time.perf_counter()
-        self._llm_first_token_time = None
+        # Start new turn (increments turn count, resets TTFT tracking)
+        self._metrics.start_turn()
 
     async def _handle_transcription_completed(self, event) -> None:
         """Handle user transcription completed."""
@@ -1048,17 +1070,15 @@ class LiveOrchestrator:
         """Handle assistant transcript delta (streaming)."""
         transcript_delta = getattr(event, "delta", "") or getattr(event, "transcript", "")
 
-        # Track LLM TTFT
-        if self._llm_turn_start_time and self._llm_first_token_time is None and transcript_delta:
-            self._llm_first_token_time = time.perf_counter()
-            ttft_ms = (self._llm_first_token_time - self._llm_turn_start_time) * 1000
-
+        # Track LLM TTFT via metrics
+        ttft_ms = self._metrics.record_first_token() if transcript_delta else None
+        if ttft_ms is not None:
             session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
             with tracer.start_as_current_span(
                 "voicelive.llm.ttft",
                 kind=trace.SpanKind.INTERNAL,
                 attributes={
-                    SpanAttr.TURN_NUMBER.value: self._llm_turn_number,
+                    SpanAttr.TURN_NUMBER.value: self._metrics.turn_count,
                     SpanAttr.TURN_LLM_TTFB_MS.value: ttft_ms,
                     SpanAttr.SESSION_ID.value: session_id or "",
                     SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id or "",
@@ -1068,7 +1088,7 @@ class LiveOrchestrator:
                 ttft_span.add_event("llm.first_token", {"ttft_ms": ttft_ms})
                 logger.info(
                     "[Orchestrator] LLM TTFT | turn=%d ttft_ms=%.2f agent=%s",
-                    self._llm_turn_number,
+                    self._metrics.turn_count,
                     ttft_ms,
                     self.active,
                 )
@@ -1145,7 +1165,7 @@ class LiveOrchestrator:
         agent = self.agents[agent_name]
 
         # Emit invoke_agent summary span for the outgoing agent
-        if previous_agent != agent_name and self._agent_response_count > 0:
+        if previous_agent != agent_name and self._metrics._response_count > 0:
             self._emit_agent_summary_span(previous_agent)
 
         with tracer.start_as_current_span(
@@ -1257,7 +1277,7 @@ class LiveOrchestrator:
                     session_id = (
                         getattr(self.messenger, "session_id", None) if self.messenger else None
                     )
-                    await agent.apply_session(
+                    await agent.apply_voicelive_session(
                         self.conn,
                         system_vars=system_vars,
                         say=None,
@@ -1275,11 +1295,8 @@ class LiveOrchestrator:
                 if self._pending_greeting and self._pending_greeting_agent == agent_name:
                     self._schedule_greeting_fallback(agent_name)
 
-                # Reset token counters for the new agent
-                self._agent_input_tokens = 0
-                self._agent_output_tokens = 0
-                self._agent_start_time = time.perf_counter()
-                self._agent_response_count = 0
+                # Reset metrics for the new agent (captures summary of previous)
+                self._metrics.reset_for_agent_switch(agent_name)
 
                 switch_span.set_status(trace.StatusCode.OK)
             except Exception as ex:
@@ -1778,7 +1795,7 @@ class LiveOrchestrator:
     def _select_pending_greeting(
         self,
         *,
-        agent: VoiceLiveAgentAdapter,
+        agent: UnifiedAgent,
         agent_name: str,
         system_vars: dict,
         is_first_visit: bool,
@@ -1838,7 +1855,7 @@ class LiveOrchestrator:
                         "[GreetingFallback] Triggering fallback introduction for %s", agent_name
                     )
                     try:
-                        await self.agents[agent_name].trigger_response(
+                        await self.agents[agent_name].trigger_voicelive_response(
                             self.conn,
                             say=self._pending_greeting,
                         )
@@ -1984,7 +2001,8 @@ class LiveOrchestrator:
             return
 
         session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
-        agent_duration_ms = (time.perf_counter() - self._agent_start_time) * 1000
+        # Use metrics for duration and token tracking
+        agent_duration_ms = self._metrics.duration_ms
 
         with tracer.start_as_current_span(
             f"invoke_agent {agent_name}",
@@ -2001,10 +2019,10 @@ class LiveOrchestrator:
                 "gen_ai.agent.description": getattr(
                     agent, "description", f"VoiceLive agent: {agent_name}"
                 ),
-                SpanAttr.GENAI_USAGE_INPUT_TOKENS.value: self._agent_input_tokens,
-                SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value: self._agent_output_tokens,
+                SpanAttr.GENAI_USAGE_INPUT_TOKENS.value: self._metrics.input_tokens,
+                SpanAttr.GENAI_USAGE_OUTPUT_TOKENS.value: self._metrics.output_tokens,
                 "voicelive.agent_name": agent_name,
-                "voicelive.response_count": self._agent_response_count,
+                "voicelive.response_count": self._metrics._response_count,
                 "voicelive.duration_ms": agent_duration_ms,
             },
         ) as agent_span:
@@ -2012,18 +2030,18 @@ class LiveOrchestrator:
                 "gen_ai.agent.session_complete",
                 {
                     "agent": agent_name,
-                    "input_tokens": self._agent_input_tokens,
-                    "output_tokens": self._agent_output_tokens,
-                    "response_count": self._agent_response_count,
+                    "input_tokens": self._metrics.input_tokens,
+                    "output_tokens": self._metrics.output_tokens,
+                    "response_count": self._metrics._response_count,
                     "duration_ms": agent_duration_ms,
                 },
             )
             logger.debug(
                 "[Agent Summary] %s complete | tokens=%d/%d responses=%d duration=%.1fms",
                 agent_name,
-                self._agent_input_tokens,
-                self._agent_output_tokens,
-                self._agent_response_count,
+                self._metrics.input_tokens,
+                self._metrics.output_tokens,
+                self._metrics._response_count,
                 agent_duration_ms,
             )
 
@@ -2036,29 +2054,26 @@ class LiveOrchestrator:
         response_id = getattr(response, "id", None)
 
         usage = getattr(response, "usage", None)
-        input_tokens = None
-        output_tokens = None
+        input_tokens = 0
+        output_tokens = 0
 
         if usage:
             input_tokens = getattr(usage, "input_tokens", None) or getattr(
                 usage, "prompt_tokens", None
-            )
+            ) or 0
             output_tokens = getattr(usage, "output_tokens", None) or getattr(
                 usage, "completion_tokens", None
-            )
+            ) or 0
 
-        if input_tokens:
-            self._agent_input_tokens += input_tokens
-        if output_tokens:
-            self._agent_output_tokens += output_tokens
-        self._agent_response_count += 1
+        # Track tokens and response via unified metrics
+        self._metrics.add_tokens(input_tokens=input_tokens, output_tokens=output_tokens)
+        self._metrics.record_response()
 
         model = self._model_name
         status = getattr(response, "status", None)
 
-        turn_duration_ms = None
-        if self._llm_turn_start_time:
-            turn_duration_ms = (time.perf_counter() - self._llm_turn_start_time) * 1000
+        # Get TTFT from metrics if available
+        turn_duration_ms = self._metrics.current_ttft_ms
 
         session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
         span_name = model if model else "gpt-4o-realtime"
@@ -2094,8 +2109,9 @@ class LiveOrchestrator:
                     SpanAttr.GENAI_CLIENT_OPERATION_DURATION.value, turn_duration_ms
                 )
 
-            if self._llm_turn_start_time and self._llm_first_token_time:
-                ttft_ms = (self._llm_first_token_time - self._llm_turn_start_time) * 1000
+            # Set TTFT if available from metrics
+            ttft_ms = self._metrics.current_ttft_ms
+            if ttft_ms is not None:
                 model_span.set_attribute(SpanAttr.GENAI_SERVER_TIME_TO_FIRST_TOKEN.value, ttft_ms)
 
             model_span.add_event(
@@ -2106,7 +2122,7 @@ class LiveOrchestrator:
                     "input_tokens": input_tokens or 0,
                     "output_tokens": output_tokens or 0,
                     "agent": self.active,
-                    "turn_number": self._llm_turn_number,
+                    "turn_number": self._metrics.turn_count,
                 },
             )
 

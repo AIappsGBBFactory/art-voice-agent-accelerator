@@ -31,8 +31,7 @@ Structure:
     │   └── metrics.py      # STT/turn/barge-in metrics
     ├── voicelive/
     │   ├── handler.py      # VoiceLiveSDKHandler
-    │   ├── orchestrator.py # LiveOrchestrator (VoiceLive SDK)
-    │   ├── agent_adapter.py # VoiceLiveAgentAdapter (UnifiedAgent → VoiceLive SDK)
+    │   ├── orchestrator.py # LiveOrchestrator (VoiceLive SDK, uses UnifiedAgent)
     │   └── metrics.py      # OTel latency metrics
     ├── shared/
     │   ├── base.py             # OrchestratorContext/Result data classes

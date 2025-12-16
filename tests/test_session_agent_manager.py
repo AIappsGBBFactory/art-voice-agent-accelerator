@@ -251,7 +251,8 @@ class TestSessionAgentManagerCore:
     def test_initialization(self, session_manager, base_agents):
         """Manager should initialize with base agents."""
         assert session_manager.session_id == "test_session_123"
-        assert session_manager.list_agents() == list(base_agents.keys())
+        # Use set comparison to avoid dict ordering issues
+        assert set(session_manager.list_agents()) == set(base_agents.keys())
         assert session_manager.active_agent is None
 
     def test_get_agent_without_overrides(self, session_manager, base_agents):
