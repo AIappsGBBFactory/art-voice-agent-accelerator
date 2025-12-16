@@ -1,3 +1,41 @@
+## Step-by-Step: Build Your First Agent
+
+Use this guided flow with screenshots to create and run your first agent.
+
+1) Open the Agent Builder
+    - Navigate to the Agent Builder home screen.
+    - You should see the initial landing page like below.
+
+    ![Agent Builder - Initial](../assets/01-agent-builder-initial.png)
+
+2) Choose a Template
+    - Pick a starter template to accelerate setup (recommended for first-time use).
+    - Confirm the template details and proceed.
+
+    ![Template Selected](../assets/02-template-selected.png)
+
+3) Configure Basics
+    - Enter a name and short description for your agent.
+    - Keep defaults for optional fields on your first run; you can refine later.
+
+4) Create the Agent
+    - Click Create (or equivalent action) to scaffold your agent from the template.
+    - Wait for confirmation that resources and defaults are ready.
+
+5) Verify the Entry Screen
+    - After creation, you’ll land on the agent’s entry or overview page.
+    - Use this page to review configuration, flows, and next steps.
+
+6) Run a Simple Test
+    - Follow the prompts in the UI (or the Local Development guide) to start your agent.
+    - Validate you can reach the agent’s health/status endpoints before moving on.
+
+7) Iterate
+    - Tweak prompts/parameters, then re-run and observe results.
+    - Commit changes as you validate behavior.
+
+Tip: If images don’t render in your local doc viewer, verify relative paths from the `docs/getting-started` folder or open the repository in VS Code’s Markdown preview.
+
 # :material-rocket-launch: Quickstart
 
 !!! success "From Zero to Running Voice Agent in 15 Minutes"
@@ -178,6 +216,58 @@ SUCCESS: Your application was deployed to Azure!
     # Or check in Azure Portal
     # Search for your environment name
     ```
+
+---
+
+## :material-scenario: Configure Your First Scenario
+
+Once your agent is deployed, create a scenario to define what conversations your agent can handle. Follow these steps:
+
+1) **Access the Scenario Builder**
+   - From the agent home, navigate to the "Scenarios" or "Flows" section.
+   - Click "Create New Scenario" or "Add Scenario".
+
+   ![Scenario Home](../assets/scenario-01-home.png)
+
+2) **Open the Scenario Builder**
+   - The scenario builder interface appears, showing available tools and configuration options.
+   - Start with a blank scenario or use a pre-built template.
+
+   ![Scenario Builder](../assets/scenario-02-builder.png)
+
+3) **Define the Knowledge Base (KB)**
+   - Set up a general knowledge base or attach specific documents/instructions.
+   - This KB acts as context for the agent's responses during conversations.
+   - You can upload FAQs, product docs, or policy documents.
+
+   ![Knowledge Base Setup](../assets/scenario-03-kb.png)
+
+4) **Configure Conversation Flow**
+   - Define how the agent should greet users (e.g., "Hello, how can I help?").
+   - Set up handoff rules (e.g., "Transfer to human agent if request is unresolved").
+   - Add any business logic or decision trees specific to your use case.
+
+5) **Add Connected Authentication (Optional)**
+   - Integrate backend systems for identity verification and account lookups.
+   - The agent can now authenticate users and securely access customer data.
+
+   ![Connected Auth Setup](../assets/scenario-04-auth.png)
+
+6) **Configure Parallel Processing & Fraud Detection (Optional)**
+   - Set up parallel workflows to handle multiple tasks simultaneously.
+   - Add fraud detection rules or business validation logic that runs alongside conversations.
+
+   ![Parallel Fraud Detection](../assets/scenario-05-fraud.png)
+
+7) **Test the Scenario**
+   - Use the built-in test console to validate the agent's responses.
+   - Refine the KB, prompts, or routing rules as needed.
+
+8) **Publish the Scenario**
+   - Once satisfied, publish the scenario to make it live.
+   - Your agent will now use this scenario for incoming calls or messages.
+
+Tip: Start simple. A basic greeting + KB + handoff rule covers most first-time scenarios. Add connected auth and fraud detection as you scale and iterate.
 
 ---
 
