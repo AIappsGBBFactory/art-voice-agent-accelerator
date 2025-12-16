@@ -277,12 +277,18 @@ def resolve_orchestrator_config(
         if agents is None:
             result.agents = _build_agents_from_session_scenario(session_scenario)
         
-        # Build handoff map from session scenario
+        # Build handoff map: merge scenario-defined with agent-derived (scenario takes precedence)
         if handoff_map is None:
-            result.handoff_map = session_scenario.build_handoff_map()
+            # Start with agent-derived handoff_map (from handoff.trigger fields)
+            base_handoff_map = _build_base_handoff_map(result.agents)
+            # Overlay scenario-defined handoffs (these take precedence)
+            scenario_handoff_map = session_scenario.build_handoff_map()
+            result.handoff_map = {**base_handoff_map, **scenario_handoff_map}
             logger.debug(
-                "Built handoff_map from session scenario: %s",
-                result.handoff_map,
+                "Built handoff_map | base=%d scenario=%d total=%d",
+                len(base_handoff_map),
+                len(scenario_handoff_map),
+                len(result.handoff_map),
             )
         
         logger.info(
@@ -356,12 +362,16 @@ def resolve_orchestrator_config(
     if handoff_map is not None:
         result.handoff_map = handoff_map
     elif result.scenario:
-        # Use scenario's handoff routes (preferred - single source of truth)
-        result.handoff_map = result.scenario.build_handoff_map()
+        # Merge: agent-derived (base) + scenario-defined (overlay, takes precedence)
+        base_handoff_map = _build_base_handoff_map(result.agents)
+        scenario_handoff_map = result.scenario.build_handoff_map()
+        result.handoff_map = {**base_handoff_map, **scenario_handoff_map}
         logger.debug(
-            "Built handoff_map from scenario '%s': %s",
+            "Built handoff_map from scenario '%s' | base=%d scenario=%d total=%d",
             result.scenario_name,
-            result.handoff_map,
+            len(base_handoff_map),
+            len(scenario_handoff_map),
+            len(result.handoff_map),
         )
     else:
         # Fall back to building from agent handoff.trigger properties

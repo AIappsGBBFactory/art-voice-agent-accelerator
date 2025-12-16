@@ -36,7 +36,7 @@ voice:
 # Model Configuration (LLM for agent reasoning)
 # ─────────────────────────────────────────────────────────────────────────────
 voicelive_model:
-  deployment_id: gpt-4o-realtime-preview
+  deployment_id: gpt-realtime
   temperature: 0.6                        # Lower for consistent authentication
   max_tokens: 150
 

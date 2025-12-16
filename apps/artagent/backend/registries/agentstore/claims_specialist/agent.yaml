@@ -48,7 +48,7 @@ session:
 # Model Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 model:
-  deployment_id: gpt-4o-realtime-preview
+  deployment_id: gpt-realtime
   temperature: 0.7
   top_p: 0.9
   max_response_output_tokens: 4096

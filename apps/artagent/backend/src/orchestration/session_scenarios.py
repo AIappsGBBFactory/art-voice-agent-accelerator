@@ -94,6 +94,7 @@ def _load_scenario_from_redis(session_id: str) -> ScenarioConfig | None:
                 tool=h.get("tool", ""),
                 type=h.get("type", "announced"),
                 share_context=h.get("share_context", True),
+                handoff_condition=h.get("handoff_condition", ""),  # Include handoff condition
             ))
         
         # Create ScenarioConfig
@@ -205,6 +206,7 @@ def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> Non
                     "tool": h.tool,
                     "type": h.type,
                     "share_context": h.share_context,
+                    "handoff_condition": h.handoff_condition,  # Include handoff condition
                 }
                 for h in (scenario.handoffs or [])
             ],

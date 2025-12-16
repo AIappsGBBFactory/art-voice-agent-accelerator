@@ -649,7 +649,7 @@ export default function AgentBuilderContent({
       max_tokens: 4096,
     },
     voicelive_model: {
-      deployment_id: 'gpt-4o-realtime-preview',
+      deployment_id: 'gpt-realtime',
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 4096,
@@ -1343,7 +1343,7 @@ export default function AgentBuilderContent({
                     </Typography>
                     <TextField
                       label="Deployment ID"
-                      value={config.voicelive_model?.deployment_id || 'gpt-4o-realtime-preview'}
+                      value={config.voicelive_model?.deployment_id || 'gpt-realtime'}
                       onChange={(e) => handleNestedConfigChange('voicelive_model', 'deployment_id', e.target.value)}
                       fullWidth
                       helperText="Azure OpenAI realtime deployment name"

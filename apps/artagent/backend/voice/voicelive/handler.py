@@ -43,7 +43,6 @@ from apps.artagent.backend.voice.shared import (
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
-from apps.artagent.backend.voice.voicelive.agent_adapter import adapt_unified_agents
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
 from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
 
@@ -854,9 +853,8 @@ class VoiceLiveSDKHandler:
                     app_state = getattr(app_state, "state", None)
 
                 if app_state and hasattr(app_state, "unified_agents") and app_state.unified_agents:
-                    # Use unified agents - adapt them for VoiceLive
-                    unified_agents = app_state.unified_agents
-                    agents = adapt_unified_agents(unified_agents)
+                    # Use unified agents directly (no adapter needed)
+                    agents = app_state.unified_agents
                     orchestrator_config = resolve_orchestrator_config(
                         session_id=self.session_id,
                         scenario_name=scenario_name,
@@ -874,8 +872,7 @@ class VoiceLiveSDKHandler:
                     logger.info(
                         "No unified agents in app.state - discovering from agents directory",
                     )
-                    discovered_agents = discover_agents()
-                    agents = adapt_unified_agents(discovered_agents)
+                    agents = discover_agents()
                     orchestrator_config = resolve_orchestrator_config(
                         session_id=self.session_id,
                         scenario_name=scenario_name,
@@ -894,10 +891,9 @@ class VoiceLiveSDKHandler:
                 # Merge scenario agents if scenario is active
                 if orchestrator_config and orchestrator_config.has_scenario:
                     if orchestrator_config.agents:
-                        # Scenario agents take precedence - adapt them too
-                        scenario_adapted = adapt_unified_agents(orchestrator_config.agents)
+                        # Scenario agents take precedence (already UnifiedAgent)
                         merged_agents = dict(agents)
-                        merged_agents.update(scenario_adapted)
+                        merged_agents.update(orchestrator_config.agents)
                         agents = merged_agents
                     span.set_attribute(
                         "voicelive.scenario", orchestrator_config.scenario_name or ""
@@ -914,10 +910,9 @@ class VoiceLiveSDKHandler:
                 # ─────────────────────────────────────────────────────────────
                 session_agent = get_session_agent(self.session_id)
                 if session_agent:
-                    # Adapt session agent for VoiceLive
-                    session_agent_adapted = adapt_unified_agents({session_agent.name: session_agent})
+                    # Session agent is already UnifiedAgent - inject directly
                     agents = dict(agents)  # Make mutable copy
-                    agents.update(session_agent_adapted)
+                    agents[session_agent.name] = session_agent
                     span.set_attribute("voicelive.session_agent", session_agent.name)
                     logger.info(
                         "Session agent found (Agent Builder) | name=%s voice=%s session_id=%s",

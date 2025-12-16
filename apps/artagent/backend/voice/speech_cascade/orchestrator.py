@@ -63,6 +63,7 @@ from apps.artagent.backend.voice.shared.config_resolver import (
     resolve_orchestrator_config,
 )
 from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
 from apps.artagent.backend.voice.shared.session_state import (
     SessionStateKeys,
     sync_state_from_memo,
@@ -84,7 +85,6 @@ class HandoffResult:
 
 if TYPE_CHECKING:
     from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
-    from apps.artagent.backend.registries.agentstore.session_manager import HandoffProvider
     from src.stateful.state_managment import MemoManager
 
 try:
@@ -242,14 +242,8 @@ class CascadeOrchestratorAdapter:
     _current_memo_manager: MemoManager | None = field(default=None, init=False)
     _session_vars: dict[str, Any] = field(default_factory=dict, init=False)
 
-    # HandoffProvider for session-aware handoff lookups (preferred over handoff_map)
-    _handoff_provider: HandoffProvider | None = field(default=None, init=False)
-
-    # Token tracking
-    _agent_input_tokens: int = field(default=0, init=False)
-    _agent_output_tokens: int = field(default=0, init=False)
-    _agent_start_time: float = field(default_factory=time.perf_counter, init=False)
-    _turn_count: int = field(default=0, init=False)
+    # Unified metrics tracking (replaces individual token/timing fields)
+    _metrics: OrchestratorMetrics = field(default=None, init=False)  # type: ignore
 
     # Callbacks for integration with SpeechCascadeHandler
     _on_tts_chunk: Callable[[str], Awaitable[None]] | None = field(default=None, init=False)
@@ -257,6 +251,13 @@ class CascadeOrchestratorAdapter:
 
     def __post_init__(self):
         """Initialize agent registry if not provided."""
+        # Initialize metrics tracker
+        self._metrics = OrchestratorMetrics(
+            agent_name=self.config.start_agent or "",
+            call_connection_id=self.config.call_connection_id,
+            session_id=self.config.session_id,
+        )
+        
         if not self.agents:
             self._load_agents()
 
@@ -323,7 +324,6 @@ class CascadeOrchestratorAdapter:
         session_id: str | None = None,
         agents: dict[str, UnifiedAgent] | None = None,
         handoff_map: dict[str, str] | None = None,
-        handoff_provider: HandoffProvider | None = None,
         enable_rag: bool = True,
         streaming: bool = False,  # Non-streaming for sentence-level TTS
     ) -> CascadeOrchestratorAdapter:
@@ -336,8 +336,7 @@ class CascadeOrchestratorAdapter:
             call_connection_id: ACS call ID for tracing
             session_id: Session ID for tracing
             agents: Optional pre-loaded agent registry
-            handoff_map: Optional pre-built handoff map (fallback if no provider)
-            handoff_provider: Optional provider for session-aware handoff lookups
+            handoff_map: Optional pre-built handoff map
             enable_rag: Whether to enable RAG search
             streaming: Whether to stream responses
 
@@ -358,9 +357,6 @@ class CascadeOrchestratorAdapter:
             agents=agents or {},
             handoff_map=handoff_map or {},
         )
-
-        if handoff_provider:
-            adapter.set_handoff_provider(handoff_provider)
 
         return adapter
 
@@ -409,15 +405,20 @@ class CascadeOrchestratorAdapter:
 
         Lazily initialized on first access using current orchestrator state.
         Uses scenario config for handoff behavior (discrete/announced).
+
+        For session-scoped scenarios (from Scenario Builder), passes the
+        ScenarioConfig object directly so HandoffService can use it without
+        trying to load from YAML files.
         """
         if not hasattr(self, "_handoff_service") or self._handoff_service is None:
-            # Get scenario name from config resolver
+            # Get scenario from config resolver (supports session-scoped scenarios)
             config = resolve_orchestrator_config(session_id=self.config.session_id)
             self._handoff_service = HandoffService(
                 scenario_name=config.scenario_name,
                 handoff_map=self.handoff_map,
                 agents=self.agents,
                 memo_manager=self._current_memo_manager,
+                scenario=config.scenario,  # Pass scenario object for session-scoped scenarios
             )
         return self._handoff_service
 
@@ -425,19 +426,94 @@ class CascadeOrchestratorAdapter:
         """
         Get the target agent for a handoff tool.
 
-        Uses HandoffService (preferred) or falls back to provider/static map.
+        Uses HandoffService for consistent resolution.
         """
-        # Use HandoffService for consistent resolution
         return self.handoff_service.get_handoff_target(tool_name)
 
-    def set_handoff_provider(self, provider: HandoffProvider) -> None:
+    def _get_tools_with_handoffs(self, agent: UnifiedAgent) -> list[dict[str, Any]]:
         """
-        Set the HandoffProvider for session-aware handoff lookups.
+        Get agent tools with centralized handoff tool injection.
 
-        When set, get_handoff_target() will use the provider instead of
-        the static handoff_map, enabling dynamic handoff configuration.
+        This method:
+        1. Filters OUT explicit handoff tools (e.g., handoff_concierge)
+        2. Auto-injects the generic `handoff_to_agent` tool when needed
+
+        The scenario edges define handoff routing and conditions, so we only
+        need the single centralized `handoff_to_agent` tool. Agents call it
+        with `target_agent` parameter based on system prompt instructions.
+
+        Args:
+            agent: The agent to get tools for
+
+        Returns:
+            List of tool schemas with only the generic handoff_to_agent tool
         """
-        self._handoff_provider = provider
+        tools = agent.get_tools()
+
+        # Filter out explicit handoff tools - we use handoff_to_agent exclusively
+        filtered_tools = []
+        for tool in tools:
+            func_name = tool.get("function", {}).get("name", "")
+            # Keep handoff_to_agent, filter out other handoff_* patterns
+            if func_name == "handoff_to_agent":
+                filtered_tools.append(tool)
+            elif is_handoff_tool(func_name):
+                logger.debug(
+                    "Filtering explicit handoff tool | tool=%s agent=%s reason=using_centralized_handoff",
+                    func_name,
+                    agent.name,
+                )
+            else:
+                filtered_tools.append(tool)
+
+        tools = filtered_tools
+        tool_names = {t.get("function", {}).get("name") for t in tools}
+
+        # Check if handoff_to_agent is already present
+        if "handoff_to_agent" in tool_names:
+            return tools
+
+        # Check scenario configuration for automatic handoff tool injection
+        # Use already-resolved scenario (supports both file-based and session-scoped)
+        config = resolve_orchestrator_config(session_id=self.config.session_id)
+        scenario = config.scenario
+        if not scenario:
+            return tools
+
+        # Add handoff_to_agent if generic handoffs enabled or agent has outgoing edges
+        should_add_handoff_tool = False
+
+        if scenario.generic_handoff.enabled:
+            should_add_handoff_tool = True
+            logger.debug(
+                "Auto-adding handoff_to_agent | agent=%s reason=generic_handoff_enabled",
+                agent.name,
+            )
+        else:
+            # Check if agent has outgoing handoffs in the scenario
+            outgoing = scenario.get_outgoing_handoffs(agent.name)
+            if outgoing:
+                should_add_handoff_tool = True
+                logger.debug(
+                    "Auto-adding handoff_to_agent | agent=%s reason=has_outgoing_handoffs count=%d targets=%s",
+                    agent.name,
+                    len(outgoing),
+                    [h.to_agent for h in outgoing],
+                )
+
+        if should_add_handoff_tool:
+            from apps.artagent.backend.registries.toolstore import get_tools_for_agent, initialize_tools
+            initialize_tools()
+            handoff_tools = get_tools_for_agent(["handoff_to_agent"])
+            if handoff_tools:
+                tools = list(tools) + handoff_tools
+                logger.info(
+                    "Added handoff_to_agent tool | agent=%s scenario=%s",
+                    agent.name,
+                    config.scenario_name,
+                )
+
+        return tools
 
     def set_on_agent_switch(self, callback: Callable[[str, str], Awaitable[None]] | None) -> None:
         """
@@ -656,7 +732,7 @@ class CascadeOrchestratorAdapter:
             OrchestratorResult with response and metadata
         """
         self._cancel_event.clear()
-        self._turn_count += 1
+        self._metrics.start_turn()  # Increments turn count and resets TTFT tracking
         self._last_user_message = context.user_text
 
         # Extract and preserve MemoManager reference for this turn
@@ -686,7 +762,7 @@ class CascadeOrchestratorAdapter:
                 kind=SpanKind.INTERNAL,
                 attributes={
                     "cascade.agent": self._active_agent,
-                    "cascade.turn": self._turn_count,
+                    "cascade.turn": self._metrics.turn_count,
                     "session.id": self.config.session_id or "",
                     "call.connection.id": self.config.call_connection_id or "",
                     "cascade.has_memo_manager": self._current_memo_manager is not None,
@@ -696,8 +772,8 @@ class CascadeOrchestratorAdapter:
                     # Build messages
                     messages = self._build_messages(context, agent)
 
-                    # Get tools for current agent
-                    tools = agent.get_tools()
+                    # Get tools for current agent with automatic handoff tool injection
+                    tools = self._get_tools_with_handoffs(agent)
                     logger.info(
                         "🔧 Agent tools loaded | agent=%s tool_count=%d tool_names=%s",
                         self._active_agent,
@@ -721,11 +797,7 @@ class CascadeOrchestratorAdapter:
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("name", "")
                         if is_handoff_tool(tool_name):
-                            target_agent = self.get_handoff_target(tool_name)
-                            if not target_agent:
-                                logger.warning("Handoff tool '%s' not in handoff_map", tool_name)
-                                continue
-                            # Parse arguments - they come as JSON string from streaming
+                            # Parse arguments first - they come as JSON string from streaming
                             raw_args = tool_call.get("arguments", "{}")
                             if isinstance(raw_args, str):
                                 try:
@@ -734,6 +806,30 @@ class CascadeOrchestratorAdapter:
                                     parsed_args = {}
                             else:
                                 parsed_args = raw_args if isinstance(raw_args, dict) else {}
+
+                            # For handoff_to_agent, get target from arguments
+                            # For other handoff tools (legacy), use handoff_map
+                            if tool_name == "handoff_to_agent":
+                                target_agent = parsed_args.get("target_agent", "")
+                                if not target_agent:
+                                    logger.warning(
+                                        "handoff_to_agent called without target_agent | args=%s",
+                                        parsed_args,
+                                    )
+                                    continue
+                                # Validate target exists
+                                if target_agent not in self.agents:
+                                    logger.warning(
+                                        "handoff_to_agent target not found | target=%s available=%s",
+                                        target_agent,
+                                        list(self.agents.keys()),
+                                    )
+                                    continue
+                            else:
+                                target_agent = self.get_handoff_target(tool_name)
+                                if not target_agent:
+                                    logger.warning("Handoff tool '%s' not in handoff_map", tool_name)
+                                    continue
 
                             # Emit tool_start for handoff tool (before execution)
                             if on_tool_start:
@@ -877,8 +973,8 @@ class CascadeOrchestratorAdapter:
                                     tool_calls=tool_calls + new_tool_calls,
                                     agent_name=self._active_agent,
                                     interrupted=self._cancel_event.is_set(),
-                                    input_tokens=self._agent_input_tokens,
-                                    output_tokens=self._agent_output_tokens,
+                                    input_tokens=self._metrics.input_tokens,
+                                    output_tokens=self._metrics.output_tokens,
                                 )
                             except Exception as handoff_err:
                                 logger.error(
@@ -908,8 +1004,8 @@ class CascadeOrchestratorAdapter:
                                         tool_calls=tool_calls,
                                         agent_name=self._active_agent,
                                         interrupted=self._cancel_event.is_set(),
-                                        input_tokens=self._agent_input_tokens,
-                                        output_tokens=self._agent_output_tokens,
+                                        input_tokens=self._metrics.input_tokens,
+                                        output_tokens=self._metrics.output_tokens,
                                     )
                                 # No greeting fallback - fall through to return original response
                         else:
@@ -943,8 +1039,8 @@ class CascadeOrchestratorAdapter:
                         tool_calls=tool_calls,
                         agent_name=self._active_agent,
                         interrupted=self._cancel_event.is_set(),
-                        input_tokens=self._agent_input_tokens,
-                        output_tokens=self._agent_output_tokens,
+                        input_tokens=self._metrics.input_tokens,
+                        output_tokens=self._metrics.output_tokens,
                     )
 
                 except asyncio.CancelledError:
@@ -972,11 +1068,35 @@ class CascadeOrchestratorAdapter:
 
         Handles both simple messages (role + content) and complex messages
         (tool calls, tool results) which are stored as JSON in the content field.
+        
+        Also injects scenario-based handoff instructions if defined.
         """
         messages = []
 
         # System prompt from agent
         system_content = agent.render_prompt(context.metadata)
+        
+        # Inject handoff instructions from scenario configuration
+        # Use the already-resolved scenario (supports both file-based and session-scoped)
+        config = resolve_orchestrator_config(session_id=self.config.session_id)
+        if config.scenario and agent.name:
+            # Use scenario.build_handoff_instructions directly (works for session scenarios)
+            handoff_instructions = config.scenario.build_handoff_instructions(agent.name)
+            if handoff_instructions:
+                system_content = f"{system_content}\n\n{handoff_instructions}" if system_content else handoff_instructions
+                logger.info(
+                    "Injected handoff instructions into system prompt | agent=%s scenario=%s len=%d",
+                    agent.name,
+                    config.scenario_name,
+                    len(handoff_instructions),
+                )
+        else:
+            logger.debug(
+                "_build_messages: no scenario or agent name | scenario=%s agent_name=%s",
+                config.scenario_name if config.scenario else None,
+                agent.name if agent else None,
+            )
+
         if system_content:
             messages.append({"role": "system", "content": system_content})
 
@@ -1324,9 +1444,10 @@ class CascadeOrchestratorAdapter:
                             continue
                     tool_calls.append(tc)
 
-                # Estimate token usage
+                # Estimate token usage and track via metrics
                 output_tokens = len(response_text) // 4
-                self._agent_output_tokens += output_tokens
+                self._metrics.add_tokens(output_tokens=output_tokens)
+                self._metrics.record_response()
 
                 logger.info(
                     "LLM response (streamed) | agent=%s text_len=%d tool_calls=%d (filtered from %d) iteration=%d",
@@ -1621,10 +1742,8 @@ class CascadeOrchestratorAdapter:
             self._visited_agents.add(target_agent)
             self._active_agent = target_agent
 
-            # Reset token counters for new agent
-            self._agent_input_tokens = 0
-            self._agent_output_tokens = 0
-            self._agent_start_time = time.perf_counter()
+            # Reset metrics for new agent (captures summary of previous)
+            self._metrics.reset_for_agent_switch(target_agent)
 
             # Select greeting using HandoffService for consistent behavior
             new_agent = self.agents[target_agent]
@@ -1750,23 +1869,23 @@ class CascadeOrchestratorAdapter:
         if state.system_vars:
             self._session_vars.update(state.system_vars)
 
-        # Restore cascade-specific state (turn count, tokens)
+        # Restore cascade-specific state (turn count via metrics)
         turn_count = (
             cm.get_value_from_corememory("cascade_turn_count")
             if hasattr(cm, "get_value_from_corememory")
             else None
         )
         if turn_count and isinstance(turn_count, int):
-            self._turn_count = turn_count
+            self._metrics._turn_count = turn_count
 
+        # Restore token counts via metrics
         tokens = (
             cm.get_value_from_corememory("cascade_tokens")
             if hasattr(cm, "get_value_from_corememory")
             else None
         )
         if tokens and isinstance(tokens, dict):
-            self._agent_input_tokens = tokens.get("input", 0)
-            self._agent_output_tokens = tokens.get("output", 0)
+            self._metrics.restore_from_memo(tokens)
 
     def sync_to_memo_manager(self, cm: MemoManager) -> None:
         """
@@ -1786,16 +1905,10 @@ class CascadeOrchestratorAdapter:
             system_vars=self._session_vars,
         )
 
-        # Persist cascade-specific state (turn count, tokens)
+        # Persist cascade-specific state (turn count, tokens) via metrics
         if hasattr(cm, "set_corememory"):
-            cm.set_corememory("cascade_turn_count", self._turn_count)
-            cm.set_corememory(
-                "cascade_tokens",
-                {
-                    "input": self._agent_input_tokens,
-                    "output": self._agent_output_tokens,
-                },
-            )
+            cm.set_corememory("cascade_turn_count", self._metrics.turn_count)
+            cm.set_corememory("cascade_tokens", self._metrics.to_memo_state())
 
     # ─────────────────────────────────────────────────────────────────
     # Legacy Interface for SpeechCascadeHandler

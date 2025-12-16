@@ -39,7 +39,7 @@ voice:
 
 # Uncomment to use DIFFERENT models per mode:
 voicelive_model:
-  deployment_id: gpt-4o-realtime-preview
+  deployment_id: gpt-realtime
   temperature: 0.7
 
 cascade_model:
