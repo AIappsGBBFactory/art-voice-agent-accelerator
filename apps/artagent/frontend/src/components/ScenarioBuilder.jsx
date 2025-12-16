@@ -479,6 +479,122 @@ function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorI
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// HANDOFF CONDITION PATTERNS (predefined templates)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const HANDOFF_CONDITION_PATTERNS = [
+  {
+    id: 'authentication',
+    name: '🔐 Authentication Required',
+    icon: '🔐',
+    description: 'When identity verification or login is needed',
+    condition: `Transfer when the customer needs to:
+- Verify their identity or authenticate
+- Log into their account
+- Provide security credentials or PIN
+- Complete multi-factor authentication`,
+  },
+  {
+    id: 'specialized_topic',
+    name: '🎯 Specialized Topic',
+    icon: '🎯',
+    description: 'When conversation requires specific expertise',
+    condition: `Transfer when the customer asks about topics that require specialized knowledge or expertise that this agent cannot provide.`,
+  },
+  {
+    id: 'account_issue',
+    name: '💳 Account/Billing Issue',
+    icon: '💳',
+    description: 'Account management or billing concerns',
+    condition: `Transfer when the customer mentions:
+- Account access problems or lockouts
+- Billing discrepancies or payment issues
+- Subscription changes or cancellations
+- Refund requests or credit adjustments`,
+  },
+  {
+    id: 'fraud_security',
+    name: '🚨 Fraud/Security Concern',
+    icon: '🚨',
+    description: 'Suspicious activity or security issues',
+    condition: `Transfer IMMEDIATELY when the customer reports:
+- Unauthorized transactions or suspicious activity
+- Lost or stolen cards/credentials
+- Potential identity theft or account compromise
+- Security alerts or concerns`,
+  },
+  {
+    id: 'technical_support',
+    name: '🔧 Technical Support',
+    icon: '🔧',
+    description: 'Technical issues requiring troubleshooting',
+    condition: `Transfer when the customer needs help with:
+- Technical problems or error messages
+- Product or service not working correctly
+- Setup, configuration, or installation issues
+- Connectivity or performance problems`,
+  },
+  {
+    id: 'escalation',
+    name: '⬆️ Escalation Request',
+    icon: '⬆️',
+    description: 'Customer requests supervisor or escalation',
+    condition: `Transfer when the customer:
+- Explicitly requests to speak with a supervisor or manager
+- Expresses significant dissatisfaction that you cannot resolve
+- Has a complex issue requiring higher authorization
+- Needs decisions beyond your authority level`,
+  },
+  {
+    id: 'sales_upsell',
+    name: '💰 Sales/Upsell Opportunity',
+    icon: '💰',
+    description: 'Interest in purchasing or upgrading',
+    condition: `Transfer when the customer expresses interest in:
+- Purchasing new products or services
+- Upgrading their current plan or subscription
+- Special offers, promotions, or deals
+- Comparing options or getting pricing information`,
+  },
+  {
+    id: 'appointment',
+    name: '📅 Scheduling/Appointment',
+    icon: '📅',
+    description: 'Booking, rescheduling, or canceling',
+    condition: `Transfer when the customer wants to:
+- Schedule a new appointment or meeting
+- Reschedule or cancel an existing appointment
+- Check availability or confirm booking details
+- Modify reservation or booking information`,
+  },
+  {
+    id: 'returns',
+    name: '📦 Returns/Exchanges',
+    icon: '📦',
+    description: 'Product returns or exchange requests',
+    condition: `Transfer when the customer needs help with:
+- Returning a product or requesting a refund
+- Exchanging an item for a different one
+- Reporting damaged or defective products
+- Tracking return status or shipping labels`,
+  },
+  {
+    id: 'general_inquiry',
+    name: '❓ General Inquiry',
+    icon: '❓',
+    description: 'Questions best handled by another agent',
+    condition: `Transfer when the customer's questions or needs are better suited for this specialized agent's expertise.`,
+  },
+  {
+    id: 'custom',
+    name: '✏️ Custom Condition',
+    icon: '✏️',
+    description: 'Write your own handoff condition',
+    condition: '',
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // HANDOFF EDITOR DIALOG
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -486,14 +602,34 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
   const [type, setType] = useState(handoff?.type || 'announced');
   const [shareContext, setShareContext] = useState(handoff?.share_context !== false);
   const [handoffCondition, setHandoffCondition] = useState(handoff?.handoff_condition || '');
+  const [selectedPattern, setSelectedPattern] = useState(null);
+  const [showPatternPicker, setShowPatternPicker] = useState(false);
 
   useEffect(() => {
     if (handoff) {
       setType(handoff.type || 'announced');
       setShareContext(handoff.share_context !== false);
       setHandoffCondition(handoff.handoff_condition || '');
+      // Detect if current condition matches a pattern
+      const matchingPattern = HANDOFF_CONDITION_PATTERNS.find(
+        p => p.condition && p.condition.trim() === (handoff.handoff_condition || '').trim()
+      );
+      setSelectedPattern(matchingPattern?.id || (handoff.handoff_condition ? 'custom' : null));
     }
   }, [handoff]);
+
+  const handlePatternSelect = (patternId) => {
+    const pattern = HANDOFF_CONDITION_PATTERNS.find(p => p.id === patternId);
+    if (pattern) {
+      setSelectedPattern(patternId);
+      if (patternId !== 'custom') {
+        // Replace {target_agent} placeholder if present
+        const condition = pattern.condition.replace(/\{target_agent\}/g, handoff?.to_agent || 'the target agent');
+        setHandoffCondition(condition);
+      }
+      setShowPatternPicker(false);
+    }
+  };
 
   const handleSave = () => {
     // Always use the centralized handoff_to_agent tool
@@ -509,31 +645,133 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
 
   if (!handoff) return null;
 
+  // Get target agent info for context
+  const targetAgent = agents?.find(a => a.name === handoff.to_agent);
+
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <CallSplitIcon color="primary" />
         Edit Handoff: {handoff.from_agent} → {handoff.to_agent}
       </DialogTitle>
       <DialogContent>
         <Stack spacing={3} sx={{ mt: 1 }}>
-          {/* Handoff Condition - when to trigger */}
+          {/* Pattern Selection Section */}
           <Box>
-            <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
               <AutoFixHighIcon sx={{ fontSize: 16, color: '#6366f1' }} />
-              Handoff Condition
+              When should this handoff happen?
             </Typography>
+            
+            {/* Quick pattern chips */}
+            <Box sx={{ mb: 2 }}>
+              <Stack direction="row" flexWrap="wrap" gap={1}>
+                {HANDOFF_CONDITION_PATTERNS.slice(0, 6).map((pattern) => (
+                  <Chip
+                    key={pattern.id}
+                    icon={<span style={{ fontSize: 14 }}>{pattern.icon}</span>}
+                    label={pattern.name.replace(pattern.icon + ' ', '')}
+                    onClick={() => handlePatternSelect(pattern.id)}
+                    variant={selectedPattern === pattern.id ? 'filled' : 'outlined'}
+                    color={selectedPattern === pattern.id ? 'primary' : 'default'}
+                    sx={{
+                      cursor: 'pointer',
+                      fontWeight: selectedPattern === pattern.id ? 600 : 400,
+                      '&:hover': { backgroundColor: selectedPattern === pattern.id ? undefined : 'rgba(99, 102, 241, 0.08)' },
+                    }}
+                  />
+                ))}
+                <Chip
+                  icon={<span style={{ fontSize: 14 }}>➕</span>}
+                  label="More..."
+                  onClick={() => setShowPatternPicker(!showPatternPicker)}
+                  variant="outlined"
+                  sx={{
+                    cursor: 'pointer',
+                    borderStyle: 'dashed',
+                    '&:hover': { backgroundColor: 'rgba(99, 102, 241, 0.08)' },
+                  }}
+                />
+              </Stack>
+            </Box>
+
+            {/* Expanded pattern picker */}
+            <Collapse in={showPatternPicker}>
+              <Paper variant="outlined" sx={{ p: 2, mb: 2, borderRadius: '12px', backgroundColor: '#fafafa' }}>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5, fontWeight: 600 }}>
+                  All Handoff Patterns:
+                </Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 1 }}>
+                  {HANDOFF_CONDITION_PATTERNS.map((pattern) => (
+                    <Paper
+                      key={pattern.id}
+                      variant="outlined"
+                      onClick={() => handlePatternSelect(pattern.id)}
+                      sx={{
+                        p: 1.5,
+                        cursor: 'pointer',
+                        borderRadius: '8px',
+                        borderColor: selectedPattern === pattern.id ? '#6366f1' : '#e5e7eb',
+                        backgroundColor: selectedPattern === pattern.id ? 'rgba(99, 102, 241, 0.08)' : '#fff',
+                        transition: 'all 0.2s',
+                        '&:hover': {
+                          borderColor: '#6366f1',
+                          boxShadow: '0 2px 8px rgba(99, 102, 241, 0.15)',
+                        },
+                      }}
+                    >
+                      <Stack direction="row" spacing={1} alignItems="flex-start">
+                        <Typography sx={{ fontSize: 20 }}>{pattern.icon}</Typography>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: 12 }}>
+                            {pattern.name.replace(pattern.icon + ' ', '')}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: 10 }}>
+                            {pattern.description}
+                          </Typography>
+                        </Box>
+                        {selectedPattern === pattern.id && (
+                          <CheckIcon sx={{ color: '#6366f1', fontSize: 18 }} />
+                        )}
+                      </Stack>
+                    </Paper>
+                  ))}
+                </Box>
+              </Paper>
+            </Collapse>
+
+            {/* Condition text area */}
             <TextField
               value={handoffCondition}
-              onChange={(e) => setHandoffCondition(e.target.value)}
+              onChange={(e) => {
+                setHandoffCondition(e.target.value);
+                setSelectedPattern('custom');
+              }}
               size="small"
               fullWidth
               multiline
               rows={4}
               placeholder={`Transfer to ${handoff.to_agent} when the customer:\n- Asks about [specific topic or service]\n- Expresses [intent or need]\n- Mentions [keywords or phrases]`}
-              helperText="Describe when this handoff should be triggered. This will be injected into the source agent's system prompt automatically."
+              helperText={
+                <span>
+                  This condition will be injected into <strong>{handoff.from_agent}</strong>'s system prompt to guide when to transfer.
+                  {targetAgent?.description && (
+                    <span style={{ display: 'block', marginTop: 4, color: '#6366f1' }}>
+                      💡 {handoff.to_agent}: {targetAgent.description}
+                    </span>
+                  )}
+                </span>
+              }
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                },
+              }}
             />
           </Box>
+
+          <Divider />
 
           {/* Type selector */}
           <Box>
