@@ -260,8 +260,9 @@ Once your agent is deployed, create a scenario to define what conversations your
    ![Parallel Fraud Detection](../assets/scenario-05-fraud.png)
 
 7) **Test the Scenario**
-   - Use the built-in test console to validate the agent's responses.
-   - Refine the KB, prompts, or routing rules as needed.
+    - In the main UI, click the person icon to start a conversation (Speech Cascade or Voice Live).
+    - Expect the start agent to greet you; continue the dialog to verify KB responses and routing.
+    - Refine the KB, prompts, or routing rules as needed.
 
 8) **Publish the Scenario**
    - Once satisfied, publish the scenario to make it live.
