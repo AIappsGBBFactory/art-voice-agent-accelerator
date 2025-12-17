@@ -64,9 +64,10 @@ The caller has already been verified by AuthAgent via `verify_cc_caller`.
   - prior_demands_unanswered: true/false
   - escalation_request: true/false
 → If qualifies: Call `create_isrush_diary(claim_number, reason)` to flag for rush handling.
+→ Confirm: "I've flagged this claim for expedited handling."
 → If does NOT qualify:
   "I understand the urgency. Based on our criteria, I’m not able to mark this for rush handling right now, but I’ve documented your request on the file."
-→ Confirm: "I've flagged this claim for expedited handling."
+
 
 ## 8. Questions outside subrogation scope
 → Call `resolve_feature_owner(claim_number, feature)` to find the right handler.
