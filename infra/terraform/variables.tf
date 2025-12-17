@@ -271,20 +271,5 @@ variable "stt_pool_size" {
     condition     = var.stt_pool_size >= 10 && var.stt_pool_size <= 500
     error_message = "STT pool size must be between 10 and 500."
   }
-}
 
-# ============================================================================
-# BACKEND IP RESTRICTIONS
-# ============================================================================
-
-variable "enable_backend_ip_restrictions" {
-  description = "Enable IP restrictions on the backend container app to limit traffic sources"
-  type        = bool
-  default     = true
-}
-
-variable "allowed_developer_ip_ranges" {
-  description = "List of CIDR ranges for developer machines to access the backend (e.g., ['203.0.113.0/24', '198.51.100.50/32'])"
-  type        = list(string)
-  default     = []
 }
