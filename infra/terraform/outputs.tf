@@ -260,17 +260,3 @@ output "AZURE_APPCONFIG_LABEL" {
   description = "Environment label used in App Configuration"
   value       = module.appconfig.label
 }
-
-# ============================================================================
-# BACKEND IP RESTRICTIONS
-# ============================================================================
-
-output "BACKEND_IP_RESTRICTIONS_ENABLED" {
-  description = "Whether IP restrictions are enabled on the backend container app"
-  value       = var.enable_backend_ip_restrictions
-}
-
-output "BACKEND_IP_RESTRICTIONS_COUNT" {
-  description = "Number of IP restriction rules applied to the backend container app"
-  value       = length(local.all_backend_ip_rules)
-}

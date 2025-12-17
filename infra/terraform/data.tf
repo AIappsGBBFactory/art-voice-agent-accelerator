@@ -1,25 +1,4 @@
 # ============================================================================
-# AZURE SERVICE TAGS FOR IP RESTRICTIONS
-# ============================================================================
-
-# Get Event Grid service tag IPs (global service - no location filter)
-data "azurerm_network_service_tags" "eventgrid" {
-  count    = var.enable_backend_ip_restrictions ? 1 : 0
-  location = var.location
-  service  = "AzureEventGrid"
-}
-
-# Get Azure Cloud IPs for the deployment region
-# This covers Azure Communication Services media streaming WebSocket connections
-# ACS does not have a dedicated service tag, so we allow Azure datacenter IPs for the region
-data "azurerm_network_service_tags" "azurecloud" {
-  count           = var.enable_backend_ip_restrictions ? 1 : 0
-  location        = var.location
-  service         = "AzureCloud"
-  location_filter = var.location
-}
-
-# ============================================================================
 # AZURE STORAGE ACCOUNT
 # ============================================================================
 

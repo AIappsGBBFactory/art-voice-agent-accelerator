@@ -71,38 +71,6 @@ locals {
   )
   # Frontend uses fixed 1Gi
   normalized_frontend_memory = "1.0Gi"
-
-  # Backend IP Security Restrictions
-  # Event Grid + Azure Cloud (for ACS media streaming) + developer IPs
-  eventgrid_ip_ranges  = var.enable_backend_ip_restrictions ? try(data.azurerm_network_service_tags.eventgrid[0].ipv4_cidrs, []) : []
-  azurecloud_ip_ranges = var.enable_backend_ip_restrictions ? try(data.azurerm_network_service_tags.azurecloud[0].ipv4_cidrs, []) : []
-
-  # Create IP restriction rules for Azure services
-  azure_service_ip_rules = var.enable_backend_ip_restrictions ? concat(
-    [for idx, cidr in local.eventgrid_ip_ranges : {
-      name             = "eventgrid-${idx}"
-      ip_address_range = cidr
-      action           = "Allow"
-      description      = "Azure Event Grid"
-    }],
-    [for idx, cidr in local.azurecloud_ip_ranges : {
-      name             = "azurecloud-${idx}"
-      ip_address_range = cidr
-      action           = "Allow"
-      description      = "Azure Cloud (ACS media streaming)"
-    }]
-  ) : []
-
-  # Developer IP rules
-  developer_ip_rules = var.enable_backend_ip_restrictions ? [for idx, cidr in var.allowed_developer_ip_ranges : {
-    name             = "developer-${idx}"
-    ip_address_range = cidr
-    action           = "Allow"
-    description      = "Developer access"
-  }] : []
-
-  # Combine all IP restriction rules
-  all_backend_ip_rules = concat(local.azure_service_ip_rules, local.developer_ip_rules)
 }
 
 # Frontend Container App
@@ -210,18 +178,6 @@ resource "azurerm_container_app" "backend" {
     traffic_weight {
       percentage      = 100
       latest_revision = true
-    }
-
-    # IP Security Restrictions - Allow only Azure services and developer IPs
-    # When enabled, traffic is restricted to Event Grid, ACS, and specified developer IPs
-    dynamic "ip_security_restriction" {
-      for_each = local.all_backend_ip_rules
-      content {
-        name             = ip_security_restriction.value.name
-        ip_address_range = ip_security_restriction.value.ip_address_range
-        action           = ip_security_restriction.value.action
-        description      = ip_security_restriction.value.description
-      }
     }
   }
 
