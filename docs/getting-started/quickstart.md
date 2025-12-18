@@ -348,7 +348,7 @@ Once your deployment is complete, use the Agent Builder to create and run your f
     From the home screen, click the **wrench icon** :material-wrench: on the left toolbar to open the Agent Editor.
     
     <figure markdown="span">
-      ![Home Screen](../assets/02-template-selected.png){ loading=lazy }
+      ![Home Screen](../assets/01-landing-page.png){ loading=lazy }
       <figcaption>Home screen - click the wrench icon on the left toolbar</figcaption>
     </figure>
     
@@ -401,7 +401,7 @@ Scenarios define what conversations your agent can handle. Create one to customi
     From the Agent Builder, select **Scenario** from the tabs at the top of the window. Then click **Create New Scenario** or select an existing one to edit.
     
     <figure markdown="span">
-      ![Scenario Home](../assets/scenario-01-home.png){ loading=lazy }
+      ![Scenario Home](../assets/02-template-selected.png){ loading=lazy }
       <figcaption>Select Scenario tab at the top of the Agent Builder</figcaption>
     </figure>
 
