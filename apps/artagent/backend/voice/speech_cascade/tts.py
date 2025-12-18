@@ -24,6 +24,7 @@ from apps.artagent.backend.voice.tts.playback import (
 )
 from utils.ml_logging import get_logger
 
+from opentelemetry import trace
 from .metrics import record_tts_streaming, record_tts_synthesis
 
 if TYPE_CHECKING:
