@@ -129,6 +129,64 @@ DEMAND_STATUS_CODES = {
 # - CLM-2024-024680: Liability accepted at 100%, demand exceeds limits
 
 MOCK_CLAIMS: Dict[str, Dict[str, Any]] = {
+    # ═══════════════════════════════════════════════════════════════════════════
+    # GOLDEN PATH - Complete B2B workflow test claim
+    # ═══════════════════════════════════════════════════════════════════════════
+    # This claim has ALL data populated to allow testing the full inquiry flow:
+    # 1. Coverage    → "Is coverage confirmed?" → YES (confirmed)
+    # 2. Liability   → "Has liability been accepted?" → YES (80%)
+    # 3. Limits      → "Does demand exceed limits?" → NO (demand: $43,847.52, limit: $100k)
+    # 4. Payments    → "Any payments made?" → YES ($14,832.00 paid)
+    # 5. Demand      → "What's the demand status?" → Under review, assigned
+    # 6. Escalation  → "Can this be rushed?" → Qualifies (attorney involved, statute near)
+    "CLM-2024-1234": {
+        "claim_number": "CLM-2024-1234",
+        "insured_name": "Michael Anderson",
+        "loss_date": "2024-10-01",
+        "claimant_carrier": "Contoso Insurance",
+        "claimant_name": "Jennifer Martinez",
+        "status": "open",
+        # Coverage: CONFIRMED (allows all other inquiries)
+        "coverage_status": "confirmed",
+        "cvq_status": None,
+        # Liability: ACCEPTED at 80% (allows limits disclosure)
+        "liability_decision": "accepted",
+        "liability_percentage": 80,
+        "liability_range_low": 80,
+        "liability_range_high": 100,
+        # Limits: $100k (demand is below limits)
+        "pd_limits": 100000,
+        # Payments: YES - partial payment made
+        "payments": [
+            {"date": "2024-11-15", "amount": 14832.00, "payee": "Contoso Insurance", "type": "subro_partial"},
+        ],
+        "pd_payments": [
+            {"date": "2024-11-15", "amount": 14832.00, "payee": "Contoso Insurance"},
+        ],
+        # Demand: Received, assigned, under review
+        "subro_demand": {
+            "received": True,
+            "received_date": "2024-10-20",
+            "amount": 43847.52,
+            "assigned_to": "Sarah Johnson",
+            "assigned_date": "2024-10-22",
+            "status": "under_review",
+        },
+        # Feature owners: All assigned
+        "feature_owners": {
+            "PD": "Sarah Johnson",
+            "BI": "David Chen",
+            "SUBRO": "Sarah Johnson",
+        },
+        # Call history: Track prior calls for "third call" rush criterion
+        # 3 prior calls = this would be their 4th call, qualifies for rush
+        "call_history": [
+            {"date": "2024-10-25", "caller": "Jennifer Martinez", "company": "Contoso Insurance", "topic": "demand_status"},
+            {"date": "2024-11-05", "caller": "Jennifer Martinez", "company": "Contoso Insurance", "topic": "liability_status"},
+            {"date": "2024-11-18", "caller": "Jennifer Martinez", "company": "Contoso Insurance", "topic": "demand_followup"},
+        ],
+        "prior_call_count": 3,  # This would be the 4th call - auto-qualifies for third-call criterion
+    },
     # Scenario 1: Demand under review, liability still pending
     "CLM-2024-001234": {
         "claim_number": "CLM-2024-001234",

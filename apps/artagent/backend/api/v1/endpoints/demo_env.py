@@ -56,6 +56,7 @@ class DemoUserRequest(BaseModel):
     )
     # Test scenario selection for consistent edge case testing
     test_scenario: Literal[
+        "golden_path",                # CLM-2024-GOLDEN: Full B2B workflow (coverage, liability, limits, payments, demand, rush)
         "demand_under_review",        # CLM-2024-001234: Demand under review, liability pending
         "demand_paid",                # CLM-2024-005678: Demand PAID, liability 80%
         "no_demand",                  # CLM-2024-009012: No demand, coverage pending
@@ -69,7 +70,7 @@ class DemoUserRequest(BaseModel):
         default=None,
         description=(
             "For insurance scenario: select a specific test scenario to use predefined claim data. "
-            "This enables consistent testing of edge cases. If not specified or 'random', claims are generated randomly."
+            "Use 'golden_path' for complete B2B workflow testing. If not specified or 'random', claims are generated randomly."
         ),
     )
 
@@ -929,6 +930,9 @@ def _build_policies(
 # TEST SCENARIO MAPPING - Maps test_scenario names to MOCK_CLAIMS claim numbers
 # ═══════════════════════════════════════════════════════════════════════════════
 TEST_SCENARIO_TO_CLAIM: dict[str, str] = {
+    # GOLDEN PATH - Full B2B workflow (coverage, liability, limits, payments, demand, rush)
+    "golden_path": "CLM-2024-1234",
+    # Individual edge case scenarios
     "demand_under_review": "CLM-2024-001234",    # Demand under review, liability pending
     "demand_paid": "CLM-2024-005678",            # Demand PAID, liability 80%
     "no_demand": "CLM-2024-009012",              # No demand, coverage pending

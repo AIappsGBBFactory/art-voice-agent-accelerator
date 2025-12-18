@@ -44,6 +44,83 @@ This scenario demonstrates a **multi-agent insurance voice system** that handles
 
 ## 🎯 Test Scenarios
 
+### ⭐ Scenario: Golden Path B2B Workflow (RECOMMENDED)
+
+> **Persona**: Jennifer Martinez from Contoso Insurance calling about a subrogation demand. This scenario tests the **complete B2B workflow** with all 6 key inquiries.
+
+#### Setup
+1. Create demo profile: `scenario=insurance`, `role=cc_rep`, `test_scenario=golden_path`
+2. Claim number: `CLM-2024-1234`
+3. Caller: Jennifer Martinez, Contoso Insurance
+
+#### Complete Workflow Script
+
+| # | User Question | Expected Response | Tool |
+|---|---------------|-------------------|------|
+| 1 | "I'm calling about claim CLM-2024-1234" | Asks for company + name | — |
+| 2 | "Jennifer Martinez, Contoso Insurance" | Verifies CC access, hands off | `verify_cc_caller` → `handoff_subro_agent` |
+| **3** | **"Is coverage confirmed for this claim?"** | "Coverage is confirmed on this claim." | `get_coverage_status` |
+| **4** | **"Has liability been accepted? What's the range?"** | "Liability has been accepted at 80%." | `get_liability_decision` |
+| **5** | **"Does the demand exceed policy limits?"** | "No limits issue. Your demand ($45,000) is within the $100,000 PD limit." | `get_pd_policy_limits` |
+| **6** | **"Have any payments been made on the PD feature?"** | "1 payment totaling $15,000.00." | `get_pd_payments` |
+| **7** | **"Has my subrogation demand been received? When will it be assigned?"** | "Received on Oct 20th for $45,000. Currently under review by Sarah Johnson." | `get_subro_demand_status` |
+| **8** | **"Can this be rushed due to attorney involvement or statute concerns?"** | Agent MUST ask about each criterion before evaluating | See Rush Flow below |
+
+#### Rush Criteria Flow (Step 8)
+
+**BUSINESS RULE: At least TWO criteria must be met to qualify for ISRUSH.**
+
+Rush Criteria:
+1. Out-of-pocket expenses (rental, deductible) involved
+2. Third call for same demand
+3. Attorney involvement or suit filed
+4. DOI complaint filed
+5. Statute of limitations within 60 days
+
+The agent **MUST ask about criteria** before calling `evaluate_rush_criteria`:
+
+```
+Agent: "I can check if this qualifies for rush handling. A few quick questions:
+        Is there attorney involvement or has a suit been filed?"
+User:  "Yes, there's an attorney involved."
+Agent: "Is the statute of limitations coming up within 60 days?"
+User:  "Yes, about 45 days left."
+Agent: "Are there out-of-pocket expenses, like rental or deductible? 
+        Has a DOI complaint been filed? Is this your third call on this demand?"
+User:  "No to those."
+→ Agent calls: evaluate_rush_criteria(attorney_represented=true, statute_near=true, 
+                                       oop_expenses=false, doi_complaint=false, 
+                                       prior_demands_unanswered=false)
+→ Result: 2 criteria met (attorney + statute) = QUALIFIES
+→ Agent calls: create_isrush_diary(...)
+Agent: "I've flagged this for rush handling. Two criteria met: attorney involvement and 
+        statute near. You'll see assignment within 2 business days."
+```
+
+#### Expected Tool Outputs (CLM-2024-1234)
+
+| Tool | Key Output Values |
+|------|-------------------|
+| `get_coverage_status` | `coverage_status: "confirmed"`, `has_cvq: false` |
+| `get_liability_decision` | `liability_decision: "accepted"`, `liability_percentage: 80` |
+| `get_pd_policy_limits` | `pd_limits: 100000`, `demand_amount: 43847.52`, `demand_exceeds_limits: false` |
+| `get_pd_payments` | `payment_count: 1`, `total_paid: 14832.00` |
+| `get_subro_demand_status` | `demand_received: true`, `amount: 43847.52`, `assigned_to: "Sarah Johnson"`, `status: "under_review"` |
+| `evaluate_rush_criteria` | `qualifies_for_rush: true` (if attorney OR statute criteria met), auto-validates call history (3 prior calls = 4th call qualifies) |
+
+#### Business Rules Verified
+- ✅ CC company must match claim's claimant_carrier
+- ✅ Coverage can be disclosed immediately
+- ✅ Liability percentage disclosed (lower end only: "80%", not "80-100%")
+- ✅ Policy limits only disclosed AFTER liability accepted
+- ✅ Demand amount auto-fetched from claim record (no need to ask caller)
+- ✅ Rush criteria: **at least 2 criteria required** to qualify for ISRUSH
+- ✅ Rush criteria: agent MUST gather criteria before calling tool
+- ✅ `escalation_request` alone does NOT count toward the 2-criteria minimum
+- ✅ Call history auto-validated: 3+ prior calls auto-qualifies for "third call" criterion
+
+---
+
 ### Scenario A: B2B Subrogation Demand Status
 
 > **Persona**: Sarah from Progressive Insurance calling about a claim where her customer was hit by our insured.
@@ -248,6 +325,7 @@ This scenario demonstrates a **multi-agent insurance voice system** that handles
 
 | `test_scenario` | Claim | CC Company | Edge Case |
 |-----------------|-------|------------|------------|
+| ⭐ `golden_path` | CLM-2024-1234 | Contoso | **Full B2B workflow**: coverage ✓, liability 80%, limits $100k, payment $14,832, demand $43,847.52 |
 | `demand_under_review` | CLM-2024-001234 | Contoso | Liability pending, demand under review |
 | `demand_paid` | CLM-2024-005678 | Fabrikam | 80% liability, demand paid |
 | `no_demand` | CLM-2024-009012 | Northwind | No demand received, coverage pending |

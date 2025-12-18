@@ -1143,15 +1143,19 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
                   value={claims.filter(c => c.status === 'open' || c.status === 'under_investigation').length.toString()} 
                 />
                 <ProfileDetailRow 
-                  label="Total Estimated" 
+                  label="Total Demand" 
                   value={formatCurrency(
-                    claims.reduce((sum, c) => sum + (c.estimated_amount || 0), 0)
+                    claims.reduce((sum, c) => sum + (c.subro_demand?.amount || c.estimated_amount || 0), 0)
                   )} 
                 />
                 <ProfileDetailRow 
                   label="Total Paid" 
                   value={formatCurrency(
-                    claims.reduce((sum, c) => sum + (c.paid_amount || 0), 0)
+                    claims.reduce((sum, c) => {
+                      // Sum all payments from payments array
+                      const paymentsTotal = (c.payments || []).reduce((pSum, p) => pSum + (p.amount || 0), 0);
+                      return sum + paymentsTotal;
+                    }, 0)
                   )} 
                 />
                 <ProfileDetailRow 
