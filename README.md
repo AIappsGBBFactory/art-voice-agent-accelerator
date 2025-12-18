@@ -6,30 +6,37 @@
 
 [📖 Documentation](https://microsoft.github.io/art-voice-agent-accelerator/) · [🚀 Quick Start](#quick-start) · [🏗️ Architecture](#architecture) · [💡 Samples](samples/)
 
-> **TL;DR**: Build real-time, multimodal, omnichannel (voice+text) agents on Azure in minutes, not months. Our approach is code-first, modular, ops-friendly & extensible.
+> **TL;DR**: Build real-time, multimodal and omnichannel agents on Azure in minutes, not months. Our approach is code-first, modular, ops-friendly & extensible.
 
 </div>
 
-<img src="docs/assets/ARTAGENT.png" height="220" alt="ARTAgent Logo" />
+<img src="docs/assets/ARTAGENT.png" height="200" alt="ARTAgent Logo" align="right" />
 
-You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
+You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. Shipping voice agents is more than "voice-to-voice." You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you—your tools, agentic design, and orchestration logic (multi-agent ready).
+
+<br clear="both" />
 
 ## **See it in Action**
 
-<p align="center">
-<a href="https://www.youtube.com/watch?v=H_uAA5_h40E"><img src="docs/assets/youtube.png" height="150"></a> <a href="https://vimeo.com/1115976100"><img src="docs/assets/ARTAgentVimeoDemo.png" height="150"></a>
-</p>
-
-<p align="center">
-<a href="https://www.youtube.com/watch?v=H_uAA5_h40E">▶️ Full overview on YouTube</a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="https://vimeo.com/1115976100">▶️ Demo app walkthrough</a>
-</p>
-
-<br>
+<table>
+<tr>
+<td align="center">
+<a href="https://www.youtube.com/watch?v=H_uAA5_h40E">
+<img src="docs/assets/youtube.png" height="120" alt="YouTube Overview" /><br/>
+<b>📺 Full Overview</b>
+</a>
+</td>
+<td align="center">
+<a href="https://vimeo.com/1115976100">
+<img src="docs/assets/ARTAgentVimeoDemo.png" height="120" alt="Demo Walkthrough" /><br/>
+<b>🎬 Demo Walkthrough</b>
+</a>
+</td>
+</tr>
+</table>
 
 <details>
-<summary><strong>The what and why behind this accelerator</strong> (click to expand)</summary>
-
-<br>
+<summary><b>💡 What you get</b></summary>
 
 ### **What you get**
 
