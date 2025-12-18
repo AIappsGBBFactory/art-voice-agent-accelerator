@@ -74,7 +74,7 @@ speech:
     language: en-US
 
   synthesis:
-    voice_name: en-US-AvaMultilingualNeural
+    voice_name: en-US-Ava:DragonHDLatestNeural
 
   vad:
     threshold: 0.02
@@ -92,7 +92,14 @@ tools:
   - escalate_human
   - escalate_emergency
 
-  # Knowledge retrieval
+  # Policy-specific tools (query user's loaded profile data)
+  - search_policy_info              # Search user's policies for specific info
+  - get_policy_details              # Get full details of a specific policy
+  - list_user_policies              # List all user's policies
+  - check_coverage                  # Check if user has specific coverage
+  - get_claims_summary              # Get summary of user's claims
+
+  # Generic knowledge retrieval (for general insurance questions)
   - search_knowledge_base
 
 # ─────────────────────────────────────────────────────────────────────────────

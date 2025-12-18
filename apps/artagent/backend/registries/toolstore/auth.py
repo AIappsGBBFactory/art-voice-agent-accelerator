@@ -107,6 +107,35 @@ resend_mfa_code_schema: dict[str, Any] = {
     },
 }
 
+verify_cc_caller_schema: dict[str, Any] = {
+    "name": "verify_cc_caller",
+    "description": (
+        "Verify a Claimant Carrier (CC) representative's access to claim information. "
+        "Use this for B2B subrogation calls to authenticate the caller represents "
+        "the claimant carrier on record for the specified claim. "
+        "Required: claim_number, company_name, caller_name. "
+        "Returns retry_allowed=true on failure - retry up to 3 times before escalating."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "claim_number": {
+                "type": "string",
+                "description": "The claim number the CC rep is calling about (e.g., CLM-2024-001234)",
+            },
+            "company_name": {
+                "type": "string",
+                "description": "The insurance company the caller represents (e.g., Contoso Insurance)",
+            },
+            "caller_name": {
+                "type": "string",
+                "description": "The name of the caller (CC representative)",
+            },
+        },
+        "required": ["claim_number", "company_name", "caller_name"],
+    },
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK DATA (for demo purposes)
@@ -333,6 +362,183 @@ def _log_mock_usage(full_name: str, ssn_last_4: str, reason: str | None) -> None
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+async def _lookup_claim_in_cosmos(
+    claim_number: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+    """
+    Query Cosmos DB for a user profile containing the given claim number.
+    
+    Returns:
+        (user_profile, claim, failure_reason)
+        - user_profile: Full user document if found
+        - claim: The matching claim dict from demo_metadata.claims
+        - failure_reason: None if found, or 'unavailable'/'not_found'/'error'
+    """
+    cosmos = _get_demo_users_manager()
+    if cosmos is None:
+        logger.warning(
+            "⚠️ Cosmos manager unavailable for claim lookup: %s",
+            claim_number
+        )
+        return None, None, "unavailable"
+
+    # Query for user with matching claim in demo_metadata.claims
+    query: dict[str, Any] = {
+        "demo_metadata.claims.claim_number": {"$regex": f"^{re.escape(claim_number)}$", "$options": "i"}
+    }
+
+    logger.info("🔍 Cosmos claim lookup | claim_number=%s", claim_number)
+
+    try:
+        document = await asyncio.to_thread(cosmos.read_document, query)
+        if document:
+            # Extract the matching claim from the document
+            claims = document.get("demo_metadata", {}).get("claims", [])
+            claim_upper = claim_number.upper()
+            for claim in claims:
+                if claim.get("claim_number", "").upper() == claim_upper:
+                    logger.info(
+                        "✓ Claim found in Cosmos: %s (user: %s)",
+                        claim_number,
+                        document.get("client_id") or document.get("_id")
+                    )
+                    return document, claim, None
+            # Document matched but claim not in expected location
+            logger.warning(
+                "⚠️ Document matched query but claim not found in demo_metadata.claims: %s",
+                claim_number
+            )
+            return document, None, "not_found"
+    except Exception as exc:  # pragma: no cover - network/driver failures
+        logger.warning("Cosmos claim lookup failed: %s", exc)
+        return None, None, "error"
+
+    logger.warning("✗ No user found with claim: %s", claim_number)
+    return None, None, "not_found"
+
+
+async def verify_cc_caller(args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Verify Claimant Carrier representative access to claim.
+
+    Checks:
+    1. Claim exists in our system (queries Cosmos DB directly)
+    2. Caller's company matches the claimant carrier on record
+
+    Returns:
+        success: bool - whether verification passed
+        claim_exists: bool - whether the claim was found
+        cc_verified: bool - whether the company matches
+        claim_number: str - the verified claim number
+        cc_company: str - the verified company name
+        caller_name: str - the caller's name
+        retry_allowed: bool - whether the agent should retry (max 3 attempts)
+        message: str - human-readable status
+    """
+    claim_number = (args.get("claim_number") or "").strip().upper()
+    company_name = (args.get("company_name") or "").strip()
+    caller_name = (args.get("caller_name") or "").strip()
+
+    logger.info(
+        "🔐 CC Verification | claim=%s company=%s caller=%s",
+        claim_number, company_name, caller_name
+    )
+
+    # Validate required fields
+    if not claim_number:
+        return {
+            "success": False,
+            "claim_exists": False,
+            "cc_verified": False,
+            "retry_allowed": True,
+            "message": "Claim number is required. Please ask for the claim number.",
+        }
+
+    if not company_name:
+        return {
+            "success": False,
+            "claim_exists": False,
+            "cc_verified": False,
+            "retry_allowed": True,
+            "message": "Company name is required. Please ask which company the caller represents.",
+        }
+
+    if not caller_name:
+        return {
+            "success": False,
+            "claim_exists": False,
+            "cc_verified": False,
+            "retry_allowed": True,
+            "message": "Caller name is required. Please ask for the caller's name.",
+        }
+
+    # Look up claim from Cosmos DB
+    user_profile, claim, failure_reason = await _lookup_claim_in_cosmos(claim_number)
+    
+    if not claim:
+        logger.warning("❌ Claim not found: %s (reason: %s)", claim_number, failure_reason)
+        return {
+            "success": False,
+            "claim_exists": False,
+            "cc_verified": False,
+            "claim_number": claim_number,
+            "retry_allowed": True,
+            "message": f"Claim {claim_number} not found in our system. Please verify the claim number.",
+        }
+
+    # Check if company matches the claimant carrier on record
+    cc_on_record = (claim.get("claimant_carrier") or "").lower()
+    company_normalized = company_name.lower()
+    
+    # Normalize common variations
+    cc_on_record_clean = cc_on_record.replace(" insurance", "").strip()
+    company_clean = company_normalized.replace(" insurance", "").strip()
+
+    # Allow partial matching for better UX (e.g., "Contoso" matches "Contoso Insurance")
+    cc_matches = (
+        cc_on_record == company_normalized or
+        cc_on_record_clean == company_clean or
+        cc_on_record.startswith(company_clean) or
+        company_normalized.startswith(cc_on_record_clean)
+    )
+
+    if not cc_matches:
+        logger.warning(
+            "❌ CC mismatch | claim=%s expected=%s got=%s",
+            claim_number, cc_on_record, company_normalized
+        )
+        return {
+            "success": False,
+            "claim_exists": True,
+            "cc_verified": False,
+            "claim_number": claim_number,
+            "cc_company": company_name,
+            "caller_name": caller_name,
+            "retry_allowed": True,
+            "message": (
+                f"Unable to verify. The claimant carrier on record for claim "
+                f"{claim_number} does not match {company_name}."
+            ),
+        }
+
+    # Verification successful
+    logger.info(
+        "✅ CC Verified | claim=%s company=%s caller=%s",
+        claim_number, company_name, caller_name
+    )
+    return {
+        "success": True,
+        "claim_exists": True,
+        "cc_verified": True,
+        "claim_number": claim_number,
+        "cc_company": company_name,
+        "caller_name": caller_name,
+        "claimant_name": claim.get("claimant_name"),
+        "loss_date": claim.get("loss_date"),
+        "message": f"Verified. {caller_name} from {company_name} accessing claim {claim_number}.",
+    }
+
+
 async def verify_client_identity(args: dict[str, Any]) -> dict[str, Any]:
     """Verify caller identity using Cosmos DB first, then fall back to mock data."""
     raw_full_name = (args.get("full_name") or "").strip()
@@ -435,3 +641,9 @@ register_tool(
 register_tool("send_mfa_code", send_mfa_code_schema, send_mfa_code, tags={"auth", "mfa"})
 register_tool("verify_mfa_code", verify_mfa_code_schema, verify_mfa_code, tags={"auth", "mfa"})
 register_tool("resend_mfa_code", resend_mfa_code_schema, resend_mfa_code, tags={"auth", "mfa"})
+register_tool(
+    "verify_cc_caller",
+    verify_cc_caller_schema,
+    verify_cc_caller,
+    tags={"auth", "insurance", "b2b"},
+)

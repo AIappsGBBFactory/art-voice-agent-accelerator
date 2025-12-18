@@ -1,28 +1,35 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Auth Agent - Unified Schema
+# Subrogation Agent - B2B Claimant Carrier Hotline
 # ═══════════════════════════════════════════════════════════════════════════════
-# Authentication and identity verification specialist
-# Works with both SpeechCascade and VoiceLive orchestrators
+# Handles inbound calls from Claimant Carriers (other insurance companies)
+# inquiring about subrogation demand status, liability, coverage, and limits
+# on claims where our insured was at fault.
 #
-# Note: When used with the 'banking' scenario, this agent gets the
-# generate_personalized_greeting tool added for high-touch experience.
+# This is a B2B agent - callers are NOT policyholders, they are representatives
+# from other insurance companies.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-name: AuthAgent
-description: Handles MFA, identity verification, and security questions
+name: SubroAgent
+description: |
+  Subrogation specialist handling B2B calls from Claimant Carriers (other insurance
+  companies) checking on demand status, liability decisions, coverage, and policy
+  limits for claims involving our insureds.
 
 greeting: |
-  {% if institution_name %}Hello, thank you for calling {{ institution_name }}. How can I help you today?
-  {% else %}Hello, thank you for calling. How can I help you today?
+  {% if caller_name and cc_company %}Hi {{ caller_name }} from {{ cc_company }}, I'm ready to help with claim {{ claim_number }}. What information do you need today?
+  {% elif caller_name %}Hi {{ caller_name }}, I'm ready to help with your subrogation inquiry. What do you need?
+  {% else %}Hello, I'm your subrogation specialist. How can I help you today?
   {% endif %}
-return_greeting: "Welcome back. Let me verify a few details and we'll continue."
+return_greeting: |
+  {% if caller_name %}{{ caller_name }}, I'm back. What else do you need on claim {{ claim_number }}?
+  {% else %}Welcome back. What else can I help you with?
+  {% endif %}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Handoff Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
-  trigger: handoff_to_auth            # Other agents call this to reach AuthAgent
-
+  trigger: handoff_subro_agent      # Other agents call this to reach SubroAgent
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration
@@ -37,16 +44,16 @@ voice:
 # ─────────────────────────────────────────────────────────────────────────────
 voicelive_model:
   deployment_id: gpt-4o-realtime-preview
-  temperature: 0.6                        # Lower for consistent authentication
-  max_tokens: 150
+  temperature: 0.5                   # Lower for precise information delivery
+  max_tokens: 250
 
 cascade_model:
   deployment_id: gpt-4o
-  temperature: 0.6
-  max_tokens: 100
+  temperature: 0.5
+  max_tokens: 150
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Session Configuration (VoiceLive-specific)
+# Session Configuration (VoiceLive Mode Only)
 # ─────────────────────────────────────────────────────────────────────────────
 session:
   modalities: [TEXT, AUDIO]
@@ -54,14 +61,14 @@ session:
   output_audio_format: PCM16
 
   input_audio_transcription_settings:
-    model: azure-speech
+    model: gpt-4o-transcribe
     language: en-US
 
   turn_detection:
     type: azure_semantic_vad
     threshold: 0.5
     prefix_padding_ms: 240
-    silence_duration_ms: 700
+    silence_duration_ms: 720
 
   tool_choice: auto
 
@@ -73,7 +80,7 @@ speech:
     language: en-US
 
   synthesis:
-    voice_name: en-US-ShimmerTurboMultilingualNeural
+    voice_name: en-US-DavisNeural
 
   vad:
     threshold: 0.02
@@ -84,37 +91,45 @@ speech:
 # Tools (referenced by name from shared registry)
 # ─────────────────────────────────────────────────────────────────────────────
 tools:
-  # MFA & Identity Verification (Customer)
-  - verify_client_identity
-  - send_mfa_code
-  - verify_mfa_code
-  - resend_mfa_code
+  # Claim Information
+  - get_claim_summary              # Basic claim info
+  - get_subro_demand_status        # Demand received/pending/assigned
+  - get_coverage_status            # Coverage confirmed/pending/denied/CVQ
+  - get_liability_decision         # Liability % (lower end only)
+  - get_pd_policy_limits           # PD limits (only if liability > 0)
+  - get_pd_payments                # Payments made on PD feature
   
-  # B2B Verification (Claimant Carriers)
-  - verify_cc_caller               # Verify Claimant Carrier rep for subrogation
+  # Routing & Ownership
+  - resolve_feature_owner          # Find handler for specific feature
+  - get_subro_contact_info         # Fax/phone for department
   
-  # Handoffs - Banking Scenario
-  - handoff_concierge              # Return to BankingConcierge
-  - handoff_fraud_agent            # Transfer to fraud if suspicious
+  # Multi-Claim Support
+  - switch_claim                   # Switch to different claim (same CC only)
   
-  # Handoffs - Insurance Scenario (Customer)
-  - handoff_policy_advisor         # Transfer to PolicyAdvisor (insurance)
-  - handoff_fnol_agent             # Transfer to FNOLAgent (insurance claims)
+  # Rush Handling
+  - evaluate_rush_criteria         # Check if qualifies for ISRUSH
+  - create_isrush_diary            # Create rush diary entry
   
-  # Handoffs - Insurance Scenario (B2B)
-  - handoff_subro_agent            # Transfer to SubroAgent (subrogation/CC inquiries)
+  # Documentation
+  - append_claim_note              # Document the call in CLAIMPRO
+  - close_and_document_call        # Close call with summary + optional email confirmation
   
   # Escalation
-  - escalate_human
-  - escalate_emergency             # For medical/injury/fire emergencies
-
-template_vars:
-  institution_name: "{{ institution_name | default('XYMZ Insurance') }}"
-  agent_name: "AuthAgent"
-  industry: "{{ industry | default('insurance') }}"
+  - escalate_human                 # Transfer to live subro handler
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Prompt (inline for simple agent)
+# Template Variables
+# ─────────────────────────────────────────────────────────────────────────────
+template_vars:
+  institution_name: "{{ institution_name | default('XYMZ Insurance') }}"
+  agent_name: "SubroAgent"
+  industry: "insurance"
+  department: "subrogation"
+  subro_fax: "(888) 781-6947"
+  subro_phone: "(855) 405-8645"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt
 # ─────────────────────────────────────────────────────────────────────────────
 prompts:
   path: prompt.jinja
