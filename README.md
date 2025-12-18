@@ -60,54 +60,60 @@ We ship the scaffolding to make that last mile fast: structured logging, metrics
 
 ## **The How (Architecture)**
 
-Pick one of three ways to run the voice inference layer—the rest of the framework (transport, orchestration, ACS telephony, UI wiring) stays the same. Choose based on control vs. speed vs. portability.
+Two orchestration modes—same agent framework, different audio paths:
+
+| Mode | Path | Latency | Best For |
+|------|------|---------|----------|
+| **SpeechCascade** | Azure Speech STT → LLM → TTS | ~400ms | Custom VAD, phrase lists, Azure voices |
+| **VoiceLive** | Azure VoiceLive SDK (gpt-4o-realtime) | ~200ms | Fastest setup, lowest latency |
+
+```bash
+# Select mode via environment variable
+export ACS_STREAMING_MODE=MEDIA       # SpeechCascade (default)
+export ACS_STREAMING_MODE=VOICE_LIVE  # VoiceLive
+```
 
 <details>
-<summary><strong>Build the AI voice pipeline from scratch (maximum control)</strong></summary>
+<summary><strong>🔧 SpeechCascade — Full Control</strong></summary>
 <br>
-<img src="docs/assets/ARTAgentarch.png" alt="ARTAgent Arch" />
+<img src="docs/assets/ARTAgentarch.png" alt="SpeechCascade Architecture" />
 
-- **Own the event loop**: STT → LLM/Tools → TTS, with granular hooks.
-- **Swap services per stage**: Azure Speech, Azure OpenAI, etc.
-- **Tune for your SLOs**: latency budgets, custom VAD, barge-in, domain policies.
-- **Deep integration**: ACS telephony, Event Hubs, Cosmos DB, FastAPI/WebSockets, Kubernetes, observability, custom memory/tool stores.
-- **Best for**: on-prem/hybrid, strict compliance, or heavy customization.
+**You own each step:** STT → LLM → TTS with granular hooks.
+
+| Feature | Description |
+|---------|-------------|
+| **Custom VAD** | Control silence detection, barge-in thresholds |
+| **Azure Speech Voices** | Full neural TTS catalog, styles, prosody |
+| **Phrase Lists** | Boost domain-specific recognition |
+| **Sentence Streaming** | Natural pacing with per-sentence TTS |
+
+Best for: On-prem/hybrid, compliance requirements, deep customization.
+
+📖 [Cascade Orchestrator Docs](docs/architecture/orchestration/cascade.md)
 
 </details>
 
 <details>
-<summary><strong>Use Azure Voice Live API + Azure AI Foundry Agents (ship fast)</strong></summary>
+<summary><strong>⚡ VoiceLive — Ship Fast</strong></summary>
 <br>
 
 > [!NOTE]
-> WIP/Preview: Azure Voice Live API is in preview; behavior and APIs may change.
+> Uses [Azure VoiceLive SDK](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live) with gpt-realtime in the backend.
 
-<br>
+<img src="docs/assets/LIVEVOICEApi.png" alt="VoiceLive Architecture" />
 
-<img src="docs/assets/LIVEVOICEApi.png" alt="LIVEVOICEApi" />
+**Managed voice-to-voice:** Azure-hosted GPT-4o Realtime handles audio in one hop.
 
- - **Enterprise Managed voice-to-voice**: barge-in, noise suppression, elastic scale.
- - **Agent runtime**: connect to Azure AI Foundry Agents for built-in tool/function calling and orchestration.
- - **Built-ins**: tool store, guardrails/evals, threads/memory patterns, APIM gateway options.
- - **Keep your hooks**: reduce ops surface and move faster to pilot/production.
+| Feature | Description |
+|---------|-------------|
+| **~200ms latency** | Direct audio streaming, no separate STT/TTS |
+| **Server-side VAD** | Automatic turn detection, noise reduction |
+| **Native tools** | Built-in function calling via Realtime API |
+| **Azure Neural Voices** | HD voices like `en-US-Ava:DragonHDLatestNeural` |
 
- **Key differences vs. from-scratch**
+Best for: Speed to production, lowest latency requirements.
 
- - Media layer and agent runtime are managed (less infra to own).
- - Faster “happy-path” to omnichannel via ACS, while still supporting your policies and extensions.
- - Great fit when you want speed, scale and consistency without giving up critical integration points.
-
-</details>
-
-<details>
-<summary><strong>Bring your own voice-to-voice model (e.g., gpt-realtime) — coming soon</strong></summary>
-
-> [!NOTE]
-> Coming soon: This adapter path is under active development.
-
-- Plug a BYO voice-to-voice model behind a slim adapter; no changes to transport/orchestration.
-- ACS telephony path remains intact.
-
+📖 [VoiceLive Orchestrator Docs](docs/architecture/orchestration/voicelive.md) · [VoiceLive SDK Samples](samples/voice_live_sdk/)
 
 </details>
 
