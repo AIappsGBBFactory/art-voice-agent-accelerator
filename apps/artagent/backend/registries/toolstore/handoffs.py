@@ -743,9 +743,11 @@ async def handoff_subro_agent(args: dict[str, Any]) -> dict[str, Any]:
         claim_number, cc_company, caller_name, inquiry_type
     )
 
+    # NOTE: No message for discrete handoffs - the transfer should be seamless
+    # The orchestration.yaml sets type: discrete for AuthAgent -> SubroAgent
     return _build_handoff_payload(
         target_agent="SubroAgent",
-        message="I'll connect you with our subrogation specialist.",
+        message="",  # Empty - discrete handoff, no announcement
         summary=f"Subro inquiry: {inquiry_type or 'demand status'}",
         context={
             "claim_number": claim_number,

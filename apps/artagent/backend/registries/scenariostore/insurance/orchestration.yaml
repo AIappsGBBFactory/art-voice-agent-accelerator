@@ -63,7 +63,7 @@ handoffs:
   - from: AuthAgent
     to: SubroAgent
     tool: handoff_subro_agent
-    type: announced           # SubroAgent greets the CC rep
+    type: discrete            # Seamless - same conversation continues
     share_context: true
 
   # ─────────────────────────────────────────────────────────────────────────────
