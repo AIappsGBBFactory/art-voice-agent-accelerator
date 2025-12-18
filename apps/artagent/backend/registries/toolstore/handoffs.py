@@ -369,7 +369,11 @@ handoff_subro_agent_schema: dict[str, Any] = {
             },
             "claimant_name": {
                 "type": "string",
-                "description": "Name of the claimant (their insured) if known",
+                "description": "Name of the claimant (their insured) from verify_cc_caller",
+            },
+            "loss_date": {
+                "type": "string",
+                "description": "Date of loss from verify_cc_caller (YYYY-MM-DD)",
             },
             "inquiry_type": {
                 "type": "string",
@@ -724,6 +728,7 @@ async def handoff_subro_agent(args: dict[str, Any]) -> dict[str, Any]:
     cc_company = (args.get("cc_company") or "").strip()
     caller_name = (args.get("caller_name") or "").strip()
     claimant_name = (args.get("claimant_name") or "").strip()
+    loss_date = (args.get("loss_date") or "").strip()
     inquiry_type = (args.get("inquiry_type") or "").strip()
 
     if not claim_number:
@@ -747,6 +752,7 @@ async def handoff_subro_agent(args: dict[str, Any]) -> dict[str, Any]:
             "cc_company": cc_company,
             "caller_name": caller_name,
             "claimant_name": claimant_name,
+            "loss_date": loss_date,
             "inquiry_type": inquiry_type,
             "handoff_timestamp": _utc_now(),
             "previous_agent": "AuthAgent",

@@ -35,7 +35,7 @@ handoff:
 # Voice Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 voice:
-  name: en-US-DavisNeural
+  name: en-US-Ava:DragonHDLatestNeural
   type: azure-standard
   rate: "0%"
 
@@ -103,12 +103,16 @@ tools:
   - resolve_feature_owner          # Find handler for specific feature
   - get_subro_contact_info         # Fax/phone for department
   
+  # Multi-Claim Support
+  - switch_claim                   # Switch to different claim (same CC only)
+  
   # Rush Handling
   - evaluate_rush_criteria         # Check if qualifies for ISRUSH
   - create_isrush_diary            # Create rush diary entry
   
   # Documentation
   - append_claim_note              # Document the call in CLAIMPRO
+  - close_and_document_call        # Close call with summary + optional email confirmation
   
   # Escalation
   - escalate_human                 # Transfer to live subro handler

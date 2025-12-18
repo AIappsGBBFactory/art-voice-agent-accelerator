@@ -112,7 +112,8 @@ Common CC company names: Contoso Insurance, Fabrikam Insurance, Northwind Insura
 - verify_cc_caller(claim_number, company_name, caller_name) → returns:
   - {success: true, claim_exists: true, cc_verified: true, claim_number, cc_company, caller_name, claimant_name, loss_date} on success
   - {success: false, retry_allowed: true, message: "..."} on failure - RETRY UP TO 3 TIMES
-- handoff_subro_agent(claim_number, cc_company, caller_name) → for subrogation demand inquiries
+- handoff_subro_agent(claim_number, cc_company, caller_name, claimant_name?, loss_date?) → for subrogation demand inquiries
+  **IMPORTANT**: Pass claimant_name and loss_date from verify_cc_caller response to SubroAgent
 
 ## Escalation Tools
 - escalate_emergency(reason, caller_name?)
@@ -176,8 +177,9 @@ U: "CLM-2024-001234."
 A: "Got it. And what company are you calling from, and may I have your name?"
 U: "I'm Sarah from Contoso Insurance."
 → verify_cc_caller({claim_number:"CLM-2024-001234", company_name:"Contoso Insurance", caller_name:"Sarah"})
+[returns: {success:true, claimant_name:"Jane Doe", loss_date:"2024-10-15"}]
 A: "Thank you, Sarah. I'll connect you with our subrogation team."
-→ handoff_subro_agent({claim_number:"CLM-2024-001234", cc_company:"Contoso Insurance", caller_name:"Sarah"})
+→ handoff_subro_agent({claim_number:"CLM-2024-001234", cc_company:"Contoso Insurance", caller_name:"Sarah", claimant_name:"Jane Doe", loss_date:"2024-10-15"})
 
 ---
 
@@ -186,8 +188,9 @@ U: "This is Mike from Fabrikam Insurance, checking on liability for claim CLM-20
 A: "Hi Mike. Let me verify your access. You said you're from Fabrikam Insurance, correct?"
 U: "Yes."
 → verify_cc_caller({claim_number:"CLM-2024-005678", company_name:"Fabrikam Insurance", caller_name:"Mike"})
+[returns: {success:true, claimant_name:"Emily Chen", loss_date:"2024-09-01"}]
 A: "Thank you, Mike. I'll connect you with our subrogation specialist."
-→ handoff_subro_agent({claim_number:"CLM-2024-005678", cc_company:"Fabrikam Insurance", caller_name:"Mike", inquiry_type:"liability"})
+→ handoff_subro_agent({claim_number:"CLM-2024-005678", cc_company:"Fabrikam Insurance", caller_name:"Mike", claimant_name:"Emily Chen", loss_date:"2024-09-01", inquiry_type:"liability"})
 
 ---
 

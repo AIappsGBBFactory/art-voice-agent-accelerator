@@ -125,6 +125,32 @@ def _lookup_user_policies_in_cosmos(client_id: str) -> List[Dict[str, Any]]:
     return []
 
 
+def _lookup_user_claims_in_cosmos(client_id: str) -> List[Dict[str, Any]]:
+    """
+    Look up a user's claims by client_id in Cosmos DB.
+    
+    Returns list of claim dicts, or empty list if not found.
+    """
+    cosmos = _get_demo_users_manager()
+    if cosmos is None:
+        return []
+
+    query: Dict[str, Any] = {"_id": client_id}
+    
+    logger.info("🔍 Cosmos claims lookup by client_id | client_id=%s", client_id)
+
+    try:
+        document = cosmos.read_document(query)
+        if document:
+            claims = document.get("demo_metadata", {}).get("claims", [])
+            logger.info("✓ Found %d claims for client %s in Cosmos", len(claims), client_id)
+            return claims
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Cosmos claims lookup failed: %s", exc)
+
+    return []
+
+
 def _lookup_policy_by_number_in_cosmos(policy_number: str) -> tuple[Dict[str, Any] | None, List[Dict[str, Any]]]:
     """
     Look up a policy by policy number in Cosmos DB.
@@ -165,21 +191,26 @@ def _get_policies_from_profile(args: Dict[str, Any]) -> List[Dict[str, Any]]:
     Extract policies list from session profile or Cosmos DB.
     
     Lookup order:
-    1. Cosmos DB by client_id (if available in session profile)
+    1. Cosmos DB by client_id (from args directly or session profile)
     2. _session_profile.demo_metadata.policies
     3. _session_profile.policies
     
     Returns empty list if no policies found.
     """
-    session_profile = args.get("_session_profile")
+    session_profile = args.get("_session_profile", {}) or {}
     
-    # Try Cosmos DB lookup by client_id first
-    if session_profile:
+    # Try client_id from direct args first (passed from auth response)
+    client_id = args.get("client_id")
+    
+    # Fallback to session_profile.client_id
+    if not client_id:
         client_id = session_profile.get("client_id")
-        if client_id:
-            cosmos_policies = _lookup_user_policies_in_cosmos(client_id)
-            if cosmos_policies:
-                return cosmos_policies
+    
+    # Try Cosmos DB lookup by client_id
+    if client_id:
+        cosmos_policies = _lookup_user_policies_in_cosmos(client_id)
+        if cosmos_policies:
+            return cosmos_policies
     
     if not session_profile:
         logger.warning("No session profile available for policy lookup")
@@ -204,18 +235,31 @@ def _get_policies_from_profile(args: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _get_claims_from_profile(args: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Extract claims list from session profile.
+    Extract claims list from session profile or Cosmos DB.
     
-    Looks in:
-    1. _session_profile.demo_metadata.claims
-    2. _session_profile.claims
+    Lookup order:
+    1. Cosmos DB by client_id (from args directly or session profile)
+    2. _session_profile.demo_metadata.claims
+    3. _session_profile.claims
     
     Returns empty list if no claims found.
     """
-    session_profile = args.get("_session_profile")
-    if not session_profile:
-        return []
+    session_profile = args.get("_session_profile", {}) or {}
     
+    # Try client_id from direct args first (passed from auth response)
+    client_id = args.get("client_id")
+    
+    # Fallback to session_profile.client_id
+    if not client_id:
+        client_id = session_profile.get("client_id")
+    
+    # Try Cosmos DB lookup by client_id
+    if client_id:
+        cosmos_claims = _lookup_user_claims_in_cosmos(client_id)
+        if cosmos_claims:
+            return cosmos_claims
+    
+    # Fallback: Try demo_metadata.claims
     demo_meta = session_profile.get("demo_metadata", {})
     claims = demo_meta.get("claims", [])
     if claims:
@@ -266,7 +310,8 @@ search_policy_info_schema: Dict[str, Any] = {
         "Search the user's insurance policies for specific information. "
         "Queries the loaded profile data to answer questions about coverage, "
         "deductibles, limits, vehicles, property, premiums, and policy status. "
-        "Use this instead of search_knowledge_base for policy-specific questions."
+        "Use this instead of search_knowledge_base for policy-specific questions. "
+        "Pass the client_id from the authentication response."
     ),
     "parameters": {
         "type": "object",
@@ -281,8 +326,12 @@ search_policy_info_schema: Dict[str, Any] = {
                 "description": "Filter by policy type, or 'all' for all policies",
                 "default": "all",
             },
+            "client_id": {
+                "type": "string",
+                "description": "The client_id returned from verify_client_identity. Required for policy lookup.",
+            },
         },
-        "required": ["query"],
+        "required": ["query", "client_id"],
     },
 }
 
@@ -519,11 +568,16 @@ list_user_policies_schema: Dict[str, Any] = {
     "name": "list_user_policies",
     "description": (
         "List all policies for the authenticated user. "
-        "Returns a summary of each policy including type, status, and key details."
+        "Returns a summary of each policy including type, status, and key details. "
+        "Pass the client_id from the authentication response."
     ),
     "parameters": {
         "type": "object",
         "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "The client_id returned from verify_client_identity. Required for policy lookup.",
+            },
             "policy_type": {
                 "type": "string",
                 "enum": ["auto", "home", "umbrella", "all"],
@@ -537,7 +591,7 @@ list_user_policies_schema: Dict[str, Any] = {
                 "default": "all",
             },
         },
-        "required": [],
+        "required": ["client_id"],
     },
 }
 
@@ -603,17 +657,22 @@ check_coverage_schema: Dict[str, Any] = {
     "name": "check_coverage",
     "description": (
         "Check if a specific type of coverage exists in the user's policies. "
-        "Useful for questions like 'do I have comprehensive coverage' or 'am I covered for liability'."
+        "Useful for questions like 'do I have comprehensive coverage' or 'am I covered for liability'. "
+        "Pass the client_id from the authentication response."
     ),
     "parameters": {
         "type": "object",
         "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "The client_id returned from verify_client_identity. Required for policy lookup.",
+            },
             "coverage_type": {
                 "type": "string",
                 "description": "The type of coverage to check for (e.g., 'comprehensive', 'collision', 'liability', 'bodily_injury', 'property_damage', 'dwelling', 'personal_property')",
             },
         },
-        "required": ["coverage_type"],
+        "required": ["client_id", "coverage_type"],
     },
 }
 
@@ -694,11 +753,16 @@ get_claims_summary_schema: Dict[str, Any] = {
     "name": "get_claims_summary",
     "description": (
         "Get a summary of the user's insurance claims. "
-        "Returns claim numbers, status, and basic details for all claims on file."
+        "Returns claim numbers, status, and basic details for all claims on file. "
+        "Pass the client_id from the authentication response."
     ),
     "parameters": {
         "type": "object",
         "properties": {
+            "client_id": {
+                "type": "string",
+                "description": "The client_id returned from verify_client_identity. Required for claims lookup.",
+            },
             "status": {
                 "type": "string",
                 "enum": ["open", "closed", "denied", "under_investigation", "all"],
@@ -706,7 +770,7 @@ get_claims_summary_schema: Dict[str, Any] = {
                 "default": "all",
             },
         },
-        "required": [],
+        "required": ["client_id"],
     },
 }
 

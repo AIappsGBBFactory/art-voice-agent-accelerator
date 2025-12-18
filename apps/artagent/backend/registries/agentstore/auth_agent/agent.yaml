@@ -28,7 +28,7 @@ handoff:
 # Voice Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 voice:
-  name: en-US-ShimmerTurboMultilingualNeural
+  name: en-US-Ava:DragonHDLatestNeural
   type: azure-standard
   rate: "0%"
 
