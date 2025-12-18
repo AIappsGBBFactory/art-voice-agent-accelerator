@@ -1,19 +1,16 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-# 🎙️ ART Voice Agent Accelerator
+<div align="center">
 
-**Build production-ready real-time voice agents on Azure in minutes, not months.**
-
-[![Azure](https://img.shields.io/badge/Azure-Ready-0078D4?logo=microsoftazure)](https://azure.microsoft.com)
-[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/Docs-MkDocs-blue)](https://microsoft.github.io/art-voice-agent-accelerator/)
+# Azure Real-Time (ART) Agent Accelerator
 
 [📖 Documentation](https://microsoft.github.io/art-voice-agent-accelerator/) · [🚀 Quick Start](#quick-start) · [🏗️ Architecture](#architecture) · [💡 Samples](samples/)
 
-> **TL;DR**: Build real-time multimodal (voice+text) agents on Azure in minutes, not months. Out approach is code-first, modular, ops-friendly & extensible.
+> **TL;DR**: Build real-time, multimodal, omnichannel (voice+text) agents on Azure in minutes, not months. Our approach is code-first, modular, ops-friendly & extensible.
 
-<img src="docs/assets/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
+</div>
+
+<img src="docs/assets/ARTAGENT.png" height="220" alt="ARTAgent Logo" />
 
 You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
 
