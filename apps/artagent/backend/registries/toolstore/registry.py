@@ -233,7 +233,9 @@ def initialize_tools() -> int:
     from apps.artagent.backend.registries.toolstore import compliance  # noqa: F401
     from apps.artagent.backend.registries.toolstore import customer_intelligence  # noqa: F401
     from apps.artagent.backend.registries.toolstore import escalation  # noqa: F401
-    from apps.artagent.backend.registries.toolstore import fnol  # noqa: F401
+    from apps.artagent.backend.registries.toolstore.insurance import fnol  # noqa: F401
+    from apps.artagent.backend.registries.toolstore.insurance import policy  # noqa: F401
+    from apps.artagent.backend.registries.toolstore.insurance import subro  # noqa: F401
     from apps.artagent.backend.registries.toolstore import fraud  # noqa: F401
     from apps.artagent.backend.registries.toolstore import handoffs  # noqa: F401
     # NOTE: investment.py (old mock-based file) removed - use banking/investments.py instead

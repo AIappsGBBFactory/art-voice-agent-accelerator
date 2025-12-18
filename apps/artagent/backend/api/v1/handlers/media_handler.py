@@ -43,7 +43,6 @@ import struct
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
 # Personalized greeting generation
@@ -77,8 +76,11 @@ from apps.artagent.backend.voice import (  # Browser barge-in controller; Speech
     send_user_transcript,
 )
 
+# Voice Session Context (Phase 1 - typed replacement for websocket.state)
+from apps.artagent.backend.voice.shared import TransportType, VoiceSessionContext
+
 # Unified TTS Playback - single source of truth for voice synthesis
-from apps.artagent.backend.voice.speech_cascade.tts import TTSPlayback
+from apps.artagent.backend.voice.tts import TTSPlayback
 from config import ACS_STREAMING_MODE, GREETING, STOP_WORDS
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
@@ -108,12 +110,9 @@ VOICE_LIVE_PCM_SAMPLE_RATE = BROWSER_PCM_SAMPLE_RATE
 VOICE_LIVE_SPEECH_RMS_THRESHOLD = BROWSER_SPEECH_RMS_THRESHOLD
 VOICE_LIVE_SILENCE_GAP_SECONDS = BROWSER_SILENCE_GAP_SECONDS
 
-
-class TransportType(str, Enum):
-    """Media transport types."""
-
-    BROWSER = "browser"
-    ACS = "acs"
+# Note: TransportType is now imported from apps.artagent.backend.voice.shared
+# Keep legacy alias for backward compatibility with existing imports
+# from apps.artagent.backend.api.v1.handlers.media_handler import TransportType
 
 
 class ACSMessageKind:
@@ -250,6 +249,27 @@ class MediaHandler:
         self._stopped = False
         self._metadata_received = False  # ACS only
 
+        # Phase 1: Typed session context (replaces websocket.state attributes)
+        # Created and populated in create() factory method
+        self._context: VoiceSessionContext | None = None
+
+    # =========================================================================
+    # Properties
+    # =========================================================================
+
+    @property
+    def context(self) -> VoiceSessionContext | None:
+        """
+        Get the typed session context.
+
+        Phase 1: Provides typed access to session resources and state.
+        Use this instead of accessing websocket.state attributes.
+
+        Returns:
+            VoiceSessionContext or None if not initialized.
+        """
+        return self._context
+
     # =========================================================================
     # Factory
     # =========================================================================
@@ -308,8 +328,37 @@ class MediaHandler:
             config.transport.value,
         )
 
-        # Setup websocket state
-        handler._setup_websocket_state(memory_manager, tts_client, stt_client)
+        # Phase 1: Create VoiceSessionContext with all typed fields
+        # This replaces the ad-hoc websocket.state attribute pollution
+        try:
+            event_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            event_loop = None
+
+        handler._context = VoiceSessionContext(
+            session_id=config.session_id,
+            call_connection_id=config.call_connection_id or config.session_id,
+            transport=config.transport,
+            conn_id=config.conn_id,
+            tts_client=tts_client,
+            stt_client=stt_client,
+            tts_tier=tts_tier,
+            stt_tier=stt_tier,
+            memo_manager=memory_manager,
+            latency_tool=handler._latency_tool,
+            session_context=SessionContext(
+                session_id=config.session_id,
+                memory_manager=memory_manager,
+                websocket=config.websocket,
+            ),
+            stream_mode=config.stream_mode,
+            cancel_event=handler._tts_cancel_event,
+            orchestration_tasks=handler._orchestration_tasks,
+            event_loop=event_loop,
+        )
+
+        # Setup websocket state for backward compatibility
+        handler._setup_websocket_state()
 
         # Initialize active agent in memory for this session
         # Priority: 1. Session agent (Agent Builder), 2. Session scenario (ScenarioBuilder),
@@ -372,25 +421,29 @@ class MediaHandler:
 
         if start_agent:
             memory_manager.update_corememory("active_agent", start_agent_name)
+            # Set current agent on context for TTSPlayback voice resolution
+            handler._context.current_agent = start_agent
 
         # Derive greeting
         handler._greeting_text = await handler._derive_greeting()
 
         # Initialize TTS Playback (unified handler for voice synthesis)
+        # Use context-based API (Phase 2) - TTSPlayback now accepts VoiceSessionContext
         handler._tts_playback = TTSPlayback(
-            websocket=config.websocket,
-            app_state=app_state,
-            session_id=config.session_id,
+            handler._context,
+            app_state,
             latency_tool=handler._latency_tool,
-            cancel_event=handler._tts_cancel_event,
         )
+        # Update context with TTS playback
+        handler._context.tts_playback = handler._tts_playback
 
-        # Create speech cascade
+        # Create speech cascade with typed context (Phase 1)
         handler.speech_cascade = SpeechCascadeHandler(
             connection_id=session_key,
             orchestrator_func=handler._create_orchestrator_wrapper(),
             recognizer=stt_client,
             memory_manager=memory_manager,
+            context=handler._context,  # Phase 1: pass typed context
             on_barge_in=handler._on_barge_in,
             on_greeting=handler._on_greeting,
             on_announcement=handler._on_announcement,
@@ -400,8 +453,11 @@ class MediaHandler:
             latency_tool=handler._latency_tool,
             redis_mgr=redis_mgr,
         )
+        # Update context with speech cascade
+        handler._context.speech_cascade = handler.speech_cascade
 
         # Expose speech_cascade on websocket.state for orchestrator TTS callbacks
+        # (backward compatibility - new code should use handler._context.speech_cascade)
         handler._websocket.state.speech_cascade = handler.speech_cascade
         # Expose tts_playback for voice configuration updates on agent switch
         handler._websocket.state.tts_playback = handler._tts_playback
@@ -563,35 +619,28 @@ class MediaHandler:
 
         return GREETING
 
-    def _setup_websocket_state(self, mm: MemoManager, tts, stt) -> None:
-        """Set up websocket state attributes for orchestrator compatibility."""
+    def _setup_websocket_state(self) -> None:
+        """
+        Set up websocket state attributes for orchestrator compatibility.
+
+        Phase 1: Uses VoiceSessionContext.populate_websocket_state() to maintain
+        backward compatibility. In future phases, direct context access will
+        replace websocket.state usage.
+        """
         ws = self._websocket
+        ctx = self._context
+
+        if ctx is None:
+            logger.warning("[%s] Context not initialized, skipping websocket state setup", self._session_short)
+            return
+
         try:
-            ws.state.session_context = SessionContext(
-                session_id=self._session_id,
-                memory_manager=mm,
-                websocket=ws,
-            )
-            ws.state.tts_client = tts
-            ws.state.stt_client = stt
-            ws.state.lt = self._latency_tool
-            ws.state.cm = mm
-            ws.state.session_id = self._session_id
-            ws.state.stream_mode = self._stream_mode
-            ws.state.is_synthesizing = False
-            ws.state.audio_playing = False
-            ws.state.tts_cancel_requested = False
-            ws.state.tts_cancel_event = self._tts_cancel_event
-            ws.state.orchestration_tasks = self._orchestration_tasks
+            # Use context's populate method for backward compatibility
+            ctx.populate_websocket_state(ws)
 
-            # Capture event loop for thread-safe scheduling
-            try:
-                ws.state._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                ws.state._loop = None
-
+            # Set call_connection_id on websocket for ACS
             if self._call_connection_id:
-                ws._call_connection_id = self._call_connection_id
+                ws.state.call_connection_id = self._call_connection_id
 
             # Set up barge-in controller for browser transport
             if self._transport == TransportType.BROWSER:
@@ -603,6 +652,7 @@ class MediaHandler:
     def _setup_browser_barge_in_controller(self) -> None:
         """Set up BargeInController for browser transport."""
         ws = self._websocket
+        ctx = self._context
 
         def get_metadata(key: str, default=None):
             """Get metadata from websocket state."""
@@ -615,6 +665,9 @@ class MediaHandler:
         def signal_tts_cancel() -> None:
             """Signal TTS cancellation."""
             self._tts_cancel_event.set()
+            # Also update context
+            if ctx:
+                ctx.request_cancel()
             # Cancel current TTS task
             if self._current_tts_task and not self._current_tts_task.done():
                 self._current_tts_task.cancel()
@@ -628,6 +681,12 @@ class MediaHandler:
             signal_tts_cancel=signal_tts_cancel,
             logger=logger,
         )
+
+        # Update context with barge-in controller
+        if ctx:
+            ctx.barge_in_controller = self._barge_in_controller
+
+        # Backward compatibility: also set on websocket.state
         ws.state.barge_in_controller = self._barge_in_controller
         ws.state.request_barge_in = self._barge_in_controller.request
 
@@ -681,9 +740,17 @@ class MediaHandler:
         try:
             logger.info("[%s] Barge-in (transport=%s)", self._session_short, self._transport.value)
 
-            # 1. Signal cancellation
+            # 1. Signal cancellation - update both context and websocket.state
             self._tts_cancel_event.set()
             self._tts_playing = False
+
+            # Update context (preferred)
+            if self._context:
+                self._context.is_synthesizing = False
+                self._context.audio_playing = False
+                self._context.tts_cancel_requested = True
+
+            # Update websocket.state (backward compatibility)
             self._websocket.state.is_synthesizing = False
             self._websocket.state.audio_playing = False
             self._websocket.state.tts_cancel_requested = True
@@ -758,6 +825,12 @@ class MediaHandler:
         await asyncio.sleep(0.1)
         self._barge_in_active = False
         self._tts_cancel_event.clear()
+
+        # Reset context (preferred)
+        if self._context:
+            self._context.clear_cancel()
+
+        # Reset websocket.state (backward compatibility)
         try:
             self._websocket.state.tts_cancel_requested = False
         except Exception:
@@ -1092,11 +1165,13 @@ class MediaHandler:
         with tracer.start_as_current_span("media_handler.run") as span:
             try:
                 count = 0
+                logger.debug("[%s] run() starting message loop", self._session_short)
                 while self._is_connected() and self._running:
                     msg = await self._websocket.receive()
                     count += 1
 
                     if msg.get("type") == "websocket.disconnect":
+                        logger.debug("[%s] run() received disconnect message", self._session_short)
                         break
                     if msg.get("type") != "websocket.receive":
                         continue
@@ -1115,15 +1190,17 @@ class MediaHandler:
                     if audio:
                         self.speech_cascade.write_audio(audio)
 
+                logger.debug("[%s] run() loop exited normally (count=%d)", self._session_short, count)
                 span.set_attribute("messages", count)
                 span.set_status(Status(StatusCode.OK))
 
-            except WebSocketDisconnect:
+            except WebSocketDisconnect as e:
+                logger.debug("[%s] run() WebSocketDisconnect: code=%s", self._session_short, e.code)
                 span.set_status(Status(StatusCode.OK, "disconnect"))
                 raise
             except Exception as e:
+                logger.error("[%s] Run error (%s): %s", self._session_short, type(e).__name__, e, exc_info=True)
                 span.set_status(Status(StatusCode.ERROR, str(e)))
-                logger.error("[%s] Run error: %s", self._session_short, e)
                 raise
 
     async def handle_media_message(self, raw_message: str) -> None:

@@ -1,49 +1,55 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Policy Advisor Agent - Insurance Policy Management
+# Subrogation Agent - B2B Claimant Carrier Hotline
 # ═══════════════════════════════════════════════════════════════════════════════
-# Specialized agent for policy questions, changes, renewals, and cancellations
-# Handles auto, home, health, life, and other insurance policies
+# Handles inbound calls from Claimant Carriers (other insurance companies)
+# inquiring about subrogation demand status, liability, coverage, and limits
+# on claims where our insured was at fault.
+#
+# This is a B2B agent - callers are NOT policyholders, they are representatives
+# from other insurance companies.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-name: PolicyAdvisor
-description: Insurance policy advisor who helps customers with policy changes, renewals, and questions
+name: SubroAgent
+description: |
+  Subrogation specialist handling B2B calls from Claimant Carriers (other insurance
+  companies) checking on demand status, liability decisions, coverage, and policy
+  limits for claims involving our insureds.
 
 greeting: |
-  {% if caller_name %}Hi {{ caller_name }}, I'm your policy advisor. I can help you make changes to your policy, answer questions about your coverage, or assist with renewals. What would you like to do today?
-  {% else %}Hello, I'm your policy advisor. I can help you make changes to your policy, answer questions about your coverage, or assist with renewals. How can I assist you?
+  {% if caller_name and cc_company %}Hi {{ caller_name }} from {{ cc_company }}, I'm ready to help with claim {{ claim_number }}. What information do you need today?
+  {% elif caller_name %}Hi {{ caller_name }}, I'm ready to help with your subrogation inquiry. What do you need?
+  {% else %}Hello, I'm your subrogation specialist. How can I help you today?
   {% endif %}
-
 return_greeting: |
-  {% if caller_name %}{{ caller_name }}, is there anything else I can help you with regarding your policy?
-  {% else %}Is there anything else about your policy I can help with?
+  {% if caller_name %}{{ caller_name }}, I'm back. What else do you need on claim {{ claim_number }}?
+  {% else %}Welcome back. What else can I help you with?
   {% endif %}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Handoff Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 handoff:
-  trigger: handoff_policy_advisor
-  is_entry_point: false
+  trigger: handoff_subro_agent      # Other agents call this to reach SubroAgent
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 voice:
-  name: en-US-AvaMultilingualNeural
+  name: en-US-Ava:DragonHDLatestNeural
   type: azure-standard
-  rate: "-4%"
+  rate: "0%"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model Configuration (LLM for agent reasoning)
 # ─────────────────────────────────────────────────────────────────────────────
 voicelive_model:
-  deployment_id: gpt-realtime
-  temperature: 0.7
+  deployment_id: gpt-4o-realtime-preview
+  temperature: 0.5                   # Lower for precise information delivery
   max_tokens: 250
 
 cascade_model:
   deployment_id: gpt-4o
-  temperature: 0.7
+  temperature: 0.5
   max_tokens: 150
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,7 +80,7 @@ speech:
     language: en-US
 
   synthesis:
-    voice_name: en-US-Ava:DragonHDLatestNeural
+    voice_name: en-US-DavisNeural
 
   vad:
     threshold: 0.02
@@ -82,36 +88,48 @@ speech:
     prefix_padding_ms: 200
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tools (Handoffs & Functions)
+# Tools (referenced by name from shared registry)
 # ─────────────────────────────────────────────────────────────────────────────
 tools:
-  # Handoffs to other agents (Insurance scenario)
-  - handoff_fnol_agent              # Transfer to FNOL for claims
+  # Claim Information
+  - get_claim_summary              # Basic claim info
+  - get_subro_demand_status        # Demand received/pending/assigned
+  - get_coverage_status            # Coverage confirmed/pending/denied/CVQ
+  - get_liability_decision         # Liability % (lower end only)
+  - get_pd_policy_limits           # PD limits (only if liability > 0)
+  - get_pd_payments                # Payments made on PD feature
+  
+  # Routing & Ownership
+  - resolve_feature_owner          # Find handler for specific feature
+  - get_subro_contact_info         # Fax/phone for department
+  
+  # Multi-Claim Support
+  - switch_claim                   # Switch to different claim (same CC only)
+  
+  # Rush Handling
+  - evaluate_rush_criteria         # Check if qualifies for ISRUSH
+  - create_isrush_diary            # Create rush diary entry
+  
+  # Documentation
+  - append_claim_note              # Document the call in CLAIMPRO
+  - close_and_document_call        # Close call with summary + optional email confirmation
   
   # Escalation
-  - escalate_human
-  - escalate_emergency
-
-  # Policy-specific tools (query user's loaded profile data)
-  - search_policy_info              # Search user's policies for specific info
-  - get_policy_details              # Get full details of a specific policy
-  - list_user_policies              # List all user's policies
-  - check_coverage                  # Check if user has specific coverage
-  - get_claims_summary              # Get summary of user's claims
-
-  # Generic knowledge retrieval (for general insurance questions)
-  - search_knowledge_base
+  - escalate_human                 # Transfer to live subro handler
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Template Variables
 # ─────────────────────────────────────────────────────────────────────────────
 template_vars:
-  institution_name: "XYMZ Insurance"
-  agent_name: "PolicyAdvisor"
+  institution_name: "{{ institution_name | default('XYMZ Insurance') }}"
+  agent_name: "SubroAgent"
   industry: "insurance"
+  department: "subrogation"
+  subro_fax: "(888) 781-6947"
+  subro_phone: "(855) 405-8645"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Prompt Template Path
+# Prompt
 # ─────────────────────────────────────────────────────────────────────────────
 prompts:
   path: prompt.jinja

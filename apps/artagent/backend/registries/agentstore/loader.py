@@ -140,53 +140,33 @@ def load_agent(
     # =========================================================================
     # MODEL CONFIGURATION - Store BOTH mode-specific models
     # =========================================================================
-    # We store cascade_model and voicelive_model separately so orchestrators
-    # can pick the right one at runtime (important for handoffs where mode
-    # might differ from the global ACS_STREAMING_MODE setting).
+    # Load all model configs:
+    #   - model: fallback/default config
+    #   - voicelive_model: for VoiceLive/realtime mode
+    #   - cascade_model: for Cascade/media mode
     # =========================================================================
-    
-    # Parse the generic "model" as base/fallback
-    model_defaults = defaults.get("model", {})
-    model_raw = _deep_merge(model_defaults, raw.get("model", {}))
-    
-    # Parse mode-specific models from defaults first, then override with agent-specific
-    cascade_defaults = defaults.get("cascade_model", model_defaults)
-    voicelive_defaults = defaults.get("voicelive_model", model_defaults)
-    
-    # Agent can define cascade_model to override defaults
-    if "cascade_model" in raw:
-        cascade_model_raw = _deep_merge(cascade_defaults, raw["cascade_model"])
-        logger.debug(
-            f"Loaded cascade_model for agent {identity['name']}: "
-            f"deployment_id={raw['cascade_model'].get('deployment_id')}"
-        )
-    elif "cascade_model" in defaults:
-        # Use defaults if agent doesn't override
-        cascade_model_raw = cascade_defaults
-        logger.debug(
-            f"Using default cascade_model for agent {identity['name']}: "
-            f"deployment_id={cascade_defaults.get('deployment_id')}"
-        )
-    else:
-        cascade_model_raw = None
-    
-    # Agent can define voicelive_model to override defaults
+
+    # Load default/fallback model config
+    model_raw = _deep_merge(defaults.get("model", {}), raw.get("model", {}))
+
+    # Load mode-specific model configs (if present in YAML)
+    voicelive_model_raw = None
+    cascade_model_raw = None
+
     if "voicelive_model" in raw:
-        voicelive_model_raw = _deep_merge(voicelive_defaults, raw["voicelive_model"])
+        voicelive_model_raw = _deep_merge(defaults.get("model", {}), raw["voicelive_model"])
         logger.debug(
             f"Loaded voicelive_model for agent {identity['name']}: "
             f"deployment_id={raw['voicelive_model'].get('deployment_id')}"
         )
-    elif "voicelive_model" in defaults:
-        # Use defaults if agent doesn't override
-        voicelive_model_raw = voicelive_defaults
+
+    if "cascade_model" in raw:
+        cascade_model_raw = _deep_merge(defaults.get("model", {}), raw["cascade_model"])
         logger.debug(
-            f"Using default voicelive_model for agent {identity['name']}: "
-            f"deployment_id={voicelive_defaults.get('deployment_id')}"
+            f"Loaded cascade_model for agent {identity['name']}: "
+            f"deployment_id={raw['cascade_model'].get('deployment_id')}"
         )
-    else:
-        voicelive_model_raw = None
-    
+
     # Merge with defaults for voice, speech, session
     voice_raw = _deep_merge(defaults.get("voice", {}), raw.get("voice", {}))
     speech_raw = _deep_merge(defaults.get("speech", {}), raw.get("speech", {}))
@@ -210,8 +190,8 @@ def load_agent(
         return_greeting=identity["return_greeting"],
         handoff=handoff,
         model=ModelConfig.from_dict(model_raw),
-        cascade_model=ModelConfig.from_dict(cascade_model_raw) if cascade_model_raw else None,
         voicelive_model=ModelConfig.from_dict(voicelive_model_raw) if voicelive_model_raw else None,
+        cascade_model=ModelConfig.from_dict(cascade_model_raw) if cascade_model_raw else None,
         voice=VoiceConfig.from_dict(voice_raw),
         speech=SpeechConfig.from_dict(speech_raw),
         session=session_raw,

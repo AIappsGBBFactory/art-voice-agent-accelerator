@@ -8,14 +8,32 @@ non-claim inquiries to appropriate departments.
 
 from __future__ import annotations
 
+import os
 import random
+import re
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
 
 from apps.artagent.backend.registries.toolstore.registry import register_tool
 from utils.ml_logging import get_logger
 
+try:  # pragma: no cover - optional dependency during tests
+    from src.cosmosdb.manager import CosmosDBMongoCoreManager as _CosmosManagerImpl
+    from src.cosmosdb.config import get_database_name, get_users_collection_name
+except Exception:  # pragma: no cover - handled at runtime
+    _CosmosManagerImpl = None
+    def get_database_name() -> str:
+        return os.getenv("AZURE_COSMOS_DATABASE_NAME", "audioagentdb")
+    def get_users_collection_name() -> str:
+        return os.getenv("AZURE_COSMOS_USERS_COLLECTION_NAME", "users")
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from src.cosmosdb.manager import CosmosDBMongoCoreManager
+
 logger = get_logger("agents.tools.fnol")
+
+# Cached Cosmos manager for fnol tools
+_COSMOS_USERS_MANAGER: CosmosDBMongoCoreManager | None = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -152,6 +170,82 @@ handoff_to_general_info_agent_schema: Dict[str, Any] = {
 # HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _get_cosmos_manager() -> CosmosDBMongoCoreManager | None:
+    """Resolve the shared Cosmos DB client from FastAPI app state."""
+    try:
+        from apps.artagent.backend import main as backend_main
+    except Exception:  # pragma: no cover
+        return None
+
+    app = getattr(backend_main, "app", None)
+    state = getattr(app, "state", None) if app else None
+    return getattr(state, "cosmos", None)
+
+
+def _get_demo_users_manager() -> CosmosDBMongoCoreManager | None:
+    """Return a Cosmos DB manager pointed at the demo users collection."""
+    global _COSMOS_USERS_MANAGER
+    database_name = get_database_name()
+    container_name = get_users_collection_name()
+
+    if _COSMOS_USERS_MANAGER is not None:
+        return _COSMOS_USERS_MANAGER
+
+    base_manager = _get_cosmos_manager()
+    if base_manager is not None:
+        try:
+            db_name = getattr(getattr(base_manager, "database", None), "name", None)
+            coll_name = getattr(getattr(base_manager, "collection", None), "name", None)
+            if db_name == database_name and coll_name == container_name:
+                _COSMOS_USERS_MANAGER = base_manager
+                return _COSMOS_USERS_MANAGER
+        except Exception:
+            pass
+
+    if _CosmosManagerImpl is None:
+        logger.debug("Cosmos manager implementation unavailable for fnol tools")
+        return None
+
+    try:
+        _COSMOS_USERS_MANAGER = _CosmosManagerImpl(
+            database_name=database_name,
+            collection_name=container_name,
+        )
+        logger.info(
+            "FNOL tools connected to Cosmos demo users collection",
+            extra={"database": database_name, "collection": container_name},
+        )
+        return _COSMOS_USERS_MANAGER
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Unable to initialize Cosmos manager for fnol tools: %s", exc)
+        return None
+
+
+def _lookup_user_by_client_id(client_id: str) -> Dict[str, Any] | None:
+    """Look up a user profile by client_id in Cosmos DB."""
+    cosmos = _get_demo_users_manager()
+    if cosmos is None:
+        return None
+
+    try:
+        document = cosmos.read_document({"_id": client_id})
+        if document:
+            logger.info("✓ Found user %s in Cosmos", client_id)
+            return document
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Cosmos user lookup failed: %s", exc)
+
+    return None
+
+
+def _get_user_policies_from_cosmos(client_id: str) -> List[Dict[str, Any]]:
+    """Get user's policies from Cosmos DB."""
+    document = _lookup_user_by_client_id(client_id)
+    if document:
+        return document.get("demo_metadata", {}).get("policies", [])
+    return []
+
+
 def _json(success: bool, message: str, **kwargs) -> Dict[str, Any]:
     """Build standardized JSON response."""
     result = {"success": success, "message": message}
@@ -239,9 +333,38 @@ async def record_fnol(args: RecordFNOLArgs) -> Dict[str, Any]:
         session_profile = args.get("_session_profile")
         
         # Extract required fields - use session profile if available
+        policy_id = args.get("policy_id", "").strip()
+        caller_name = ""
+        policies = []
+        
         if session_profile:
-            policy_id = session_profile.get("policy_id", "")
+            # Get caller name from profile
             caller_name = session_profile.get("caller_name") or session_profile.get("full_name", "")
+            client_id = session_profile.get("client_id")
+            
+            # Try to get policies from Cosmos DB first
+            if client_id and not policy_id:
+                cosmos_policies = _get_user_policies_from_cosmos(client_id)
+                if cosmos_policies:
+                    policies = cosmos_policies
+                    logger.info("📋 Found %d policies from Cosmos for client %s", len(policies), client_id)
+            
+            # Fallback to session profile policies
+            if not policies:
+                demo_metadata = session_profile.get("demo_metadata", {})
+                policies = demo_metadata.get("policies") or session_profile.get("policies") or []
+            
+            # If we have policies and no explicit policy_id, use the first auto policy or first policy
+            if not policy_id and policies:
+                for p in policies:
+                    if p.get("policy_type") == "auto":
+                        policy_id = p.get("policy_number", "")
+                        break
+                if not policy_id and policies:
+                    policy_id = policies[0].get("policy_number", "")
+                # Final fallback to client_id
+                if not policy_id:
+                    policy_id = session_profile.get("client_id", "")
         else:
             policy_id = (args.get("policy_id") or "").strip()
             caller_name = (args.get("caller_name") or "").strip()

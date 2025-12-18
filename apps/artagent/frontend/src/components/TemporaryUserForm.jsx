@@ -340,6 +340,10 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
     email: '',
     phone_number: '',
     preferred_channel: 'email',
+    // Insurance-specific fields
+    insurance_company_name: '',
+    insurance_role: 'policyholder',
+    test_scenario: 'golden_path',  // Default to golden_path for consistent B2B testing
   });
   const [status, setStatus] = useState({ type: 'idle', message: '', data: null });
   const [focusedField, setFocusedField] = useState(null);
@@ -349,6 +353,7 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
   const [mode, setMode] = useState('create'); // 'create' | 'lookup'
+  const [scenario, setScenario] = useState('banking'); // 'banking' | 'insurance'
   const [lookupEmail, setLookupEmail] = useState('');
   const [lookupPending, setLookupPending] = useState(false);
   const [lookupError, setLookupError] = useState('');
@@ -398,12 +403,24 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
       full_name: formState.full_name.trim(),
       email: formState.email.trim(),
       preferred_channel: formState.preferred_channel,
+      scenario: scenario,
     };
     if (formState.phone_number.trim()) {
       payload.phone_number = formState.phone_number.trim();
     }
     if (sessionId) {
       payload.session_id = sessionId;
+    }
+    // Add insurance-specific fields if insurance scenario
+    if (scenario === 'insurance') {
+      if (formState.insurance_company_name.trim()) {
+        payload.insurance_company_name = formState.insurance_company_name.trim();
+      }
+      payload.insurance_role = formState.insurance_role;
+      // Add test_scenario for CC reps to enable consistent B2B workflow testing
+      if (formState.insurance_role === 'cc_rep' && formState.test_scenario) {
+        payload.test_scenario = formState.test_scenario;
+      }
     }
 
     try {
@@ -419,9 +436,10 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
       }
 
       const data = await response.json();
+      const scenarioLabel = scenario === 'insurance' ? 'Insurance' : 'Banking';
       setStatus({
         type: 'success',
-        message: 'Demo profile ready. Check the User Profile panel for details.',
+        message: `${scenarioLabel} demo profile ready. Check the User Profile panel for details.`,
         data: {
           safety_notice: data?.safety_notice,
           institution_name: data?.profile?.institution_name,
@@ -429,10 +447,19 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
           company_code_last4:
             data?.profile?.company_code_last4 ||
             data?.profile?.company_code?.slice?.(-4),
+          scenario: data?.scenario,
         },
       });
       onSuccess?.(data);
-      setFormState({ full_name: '', email: '', phone_number: '', preferred_channel: 'email' });
+      setFormState({ 
+        full_name: '', 
+        email: '', 
+        phone_number: '', 
+        preferred_channel: 'email',
+        insurance_company_name: '',
+        insurance_role: 'policyholder',
+        test_scenario: 'golden_path',
+      });
       setTouchedFields({});
       setAttemptedSubmit(false);
     } catch (error) {
@@ -549,6 +576,35 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
           Lookup by Email
         </button>
       </div>
+
+      {mode === 'create' && (
+        <div style={{ ...formStyles.modeSwitcher, marginTop: '12px' }}>
+          <button
+            type="button"
+            style={{
+              ...formStyles.modeButton(scenario === 'banking'),
+              backgroundColor: scenario === 'banking' ? '#8b5cf6' : '#f8fafc',
+              borderColor: scenario === 'banking' ? '#7c3aed' : 'rgba(148,163,184,0.5)',
+            }}
+            onClick={() => setScenario('banking')}
+            disabled={lookupPending}
+          >
+            🏦 Banking
+          </button>
+          <button
+            type="button"
+            style={{
+              ...formStyles.modeButton(scenario === 'insurance'),
+              backgroundColor: scenario === 'insurance' ? '#059669' : '#f8fafc',
+              borderColor: scenario === 'insurance' ? '#047857' : 'rgba(148,163,184,0.5)',
+            }}
+            onClick={() => setScenario('insurance')}
+            disabled={lookupPending}
+          >
+            🛡️ Insurance
+          </button>
+        </div>
+      )}
 
       {mode === 'create' ? (
       <form style={formStyles.form} onSubmit={handleSubmit}>
@@ -698,6 +754,125 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
             />
           </div>
         </div>
+
+        {/* Insurance-specific fields */}
+        {scenario === 'insurance' && (
+          <>
+            <div style={formStyles.formRow}>
+              <label 
+                style={{
+                  ...formStyles.label,
+                  ...(focusedField === 'insurance_company_name' ? formStyles.labelFocused : {})
+                }} 
+                htmlFor="insurance_company_name"
+              >
+                <span style={formStyles.labelText}>Your Insurance Company</span>
+              </label>
+              <div style={formStyles.inputContainer}>
+                <input
+                  id="insurance_company_name"
+                  name="insurance_company_name"
+                  value={formState.insurance_company_name}
+                  onChange={handleChange}
+                  onFocus={() => setFocusedField('insurance_company_name')}
+                  onBlur={() => setFocusedField(null)}
+                  style={{
+                    ...formStyles.input,
+                    ...(focusedField === 'insurance_company_name' ? formStyles.inputFocused : {}),
+                  }}
+                  placeholder="e.g., Fabrikam Insurance"
+                />
+              </div>
+              <div style={formStyles.helperText}>
+                For B2B calls: Enter the claimant carrier company name.
+              </div>
+            </div>
+            <div style={formStyles.formRow}>
+              <label 
+                style={{
+                  ...formStyles.label,
+                  ...(focusedField === 'insurance_role' ? formStyles.labelFocused : {})
+                }} 
+                htmlFor="insurance_role"
+              >
+                <span style={formStyles.labelText}>Role</span>
+              </label>
+              <div style={formStyles.inputContainer}>
+                <select
+                  id="insurance_role"
+                  name="insurance_role"
+                  value={formState.insurance_role}
+                  onChange={handleChange}
+                  onFocus={() => setFocusedField('insurance_role')}
+                  onBlur={() => setFocusedField(null)}
+                  style={{
+                    ...formStyles.input,
+                    ...(focusedField === 'insurance_role' ? formStyles.inputFocused : {}),
+                    paddingRight: '32px',
+                    backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'m6 8 4 4 4-4\'/%3e%3c/svg%3e")',
+                    backgroundPosition: 'right 12px center',
+                    backgroundRepeat: 'no-repeat',
+                    backgroundSize: '16px',
+                  }}
+                >
+                  <option value="policyholder">👤 Policyholder (My Own Claim)</option>
+                  <option value="cc_rep">🏢 CC Representative (Subrogation)</option>
+                </select>
+              </div>
+              <div style={formStyles.helperText}>
+                Policyholder: Calling about your own policy/claim. CC Rep: Calling from another insurer about subrogation.
+              </div>
+            </div>
+            {/* Test Scenario dropdown - only for CC Representatives */}
+            {formState.insurance_role === 'cc_rep' && (
+              <div style={formStyles.formRow}>
+                <label 
+                  style={{
+                    ...formStyles.label,
+                    ...(focusedField === 'test_scenario' ? formStyles.labelFocused : {})
+                  }} 
+                  htmlFor="test_scenario"
+                >
+                  <span style={formStyles.labelText}>Test Scenario</span>
+                </label>
+                <div style={formStyles.inputContainer}>
+                  <select
+                    id="test_scenario"
+                    name="test_scenario"
+                    value={formState.test_scenario}
+                    onChange={handleChange}
+                    onFocus={() => setFocusedField('test_scenario')}
+                    onBlur={() => setFocusedField(null)}
+                    style={{
+                      ...formStyles.input,
+                      ...(focusedField === 'test_scenario' ? formStyles.inputFocused : {}),
+                      paddingRight: '32px',
+                      backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'m6 8 4 4 4-4\'/%3e%3c/svg%3e")',
+                      backgroundPosition: 'right 12px center',
+                      backgroundRepeat: 'no-repeat',
+                      backgroundSize: '16px',
+                    }}
+                  >
+                    <option value="golden_path">⭐ Golden Path (Full B2B Workflow)</option>
+                    <option value="demand_under_review">📋 Demand Under Review</option>
+                    <option value="demand_paid">✅ Demand Paid</option>
+                    <option value="no_demand">📭 No Demand Received</option>
+                    <option value="coverage_denied">❌ Coverage Denied</option>
+                    <option value="pending_assignment">⏳ Pending Assignment</option>
+                    <option value="liability_denied">⚠️ Liability Denied</option>
+                    <option value="cvq_open">❓ CVQ Open</option>
+                    <option value="demand_exceeds_limits">💰 Demand Exceeds Limits</option>
+                    <option value="random">🎲 Random</option>
+                  </select>
+                </div>
+                <div style={formStyles.helperText}>
+                  Golden Path: Tests coverage, liability, limits, payments, demand status & escalation.
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
         <div style={{ ...formStyles.formRow, ...formStyles.formRowFull }}>
           <label 
             style={{
@@ -840,8 +1015,9 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
 
       {status.type === 'success' && (
         <div style={{ ...formStyles.resultCard, animation: 'slideInUp 0.35s ease-out' }}>
-          <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Demo Profile Snapshot
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {status.data?.scenario === 'insurance' ? '🛡️' : '🏦'}
+            Demo Profile Snapshot ({status.data?.scenario === 'insurance' ? 'Insurance' : 'Banking'})
           </div>
           <div>
             <strong>Institution:</strong>{' '}
