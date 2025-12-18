@@ -4,6 +4,18 @@ This guide explains the **Insurance Customer Service Scenario** — a security-f
 
 ---
 
+## Business Value
+
+| Capability | Business Impact |
+|------------|-----------------|
+| **First Notice of Loss (FNOL)** | Capture claims at first contact, reduce cycle time |
+| **Subrogation Recovery** | Automate fault liability and payment tracking |
+| **Policy Management** | Self-service policy inquiries, reduce call volume |
+| **Fraud Detection** | Route suspicious claims for investigation |
+| **Secure Authentication** | Verify caller identity before disclosing PII |
+
+---
+
 ## Scenario Overview
 
 The insurance scenario demonstrates a **security-first model** where authentication is the entry point, with fraud detection as a key specialist. This pattern is common in industries where identity verification is critical before any service delivery.
@@ -541,3 +553,200 @@ agent_defaults:
 - [Handoff Strategies](../architecture/agents/handoffs.md) — Deep dive on handoff patterns
 - [Banking Scenario](banking.md) — Compare with banking use case
 - [Healthcare Scenario](healthcare.md) — Another security-first pattern
+
+---
+
+## Test Scenarios
+
+Use these scripts to validate the insurance scenario end-to-end.
+
+### Scenario A: Claim Authentication (Claimant Calling)
+
+!!! example "Persona: John, the claimant, calling about his auto claim after an accident"
+
+| Turn | Caller Says | Agent Does | Tool Triggered |
+|------|-------------|------------|----------------|
+| 1 | "Hi, I have a claim I need to check on" | Asks for claim number | — |
+| 2 | "Claim number CLM-2024-001234" | Looks up claim, asks verification | `verify_cc_caller` ✓ |
+| 3 | "John Smith, last four 1234" | Verifies claimant identity | — |
+| 4 | — | Loads claim profile | Session profile loaded |
+| 5 | "What's the status of my claim?" | Retrieves claim status | `get_claim_status` ✓ |
+| 6 | "When will I get paid?" | Checks payment info | `get_payment_status` ✓ |
+
+**Business Rules Tested:**
+
+- ✅ Must verify claimant before disclosing claim details
+- ✅ SSN4 + name verification for identity
+- ✅ Claim data from Cosmos DB `demo_metadata.claims`
+
+---
+
+### Scenario B: Subrogation Status Inquiry
+
+!!! example "Persona: Maria, checking recovery status on her claim where other party was at fault"
+
+| Turn | Caller Says | Agent Does | Tool Triggered |
+|------|-------------|------------|----------------|
+| 1 | [Verifies identity via claim number + SSN4] | Authenticates | `verify_cc_caller` ✓ |
+| 2 | "What's the subrogation status?" | Retrieves subro details | `get_subrogation_status` ✓ |
+| 3 | "What liability did you determine?" | Shows fault percentage | `get_liability_determination` ✓ |
+| 4 | "Have any payments been made?" | Lists recovery payments | `get_recovery_payments` ✓ |
+
+**Business Rules Tested:**
+
+- ✅ Subrogation data includes `liability_percentage`
+- ✅ Recovery payments tracked with dates and amounts
+- ✅ Adverse party information available
+
+---
+
+### Scenario C: First Notice of Loss (FNOL)
+
+!!! example "Persona: David, reporting a new accident"
+
+| Turn | Caller Says | Agent Does | Tool Triggered |
+|------|-------------|------------|----------------|
+| 1 | "I need to file a claim, I was in an accident" | Routes to FNOL agent | Handoff |
+| 2 | "What's your policy number?" | Caller provides | — |
+| 3 | "POL-AUTO-789012" | Looks up policy | `lookup_policy` ✓ |
+| 4 | "Tell me what happened" | Caller describes | — |
+| 5 | "Another car rear-ended me at a stoplight" | Creates FNOL | `file_new_claim` ✓ |
+| 6 | "Your claim number is CLM-2024-005678" | Confirms new claim | — |
+
+**Business Rules Tested:**
+
+- ✅ Policy lookup validates coverage
+- ✅ FNOL creates new claim record
+- ✅ Claim number assigned immediately
+
+---
+
+### Scenario D: Policy Inquiry (Multi-Policy Holder)
+
+!!! example "Persona: Sarah, inquiring about multiple policies"
+
+| Turn | Caller Says | Agent Does | Tool Triggered |
+|------|-------------|------------|----------------|
+| 1 | [Authenticates with policy number + SSN4] | Verifies identity | `verify_policy_holder` ✓ |
+| 2 | "What policies do I have?" | Lists all policies | `get_all_policies` ✓ |
+| 3 | "Tell me about my auto policy" | Gets policy details | `get_policy_details` ✓ |
+| 4 | "What's my deductible?" | Shows coverage | `get_coverage_details` ✓ |
+| 5 | "When is my premium due?" | Shows billing | `get_billing_info` ✓ |
+
+**Business Rules Tested:**
+
+- ✅ Multi-policy lookup by holder ID
+- ✅ Coverage details include deductibles and limits
+- ✅ Billing dates and amounts accessible
+
+---
+
+### Scenario E: Cross-Agent Handoff (Auth → Subro → FNOL)
+
+!!! example "Persona: Complex journey across multiple specialists"
+
+| Turn | Caller Says | Agent Does | Tool Triggered |
+|------|-------------|------------|----------------|
+| 1 | [Verifies identity] | Loads session | `verify_cc_caller` ✓ |
+| 2 | "What's my subrogation status?" | Routes to Subro | Handoff |
+| 3 | [Gets subro details] | Returns status | `get_subrogation_status` ✓ |
+| 4 | "Actually, I had another accident yesterday" | Routes to FNOL | Handoff |
+| 5 | [Files new claim] | Creates FNOL | `file_new_claim` ✓ |
+| 6 | "That's all, thanks" | Returns to Auth | `handoff_to_auth` |
+
+**Business Rules Tested:**
+
+- ✅ Seamless cross-specialist handoffs
+- ✅ Context preserved across agents
+- ✅ Multiple claims per caller supported
+
+---
+
+## Agent Architecture
+
+```mermaid
+flowchart TD
+    subgraph Entry["🔐 Authentication"]
+        Auth[AuthAgent<br/>Entry Point]
+    end
+
+    subgraph Specialists["🛡️ Specialists"]
+        Policy[PolicyAdvisor<br/>Policy inquiries]
+        FNOL[FNOLAgent<br/>File new claims]
+        Subro[SubroAgent<br/>Subrogation status]
+    end
+
+    Auth -->|"handoff_policy_advisor"| Policy
+    Auth -->|"handoff_fnol_agent"| FNOL
+    Auth -->|"handoff_subro_agent"| Subro
+    Policy -->|"handoff_to_auth"| Auth
+    FNOL -->|"handoff_to_auth"| Auth
+    Subro -->|"handoff_to_auth"| Auth
+
+    classDef auth fill:#e74c3c,stroke:#c0392b,color:#fff
+    classDef specialist fill:#2ecc71,stroke:#27ae60,color:#fff
+
+    class Auth auth
+    class Policy,FNOL,Subro specialist
+```
+
+### Agent Roles
+
+| Agent | Purpose | Tools |
+|-------|---------|-------|
+| **AuthAgent** | Identity verification, routing | `verify_cc_caller`, `verify_policy_holder` |
+| **PolicyAdvisor** | Policy inquiries, coverage | `get_policy_details`, `get_coverage_details`, `get_billing_info` |
+| **FNOLAgent** | File new claims | `lookup_policy`, `file_new_claim` |
+| **SubroAgent** | Subrogation recovery | `get_subrogation_status`, `get_liability_determination`, `get_recovery_payments` |
+
+---
+
+## Tools Reference
+
+### Authentication Tools
+
+| Tool | Purpose |
+|------|---------|
+| `verify_cc_caller` | Verify claimant by claim number + name + SSN4 |
+| `verify_policy_holder` | Verify policy holder by policy number + SSN4 |
+
+### Claim Tools
+
+| Tool | Returns |
+|------|---------|
+| `get_claim_status` | Current claim state, adjuster info |
+| `get_payment_status` | Payment amounts, dates, method |
+| `file_new_claim` | Creates FNOL, returns claim number |
+
+### Subrogation Tools
+
+| Tool | Returns |
+|------|---------|
+| `get_subrogation_status` | Recovery status, adverse party |
+| `get_liability_determination` | Fault percentage, determination date |
+| `get_recovery_payments` | List of payments received |
+
+### Policy Tools
+
+| Tool | Returns |
+|------|---------|
+| `lookup_policy` | Basic policy info |
+| `get_all_policies` | All policies for holder |
+| `get_policy_details` | Full policy data |
+| `get_coverage_details` | Deductibles, limits, covered perils |
+| `get_billing_info` | Premium amount, due date, payment history |
+
+---
+
+## System Capabilities Summary
+
+| Capability | How It's Demonstrated |
+|------------|----------------------|
+| **Multi-Agent Orchestration** | Auth → Policy/FNOL/Subro → Return |
+| **Claim-Based Auth** | Verify claimant by claim number + SSN4 |
+| **Policy-Based Auth** | Verify holder by policy number + SSN4 |
+| **Real-Time Data Access** | Live Cosmos DB queries for claims/policies |
+| **FNOL Processing** | File new claims with immediate confirmation |
+| **Subrogation Tracking** | Liability, recovery payments, adverse party |
+| **Multi-Policy Support** | Holders with multiple policies |
+| **Cross-Agent Context** | Seamless specialist transitions |
