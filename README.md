@@ -1,22 +1,17 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-# **ARTVoice Accelerator Framework**
+# 🎙️ ART Voice Agent Accelerator
 
-<p align="center">
-<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Staging" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=staging&label=Staging&style=flat-square" height="18" /></a>
-<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Prod" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=main&label=Prod&style=flat-square" height="18" /></a>
-<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml"><img alt="Docs" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/docs.yml?label=Docs&style=flat-square" height="18" /></a>
-</p>
+**Build production-ready real-time voice agents on Azure in minutes, not months.**
 
-<p align="center">
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/">Getting started</a>
-  ·
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/">Docs</a>
-  ·
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/">Architecture</a>
-</p>
+[![Azure](https://img.shields.io/badge/Azure-Ready-0078D4?logo=microsoftazure)](https://azure.microsoft.com)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/Docs-MkDocs-blue)](https://microsoft.github.io/art-voice-agent-accelerator/)
 
-> **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
+[📖 Documentation](https://microsoft.github.io/art-voice-agent-accelerator/) · [🚀 Quick Start](#quick-start) · [🏗️ Architecture](#architecture) · [💡 Samples](samples/)
+
+> **TL;DR**: Build real-time multimodal (voice+text) agents on Azure in minutes, not months. Out approach is code-first, modular, ops-friendly & extensible.
 
 <img src="docs/assets/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
 
