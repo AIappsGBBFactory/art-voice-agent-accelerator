@@ -1,43 +1,36 @@
 <!-- markdownlint-disable MD033 MD041 -->
 
-# **ARTVoice Accelerator Framework**
+<div align="center">
 
-<p align="center">
-<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Staging" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=staging&label=Staging&style=flat-square" height="18" /></a>
-<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/deploy-azd-complete.yml"><img alt="Prod" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/deploy-azd-complete.yml?branch=main&label=Prod&style=flat-square" height="18" /></a>
-<a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/actions/workflows/docs.yml"><img alt="Docs" src="https://img.shields.io/github/actions/workflow/status/AIappsGBBFactory/art-voice-agent-accelerator/docs.yml?label=Docs&style=flat-square" height="18" /></a>
-</p>
+# Azure Real-Time (ART) Agent Accelerator
 
-<p align="center">
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/">Getting started</a>
-  ·
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/">Docs</a>
-  ·
-  <a href="https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/">Architecture</a>
-</p>
+[📖 Documentation](https://azure-samples.github.io/art-voice-agent-accelerator/) · [🚀 Quick Start](#getting-started) · [🏗️ Architecture](#the-how-architecture) · [🎨 Community](docs/community/artist-certification.md)
 
-> **TL;DR**: Build real-time voice agents on Azure—one hyperscale stack, omnichannel (ACS), code-first, modular, ops-friendly & extensible.
+> **TL;DR**: Build real-time, multimodal and omnichannel agents on Azure in minutes, not months. Our approach is code-first, modular, ops-friendly & extensible.
 
-<img src="docs/assets/ARTAGENT.png" align="right" height="220" alt="ARTAgent Logo" />
+</div>
 
-You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. We know, shipping voice agents is more than “voice-to-voice.” You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you— your tools, agentic design, and orchestration logic (multi-agent ready).
+<img src="docs/assets/ARTAGENT.png" height="200" alt="ARTAgent Logo" align="right" />
+
+You own the agentic design; this repo handles the end-to-end voice plumbing. We keep a clean separation of concerns—telephony (ACS), app middleware, AI inference loop (STT → LLM → TTS), and orchestration—so you can swap parts without starting from zero. Shipping voice agents is more than "voice-to-voice." You need predictable latency budgets, media handoffs, error paths, channel fan-out, barge-in, noise cancellation, and more. This framework gives you the e2e working spine so you can focus on what differentiates you—your tools, agentic design, and orchestration logic (multi-agent ready).
+
+<br clear="both" />
 
 ## **See it in Action**
 
 <p align="center">
-<a href="https://www.youtube.com/watch?v=H_uAA5_h40E"><img src="docs/assets/youtube.png" height="150"></a> <a href="https://vimeo.com/1115976100"><img src="docs/assets/ARTAgentVimeoDemo.png" height="150"></a>
+  <a href="https://www.youtube.com/watch?v=H_uAA5_h40E"><img src="docs/assets/youtube.png" height="140" alt="Full Overview" /></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://vimeo.com/1115976100"><img src="docs/assets/ARTAgentVimeoDemo.png" height="140" alt="Demo Walkthrough" /></a>
 </p>
-
 <p align="center">
-<a href="https://www.youtube.com/watch?v=H_uAA5_h40E">▶️ Full overview on YouTube</a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="https://vimeo.com/1115976100">▶️ Demo app walkthrough</a>
+  <a href="https://www.youtube.com/watch?v=H_uAA5_h40E"><b>📺 Full Overview</b></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://vimeo.com/1115976100"><b>🎬 Demo Walkthrough</b></a>
 </p>
-
-<br>
 
 <details>
-<summary><strong>The what and why behind this accelerator</strong> (click to expand)</summary>
-
-<br>
+<summary><b>💡 What you get</b></summary>
 
 ### **What you get**
 
@@ -67,58 +60,74 @@ We ship the scaffolding to make that last mile fast: structured logging, metrics
 
 ## **The How (Architecture)**
 
-Pick one of three ways to run the voice inference layer—the rest of the framework (transport, orchestration, ACS telephony, UI wiring) stays the same. Choose based on control vs. speed vs. portability.
+Two orchestration modes—same agent framework, different audio paths:
+
+| Mode | Path | Latency | Best For |
+|------|------|---------|----------|
+| **SpeechCascade** | Azure Speech STT → LLM → TTS | ~400ms | Custom VAD, phrase lists, Azure voices |
+| **VoiceLive** | Azure VoiceLive SDK (gpt-4o-realtime) | ~200ms | Fastest setup, lowest latency |
+
+```bash
+# Select mode via environment variable
+export ACS_STREAMING_MODE=MEDIA       # SpeechCascade (default)
+export ACS_STREAMING_MODE=VOICE_LIVE  # VoiceLive
+```
 
 <details>
-<summary><strong>Build the AI voice pipeline from scratch (maximum control)</strong></summary>
+<summary><strong>🔧 SpeechCascade — Full Control</strong></summary>
 <br>
-<img src="docs/assets/ARTAgentarch.png" alt="ARTAgent Arch" />
+<img src="docs/assets/ARTAgentarch.png" alt="SpeechCascade Architecture" />
 
-- **Own the event loop**: STT → LLM/Tools → TTS, with granular hooks.
-- **Swap services per stage**: Azure Speech, Azure OpenAI, etc.
-- **Tune for your SLOs**: latency budgets, custom VAD, barge-in, domain policies.
-- **Deep integration**: ACS telephony, Event Hubs, Cosmos DB, FastAPI/WebSockets, Kubernetes, observability, custom memory/tool stores.
-- **Best for**: on-prem/hybrid, strict compliance, or heavy customization.
+**You own each step:** STT → LLM → TTS with granular hooks.
+
+| Feature | Description |
+|---------|-------------|
+| **Custom VAD** | Control silence detection, barge-in thresholds |
+| **Azure Speech Voices** | Full neural TTS catalog, styles, prosody |
+| **Phrase Lists** | Boost domain-specific recognition |
+| **Sentence Streaming** | Natural pacing with per-sentence TTS |
+
+Best for: On-prem/hybrid, compliance requirements, deep customization.
+
+📖 [Cascade Orchestrator Docs](docs/architecture/orchestration/cascade.md)
 
 </details>
 
 <details>
-<summary><strong>Use Azure Voice Live API + Azure AI Foundry Agents (ship fast)</strong></summary>
+<summary><strong>⚡ VoiceLive — Ship Fast</strong></summary>
 <br>
 
 > [!NOTE]
-> WIP/Preview: Azure Voice Live API is in preview; behavior and APIs may change.
+> Uses [Azure VoiceLive SDK](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live) with gpt-realtime in the backend.
 
-<br>
+<img src="docs/assets/LIVEVOICEApi.png" alt="VoiceLive Architecture" />
 
-<img src="docs/assets/LIVEVOICEApi.png" alt="LIVEVOICEApi" />
+**Managed voice-to-voice:** Azure-hosted GPT-4o Realtime handles audio in one hop.
 
- - **Enterprise Managed voice-to-voice**: barge-in, noise suppression, elastic scale.
- - **Agent runtime**: connect to Azure AI Foundry Agents for built-in tool/function calling and orchestration.
- - **Built-ins**: tool store, guardrails/evals, threads/memory patterns, APIM gateway options.
- - **Keep your hooks**: reduce ops surface and move faster to pilot/production.
+| Feature | Description |
+|---------|-------------|
+| **~200ms latency** | Direct audio streaming, no separate STT/TTS |
+| **Server-side VAD** | Automatic turn detection, noise reduction |
+| **Native tools** | Built-in function calling via Realtime API |
+| **Azure Neural Voices** | HD voices like `en-US-Ava:DragonHDLatestNeural` |
 
- **Key differences vs. from-scratch**
+Best for: Speed to production, lowest latency requirements.
 
- - Media layer and agent runtime are managed (less infra to own).
- - Faster “happy-path” to omnichannel via ACS, while still supporting your policies and extensions.
- - Great fit when you want speed, scale and consistency without giving up critical integration points.
-
-</details>
-
-<details>
-<summary><strong>Bring your own voice-to-voice model (e.g., gpt-realtime) — coming soon</strong></summary>
-
-> [!NOTE]
-> Coming soon: This adapter path is under active development.
-
-- Plug a BYO voice-to-voice model behind a slim adapter; no changes to transport/orchestration.
-- ACS telephony path remains intact.
-
+📖 [VoiceLive Orchestrator Docs](docs/architecture/orchestration/voicelive.md) · [VoiceLive SDK Samples](samples/voice_live_sdk/)
 
 </details>
 
 ## **Getting Started**
+
+### 📋 Prerequisites
+
+| Requirement | Quick Check |
+|------------|-------------|
+| Azure CLI | `az --version` |
+| Azure Developer CLI | `azd version` |
+| Docker | `docker --version` |
+| Azure Subscription | `az account show` |
+| Contributor Access | Required for resource creation |
 
 ### ⚡ Fastest Path (15 minutes)
 
@@ -134,17 +143,11 @@ azd auth login
 azd up   # ~15 min for complete infra and code deployment
 ```
 
+> [!NOTE]
+> If you encounter any issues, please refer to [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
 **Done!** Your voice agent is running. Open the frontend URL shown in the output.
 
-### 📋 Prerequisites
-
-| Requirement | Quick Check |
-|------------|-------------|
-| Azure CLI | `az --version` |
-| Azure Developer CLI | `azd version` |
-| Docker | `docker --version` |
-| Azure Subscription | `az account show` |
-| Contributor Access | Required for resource creation |
 
 ### 🗺️ Repository Structure
 
@@ -163,13 +166,13 @@ azd up   # ~15 min for complete infra and code deployment
 
 ### 📚 Documentation Guides
 
-- Start here: [Getting started](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/)
-- Deploy in ~15 minutes: [Quick start](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/quickstart/)
-- Run locally: [Local development](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/local-development/)
-- Setup: [Prerequisites](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/prerequisites/)
-- Try the UI: [Demo guide](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/getting-started/demo-guide/)
-- Production guidance: [Deployment guide](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/deployment/)
-- Understand the system: [Architecture](https://aiappsgbbfactory.github.io/art-voice-agent-accelerator/architecture/)
+- Start here: [Getting started](https://azure-samples.github.io/art-voice-agent-accelerator/getting-started/)
+- Deploy in ~15 minutes: [Quick start](https://azure-samples.github.io/art-voice-agent-accelerator/getting-started/quickstart/)
+- Run locally: [Local development](https://azure-samples.github.io/art-voice-agent-accelerator/getting-started/local-development/)
+- Setup: [Prerequisites](https://azure-samples.github.io/art-voice-agent-accelerator/getting-started/prerequisites/)
+- Try the UI: [Demo guide](https://azure-samples.github.io/art-voice-agent-accelerator/getting-started/demo-guide/)
+- Production guidance: [Deployment guide](https://azure-samples.github.io/art-voice-agent-accelerator/deployment/)
+- Understand the system: [Architecture](https://azure-samples.github.io/art-voice-agent-accelerator/architecture/)
 - IaC details (repo): [infra/README.md](infra/README.md)
 
 

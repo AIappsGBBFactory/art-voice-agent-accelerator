@@ -15,6 +15,9 @@ from src.cosmosdb.manager import CosmosDBMongoCoreManager
 from src.cosmosdb.config import get_database_name, get_users_collection_name
 from src.stateful.state_managment import MemoManager
 
+# Import MOCK_CLAIMS for test scenario support
+from apps.artagent.backend.registries.toolstore.insurance.constants import MOCK_CLAIMS
+
 __all__ = ["router"]
 
 router = APIRouter(prefix="/api/v1/demo-env", tags=["demo-env"])
@@ -37,6 +40,38 @@ class DemoUserRequest(BaseModel):
         min_length=5,
         max_length=120,
         description="Browser session identifier used to correlate demo activity.",
+    )
+    scenario: Literal["banking", "insurance"] = Field(
+        default="banking",
+        description="Demo scenario type. Banking for financial services, Insurance for claims/subrogation.",
+    )
+    # Insurance-specific fields
+    insurance_company_name: str | None = Field(
+        default=None,
+        description="For insurance scenario: the claimant carrier company name (e.g., Contoso Insurance).",
+    )
+    insurance_role: Literal["policyholder", "cc_rep"] | None = Field(
+        default="policyholder",
+        description="For insurance scenario: policyholder or claimant carrier representative.",
+    )
+    # Test scenario selection for consistent edge case testing
+    test_scenario: Literal[
+        "golden_path",                # CLM-2024-GOLDEN: Full B2B workflow (coverage, liability, limits, payments, demand, rush)
+        "demand_under_review",        # CLM-2024-001234: Demand under review, liability pending
+        "demand_paid",                # CLM-2024-005678: Demand PAID, liability 80%
+        "no_demand",                  # CLM-2024-009012: No demand, coverage pending
+        "coverage_denied",            # CLM-2024-003456: Coverage DENIED (policy lapsed)
+        "pending_assignment",         # CLM-2024-007890: Demand pending assignment (queue)
+        "liability_denied",           # CLM-2024-002468: Liability DENIED, demand denied
+        "cvq_open",                   # CLM-2024-013579: CVQ open (named driver dispute)
+        "demand_exceeds_limits",      # CLM-2024-024680: Demand exceeds limits ($85k vs $25k)
+        "random",                     # Random generation (default)
+    ] | None = Field(
+        default=None,
+        description=(
+            "For insurance scenario: select a specific test scenario to use predefined claim data. "
+            "Use 'golden_path' for complete B2B workflow testing. If not specified or 'random', claims are generated randomly."
+        ),
     )
 
 
@@ -92,6 +127,67 @@ class DemoTransaction(BaseModel):
     notes: str | None = None
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# INSURANCE SCENARIO MODELS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class DemoInsurancePolicy(BaseModel):
+    """Insurance policy for demo users."""
+    policy_number: str
+    policy_type: Literal["auto", "home", "umbrella"]
+    status: Literal["active", "cancelled", "expired"]
+    effective_date: str
+    expiration_date: str
+    premium_amount: float
+    deductible: float
+    coverage_limits: dict[str, Any]
+    vehicles: list[dict[str, Any]] | None = None  # For auto policies
+    property_address: str | None = None  # For home policies
+
+
+class DemoSubroDemand(BaseModel):
+    """Subrogation demand details."""
+    received: bool = False
+    received_date: str | None = None
+    amount: float | None = None
+    assigned_to: str | None = None
+    assigned_date: str | None = None
+    status: Literal["pending", "under_review", "paid", "denied_no_coverage", "denied_liability"] | None = None
+
+
+class DemoInsuranceClaim(BaseModel):
+    """Insurance claim for demo users."""
+    claim_number: str
+    policy_number: str
+    loss_date: str
+    reported_date: str
+    status: Literal["open", "under_investigation", "closed", "denied"]
+    claim_type: Literal["collision", "comprehensive", "liability", "property_damage", "bodily_injury"]
+    description: str
+    # Parties involved
+    insured_name: str
+    claimant_name: str | None = None
+    claimant_carrier: str | None = None  # Other insurance company if applicable
+    # Financial details
+    estimated_amount: float | None = None
+    paid_amount: float | None = None
+    deductible_applied: float | None = None
+    # Coverage and liability
+    coverage_status: Literal["confirmed", "pending", "denied", "cvq"] = "confirmed"
+    cvq_status: str | None = None
+    liability_decision: Literal["pending", "accepted", "denied", "not_applicable"] | None = None
+    liability_percentage: int | None = None  # 0-100
+    # Policy limits
+    pd_limits: float | None = None
+    bi_limits: float | None = None
+    # Subrogation (for B2B scenarios)
+    subro_demand: DemoSubroDemand | None = None
+    # Handlers (values can be None for unassigned features)
+    feature_owners: dict[str, str | None] | None = None  # {"PD": "John Smith", "BI": None}
+    # Payments
+    payments: list[dict[str, Any]] | None = None
+
+
 class DemoInteractionPlan(BaseModel):
     primary_channel: str
     fallback_channel: str
@@ -107,6 +203,11 @@ class DemoUserResponse(BaseModel):
     interaction_plan: DemoInteractionPlan
     session_id: str | None = None
     safety_notice: str
+    # Scenario identification
+    scenario: Literal["banking", "insurance"] = "banking"
+    # Insurance-specific data (only populated for insurance scenario)
+    policies: list[DemoInsurancePolicy] | None = None
+    claims: list[DemoInsuranceClaim] | None = None
 
 
 class DemoUserLookupResponse(DemoUserResponse):
@@ -228,6 +329,103 @@ PREFERRED_TIMES = (
     "3-5 PM",
 )
 SPENDING_RANGES = ("$500 - $8,000", "$1,000 - $15,000", "$1,000 - $25,000")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INSURANCE SCENARIO TEMPLATES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+INSURANCE_PROFILE_TEMPLATES = (
+    {
+        "key": "xymz_insurance",
+        "institution_name": "XYMZ Insurance",
+        "company_code_prefix": "XYMZ",
+        "authorization_level": "policyholder",
+        "relationship_tier": "Preferred",
+        "default_phone": "+18885551234",
+        "default_mfa_method": "email",
+    },
+    {
+        "key": "contoso_insurance",
+        "institution_name": "Contoso Insurance",
+        "company_code_prefix": "CI",
+        "authorization_level": "policyholder",
+        "relationship_tier": "Standard",
+        "default_phone": "+18005559876",
+        "default_mfa_method": "email",
+    },
+)
+
+# Known claimant carrier companies (fictional)
+CLAIMANT_CARRIER_COMPANIES = (
+    "Fabrikam Insurance",
+    "Northwind Insurance",
+    "Tailspin Insurance",
+    "Woodgrove Insurance",
+    "Proseware Insurance",
+    "Lucerne Insurance",
+    "Wingtip Insurance",
+    "Fourth Coffee Insurance",
+    "Litware Insurance",
+    "Adventure Works Insurance",
+)
+
+# Vehicle makes for auto policies
+VEHICLE_MAKES = (
+    ("Toyota", "Camry", "Sedan"),
+    ("Honda", "Accord", "Sedan"),
+    ("Ford", "F-150", "Truck"),
+    ("Chevrolet", "Silverado", "Truck"),
+    ("Tesla", "Model 3", "Electric"),
+    ("BMW", "X5", "SUV"),
+    ("Mercedes", "C-Class", "Sedan"),
+    ("Subaru", "Outback", "SUV"),
+)
+
+# Claim types and descriptions
+CLAIM_SCENARIOS = (
+    {
+        "type": "collision",
+        "description": "Rear-end collision at intersection",
+        "typical_amount": (5000, 15000),
+    },
+    {
+        "type": "collision",
+        "description": "Side impact in parking lot",
+        "typical_amount": (2000, 8000),
+    },
+    {
+        "type": "comprehensive",
+        "description": "Windshield damage from road debris",
+        "typical_amount": (500, 1500),
+    },
+    {
+        "type": "comprehensive",
+        "description": "Hail damage to vehicle",
+        "typical_amount": (3000, 10000),
+    },
+    {
+        "type": "property_damage",
+        "description": "Water damage from burst pipe",
+        "typical_amount": (10000, 50000),
+    },
+    {
+        "type": "property_damage",
+        "description": "Fire damage to kitchen",
+        "typical_amount": (15000, 75000),
+    },
+)
+
+# Adjuster names for feature owners
+ADJUSTER_NAMES = (
+    "Sarah Johnson",
+    "Michael Chen",
+    "Emily Rodriguez",
+    "James Wilson",
+    "Amanda Thompson",
+    "David Kim",
+    "Jennifer Martinez",
+    "Robert Taylor",
+)
 
 
 def _rng_dependency() -> Random:
@@ -548,6 +746,492 @@ EXCHANGE_RATES: dict[str, float] = {
 }
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# INSURANCE PROFILE AND DATA BUILDERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _build_insurance_profile(
+    payload: DemoUserRequest,
+    rng: Random,
+    anchor: datetime,
+) -> DemoUserProfile:
+    """Build a demo profile for the insurance scenario."""
+    template = rng.choice(INSURANCE_PROFILE_TEMPLATES)
+    slug = _slugify_name(payload.full_name)
+    company_suffix = rng.randint(10_000, 99_999)
+    client_id = f"{slug}_{template['company_code_prefix'].lower()}"
+    company_code = f"{template['company_code_prefix']}-{company_suffix}"
+    contact_phone = payload.phone_number or template["default_phone"]
+    explicit_channel = (payload.preferred_channel or "").lower()
+    prefers_sms = explicit_channel == "sms" and bool(payload.phone_number)
+    preferred_mfa = "sms" if prefers_sms else "email"
+    phone_last4 = contact_phone[-4:] if contact_phone else f"{rng.randint(0, 9999):04d}"
+    
+    contact_info = {
+        "email": str(payload.email),
+        "phone": contact_phone,
+        "preferred_mfa_method": preferred_mfa,
+    }
+    verification_codes = {
+        "ssn4": f"{rng.randint(0, 9999):04d}",
+        "policy_number4": f"{rng.randint(0, 9999):04d}",
+        "phone4": phone_last4,
+    }
+    mfa_settings = {
+        "enabled": True,
+        "secret_key": secrets.token_urlsafe(24),
+        "code_expiry_minutes": 5,
+        "max_attempts": 3,
+    }
+    compliance = {
+        "kyc_verified": True,
+        "aml_cleared": True,
+        "last_review_date": (anchor - timedelta(days=rng.randint(30, 140))).date().isoformat(),
+        "risk_rating": "low",
+    }
+    
+    tenure_days = rng.randint(365 * 1, 365 * 10)
+    client_since_date = (anchor - timedelta(days=tenure_days)).date()
+    relationship_duration = round(tenure_days / 365, 1)
+    
+    # Insurance-specific customer intelligence
+    customer_intelligence = {
+        "scenario": "insurance",
+        "relationship_context": {
+            "relationship_tier": template["relationship_tier"],
+            "client_since": client_since_date.isoformat(),
+            "relationship_duration_years": relationship_duration,
+            "satisfaction_score": rng.randint(75, 98),
+            "previous_interactions": rng.randint(5, 25),
+        },
+        "insurance_profile": {
+            "customer_type": payload.insurance_role or "policyholder",
+            "company_name": payload.insurance_company_name,
+            "years_insured": round(relationship_duration),
+            "claims_history_count": rng.randint(0, 3),
+            "preferred_contact_method": preferred_mfa,
+            "autopay_enrolled": rng.choice([True, True, False]),
+            "paperless_enrolled": rng.choice([True, True, True, False]),
+        },
+        "memory_score": {
+            "communication_style": rng.choice(["Direct", "Detailed", "Friendly"]),
+            "personality_traits": {
+                "patience_level": rng.choice(["High", "Medium", "Low"]),
+                "detail_preference": rng.choice(["Summary", "Detailed", "Thorough"]),
+            },
+            "preferred_resolution_style": rng.choice(["Quick resolution", "Full explanation", "Options presented"]),
+        },
+        "preferences": {
+            "preferredContactMethod": preferred_mfa,
+            "communicationStyle": "Professional",
+            "languagePreference": "en-US",
+        },
+        "active_alerts": [],
+    }
+    
+    return DemoUserProfile(
+        client_id=client_id,
+        full_name=payload.full_name.strip(),
+        email=payload.email,
+        phone_number=contact_phone,
+        relationship_tier=template["relationship_tier"],
+        created_at=anchor,
+        institution_name=template["institution_name"],
+        company_code=company_code,
+        company_code_last4=str(company_suffix)[-4:],
+        client_type="policyholder" if payload.insurance_role != "cc_rep" else "claimant_carrier_rep",
+        authorization_level=template["authorization_level"],
+        max_transaction_limit=0,  # Not applicable for insurance
+        mfa_required_threshold=0,
+        contact_info=contact_info,
+        verification_codes=verification_codes,
+        mfa_settings=mfa_settings,
+        compliance=compliance,
+        customer_intelligence=customer_intelligence,
+    )
+
+
+def _build_policies(
+    client_id: str,
+    full_name: str,
+    rng: Random,
+    anchor: datetime,
+) -> list[DemoInsurancePolicy]:
+    """Generate insurance policies for a demo user."""
+    policies = []
+    
+    # Generate 1-2 auto policies
+    num_auto = rng.randint(1, 2)
+    for i in range(num_auto):
+        make, model, body_type = rng.choice(VEHICLE_MAKES)
+        year = rng.randint(2018, 2024)
+        vin_suffix = f"{rng.randint(100000, 999999)}"
+        
+        effective = anchor - timedelta(days=rng.randint(30, 300))
+        expiration = effective + timedelta(days=365)
+        
+        policies.append(DemoInsurancePolicy(
+            policy_number=f"AUTO-{client_id.upper()[:6]}-{rng.randint(1000, 9999)}",
+            policy_type="auto",
+            status="active",
+            effective_date=effective.date().isoformat(),
+            expiration_date=expiration.date().isoformat(),
+            premium_amount=round(rng.uniform(800, 2400), 2),
+            deductible=rng.choice([500.0, 1000.0, 1500.0]),
+            coverage_limits={
+                "bodily_injury_per_person": rng.choice([50000, 100000, 250000]),
+                "bodily_injury_per_accident": rng.choice([100000, 300000, 500000]),
+                "property_damage": rng.choice([50000, 100000, 250000]),
+                "collision": rng.choice([25000, 50000, 100000]),
+                "comprehensive": rng.choice([25000, 50000, 100000]),
+                "uninsured_motorist": rng.choice([50000, 100000]),
+            },
+            vehicles=[{
+                "year": year,
+                "make": make,
+                "model": model,
+                "body_type": body_type,
+                "vin": f"1HGBH{vin_suffix}",
+                "color": rng.choice(["White", "Black", "Silver", "Blue", "Red"]),
+            }],
+        ))
+    
+    # Maybe generate a home policy
+    if rng.choice([True, False]):
+        effective = anchor - timedelta(days=rng.randint(60, 400))
+        expiration = effective + timedelta(days=365)
+        
+        street_num = rng.randint(100, 9999)
+        street_names = ["Oak", "Maple", "Cedar", "Pine", "Elm", "Main", "Park"]
+        street_types = ["St", "Ave", "Dr", "Ln", "Blvd"]
+        cities = ["Seattle", "Portland", "Denver", "Austin", "Chicago"]
+        
+        policies.append(DemoInsurancePolicy(
+            policy_number=f"HOME-{client_id.upper()[:6]}-{rng.randint(1000, 9999)}",
+            policy_type="home",
+            status="active",
+            effective_date=effective.date().isoformat(),
+            expiration_date=expiration.date().isoformat(),
+            premium_amount=round(rng.uniform(1200, 3600), 2),
+            deductible=rng.choice([1000.0, 2500.0, 5000.0]),
+            coverage_limits={
+                "dwelling": rng.choice([250000, 400000, 600000]),
+                "personal_property": rng.choice([100000, 150000, 200000]),
+                "liability": rng.choice([100000, 300000, 500000]),
+                "medical_payments": rng.choice([5000, 10000]),
+            },
+            property_address=f"{street_num} {rng.choice(street_names)} {rng.choice(street_types)}, {rng.choice(cities)}",
+        ))
+    
+    return policies
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST SCENARIO MAPPING - Maps test_scenario names to MOCK_CLAIMS claim numbers
+# ═══════════════════════════════════════════════════════════════════════════════
+TEST_SCENARIO_TO_CLAIM: dict[str, str] = {
+    # GOLDEN PATH - Full B2B workflow (coverage, liability, limits, payments, demand, rush)
+    "golden_path": "CLM-2024-1234",
+    # Individual edge case scenarios
+    "demand_under_review": "CLM-2024-001234",    # Demand under review, liability pending
+    "demand_paid": "CLM-2024-005678",            # Demand PAID, liability 80%
+    "no_demand": "CLM-2024-009012",              # No demand, coverage pending
+    "coverage_denied": "CLM-2024-003456",        # Coverage DENIED (policy lapsed)
+    "pending_assignment": "CLM-2024-007890",     # Demand pending assignment (queue)
+    "liability_denied": "CLM-2024-002468",       # Liability DENIED, demand denied
+    "cvq_open": "CLM-2024-013579",               # CVQ open (named driver dispute)
+    "demand_exceeds_limits": "CLM-2024-024680",  # Demand exceeds limits ($85k vs $25k)
+}
+
+
+def _mock_claim_to_demo_claim(mock_claim: dict[str, Any], policy_number: str) -> DemoInsuranceClaim:
+    """
+    Convert a MOCK_CLAIMS entry to a DemoInsuranceClaim object.
+    
+    This ensures test scenarios from MOCK_CLAIMS are properly formatted for the demo API.
+    """
+    subro_data = mock_claim.get("subro_demand", {})
+    subro_demand = None
+    if subro_data:
+        subro_demand = DemoSubroDemand(
+            received=subro_data.get("received", False),
+            received_date=subro_data.get("received_date"),
+            amount=subro_data.get("amount"),
+            assigned_to=subro_data.get("assigned_to"),
+            assigned_date=subro_data.get("assigned_date"),
+            status=subro_data.get("status"),
+        )
+    
+    # Map coverage_status to DemoInsuranceClaim format
+    coverage_status = mock_claim.get("coverage_status", "confirmed")
+    if coverage_status not in ("confirmed", "pending", "denied", "cvq"):
+        coverage_status = "confirmed"
+    
+    return DemoInsuranceClaim(
+        claim_number=mock_claim.get("claim_number", "CLM-UNKNOWN"),
+        policy_number=policy_number,
+        loss_date=mock_claim.get("loss_date", "2024-01-01"),
+        reported_date=mock_claim.get("loss_date", "2024-01-01"),  # Use loss_date as reported
+        status=mock_claim.get("status", "open"),
+        claim_type="collision",  # Most subro scenarios are collision
+        description=f"Subrogation claim - {mock_claim.get('claimant_carrier', 'Unknown CC')}",
+        insured_name=mock_claim.get("insured_name", "Demo Insured"),
+        claimant_name=mock_claim.get("claimant_name"),
+        claimant_carrier=mock_claim.get("claimant_carrier"),
+        estimated_amount=subro_data.get("amount") if subro_data else None,
+        paid_amount=sum(p.get("amount", 0) for p in mock_claim.get("payments", [])) or None,
+        coverage_status=coverage_status,
+        cvq_status=mock_claim.get("cvq_status"),
+        liability_decision=mock_claim.get("liability_decision"),
+        liability_percentage=mock_claim.get("liability_percentage"),
+        pd_limits=mock_claim.get("pd_limits"),
+        bi_limits=None,  # Subro scenarios focus on PD
+        subro_demand=subro_demand,
+        feature_owners=mock_claim.get("feature_owners"),
+        payments=mock_claim.get("payments") if mock_claim.get("payments") else None,
+    )
+
+
+def _build_claims(
+    client_id: str,
+    full_name: str,
+    policies: list[DemoInsurancePolicy],
+    rng: Random,
+    anchor: datetime,
+    is_cc_rep: bool = False,
+    cc_company_name: str | None = None,
+    test_scenario: str | None = None,
+) -> list[DemoInsuranceClaim]:
+    """
+    Generate insurance claims for demo user.
+    
+    If test_scenario is specified (and not 'random'), uses MOCK_CLAIMS for consistent
+    edge case testing. Otherwise generates random claims.
+    
+    Args:
+        client_id: Demo user client ID
+        full_name: Demo user full name
+        policies: List of demo policies for this user
+        rng: Random generator
+        anchor: Timestamp anchor for date generation
+        is_cc_rep: Whether caller is a claimant carrier rep
+        cc_company_name: CC company name if cc_rep
+        test_scenario: Optional test scenario name (maps to MOCK_CLAIMS)
+    
+    Returns:
+        List of DemoInsuranceClaim objects
+    """
+    claims = []
+    policy_number = policies[0].policy_number if policies else f"POL-{rng.randint(100000, 999999)}"
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # TEST SCENARIO MODE: Use MOCK_CLAIMS for consistent edge case testing
+    # ─────────────────────────────────────────────────────────────────────────
+    if test_scenario and test_scenario != "random":
+        claim_number = TEST_SCENARIO_TO_CLAIM.get(test_scenario)
+        if claim_number and claim_number in MOCK_CLAIMS:
+            mock_claim = MOCK_CLAIMS[claim_number]
+            demo_claim = _mock_claim_to_demo_claim(mock_claim, policy_number)
+            claims.append(demo_claim)
+            logging.getLogger(__name__).info(
+                "📋 Using MOCK_CLAIMS scenario: %s -> %s (%s)",
+                test_scenario, claim_number, mock_claim.get("claimant_carrier")
+            )
+            return claims
+        else:
+            logging.getLogger(__name__).warning(
+                "⚠️ Unknown test_scenario: %s, falling back to random generation", test_scenario
+            )
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # RANDOM GENERATION MODE: Generate realistic random claims with full edge case coverage
+    # ─────────────────────────────────────────────────────────────────────────
+    num_claims = rng.randint(1, 3)
+    
+    # Extended scenarios for better random coverage
+    extended_claim_scenarios = (
+        # Standard scenarios
+        {"type": "collision", "description": "Rear-end collision at intersection", "typical_amount": (5000, 15000)},
+        {"type": "collision", "description": "Side impact in parking lot", "typical_amount": (2000, 8000)},
+        {"type": "comprehensive", "description": "Windshield damage from road debris", "typical_amount": (500, 1500)},
+        {"type": "comprehensive", "description": "Hail damage to vehicle", "typical_amount": (3000, 10000)},
+        {"type": "property_damage", "description": "Water damage from burst pipe", "typical_amount": (10000, 50000)},
+        # Edge case scenarios
+        {"type": "collision", "description": "Multi-vehicle accident - liability disputed", "typical_amount": (15000, 85000)},
+        {"type": "collision", "description": "Hit and run - coverage investigation", "typical_amount": (8000, 25000)},
+    )
+    
+    # Coverage status distribution for better edge case coverage
+    coverage_statuses = [
+        ("confirmed", None, 60),      # 60% confirmed
+        ("pending", "coverage_verification_pending", 15),  # 15% pending
+        ("denied", "policy_lapsed", 10),   # 10% denied
+        ("cvq", "named_driver_dispute", 15),  # 15% CVQ
+    ]
+    
+    # Subro demand status distribution
+    subro_statuses = [
+        ("pending", 20),       # Pending assignment
+        ("under_review", 40),  # Under review
+        ("paid", 15),          # Paid
+        ("denied_liability", 15),  # Denied - liability
+        ("denied_no_coverage", 10),  # Denied - no coverage
+    ]
+    
+    for i in range(num_claims):
+        scenario = rng.choice(extended_claim_scenarios)
+        
+        # Pick a policy that matches the claim type
+        matching_policies = [
+            p for p in policies
+            if (scenario["type"] in ["collision", "comprehensive"] and p.policy_type == "auto")
+            or (scenario["type"] == "property_damage" and p.policy_type == "home")
+        ]
+        
+        if not matching_policies:
+            matching_policies = policies
+        
+        policy = rng.choice(matching_policies) if matching_policies else None
+        claim_policy_number = policy.policy_number if policy else f"POL-{rng.randint(100000, 999999)}"
+        
+        loss_date = anchor - timedelta(days=rng.randint(7, 90))
+        reported_date = loss_date + timedelta(days=rng.randint(0, 3))
+        
+        estimated_amount = round(rng.uniform(*scenario["typical_amount"]), 2)
+        
+        # Determine claim status and related fields
+        status = rng.choice(["open", "open", "under_investigation", "closed"])
+        paid_amount = round(estimated_amount * rng.uniform(0.7, 1.0), 2) if status == "closed" else None
+        
+        # Coverage status with weighted distribution
+        coverage_roll = rng.randint(1, 100)
+        cumulative = 0
+        coverage_status = "confirmed"
+        cvq_status = None
+        for cov_status, cvq, weight in coverage_statuses:
+            cumulative += weight
+            if coverage_roll <= cumulative:
+                coverage_status = cov_status
+                cvq_status = cvq
+                break
+        
+        # Liability decision (more relevant for collision claims)
+        liability_decision = None
+        liability_percentage = None
+        if scenario["type"] == "collision":
+            if coverage_status == "denied":
+                liability_decision = "not_applicable"
+            elif coverage_status == "cvq":
+                liability_decision = "pending"
+            else:
+                liability_decision = rng.choice(["pending", "accepted", "accepted", "accepted", "denied"])
+                if liability_decision == "accepted":
+                    liability_percentage = rng.choice([100, 100, 80, 80, 70, 50])
+                elif liability_decision == "denied":
+                    liability_percentage = 0
+        
+        # PD limits with occasional low-limits scenario
+        pd_limits = rng.choice([25000, 50000, 50000, 100000, 100000, 250000])
+        
+        # Subrogation demand (for B2B scenarios)
+        subro_demand = None
+        claimant_carrier = None
+        claimant_name = None
+        
+        if is_cc_rep or rng.choice([True, False, False]):
+            # This claim has a subrogation component
+            claimant_carrier = cc_company_name or rng.choice(CLAIMANT_CARRIER_COMPANIES)
+            claimant_name = f"{rng.choice(['John', 'Jane', 'Robert', 'Maria', 'Tom', 'Susan'])} {rng.choice(['Smith', 'Johnson', 'Williams', 'Brown', 'Martinez', 'Garcia'])}"
+            
+            # Demand received probability based on coverage status
+            demand_received = coverage_status != "denied" and rng.choice([True, True, True, False])
+            
+            # Determine subro status with distribution
+            subro_status = None
+            assigned_to = None
+            if demand_received:
+                if coverage_status == "denied":
+                    subro_status = "denied_no_coverage"
+                elif liability_decision == "denied":
+                    subro_status = "denied_liability"
+                else:
+                    # Weighted random subro status
+                    subro_roll = rng.randint(1, 100)
+                    cumulative = 0
+                    for s_status, weight in subro_statuses:
+                        cumulative += weight
+                        if subro_roll <= cumulative:
+                            subro_status = s_status
+                            break
+                
+                # Only assign handler if not pending assignment
+                if subro_status not in ("pending", "denied_no_coverage"):
+                    assigned_to = rng.choice(ADJUSTER_NAMES)
+            
+            # Demand amount - occasionally exceeds limits for edge case
+            demand_amount = None
+            if demand_received:
+                if rng.randint(1, 10) <= 2:  # 20% chance of exceeding limits
+                    demand_amount = round(pd_limits * rng.uniform(1.5, 3.5), 2)
+                else:
+                    demand_amount = round(estimated_amount * rng.uniform(0.8, 1.2), 2)
+            
+            subro_demand = DemoSubroDemand(
+                received=demand_received,
+                received_date=(loss_date + timedelta(days=rng.randint(14, 45))).date().isoformat() if demand_received else None,
+                amount=demand_amount,
+                assigned_to=assigned_to,
+                assigned_date=(loss_date + timedelta(days=rng.randint(16, 50))).date().isoformat() if assigned_to else None,
+                status=subro_status,
+            )
+        
+        # Feature owners (adjusters) - sometimes unassigned for edge cases
+        feature_owners = {
+            "PD": rng.choice(ADJUSTER_NAMES) if coverage_status != "denied" else None,
+            "SUBRO": rng.choice(ADJUSTER_NAMES) if subro_demand and subro_demand.status not in ("pending", None) else None,
+        }
+        if scenario["type"] == "collision":
+            feature_owners["BI"] = rng.choice(ADJUSTER_NAMES) if liability_decision == "accepted" else None
+        
+        # Payments
+        payments = []
+        if paid_amount:
+            payments.append({
+                "payment_id": f"PMT-{rng.randint(100000, 999999)}",
+                "amount": paid_amount,
+                "date": (loss_date + timedelta(days=rng.randint(30, 60))).date().isoformat(),
+                "payee": full_name,
+                "type": "indemnity",
+            })
+        
+        claims.append(DemoInsuranceClaim(
+            claim_number=f"CLM-{anchor.year}-{rng.randint(100000, 999999)}",
+            policy_number=claim_policy_number,
+            loss_date=loss_date.date().isoformat(),
+            reported_date=reported_date.date().isoformat(),
+            status=status,
+            claim_type=scenario["type"],
+            description=scenario["description"],
+            insured_name=full_name,
+            claimant_name=claimant_name,
+            claimant_carrier=claimant_carrier,
+            estimated_amount=estimated_amount,
+            paid_amount=paid_amount,
+            deductible_applied=policy.deductible if policy and status == "closed" else None,
+            coverage_status=coverage_status,
+            cvq_status=cvq_status,
+            liability_decision=liability_decision,
+            liability_percentage=liability_percentage,
+            pd_limits=pd_limits,
+            bi_limits=rng.choice([100000, 300000, 500000]) if scenario["type"] == "collision" else None,
+            subro_demand=subro_demand,
+            feature_owners=feature_owners,
+            payments=payments if payments else None,
+        ))
+    
+    return claims
+
+
 def _build_transactions(
     client_id: str,
     rng: Random,
@@ -723,13 +1407,18 @@ def _serialize_demo_user(response: DemoUserResponse) -> dict:
         "updated_at": created_at,
         "last_login": None,
         "login_attempts": 0,
+        "scenario": response.scenario,
         "demo_metadata": {
             "entry_id": response.entry_id,
             "expires_at": response.expires_at.isoformat(),
             "session_id": response.session_id,
             "safety_notice": response.safety_notice,
+            "scenario": response.scenario,
             "interaction_plan": response.interaction_plan.model_dump(mode="json"),
             "transactions": [txn.model_dump(mode="json") for txn in response.transactions],
+            # Insurance-specific data
+            "policies": [p.model_dump(mode="json") for p in response.policies] if response.policies else None,
+            "claims": [c.model_dump(mode="json") for c in response.claims] if response.claims else None,
         },
     }
     return document
@@ -876,24 +1565,62 @@ async def create_temporary_user(
     """
     anchor = datetime.now(tz=UTC)
     expires_at = anchor + timedelta(hours=24)
-    profile = _build_profile(payload, rng, anchor)
     
-    # Extract card last4 from profile for transaction generation
-    bank_profile = profile.customer_intelligence.get("bank_profile", {})
-    cards = bank_profile.get("cards", [])
-    card_last4 = cards[0].get("last4", "4242") if cards else f"{rng.randint(1000, 9999)}"
+    # Determine scenario and build appropriate profile
+    scenario = payload.scenario or "banking"
     
-    transactions = _build_transactions(profile.client_id, rng, anchor, card_last4=card_last4)
-    interaction_plan = _build_interaction_plan(payload, rng)
-    response = DemoUserResponse(
-        entry_id=f"demo-entry-{rng.randint(100000, 999999)}",
-        expires_at=expires_at,
-        profile=profile,
-        transactions=transactions,
-        interaction_plan=interaction_plan,
-        session_id=payload.session_id,
-        safety_notice="Demo data only. Never enter real customer or personal information in this sandbox.",
-    )
+    if scenario == "insurance":
+        # Build insurance profile with policies and claims
+        profile = _build_insurance_profile(payload, rng, anchor)
+        policies = _build_policies(profile.client_id, profile.full_name, rng, anchor)
+        claims = _build_claims(
+            profile.client_id,
+            profile.full_name,
+            policies,
+            rng,
+            anchor,
+            is_cc_rep=(payload.insurance_role == "cc_rep"),
+            cc_company_name=payload.insurance_company_name,
+            test_scenario=payload.test_scenario,
+        )
+        transactions = []  # Insurance scenario doesn't use banking transactions
+        
+        response = DemoUserResponse(
+            entry_id=f"demo-entry-{rng.randint(100000, 999999)}",
+            expires_at=expires_at,
+            profile=profile,
+            transactions=transactions,
+            interaction_plan=_build_interaction_plan(payload, rng),
+            session_id=payload.session_id,
+            safety_notice="Demo data only. Never enter real customer or personal information in this sandbox.",
+            scenario="insurance",
+            policies=policies,
+            claims=claims,
+        )
+    else:
+        # Build banking profile with transactions (existing behavior)
+        profile = _build_profile(payload, rng, anchor)
+        
+        # Extract card last4 from profile for transaction generation
+        bank_profile = profile.customer_intelligence.get("bank_profile", {})
+        cards = bank_profile.get("cards", [])
+        card_last4 = cards[0].get("last4", "4242") if cards else f"{rng.randint(1000, 9999)}"
+        
+        transactions = _build_transactions(profile.client_id, rng, anchor, card_last4=card_last4)
+        
+        response = DemoUserResponse(
+            entry_id=f"demo-entry-{rng.randint(100000, 999999)}",
+            expires_at=expires_at,
+            profile=profile,
+            transactions=transactions,
+            interaction_plan=_build_interaction_plan(payload, rng),
+            session_id=payload.session_id,
+            safety_notice="Demo data only. Never enter real customer or personal information in this sandbox.",
+            scenario="banking",
+            policies=None,
+            claims=None,
+        )
+    
     await _persist_demo_user(response)
     await _append_phrase_bias_entries(profile, request)
     # Persist profile to Redis session so media_handler can discover it
@@ -945,7 +1672,7 @@ async def lookup_demo_user(
     demo_metadata = document.get("demo_metadata") or {}
     profile_payload = document.copy()
     # Remove internal fields that aren't part of DemoUserProfile
-    for key in ("demo_metadata", "_id", "ttl", "expires_at", "transactions"):
+    for key in ("demo_metadata", "_id", "ttl", "expires_at", "transactions", "scenario", "policies", "claims"):
         profile_payload.pop(key, None)
 
     contact_info = profile_payload.get("contact_info") or {}
@@ -966,6 +1693,9 @@ async def lookup_demo_user(
 
     profile_model = DemoUserProfile.model_validate(profile_payload)
 
+    # Determine scenario from document or metadata
+    scenario = document.get("scenario") or demo_metadata.get("scenario") or "banking"
+
     # Support both demo_metadata.transactions and document.transactions (for banking profiles)
     transactions_payload = demo_metadata.get("transactions") or document.get("transactions") or []
 
@@ -974,11 +1704,15 @@ async def lookup_demo_user(
         "primary_channel": "voice",
         "fallback_channel": "sms",
         "mfa_required": False,
-        "notification_message": "Banking profile loaded successfully",
+        "notification_message": f"{scenario.title()} profile loaded successfully",
     }
 
     # Determine effective session_id
     effective_session_id = session_id or demo_metadata.get("session_id")
+
+    # Parse insurance data if present
+    policies_payload = demo_metadata.get("policies") or []
+    claims_payload = demo_metadata.get("claims") or []
 
     response = DemoUserLookupResponse(
         entry_id=demo_metadata.get("entry_id")
@@ -994,6 +1728,9 @@ async def lookup_demo_user(
             "safety_notice",
             "Demo data only. Never enter real customer or personal information in this sandbox.",
         ),
+        scenario=scenario,
+        policies=[DemoInsurancePolicy.model_validate(p) for p in policies_payload] if policies_payload else None,
+        claims=[DemoInsuranceClaim.model_validate(c) for c in claims_payload] if claims_payload else None,
     )
 
     # Persist profile to Redis session so media_handler can discover it

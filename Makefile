@@ -113,6 +113,35 @@ start_frontend:
 start_tunnel:
 	bash $(SCRIPTS_DIR)/start_devtunnel_host.sh
 
+# First-time tunnel setup - creates a new dev tunnel with anonymous access
+setup_tunnel:
+	@echo "🔧 Setting up Azure Dev Tunnel for first time use..."
+	@echo ""
+	@echo "📋 Prerequisites:"
+	@echo "   - Azure CLI installed (https://aka.ms/install-azure-cli)"
+	@echo "   - devtunnel CLI installed: brew install --cask devtunnel (macOS)"
+	@echo ""
+	@command -v devtunnel >/dev/null 2>&1 || { echo "❌ devtunnel not found. Install with: brew install --cask devtunnel"; exit 1; }
+	@echo "1️⃣  Logging into devtunnel..."
+	devtunnel user login
+	@echo ""
+	@echo "2️⃣  Creating new tunnel with anonymous access..."
+	devtunnel create --allow-anonymous
+	@echo ""
+	@echo "3️⃣  Adding port 8000 (backend port)..."
+	devtunnel port create -p 8000 --protocol https
+	@echo ""
+	@echo "4️⃣  Getting tunnel info..."
+	@devtunnel show
+	@echo ""
+	@echo "✅ Tunnel created! Now:"
+	@echo "   1. Copy the tunnel URL from above (e.g., https://xxxxx-8000.usw3.devtunnels.ms)"
+	@echo "   2. Update .env: BASE_URL=<tunnel-url>"
+	@echo "   3. Update apps/artagent/frontend/.env: VITE_BACKEND_BASE_URL=<tunnel-url>"
+	@echo "   4. Update devops/scripts/local-dev/start_devtunnel_host.sh with TUNNEL_ID"
+	@echo "   5. Run: make start_tunnel"
+	@echo ""
+
 generate_audio:
 	$(UV_BIN) run python $(SCRIPTS_LOAD_DIR)/utils/audio_generator.py --max-turns 5
 
@@ -535,6 +564,7 @@ help:
 	@echo "  start_backend                    Start backend via script"
 	@echo "  start_frontend                   Start frontend via script"
 	@echo "  start_tunnel                     Start dev tunnel via script"
+	@echo "  setup_tunnel                     First-time tunnel setup (create tunnel, add port)"
 	@echo ""
 	@echo "⚡ Load Testing:"
 	@echo "  generate_audio                   Generate PCM audio files for load testing"

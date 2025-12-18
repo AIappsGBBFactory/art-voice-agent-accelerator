@@ -34,7 +34,9 @@ This script helps you host an Azure Dev Tunnel for your local FastAPI server.
 
 set -e
 
-PORT=8080
+PORT=8000
+TUNNEL_ID="interesting-dog-f2mjtgx"
+TUNNEL_URL="https://hx3xds1k-8000.usw3.devtunnels.ms"
 
 function check_devtunnel_installed() {
     if ! command -v devtunnel >/dev/null 2>&1; then
@@ -45,10 +47,19 @@ function check_devtunnel_installed() {
     fi
 }
 
+function kill_existing_tunnels() {
+    echo "🔪 Killing any existing devtunnel host processes..."
+    pkill -f "devtunnel host" 2>/dev/null || true
+    sleep 1
+}
+
 function host_tunnel() {
-    echo "Hosting Azure Dev Tunnel on port $PORT"
-    devtunnel host -p $PORT
+    echo "🚀 Hosting Azure Dev Tunnel: $TUNNEL_ID on port $PORT"
+    echo "🔗 URL: $TUNNEL_URL"
+    echo ""
+    devtunnel host $TUNNEL_ID --allow-anonymous
 }
 
 check_devtunnel_installed
+kill_existing_tunnels
 host_tunnel
