@@ -1,4 +1,5 @@
 import types
+from datetime import UTC, datetime
 
 import pytest
 from apps.artagent.backend.api.v1.endpoints import demo_env
@@ -27,7 +28,7 @@ async def test_phrase_bias_helper_adds_full_and_institution_names():
         email="ada@example.com",
         phone_number=None,
         relationship_tier="Gold",
-        created_at=demo_env.datetime.now(demo_env.timezone.utc),
+        created_at=datetime.now(UTC),
         institution_name="Fabrikam Capital",
         company_code="FAB-1234",
         company_code_last4="1234",

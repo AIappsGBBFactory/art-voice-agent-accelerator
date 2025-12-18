@@ -28,7 +28,7 @@ handoff:
 # Voice Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 voice:
-  name: en-US-ShimmerTurboMultilingualNeural
+  name: en-US-Ava:DragonHDLatestNeural
   type: azure-standard
   rate: "0%"
 
@@ -84,19 +84,25 @@ speech:
 # Tools (referenced by name from shared registry)
 # ─────────────────────────────────────────────────────────────────────────────
 tools:
-  # MFA & Identity Verification
+  # MFA & Identity Verification (Customer)
   - verify_client_identity
   - send_mfa_code
   - verify_mfa_code
   - resend_mfa_code
   
+  # B2B Verification (Claimant Carriers)
+  - verify_cc_caller               # Verify Claimant Carrier rep for subrogation
+  
   # Handoffs - Banking Scenario
   - handoff_concierge              # Return to BankingConcierge
   - handoff_fraud_agent            # Transfer to fraud if suspicious
   
-  # Handoffs - Insurance Scenario
+  # Handoffs - Insurance Scenario (Customer)
   - handoff_policy_advisor         # Transfer to PolicyAdvisor (insurance)
   - handoff_fnol_agent             # Transfer to FNOLAgent (insurance claims)
+  
+  # Handoffs - Insurance Scenario (B2B)
+  - handoff_subro_agent            # Transfer to SubroAgent (subrogation/CC inquiries)
   
   # Escalation
   - escalate_human

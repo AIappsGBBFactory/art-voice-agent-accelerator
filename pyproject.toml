@@ -103,7 +103,6 @@ dev = [
     "pytest>=7.4.0",
     "pytest-asyncio",
     "pytest-cov",
-    "pytest-twisted",
     "anyio",
     # Code quality
     "black[jupyter]==25.1.0",

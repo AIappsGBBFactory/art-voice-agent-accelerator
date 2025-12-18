@@ -133,6 +133,33 @@ export const buildSessionProfile = (raw, fallbackSessionId, previous) => {
     previous?.safetyNotice ??
     null;
 
+  // Scenario-based data (banking vs insurance)
+  const scenarioValue =
+    container.scenario ??
+    data.scenario ??
+    demoMeta.scenario ??
+    previous?.scenario ??
+    'banking';
+  
+  // Insurance-specific data
+  const rawPolicies = container.policies ?? data.policies;
+  const metaPolicies = demoMeta.policies;
+  const policiesValue =
+    Array.isArray(rawPolicies) && rawPolicies.length
+      ? rawPolicies
+      : Array.isArray(metaPolicies) && metaPolicies.length
+      ? metaPolicies
+      : previous?.policies ?? [];
+  
+  const rawClaims = container.claims ?? data.claims;
+  const metaClaims = demoMeta.claims;
+  const claimsValue =
+    Array.isArray(rawClaims) && rawClaims.length
+      ? rawClaims
+      : Array.isArray(metaClaims) && metaClaims.length
+      ? metaClaims
+      : previous?.claims ?? [];
+
   return {
     sessionId: sessionValue,
     profile: profileValue,
@@ -141,5 +168,9 @@ export const buildSessionProfile = (raw, fallbackSessionId, previous) => {
     entryId: entryIdValue,
     expiresAt: expiresAtValue,
     safetyNotice: safetyNoticeValue,
+    // Scenario-based fields
+    scenario: scenarioValue,
+    policies: policiesValue,
+    claims: claimsValue,
   };
 };

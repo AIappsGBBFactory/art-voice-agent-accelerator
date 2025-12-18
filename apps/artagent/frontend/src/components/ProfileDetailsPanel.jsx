@@ -92,6 +92,9 @@ const TAB_META = {
   banking: { icon: '🏦', accent: '#8b5cf6' },
   transactions: { icon: '💳', accent: '#ec4899' },
   contact: { icon: '☎️', accent: '#10b981' },
+  // Insurance scenario tabs
+  policies: { icon: '📋', accent: '#0d9488' },
+  claims: { icon: '📝', accent: '#f59e0b' },
 };
 
 const SectionCard = ({ children, sx = {} }) => (
@@ -275,6 +278,22 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
   const financialGoals = conversationContext.financial_goals ?? [];
   const lifeEvents = conversationContext.life_events ?? [];
 
+  // Scenario-based data (banking vs insurance)
+  const scenario = baseProfile.scenario ?? data?.scenario ?? 'banking';
+  const isBankingScenario = scenario === 'banking';
+  const isInsuranceScenario = scenario === 'insurance';
+  
+  // Insurance-specific data
+  const policies = (Array.isArray(baseProfile.policies) && baseProfile.policies.length
+    ? baseProfile.policies
+    : Array.isArray(data?.policies)
+      ? data.policies
+      : []) ?? [];
+  const claims = (Array.isArray(baseProfile.claims) && baseProfile.claims.length
+    ? baseProfile.claims
+    : Array.isArray(data?.claims)
+      ? data.claims
+      : []) ?? [];
   const typicalBehavior = fraudContext.typical_transaction_behavior ?? {};
   const sessionDisplayId = baseProfile.sessionId ?? sessionId;
   const profileId = data?._id ?? data?.id ?? data?.client_id ?? baseProfile.sessionId;
@@ -795,10 +814,364 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
           </>
         ),
       },
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // INSURANCE SCENARIO TABS
+      // ═══════════════════════════════════════════════════════════════════════════════
+      {
+        id: 'policies',
+        label: 'Policies',
+        content: (
+          <>
+            <SectionCard>
+              <SectionTitle icon="📋">Insurance Policies</SectionTitle>
+              {policies.length ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                  {policies.map((policy, idx) => {
+                    const isActive = policy.status === 'active';
+                    const isPending = policy.status === 'pending';
+                    return (
+                      <Box
+                        key={policy.policy_number || idx}
+                        sx={{
+                          border: '1px solid',
+                          borderColor: isActive 
+                            ? 'rgba(16, 185, 129, 0.3)' 
+                            : isPending 
+                              ? 'rgba(251, 191, 36, 0.3)'
+                              : 'rgba(226,232,240,0.9)',
+                          borderRadius: '14px',
+                          padding: '12px 14px',
+                          backgroundColor: isActive 
+                            ? 'rgba(240, 253, 244, 0.5)' 
+                            : isPending
+                              ? 'rgba(254, 252, 232, 0.5)'
+                              : '#fff',
+                          boxShadow: '0 6px 16px rgba(15,23,42,0.08)',
+                        }}
+                      >
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 0.5 }}>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography sx={{ fontWeight: 700, color: '#0f172a', fontSize: '13px' }}>
+                              {toTitleCase(policy.policy_type)} Policy
+                            </Typography>
+                            <Typography sx={{ color: '#64748b', fontSize: '10px', mt: 0.3 }}>
+                              # {policy.policy_number}
+                            </Typography>
+                          </Box>
+                          <Chip
+                            label={toTitleCase(policy.status)}
+                            size="small"
+                            sx={{
+                              backgroundColor: isActive 
+                                ? 'rgba(16, 185, 129, 0.15)' 
+                                : isPending
+                                  ? 'rgba(251, 191, 36, 0.15)'
+                                  : 'rgba(239, 68, 68, 0.15)',
+                              color: isActive 
+                                ? '#059669' 
+                                : isPending
+                                  ? '#d97706'
+                                  : '#dc2626',
+                              fontSize: '9px',
+                              fontWeight: 700,
+                              height: '20px',
+                            }}
+                          />
+                        </Box>
+                        
+                        <Divider sx={{ my: 1 }} />
+                        
+                        <ProfileDetailRow label="Premium" value={formatCurrency(policy.premium_amount)} />
+                        <ProfileDetailRow label="Deductible" value={formatCurrency(policy.deductible)} />
+                        <ProfileDetailRow label="Effective" value={formatDate(policy.effective_date)} />
+                        <ProfileDetailRow label="Expires" value={formatDate(policy.expiration_date)} />
+                        
+                        {policy.coverage_limits && (
+                          <>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography sx={{ fontSize: '10px', fontWeight: 700, color: '#475569', mb: 0.5 }}>
+                              Coverage Limits
+                            </Typography>
+                            {Object.entries(policy.coverage_limits).map(([key, val]) => (
+                              <ProfileDetailRow 
+                                key={key} 
+                                label={toTitleCase(key)} 
+                                value={typeof val === 'number' ? formatCurrency(val) : String(val)} 
+                              />
+                            ))}
+                          </>
+                        )}
+                        
+                        {policy.vehicles && policy.vehicles.length > 0 && (
+                          <>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography sx={{ fontSize: '10px', fontWeight: 700, color: '#475569', mb: 0.5 }}>
+                              🚗 Vehicles
+                            </Typography>
+                            {policy.vehicles.map((vehicle, vIdx) => (
+                              <Typography key={vIdx} sx={{ fontSize: '11px', color: '#1f2937', mb: 0.3 }}>
+                                {vehicle.year} {vehicle.make} {vehicle.model} ({vehicle.vin?.slice(-6) || 'N/A'})
+                              </Typography>
+                            ))}
+                          </>
+                        )}
+                        
+                        {policy.property_address && (
+                          <>
+                            <Divider sx={{ my: 1 }} />
+                            <ProfileDetailRow label="🏠 Property" value={policy.property_address} multiline />
+                          </>
+                        )}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              ) : (
+                <Typography sx={{ fontSize: '11px', color: '#94a3b8' }}>
+                  No policies available for this profile.
+                </Typography>
+              )}
+            </SectionCard>
+            
+            {policies.length > 0 && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="📊">Policy Summary</SectionTitle>
+                <ProfileDetailRow 
+                  label="Total Policies" 
+                  value={policies.length.toString()} 
+                />
+                <ProfileDetailRow 
+                  label="Active" 
+                  value={policies.filter(p => p.status === 'active').length.toString()} 
+                />
+                <ProfileDetailRow 
+                  label="Total Premium" 
+                  value={formatCurrency(
+                    policies.filter(p => p.status === 'active').reduce((sum, p) => sum + (p.premium_amount || 0), 0)
+                  )} 
+                />
+              </SectionCard>
+            )}
+          </>
+        ),
+      },
+      {
+        id: 'claims',
+        label: 'Claims',
+        content: (
+          <>
+            <SectionCard>
+              <SectionTitle icon="📝">Insurance Claims</SectionTitle>
+              {claims.length ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                  {claims.map((claim, idx) => {
+                    const isOpen = claim.status === 'open' || claim.status === 'under_investigation';
+                    const isDenied = claim.status === 'denied';
+                    const hasSubro = claim.subro_demand?.received;
+                    return (
+                      <Box
+                        key={claim.claim_number || idx}
+                        sx={{
+                          border: '1px solid',
+                          borderColor: isOpen 
+                            ? 'rgba(59, 130, 246, 0.3)' 
+                            : isDenied
+                              ? 'rgba(239, 68, 68, 0.3)'
+                              : 'rgba(16, 185, 129, 0.3)',
+                          borderRadius: '14px',
+                          padding: '12px 14px',
+                          backgroundColor: isOpen 
+                            ? 'rgba(239, 246, 255, 0.5)' 
+                            : isDenied
+                              ? 'rgba(254, 242, 242, 0.5)'
+                              : 'rgba(240, 253, 244, 0.5)',
+                          boxShadow: '0 6px 16px rgba(15,23,42,0.08)',
+                        }}
+                      >
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 0.5 }}>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography sx={{ fontWeight: 700, color: '#0f172a', fontSize: '13px' }}>
+                              {toTitleCase(claim.claim_type)} Claim
+                            </Typography>
+                            <Typography sx={{ color: '#64748b', fontSize: '10px', mt: 0.3 }}>
+                              # {claim.claim_number}
+                            </Typography>
+                          </Box>
+                          <Chip
+                            label={toTitleCase(claim.status?.replace(/_/g, ' '))}
+                            size="small"
+                            sx={{
+                              backgroundColor: isOpen 
+                                ? 'rgba(59, 130, 246, 0.15)' 
+                                : isDenied
+                                  ? 'rgba(239, 68, 68, 0.15)'
+                                  : 'rgba(16, 185, 129, 0.15)',
+                              color: isOpen 
+                                ? '#2563eb' 
+                                : isDenied
+                                  ? '#dc2626'
+                                  : '#059669',
+                              fontSize: '9px',
+                              fontWeight: 700,
+                              height: '20px',
+                            }}
+                          />
+                        </Box>
+                        
+                        <Typography sx={{ fontSize: '11px', color: '#475569', mt: 0.5, mb: 1 }}>
+                          {claim.description}
+                        </Typography>
+                        
+                        <Divider sx={{ my: 1 }} />
+                        
+                        <ProfileDetailRow label="Loss Date" value={formatDate(claim.loss_date)} />
+                        <ProfileDetailRow label="Reported" value={formatDate(claim.reported_date)} />
+                        <ProfileDetailRow label="Policy" value={claim.policy_number} />
+                        <ProfileDetailRow label="Insured" value={claim.insured_name} />
+                        
+                        {claim.claimant_name && (
+                          <ProfileDetailRow label="Claimant" value={claim.claimant_name} />
+                        )}
+                        {claim.claimant_carrier && (
+                          <ProfileDetailRow label="Claimant Carrier" value={claim.claimant_carrier} />
+                        )}
+                        
+                        <Divider sx={{ my: 1 }} />
+                        
+                        <Typography sx={{ fontSize: '10px', fontWeight: 700, color: '#475569', mb: 0.5 }}>
+                          💰 Financials
+                        </Typography>
+                        <ProfileDetailRow label="Estimated" value={formatCurrency(claim.estimated_amount)} />
+                        <ProfileDetailRow label="Paid" value={formatCurrency(claim.paid_amount)} />
+                        {claim.deductible_applied && (
+                          <ProfileDetailRow label="Deductible Applied" value={formatCurrency(claim.deductible_applied)} />
+                        )}
+                        
+                        {(claim.pd_limits || claim.bi_limits) && (
+                          <>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography sx={{ fontSize: '10px', fontWeight: 700, color: '#475569', mb: 0.5 }}>
+                              📊 Policy Limits
+                            </Typography>
+                            {claim.pd_limits && <ProfileDetailRow label="PD Limit" value={formatCurrency(claim.pd_limits)} />}
+                            {claim.bi_limits && <ProfileDetailRow label="BI Limit" value={formatCurrency(claim.bi_limits)} />}
+                          </>
+                        )}
+                        
+                        <Divider sx={{ my: 1 }} />
+                        
+                        <Typography sx={{ fontSize: '10px', fontWeight: 700, color: '#475569', mb: 0.5 }}>
+                          ⚖️ Coverage & Liability
+                        </Typography>
+                        <ProfileDetailRow label="Coverage Status" value={toTitleCase(claim.coverage_status)} />
+                        {claim.cvq_status && (
+                          <ProfileDetailRow label="CVQ Status" value={claim.cvq_status} />
+                        )}
+                        <ProfileDetailRow label="Liability Decision" value={toTitleCase(claim.liability_decision)} />
+                        {claim.liability_percentage !== null && claim.liability_percentage !== undefined && (
+                          <ProfileDetailRow label="Liability %" value={`${claim.liability_percentage}%`} />
+                        )}
+                        
+                        {claim.feature_owners && Object.keys(claim.feature_owners).length > 0 && (
+                          <>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography sx={{ fontSize: '10px', fontWeight: 700, color: '#475569', mb: 0.5 }}>
+                              👤 Feature Owners
+                            </Typography>
+                            {Object.entries(claim.feature_owners).map(([feature, owner]) => (
+                              <ProfileDetailRow key={feature} label={feature} value={owner} />
+                            ))}
+                          </>
+                        )}
+                        
+                        {hasSubro && (
+                          <Box sx={{ 
+                            mt: 1.5, 
+                            p: 1.5,
+                            borderRadius: '10px',
+                            backgroundColor: 'rgba(245, 158, 11, 0.08)',
+                            border: '1px solid rgba(245, 158, 11, 0.2)',
+                          }}>
+                            <Typography sx={{ fontSize: '10px', fontWeight: 700, color: '#b45309', mb: 0.5 }}>
+                              📨 Subrogation Demand
+                            </Typography>
+                            <ProfileDetailRow label="Amount" value={formatCurrency(claim.subro_demand.amount)} />
+                            <ProfileDetailRow label="Received" value={formatDate(claim.subro_demand.received_date)} />
+                            <ProfileDetailRow label="Status" value={toTitleCase(claim.subro_demand.status)} />
+                            {claim.subro_demand.assigned_to && (
+                              <ProfileDetailRow label="Assigned To" value={claim.subro_demand.assigned_to} />
+                            )}
+                          </Box>
+                        )}
+                        
+                        {claim.payments && claim.payments.length > 0 && (
+                          <>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography sx={{ fontSize: '10px', fontWeight: 700, color: '#475569', mb: 0.5 }}>
+                              💳 Payments
+                            </Typography>
+                            {claim.payments.map((pmt, pIdx) => (
+                              <Box key={pIdx} sx={{ mb: 0.5 }}>
+                                <ProfileDetailRow 
+                                  label={formatDate(pmt.date)} 
+                                  value={`${formatCurrency(pmt.amount)} - ${toTitleCase(pmt.type || 'Payment')}`} 
+                                />
+                              </Box>
+                            ))}
+                          </>
+                        )}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              ) : (
+                <Typography sx={{ fontSize: '11px', color: '#94a3b8' }}>
+                  No claims available for this profile.
+                </Typography>
+              )}
+            </SectionCard>
+            
+            {claims.length > 0 && (
+              <SectionCard sx={{ mt: 2 }}>
+                <SectionTitle icon="📊">Claims Summary</SectionTitle>
+                <ProfileDetailRow 
+                  label="Total Claims" 
+                  value={claims.length.toString()} 
+                />
+                <ProfileDetailRow 
+                  label="Open" 
+                  value={claims.filter(c => c.status === 'open' || c.status === 'under_investigation').length.toString()} 
+                />
+                <ProfileDetailRow 
+                  label="Total Demand" 
+                  value={formatCurrency(
+                    claims.reduce((sum, c) => sum + (c.subro_demand?.amount || c.estimated_amount || 0), 0)
+                  )} 
+                />
+                <ProfileDetailRow 
+                  label="Total Paid" 
+                  value={formatCurrency(
+                    claims.reduce((sum, c) => {
+                      // Sum all payments from payments array
+                      const paymentsTotal = (c.payments || []).reduce((pSum, p) => pSum + (p.amount || 0), 0);
+                      return sum + paymentsTotal;
+                    }, 0)
+                  )} 
+                />
+                <ProfileDetailRow 
+                  label="Subro Demands" 
+                  value={claims.filter(c => c.subro_demand?.received).length.toString()} 
+                />
+              </SectionCard>
+            )}
+          </>
+        ),
+      },
     ],
     [
       activeAlerts,
       bankProfile,
+      claims,
       coreIdentity,
       companyCodeLast4,
       compliance,
@@ -816,10 +1189,12 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
       loginAttempts,
       mfaSettings,
       payrollSetup,
+      policies,
       preferences,
       profileId,
       recordExpiresAt,
       retirementProfile,
+      scenario,
       sessionDisplayId,
       ssnLast4,
       suggestedTalkingPoints,
@@ -831,7 +1206,17 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
     ],
   );
 
-  const activeTabContent = tabs.find((tab) => tab.id === activeTab)?.content;
+  // Filter tabs based on scenario
+  const visibleTabs = useMemo(() => {
+    if (isInsuranceScenario) {
+      // Insurance: show verification, identity, policies, claims, contact
+      return tabs.filter(tab => ['verification', 'identity', 'policies', 'claims', 'contact'].includes(tab.id));
+    }
+    // Banking (default): show verification, identity, banking, transactions, contact
+    return tabs.filter(tab => ['verification', 'identity', 'banking', 'transactions', 'contact'].includes(tab.id));
+  }, [tabs, isInsuranceScenario]);
+
+  const activeTabContent = visibleTabs.find((tab) => tab.id === activeTab)?.content;
 
   if (!hasProfile) {
     return null;
@@ -994,7 +1379,7 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
                           }}
                         />
                       )}
-                      {institutionName && (
+                      {institutionName && isBankingScenario && (
                         <Chip
                           label={
                             companyCodeLast4
@@ -1011,6 +1396,20 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
                           }}
                         />
                       )}
+                      {/* Scenario Badge */}
+                      <Chip
+                        label={isInsuranceScenario ? '🛡️ Insurance' : '🏦 Banking'}
+                        size="small"
+                        sx={{
+                          backgroundColor: isInsuranceScenario 
+                            ? 'rgba(245, 158, 11, 0.15)' 
+                            : 'rgba(139, 92, 246, 0.15)',
+                          color: isInsuranceScenario ? '#b45309' : '#7c3aed',
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          height: '22px',
+                        }}
+                      />
                     </Box>
                   </Box>
                 </Box>
@@ -1032,7 +1431,7 @@ const ProfileDetailsPanel = ({ profile, sessionId, open, onClose }) => {
                   gap: '10px',
                 }}
               >
-                {tabs.map((tab) => {
+                {visibleTabs.map((tab) => {
                   const isActive = activeTab === tab.id;
                   const { icon = '•', accent = '#6366f1' } = TAB_META[tab.id] || {};
                   return (
