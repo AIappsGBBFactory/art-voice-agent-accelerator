@@ -231,7 +231,7 @@ Before testing personalized conversations, create a demo profile with synthetic 
     From the home screen, click the **:material-lightning-bolt: Create Demo Profile** button in the top navigation.
     
     <figure markdown="span">
-      ![Home Screen](../assets/01-.png){ loading=lazy }
+      ![Home Screen](../assets/01-landing-page.png){ loading=lazy }
       <figcaption>Click "Create Demo Profile" button</figcaption>
     </figure>
 
@@ -348,7 +348,7 @@ Once your deployment is complete, use the Agent Builder to create and run your f
     From the home screen, click the **wrench icon** :material-wrench: on the left toolbar to open the Agent Editor.
     
     <figure markdown="span">
-      ![Home Screen](../assets/01-.png){ loading=lazy }
+      ![Home Screen](../assets/01-landing-page.png){ loading=lazy }
       <figcaption>Home screen - click the wrench icon on the left toolbar</figcaption>
     </figure>
     
