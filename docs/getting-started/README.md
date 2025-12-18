@@ -1,3 +1,4 @@
+
 # :material-rocket: Getting Started
 
 !!! success "Welcome to ARTVoice Accelerator"
