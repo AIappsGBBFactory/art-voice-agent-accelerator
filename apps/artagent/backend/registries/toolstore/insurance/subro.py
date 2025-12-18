@@ -35,6 +35,14 @@ from apps.artagent.backend.registries.toolstore.insurance.constants import (
 )
 from utils.ml_logging import get_logger
 
+# Email service import for call summary emails
+try:
+    from src.acs.email_service import send_email as send_email_async, is_email_configured
+except ImportError:
+    send_email_async = None
+    def is_email_configured() -> bool:
+        return False
+
 try:  # pragma: no cover - optional dependency during tests
     from src.cosmosdb.manager import CosmosDBMongoCoreManager as _CosmosManagerImpl
     from src.cosmosdb.config import get_database_name, get_users_collection_name
@@ -285,47 +293,86 @@ get_subro_demand_status_schema: Dict[str, Any] = {
 
 
 async def get_subro_demand_status(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get subrogation demand status."""
+    """Get subrogation demand status with defensive null handling."""
     claim_number = (args.get("claim_number") or "").strip().upper()
+
+    if not claim_number:
+        return _json({"success": False, "message": "Claim number is required."})
 
     claim = _find_claim_by_number(args, claim_number)
     if not claim:
-        return _json({"success": False, "message": f"Claim {claim_number} not found."})
+        return _json({"success": False, "message": f"Claim {claim_number} not found in our system."})
 
-    demand = claim.get("subro_demand", {})
+    # Defensive: subro_demand could be None, {}, or a dict with partial data
+    demand = claim.get("subro_demand") or {}
+    if not isinstance(demand, dict):
+        demand = {}
+
+    # Normalize boolean for received status
+    demand_received = bool(demand.get("received"))
 
     return _json({
         "success": True,
         "claim_number": claim_number,
-        "demand_received": demand.get("received", False),
-        "received_date": demand.get("received_date"),
-        "demand_amount": demand.get("amount"),
+        "demand_received": demand_received,
+        "received_date": demand.get("received_date") if demand_received else None,
+        "demand_amount": demand.get("amount") if demand_received else None,
         "assigned_to": demand.get("assigned_to"),
         "assigned_date": demand.get("assigned_date"),
-        "status": demand.get("status"),
-        "fax_number": SUBRO_FAX_NUMBER if not demand.get("received") else None,
+        "status": demand.get("status") or ("not_received" if not demand_received else "unknown"),
+        "fax_number": SUBRO_FAX_NUMBER if not demand_received else None,
         "message": _format_demand_status_message(demand),
     })
 
 
-def _format_demand_status_message(demand: Dict[str, Any]) -> str:
-    """Format human-readable demand status message."""
+def _format_demand_status_message(demand: Dict[str, Any] | None) -> str:
+    """Format human-readable demand status message with business process language.
+    
+    Handles None, empty dict, and partial demand objects defensively.
+    """
+    # Defensive: handle None or non-dict
+    if not demand or not isinstance(demand, dict):
+        return (
+            f"No demand received on this claim. You can fax demands to {SUBRO_FAX_NUMBER}. "
+            "Once received, demands are assigned on a first-come, first-served basis."
+        )
+    
     if not demand.get("received"):
-        return f"No demand received. Please fax demands to {SUBRO_FAX_NUMBER}."
+        return (
+            f"No demand received on this claim. You can fax demands to {SUBRO_FAX_NUMBER}. "
+            "Once received, demands are assigned on a first-come, first-served basis."
+        )
 
-    status = demand.get("status", "unknown")
+    status = demand.get("status") or "unknown"
     assigned = demand.get("assigned_to")
+    amount = demand.get("amount")
+    received_date = demand.get("received_date")
+    
+    # Build base message with received info (handle None amount gracefully)
+    try:
+        amount_str = f" for ${float(amount):,.2f}" if amount is not None else ""
+    except (ValueError, TypeError):
+        amount_str = f" for ${amount}" if amount else ""
+    date_str = f" on {received_date}" if received_date else ""
+    base_msg = f"Demand received{date_str}{amount_str}."
 
     if status == "paid":
-        return "Demand has been paid."
+        return f"{base_msg} Demand has been paid."
     elif status == "denied_no_coverage":
-        return "Demand denied due to no coverage."
+        return f"{base_msg} Demand denied due to no coverage."
+    elif status == "denied_liability":
+        return f"{base_msg} Demand denied due to liability denial."
     elif status == "under_review" and assigned:
-        return f"Demand is under review by {assigned}."
+        return f"{base_msg} Currently under review by {assigned}."
+    elif status == "pending" and not assigned:
+        return (
+            f"{base_msg} Pending assignment. "
+            "Demands are processed first-come, first-served. Expect assignment within 5-7 business days."
+        )
     elif assigned:
-        return f"Demand assigned to {assigned}. Status: {status}."
+        return f"{base_msg} Assigned to {assigned}. Status: {status}."
     else:
-        return f"Demand received. Status: {status}."
+        return f"{base_msg} Status: {status}."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -352,25 +399,42 @@ get_coverage_status_schema: Dict[str, Any] = {
 
 
 async def get_coverage_status(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get coverage status for claim."""
+    """Get coverage status for claim with enhanced messaging for CVQ scenarios."""
     claim_number = (args.get("claim_number") or "").strip().upper()
+
+    if not claim_number:
+        return _json({"success": False, "message": "Claim number is required."})
 
     claim = _find_claim_by_number(args, claim_number)
     if not claim:
-        return _json({"success": False, "message": f"Claim {claim_number} not found."})
+        return _json({"success": False, "message": f"Claim {claim_number} not found in our system."})
 
-    coverage_status = claim.get("coverage_status", "unknown")
+    coverage_status = claim.get("coverage_status") or "unknown"
     cvq_status = claim.get("cvq_status")
 
-    message = f"Coverage status: {coverage_status}."
-    if cvq_status:
-        message += f" CVQ: {cvq_status}."
+    # Build message based on coverage status
+    if coverage_status == "confirmed":
+        message = "Coverage is confirmed on this claim."
+    elif coverage_status == "pending":
+        message = "Coverage verification is still pending."
+    elif coverage_status == "denied":
+        reason = cvq_status or "coverage issue"
+        message = f"Coverage has been denied on this claim."
+    elif coverage_status == "cvq" or cvq_status:
+        message = "There's an open coverage question on this claim. The file owner can discuss details."
+    else:
+        message = f"Coverage status: {coverage_status}."
+    
+    # Add CVQ detail if present and not already covered
+    if cvq_status and coverage_status not in ("cvq", "denied"):
+        message += f" Note: CVQ status is {cvq_status}."
 
     return _json({
         "success": True,
         "claim_number": claim_number,
         "coverage_status": coverage_status,
         "cvq_status": cvq_status,
+        "has_cvq": bool(cvq_status) or coverage_status == "cvq",
         "message": message,
     })
 
@@ -400,32 +464,55 @@ get_liability_decision_schema: Dict[str, Any] = {
 
 
 async def get_liability_decision(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get liability decision for claim."""
+    """Get liability decision for claim with edge case handling.
+    
+    Edge cases handled:
+    - liability_percentage = 0 (valid but falsy - means 0% liability)
+    - liability_percentage = None with decision = accepted (partial data)
+    - Unknown decision values
+    """
     claim_number = (args.get("claim_number") or "").strip().upper()
+
+    if not claim_number:
+        return _json({"success": False, "message": "Claim number is required."})
 
     claim = _find_claim_by_number(args, claim_number)
     if not claim:
-        return _json({"success": False, "message": f"Claim {claim_number} not found."})
+        return _json({"success": False, "message": f"Claim {claim_number} not found in our system."})
 
-    decision = claim.get("liability_decision", "unknown")
+    decision = claim.get("liability_decision") or "unknown"
     # Support both liability_percentage (from demo_env) and liability_range_low (legacy)
-    percentage = claim.get("liability_percentage") or claim.get("liability_range_low")
+    # Use 'is not None' to preserve 0 as a valid value
+    percentage = claim.get("liability_percentage")
+    if percentage is None:
+        percentage = claim.get("liability_range_low")
 
-    result = {
+    result: Dict[str, Any] = {
         "success": True,
         "claim_number": claim_number,
         "liability_decision": decision,
         "liability_percentage": percentage,
+        "can_disclose_limits": False,  # Help SubroAgent know if limits can be disclosed
     }
 
     if decision == "pending":
-        result["message"] = "Liability decision is still pending."
-    elif decision == "accepted" and percentage is not None:
-        result["message"] = f"Liability accepted at {percentage}%."
+        result["message"] = "Liability decision is still pending on this claim."
+    elif decision == "accepted":
+        if percentage is not None and percentage > 0:
+            result["message"] = f"Liability has been accepted at {percentage}%."
+            result["can_disclose_limits"] = True
+        elif percentage == 0:
+            # Edge case: accepted at 0% (unusual but possible)
+            result["message"] = "Liability decision shows accepted but at 0%."
+            result["can_disclose_limits"] = False
+        else:
+            # Accepted but no percentage - partial data
+            result["message"] = "Liability has been accepted on this claim."
+            result["can_disclose_limits"] = True
     elif decision == "denied":
-        result["message"] = "Liability denied."
+        result["message"] = "Liability has been denied on this claim."
     elif decision == "not_applicable":
-        result["message"] = "Liability not applicable (no coverage)."
+        result["message"] = "Liability is not applicable on this claim (typically due to coverage issues)."
     else:
         result["message"] = f"Liability status: {decision}."
 
@@ -439,9 +526,9 @@ async def get_liability_decision(args: Dict[str, Any]) -> Dict[str, Any]:
 get_pd_policy_limits_schema: Dict[str, Any] = {
     "name": "get_pd_policy_limits",
     "description": (
-        "Get property damage policy limits for a claim. IMPORTANT: Only disclose "
-        "limits if liability has been accepted (liability > 0%). If liability is "
-        "pending or denied, do not disclose limits."
+        "Get property damage policy limits for a claim and compare against demand. "
+        "IMPORTANT: Only disclose limits if liability has been accepted (> 0%). "
+        "Pass the demand_amount to determine if there's a limits issue."
     ),
     "parameters": {
         "type": "object",
@@ -450,6 +537,10 @@ get_pd_policy_limits_schema: Dict[str, Any] = {
                 "type": "string",
                 "description": "The claim number to check PD limits for",
             },
+            "demand_amount": {
+                "type": "number",
+                "description": "The demand amount in dollars (e.g., 85000). Used to check if demand exceeds policy limits.",
+            },
         },
         "required": ["claim_number"],
     },
@@ -457,35 +548,92 @@ get_pd_policy_limits_schema: Dict[str, Any] = {
 
 
 async def get_pd_policy_limits(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get PD limits - only if liability accepted."""
+    """Get PD limits and compare against demand amount - only if liability accepted.
+    
+    Edge cases handled:
+    - Demand amount not provided: just return limits (if disclosable)
+    - Demand equals limits exactly: not exceeding (borderline case)
+    - Limits is 0 or None: handle gracefully
+    - Liability accepted but percentage is None or 0
+    """
     claim_number = (args.get("claim_number") or "").strip().upper()
+    demand_amount = args.get("demand_amount")  # Optional - for limits comparison
+
+    if not claim_number:
+        return _json({"success": False, "message": "Claim number is required."})
 
     claim = _find_claim_by_number(args, claim_number)
     if not claim:
-        return _json({"success": False, "message": f"Claim {claim_number} not found."})
+        return _json({"success": False, "message": f"Claim {claim_number} not found in our system."})
 
     decision = claim.get("liability_decision")
-    # Support both liability_percentage (from demo_env) and liability_range_low (legacy)
-    percentage = claim.get("liability_percentage") or claim.get("liability_range_low")
-    limits = claim.get("pd_limits", 0)
+    # Use 'is not None' to preserve 0 as valid value
+    percentage = claim.get("liability_percentage")
+    if percentage is None:
+        percentage = claim.get("liability_range_low")
+    
+    limits = claim.get("pd_limits") or 0
 
-    # Only disclose limits if liability > 0
-    if decision == "accepted" and percentage and percentage > 0:
+    # Determine if we can disclose limits:
+    # Liability must be accepted AND percentage > 0
+    can_disclose = (
+        decision == "accepted" and 
+        percentage is not None and 
+        percentage > 0
+    )
+
+    if can_disclose:
+        # Check if demand exceeds limits (>= means at limit, not exceeding)
+        demand_exceeds_limits = False
+        
+        if demand_amount is not None:
+            try:
+                demand_float = float(demand_amount)
+                if limits > 0:
+                    demand_exceeds_limits = demand_float > limits
+                    if demand_exceeds_limits:
+                        limits_message = f"The property damage limit is ${limits:,}. Your demand of ${demand_float:,.2f} exceeds policy limits."
+                    elif demand_float == limits:
+                        limits_message = f"The property damage limit is ${limits:,}. Your demand matches the policy limit exactly."
+                    else:
+                        limits_message = f"No limits issue. Your demand (${demand_float:,.2f}) is within the ${limits:,} PD limit."
+                else:
+                    limits_message = f"Property damage limits show as ${limits:,}. Please verify with the handler."
+            except (ValueError, TypeError):
+                limits_message = f"Property damage limits: ${limits:,}. Unable to compare with demand amount."
+        else:
+            # No demand amount provided - SubroAgent should ask for it first
+            limits_message = f"Property damage limits: ${limits:,}."
+        
         return _json({
             "success": True,
             "claim_number": claim_number,
             "can_disclose": True,
             "pd_limits": limits,
-            "message": f"Property damage limits: ${limits:,}.",
+            "demand_amount": demand_amount,
+            "demand_exceeds_limits": demand_exceeds_limits,
+            "ask_for_demand": demand_amount is None,  # Hint to SubroAgent
+            "message": limits_message,
         })
     else:
+        # Cannot disclose - build appropriate message
+        if decision == "pending":
+            msg = "Cannot disclose policy limits. Liability is still pending on this claim."
+        elif decision == "denied":
+            msg = "Cannot disclose policy limits. Liability has been denied on this claim."
+        elif decision == "accepted" and (percentage is None or percentage == 0):
+            msg = "Cannot disclose policy limits. Liability percentage is not established."
+        else:
+            msg = "Cannot disclose policy limits until liability has been accepted."
+        
         return _json({
             "success": True,
             "claim_number": claim_number,
             "can_disclose": False,
             "pd_limits": None,
             "liability_status": decision,
-            "message": "Cannot disclose limits until liability is accepted.",
+            "liability_percentage": percentage,
+            "message": msg,
         })
 
 
@@ -602,7 +750,8 @@ evaluate_rush_criteria_schema: Dict[str, Any] = {
     "description": (
         "Evaluate if a subrogation demand qualifies for rush (ISRUSH) assignment. "
         "Rush criteria include: attorney represented, demand over limits, "
-        "statute of limitations near, prior demands unanswered, or explicit escalation request."
+        "statute of limitations near, out-of-pocket expenses (rental/deductible), "
+        "DOI complaint, prior demands unanswered, or explicit escalation request."
     ),
     "parameters": {
         "type": "object",
@@ -613,7 +762,7 @@ evaluate_rush_criteria_schema: Dict[str, Any] = {
             },
             "attorney_represented": {
                 "type": "boolean",
-                "description": "Whether the claimant is represented by an attorney",
+                "description": "Whether the claimant is represented by an attorney or suit has been filed",
             },
             "demand_over_limits": {
                 "type": "boolean",
@@ -623,9 +772,17 @@ evaluate_rush_criteria_schema: Dict[str, Any] = {
                 "type": "boolean",
                 "description": "Whether statute of limitations is within 60 days",
             },
+            "oop_expenses": {
+                "type": "boolean",
+                "description": "Whether out-of-pocket expenses are involved (rental car, deductible paid by claimant)",
+            },
+            "doi_complaint": {
+                "type": "boolean",
+                "description": "Whether a Department of Insurance complaint has been filed",
+            },
             "prior_demands_unanswered": {
                 "type": "boolean",
-                "description": "Whether there are prior unanswered demands",
+                "description": "Whether there are prior unanswered demands (third call for same demand)",
             },
             "escalation_request": {
                 "type": "boolean",
@@ -638,20 +795,27 @@ evaluate_rush_criteria_schema: Dict[str, Any] = {
 
 
 async def evaluate_rush_criteria(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluate if demand qualifies for rush assignment."""
+    """Evaluate if demand qualifies for rush assignment based on business criteria."""
     claim_number = (args.get("claim_number") or "").strip().upper()
 
+    # Map criteria to human-readable descriptions
+    criteria_map = {
+        "attorney_represented": "Attorney represented / suit filed",
+        "demand_over_limits": "Demand exceeds policy limits",
+        "statute_near": "Statute of limitations within 60 days",
+        "oop_expenses": "Out-of-pocket expenses (rental/deductible)",
+        "doi_complaint": "Department of Insurance complaint",
+        "prior_demands_unanswered": "Prior demands unanswered (3rd call)",
+        "escalation_request": "Explicit escalation request",
+    }
+
     criteria_met = []
-    if args.get("attorney_represented"):
-        criteria_met.append("attorney_represented")
-    if args.get("demand_over_limits"):
-        criteria_met.append("demand_over_limits")
-    if args.get("statute_near"):
-        criteria_met.append("statute_of_limitations_near")
-    if args.get("prior_demands_unanswered"):
-        criteria_met.append("prior_demands_unanswered")
-    if args.get("escalation_request"):
-        criteria_met.append("escalation_request")
+    criteria_descriptions = []
+    
+    for key, description in criteria_map.items():
+        if args.get(key):
+            criteria_met.append(key)
+            criteria_descriptions.append(description)
 
     qualifies = len(criteria_met) > 0
 
@@ -660,9 +824,12 @@ async def evaluate_rush_criteria(args: Dict[str, Any]) -> Dict[str, Any]:
         "claim_number": claim_number,
         "qualifies_for_rush": qualifies,
         "criteria_met": criteria_met,
+        "criteria_descriptions": criteria_descriptions,
         "message": (
-            f"Qualifies for ISRUSH. Criteria: {', '.join(criteria_met)}."
-            if qualifies else "Does not meet rush criteria."
+            f"Qualifies for ISRUSH assignment. Criteria: {'; '.join(criteria_descriptions)}. "
+            "Expect assignment within 2 business days."
+            if qualifies 
+            else "Does not meet rush criteria. Request documented on file."
         ),
     })
 
@@ -740,8 +907,8 @@ async def create_isrush_diary(args: Dict[str, Any]) -> Dict[str, Any]:
 append_claim_note_schema: Dict[str, Any] = {
     "name": "append_claim_note",
     "description": (
-        "Document the Claimant Carrier call interaction in CLAIMPRO. "
-        "Should be called at the end of every subrogation call to record "
+        "Document the Claimant Carrier call interaction in CLAIMPRO under the Subrogation category. "
+        "MUST be called at the end of every subrogation call to record "
         "who called, what was discussed, and any actions taken."
     ),
     "parameters": {
@@ -761,25 +928,26 @@ append_claim_note_schema: Dict[str, Any] = {
             },
             "inquiry_type": {
                 "type": "string",
-                "description": "Type of inquiry (demand_status, liability, coverage, limits, rush_request, other)",
+                "enum": ["demand_status", "liability", "coverage", "limits", "payment", "rush_request", "handler_callback", "general"],
+                "description": "Type of inquiry: demand_status (demand receipt/assignment), liability (liability decision), coverage (coverage status/CVQ), limits (policy limits), payment (payments made), rush_request (expedite request), handler_callback (callback requested), general (multiple topics)",
             },
             "summary": {
                 "type": "string",
-                "description": "Brief summary of the call and any information provided",
+                "description": "Brief summary including request made and response given (e.g., 'CC inquired about demand status. Confirmed demand received 11/20 for $12,500, under review by Sarah Johnson.')",
             },
             "actions_taken": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "List of actions taken during the call",
+                "description": "List of actions taken (e.g., 'Provided demand status', 'Created ISRUSH diary', 'Noted callback request')",
             },
         },
-        "required": ["claim_number", "cc_company", "caller_name", "summary"],
+        "required": ["claim_number", "cc_company", "caller_name", "inquiry_type", "summary"],
     },
 }
 
 
 async def append_claim_note(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Append note to claim documenting the CC call."""
+    """Append note to claim documenting the CC call in Subrogation category."""
     claim_number = (args.get("claim_number") or "").strip().upper()
     cc_company = (args.get("cc_company") or "").strip()
     caller_name = (args.get("caller_name") or "").strip()
@@ -794,29 +962,435 @@ async def append_claim_note(args: Dict[str, Any]) -> Dict[str, Any]:
         })
 
     # Generate note ID
-    note_id = f"NOTE-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{random.randint(1000, 9999)}"
+    note_id = f"SUBRO-NOTE-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{random.randint(1000, 9999)}"
+
+    # Map inquiry types to human-readable categories
+    inquiry_labels = {
+        "demand_status": "Demand Status Inquiry",
+        "liability": "Liability Inquiry",
+        "coverage": "Coverage Inquiry",
+        "limits": "Policy Limits Inquiry",
+        "payment": "Payment Inquiry",
+        "rush_request": "Rush/Expedite Request",
+        "handler_callback": "Handler Callback Request",
+        "general": "General Inquiry",
+    }
+    inquiry_label = inquiry_labels.get(inquiry_type, inquiry_type.replace("_", " ").title())
 
     note_content = (
-        f"CC HOTLINE CALL\n"
-        f"Caller: {caller_name} from {cc_company}\n"
-        f"Inquiry Type: {inquiry_type}\n"
-        f"Summary: {summary}\n"
+        f"═══════════════════════════════════════\n"
+        f"CC HOTLINE CALL - {inquiry_label}\n"
+        f"═══════════════════════════════════════\n"
+        f"Caller: {caller_name}\n"
+        f"Company: {cc_company}\n"
+        f"Category: Subrogation\n"
+        f"───────────────────────────────────────\n"
+        f"Request/Response:\n{summary}\n"
     )
     if actions:
-        note_content += f"Actions: {', '.join(actions)}\n"
+        note_content += f"───────────────────────────────────────\n"
+        note_content += f"Actions Taken:\n• " + "\n• ".join(actions) + "\n"
+    note_content += f"═══════════════════════════════════════\n"
 
     logger.info(
-        "📝 Claim Note Added | claim=%s note=%s cc=%s",
-        claim_number, note_id, cc_company
+        "📝 Claim Note Added | claim=%s note=%s type=%s cc=%s",
+        claim_number, note_id, inquiry_type, cc_company
     )
 
     return _json({
         "success": True,
         "claim_number": claim_number,
         "note_id": note_id,
+        "inquiry_type": inquiry_type,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "message": f"Note {note_id} added to claim {claim_number}.",
+        "message": f"Call documented in Subrogation notes. Note ID: {note_id}.",
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCHEMA: close_and_document_call
+# ═══════════════════════════════════════════════════════════════════════════════
+
+close_and_document_call_schema: Dict[str, Any] = {
+    "name": "close_and_document_call",
+    "description": (
+        "Close the call and document the interaction. Creates a detailed claim note "
+        "summarizing the entire conversation and optionally sends a confirmation email "
+        "to the Claimant Carrier representative. MUST be called at the end of every "
+        "subrogation call before saying goodbye."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "claim_number": {
+                "type": "string",
+                "description": "The claim number discussed",
+            },
+            "cc_company": {
+                "type": "string",
+                "description": "Claimant Carrier company name",
+            },
+            "caller_name": {
+                "type": "string",
+                "description": "Name of the CC representative",
+            },
+            "caller_email": {
+                "type": "string",
+                "description": "Email address for the CC rep to send confirmation (optional - ask if they want email confirmation)",
+            },
+            "topics_discussed": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["demand_status", "liability", "coverage", "limits", "payment", "rush_request", "handler_callback"],
+                },
+                "description": "List of topics discussed during the call",
+            },
+            "key_responses": {
+                "type": "object",
+                "description": "Key information provided during the call",
+                "properties": {
+                    "demand_status": {
+                        "type": "string",
+                        "description": "Demand status provided (e.g., 'Received 11/20, under review by Sarah Johnson')",
+                    },
+                    "liability_decision": {
+                        "type": "string",
+                        "description": "Liability decision provided (e.g., 'Accepted at 80%', 'Pending', 'Denied')",
+                    },
+                    "coverage_status": {
+                        "type": "string",
+                        "description": "Coverage status provided (e.g., 'Confirmed', 'CVQ open', 'Denied')",
+                    },
+                    "limits_info": {
+                        "type": "string",
+                        "description": "Limits info provided (e.g., 'No limits issue', 'PD limit $25,000')",
+                    },
+                    "payment_info": {
+                        "type": "string",
+                        "description": "Payment info provided (e.g., 'No payments', '$8,500 paid to Fabrikam')",
+                    },
+                    "rush_status": {
+                        "type": "string",
+                        "description": "Rush handling status (e.g., 'Flagged for rush - attorney represented', 'Does not qualify')",
+                    },
+                    "handler_info": {
+                        "type": "string",
+                        "description": "Handler/callback info (e.g., 'Callback requested from Sarah Johnson')",
+                    },
+                },
+            },
+            "actions_taken": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of actions taken (e.g., 'Created ISRUSH diary', 'Noted callback request')",
+            },
+            "send_email_confirmation": {
+                "type": "boolean",
+                "description": "Whether to send email confirmation to the CC rep (default: false, only if they requested it)",
+            },
+        },
+        "required": ["claim_number", "cc_company", "caller_name", "topics_discussed", "key_responses"],
+    },
+}
+
+
+def _build_call_summary_email(
+    claim_number: str,
+    cc_company: str,
+    caller_name: str,
+    topics: List[str],
+    responses: Dict[str, str],
+    actions: List[str],
+    institution_name: str = "XYMZ Insurance",
+) -> tuple[str, str, str]:
+    """
+    Build email content for call summary confirmation.
+    
+    Returns:
+        Tuple of (subject, plain_text_body, html_body)
+    """
+    subject = f"Call Summary - Claim {claim_number} | {institution_name} Subrogation"
+    
+    # Topic labels for display
+    topic_labels = {
+        "demand_status": "Demand Status",
+        "liability": "Liability Decision",
+        "coverage": "Coverage Status",
+        "limits": "Policy Limits",
+        "payment": "Payment Information",
+        "rush_request": "Rush Handling",
+        "handler_callback": "Handler Callback",
+    }
+    
+    # Build response details
+    response_lines = []
+    if responses.get("demand_status"):
+        response_lines.append(f"• Demand Status: {responses['demand_status']}")
+    if responses.get("liability_decision"):
+        response_lines.append(f"• Liability: {responses['liability_decision']}")
+    if responses.get("coverage_status"):
+        response_lines.append(f"• Coverage: {responses['coverage_status']}")
+    if responses.get("limits_info"):
+        response_lines.append(f"• Limits: {responses['limits_info']}")
+    if responses.get("payment_info"):
+        response_lines.append(f"• Payments: {responses['payment_info']}")
+    if responses.get("rush_status"):
+        response_lines.append(f"• Rush Handling: {responses['rush_status']}")
+    if responses.get("handler_info"):
+        response_lines.append(f"• Handler: {responses['handler_info']}")
+    
+    response_text = "\n".join(response_lines) if response_lines else "No specific information provided."
+    actions_text = "\n".join(f"• {a}" for a in actions) if actions else "No specific actions taken."
+    topics_text = ", ".join(topic_labels.get(t, t) for t in topics)
+    
+    # Plain text version
+    plain_text_body = f"""Hi {caller_name},
+
+Thank you for calling {institution_name} Subrogation.
+
+CALL SUMMARY
+============
+Claim Number: {claim_number}
+Your Company: {cc_company}
+Topics Discussed: {topics_text}
+
+INFORMATION PROVIDED
+====================
+{response_text}
+
+ACTIONS TAKEN
+=============
+{actions_text}
+
+CONTACT INFORMATION
+===================
+Subro Fax (for demands): {SUBRO_FAX_NUMBER}
+Subro Phone (for inquiries): {SUBRO_PHONE_NUMBER}
+
+If you have any questions, please call us at {SUBRO_PHONE_NUMBER}.
+
+Thank you for your business.
+
+{institution_name} Subrogation Department
+"""
+
+    # HTML version
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td align="center" style="padding: 40px 0;">
+                <table role="presentation" style="width: 600px; max-width: 100%; border-collapse: collapse;">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #1e3a5f, #2d5a87); padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">Call Summary</h1>
+                            <p style="margin: 10px 0 0 0; color: #a0c4e8; font-size: 14px;">{institution_name} Subrogation</p>
+                        </td>
+                    </tr>
+                    <!-- Body -->
+                    <tr>
+                        <td style="background-color: #ffffff; padding: 30px;">
+                            <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px;">Hi {caller_name},</p>
+                            <p style="margin: 0 0 25px 0; color: #666666; font-size: 14px;">
+                                Thank you for calling {institution_name} Subrogation. Below is a summary of our conversation.
+                            </p>
+                            
+                            <!-- Claim Info Box -->
+                            <div style="background-color: #f8fafc; border-left: 4px solid #2d5a87; padding: 15px; margin-bottom: 25px; border-radius: 0 4px 4px 0;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <tr>
+                                        <td style="padding: 5px 0; color: #666666; font-size: 14px;">Claim Number:</td>
+                                        <td style="padding: 5px 0; color: #1e3a5f; font-size: 14px; font-weight: 600; text-align: right;">{claim_number}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 5px 0; color: #666666; font-size: 14px;">Your Company:</td>
+                                        <td style="padding: 5px 0; color: #333333; font-size: 14px; text-align: right;">{cc_company}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 5px 0; color: #666666; font-size: 14px;">Topics Discussed:</td>
+                                        <td style="padding: 5px 0; color: #333333; font-size: 14px; text-align: right;">{topics_text}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            
+                            <!-- Information Provided -->
+                            <h3 style="margin: 0 0 15px 0; color: #1e3a5f; font-size: 16px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">Information Provided</h3>
+                            <div style="margin-bottom: 25px; color: #333333; font-size: 14px; line-height: 1.8;">
+                                {response_text.replace(chr(10), '<br>').replace('• ', '&#8226; ')}
+                            </div>
+                            
+                            <!-- Actions Taken -->
+                            <h3 style="margin: 0 0 15px 0; color: #1e3a5f; font-size: 16px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">Actions Taken</h3>
+                            <div style="margin-bottom: 25px; color: #333333; font-size: 14px; line-height: 1.8;">
+                                {actions_text.replace(chr(10), '<br>').replace('• ', '&#8226; ')}
+                            </div>
+                            
+                            <!-- Contact Box -->
+                            <div style="background-color: #e8f4fd; padding: 20px; border-radius: 4px; margin-top: 25px;">
+                                <h4 style="margin: 0 0 10px 0; color: #1e3a5f; font-size: 14px;">Contact Information</h4>
+                                <p style="margin: 0; color: #666666; font-size: 13px;">
+                                    <strong>Fax (for demands):</strong> {SUBRO_FAX_NUMBER}<br>
+                                    <strong>Phone (for inquiries):</strong> {SUBRO_PHONE_NUMBER}
+                                </p>
+                            </div>
+                        </td>
+                    </tr>
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #f8fafc; padding: 20px; border-radius: 0 0 8px 8px; text-align: center;">
+                            <p style="margin: 0 0 5px 0; color: #666666; font-size: 12px;">Questions? Call us at {SUBRO_PHONE_NUMBER}</p>
+                            <p style="margin: 0; color: #999999; font-size: 11px;">© 2025 {institution_name}. All rights reserved.</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+
+    return subject, plain_text_body, html_body
+
+
+async def close_and_document_call(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Close the call and document the interaction.
+    
+    Creates a detailed claim note and optionally sends email confirmation.
+    """
+    claim_number = (args.get("claim_number") or "").strip().upper()
+    cc_company = (args.get("cc_company") or "").strip()
+    caller_name = (args.get("caller_name") or "").strip()
+    caller_email = (args.get("caller_email") or "").strip()
+    topics = args.get("topics_discussed") or []
+    responses = args.get("key_responses") or {}
+    actions = args.get("actions_taken") or []
+    send_email = args.get("send_email_confirmation", False)
+    
+    if not claim_number or not cc_company or not caller_name:
+        return _json({
+            "success": False,
+            "message": "Claim number, CC company, and caller name are required.",
+        })
+    
+    if not topics:
+        return _json({
+            "success": False,
+            "message": "At least one topic discussed is required.",
+        })
+    
+    # Generate note ID
+    note_id = f"SUBRO-NOTE-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{random.randint(1000, 9999)}"
+    
+    # Topic labels
+    topic_labels = {
+        "demand_status": "Demand Status",
+        "liability": "Liability Decision",
+        "coverage": "Coverage Status",
+        "limits": "Policy Limits",
+        "payment": "Payment Information",
+        "rush_request": "Rush Handling",
+        "handler_callback": "Handler Callback",
+    }
+    topics_display = ", ".join(topic_labels.get(t, t) for t in topics)
+    
+    # Build comprehensive note
+    note_lines = [
+        "═══════════════════════════════════════",
+        f"CC HOTLINE CALL - CALL SUMMARY",
+        "═══════════════════════════════════════",
+        f"Caller: {caller_name}",
+        f"Company: {cc_company}",
+        f"Category: Subrogation",
+        f"Topics: {topics_display}",
+        "───────────────────────────────────────",
+        "Request/Response Details:",
+    ]
+    
+    # Add each response detail
+    if responses.get("demand_status"):
+        note_lines.append(f"  • Demand Status: {responses['demand_status']}")
+    if responses.get("liability_decision"):
+        note_lines.append(f"  • Liability: {responses['liability_decision']}")
+    if responses.get("coverage_status"):
+        note_lines.append(f"  • Coverage: {responses['coverage_status']}")
+    if responses.get("limits_info"):
+        note_lines.append(f"  • Limits: {responses['limits_info']}")
+    if responses.get("payment_info"):
+        note_lines.append(f"  • Payments: {responses['payment_info']}")
+    if responses.get("rush_status"):
+        note_lines.append(f"  • Rush: {responses['rush_status']}")
+    if responses.get("handler_info"):
+        note_lines.append(f"  • Handler: {responses['handler_info']}")
+    
+    if actions:
+        note_lines.append("───────────────────────────────────────")
+        note_lines.append("Actions Taken:")
+        for action in actions:
+            note_lines.append(f"  • {action}")
+    
+    note_lines.append("═══════════════════════════════════════")
+    note_content = "\n".join(note_lines)
+    
+    logger.info(
+        "📝 Call Documented | claim=%s note=%s topics=%s cc=%s",
+        claim_number, note_id, topics, cc_company
+    )
+    
+    # Handle email confirmation
+    email_sent = False
+    email_error = None
+    
+    if send_email and caller_email:
+        if send_email_async and is_email_configured():
+            try:
+                subject, plain_text, html_body = _build_call_summary_email(
+                    claim_number=claim_number,
+                    cc_company=cc_company,
+                    caller_name=caller_name,
+                    topics=topics,
+                    responses=responses,
+                    actions=actions,
+                )
+                result = await send_email_async(caller_email, subject, plain_text, html_body)
+                email_sent = result.get("success", False)
+                if not email_sent:
+                    email_error = result.get("error")
+                logger.info("📧 Call summary email sent: %s - %s", caller_email, "success" if email_sent else email_error)
+            except Exception as exc:
+                email_error = str(exc)
+                logger.warning("📧 Call summary email failed: %s", exc)
+        else:
+            email_error = "Email service not configured"
+            logger.info("📧 Email service not configured for call summary")
+    elif send_email and not caller_email:
+        email_error = "No email address provided"
+    
+    result = {
+        "success": True,
+        "claim_number": claim_number,
+        "note_id": note_id,
+        "topics_documented": topics,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "message": f"Call documented in Subrogation notes. Note ID: {note_id}.",
+    }
+    
+    if send_email:
+        result["email_confirmation_sent"] = email_sent
+        result["email_address"] = caller_email if caller_email else None
+        if email_error:
+            result["email_error"] = email_error
+        if email_sent:
+            result["message"] += f" Confirmation email sent to {caller_email}."
+    
+    return _json(result)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -847,6 +1421,109 @@ async def get_subro_contact_info(args: Dict[str, Any]) -> Dict[str, Any]:
             f"Subrogation demands can be faxed to {SUBRO_FAX_NUMBER}. "
             f"For inquiries, call {SUBRO_PHONE_NUMBER}."
         ),
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCHEMA: switch_claim
+# ═══════════════════════════════════════════════════════════════════════════════
+
+switch_claim_schema: Dict[str, Any] = {
+    "name": "switch_claim",
+    "description": (
+        "Switch to a different claim during the call. "
+        "Use when caller asks about a DIFFERENT claim number than the one they were verified for. "
+        "Verifies the new claim belongs to the same claimant carrier before switching. "
+        "If the new claim belongs to a different CC, informs caller they need separate verification."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "new_claim_number": {
+                "type": "string",
+                "description": "The new claim number the caller wants to discuss",
+            },
+            "current_cc_company": {
+                "type": "string",
+                "description": "The claimant carrier company from the original verification",
+            },
+        },
+        "required": ["new_claim_number", "current_cc_company"],
+    },
+}
+
+
+async def switch_claim(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Switch to a different claim, verifying same CC company.
+    
+    This allows a CC rep to ask about multiple claims in one call without
+    full re-authentication, as long as the claims belong to the same CC.
+    """
+    new_claim_number = (args.get("new_claim_number") or "").strip().upper()
+    current_cc_company = (args.get("current_cc_company") or "").strip()
+
+    if not new_claim_number:
+        return _json({
+            "success": False,
+            "message": "Please provide the new claim number you'd like to discuss.",
+        })
+
+    if not current_cc_company:
+        return _json({
+            "success": False,
+            "message": "Current CC company context is required for claim switch.",
+        })
+
+    # Look up the new claim
+    claim = _find_claim_by_number(args, new_claim_number)
+    if not claim:
+        return _json({
+            "success": False,
+            "claim_found": False,
+            "message": f"Claim {new_claim_number} not found in our system. Please verify the claim number.",
+        })
+
+    # Check if the CC matches
+    cc_on_record = (claim.get("claimant_carrier") or "").lower()
+    current_cc_normalized = current_cc_company.lower()
+    
+    # Normalize for comparison
+    cc_on_record_clean = cc_on_record.replace(" insurance", "").strip()
+    current_cc_clean = current_cc_normalized.replace(" insurance", "").strip()
+
+    cc_matches = (
+        cc_on_record == current_cc_normalized or
+        cc_on_record_clean == current_cc_clean or
+        cc_on_record.startswith(current_cc_clean) or
+        current_cc_normalized.startswith(cc_on_record_clean)
+    )
+
+    if not cc_matches:
+        return _json({
+            "success": False,
+            "claim_found": True,
+            "cc_matches": False,
+            "message": (
+                f"Claim {new_claim_number} is associated with a different claimant carrier. "
+                "You would need to call back and verify separately for that claim."
+            ),
+        })
+
+    # Success - return the new claim context
+    logger.info(
+        "🔄 Claim Switch | new_claim=%s cc=%s claimant=%s",
+        new_claim_number, current_cc_company, claim.get("claimant_name")
+    )
+
+    return _json({
+        "success": True,
+        "claim_found": True,
+        "cc_matches": True,
+        "new_claim_number": new_claim_number,
+        "claimant_name": claim.get("claimant_name"),
+        "loss_date": claim.get("loss_date"),
+        "insured_name": claim.get("insured_name"),
+        "message": f"Switched to claim {new_claim_number}. How can I help you with this claim?",
     })
 
 
@@ -928,8 +1605,22 @@ register_tool(
 )
 
 register_tool(
+    name="close_and_document_call",
+    schema=close_and_document_call_schema,
+    executor=close_and_document_call,
+    tags={"scenario": "insurance", "category": "subro"},
+)
+
+register_tool(
     name="get_subro_contact_info",
     schema=get_subro_contact_info_schema,
     executor=get_subro_contact_info,
+    tags={"scenario": "insurance", "category": "subro"},
+)
+
+register_tool(
+    name="switch_claim",
+    schema=switch_claim_schema,
+    executor=switch_claim,
     tags={"scenario": "insurance", "category": "subro"},
 )

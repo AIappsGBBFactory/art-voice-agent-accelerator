@@ -15,6 +15,9 @@ from src.cosmosdb.manager import CosmosDBMongoCoreManager
 from src.cosmosdb.config import get_database_name, get_users_collection_name
 from src.stateful.state_managment import MemoManager
 
+# Import MOCK_CLAIMS for test scenario support
+from apps.artagent.backend.registries.toolstore.insurance.constants import MOCK_CLAIMS
+
 __all__ = ["router"]
 
 router = APIRouter(prefix="/api/v1/demo-env", tags=["demo-env"])
@@ -50,6 +53,24 @@ class DemoUserRequest(BaseModel):
     insurance_role: Literal["policyholder", "cc_rep"] | None = Field(
         default="policyholder",
         description="For insurance scenario: policyholder or claimant carrier representative.",
+    )
+    # Test scenario selection for consistent edge case testing
+    test_scenario: Literal[
+        "demand_under_review",        # CLM-2024-001234: Demand under review, liability pending
+        "demand_paid",                # CLM-2024-005678: Demand PAID, liability 80%
+        "no_demand",                  # CLM-2024-009012: No demand, coverage pending
+        "coverage_denied",            # CLM-2024-003456: Coverage DENIED (policy lapsed)
+        "pending_assignment",         # CLM-2024-007890: Demand pending assignment (queue)
+        "liability_denied",           # CLM-2024-002468: Liability DENIED, demand denied
+        "cvq_open",                   # CLM-2024-013579: CVQ open (named driver dispute)
+        "demand_exceeds_limits",      # CLM-2024-024680: Demand exceeds limits ($85k vs $25k)
+        "random",                     # Random generation (default)
+    ] | None = Field(
+        default=None,
+        description=(
+            "For insurance scenario: select a specific test scenario to use predefined claim data. "
+            "This enables consistent testing of edge cases. If not specified or 'random', claims are generated randomly."
+        ),
     )
 
 
@@ -160,8 +181,8 @@ class DemoInsuranceClaim(BaseModel):
     bi_limits: float | None = None
     # Subrogation (for B2B scenarios)
     subro_demand: DemoSubroDemand | None = None
-    # Handlers
-    feature_owners: dict[str, str] | None = None  # {"PD": "John Smith", "BI": "Jane Doe"}
+    # Handlers (values can be None for unassigned features)
+    feature_owners: dict[str, str | None] | None = None  # {"PD": "John Smith", "BI": None}
     # Payments
     payments: list[dict[str, Any]] | None = None
 
@@ -904,6 +925,69 @@ def _build_policies(
     return policies
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST SCENARIO MAPPING - Maps test_scenario names to MOCK_CLAIMS claim numbers
+# ═══════════════════════════════════════════════════════════════════════════════
+TEST_SCENARIO_TO_CLAIM: dict[str, str] = {
+    "demand_under_review": "CLM-2024-001234",    # Demand under review, liability pending
+    "demand_paid": "CLM-2024-005678",            # Demand PAID, liability 80%
+    "no_demand": "CLM-2024-009012",              # No demand, coverage pending
+    "coverage_denied": "CLM-2024-003456",        # Coverage DENIED (policy lapsed)
+    "pending_assignment": "CLM-2024-007890",     # Demand pending assignment (queue)
+    "liability_denied": "CLM-2024-002468",       # Liability DENIED, demand denied
+    "cvq_open": "CLM-2024-013579",               # CVQ open (named driver dispute)
+    "demand_exceeds_limits": "CLM-2024-024680",  # Demand exceeds limits ($85k vs $25k)
+}
+
+
+def _mock_claim_to_demo_claim(mock_claim: dict[str, Any], policy_number: str) -> DemoInsuranceClaim:
+    """
+    Convert a MOCK_CLAIMS entry to a DemoInsuranceClaim object.
+    
+    This ensures test scenarios from MOCK_CLAIMS are properly formatted for the demo API.
+    """
+    subro_data = mock_claim.get("subro_demand", {})
+    subro_demand = None
+    if subro_data:
+        subro_demand = DemoSubroDemand(
+            received=subro_data.get("received", False),
+            received_date=subro_data.get("received_date"),
+            amount=subro_data.get("amount"),
+            assigned_to=subro_data.get("assigned_to"),
+            assigned_date=subro_data.get("assigned_date"),
+            status=subro_data.get("status"),
+        )
+    
+    # Map coverage_status to DemoInsuranceClaim format
+    coverage_status = mock_claim.get("coverage_status", "confirmed")
+    if coverage_status not in ("confirmed", "pending", "denied", "cvq"):
+        coverage_status = "confirmed"
+    
+    return DemoInsuranceClaim(
+        claim_number=mock_claim.get("claim_number", "CLM-UNKNOWN"),
+        policy_number=policy_number,
+        loss_date=mock_claim.get("loss_date", "2024-01-01"),
+        reported_date=mock_claim.get("loss_date", "2024-01-01"),  # Use loss_date as reported
+        status=mock_claim.get("status", "open"),
+        claim_type="collision",  # Most subro scenarios are collision
+        description=f"Subrogation claim - {mock_claim.get('claimant_carrier', 'Unknown CC')}",
+        insured_name=mock_claim.get("insured_name", "Demo Insured"),
+        claimant_name=mock_claim.get("claimant_name"),
+        claimant_carrier=mock_claim.get("claimant_carrier"),
+        estimated_amount=subro_data.get("amount") if subro_data else None,
+        paid_amount=sum(p.get("amount", 0) for p in mock_claim.get("payments", [])) or None,
+        coverage_status=coverage_status,
+        cvq_status=mock_claim.get("cvq_status"),
+        liability_decision=mock_claim.get("liability_decision"),
+        liability_percentage=mock_claim.get("liability_percentage"),
+        pd_limits=mock_claim.get("pd_limits"),
+        bi_limits=None,  # Subro scenarios focus on PD
+        subro_demand=subro_demand,
+        feature_owners=mock_claim.get("feature_owners"),
+        payments=mock_claim.get("payments") if mock_claim.get("payments") else None,
+    )
+
+
 def _build_claims(
     client_id: str,
     full_name: str,
@@ -912,15 +996,86 @@ def _build_claims(
     anchor: datetime,
     is_cc_rep: bool = False,
     cc_company_name: str | None = None,
+    test_scenario: str | None = None,
 ) -> list[DemoInsuranceClaim]:
-    """Generate insurance claims for demo user."""
-    claims = []
+    """
+    Generate insurance claims for demo user.
     
-    # Generate 1-3 claims
+    If test_scenario is specified (and not 'random'), uses MOCK_CLAIMS for consistent
+    edge case testing. Otherwise generates random claims.
+    
+    Args:
+        client_id: Demo user client ID
+        full_name: Demo user full name
+        policies: List of demo policies for this user
+        rng: Random generator
+        anchor: Timestamp anchor for date generation
+        is_cc_rep: Whether caller is a claimant carrier rep
+        cc_company_name: CC company name if cc_rep
+        test_scenario: Optional test scenario name (maps to MOCK_CLAIMS)
+    
+    Returns:
+        List of DemoInsuranceClaim objects
+    """
+    claims = []
+    policy_number = policies[0].policy_number if policies else f"POL-{rng.randint(100000, 999999)}"
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # TEST SCENARIO MODE: Use MOCK_CLAIMS for consistent edge case testing
+    # ─────────────────────────────────────────────────────────────────────────
+    if test_scenario and test_scenario != "random":
+        claim_number = TEST_SCENARIO_TO_CLAIM.get(test_scenario)
+        if claim_number and claim_number in MOCK_CLAIMS:
+            mock_claim = MOCK_CLAIMS[claim_number]
+            demo_claim = _mock_claim_to_demo_claim(mock_claim, policy_number)
+            claims.append(demo_claim)
+            logging.getLogger(__name__).info(
+                "📋 Using MOCK_CLAIMS scenario: %s -> %s (%s)",
+                test_scenario, claim_number, mock_claim.get("claimant_carrier")
+            )
+            return claims
+        else:
+            logging.getLogger(__name__).warning(
+                "⚠️ Unknown test_scenario: %s, falling back to random generation", test_scenario
+            )
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # RANDOM GENERATION MODE: Generate realistic random claims with full edge case coverage
+    # ─────────────────────────────────────────────────────────────────────────
     num_claims = rng.randint(1, 3)
     
+    # Extended scenarios for better random coverage
+    extended_claim_scenarios = (
+        # Standard scenarios
+        {"type": "collision", "description": "Rear-end collision at intersection", "typical_amount": (5000, 15000)},
+        {"type": "collision", "description": "Side impact in parking lot", "typical_amount": (2000, 8000)},
+        {"type": "comprehensive", "description": "Windshield damage from road debris", "typical_amount": (500, 1500)},
+        {"type": "comprehensive", "description": "Hail damage to vehicle", "typical_amount": (3000, 10000)},
+        {"type": "property_damage", "description": "Water damage from burst pipe", "typical_amount": (10000, 50000)},
+        # Edge case scenarios
+        {"type": "collision", "description": "Multi-vehicle accident - liability disputed", "typical_amount": (15000, 85000)},
+        {"type": "collision", "description": "Hit and run - coverage investigation", "typical_amount": (8000, 25000)},
+    )
+    
+    # Coverage status distribution for better edge case coverage
+    coverage_statuses = [
+        ("confirmed", None, 60),      # 60% confirmed
+        ("pending", "coverage_verification_pending", 15),  # 15% pending
+        ("denied", "policy_lapsed", 10),   # 10% denied
+        ("cvq", "named_driver_dispute", 15),  # 15% CVQ
+    ]
+    
+    # Subro demand status distribution
+    subro_statuses = [
+        ("pending", 20),       # Pending assignment
+        ("under_review", 40),  # Under review
+        ("paid", 15),          # Paid
+        ("denied_liability", 15),  # Denied - liability
+        ("denied_no_coverage", 10),  # Denied - no coverage
+    ]
+    
     for i in range(num_claims):
-        scenario = rng.choice(CLAIM_SCENARIOS)
+        scenario = rng.choice(extended_claim_scenarios)
         
         # Pick a policy that matches the claim type
         matching_policies = [
@@ -933,7 +1088,7 @@ def _build_claims(
             matching_policies = policies
         
         policy = rng.choice(matching_policies) if matching_policies else None
-        policy_number = policy.policy_number if policy else f"POL-{rng.randint(100000, 999999)}"
+        claim_policy_number = policy.policy_number if policy else f"POL-{rng.randint(100000, 999999)}"
         
         loss_date = anchor - timedelta(days=rng.randint(7, 90))
         reported_date = loss_date + timedelta(days=rng.randint(0, 3))
@@ -944,13 +1099,35 @@ def _build_claims(
         status = rng.choice(["open", "open", "under_investigation", "closed"])
         paid_amount = round(estimated_amount * rng.uniform(0.7, 1.0), 2) if status == "closed" else None
         
+        # Coverage status with weighted distribution
+        coverage_roll = rng.randint(1, 100)
+        cumulative = 0
+        coverage_status = "confirmed"
+        cvq_status = None
+        for cov_status, cvq, weight in coverage_statuses:
+            cumulative += weight
+            if coverage_roll <= cumulative:
+                coverage_status = cov_status
+                cvq_status = cvq
+                break
+        
         # Liability decision (more relevant for collision claims)
         liability_decision = None
         liability_percentage = None
         if scenario["type"] == "collision":
-            liability_decision = rng.choice(["pending", "accepted", "accepted", "denied"])
-            if liability_decision == "accepted":
-                liability_percentage = rng.choice([100, 80, 70, 50])
+            if coverage_status == "denied":
+                liability_decision = "not_applicable"
+            elif coverage_status == "cvq":
+                liability_decision = "pending"
+            else:
+                liability_decision = rng.choice(["pending", "accepted", "accepted", "accepted", "denied"])
+                if liability_decision == "accepted":
+                    liability_percentage = rng.choice([100, 100, 80, 80, 70, 50])
+                elif liability_decision == "denied":
+                    liability_percentage = 0
+        
+        # PD limits with occasional low-limits scenario
+        pd_limits = rng.choice([25000, 50000, 50000, 100000, 100000, 250000])
         
         # Subrogation demand (for B2B scenarios)
         subro_demand = None
@@ -960,25 +1137,57 @@ def _build_claims(
         if is_cc_rep or rng.choice([True, False, False]):
             # This claim has a subrogation component
             claimant_carrier = cc_company_name or rng.choice(CLAIMANT_CARRIER_COMPANIES)
-            claimant_name = f"{rng.choice(['John', 'Jane', 'Robert', 'Maria'])} {rng.choice(['Smith', 'Johnson', 'Williams', 'Brown'])}"
+            claimant_name = f"{rng.choice(['John', 'Jane', 'Robert', 'Maria', 'Tom', 'Susan'])} {rng.choice(['Smith', 'Johnson', 'Williams', 'Brown', 'Martinez', 'Garcia'])}"
             
-            demand_received = rng.choice([True, True, False])
+            # Demand received probability based on coverage status
+            demand_received = coverage_status != "denied" and rng.choice([True, True, True, False])
+            
+            # Determine subro status with distribution
+            subro_status = None
+            assigned_to = None
+            if demand_received:
+                if coverage_status == "denied":
+                    subro_status = "denied_no_coverage"
+                elif liability_decision == "denied":
+                    subro_status = "denied_liability"
+                else:
+                    # Weighted random subro status
+                    subro_roll = rng.randint(1, 100)
+                    cumulative = 0
+                    for s_status, weight in subro_statuses:
+                        cumulative += weight
+                        if subro_roll <= cumulative:
+                            subro_status = s_status
+                            break
+                
+                # Only assign handler if not pending assignment
+                if subro_status not in ("pending", "denied_no_coverage"):
+                    assigned_to = rng.choice(ADJUSTER_NAMES)
+            
+            # Demand amount - occasionally exceeds limits for edge case
+            demand_amount = None
+            if demand_received:
+                if rng.randint(1, 10) <= 2:  # 20% chance of exceeding limits
+                    demand_amount = round(pd_limits * rng.uniform(1.5, 3.5), 2)
+                else:
+                    demand_amount = round(estimated_amount * rng.uniform(0.8, 1.2), 2)
+            
             subro_demand = DemoSubroDemand(
                 received=demand_received,
                 received_date=(loss_date + timedelta(days=rng.randint(14, 45))).date().isoformat() if demand_received else None,
-                amount=round(estimated_amount * rng.uniform(0.8, 1.2), 2) if demand_received else None,
-                assigned_to=rng.choice(ADJUSTER_NAMES) if demand_received else None,
-                assigned_date=(loss_date + timedelta(days=rng.randint(16, 50))).date().isoformat() if demand_received else None,
-                status=rng.choice(["pending", "under_review", "under_review"]) if demand_received else None,
+                amount=demand_amount,
+                assigned_to=assigned_to,
+                assigned_date=(loss_date + timedelta(days=rng.randint(16, 50))).date().isoformat() if assigned_to else None,
+                status=subro_status,
             )
         
-        # Feature owners (adjusters)
+        # Feature owners (adjusters) - sometimes unassigned for edge cases
         feature_owners = {
-            "PD": rng.choice(ADJUSTER_NAMES),
-            "SUBRO": rng.choice(ADJUSTER_NAMES),
+            "PD": rng.choice(ADJUSTER_NAMES) if coverage_status != "denied" else None,
+            "SUBRO": rng.choice(ADJUSTER_NAMES) if subro_demand and subro_demand.status not in ("pending", None) else None,
         }
         if scenario["type"] == "collision":
-            feature_owners["BI"] = rng.choice(ADJUSTER_NAMES)
+            feature_owners["BI"] = rng.choice(ADJUSTER_NAMES) if liability_decision == "accepted" else None
         
         # Payments
         payments = []
@@ -993,7 +1202,7 @@ def _build_claims(
         
         claims.append(DemoInsuranceClaim(
             claim_number=f"CLM-{anchor.year}-{rng.randint(100000, 999999)}",
-            policy_number=policy_number,
+            policy_number=claim_policy_number,
             loss_date=loss_date.date().isoformat(),
             reported_date=reported_date.date().isoformat(),
             status=status,
@@ -1005,10 +1214,11 @@ def _build_claims(
             estimated_amount=estimated_amount,
             paid_amount=paid_amount,
             deductible_applied=policy.deductible if policy and status == "closed" else None,
-            coverage_status="confirmed",
+            coverage_status=coverage_status,
+            cvq_status=cvq_status,
             liability_decision=liability_decision,
             liability_percentage=liability_percentage,
-            pd_limits=rng.choice([50000, 100000, 250000]),
+            pd_limits=pd_limits,
             bi_limits=rng.choice([100000, 300000, 500000]) if scenario["type"] == "collision" else None,
             subro_demand=subro_demand,
             feature_owners=feature_owners,
@@ -1367,6 +1577,7 @@ async def create_temporary_user(
             anchor,
             is_cc_rep=(payload.insurance_role == "cc_rep"),
             cc_company_name=payload.insurance_company_name,
+            test_scenario=payload.test_scenario,
         )
         transactions = []  # Insurance scenario doesn't use banking transactions
         

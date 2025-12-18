@@ -74,7 +74,7 @@ speech:
     language: en-US
 
   synthesis:
-    voice_name: en-US-AvaMultilingualNeural
+    voice_name: en-US-Ava:DragonHDLatestNeural
 
   vad:
     threshold: 0.02
