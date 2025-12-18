@@ -18,22 +18,16 @@ You own the agentic design; this repo handles the end-to-end voice plumbing. We 
 
 ## **See it in Action**
 
-<table>
-<tr>
-<td align="center">
-<a href="https://www.youtube.com/watch?v=H_uAA5_h40E">
-<img src="docs/assets/youtube.png" height="120" alt="YouTube Overview" /><br/>
-<b>📺 Full Overview</b>
-</a>
-</td>
-<td align="center">
-<a href="https://vimeo.com/1115976100">
-<img src="docs/assets/ARTAgentVimeoDemo.png" height="120" alt="Demo Walkthrough" /><br/>
-<b>🎬 Demo Walkthrough</b>
-</a>
-</td>
-</tr>
-</table>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=H_uAA5_h40E"><img src="docs/assets/youtube.png" height="140" alt="Full Overview" /></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://vimeo.com/1115976100"><img src="docs/assets/ARTAgentVimeoDemo.png" height="140" alt="Demo Walkthrough" /></a>
+</p>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=H_uAA5_h40E"><b>📺 Full Overview</b></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://vimeo.com/1115976100"><b>🎬 Demo Walkthrough</b></a>
+</p>
 
 <details>
 <summary><b>💡 What you get</b></summary>
