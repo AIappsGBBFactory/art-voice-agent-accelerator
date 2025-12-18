@@ -169,6 +169,7 @@ def _get_claims_from_profile(args: Dict[str, Any]) -> List[Dict[str, Any]]:
     2. _session_profile.claims
     
     Returns empty list if no claims found.
+    Ensures claims are converted to dicts (handles Pydantic objects).
     """
     session_profile = args.get("_session_profile")
     if not session_profile:
@@ -177,21 +178,38 @@ def _get_claims_from_profile(args: Dict[str, Any]) -> List[Dict[str, Any]]:
     # Try demo_metadata.claims first
     demo_meta = session_profile.get("demo_metadata", {})
     claims = demo_meta.get("claims", [])
-    if claims:
-        return claims
+    if not claims:
+        # Try top-level claims
+        claims = session_profile.get("claims", [])
     
-    # Try top-level claims
-    claims = session_profile.get("claims", [])
-    return claims if claims else []
+    if not claims:
+        return []
+    
+    # Convert Pydantic models to dicts if needed
+    result = []
+    for claim in claims:
+        if hasattr(claim, "model_dump"):
+            # Pydantic v2
+            result.append(claim.model_dump())
+        elif hasattr(claim, "dict"):
+            # Pydantic v1
+            result.append(claim.dict())
+        elif isinstance(claim, dict):
+            result.append(claim)
+        else:
+            # Try to convert to dict
+            result.append(dict(claim) if hasattr(claim, "__iter__") else {})
+    
+    return result
 
 
 def _find_claim_by_number(args: Dict[str, Any], claim_number: str) -> Dict[str, Any] | None:
     """
     Find a claim by claim number.
     
-    Lookup order:
-    1. Cosmos DB (direct query) - primary source
-    2. Session profile (_session_profile.demo_metadata.claims)
+    Lookup order (session profile first for consistency with UI):
+    1. Session profile (_session_profile.demo_metadata.claims) - matches UI data
+    2. Cosmos DB (direct query) - for profiles without session context
     3. MOCK_CLAIMS fallback for testing
     
     Args:
@@ -203,18 +221,18 @@ def _find_claim_by_number(args: Dict[str, Any], claim_number: str) -> Dict[str, 
     """
     claim_number_upper = claim_number.upper()
     
-    # First, try Cosmos DB direct lookup (most reliable)
-    cosmos_claim = _lookup_claim_in_cosmos_sync(claim_number_upper)
-    if cosmos_claim:
-        return cosmos_claim
-    
-    # Second, try session profile
+    # First, try session profile (matches what UI displays)
     claims = _get_claims_from_profile(args)
     if claims:
         for claim in claims:
             if claim.get("claim_number", "").upper() == claim_number_upper:
                 logger.info("📋 Found claim %s in session profile", claim_number_upper)
                 return claim
+    
+    # Second, try Cosmos DB direct lookup
+    cosmos_claim = _lookup_claim_in_cosmos_sync(claim_number_upper)
+    if cosmos_claim:
+        return cosmos_claim
     
     # Fallback to MOCK_CLAIMS for testing
     claim = MOCK_CLAIMS.get(claim_number_upper)
@@ -303,9 +321,15 @@ async def get_subro_demand_status(args: Dict[str, Any]) -> Dict[str, Any]:
     if not claim:
         return _json({"success": False, "message": f"Claim {claim_number} not found in our system."})
 
-    # Defensive: subro_demand could be None, {}, or a dict with partial data
+    # Defensive: subro_demand could be None, {}, dict, or Pydantic object
     demand = claim.get("subro_demand") or {}
-    if not isinstance(demand, dict):
+    
+    # Convert Pydantic model to dict if needed
+    if hasattr(demand, "model_dump"):
+        demand = demand.model_dump()
+    elif hasattr(demand, "dict"):
+        demand = demand.dict()
+    elif not isinstance(demand, dict):
         demand = {}
 
     # Normalize boolean for received status
@@ -528,7 +552,8 @@ get_pd_policy_limits_schema: Dict[str, Any] = {
     "description": (
         "Get property damage policy limits for a claim and compare against demand. "
         "IMPORTANT: Only disclose limits if liability has been accepted (> 0%). "
-        "Pass the demand_amount to determine if there's a limits issue."
+        "The demand_amount will be AUTO-FETCHED from the claim's subro_demand record. "
+        "Only pass demand_amount if you have a DIFFERENT amount from the caller."
     ),
     "parameters": {
         "type": "object",
@@ -539,7 +564,7 @@ get_pd_policy_limits_schema: Dict[str, Any] = {
             },
             "demand_amount": {
                 "type": "number",
-                "description": "The demand amount in dollars (e.g., 85000). Used to check if demand exceeds policy limits.",
+                "description": "OPTIONAL - Only provide if caller gives a different amount than what's on file. Tool will auto-fetch demand from claim record.",
             },
         },
         "required": ["claim_number"],
@@ -551,7 +576,7 @@ async def get_pd_policy_limits(args: Dict[str, Any]) -> Dict[str, Any]:
     """Get PD limits and compare against demand amount - only if liability accepted.
     
     Edge cases handled:
-    - Demand amount not provided: just return limits (if disclosable)
+    - Demand amount not provided: AUTO-FETCH from subro_demand.amount
     - Demand equals limits exactly: not exceeding (borderline case)
     - Limits is 0 or None: handle gracefully
     - Liability accepted but percentage is None or 0
@@ -573,6 +598,20 @@ async def get_pd_policy_limits(args: Dict[str, Any]) -> Dict[str, Any]:
         percentage = claim.get("liability_range_low")
     
     limits = claim.get("pd_limits") or 0
+    
+    # AUTO-FETCH demand from subro_demand if not explicitly provided
+    if demand_amount is None:
+        subro_demand = claim.get("subro_demand") or {}
+        # Convert Pydantic model to dict if needed
+        if hasattr(subro_demand, "model_dump"):
+            subro_demand = subro_demand.model_dump()
+        elif hasattr(subro_demand, "dict"):
+            subro_demand = subro_demand.dict()
+        elif not isinstance(subro_demand, dict):
+            subro_demand = {}
+        
+        if subro_demand.get("received") and subro_demand.get("amount"):
+            demand_amount = subro_demand.get("amount")
 
     # Determine if we can disclose limits:
     # Liability must be accepted AND percentage > 0
@@ -749,9 +788,11 @@ evaluate_rush_criteria_schema: Dict[str, Any] = {
     "name": "evaluate_rush_criteria",
     "description": (
         "Evaluate if a subrogation demand qualifies for rush (ISRUSH) assignment. "
-        "Rush criteria include: attorney represented, demand over limits, "
-        "statute of limitations near, out-of-pocket expenses (rental/deductible), "
-        "DOI complaint, prior demands unanswered, or explicit escalation request."
+        "BUSINESS RULE: At least TWO criteria must be met to qualify. "
+        "Criteria: 1) OOP expenses (rental/deductible), 2) Attorney involvement or suit filed, "
+        "3) DOI complaint, 4) Statute of limitations near. "
+        "NOTE: 'Third call' criterion is AUTO-CHECKED from system records - do NOT ask caller. "
+        "You must ask the caller about the OTHER criteria before calling this tool."
     ),
     "parameters": {
         "type": "object",
@@ -760,78 +801,151 @@ evaluate_rush_criteria_schema: Dict[str, Any] = {
                 "type": "string",
                 "description": "The claim number",
             },
-            "attorney_represented": {
-                "type": "boolean",
-                "description": "Whether the claimant is represented by an attorney or suit has been filed",
-            },
-            "demand_over_limits": {
-                "type": "boolean",
-                "description": "Whether the demand exceeds policy limits",
-            },
-            "statute_near": {
-                "type": "boolean",
-                "description": "Whether statute of limitations is within 60 days",
-            },
             "oop_expenses": {
                 "type": "boolean",
-                "description": "Whether out-of-pocket expenses are involved (rental car, deductible paid by claimant)",
+                "description": "Are there out-of-pocket expenses (rental car, deductible paid by claimant)?",
+            },
+            "attorney_represented": {
+                "type": "boolean",
+                "description": "Is there attorney involvement or has a suit been filed?",
             },
             "doi_complaint": {
                 "type": "boolean",
-                "description": "Whether a Department of Insurance complaint has been filed",
+                "description": "Has a Department of Insurance complaint been filed?",
             },
-            "prior_demands_unanswered": {
+            "statute_near": {
                 "type": "boolean",
-                "description": "Whether there are prior unanswered demands (third call for same demand)",
+                "description": "Is statute of limitations within 60 days?",
             },
             "escalation_request": {
                 "type": "boolean",
-                "description": "Whether caller is explicitly requesting escalation",
+                "description": "Is caller explicitly requesting escalation? (Does NOT count toward the 2-criteria minimum)",
             },
         },
-        "required": ["claim_number"],
+        "required": ["claim_number", "attorney_represented", "statute_near"],
     },
 }
 
 
 async def evaluate_rush_criteria(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluate if demand qualifies for rush assignment based on business criteria."""
+    """Evaluate if demand qualifies for rush assignment based on business criteria.
+    
+    BUSINESS RULE: At least TWO substantive criteria must be met to qualify for ISRUSH:
+    - oop_expenses: Out-of-pocket expenses (rental, deductible) involved
+    - prior_demands_unanswered: Third call for same demand (AUTO-CHECKED from system)
+    - attorney_represented: Attorney involvement or suit filed
+    - doi_complaint: DOI complaint filed
+    - statute_near: Statute of limitations within 60 days
+    
+    Note: escalation_request alone does NOT count toward the minimum.
+    
+    CALL HISTORY: Automatically checked from claim records - SYSTEM DATA IS SOURCE OF TRUTH.
+    Agent does NOT need to ask caller about call history. If system shows 2+ prior calls,
+    the "third call" criterion is automatically met.
+    """
     claim_number = (args.get("claim_number") or "").strip().upper()
 
-    # Map criteria to human-readable descriptions
-    criteria_map = {
-        "attorney_represented": "Attorney represented / suit filed",
-        "demand_over_limits": "Demand exceeds policy limits",
-        "statute_near": "Statute of limitations within 60 days",
+    # AUTO-CHECK call history from claim records (SYSTEM IS SOURCE OF TRUTH)
+    claim = _find_claim_by_number(args, claim_number)
+    actual_prior_calls = 0
+    if claim:
+        call_history = claim.get("call_history", [])
+        actual_prior_calls = len(call_history) if isinstance(call_history, list) else 0
+        # Also check prior_call_count if set directly
+        prior_count = claim.get("prior_call_count")
+        if isinstance(prior_count, int) and prior_count > actual_prior_calls:
+            actual_prior_calls = prior_count
+    
+    # System determines "third call" criterion - 2+ prior calls = this is 3rd+ call
+    system_third_call_met = actual_prior_calls >= 2
+
+    # Criteria that require caller input (agent must ask about these)
+    caller_input_criteria = {
         "oop_expenses": "Out-of-pocket expenses (rental/deductible)",
-        "doi_complaint": "Department of Insurance complaint",
-        "prior_demands_unanswered": "Prior demands unanswered (3rd call)",
-        "escalation_request": "Explicit escalation request",
+        "attorney_represented": "Attorney involvement or suit filed",
+        "doi_complaint": "DOI complaint filed",
+        "statute_near": "Statute of limitations within 60 days",
     }
+    
+    # Count how many caller-input criteria were provided
+    criteria_provided = sum(
+        1 for key in caller_input_criteria.keys() 
+        if key in args and args.get(key) is not None
+    )
+    
+    # Need at least 2 caller-input criteria answers to proceed
+    # (unless system already has third-call + 1 other)
+    if criteria_provided < 2 and not system_third_call_met:
+        return _json({
+            "success": False,
+            "claim_number": claim_number,
+            "qualifies_for_rush": False,
+            "criteria_met": [],
+            "criteria_descriptions": [],
+            "missing_criteria": True,
+            "system_call_count": actual_prior_calls,
+            "message": (
+                "I need to gather more information. Please ask about: "
+                "1) Attorney involvement or suit filed? "
+                "2) Statute of limitations within 60 days? "
+                "3) Out-of-pocket expenses (rental/deductible)? "
+                "4) DOI complaint filed?"
+            ),
+        })
 
     criteria_met = []
     criteria_descriptions = []
     
-    for key, description in criteria_map.items():
+    # Auto-add third-call criterion if system confirms it (NO CALLER INPUT NEEDED)
+    if system_third_call_met:
+        criteria_met.append("prior_demands_unanswered")
+        criteria_descriptions.append(f"Multiple prior calls ({actual_prior_calls} on record)")
+    
+    # Check caller-input criteria
+    for key, description in caller_input_criteria.items():
         if args.get(key):
             criteria_met.append(key)
             criteria_descriptions.append(description)
+    
+    # Also track escalation_request if present (informational only)
+    if args.get("escalation_request"):
+        criteria_met.append("escalation_request")
+        criteria_descriptions.append("Explicit escalation request")
 
-    qualifies = len(criteria_met) > 0
+    # Count only substantive criteria (not escalation_request)
+    substantive_met = [c for c in criteria_met if c != "escalation_request"]
+    
+    # BUSINESS RULE: At least TWO substantive criteria required
+    qualifies = len(substantive_met) >= 2
 
-    return _json({
-        "success": True,
-        "claim_number": claim_number,
-        "qualifies_for_rush": qualifies,
-        "criteria_met": criteria_met,
-        "criteria_descriptions": criteria_descriptions,
-        "message": (
-            f"Qualifies for ISRUSH assignment. Criteria: {'; '.join(criteria_descriptions)}. "
-            "Expect assignment within 2 business days."
-            if qualifies 
-            else "Does not meet rush criteria. Request documented on file."
-        ),
-    })
+    if qualifies:
+        return _json({
+            "success": True,
+            "claim_number": claim_number,
+            "qualifies_for_rush": True,
+            "criteria_met": criteria_met,
+            "criteria_count": len(substantive_met),
+            "criteria_descriptions": criteria_descriptions,
+            "message": (
+                f"Qualifies for ISRUSH assignment. {len(substantive_met)} criteria met: "
+                f"{'; '.join([d for d in criteria_descriptions if d != 'Explicit escalation request'])}. "
+                "Will document with ISRUSH diary and notify assignment within 2 business days."
+            ),
+        })
+    else:
+        return _json({
+            "success": True,
+            "claim_number": claim_number,
+            "qualifies_for_rush": False,
+            "criteria_met": criteria_met,
+            "criteria_count": len(substantive_met),
+            "criteria_descriptions": criteria_descriptions,
+            "message": (
+                f"Does not meet rush criteria. Only {len(substantive_met)} criterion met (need at least 2). "
+                "Qualifying factors: OOP expenses, third call, attorney/suit, DOI complaint, or statute near. "
+                "Your request has been documented on the file."
+            ),
+        })
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

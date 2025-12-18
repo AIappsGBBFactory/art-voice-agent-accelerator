@@ -343,6 +343,7 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
     // Insurance-specific fields
     insurance_company_name: '',
     insurance_role: 'policyholder',
+    test_scenario: 'golden_path',  // Default to golden_path for consistent B2B testing
   });
   const [status, setStatus] = useState({ type: 'idle', message: '', data: null });
   const [focusedField, setFocusedField] = useState(null);
@@ -416,6 +417,10 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
         payload.insurance_company_name = formState.insurance_company_name.trim();
       }
       payload.insurance_role = formState.insurance_role;
+      // Add test_scenario for CC reps to enable consistent B2B workflow testing
+      if (formState.insurance_role === 'cc_rep' && formState.test_scenario) {
+        payload.test_scenario = formState.test_scenario;
+      }
     }
 
     try {
@@ -453,6 +458,7 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
         preferred_channel: 'email',
         insurance_company_name: '',
         insurance_role: 'policyholder',
+        test_scenario: 'golden_path',
       });
       setTouchedFields({});
       setAttemptedSubmit(false);
@@ -817,6 +823,53 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
                 Policyholder: Calling about your own policy/claim. CC Rep: Calling from another insurer about subrogation.
               </div>
             </div>
+            {/* Test Scenario dropdown - only for CC Representatives */}
+            {formState.insurance_role === 'cc_rep' && (
+              <div style={formStyles.formRow}>
+                <label 
+                  style={{
+                    ...formStyles.label,
+                    ...(focusedField === 'test_scenario' ? formStyles.labelFocused : {})
+                  }} 
+                  htmlFor="test_scenario"
+                >
+                  <span style={formStyles.labelText}>Test Scenario</span>
+                </label>
+                <div style={formStyles.inputContainer}>
+                  <select
+                    id="test_scenario"
+                    name="test_scenario"
+                    value={formState.test_scenario}
+                    onChange={handleChange}
+                    onFocus={() => setFocusedField('test_scenario')}
+                    onBlur={() => setFocusedField(null)}
+                    style={{
+                      ...formStyles.input,
+                      ...(focusedField === 'test_scenario' ? formStyles.inputFocused : {}),
+                      paddingRight: '32px',
+                      backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'m6 8 4 4 4-4\'/%3e%3c/svg%3e")',
+                      backgroundPosition: 'right 12px center',
+                      backgroundRepeat: 'no-repeat',
+                      backgroundSize: '16px',
+                    }}
+                  >
+                    <option value="golden_path">⭐ Golden Path (Full B2B Workflow)</option>
+                    <option value="demand_under_review">📋 Demand Under Review</option>
+                    <option value="demand_paid">✅ Demand Paid</option>
+                    <option value="no_demand">📭 No Demand Received</option>
+                    <option value="coverage_denied">❌ Coverage Denied</option>
+                    <option value="pending_assignment">⏳ Pending Assignment</option>
+                    <option value="liability_denied">⚠️ Liability Denied</option>
+                    <option value="cvq_open">❓ CVQ Open</option>
+                    <option value="demand_exceeds_limits">💰 Demand Exceeds Limits</option>
+                    <option value="random">🎲 Random</option>
+                  </select>
+                </div>
+                <div style={formStyles.helperText}>
+                  Golden Path: Tests coverage, liability, limits, payments, demand status & escalation.
+                </div>
+              </div>
+            )}
           </>
         )}
 
