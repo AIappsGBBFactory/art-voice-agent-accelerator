@@ -433,79 +433,76 @@ task_enable_easyauth() {
     fi
     
     if is_ci; then
-        # In CI mode, check for ENABLE_EASYAUTH env var
-        if [[ "${ENABLE_EASYAUTH:-false}" == "true" ]]; then
-            log "Enabling EasyAuth (CI mode)..."
-            if bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id"; then
-                success "EasyAuth enabled"
-                # Set azd env variable to prevent re-running
-                azd_set "EASYAUTH_ENABLED" "true"
-                # Output to GitHub Actions environment (if running in GitHub Actions)
-                if [[ -n "${GITHUB_ENV:-}" ]]; then
-                    echo "EASYAUTH_ENABLED=true" >> "$GITHUB_ENV"
-                    info "Set EASYAUTH_ENABLED=true in GitHub Actions environment"
-                fi
-            else
-                warn "Failed to enable EasyAuth"
+        # In CI mode, automatically enable EasyAuth if not already enabled
+        log "Enabling EasyAuth (CI mode)…"
+        if bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id"; then
+            success "EasyAuth enabled"
+            # Set azd env variable to prevent re-running
+            azd_set "EASYAUTH_ENABLED" "true"
+            # Output to GitHub Actions environment (if running in GitHub Actions)
+            if [[ -n "${GITHUB_ENV:-}" ]]; then
+                echo "EASYAUTH_ENABLED=true" >> "$GITHUB_ENV"
+                info "Set EASYAUTH_ENABLED=true in GitHub Actions environment"
             fi
         else
-            info "EasyAuth not enabled (set ENABLE_EASYAUTH=true to enable in CI)"
+            warn "Failed to enable EasyAuth"
         fi
         footer
         return 0
     fi
-    
-    # Interactive mode
-    log ""
-    log "EasyAuth adds Microsoft Entra ID authentication to your frontend."
-    log "Users will need to sign in with their organizational account."
-    log ""
-    log "Benefits:"
-    log "  • Secure access with Microsoft Entra ID"
-    log "  • No secrets to manage (uses Federated Identity Credentials)"
-    log "  • Works with your organization's identity policies"
-    log ""
-    log "Note: The backend API remains unsecured (accessible within your network)."
-    log ""
-    log "  1) Enable EasyAuth now"
-    log "  2) Skip for now (can enable later)"
-    log ""
-    log "(Auto-skipping in 15 seconds if no input...)"
-    
-    if read -t 15 -rp "│ Choice (1-2): " choice; then
-        : # Got input
     else
+        # Interactive mode
         log ""
-        info "No input received, skipping EasyAuth configuration"
-        choice="2"
-    fi
-    
-    case "$choice" in
-        1)
+        log "EasyAuth adds Microsoft Entra ID authentication to your frontend."
+        log "Users will need to sign in with their organizational account."
+        log ""
+        log "Benefits:"
+        log "  • Secure access with Microsoft Entra ID"
+        log "  • No secrets to manage (uses Federated Identity Credentials)"
+        log "  • Works with your organization's identity policies"
+        log ""
+        log "Note: The backend API remains unsecured (accessible within your network)."
+        log ""
+        log "  1) Enable EasyAuth now"
+        log "  2) Skip for now (can enable later)"
+        log ""
+        log "(Auto-skipping in 15 seconds if no input...)"
+        
+        if read -t 15 -rp "│ Choice (1-2): " choice; then
+            : # Got input
+        else
             log ""
-            log "Enabling EasyAuth..."
-            if bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id"; then
-                success "EasyAuth enabled successfully"
-                # Set azd env variable to prevent re-running
-                azd_set "EASYAUTH_ENABLED" "true"
+            info "No input received, skipping EasyAuth configuration"
+            choice="2"
+        fi
+        
+        case "$choice" in
+            1)
                 log ""
-                log "Your frontend now requires authentication."
-                log "Users will be redirected to Microsoft login."
-            else
-                fail "Failed to enable EasyAuth"
-            fi
-            ;;
-        *)
-            info "Skipped - you can enable EasyAuth later by running:"
-            log ""
-            log "  ./devops/scripts/azd/helpers/enable-easyauth.sh \\"
-            log "    -g \"$resource_group\" \\"
-            log "    -a \"$container_app\" \\"
-            log "    -i \"$uami_client_id\""
-            ;;
-    esac
-    
-    footer
+                log "Enabling EasyAuth..."
+                if bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id"; then
+                    success "EasyAuth enabled successfully"
+                    # Set azd env variable to prevent re-running
+                    azd_set "EASYAUTH_ENABLED" "true"
+                    log ""
+                    log "Your frontend now requires authentication."
+                    log "Users will be redirected to Microsoft login."
+                else
+                    fail "Failed to enable EasyAuth"
+                fi
+                ;;
+            *)
+                info "Skipped - you can enable EasyAuth later by running:"
+                log ""
+                log "  ./devops/scripts/azd/helpers/enable-easyauth.sh \\"
+                log "    -g \"$resource_group\" \\"
+                log "    -a \"$container_app\" \\"
+                log "    -i \"$uami_client_id\""
+                ;;
+        esac
+        
+        footer
+    fi
 }
 
 # ============================================================================
