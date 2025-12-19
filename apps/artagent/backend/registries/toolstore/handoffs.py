@@ -380,6 +380,8 @@ handoff_fnol_agent_schema: dict[str, Any] = {
     },
 }
 
+
+
 handoff_subro_agent_schema: dict[str, Any] = {
     "name": "handoff_subro_agent",
     "description": (
@@ -420,7 +422,6 @@ handoff_subro_agent_schema: dict[str, Any] = {
         "required": ["claim_number", "cc_company", "caller_name"],
     },
 }
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXECUTORS
@@ -837,7 +838,6 @@ async def handoff_fnol_agent(args: dict[str, Any]) -> dict[str, Any]:
         extra={"should_interrupt_playback": urgency == "emergency"},
     )
 
-
 async def handoff_subro_agent(args: dict[str, Any]) -> dict[str, Any]:
     """Transfer to Subrogation Agent for B2B Claimant Carrier inquiries."""
     claim_number = (args.get("claim_number") or "").strip()
@@ -878,6 +878,7 @@ async def handoff_subro_agent(args: dict[str, Any]) -> dict[str, Any]:
         },
         extra={"should_interrupt_playback": True},
     )
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -965,16 +966,26 @@ register_tool(
     tags={"handoff", "insurance", "policy"},
 )
 register_tool(
+    "handoff_subro_agent",
+    handoff_subro_agent_schema,
+    handoff_subro_agent,
+    is_handoff=True,
+    tags={"handoff", "insurance", "subro", "b2b"},
+)
+
+register_tool(
     "handoff_fnol_agent",
     handoff_fnol_agent_schema,
     handoff_fnol_agent,
     is_handoff=True,
     tags={"handoff", "insurance", "claims"},
 )
+
+# Generic handoff tool - enables dynamic routing without explicit handoff tools
 register_tool(
-    "handoff_subro_agent",
-    handoff_subro_agent_schema,
-    handoff_subro_agent,
+    "handoff_to_agent",
+    handoff_to_agent_schema,
+    handoff_to_agent,
     is_handoff=True,
-    tags={"handoff", "insurance", "subro", "b2b"},
+    tags={"handoff", "generic"},
 )
