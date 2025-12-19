@@ -871,17 +871,34 @@ async def lifespan(app: FastAPI):
     add_step("agents", start_agents)
 
     async def start_event_handlers() -> None:
-        unified_tool_count = initialize_unified_tools()
-        logger.debug(
-            "Unified tool registry initialized",
-            extra={"tool_count": unified_tool_count},
-        )
+        # Initialize tool registry and event handlers defensively to avoid
+        # failing the entire app startup when optional components misconfigure.
+        try:
+            unified_tool_count = initialize_unified_tools()
+            logger.debug(
+                "Unified tool registry initialized",
+                extra={"tool_count": unified_tool_count},
+            )
+        except Exception as exc:
+            logger.warning(
+                "Tool registry initialization failed (non-blocking)",
+                extra={"error": str(exc)},
+            )
 
         # Register ACS webhook event handlers
-        register_default_handlers()
+        try:
+            register_default_handlers()
+        except Exception as exc:
+            logger.warning(
+                "Event handler registration failed (non-blocking)",
+                extra={"error": str(exc)},
+            )
 
         orchestrator_preset = os.getenv("ORCHESTRATOR_PRESET", "production")
-        logger.debug("event handlers registered", extra={"orchestrator_preset": orchestrator_preset})
+        logger.debug(
+            "event handlers ready",
+            extra={"orchestrator_preset": orchestrator_preset},
+        )
 
     add_step("events", start_event_handlers)
 
