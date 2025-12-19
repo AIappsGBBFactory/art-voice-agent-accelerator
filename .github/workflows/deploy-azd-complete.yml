@@ -56,6 +56,6 @@ jobs:
       # For push to main: deploy to prod
       # For push to staging: deploy to staging
       # For pull_request: use target branch to determine environment (staging for staging, dev for main)
-      environment: ${{ inputs.environment || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'prod') || (github.event_name == 'push' && github.ref == 'refs/heads/staging' && 'staging') || (github.event_name == 'pull_request' && github.base_ref == 'staging' && 'staging') || 'dev' }}
+      environment: ${{ inputs.environment || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'prod') || (github.event_name == 'push' && github.ref == 'refs/heads/staging' && 'staging') || (github.event_name == 'pull_request' && github.base_ref == 'main' && 'prod') || (github.event_name == 'pull_request' && github.base_ref == 'staging' && 'staging') || 'dev' }}
       action: ${{ inputs.action || (github.event_name == 'pull_request' && 'provision') || 'up' }}
     secrets: inherit
