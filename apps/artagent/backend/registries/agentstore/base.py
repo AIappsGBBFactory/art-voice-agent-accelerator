@@ -74,6 +74,7 @@ class VoiceConfig:
     type: str = "azure-standard"
     style: str = "chat"
     rate: str = "+0%"
+    pitch: str = "+0%"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VoiceConfig:
@@ -85,6 +86,7 @@ class VoiceConfig:
             type=data.get("type", cls.type),
             style=data.get("style", cls.style),
             rate=data.get("rate", cls.rate),
+            pitch=data.get("pitch", cls.pitch),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +96,7 @@ class VoiceConfig:
             "type": self.type,
             "style": self.style,
             "rate": self.rate,
+            "pitch": self.pitch,
         }
 
 
@@ -223,11 +226,11 @@ class UnifiedAgent:
     # ─────────────────────────────────────────────────────────────────
     # Model Settings
     # ─────────────────────────────────────────────────────────────────
-    # Default/fallback model config (used when mode-specific not available)
     model: ModelConfig = field(default_factory=ModelConfig)
-    # Mode-specific model configs (from agent.yaml)
-    voicelive_model: ModelConfig | None = None  # For VoiceLive/realtime mode
-    cascade_model: ModelConfig | None = None  # For Cascade/media mode
+    
+    # Mode-specific model overrides (if both are set, orchestrator picks)
+    cascade_model: ModelConfig | None = None
+    voicelive_model: ModelConfig | None = None
 
     # ─────────────────────────────────────────────────────────────────
     # Voice Settings (TTS)
@@ -265,43 +268,7 @@ class UnifiedAgent:
     metadata: dict[str, Any] = field(default_factory=dict)
     source_dir: Path | None = None
     _custom_tools_loaded: bool = field(default=False, init=False, repr=False)
-
-    # ═══════════════════════════════════════════════════════════════════
-    # MODEL ACCESS
-    # ═══════════════════════════════════════════════════════════════════
-
-    def get_model_for_mode(self, mode: str) -> "ModelConfig":
-        """
-        Get model configuration for the specified mode.
-
-        Priority:
-        1. Mode-specific config (voicelive_model or cascade_model)
-        2. Fallback to generic 'model' config
-
-        Args:
-            mode: The mode to get the model for. Supported values:
-                - "cascade", "media" → cascade_model
-                - "voicelive", "realtime" → voicelive_model
-
-        Returns:
-            ModelConfig for the requested mode
-        """
-        mode_lower = mode.lower()
-
-        # VoiceLive / Realtime mode
-        if mode_lower in ("voicelive", "realtime", "voice_live"):
-            if self.voicelive_model is not None:
-                return self.voicelive_model
-            return self.model
-
-        # Cascade / Media mode
-        if mode_lower in ("cascade", "media"):
-            if self.cascade_model is not None:
-                return self.cascade_model
-            return self.model
-
-        # Unknown mode - fall back to default model
-        return self.model
+    _cached_tools: list[dict[str, Any]] | None = field(default=None, init=False, repr=False)
 
     # ═══════════════════════════════════════════════════════════════════
     # TOOL INTEGRATION (via shared registry)
@@ -361,18 +328,38 @@ class UnifiedAgent:
                 exc,
             )
 
-    def get_tools(self) -> list[dict[str, Any]]:
+    def get_tools(self, use_cache: bool = True) -> list[dict[str, Any]]:
         """
         Get OpenAI-compatible tool schemas from shared registry.
+
+        Args:
+            use_cache: If True, return cached tools if available (default).
+                       Set to False to force refresh (e.g., after tool_names change).
 
         Returns:
             List of {"type": "function", "function": {...}} dicts
         """
+        # Return cached tools if available and caching enabled
+        if use_cache and self._cached_tools is not None:
+            return self._cached_tools
+
         from apps.artagent.backend.registries.toolstore import get_tools_for_agent, initialize_tools
 
         initialize_tools()
         self._load_custom_tools()
-        return get_tools_for_agent(self.tool_names)
+        tools = get_tools_for_agent(self.tool_names)
+
+        # Cache the tools for future calls
+        self._cached_tools = tools
+        return tools
+
+    def invalidate_tool_cache(self) -> None:
+        """
+        Invalidate the cached tools, forcing next get_tools() to rebuild.
+
+        Call this when tool_names are modified at runtime.
+        """
+        self._cached_tools = None
 
     def get_tool_executor(self, tool_name: str) -> Callable | None:
         """Get the executor function for a specific tool."""
@@ -534,6 +521,22 @@ class UnifiedAgent:
         """Check if the given tool name routes to this agent."""
         return self.handoff.trigger == tool_name
 
+    def get_model_for_mode(self, mode: str) -> ModelConfig:
+        """
+        Get the appropriate model config for the given orchestration mode.
+        
+        Args:
+            mode: "cascade" or "voicelive"
+            
+        Returns:
+            The mode-specific model if defined, otherwise falls back to self.model
+        """
+        if mode == "cascade" and self.cascade_model is not None:
+            return self.cascade_model
+        if mode == "voicelive" and self.voicelive_model is not None:
+            return self.voicelive_model
+        return self.model
+
     # ═══════════════════════════════════════════════════════════════════
     # CONVENIENCE PROPERTIES
     # ═══════════════════════════════════════════════════════════════════
@@ -557,6 +560,415 @@ class UnifiedAgent:
     def handoff_trigger(self) -> str:
         """Alias for handoff.trigger for backward compatibility."""
         return self.handoff.trigger
+
+    # ═══════════════════════════════════════════════════════════════════
+    # VOICELIVE SDK METHODS
+    # ═══════════════════════════════════════════════════════════════════
+    # These methods support the VoiceLive orchestrator directly without
+    # needing a separate adapter layer. They are no-ops if the SDK is
+    # not available.
+
+    def build_voicelive_tools(self) -> list[Any]:
+        """
+        Build VoiceLive FunctionTool objects from this agent's tool schemas.
+
+        Returns:
+            List of FunctionTool objects for VoiceLive SDK, or empty list
+            if VoiceLive SDK is not available.
+        """
+        try:
+            from azure.ai.voicelive.models import FunctionTool
+        except ImportError:
+            return []
+
+        tools = []
+        tool_schemas = self.get_tools()
+
+        for schema in tool_schemas:
+            if schema.get("type") != "function":
+                continue
+
+            func = schema.get("function", {})
+            tools.append(
+                FunctionTool(
+                    name=func.get("name", ""),
+                    description=func.get("description", ""),
+                    parameters=func.get("parameters", {}),
+                )
+            )
+
+        return tools
+
+    def _build_voicelive_tools_with_handoffs(self, session_id: str | None = None) -> list[Any]:
+        """
+        Build VoiceLive FunctionTool objects with centralized handoff tool.
+
+        This method:
+        1. Filters OUT explicit handoff tools (e.g., handoff_concierge)
+        2. Auto-injects the generic `handoff_to_agent` tool when needed
+
+        The scenario edges define handoff routing and conditions, so we only
+        need the single centralized `handoff_to_agent` tool.
+
+        Args:
+            session_id: Session ID to look up scenario configuration
+
+        Returns:
+            List of FunctionTool objects for VoiceLive SDK
+        """
+        try:
+            from azure.ai.voicelive.models import FunctionTool
+        except ImportError:
+            return []
+
+        from apps.artagent.backend.registries.toolstore.registry import is_handoff_tool
+
+        # Get base tool schemas and filter out explicit handoff tools
+        tool_schemas = self.get_tools()
+        filtered_schemas = []
+        for schema in tool_schemas:
+            if schema.get("type") != "function":
+                continue
+            func_name = schema.get("function", {}).get("name", "")
+            if func_name == "handoff_to_agent":
+                filtered_schemas.append(schema)
+            elif is_handoff_tool(func_name):
+                logger.debug(
+                    "VoiceLive: Filtering explicit handoff tool | tool=%s agent=%s",
+                    func_name,
+                    self.name,
+                )
+            else:
+                filtered_schemas.append(schema)
+
+        tool_schemas = filtered_schemas
+        tool_names = {s.get("function", {}).get("name") for s in tool_schemas}
+
+        # Check if we need to inject handoff_to_agent
+        if "handoff_to_agent" not in tool_names and session_id:
+            try:
+                from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+
+                # Use already-resolved scenario (supports both file-based and session-scoped)
+                config = resolve_orchestrator_config(session_id=session_id)
+                scenario = config.scenario
+                if scenario:
+                    should_add = False
+                    if scenario.generic_handoff.enabled:
+                        should_add = True
+                        logger.debug(
+                            "VoiceLive: Auto-adding handoff_to_agent | agent=%s reason=generic_handoff_enabled",
+                            self.name,
+                        )
+                    else:
+                        outgoing = scenario.get_outgoing_handoffs(self.name)
+                        if outgoing:
+                            should_add = True
+                            logger.debug(
+                                "VoiceLive: Auto-adding handoff_to_agent | agent=%s reason=has_outgoing_handoffs count=%d targets=%s",
+                                self.name,
+                                len(outgoing),
+                                [h.to_agent for h in outgoing],
+                            )
+
+                    if should_add:
+                        from apps.artagent.backend.registries.toolstore import get_tools_for_agent, initialize_tools
+                        initialize_tools()
+                        handoff_tool_schemas = get_tools_for_agent(["handoff_to_agent"])
+                        tool_schemas = list(tool_schemas) + handoff_tool_schemas
+                        logger.info(
+                            "VoiceLive: Added handoff_to_agent tool | agent=%s scenario=%s",
+                            self.name,
+                            config.scenario_name,
+                        )
+
+            except Exception as e:
+                logger.debug("Failed to check scenario for handoff tool injection: %s", e)
+
+        # Convert to FunctionTool objects
+        tools = []
+        for schema in tool_schemas:
+            func = schema.get("function", {})
+            tools.append(
+                FunctionTool(
+                    name=func.get("name", ""),
+                    description=func.get("description", ""),
+                    parameters=func.get("parameters", {}),
+                )
+            )
+
+        return tools
+
+    def build_voicelive_voice(self) -> Any | None:
+        """
+        Build VoiceLive voice configuration from this agent's voice settings.
+
+        Returns:
+            AzureStandardVoice or similar object, or None if SDK not available.
+        """
+        try:
+            from azure.ai.voicelive.models import AzureStandardVoice
+        except ImportError:
+            return None
+
+        if not self.voice.name:
+            return None
+
+        voice_type = self.voice.type.lower().strip()
+
+        if voice_type in {"azure-standard", "azure_standard", "azure"}:
+            optionals = {}
+            for key in ("style", "pitch", "rate"):
+                val = getattr(self.voice, key, None)
+                if val is not None and val != "+0%":
+                    optionals[key] = val
+            return AzureStandardVoice(name=self.voice.name, **optionals)
+
+        # Default to standard voice
+        return AzureStandardVoice(name=self.voice.name)
+
+    def build_voicelive_vad(self) -> Any | None:
+        """
+        Build VoiceLive VAD (turn detection) configuration.
+
+        Returns:
+            TurnDetection object (AzureSemanticVad or ServerVad), or None.
+        """
+        try:
+            from azure.ai.voicelive.models import AzureSemanticVad, ServerVad
+        except ImportError:
+            return None
+
+        cfg = self.session.get("turn_detection") if self.session else None
+        if not cfg:
+            return None
+
+        vad_type = (cfg.get("type") or "semantic").lower()
+
+        common_kwargs: dict[str, Any] = {}
+        if "threshold" in cfg:
+            common_kwargs["threshold"] = float(cfg["threshold"])
+        if "prefix_padding_ms" in cfg:
+            common_kwargs["prefix_padding_ms"] = int(cfg["prefix_padding_ms"])
+        if "silence_duration_ms" in cfg:
+            common_kwargs["silence_duration_ms"] = int(cfg["silence_duration_ms"])
+
+        if vad_type in ("semantic", "azure_semantic", "azure_semantic_vad"):
+            return AzureSemanticVad(**common_kwargs)
+        elif vad_type in ("server", "server_vad"):
+            return ServerVad(**common_kwargs)
+
+        return AzureSemanticVad(**common_kwargs)
+
+    def get_voicelive_modalities(self) -> list[Any]:
+        """
+        Get VoiceLive modality enums from session config.
+
+        Returns:
+            List of Modality enums (TEXT, AUDIO), or empty list if SDK unavailable.
+        """
+        try:
+            from azure.ai.voicelive.models import Modality
+        except ImportError:
+            return []
+
+        values = self.session.get("modalities") if self.session else None
+        vals = [v.lower() for v in (values or ["TEXT", "AUDIO"])]
+        out = []
+        for v in vals:
+            if v in ("text", "TEXT"):
+                out.append(Modality.TEXT)
+            elif v in ("audio", "AUDIO"):
+                out.append(Modality.AUDIO)
+        return out
+
+    def get_voicelive_audio_formats(self) -> tuple[Any | None, Any | None]:
+        """
+        Get input and output audio format enums for VoiceLive.
+
+        Returns:
+            Tuple of (InputAudioFormat, OutputAudioFormat), or (None, None).
+        """
+        try:
+            from azure.ai.voicelive.models import InputAudioFormat, OutputAudioFormat
+        except ImportError:
+            return None, None
+
+        in_fmt_str = (self.session.get("input_audio_format") or "PCM16").lower()
+        out_fmt_str = (self.session.get("output_audio_format") or "PCM16").lower()
+
+        in_fmt = InputAudioFormat.PCM16 if in_fmt_str == "pcm16" else InputAudioFormat.PCM16
+        out_fmt = OutputAudioFormat.PCM16 if out_fmt_str == "pcm16" else OutputAudioFormat.PCM16
+
+        return in_fmt, out_fmt
+
+    async def apply_voicelive_session(
+        self,
+        conn,
+        *,
+        system_vars: dict[str, Any] | None = None,
+        say: str | None = None,
+        session_id: str | None = None,
+        call_connection_id: str | None = None,
+    ) -> None:
+        """
+        Apply this agent's configuration to a VoiceLive session.
+
+        Updates voice, VAD settings, instructions, and tools on the connection.
+        Automatically injects the handoff_to_agent tool when the scenario has
+        generic handoffs enabled or when the agent has outgoing edges defined.
+
+        Args:
+            conn: VoiceLive connection object
+            system_vars: Runtime variables for prompt rendering
+            say: Optional greeting text to trigger after session update
+            session_id: Session ID for tracing
+            call_connection_id: Call connection ID for tracing
+        """
+        try:
+            from azure.ai.voicelive.models import (
+                AudioInputTranscriptionOptions,
+                RequestSession,
+            )
+        except ImportError:
+            logger.error("VoiceLive SDK not available, cannot apply session")
+            return
+
+        from opentelemetry import trace
+        from opentelemetry.trace import SpanKind, Status, StatusCode
+
+        tracer = trace.get_tracer(__name__)
+
+        with tracer.start_as_current_span(
+            f"invoke_agent {self.name}",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "component": "voicelive",
+                "ai.session.id": session_id or "",
+                "gen_ai.agent.name": self.name,
+                "gen_ai.agent.description": self.description or "",
+            },
+        ) as span:
+            # Render instructions
+            system_vars = system_vars or {}
+            system_vars.setdefault("active_agent", self.name)
+            instructions = self.render_prompt(system_vars)
+
+            # Build session components
+            voice_payload = self.build_voicelive_voice()
+            vad = self.build_voicelive_vad()
+            modalities = self.get_voicelive_modalities()
+            in_fmt, out_fmt = self.get_voicelive_audio_formats()
+            tools = self._build_voicelive_tools_with_handoffs(session_id)
+
+            logger.debug(
+                "[%s] Applying session | voice=%s",
+                self.name,
+                getattr(voice_payload, "name", None) if voice_payload else None,
+            )
+
+            # Build transcription settings
+            transcription_cfg = self.session.get("input_audio_transcription_settings") or {}
+            transcription_kwargs: dict[str, Any] = {}
+            if transcription_cfg.get("model"):
+                transcription_kwargs["model"] = transcription_cfg["model"]
+            if transcription_cfg.get("language"):
+                transcription_kwargs["language"] = transcription_cfg["language"]
+
+            input_audio_transcription = (
+                AudioInputTranscriptionOptions(**transcription_kwargs)
+                if transcription_kwargs
+                else None
+            )
+
+            # Build session update kwargs
+            kwargs: dict[str, Any] = dict(
+                modalities=modalities,
+                instructions=instructions,
+                input_audio_format=in_fmt,
+                output_audio_format=out_fmt,
+                turn_detection=vad,
+            )
+
+            if input_audio_transcription:
+                kwargs["input_audio_transcription"] = input_audio_transcription
+
+            if voice_payload:
+                kwargs["voice"] = voice_payload
+
+            if tools:
+                kwargs["tools"] = tools
+                tool_choice = self.session.get("tool_choice", "auto") if self.session else "auto"
+                if tool_choice:
+                    kwargs["tool_choice"] = tool_choice
+
+            # Apply session
+            session_payload = RequestSession(**kwargs)
+            await conn.session.update(session=session_payload)
+
+            logger.info("[%s] Session updated successfully", self.name)
+            span.set_status(Status(StatusCode.OK))
+
+            # Trigger greeting if provided
+            if say:
+                logger.info(
+                    "[%s] Triggering greeting: %s",
+                    self.name,
+                    say[:50] + "..." if len(say) > 50 else say,
+                )
+                await self.trigger_voicelive_response(conn, say=say)
+
+    async def trigger_voicelive_response(
+        self,
+        conn,
+        *,
+        say: str | None = None,
+        cancel_active: bool = True,
+    ) -> None:
+        """
+        Trigger a response from the agent on a VoiceLive connection.
+
+        Args:
+            conn: VoiceLive connection object
+            say: Text for the agent to say verbatim
+            cancel_active: If True, cancel any active response first
+        """
+        try:
+            from azure.ai.voicelive.models import (
+                ClientEventResponseCreate,
+                ResponseCreateParams,
+            )
+        except ImportError:
+            return
+
+        if not say:
+            return
+
+        # Cancel any active response first to avoid conflicts
+        if cancel_active:
+            try:
+                await conn.response.cancel()
+            except Exception:
+                pass  # No active response to cancel
+
+        # Create response with explicit instruction to say the greeting verbatim
+        verbatim_instruction = (
+            f"Say exactly the following greeting to the user, word for word. "
+            f"Do not add anything before or after. Do not modify the wording:\n\n"
+            f'"{say}"'
+        )
+
+        try:
+            await conn.send(
+                ClientEventResponseCreate(
+                    response=ResponseCreateParams(
+                        instructions=verbatim_instruction,
+                    )
+                )
+            )
+            logger.debug("[%s] Triggered verbatim greeting response", self.name)
+        except Exception as e:
+            logger.warning("trigger_voicelive_response failed: %s", e)
 
     def __repr__(self) -> str:
         return (

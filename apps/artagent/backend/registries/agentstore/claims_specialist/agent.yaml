@@ -48,7 +48,7 @@ session:
 # Model Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 model:
-  deployment_id: gpt-4o-realtime-preview
+  deployment_id: gpt-realtime
   temperature: 0.7
   top_p: 0.9
   max_response_output_tokens: 4096
@@ -58,18 +58,12 @@ model:
 # ─────────────────────────────────────────────────────────────────────────────
 tools:
   # Handoffs to other agents
-  - handoff_concierge
-  - handoff_policy_advisor
-  - handoff_coverage_specialist
-  - handoff_fraud_agent
-  - escalate_human
+  - handoff_to_auth          # Return to AuthAgent (insurance scenario entry)
+  - handoff_fraud_agent      # Transfer to fraud investigation
+  - escalate_human           # Escalate to human agent
   
-  # Claims management tools
-  - file_new_claim
-  - check_claim_status
-  - upload_claim_documents
-  - get_claim_history
-  - update_claim_information
+  # Knowledge base for claims info
+  - search_knowledge_base
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt Template Path

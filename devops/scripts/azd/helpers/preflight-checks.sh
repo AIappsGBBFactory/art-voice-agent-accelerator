@@ -6,6 +6,16 @@
 #   - Required CLI tools are installed
 #   - Azure subscription has required resource providers registered
 #   - ARM_SUBSCRIPTION_ID is set correctly
+#
+# Configuration:
+#   PREFLIGHT_LIVE_CHECKS=true|false  - Enable/disable live Azure checks
+#                                       Set via: azd env set PREFLIGHT_LIVE_CHECKS false
+#   PREFLIGHT_DEEP_CHECKS=true        - Enable slow quota checks (Redis, Cosmos, ACA)
+#
+# Usage:
+#   ./preflight-checks.sh             # Interactive mode (prompts for checks)
+#   PREFLIGHT_LIVE_CHECKS=true ./preflight-checks.sh   # Run all checks
+#   PREFLIGHT_LIVE_CHECKS=false ./preflight-checks.sh  # Skip Azure checks
 # ============================================================================
 
 set -euo pipefail
@@ -1050,11 +1060,31 @@ run_preflight_checks() {
     header "✅ Running Preflight Checks"
     
     local failed=0
-    local skip_azure_checks="${PREFLIGHT_LIVE_CHECKS:-true}"
-    
+    local skip_azure_checks="${PREFLIGHT_LIVE_CHECKS:-}"
+
     # In CI mode without explicit PREFLIGHT_LIVE_CHECKS, skip Azure auth checks
     if [[ "${CI:-}" == "true" && "${PREFLIGHT_LIVE_CHECKS:-}" != "true" ]]; then
         skip_azure_checks="false"
+    elif [[ -z "$skip_azure_checks" ]]; then
+        if [[ -t 0 ]]; then
+            log ""
+            log "💡 To skip this prompt, run: azd env set PREFLIGHT_LIVE_CHECKS false"
+            log ""
+            read -r -p "Run Azure preflight checks now? [y/N]: " _run_preflight_choice
+            if [[ "$_run_preflight_choice" =~ ^[Yy]$ ]]; then
+                skip_azure_checks="true"
+                export PREFLIGHT_LIVE_CHECKS="true"
+            else
+                skip_azure_checks="false"
+                export PREFLIGHT_LIVE_CHECKS="false"
+            fi
+        else
+            skip_azure_checks="true"
+        fi
+    fi
+
+    if [[ -z "$skip_azure_checks" ]]; then
+        skip_azure_checks="${PREFLIGHT_LIVE_CHECKS:-true}"
     fi
     
     # 1. Check required tools

@@ -26,10 +26,16 @@ class HandoffConfig:
     - TO which agent receives the handoff
     - TOOL what tool name triggers this route
     - TYPE discrete (silent) or announced (greeting)
+    - CONDITION when this handoff should be triggered (prompt for source agent)
 
     This allows different behavior for the same tool depending on context.
     Example: handoff_concierge from FraudAgent might be discrete (returning),
     but from AuthAgent might be announced (first routing).
+
+    The handoff_condition field allows users to define when the source agent
+    should trigger this handoff, which gets injected into the agent's system
+    prompt automatically. This eliminates the need for explicit handoff tool
+    definitions in most cases.
 
     Attributes:
         from_agent: Source agent initiating the handoff
@@ -37,6 +43,7 @@ class HandoffConfig:
         tool: The handoff tool name that triggers this route
         type: "discrete" (silent) or "announced" (greet on switch)
         share_context: Whether to pass conversation context (default True)
+        handoff_condition: Prompt text describing when to trigger this handoff
     """
 
     from_agent: str = ""
@@ -44,6 +51,7 @@ class HandoffConfig:
     tool: str = ""
     type: str = "announced"  # "discrete" or "announced"
     share_context: bool = True
+    handoff_condition: str = ""  # User-defined condition for when to trigger handoff
 
     @property
     def greet_on_switch(self) -> bool:
@@ -65,6 +73,7 @@ class HandoffConfig:
             tool=data.get("tool", data.get("tool_name", "")),
             type=handoff_type,
             share_context=data.get("share_context", True),
+            handoff_condition=data.get("handoff_condition", data.get("condition", "")),
         )
 
 
@@ -112,11 +121,72 @@ class AgentOverride:
 
 
 @dataclass
+class GenericHandoffConfig:
+    """Configuration for generic handoff behavior in a scenario.
+
+    Controls whether the generic `handoff_to_agent` tool is enabled and
+    how it behaves. This allows scenarios to enable dynamic agent transfers
+    without requiring explicit handoff tool definitions for every agent pair.
+
+    Attributes:
+        enabled: Whether generic handoffs are allowed in this scenario
+        allowed_targets: List of agent names that can be targeted. If empty,
+                         all agents in the scenario are valid targets.
+        require_client_id: Whether client_id is required for generic handoffs
+        default_type: Default handoff type ("discrete" or "announced")
+        share_context: Whether to share conversation context by default
+    """
+
+    enabled: bool = False
+    allowed_targets: list[str] = field(default_factory=list)
+    require_client_id: bool = False
+    default_type: str = "announced"  # "discrete" or "announced"
+    share_context: bool = True
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> GenericHandoffConfig:
+        """Create from dictionary."""
+        if not data:
+            return cls()
+
+        return cls(
+            enabled=data.get("enabled", False),
+            allowed_targets=data.get("allowed_targets", []),
+            require_client_id=data.get("require_client_id", False),
+            default_type=data.get("default_type", "announced"),
+            share_context=data.get("share_context", True),
+        )
+
+    def is_target_allowed(self, target_agent: str, scenario_agents: list[str]) -> bool:
+        """Check if a target agent is allowed for generic handoffs.
+
+        Args:
+            target_agent: The agent name to check
+            scenario_agents: List of all agents in the scenario
+
+        Returns:
+            True if the target is allowed
+        """
+        if not self.enabled:
+            return False
+
+        # If allowed_targets is specified, check against it
+        if self.allowed_targets:
+            return target_agent in self.allowed_targets
+
+        # Otherwise, any agent in the scenario is valid
+        return target_agent in scenario_agents if scenario_agents else True
+
+
+@dataclass
 class ScenarioConfig:
     """Complete scenario configuration."""
 
     name: str
     description: str = ""
+
+    # Icon emoji for the scenario (shown in UI)
+    icon: str = "🎭"
 
     # Which agents to include (if empty, include all)
     agents: list[str] = field(default_factory=list)
@@ -141,6 +211,9 @@ class ScenarioConfig:
     # Handoff configurations - list of directed edges (from → to via tool)
     handoffs: list[HandoffConfig] = field(default_factory=list)
 
+    # Generic handoff configuration - enables dynamic agent transfers
+    generic_handoff: GenericHandoffConfig = field(default_factory=GenericHandoffConfig)
+
     @classmethod
     def from_dict(cls, name: str, data: dict[str, Any]) -> ScenarioConfig:
         """Create from dictionary."""
@@ -157,9 +230,15 @@ class ScenarioConfig:
                 if isinstance(h, dict) and h.get("from") and h.get("to"):
                     handoffs.append(HandoffConfig.from_dict(h))
 
+        # Parse generic handoff configuration
+        generic_handoff = GenericHandoffConfig.from_dict(
+            data.get("generic_handoff")
+        )
+
         return cls(
             name=name,
             description=data.get("description", ""),
+            icon=data.get("icon", "🎭"),
             agents=data.get("agents", []),
             agent_defaults=agent_defaults,
             global_template_vars=data.get("template_vars", {}),
@@ -167,6 +246,7 @@ class ScenarioConfig:
             start_agent=data.get("start_agent"),
             handoff_type=data.get("handoff_type", "announced"),
             handoffs=handoffs,
+            generic_handoff=generic_handoff,
         )
 
     def get_handoff_config(
@@ -220,6 +300,141 @@ class ScenarioConfig:
                 # This is fine since tool→agent mapping should be consistent
                 handoff_map[h.tool] = h.to_agent
         return handoff_map
+
+    def get_generic_handoff_config(
+        self,
+        from_agent: str,
+        target_agent: str,
+    ) -> HandoffConfig | None:
+        """
+        Get handoff config for a handoff_to_agent call.
+
+        Returns a HandoffConfig if the handoff is allowed through either:
+        1. Explicit edge from from_agent to target_agent in scenario
+        2. Generic handoff enabled and target in allowed list
+
+        This enables the centralized handoff_to_agent tool to work with
+        both explicitly defined edges and generic handoffs.
+
+        Args:
+            from_agent: The agent initiating the handoff
+            target_agent: The target agent from handoff_to_agent args
+
+        Returns:
+            HandoffConfig for the handoff, or None if not allowed
+        """
+        # Priority 1: Check for explicit edge from source to target
+        for h in self.handoffs:
+            if h.from_agent == from_agent and h.to_agent == target_agent:
+                # Return the edge config (may have custom handoff_condition)
+                return h
+
+        # Priority 2: Check generic handoff settings
+        if self.generic_handoff.enabled:
+            if self.generic_handoff.is_target_allowed(target_agent, self.agents):
+                return HandoffConfig(
+                    from_agent=from_agent,
+                    to_agent=target_agent,
+                    tool="handoff_to_agent",
+                    type=self.generic_handoff.default_type,
+                    share_context=self.generic_handoff.share_context,
+                )
+
+        return None
+
+    def get_outgoing_handoffs(self, agent_name: str) -> list[HandoffConfig]:
+        """
+        Get all outgoing handoff configurations for a specific agent.
+
+        Args:
+            agent_name: The source agent name
+
+        Returns:
+            List of HandoffConfig for all outgoing edges from this agent
+        """
+        return [h for h in self.handoffs if h.from_agent == agent_name]
+
+    def build_handoff_instructions(self, agent_name: str) -> str:
+        """
+        Build handoff instructions for an agent based on scenario edge configurations.
+
+        This generates a prompt instruction block that describes when and how
+        the agent should trigger handoffs to other agents. The instructions are
+        derived from the handoff_condition field on each outgoing edge.
+
+        If no explicit handoff_condition is provided, a default instruction is
+        generated based on the target agent's description.
+
+        Args:
+            agent_name: The agent to build handoff instructions for
+
+        Returns:
+            Formatted instruction string to inject into the agent's system prompt,
+            or empty string if no outgoing handoffs exist.
+
+        Example output:
+            ## Agent Handoff Instructions
+
+            You can transfer the conversation to other specialized agents when appropriate.
+            Call the handoff tool immediately without announcing the transfer - the target
+            agent will greet the customer.
+
+            **Available Handoffs:**
+
+            - **To FraudAgent** (tool: `handoff_fraud_agent`):
+              When the customer reports suspicious activity, unauthorized charges, or
+              potential fraud on their account.
+
+            - **To InvestmentAdvisor** (tool: `handoff_investment_advisor`):
+              When the customer asks about retirement planning, 401k rollovers, or
+              investment options.
+        """
+        outgoing = self.get_outgoing_handoffs(agent_name)
+        if not outgoing:
+            logger.debug(
+                "No outgoing handoffs for agent | scenario=%s agent=%s total_handoffs=%d",
+                self.name,
+                agent_name,
+                len(self.handoffs),
+            )
+            return ""
+
+        logger.info(
+            "Building handoff instructions | scenario=%s agent=%s outgoing_count=%d targets=%s",
+            self.name,
+            agent_name,
+            len(outgoing),
+            [h.to_agent for h in outgoing],
+        )
+
+        # Build the handoff instructions block
+        lines = [
+            "## Agent Handoff Instructions",
+            "",
+            "You can transfer the conversation to other specialized agents when appropriate.",
+            "Use the `handoff_to_agent` tool with the target agent name and reason.",
+            "Call the tool immediately without announcing the transfer - the target agent will greet the customer.",
+            "",
+            "**Available Handoff Targets:**",
+            "",
+        ]
+
+        for h in outgoing:
+            # Use handoff_condition if provided, otherwise generate a default
+            condition = h.handoff_condition.strip() if h.handoff_condition else ""
+            if not condition:
+                # Generate a default condition based on target agent
+                condition = f"When the customer's needs are better served by {h.to_agent}."
+
+            # Always reference the generic handoff_to_agent tool
+            lines.append(f"- **{h.to_agent}** - call `handoff_to_agent(target_agent=\"{h.to_agent}\", reason=\"...\")`")
+            # Indent the condition text
+            for line in condition.split("\n"):
+                if line.strip():
+                    lines.append(f"  {line.strip()}")
+            lines.append("")
+
+        return "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -455,6 +670,55 @@ def build_handoff_map_from_scenario(scenario_name: str | None) -> dict[str, str]
     return scenario.build_handoff_map()
 
 
+def get_handoff_instructions(
+    scenario_name: str | None,
+    agent_name: str,
+) -> str:
+    """
+    Get handoff instructions for an agent based on scenario edge configurations.
+
+    This function retrieves the auto-generated handoff instruction prompt that
+    should be injected into the agent's system prompt. The instructions describe
+    when and how the agent should trigger handoffs to other agents based on the
+    handoff_condition fields in the scenario's edge configurations.
+
+    Args:
+        scenario_name: Active scenario name (or None)
+        agent_name: The agent to build handoff instructions for
+
+    Returns:
+        Formatted instruction string to inject into the agent's system prompt,
+        or empty string if no scenario or no outgoing handoffs exist.
+
+    Example:
+        instructions = get_handoff_instructions("banking", "Concierge")
+        if instructions:
+            full_prompt = f"{base_prompt}\\n\\n{instructions}"
+    """
+    if not scenario_name:
+        logger.debug("get_handoff_instructions called with no scenario_name | agent=%s", agent_name)
+        return ""
+
+    scenario = load_scenario(scenario_name)
+    if not scenario:
+        logger.warning(
+            "get_handoff_instructions: scenario not found | scenario=%s agent=%s",
+            scenario_name,
+            agent_name,
+        )
+        return ""
+
+    instructions = scenario.build_handoff_instructions(agent_name)
+    if instructions:
+        logger.info(
+            "get_handoff_instructions: generated instructions | scenario=%s agent=%s len=%d",
+            scenario_name,
+            agent_name,
+            len(instructions),
+        )
+    return instructions
+
+
 __all__ = [
     "load_scenario",
     "list_scenarios",
@@ -462,8 +726,10 @@ __all__ = [
     "get_scenario_start_agent",
     "get_scenario_template_vars",
     "get_handoff_config",
+    "get_handoff_instructions",
     "build_handoff_map_from_scenario",
     "ScenarioConfig",
     "AgentOverride",
     "HandoffConfig",
+    "GenericHandoffConfig",
 ]

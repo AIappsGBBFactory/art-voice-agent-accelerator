@@ -31,8 +31,7 @@ Structure:
     │   └── metrics.py      # STT/turn/barge-in metrics
     ├── voicelive/
     │   ├── handler.py      # VoiceLiveSDKHandler
-    │   ├── orchestrator.py # LiveOrchestrator (VoiceLive SDK)
-    │   ├── agent_adapter.py # VoiceLiveAgentAdapter (UnifiedAgent → VoiceLive SDK)
+    │   ├── orchestrator.py # LiveOrchestrator (VoiceLive SDK, uses UnifiedAgent)
     │   └── metrics.py      # OTel latency metrics
     ├── shared/
     │   ├── base.py             # OrchestratorContext/Result data classes
@@ -73,14 +72,9 @@ from .shared import (
     DEFAULT_START_AGENT,
     OrchestratorContext,
     OrchestratorResult,
-    TransportType,
-    VoiceSessionContext,
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
-# Phase 3: Unified Voice Handler (combines MediaHandler + SpeechCascadeHandler)
-from .handler import VoiceHandler, VoiceHandlerConfig
-
 from .speech_cascade import (  # Orchestrator (co-located with handler); Unified TTS Playback
     SAMPLE_RATE_ACS,
     SAMPLE_RATE_BROWSER,
@@ -120,13 +114,7 @@ from .voicelive import (  # Orchestrator (co-located with handler)
 )
 
 __all__ = [
-    # Phase 3: Unified Voice Handler (new entry point)
-    "VoiceHandler",
-    "VoiceHandlerConfig",
-    # Phase 1: Voice Session Context (typed replacement for websocket.state)
-    "VoiceSessionContext",
-    "TransportType",
-    # Speech Cascade Handler (STT→LLM→TTS) - legacy, use VoiceHandler
+    # Speech Cascade Handler (STT→LLM→TTS)
     "SpeechCascadeHandler",
     "SpeechEvent",
     "SpeechEventType",
