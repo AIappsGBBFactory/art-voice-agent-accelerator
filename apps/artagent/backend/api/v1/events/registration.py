@@ -34,7 +34,7 @@ def register_default_handlers() -> None:
         logger.debug("🔄 Handlers already registered, skipping...")
         return  # Already registered, skip
 
-    logger.info("🆕 First time registration, setting up handlers...")
+    logger.debug("🆕 First time registration, setting up handlers...")
     processor = get_call_event_processor()
 
     # Register V1 API-initiated events
@@ -93,7 +93,7 @@ def register_default_handlers() -> None:
     )
 
     _handlers_registered = True  # Mark as registered
-    logger.info("✅ V1 call event handlers registered successfully")
+    logger.debug("✅ V1 call event handlers registered successfully")
 
 
 def register_all_handlers() -> None:

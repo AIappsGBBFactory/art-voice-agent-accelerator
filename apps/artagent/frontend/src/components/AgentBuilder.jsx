@@ -306,7 +306,8 @@ const extractJinjaVariables = (text = '') => {
 // MODEL DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const MODEL_OPTIONS = [
+// Models for Cascade mode (standard chat completion API)
+const CASCADE_MODEL_OPTIONS = [
   {
     id: 'gpt-4o',
     name: 'GPT-4o',
@@ -353,6 +354,31 @@ const MODEL_OPTIONS = [
     contextWindow: '16K tokens',
   },
 ];
+
+// Models for VoiceLive mode (realtime API)
+const VOICELIVE_MODEL_OPTIONS = [
+  {
+    id: 'gpt-realtime',
+    name: 'GPT-4o Realtime Preview',
+    description: 'Low-latency realtime voice model',
+    tier: 'recommended',
+    speed: 'fastest',
+    capabilities: ['Realtime Audio', 'Function Calling'],
+    contextWindow: '128K tokens',
+  },
+  {
+    id: 'gpt-4o-mini-realtime-preview',
+    name: 'GPT-4o Mini Realtime Preview',
+    description: 'Faster, cost-effective realtime model',
+    tier: 'standard',
+    speed: 'fastest',
+    capabilities: ['Realtime Audio', 'Function Calling'],
+    contextWindow: '128K tokens',
+  },
+];
+
+// Legacy: combined options for backward compatibility
+const MODEL_OPTIONS = CASCADE_MODEL_OPTIONS;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STYLES
@@ -581,7 +607,7 @@ const TemplateVariableHelper = React.memo(function TemplateVariableHelper({ onIn
 // MODEL SELECTOR COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ModelSelector({ value, onChange }) {
+function ModelSelector({ value, onChange, modelOptions = MODEL_OPTIONS, title = 'Select Model Deployment', showAlert = true }) {
   const getTierColor = (tier) => {
     switch (tier) {
       case 'recommended': return 'success';
@@ -603,23 +629,25 @@ function ModelSelector({ value, onChange }) {
 
   return (
     <Stack spacing={2}>
-      <Alert severity="info" icon={<WarningAmberIcon />} sx={{ borderRadius: '12px' }}>
-        <AlertTitle sx={{ fontWeight: 600 }}>Azure OpenAI Deployment Required</AlertTitle>
-        <Typography variant="body2">
-          The model deployment name must match a deployment in your Azure OpenAI resource. 
-          Ensure the selected model is deployed in your subscription before use.
-        </Typography>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          Check your Azure Portal → Azure OpenAI → Deployments to verify available models.
-        </Typography>
-      </Alert>
+      {showAlert && (
+        <Alert severity="info" icon={<WarningAmberIcon />} sx={{ borderRadius: '12px' }}>
+          <AlertTitle sx={{ fontWeight: 600 }}>Azure OpenAI Deployment Required</AlertTitle>
+          <Typography variant="body2">
+            The model deployment name must match a deployment in your Azure OpenAI resource. 
+            Ensure the selected model is deployed in your subscription before use.
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            Check your Azure Portal → Azure OpenAI → Deployments to verify available models.
+          </Typography>
+        </Alert>
+      )}
 
       <Typography variant="subtitle2" sx={{ mt: 1 }}>
-        Select Model Deployment
+        {title}
       </Typography>
 
       <Stack spacing={1.5}>
-        {MODEL_OPTIONS.map((model) => (
+        {modelOptions.map((model) => (
           <Card
             key={model.id}
             variant="outlined"
@@ -763,6 +791,18 @@ export default function AgentBuilder({
     return_greeting: '',
     prompt: DEFAULT_PROMPT,
     tools: [],
+    cascade_model: {
+      deployment_id: 'gpt-4o',
+      temperature: 0.7,
+      top_p: 0.9,
+      max_tokens: 4096,
+    },
+    voicelive_model: {
+      deployment_id: 'gpt-realtime',
+      temperature: 0.7,
+      top_p: 0.9,
+      max_tokens: 4096,
+    },
     model: {
       deployment_id: 'gpt-4o',
       temperature: 0.7,
@@ -1114,6 +1154,11 @@ export default function AgentBuilder({
       const template = data.template;
       
       // Apply template to config
+      // Build cascade_model and voicelive_model from template's model or use defaults
+      const templateModel = template.model || {};
+      const cascadeDefaults = { deployment_id: 'gpt-4o', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
+      const voiceliveDefaults = { deployment_id: 'gpt-realtime', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
+      
       setConfig(prev => ({
         ...prev,
         name: template.name || prev.name,
@@ -1124,6 +1169,12 @@ export default function AgentBuilder({
         tools: template.tools || prev.tools,
         voice: template.voice ? { ...prev.voice, ...template.voice } : prev.voice,
         model: template.model ? { ...prev.model, ...template.model } : prev.model,
+        cascade_model: template.cascade_model 
+          ? { ...cascadeDefaults, ...template.cascade_model }
+          : { ...cascadeDefaults, ...templateModel },
+        voicelive_model: template.voicelive_model
+          ? { ...voiceliveDefaults, ...template.voicelive_model }
+          : voiceliveDefaults,
         speech: template.speech ? { ...prev.speech, ...template.speech } : prev.speech,
         template_vars: template.template_vars ? { ...prev.template_vars, ...template.template_vars } : prev.template_vars,
       }));
@@ -1153,11 +1204,17 @@ export default function AgentBuilder({
         return_greeting: config.return_greeting,
         prompt: config.prompt,  // Backend expects 'prompt', not 'prompt_template'
         tools: config.tools,
-        model: {
-          deployment_id: config.model.deployment_id,
-          temperature: config.model.temperature,
-          top_p: config.model.top_p,
-          max_tokens: config.model.max_tokens,
+        cascade_model: {
+          deployment_id: config.cascade_model?.deployment_id || 'gpt-4o',
+          temperature: config.cascade_model?.temperature ?? 0.7,
+          top_p: config.cascade_model?.top_p ?? 0.9,
+          max_tokens: config.cascade_model?.max_tokens ?? 4096,
+        },
+        voicelive_model: {
+          deployment_id: config.voicelive_model?.deployment_id || 'gpt-realtime',
+          temperature: config.voicelive_model?.temperature ?? 0.7,
+          top_p: config.voicelive_model?.top_p ?? 0.9,
+          max_tokens: config.voicelive_model?.max_tokens ?? 4096,
         },
         voice: {
           name: config.voice.name,
@@ -1334,7 +1391,13 @@ export default function AgentBuilder({
       const key = tmpl.id || tmpl.name;
       if (!key || seen.has(key)) return;
       seen.add(key);
-      merged.push({ ...tmpl, source: 'template' });
+      merged.push({
+        ...tmpl,
+        source: 'template',
+        // Ensure consistent field names
+        voiceName: tmpl.voice?.name || tmpl.voice?.voice_name || null,
+        modelName: tmpl.model?.model_name || tmpl.model?.name || tmpl.model?.deployment || null,
+      });
     });
     (sessionAgents || []).forEach((agent) => {
       const key = agent.id || agent.name || agent.agent_name;
@@ -1344,9 +1407,14 @@ export default function AgentBuilder({
         id: key,
         name: agent.name || agent.agent_name || 'Agent',
         description: agent.description || agent.summary || '',
+        greeting: agent.greeting || '',
         tools: agent.tools || agent.tool_names || agent.toolNames || [],
         is_entry_point: agent.is_entry_point || agent.entry_point || false,
         source: 'session',
+        voiceName: agent.voice?.name || agent.voice?.voice_name || null,
+        modelName: agent.model?.model_name || agent.model?.name || agent.model?.deployment || null,
+        is_session_agent: true,
+        session_id: agent.session_id || null,
       });
     });
     return merged;
@@ -1640,36 +1708,56 @@ export default function AgentBuilder({
                           key={tmpl.id}
                           variant="outlined"
                           sx={{
-                            minWidth: 220,
-                            maxWidth: 260,
-                            flex: '1 1 220px',
+                            minWidth: 280,
+                            maxWidth: 320,
+                            flex: '1 1 280px',
                             display: 'flex',
                             flexDirection: 'column',
-                            height: expandedTemplates[tmpl.id] ? 'auto' : 260,
+                            height: expandedTemplates[tmpl.id] ? 'auto' : 380,
                             borderColor: tmpl.id === selectedTemplate ? '#6366f1' : '#e5e7eb',
                             boxShadow: tmpl.id === selectedTemplate ? '0 6px 18px rgba(99,102,241,0.15)' : 'none',
+                            transition: 'all 0.2s ease',
+                            '&:hover': {
+                              borderColor: '#6366f1',
+                              boxShadow: '0 4px 12px rgba(99,102,241,0.1)',
+                            },
                           }}
                         >
                           <CardContent sx={{ pb: '12px !important', display: 'flex', flexDirection: 'column', height: '100%' }}>
+                            {/* Header with avatar and name */}
                             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-                              <Avatar sx={{ width: 28, height: 28, bgcolor: '#eef2ff', color: '#4338ca' }}>
-                                {tmpl.name?.[0] || 'A'}
+                              <Avatar sx={{ width: 32, height: 32, bgcolor: tmpl.is_entry_point ? '#4338ca' : '#eef2ff', color: tmpl.is_entry_point ? 'white' : '#4338ca' }}>
+                                {tmpl.is_entry_point ? <StarIcon fontSize="small" /> : (tmpl.name?.[0] || 'A')}
                               </Avatar>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                                {tmpl.name}
-                              </Typography>
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.2 }} noWrap>
+                                  {tmpl.name}
+                                </Typography>
+                                {tmpl.source === 'session' && (
+                                  <Typography variant="caption" sx={{ color: '#6366f1', fontWeight: 500 }}>
+                                    Session Agent
+                                  </Typography>
+                                )}
+                              </Box>
+                              {tmpl.is_entry_point && (
+                                <Chip size="small" color="primary" label="Entry" sx={{ height: 20, fontSize: '0.7rem' }} />
+                              )}
                             </Stack>
+
+                            {/* Description */}
                             <Typography
                               variant="body2"
                               color="text.secondary"
                               sx={{
-                                mb: 1,
-                                flexGrow: 1,
+                                mb: 1.5,
+                                minHeight: 40,
+                                fontSize: '0.8rem',
+                                lineHeight: 1.4,
                                 ...(expandedTemplates[tmpl.id]
                                   ? {}
                                   : {
                                       display: '-webkit-box',
-                                      WebkitLineClamp: 3,
+                                      WebkitLineClamp: 2,
                                       WebkitBoxOrient: 'vertical',
                                       overflow: 'hidden',
                                     }),
@@ -1677,22 +1765,111 @@ export default function AgentBuilder({
                             >
                               {tmpl.description || 'No description provided.'}
                             </Typography>
-                            {(tmpl.description || '').length > 140 && (
+                            {(tmpl.description || '').length > 100 && (
                               <Button
                                 size="small"
                                 variant="text"
                                 onClick={() => toggleTemplateExpansion(tmpl.id)}
-                                sx={{ alignSelf: 'flex-start', textTransform: 'none', mb: 1 }}
+                                sx={{ alignSelf: 'flex-start', textTransform: 'none', py: 0, mb: 1, fontSize: '0.75rem' }}
                               >
                                 {expandedTemplates[tmpl.id] ? 'Show less' : 'Show more'}
                               </Button>
                             )}
-                            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 1 }}>
-                              <Chip size="small" label={`${tmpl.tools?.length || 0} tools`} />
-                              {tmpl.is_entry_point && (
-                                <Chip size="small" color="primary" label="Entry" />
-                              )}
+
+                            <Divider sx={{ my: 1 }} />
+
+                            {/* Tools Section */}
+                            <Box sx={{ mb: 1.5 }}>
+                              <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
+                                <BuildIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                  Tools ({tmpl.tools?.length || 0})
+                                </Typography>
+                              </Stack>
+                              <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ gap: 0.5 }}>
+                                {(tmpl.tools || []).slice(0, 4).map((tool, idx) => (
+                                  <Chip
+                                    key={idx}
+                                    size="small"
+                                    label={typeof tool === 'string' ? tool.replace(/_/g, ' ') : tool.name || tool}
+                                    sx={{
+                                      height: 22,
+                                      fontSize: '0.65rem',
+                                      backgroundColor: '#f1f5f9',
+                                      '& .MuiChip-label': { px: 1 },
+                                    }}
+                                  />
+                                ))}
+                                {(tmpl.tools?.length || 0) > 4 && (
+                                  <Chip
+                                    size="small"
+                                    label={`+${tmpl.tools.length - 4} more`}
+                                    sx={{
+                                      height: 22,
+                                      fontSize: '0.65rem',
+                                      backgroundColor: '#e0e7ff',
+                                      color: '#4338ca',
+                                      '& .MuiChip-label': { px: 1 },
+                                    }}
+                                  />
+                                )}
+                                {(!tmpl.tools || tmpl.tools.length === 0) && (
+                                  <Typography variant="caption" color="text.disabled" sx={{ fontStyle: 'italic' }}>
+                                    No tools configured
+                                  </Typography>
+                                )}
+                              </Stack>
+                            </Box>
+
+                            {/* Voice & Model Info */}
+                            <Stack direction="row" spacing={2} sx={{ mb: 1.5 }}>
+                              <Box sx={{ flex: 1 }}>
+                                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.25 }}>
+                                  <RecordVoiceOverIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                  <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                    Voice
+                                  </Typography>
+                                </Stack>
+                                <Typography variant="caption" sx={{ color: tmpl.voiceName ? 'text.primary' : 'text.disabled' }}>
+                                  {tmpl.voiceName || 'Default'}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ flex: 1 }}>
+                                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.25 }}>
+                                  <MemoryIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                  <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                                    Model
+                                  </Typography>
+                                </Stack>
+                                <Typography variant="caption" sx={{ color: tmpl.modelName ? 'text.primary' : 'text.disabled' }} noWrap>
+                                  {tmpl.modelName || 'Default'}
+                                </Typography>
+                              </Box>
                             </Stack>
+
+                            {/* Greeting preview if available */}
+                            {tmpl.greeting && (
+                              <Box sx={{ mb: 1.5, p: 1, backgroundColor: '#f8fafc', borderRadius: 1, border: '1px solid #e2e8f0' }}>
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.25 }}>
+                                  Greeting
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    color: 'text.secondary',
+                                    fontStyle: 'italic',
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                  }}
+                                >
+                                  "{tmpl.greeting}"
+                                </Typography>
+                              </Box>
+                            )}
+
+                            {/* Action button */}
                             <Button
                               size="small"
                               fullWidth
@@ -1706,7 +1883,7 @@ export default function AgentBuilder({
                               }}
                               sx={{ mt: 'auto' }}
                             >
-                              Use Template
+                              {tmpl.source === 'session' ? 'Edit Agent' : 'Use Template'}
                             </Button>
                           </CardContent>
                         </Card>
@@ -2433,17 +2610,67 @@ export default function AgentBuilder({
             {/* ═══════════════════════════════════════════════════════════════════ */}
             <TabPanel value={activeTab} index={5}>
               <Stack spacing={3}>
-                <ModelSelector
-                  value={config.model.deployment_id}
-                  onChange={(v) => handleNestedConfigChange('model', 'deployment_id', v)}
-                />
+                <Alert severity="info" icon={<WarningAmberIcon />} sx={{ borderRadius: '12px' }}>
+                  <AlertTitle sx={{ fontWeight: 600 }}>Azure OpenAI Deployment Required</AlertTitle>
+                  <Typography variant="body2">
+                    Model deployment names must match deployments in your Azure OpenAI resource.
+                    Different models are used depending on the orchestration mode.
+                  </Typography>
+                </Alert>
+
+                {/* Cascade Mode Model */}
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+                      <Chip label="Cascade Mode" color="primary" size="small" />
+                      <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>
+                        🔄 STT → LLM → TTS Pipeline
+                      </Typography>
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Uses standard Chat Completion API. Best for complex conversations with tool calling.
+                    </Typography>
+                    <ModelSelector
+                      value={config.cascade_model?.deployment_id || 'gpt-4o'}
+                      onChange={(v) => handleNestedConfigChange('cascade_model', 'deployment_id', v)}
+                      modelOptions={CASCADE_MODEL_OPTIONS}
+                      title="Cascade Model Deployment"
+                      showAlert={false}
+                    />
+                  </CardContent>
+                </Card>
+
+                {/* VoiceLive Mode Model */}
+                <Card variant="outlined" sx={styles.sectionCard}>
+                  <CardContent>
+                    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+                      <Chip label="VoiceLive Mode" color="secondary" size="small" />
+                      <Typography variant="subtitle2" color="secondary" sx={{ fontWeight: 600 }}>
+                        ⚡ Realtime Audio API
+                      </Typography>
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Uses Realtime API for ultra-low latency. Audio streams directly to/from the model.
+                    </Typography>
+                    <ModelSelector
+                      value={config.voicelive_model?.deployment_id || 'gpt-realtime'}
+                      onChange={(v) => handleNestedConfigChange('voicelive_model', 'deployment_id', v)}
+                      modelOptions={VOICELIVE_MODEL_OPTIONS}
+                      title="VoiceLive Model Deployment"
+                      showAlert={false}
+                    />
+                  </CardContent>
+                </Card>
 
                 <Divider />
 
                 <Card variant="outlined" sx={styles.sectionCard}>
                   <CardContent>
                     <Typography variant="subtitle2" color="primary" sx={{ mb: 3, fontWeight: 600 }}>
-                      ⚙️ Generation Parameters
+                      ⚙️ Generation Parameters (Shared)
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 3 }}>
+                      These parameters apply to both Cascade and VoiceLive modes.
                     </Typography>
 
                     <Stack spacing={4}>
@@ -2455,11 +2682,14 @@ export default function AgentBuilder({
                               <InfoOutlinedIcon fontSize="small" color="action" />
                             </Tooltip>
                           </Stack>
-                          <Chip label={config.model.temperature} size="small" color="primary" />
+                          <Chip label={config.cascade_model?.temperature ?? 0.7} size="small" color="primary" />
                         </Stack>
                         <Slider
-                          value={config.model.temperature}
-                          onChange={(_e, v) => handleNestedConfigChange('model', 'temperature', v)}
+                          value={config.cascade_model?.temperature ?? 0.7}
+                          onChange={(_e, v) => {
+                            handleNestedConfigChange('cascade_model', 'temperature', v);
+                            handleNestedConfigChange('voicelive_model', 'temperature', v);
+                          }}
                           min={0}
                           max={2}
                           step={0.1}
@@ -2480,11 +2710,14 @@ export default function AgentBuilder({
                               <InfoOutlinedIcon fontSize="small" color="action" />
                             </Tooltip>
                           </Stack>
-                          <Chip label={config.model.top_p} size="small" color="primary" />
+                          <Chip label={config.cascade_model?.top_p ?? 0.9} size="small" color="primary" />
                         </Stack>
                         <Slider
-                          value={config.model.top_p}
-                          onChange={(_e, v) => handleNestedConfigChange('model', 'top_p', v)}
+                          value={config.cascade_model?.top_p ?? 0.9}
+                          onChange={(_e, v) => {
+                            handleNestedConfigChange('cascade_model', 'top_p', v);
+                            handleNestedConfigChange('voicelive_model', 'top_p', v);
+                          }}
                           min={0}
                           max={1}
                           step={0.05}
@@ -2505,11 +2738,14 @@ export default function AgentBuilder({
                               <InfoOutlinedIcon fontSize="small" color="action" />
                             </Tooltip>
                           </Stack>
-                          <Chip label={`${config.model.max_tokens.toLocaleString()} tokens`} size="small" color="primary" />
+                          <Chip label={`${(config.cascade_model?.max_tokens ?? 4096).toLocaleString()} tokens`} size="small" color="primary" />
                         </Stack>
                         <Slider
-                          value={config.model.max_tokens}
-                          onChange={(_e, v) => handleNestedConfigChange('model', 'max_tokens', v)}
+                          value={config.cascade_model?.max_tokens ?? 4096}
+                          onChange={(_e, v) => {
+                            handleNestedConfigChange('cascade_model', 'max_tokens', v);
+                            handleNestedConfigChange('voicelive_model', 'max_tokens', v);
+                          }}
                           min={256}
                           max={16384}
                           step={256}

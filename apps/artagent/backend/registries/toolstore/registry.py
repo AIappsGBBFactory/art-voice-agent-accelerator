@@ -247,7 +247,7 @@ def initialize_tools() -> int:
     from apps.artagent.backend.registries.toolstore.banking import investments  # noqa: F401
 
     _INITIALIZED = True
-    logger.info("Tool registry initialized with %d tools", len(_TOOL_DEFINITIONS))
+    logger.debug("Tool registry initialized with %d tools", len(_TOOL_DEFINITIONS))
     return len(_TOOL_DEFINITIONS)
 
 

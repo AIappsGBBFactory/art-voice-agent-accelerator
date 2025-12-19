@@ -27,6 +27,7 @@ import GraphListView from './graph/GraphListView.jsx';
 import AgentTopologyPanel from './AgentTopologyPanel.jsx';
 import AgentDetailsPanel from './AgentDetailsPanel.jsx';
 import AgentBuilder from './AgentBuilder.jsx';
+import AgentScenarioBuilder from './AgentScenarioBuilder.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import { API_BASE_URL, WS_URL } from '../config/constants.js';
 import { ensureVoiceAppKeyframes, styles } from '../styles/voiceAppStyles.js';
@@ -53,6 +54,8 @@ const STREAM_MODE_FALLBACK = 'voice_live';
 const REALTIME_STREAM_MODE_STORAGE_KEY = 'artagent.realtimeStreamingMode';
 const REALTIME_STREAM_MODE_FALLBACK = 'realtime';
 const PANEL_MARGIN = 16;
+// Avoid noisy logging in hot-path streaming handlers unless explicitly enabled
+const ENABLE_VERBOSE_STREAM_LOGS = false;
 
 // Infer template id from config path (e.g., /agents/concierge/agent.yaml -> concierge)
 const deriveTemplateId = (configPath) => {
@@ -99,6 +102,7 @@ function RealTimeVoiceApp() {
   const [agentInventory, setAgentInventory] = useState(null);
   const [agentDetail, setAgentDetail] = useState(null);
   const [sessionAgentConfig, setSessionAgentConfig] = useState(null);
+  const [sessionScenarioConfig, setSessionScenarioConfig] = useState(null);
   const [showAgentsPanel, setShowAgentsPanel] = useState(false);
   const [selectedAgentName, setSelectedAgentName] = useState(null);
   const [realtimePanelCoords, setRealtimePanelCoords] = useState({ top: 0, left: 0 });
@@ -179,6 +183,24 @@ function RealTimeVoiceApp() {
       [sessId]: { ...prev[sessId], scenario }
     }));
   }, [sessionId]);
+  
+  // Helper to get scenario icon from session config (falls back to scenario type icons)
+  const getSessionScenarioIcon = useCallback(() => {
+    const scenario = getSessionScenario();
+    // First check if we have a custom scenario with an icon in sessionScenarioConfig
+    if (sessionScenarioConfig?.scenarios) {
+      const activeScenario = sessionScenarioConfig.scenarios.find(s => 
+        s.name && `custom_${s.name.replace(/\s+/g, '_').toLowerCase()}` === scenario
+      );
+      if (activeScenario?.icon) {
+        return activeScenario.icon;
+      }
+    }
+    // Fall back to type-based icons
+    if (scenario?.startsWith('custom_')) return '🎭';
+    if (scenario === 'banking') return '🏦';
+    return '🛡️'; // insurance default
+  }, [getSessionScenario, sessionScenarioConfig]);
   // Profile menu state moved to ProfileButton component
   const [editingSessionId, setEditingSessionId] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState(() => getOrCreateSessionId());
@@ -233,6 +255,30 @@ function RealTimeVoiceApp() {
   useEffect(() => {
     fetchSessionAgentConfig();
   }, [fetchSessionAgentConfig]);
+
+  // Fetch all session scenarios (for custom scenarios list)
+  const fetchSessionScenarioConfig = useCallback(async (targetSessionId = sessionId) => {
+    if (!targetSessionId) return;
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/scenario-builder/session/${encodeURIComponent(targetSessionId)}/scenarios`
+      );
+      if (res.status === 404) {
+        setSessionScenarioConfig(null);
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json();
+      // Store the scenarios array
+      setSessionScenarioConfig(data.scenarios && data.scenarios.length > 0 ? data : null);
+    } catch (err) {
+      appendLog(`Session scenarios fetch failed: ${err.message}`);
+    }
+  }, [sessionId, appendLog]);
+
+  useEffect(() => {
+    fetchSessionScenarioConfig();
+  }, [fetchSessionScenarioConfig]);
 
   // Chat width resize listeners (placed after state initialization)
   useEffect(() => {
@@ -543,6 +589,8 @@ function RealTimeVoiceApp() {
   const openDemoForm = useCallback(() => setShowDemoForm(true), [setShowDemoForm]);
   const closeDemoForm = useCallback(() => setShowDemoForm(false), [setShowDemoForm]);
   const [showAgentBuilder, setShowAgentBuilder] = useState(false);
+  const [showAgentScenarioBuilder, setShowAgentScenarioBuilder] = useState(false);
+  const [builderInitialMode, setBuilderInitialMode] = useState('agents');
   const [createProfileHovered, setCreateProfileHovered] = useState(false);
   const demoFormCloseTimeoutRef = useRef(null);
   const profileHighlightTimeoutRef = useRef(null);
@@ -898,8 +946,11 @@ function RealTimeVoiceApp() {
   const pcmSinkRef = useRef(null);
   const playbackActiveRef = useRef(false);
   const assistantStreamGenerationRef = useRef(0);
+  const currentAudioGenerationRef = useRef(0); // Generation when current audio stream started
   const terminationReasonRef = useRef(null);
   const resampleWarningRef = useRef(false);
+  const audioInitFailedRef = useRef(false);
+  const audioInitAttemptedRef = useRef(false);
   const shouldReconnectRef = useRef(false);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
@@ -956,6 +1007,9 @@ function RealTimeVoiceApp() {
     [appendLog, cancelOutputLevelDecay],
   );
   const metricsRef = useRef(createMetricsState());
+  // Throttle hot-path UI updates for streaming text
+  const lastSttPartialUpdateRef = useRef(0);
+  const lastAssistantStreamUpdateRef = useRef(0);
 
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
@@ -1086,6 +1140,10 @@ function RealTimeVoiceApp() {
   // Initialize playback audio context and worklet (call on user gesture)
   const initializeAudioPlayback = async () => {
     if (playbackAudioContextRef.current) return; // Already initialized
+    if (audioInitFailedRef.current) return; // Already failed, don't retry
+    if (audioInitAttemptedRef.current) return; // Already attempting
+    
+    audioInitAttemptedRef.current = true;
     
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
@@ -1119,6 +1177,8 @@ function RealTimeVoiceApp() {
       appendLog("🔊 Audio playback initialized");
       logger.info("AudioWorklet playback system initialized, context sample rate:", audioCtx.sampleRate);
     } catch (error) {
+      audioInitFailedRef.current = true;
+      audioInitAttemptedRef.current = false;
       logger.error("Failed to initialize audio playback:", error);
       appendLog("❌ Audio playback init failed");
     }
@@ -1240,6 +1300,8 @@ function RealTimeVoiceApp() {
     const newSessionId = createNewSessionId();
     setSessionId(newSessionId);
     setSessionProfiles({});
+    setSessionAgentConfig(null); // Clear session-specific agent config
+    setSessionScenarioConfig(null); // Clear session-specific scenario config
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       logger.info('🔌 Closing WebSocket for session reset...');
       try {
@@ -1361,15 +1423,15 @@ function RealTimeVoiceApp() {
       let formatted = null;
       if (typeof detail === "string") {
         formatted = detail;
-        logger.info(`[Metrics] ${label}: ${detail}`);
+        logger.debug(`[Metrics] ${label}: ${detail}`);
       } else if (detail && typeof detail === "object") {
         const entries = Object.entries(detail).filter(([, value]) => value !== undefined && value !== null && value !== "");
         formatted = entries
           .map(([key, value]) => `${key}=${value}`)
           .join(" • ");
-        logger.info(`[Metrics] ${label}`, detail);
+        logger.debug(`[Metrics] ${label}`, detail);
       } else {
-        logger.info(`[Metrics] ${label}`, metricsRef.current);
+        logger.debug(`[Metrics] ${label}`, metricsRef.current);
       }
 
       appendLog(formatted ? `📈 ${label} — ${formatted}` : `📈 ${label}`);
@@ -1535,19 +1597,13 @@ function RealTimeVoiceApp() {
     [publishMetricsSummary],
   );
 
-  useEffect(()=>{
-    if(messageContainerRef.current) {
-      messageContainerRef.current.scrollTo({
-        top: messageContainerRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
-    } else if(chatRef.current) {
-      chatRef.current.scrollTo({
-        top: chatRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
-    }
-  },[messages]);
+  useEffect(() => {
+    const target = messageContainerRef.current || chatRef.current;
+    if (!target) return;
+    // Use instant scrolling while streaming to reduce layout thrash
+    const behavior = recording ? "auto" : "smooth";
+    target.scrollTo({ top: target.scrollHeight, behavior });
+  }, [messages, recording]);
 
   useEffect(() => {
     return () => {
@@ -1627,6 +1683,9 @@ function RealTimeVoiceApp() {
       assistantStreamGenerationRef.current = 0;
       terminationReasonRef.current = null;
       resampleWarningRef.current = false;
+      audioInitFailedRef.current = false;
+      audioInitAttemptedRef.current = false;
+      currentAudioGenerationRef.current = 0;
       shouldReconnectRef.current = true;
       reconnectAttemptsRef.current = 0;
       if (reconnectTimeoutRef.current) {
@@ -1893,17 +1952,19 @@ function RealTimeVoiceApp() {
     };
 
     const handleSocketMessage = async (event) => {
-      // Log all incoming messages for debugging
-      if (typeof event.data === "string") {
-        try {
-          const msg = JSON.parse(event.data);
-          logger.debug("📨 WebSocket message received:", msg.type || "unknown", msg);
-        } catch (e) {
-          logger.debug("📨 Non-JSON WebSocket message:", event.data);
-          logger.debug(e)
+      // Optional verbose tracing; disabled by default for perf
+      if (ENABLE_VERBOSE_STREAM_LOGS) {
+        if (typeof event.data === "string") {
+          try {
+            const msg = JSON.parse(event.data);
+            logger.debug("📨 WebSocket message received:", msg.type || "unknown", msg);
+          } catch (e) {
+            logger.debug("📨 Non-JSON WebSocket message:", event.data);
+            logger.debug(e);
+          }
+        } else {
+          logger.debug("📨 Binary WebSocket message received, length:", event.data.byteLength);
         }
-      } else {
-        logger.debug("📨 Binary WebSocket message received, length:", event.data.byteLength);
       }
 
       if (typeof event.data !== "string") {
@@ -2261,7 +2322,7 @@ function RealTimeVoiceApp() {
           agent: agentName,
         });
         
-        logger.info(`📊 Turn ${turnNum} metrics from server:`, {
+        logger.debug(`📊 Turn ${turnNum} metrics from server:`, {
           ttfbMs,
           ttftMs,
           sttMs,
@@ -2303,54 +2364,63 @@ function RealTimeVoiceApp() {
           }
         }
 
+        const now = (typeof performance !== "undefined" && performance.now)
+          ? performance.now()
+          : Date.now();
+        const throttleMs = 90;
+
         if (partialText) {
-          const turnId =
-            partialData.turn_id ||
-            partialData.turnId ||
-            partialData.response_id ||
-            partialData.responseId ||
-            null;
-          let registeredTurn = false;
+          const shouldUpdateUi = now - lastSttPartialUpdateRef.current >= throttleMs;
+          if (shouldUpdateUi) {
+            lastSttPartialUpdateRef.current = now;
+            const turnId =
+              partialData.turn_id ||
+              partialData.turnId ||
+              partialData.response_id ||
+              partialData.responseId ||
+              null;
+            let registeredTurn = false;
 
-          setMessages((prev) => {
-            const last = prev.at(-1);
-            if (
-              last?.speaker === "User" &&
-              last?.streaming &&
-              (!turnId || last.turnId === turnId)
-            ) {
-              if (last.text === partialText) {
-                return prev;
+            setMessages((prev) => {
+              const last = prev.at(-1);
+              if (
+                last?.speaker === "User" &&
+                last?.streaming &&
+                (!turnId || last.turnId === turnId)
+              ) {
+                if (last.text === partialText) {
+                  return prev;
+                }
+                const updated = prev.slice();
+                updated[updated.length - 1] = {
+                  ...last,
+                  text: partialText,
+                  streamingType: "stt_partial",
+                  sequence: partialData.sequence,
+                  language: partialData.language || last.language,
+                  turnId: turnId ?? last.turnId,
+                };
+                return updated;
               }
-              const updated = prev.slice();
-              updated[updated.length - 1] = {
-                ...last,
-                text: partialText,
-                streamingType: "stt_partial",
-                sequence: partialData.sequence,
-                language: partialData.language || last.language,
-                turnId: turnId ?? last.turnId,
-              };
-              return updated;
+
+              registeredTurn = true;
+              return [
+                ...prev,
+                {
+                  speaker: "User",
+                  text: partialText,
+                  streaming: true,
+                  streamingType: "stt_partial",
+                  sequence: partialData.sequence,
+                  language: partialData.language,
+                  turnId: turnId ?? undefined,
+                },
+              ];
+            });
+
+            if (registeredTurn) {
+              registerUserTurn(partialText);
             }
-
-            registeredTurn = true;
-            return [
-              ...prev,
-              {
-                speaker: "User",
-                text: partialText,
-                streaming: true,
-                streamingType: "stt_partial",
-                sequence: partialData.sequence,
-                language: partialData.language,
-                turnId: turnId ?? undefined,
-              },
-            ];
-          });
-
-          if (registeredTurn) {
-            registerUserTurn(partialText);
           }
         }
 
@@ -2491,13 +2561,15 @@ function RealTimeVoiceApp() {
       // Handle audio_data messages from backend TTS
       if (payload.type === "audio_data") {
         try {
-          logger.info("🔊 Received audio_data message:", {
-            frame_index: payload.frame_index,
-            total_frames: payload.total_frames,
-            sample_rate: payload.sample_rate,
-            data_length: payload.data ? payload.data.length : 0,
-            is_final: payload.is_final
-          });
+          if (ENABLE_VERBOSE_STREAM_LOGS) {
+            logger.debug("🔊 Received audio_data message:", {
+              frame_index: payload.frame_index,
+              total_frames: payload.total_frames,
+              sample_rate: payload.sample_rate,
+              data_length: payload.data ? payload.data.length : 0,
+              is_final: payload.is_final,
+            });
+          }
 
           const hasData = typeof payload.data === "string" && payload.data.length > 0;
 
@@ -2508,17 +2580,31 @@ function RealTimeVoiceApp() {
               payload.frame_index + 1 >= payload.total_frames);
 
           const frameIndex = Number.isFinite(payload.frame_index) ? payload.frame_index : 0;
+          
+          // Track generation for this audio stream - first frame starts a new stream
+          if (frameIndex === 0) {
+            currentAudioGenerationRef.current = assistantStreamGenerationRef.current;
+          }
+          
+          // Check if barge-in happened - skip audio from cancelled turns
+          if (currentAudioGenerationRef.current !== assistantStreamGenerationRef.current) {
+            logger.debug(`🔇 Skipping stale audio frame (gen ${currentAudioGenerationRef.current} vs ${assistantStreamGenerationRef.current})`);
+            // Still mark as not active since we're skipping
+            playbackActiveRef.current = false;
+            return;
+          }
+          
           registerAudioFrame(frameIndex, isFinalChunk);
 
           // Resume playback context if suspended (after text barge-in)
           if (playbackAudioContextRef.current) {
             const ctx = playbackAudioContextRef.current;
-            logger.info(`[Audio] Playback context state: ${ctx.state}`);
+            logger.debug(`[Audio] Playback context state: ${ctx.state}`);
             if (ctx.state === "suspended") {
               logger.info("[Audio] Resuming suspended playback context...");
               await ctx.resume();
               appendLog("▶️ TTS playback resumed");
-              logger.info(`[Audio] Playback context state after resume: ${ctx.state}`);
+              logger.debug(`[Audio] Playback context state after resume: ${ctx.state}`);
             }
           } else {
             logger.warn("[Audio] No playback context found, initializing...");
@@ -2540,8 +2626,12 @@ function RealTimeVoiceApp() {
           const float32 = new Float32Array(int16.length);
           for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x8000;
 
-          logger.debug(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`);
-          logger.debug("🔊 Audio data preview:", float32.slice(0, 10));
+          if (ENABLE_VERBOSE_STREAM_LOGS) {
+            logger.debug(
+              `🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`,
+            );
+            logger.debug("🔊 Audio data preview:", float32.slice(0, 10));
+          }
 
           // Push to the worklet queue
           if (pcmSinkRef.current) {
@@ -2550,37 +2640,48 @@ function RealTimeVoiceApp() {
             const sourceRate = payload.sample_rate;
             if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
               samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
-              if (!resampleWarningRef.current) {
+              if (!resampleWarningRef.current && ENABLE_VERBOSE_STREAM_LOGS) {
                 appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
                 resampleWarningRef.current = true;
               }
             }
             pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
             updateOutputLevelMeter(samples);
-            appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
+            if (ENABLE_VERBOSE_STREAM_LOGS) {
+              appendLog(`🔊 TTS audio frame ${payload.frame_index + 1}/${payload.total_frames}`);
+            }
           } else {
-            logger.warn("Audio playback not initialized, attempting init...");
-            appendLog("⚠️ Audio playback not ready, initializing...");
-            // Try to initialize if not done yet
-            await initializeAudioPlayback();
-            if (pcmSinkRef.current) {
-              let samples = float32;
-              const playbackCtx = playbackAudioContextRef.current;
-              const sourceRate = payload.sample_rate;
-              if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
-                samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
-                if (!resampleWarningRef.current) {
-                  appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
-                  resampleWarningRef.current = true;
+            if (!audioInitFailedRef.current) {
+              logger.warn("Audio playback not initialized, attempting init...");
+              if (ENABLE_VERBOSE_STREAM_LOGS) {
+                appendLog("⚠️ Audio playback not ready, initializing...");
+              }
+              // Try to initialize if not done yet
+              await initializeAudioPlayback();
+              if (pcmSinkRef.current) {
+                let samples = float32;
+                const playbackCtx = playbackAudioContextRef.current;
+                const sourceRate = payload.sample_rate;
+                if (playbackCtx && Number.isFinite(sourceRate) && sourceRate && playbackCtx.sampleRate !== sourceRate) {
+                  samples = resampleFloat32(float32, sourceRate, playbackCtx.sampleRate);
+                  if (!resampleWarningRef.current && ENABLE_VERBOSE_STREAM_LOGS) {
+                    appendLog(`🎚️ Resampling audio ${sourceRate}Hz → ${playbackCtx.sampleRate}Hz`);
+                    resampleWarningRef.current = true;
+                  }
+                }
+                pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
+                updateOutputLevelMeter(samples);
+                if (ENABLE_VERBOSE_STREAM_LOGS) {
+                  appendLog("🔊 TTS audio playing (after init)");
+                }
+              } else {
+                logger.error("Failed to initialize audio playback");
+                if (ENABLE_VERBOSE_STREAM_LOGS) {
+                  appendLog("❌ Audio init failed");
                 }
               }
-              pcmSinkRef.current.port.postMessage({ type: 'push', payload: samples });
-              updateOutputLevelMeter(samples);
-              appendLog("🔊 TTS audio playing (after init)");
-            } else {
-              logger.error("Failed to initialize audio playback");
-              appendLog("❌ Audio init failed");
             }
+            // If init already failed, silently skip audio frames
           }
           playbackActiveRef.current = !isFinalChunk;
           return; // handled
@@ -2722,6 +2823,11 @@ function RealTimeVoiceApp() {
         const streamGeneration = assistantStreamGenerationRef.current;
         registerAssistantStreaming(streamingSpeaker);
         setActiveSpeaker(streamingSpeaker);
+        const now = (typeof performance !== "undefined" && performance.now)
+          ? performance.now()
+          : Date.now();
+        const throttleMs = 90;
+        const shouldUpdateUi = now - lastAssistantStreamUpdateRef.current >= throttleMs;
         const turnId =
           payload.turn_id ||
           payload.turnId ||
@@ -2729,64 +2835,67 @@ function RealTimeVoiceApp() {
           payload.responseId ||
           null;
 
-        if (turnId) {
-          updateTurnMessage(
-            turnId,
-            (current) => {
-              const previousText =
-                current?.streamGeneration === streamGeneration
-                  ? current?.text ?? ""
-                  : "";
-              return {
-                speaker: streamingSpeaker,
-                text: `${previousText}${txt}`,
-                streaming: true,
-                streamGeneration,
-                cancelled: false,
-                cancelReason: undefined,
-              };
-            },
-            {
-              initial: () => ({
-                speaker: streamingSpeaker,
-                text: txt,
-                streaming: true,
-                streamGeneration,
-                turnId,
-                cancelled: false,
-              }),
-            },
-          );
-        } else {
-          setMessages((prev) => {
-            const latest = prev.at(-1);
-            if (
-              latest?.streaming &&
-              latest?.speaker === streamingSpeaker &&
-              latest?.streamGeneration === streamGeneration
-            ) {
-              return prev.map((m, i) =>
-                i === prev.length - 1
-                  ? {
-                      ...m,
-                      text: m.text + txt,
-                      cancelled: false,
-                      cancelReason: undefined,
-                    }
-                  : m,
-              );
-            }
-            return [
-              ...prev,
-              {
-                speaker: streamingSpeaker,
-                text: txt,
-                streaming: true,
-                streamGeneration,
-                cancelled: false,
+        if (shouldUpdateUi) {
+          lastAssistantStreamUpdateRef.current = now;
+          if (turnId) {
+            updateTurnMessage(
+              turnId,
+              (current) => {
+                const previousText =
+                  current?.streamGeneration === streamGeneration
+                    ? current?.text ?? ""
+                    : "";
+                return {
+                  speaker: streamingSpeaker,
+                  text: `${previousText}${txt}`,
+                  streaming: true,
+                  streamGeneration,
+                  cancelled: false,
+                  cancelReason: undefined,
+                };
               },
-            ];
-          });
+              {
+                initial: () => ({
+                  speaker: streamingSpeaker,
+                  text: txt,
+                  streaming: true,
+                  streamGeneration,
+                  turnId,
+                  cancelled: false,
+                }),
+              },
+            );
+          } else {
+            setMessages((prev) => {
+              const latest = prev.at(-1);
+              if (
+                latest?.streaming &&
+                latest?.speaker === streamingSpeaker &&
+                latest?.streamGeneration === streamGeneration
+              ) {
+                return prev.map((m, i) =>
+                  i === prev.length - 1
+                    ? {
+                        ...m,
+                        text: m.text + txt,
+                        cancelled: false,
+                        cancelReason: undefined,
+                      }
+                    : m,
+                );
+              }
+              return [
+                ...prev,
+                {
+                  speaker: streamingSpeaker,
+                  text: txt,
+                  streaming: true,
+                  streamGeneration,
+                  cancelled: false,
+                },
+              ];
+            });
+          }
         }
         const pending = metricsRef.current?.pendingBargeIn;
         if (pending) {
@@ -3377,9 +3486,11 @@ function RealTimeVoiceApp() {
                 height: '44px',
                 borderRadius: '12px',
                 border: '1px solid rgba(226,232,240,0.6)',
-                background: getSessionScenario() === 'banking' 
-                  ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
-                  : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                background: getSessionScenario()?.startsWith('custom_') 
+                  ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                  : getSessionScenario() === 'banking' 
+                    ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
+                    : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
                 color: '#ffffff',
                 fontSize: '18px',
                 fontWeight: '500',
@@ -3399,7 +3510,7 @@ function RealTimeVoiceApp() {
                 e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.1), inset 0 1px 0 rgba(255,255,255,0.15)';
               }}
             >
-              {getSessionScenario() === 'banking' ? '🏦' : '🛡️'}
+              {getSessionScenarioIcon()}
             </button>
 
             {/* Scenario Selection Menu */}
@@ -3416,16 +3527,38 @@ function RealTimeVoiceApp() {
                 boxShadow: '0 8px 32px rgba(15,23,42,0.12), 0 0 0 1px rgba(226,232,240,0.4), inset 0 1px 0 rgba(255,255,255,0.8)',
                 backdropFilter: 'blur(24px)',
                 WebkitBackdropFilter: 'blur(24px)',
-                minWidth: '180px',
+                minWidth: '200px',
                 zIndex: 1400,
               }}>
+                {/* Built-in Scenarios */}
+                <div style={{
+                  padding: '4px 8px 6px',
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  color: '#94a3b8',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                }}>
+                  Industry Templates
+                </div>
                 {[
                   { id: 'banking', icon: '🏦', label: 'Banking' },
                   { id: 'insurance', icon: '🛡️', label: 'Insurance' },
                 ].map(({ id, icon, label }) => (
                   <button
                     key={id}
-                    onClick={() => {
+                    onClick={async () => {
+                      // Apply industry template to session on backend
+                      try {
+                        await fetch(
+                          `${API_BASE_URL}/api/v1/scenario-builder/session/${sessionId}/apply-template?template_id=${encodeURIComponent(id)}`,
+                          { method: 'POST' }
+                        );
+                        appendLog(`${icon} Applied ${label} template to session ${sessionId}`);
+                      } catch (err) {
+                        appendLog(`Failed to apply template: ${err.message}`);
+                      }
+                      
                       setSessionScenario(id);
                       setShowScenarioMenu(false);
                       appendLog(`${icon} Switched to ${label} for session ${sessionId}`);
@@ -3482,17 +3615,135 @@ function RealTimeVoiceApp() {
                     )}
                   </button>
                 ))}
+
+                {/* Custom Scenarios (show all custom scenarios for the session) */}
+                {sessionScenarioConfig?.scenarios?.length > 0 && (
+                  <>
+                    <div style={{
+                      margin: '8px 0 4px',
+                      borderTop: '1px solid rgba(226,232,240,0.6)',
+                      paddingTop: '8px',
+                    }}>
+                      <div style={{
+                        padding: '4px 8px 6px',
+                        fontSize: '10px',
+                        fontWeight: '600',
+                        color: '#f59e0b',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}>
+                        <span style={{ fontSize: '12px' }}>🎭</span>
+                        Custom Scenarios ({sessionScenarioConfig.scenarios.length})
+                      </div>
+                    </div>
+                    {sessionScenarioConfig.scenarios.map((scenario, index) => {
+                      const scenarioKey = `custom_${scenario.name.replace(/\s+/g, '_').toLowerCase()}`;
+                      const isActive = getSessionScenario() === scenarioKey;
+                      const scenarioIcon = scenario.icon || '🎭';
+                      return (
+                        <button
+                          key={scenarioKey}
+                          onClick={async () => {
+                            // Set active scenario on backend
+                            try {
+                              await fetch(
+                                `${API_BASE_URL}/api/v1/scenario-builder/session/${sessionId}/active?scenario_name=${encodeURIComponent(scenario.name)}`,
+                                { method: 'POST' }
+                              );
+                            } catch (err) {
+                              appendLog(`Failed to set active scenario: ${err.message}`);
+                            }
+                            
+                            setSessionScenario(scenarioKey);
+                            setShowScenarioMenu(false);
+                            appendLog(`${scenarioIcon} Switched to Custom Scenario: ${scenario.name}`);
+                            
+                            if (callActive) {
+                              appendLog(`🔄 Restarting call with custom scenario...`);
+                              terminateACSCall();
+                              setTimeout(() => {
+                                handlePhoneButtonClick();
+                              }, 500);
+                            } else if (recording) {
+                              appendLog(`🔄 Reconnecting with custom scenario...`);
+                              handleMicToggle();
+                              setTimeout(() => {
+                                handleMicToggle();
+                              }, 500);
+                            }
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            borderRadius: '10px',
+                            border: 'none',
+                            background: isActive 
+                              ? 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(217,119,6,0.1))' 
+                              : 'transparent',
+                            color: isActive ? '#d97706' : '#64748b',
+                            fontSize: '13px',
+                            fontWeight: isActive ? '600' : '500',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                            textAlign: 'left',
+                            marginBottom: index < sessionScenarioConfig.scenarios.length - 1 ? '4px' : 0,
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isActive) {
+                              e.currentTarget.style.background = 'rgba(245,158,11,0.06)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isActive) {
+                              e.currentTarget.style.background = 'transparent';
+                            }
+                          }}
+                        >
+                          <span style={{ fontSize: '16px' }}>{scenarioIcon}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ 
+                              overflow: 'hidden', 
+                              textOverflow: 'ellipsis', 
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {scenario.name}
+                            </div>
+                            <div style={{ 
+                              fontSize: '10px', 
+                              color: '#94a3b8',
+                              fontWeight: '400',
+                            }}>
+                              {scenario.agents?.length || 0} agents · {scenario.handoffs?.length || 0} handoffs
+                            </div>
+                          </div>
+                          {isActive && (
+                            <span style={{ fontSize: '14px', color: '#d97706' }}>✓</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+
                 <div style={{
                   marginTop: '8px',
                   padding: '8px 10px 6px',
                   borderRadius: '10px',
                   background: 'rgba(148,163,184,0.08)',
                   color: '#475569',
-                  fontSize: '12px',
+                  fontSize: '11px',
                   lineHeight: 1.4,
                   border: '1px dashed rgba(148,163,184,0.35)',
                 }}>
-                  Scenario is tied to this session. Start a new session to switch cleanly.
+                  {sessionScenarioConfig?.scenarios?.length > 0 
+                    ? 'Switch between scenarios for this session'
+                    : 'Create a custom scenario in the Scenario Builder'}
                 </div>
               </div>
             )}
@@ -3500,7 +3751,10 @@ function RealTimeVoiceApp() {
 
           {/* Agent Builder Button */}
           <button
-            onClick={() => setShowAgentBuilder(true)}
+            onClick={() => {
+              setBuilderInitialMode('agents');
+              setShowAgentScenarioBuilder(true);
+            }}
             title="Agent Builder"
             style={{
               width: '44px',
@@ -3638,18 +3892,22 @@ function RealTimeVoiceApp() {
                     <span style={{
                       padding: "2px 8px",
                       borderRadius: "4px",
-                      background: getSessionScenario() === 'banking' 
-                        ? "rgba(99,102,241,0.1)" 
-                        : "rgba(16,185,129,0.1)",
-                      color: getSessionScenario() === 'banking' 
-                        ? "#6366f1" 
-                        : "#10b981",
+                      background: getSessionScenario()?.startsWith('custom_')
+                        ? "rgba(245,158,11,0.1)"
+                        : getSessionScenario() === 'banking' 
+                          ? "rgba(99,102,241,0.1)" 
+                          : "rgba(14,165,233,0.1)",
+                      color: getSessionScenario()?.startsWith('custom_')
+                        ? "#f59e0b"
+                        : getSessionScenario() === 'banking' 
+                          ? "#6366f1" 
+                          : "#0ea5e9",
                       fontSize: "10px",
                       fontWeight: 600,
                       textTransform: "uppercase",
                       letterSpacing: "0.5px",
                     }}>
-                      {getSessionScenario()}
+                      {getSessionScenario()?.startsWith('custom_') ? getSessionScenario().replace('custom_', '') : getSessionScenario()}
                     </span>
                   </div>
                   <code style={styles.sessionTagValue}>{sessionId}</code>
@@ -4058,6 +4316,118 @@ function RealTimeVoiceApp() {
           };
         });
         // Don't close the dialog on update - user may want to continue editing
+      }}
+    />
+    <AgentScenarioBuilder
+      open={showAgentScenarioBuilder}
+      onClose={() => setShowAgentScenarioBuilder(false)}
+      initialMode={builderInitialMode}
+      sessionId={sessionId}
+      sessionProfile={activeSessionProfile}
+      scenarioEditMode={sessionScenarioConfig?.scenarios?.length > 0}
+      existingScenarioConfig={
+        sessionScenarioConfig?.scenarios?.find(s => s.is_active) || 
+        sessionScenarioConfig?.scenarios?.[0] || 
+        null
+      }
+      onAgentCreated={(agentConfig) => {
+        appendLog(`✨ Dynamic agent created: ${agentConfig.name}`);
+        appendSystemMessage(`🤖 Agent "${agentConfig.name}" is now active`, {
+          tone: "success",
+          statusCaption: `Tools: ${agentConfig.tools?.length || 0} · Voice: ${agentConfig.voice?.name || 'default'}`,
+          statusLabel: "Agent Active",
+        });
+        setSelectedAgentName(agentConfig.name);
+        fetchSessionAgentConfig();
+        setAgentInventory((prev) => {
+          if (!prev) return prev;
+          const existing = prev.agents?.find((a) => a.name === agentConfig.name);
+          if (existing) {
+            return {
+              ...prev,
+              agents: prev.agents.map((a) => 
+                a.name === agentConfig.name
+                  ? {
+                      ...a,
+                      description: agentConfig.description,
+                      tools: agentConfig.tools || [],
+                      toolCount: agentConfig.tools?.length || 0,
+                      model: agentConfig.model?.deployment_id || null,
+                      voice: agentConfig.voice?.name || null,
+                    }
+                  : a
+              ),
+            };
+          }
+          return {
+            ...prev,
+            agents: [
+              ...(prev.agents || []),
+              {
+                name: agentConfig.name,
+                description: agentConfig.description,
+                tools: agentConfig.tools || [],
+                toolCount: agentConfig.tools?.length || 0,
+                model: agentConfig.model?.deployment_id || null,
+                voice: agentConfig.voice?.name || null,
+                templateId: agentConfig.name ? agentConfig.name.toLowerCase().replace(/\s+/g, "_") : null,
+              },
+            ],
+          };
+        });
+      }}
+      onAgentUpdated={(agentConfig) => {
+        appendLog(`✏️ Dynamic agent updated: ${agentConfig.name}`);
+        appendSystemMessage(`🤖 Agent "${agentConfig.name}" updated`, {
+          tone: "success",
+          statusCaption: `Tools: ${agentConfig.tools?.length || 0} · Voice: ${agentConfig.voice?.name || 'default'}`,
+          statusLabel: "Agent Updated",
+        });
+        setAgentInventory((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            agents: prev.agents.map((a) => 
+              a.name === agentConfig.name
+                ? {
+                    ...a,
+                    description: agentConfig.description,
+                    tools: agentConfig.tools || [],
+                    toolCount: agentConfig.tools?.length || 0,
+                    model: agentConfig.model?.deployment_id || null,
+                    voice: agentConfig.voice?.name || null,
+                    templateId: agentConfig.name
+                      ? agentConfig.name.toLowerCase().replace(/\s+/g, "_")
+                      : a.templateId,
+                  }
+                : a
+            ),
+          };
+        });
+      }}
+      onScenarioCreated={(scenarioConfig) => {
+        appendLog(`🎭 Scenario created: ${scenarioConfig.name || 'Custom Scenario'}`);
+        appendSystemMessage(`🎭 Scenario "${scenarioConfig.name || 'Custom'}" is now active`, {
+          tone: "success",
+          statusCaption: `Agents: ${scenarioConfig.agents?.length || 0} · Handoffs: ${scenarioConfig.handoffs?.length || 0}`,
+          statusLabel: "Scenario Active",
+        });
+        // Refresh scenario configuration and set to custom scenario
+        fetchSessionScenarioConfig();
+        setSessionScenario('custom');
+      }}
+      onScenarioUpdated={(scenarioConfig) => {
+        appendLog(`✏️ Scenario updated: ${scenarioConfig.name || 'Custom Scenario'}`);
+        appendSystemMessage(`🎭 Scenario "${scenarioConfig.name || 'Custom'}" updated`, {
+          tone: "success",
+          statusCaption: `Agents: ${scenarioConfig.agents?.length || 0} · Handoffs: ${scenarioConfig.handoffs?.length || 0}`,
+          statusLabel: "Scenario Updated",
+        });
+        fetchSessionScenarioConfig();
+        // Keep the scenario set to custom if updating
+        if (!getSessionScenario()?.startsWith('custom_')) {
+          setSessionScenario('custom');
+        }
       }}
     />
   </div>

@@ -971,7 +971,6 @@ class SpeechCascadeHandler:
         recognizer: StreamingSpeechRecognizerFromBytes | None = None,
         memory_manager: MemoManager | None = None,
         *,
-        context: Any | None = None,  # VoiceSessionContext (Phase 1)
         on_barge_in: Callable[[], Awaitable[None]] | None = None,
         on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
         on_announcement: Callable[[SpeechEvent], Awaitable[None]] | None = None,
@@ -991,8 +990,6 @@ class SpeechCascadeHandler:
             orchestrator_func: Orchestrator function for conversation management.
             recognizer: Speech recognition client instance.
             memory_manager: Memory manager for conversation state.
-            context: VoiceSessionContext (Phase 1) - typed session context.
-                     If provided, can be used instead of individual parameters.
             on_barge_in: Callback for barge-in events (transport-specific).
             on_greeting: Callback for greeting playback.
             on_announcement: Callback for announcement playback.
@@ -1010,10 +1007,6 @@ class SpeechCascadeHandler:
         self.memory_manager = memory_manager
         self._latency_tool = latency_tool
         self._redis_mgr = redis_mgr
-
-        # Phase 1: Store typed context for future use
-        # In future phases, context will replace individual parameters
-        self._context = context
 
         # Store callbacks for transport layer coordination
         self.on_user_transcript = on_user_transcript
@@ -1066,16 +1059,6 @@ class SpeechCascadeHandler:
         # Lifecycle
         self.running = False
         self._stopped = False
-
-    @property
-    def context(self) -> Any | None:
-        """
-        Get the typed session context (Phase 1).
-
-        Returns:
-            VoiceSessionContext or None if not set.
-        """
-        return self._context
 
     async def _handle_barge_in_with_stt_stop(self) -> None:
         """Handle barge-in with STT timer stop."""

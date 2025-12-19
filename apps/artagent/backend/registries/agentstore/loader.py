@@ -129,9 +129,6 @@ def load_agent(
     defaults: dict[str, Any],
 ) -> UnifiedAgent:
     """Load a single agent from its agent.yaml file."""
-    from src.enums.stream_modes import StreamMode
-    from config import ACS_STREAMING_MODE
-    
     with open(agent_file) as f:
         raw = yaml.safe_load(f) or {}
 
@@ -141,7 +138,7 @@ def load_agent(
     identity = _extract_agent_identity(raw, agent_dir)
 
     # =========================================================================
-    # MODEL CONFIGURATION - Support mode-specific models
+    # MODEL CONFIGURATION - Store BOTH mode-specific models
     # =========================================================================
     # Load all model configs:
     #   - model: fallback/default config
@@ -242,7 +239,7 @@ def discover_agents(agents_dir: Path = AGENTS_DIR) -> dict[str, UnifiedAgent]:
             except Exception as e:
                 logger.error("Failed to load agent from %s: %s", item, e)
 
-    logger.info("Discovered %d agents: %s", len(agents), list(agents.keys()))
+    logger.debug("Discovered %d agents: %s", len(agents), list(agents.keys()))
     return agents
 
 

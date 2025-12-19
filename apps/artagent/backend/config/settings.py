@@ -65,8 +65,6 @@ def _load_dotenv_local():
         if env_file.exists():
             # override=False means existing env vars are NOT overwritten
             load_dotenv(env_file, override=False)
-            # Log to stderr for startup diagnostics
-            print(f"📁 Loaded environment from: {env_file}", file=sys.stderr, flush=True)
             break
 
 

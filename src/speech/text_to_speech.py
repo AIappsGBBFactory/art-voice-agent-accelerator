@@ -1834,7 +1834,7 @@ class SpeechSynthesizer:
             result = synthesizer.speak_text_async(" .").get()
 
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-                logger.info("TTS connection warmed successfully")
+                logger.debug("TTS connection warmed successfully")
                 return True
             else:
                 logger.warning("TTS warmup synthesis did not complete: %s", result.reason)

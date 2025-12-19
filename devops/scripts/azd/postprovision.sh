@@ -6,6 +6,9 @@
 #   1. Cosmos DB initialization (seeding data)
 #   2. ACS phone number provisioning
 #   3. App Config URL updates (known only after deploy)
+#   4. App Config settings sync
+#   5. Local development environment setup
+#   6. EasyAuth configuration (optional, interactive)
 # ============================================================================
 
 set -euo pipefail
@@ -76,46 +79,46 @@ trigger_config_refresh() {
 # Task 1: Cosmos DB Initialization
 # ============================================================================
 
-task_cosmos_init() {
-    header "🗄️  Task 1: Cosmos DB Initialization"
+# task_cosmos_init() {
+#     header "🗄️  Task 1: Cosmos DB Initialization"
     
-    local db_init
-    db_init=$(azd_get "DB_INITIALIZED" "false")
+#     local db_init
+#     db_init=$(azd_get "DB_INITIALIZED" "false")
     
-    if [[ "$db_init" == "true" ]]; then
-        info "Already initialized, skipping"
-        footer
-        return 0
-    fi
+#     if [[ "$db_init" == "true" ]]; then
+#         info "Already initialized, skipping"
+#         footer
+#         return 0
+#     fi
     
-    local conn_string
-    conn_string=$(azd_get "AZURE_COSMOS_CONNECTION_STRING")
+#     local conn_string
+#     conn_string=$(azd_get "AZURE_COSMOS_CONNECTION_STRING")
     
-    if [[ -z "$conn_string" ]]; then
-        warn "AZURE_COSMOS_CONNECTION_STRING not set"
-        footer
-        return 1
-    fi
+#     if [[ -z "$conn_string" ]]; then
+#         warn "AZURE_COSMOS_CONNECTION_STRING not set"
+#         footer
+#         return 1
+#     fi
     
-    export AZURE_COSMOS_CONNECTION_STRING="$conn_string"
-    export AZURE_COSMOS_DATABASE_NAME="$(azd_get "AZURE_COSMOS_DATABASE_NAME" "audioagentdb")"
-    export AZURE_COSMOS_COLLECTION_NAME="$(azd_get "AZURE_COSMOS_COLLECTION_NAME" "audioagentcollection")"
+#     export AZURE_COSMOS_CONNECTION_STRING="$conn_string"
+#     export AZURE_COSMOS_DATABASE_NAME="$(azd_get "AZURE_COSMOS_DATABASE_NAME" "audioagentdb")"
+#     export AZURE_COSMOS_COLLECTION_NAME="$(azd_get "AZURE_COSMOS_COLLECTION_NAME" "audioagentcollection")"
     
-    if [[ -f "$HELPERS_DIR/requirements-cosmos.txt" ]]; then
-        log "Installing Python dependencies..."
-        pip3 install -q -r "$HELPERS_DIR/requirements-cosmos.txt" 2>/dev/null || true
-    fi
+#     if [[ -f "$HELPERS_DIR/requirements-cosmos.txt" ]]; then
+#         log "Installing Python dependencies..."
+#         pip3 install -q -r "$HELPERS_DIR/requirements-cosmos.txt" 2>/dev/null || true
+#     fi
     
-    log "Running initialization script..."
-    if python3 "$HELPERS_DIR/cosmos_init.py" 2>/dev/null; then
-        success "Cosmos DB initialized"
-        azd_set "DB_INITIALIZED" "true"
-    else
-        fail "Initialization failed"
-    fi
+#     log "Running initialization script..."
+#     if python3 "$HELPERS_DIR/cosmos_init.py" 2>/dev/null; then
+#         success "Cosmos DB initialized"
+#         azd_set "DB_INITIALIZED" "true"
+#     else
+#         fail "Initialization failed"
+#     fi
     
-    footer
-}
+#     footer
+# }
 
 # ============================================================================
 # Task 2: ACS Phone Number Configuration
@@ -285,16 +288,18 @@ task_update_urls() {
 show_summary() {
     header "📋 Summary"
     
-    local db_init phone endpoint env_file
+    local db_init phone endpoint env_file easyauth_enabled
     db_init=$(azd_get "DB_INITIALIZED" "false")
     phone=$(azd_get "ACS_SOURCE_PHONE_NUMBER" "")
     endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT" "")
+    easyauth_enabled=$(azd_get "EASYAUTH_ENABLED" "false")
     env_file=".env.local"
     
     [[ "$db_init" == "true" ]] && log "  ✅ Cosmos DB: initialized" || log "  ⏳ Cosmos DB: pending"
     [[ -n "$phone" ]] && log "  ✅ Phone: $phone" || log "  ⏳ Phone: not configured"
     [[ -n "$endpoint" ]] && log "  ✅ App Config: $endpoint" || log "  ⏳ App Config: pending"
     [[ -f "$env_file" ]] && log "  ✅ Local env: $env_file" || log "  ⏳ Local env: not generated"
+    [[ "$easyauth_enabled" == "true" ]] && log "  ✅ EasyAuth: enabled" || log "  ⏳ EasyAuth: not enabled"
     
     if ! is_ci; then
         log ""
@@ -302,6 +307,7 @@ show_summary() {
         log "  • Verify: azd show"
         log "  • Health check: curl \$(azd env get-value BACKEND_CONTAINER_APP_URL)/api/v1/health"
         [[ -z "$phone" ]] && log "  • Configure phone: Azure Portal → ACS → Phone numbers"
+        [[ "$easyauth_enabled" != "true" ]] && log "  • Enable EasyAuth: ./devops/scripts/azd/helpers/enable-easyauth.sh"
     fi
     
     footer
@@ -388,6 +394,118 @@ task_generate_env_local() {
 }
 
 # ============================================================================
+# Task 6: Enable EasyAuth (Optional)
+# ============================================================================
+
+task_enable_easyauth() {
+    header "🔐 Task 6: Frontend Authentication (EasyAuth)"
+    
+    local easyauth_script="$HELPERS_DIR/enable-easyauth.sh"
+    
+    if [[ ! -f "$easyauth_script" ]]; then
+        warn "enable-easyauth.sh not found, skipping"
+        footer
+        return 0
+    fi
+    
+    # Check if EasyAuth was already enabled (via azd env)
+    local easyauth_configured
+    easyauth_configured=$(azd_get "EASYAUTH_ENABLED" "false")
+    
+    if [[ "$easyauth_configured" == "true" ]]; then
+        success "EasyAuth already configured (EASYAUTH_ENABLED=true)"
+        footer
+        return 0
+    fi
+    
+    local resource_group container_app uami_client_id
+    resource_group=$(azd_get "AZURE_RESOURCE_GROUP")
+    container_app=$(azd_get "FRONTEND_CONTAINER_APP_NAME")
+    uami_client_id=$(azd_get "FRONTEND_UAI_CLIENT_ID")
+    
+    if [[ -z "$resource_group" || -z "$container_app" || -z "$uami_client_id" ]]; then
+        warn "Missing required values for EasyAuth configuration"
+        [[ -z "$resource_group" ]] && warn "  - AZURE_RESOURCE_GROUP not set"
+        [[ -z "$container_app" ]] && warn "  - FRONTEND_CONTAINER_APP_NAME not set"
+        [[ -z "$uami_client_id" ]] && warn "  - FRONTEND_UAI_CLIENT_ID not set"
+        footer
+        return 1
+    fi
+    
+    if is_ci; then
+        # In CI mode, automatically enable EasyAuth if not already enabled
+        log "Enabling EasyAuth (CI mode)…"
+        if bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id"; then
+            success "EasyAuth enabled"
+            # Set azd env variable to prevent re-running
+            azd_set "EASYAUTH_ENABLED" "true"
+            # Output to GitHub Actions environment (if running in GitHub Actions)
+            if [[ -n "${GITHUB_ENV:-}" ]]; then
+                echo "EASYAUTH_ENABLED=true" >> "$GITHUB_ENV"
+                info "Set EASYAUTH_ENABLED=true in GitHub Actions environment"
+            fi
+        else
+            warn "Failed to enable EasyAuth"
+        fi
+        footer
+        return 0
+    fi
+    else
+        # Interactive mode
+        log ""
+        log "EasyAuth adds Microsoft Entra ID authentication to your frontend."
+        log "Users will need to sign in with their organizational account."
+        log ""
+        log "Benefits:"
+        log "  • Secure access with Microsoft Entra ID"
+        log "  • No secrets to manage (uses Federated Identity Credentials)"
+        log "  • Works with your organization's identity policies"
+        log ""
+        log "Note: The backend API remains unsecured (accessible within your network)."
+        log ""
+        log "  1) Enable EasyAuth now"
+        log "  2) Skip for now (can enable later)"
+        log ""
+        log "(Auto-skipping in 15 seconds if no input...)"
+        
+        if read -t 15 -rp "│ Choice (1-2): " choice; then
+            : # Got input
+        else
+            log ""
+            info "No input received, skipping EasyAuth configuration"
+            choice="2"
+        fi
+        
+        case "$choice" in
+            1)
+                log ""
+                log "Enabling EasyAuth..."
+                if bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id"; then
+                    success "EasyAuth enabled successfully"
+                    # Set azd env variable to prevent re-running
+                    azd_set "EASYAUTH_ENABLED" "true"
+                    log ""
+                    log "Your frontend now requires authentication."
+                    log "Users will be redirected to Microsoft login."
+                else
+                    fail "Failed to enable EasyAuth"
+                fi
+                ;;
+            *)
+                info "Skipped - you can enable EasyAuth later by running:"
+                log ""
+                log "  ./devops/scripts/azd/helpers/enable-easyauth.sh \\"
+                log "    -g \"$resource_group\" \\"
+                log "    -a \"$container_app\" \\"
+                log "    -i \"$uami_client_id\""
+                ;;
+        esac
+        
+        footer
+    fi
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -396,11 +514,12 @@ main() {
     is_ci && info "CI/CD mode" || info "Interactive mode"
     footer
     
-    task_cosmos_init || true
+    # task_cosmos_init || true
     task_phone_number || true
     task_update_urls || true
     task_sync_appconfig || true
     task_generate_env_local || true
+    task_enable_easyauth || true
     show_summary
 }
 
