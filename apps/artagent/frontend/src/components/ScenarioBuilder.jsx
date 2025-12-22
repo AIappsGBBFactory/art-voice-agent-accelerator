@@ -18,6 +18,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Alert,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Avatar,
   Box,
   Button,
@@ -57,6 +60,7 @@ import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HubIcon from '@mui/icons-material/Hub';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -114,6 +118,102 @@ const connectionColors = [
   '#84cc16', // lime
   '#a855f7', // purple
 ];
+
+const parseSimpleJinjaVar = (value) => {
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^\s*\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}\s*$/);
+  return match ? match[1] : null;
+};
+
+const stringifyContextValue = (value) => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch (err) {
+    return String(value);
+  }
+};
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const truncateText = (value, maxLength = 32) => {
+  if (value === null || value === undefined) return '';
+  const text = String(value).replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+};
+
+const buildVarAliases = (varName) => {
+  if (!varName) return [];
+  if (!varName.includes('.')) return [varName];
+  const parts = varName.split('.');
+  const key = parts.pop();
+  const root = parts.join('.');
+  return [
+    varName,
+    `${root}.get('${key}')`,
+    `${root}.get("${key}")`,
+    `${root}['${key}']`,
+    `${root}["${key}"]`,
+  ];
+};
+
+const getPromptContextSnippet = (prompt, varName, maxLines = 4) => {
+  if (!prompt) return '';
+  const lines = prompt.split('\n');
+  if (!varName) {
+    const fallback = lines.slice(0, maxLines).join('\n');
+    return lines.length > maxLines ? `${fallback}\n…` : fallback;
+  }
+  const aliases = buildVarAliases(varName);
+  const firstIndex = lines.findIndex((line) =>
+    aliases.some((alias) => alias && line.includes(alias))
+  );
+  if (firstIndex === -1) {
+    const fallback = lines.slice(0, maxLines).join('\n');
+    return lines.length > maxLines ? `${fallback}\n…` : fallback;
+  }
+  const start = Math.max(0, firstIndex - 1);
+  const end = Math.min(lines.length, start + maxLines);
+  const snippet = lines.slice(start, end).join('\n');
+  return end < lines.length ? `${snippet}\n…` : snippet;
+};
+
+const renderPromptHighlights = (text, vars) => {
+  if (!text) return 'No prompt preview available.';
+  const uniqueVars = Array.from(new Set(vars || [])).filter(Boolean);
+  if (uniqueVars.length === 0) return text;
+  const aliases = uniqueVars.flatMap(buildVarAliases).filter(Boolean);
+  if (aliases.length === 0) return text;
+  const pattern = aliases.map(escapeRegExp).join('|');
+  if (!pattern) return text;
+  const regex = new RegExp(`\\{\\{[^}]*(${pattern})[^}]*\\}\\}`, 'g');
+  const parts = [];
+  let lastIndex = 0;
+  let matchIndex = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    parts.push(
+      <Box
+        component="span"
+        key={`hl-${match.index}-${matchIndex}`}
+        sx={{ bgcolor: 'rgba(99, 102, 241, 0.15)', borderRadius: '4px', px: 0.5 }}
+      >
+        {match[0]}
+      </Box>
+    );
+    lastIndex = regex.lastIndex;
+    matchIndex += 1;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FLOW NODE COMPONENT
@@ -604,19 +704,67 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
   const [handoffCondition, setHandoffCondition] = useState(handoff?.handoff_condition || '');
   const [selectedPattern, setSelectedPattern] = useState(null);
   const [showPatternPicker, setShowPatternPicker] = useState(false);
+  const [contextVarEntries, setContextVarEntries] = useState([]);
+  const [expandedMappingId, setExpandedMappingId] = useState(null);
+  const [promptDialog, setPromptDialog] = useState({
+    open: false,
+    title: '',
+    content: '',
+  });
+
+  const sourceAgent = agents?.find(a => a.name === handoff?.from_agent);
+  const targetAgent = agents?.find(a => a.name === handoff?.to_agent);
+  const sourcePromptVars = useMemo(
+    () => Array.from(new Set((sourceAgent?.prompt_vars || []).filter(Boolean))),
+    [sourceAgent],
+  );
+  const targetPromptVars = useMemo(
+    () => Array.from(new Set((targetAgent?.prompt_vars || []).filter(Boolean))),
+    [targetAgent],
+  );
 
   useEffect(() => {
     if (handoff) {
       setType(handoff.type || 'announced');
       setShareContext(handoff.share_context !== false);
       setHandoffCondition(handoff.handoff_condition || '');
+      const existingContextVars = handoff.context_vars || {};
+      const entries = [];
+      const seen = new Set();
+      targetPromptVars.forEach((key) => {
+        const existingValue = existingContextVars[key];
+        const mappedVar = parseSimpleJinjaVar(existingValue);
+        entries.push({
+          id: `auto-${key}`,
+          key,
+          mode: existingValue !== undefined ? (mappedVar ? 'map' : 'custom') : 'inherit',
+          sourceVar: mappedVar || '',
+          value: mappedVar ? '' : stringifyContextValue(existingValue),
+          locked: true,
+        });
+        seen.add(key);
+      });
+      Object.entries(existingContextVars).forEach(([key, value]) => {
+        if (!seen.has(key)) {
+          const mappedVar = parseSimpleJinjaVar(value);
+          entries.push({
+            id: `custom-${key}`,
+            key,
+            mode: mappedVar ? 'map' : 'custom',
+            sourceVar: mappedVar || '',
+            value: mappedVar ? '' : stringifyContextValue(value),
+            locked: false,
+          });
+        }
+      });
+      setContextVarEntries(entries);
       // Detect if current condition matches a pattern
       const matchingPattern = HANDOFF_CONDITION_PATTERNS.find(
         p => p.condition && p.condition.trim() === (handoff.handoff_condition || '').trim()
       );
       setSelectedPattern(matchingPattern?.id || (handoff.handoff_condition ? 'custom' : null));
     }
-  }, [handoff]);
+  }, [handoff, targetPromptVars]);
 
   const handlePatternSelect = (patternId) => {
     const pattern = HANDOFF_CONDITION_PATTERNS.find(p => p.id === patternId);
@@ -632,6 +780,22 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
   };
 
   const handleSave = () => {
+    const contextVars = contextVarEntries.reduce((acc, entry) => {
+      const key = entry.key?.trim();
+      if (!key) return acc;
+      if (entry.mode === 'inherit') return acc;
+      if (entry.mode === 'map') {
+        const sourceVar = entry.sourceVar?.trim();
+        if (!sourceVar) return acc;
+        acc[key] = `{{ ${sourceVar} }}`;
+        return acc;
+      }
+      const value = entry.value;
+      if (value === undefined || value === null) return acc;
+      if (typeof value === 'string' && value.trim() === '') return acc;
+      acc[key] = value;
+      return acc;
+    }, {});
     // Always use the centralized handoff_to_agent tool
     onSave({
       ...handoff,
@@ -639,17 +803,47 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
       tool: 'handoff_to_agent',  // Standardized - always use generic handoff
       share_context: shareContext,
       handoff_condition: handoffCondition,
+      context_vars: contextVars,
     });
     onClose();
   };
 
   if (!handoff) return null;
 
-  // Get target agent info for context
-  const targetAgent = agents?.find(a => a.name === handoff.to_agent);
+  const handleAddContextVar = () => {
+    const newId = `custom-${Date.now()}`;
+    setContextVarEntries((prev) => [
+      { id: newId, key: '', mode: 'custom', sourceVar: '', value: '', locked: false },
+      ...prev,
+    ]);
+    setExpandedMappingId(newId);
+  };
+
+  const handleUpdateContextVar = (id, field, value) => {
+    setContextVarEntries((prev) =>
+      prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry))
+    );
+  };
+
+  const handleRemoveContextVar = (id) => {
+    setContextVarEntries((prev) => prev.filter((entry) => entry.id !== id));
+  };
+
+  const handleOpenPromptDialog = (title, content) => {
+    setPromptDialog({
+      open: true,
+      title,
+      content: content || 'No prompt available.',
+    });
+  };
+
+  const handleClosePromptDialog = () => {
+    setPromptDialog({ open: false, title: '', content: '' });
+  };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <>
+      <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <CallSplitIcon color="primary" />
         Edit Handoff: {handoff.from_agent} → {handoff.to_agent}
@@ -771,6 +965,303 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
             />
           </Box>
 
+          <Accordion
+            defaultExpanded
+            sx={{
+              borderRadius: '12px',
+              border: '1px solid #e5e7eb',
+              boxShadow: 'none',
+              '&:before': { display: 'none' },
+            }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                <TextFieldsIcon sx={{ fontSize: 18, color: '#6366f1' }} />
+                <Box>
+                  <Typography variant="subtitle2">Advanced Handoff Config</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Prompt context and variable mapping
+                  </Typography>
+                </Box>
+              </Stack>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Stack spacing={2}>
+                <Paper variant="outlined" sx={{ p: 2, borderRadius: '12px' }}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Box>
+                      <Typography variant="subtitle2">Variable mapping</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Map source variables or override values passed to the target agent.
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        Source vars: {sourcePromptVars.length} • Target vars: {targetPromptVars.length}
+                      </Typography>
+                    </Box>
+                    <Button
+                      onClick={handleAddContextVar}
+                      size="small"
+                      variant="outlined"
+                      startIcon={<AddIcon />}
+                    >
+                      Add mapping
+                    </Button>
+                  </Stack>
+                  <Stack spacing={1.5} sx={{ mt: 2 }}>
+                    {contextVarEntries.length === 0 ? (
+                      <Alert severity="info" sx={{ borderRadius: '8px' }}>
+                        Add a mapping to pass or override context for this handoff.
+                      </Alert>
+                    ) : (
+                      contextVarEntries.map((entry) => (
+                        <Accordion
+                          key={entry.id}
+                          expanded={expandedMappingId === entry.id}
+                          onChange={(_event, isExpanded) =>
+                            setExpandedMappingId(isExpanded ? entry.id : null)
+                          }
+                          sx={{
+                            border: '1px solid #e5e7eb',
+                            borderRadius: '10px',
+                            bgcolor: '#fff',
+                            boxShadow: 'none',
+                            '&:before': { display: 'none' },
+                          }}
+                          TransitionProps={{ unmountOnExit: true }}
+                        >
+                          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              alignItems="center"
+                              sx={{ flex: 1, minWidth: 0 }}
+                            >
+                              <Chip
+                                label={entry.key || 'unnamed'}
+                                size="small"
+                                sx={{ fontFamily: 'monospace' }}
+                              />
+                              <Chip
+                                label={
+                                  entry.mode === 'map'
+                                    ? 'Mapped'
+                                    : entry.mode === 'custom'
+                                      ? 'Override'
+                                      : 'Inherit'
+                                }
+                                size="small"
+                                variant="outlined"
+                              />
+                              {entry.mode === 'custom' ? (
+                                <Chip
+                                  label={`Value: ${truncateText(entry.value || '') || 'set value'}`}
+                                  size="small"
+                                  color="warning"
+                                  variant="outlined"
+                                />
+                              ) : (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{
+                                    minWidth: 0,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {entry.mode === 'map' && entry.sourceVar
+                                    ? `← ${entry.sourceVar}`
+                                    : 'uses runtime value'}
+                                </Typography>
+                              )}
+                            </Stack>
+                            {!entry.locked && (
+                              <IconButton
+                                size="small"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleRemoveContextVar(entry.id);
+                                }}
+                                aria-label="Remove mapping"
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            )}
+                          </AccordionSummary>
+                          <AccordionDetails>
+                            <Stack spacing={2}>
+                              <Box
+                                sx={{
+                                  display: 'grid',
+                                  gridTemplateColumns: {
+                                    xs: '1fr',
+                                    md: '220px 180px 1fr',
+                                  },
+                                  gap: 1,
+                                }}
+                              >
+                                <Box>
+                                  <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                                    Target variable
+                                  </Typography>
+                                  {entry.locked ? (
+                                    <Chip
+                                      label={entry.key}
+                                      size="small"
+                                      sx={{
+                                        fontFamily: 'monospace',
+                                        maxWidth: 200,
+                                        whiteSpace: 'normal',
+                                      }}
+                                    />
+                                  ) : (
+                                    <TextField
+                                      label="Target variable"
+                                      size="small"
+                                      value={entry.key}
+                                      onChange={(e) => handleUpdateContextVar(entry.id, 'key', e.target.value)}
+                                      fullWidth
+                                    />
+                                  )}
+                                </Box>
+                                <Box>
+                                  <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                                    Mode
+                                  </Typography>
+                                  <FormControl size="small" fullWidth>
+                                    <InputLabel>Mode</InputLabel>
+                                    <Select
+                                      label="Mode"
+                                      value={entry.mode || 'inherit'}
+                                      onChange={(e) => {
+                                        const nextMode = e.target.value;
+                                        handleUpdateContextVar(entry.id, 'mode', nextMode);
+                                        if (nextMode === 'map' && !entry.sourceVar && sourcePromptVars[0]) {
+                                          handleUpdateContextVar(entry.id, 'sourceVar', sourcePromptVars[0]);
+                                        }
+                                      }}
+                                    >
+                                      <MenuItem value="inherit">Use existing</MenuItem>
+                                      <MenuItem value="map">Map from source</MenuItem>
+                                      <MenuItem value="custom">Custom override</MenuItem>
+                                    </Select>
+                                  </FormControl>
+                                </Box>
+                                <Box>
+                                  <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                                    Source / Value
+                                  </Typography>
+                                  {entry.mode === 'map' && (
+                                    <FormControl size="small" fullWidth>
+                                      <InputLabel>Source variable</InputLabel>
+                                      <Select
+                                        label="Source variable"
+                                        value={entry.sourceVar || ''}
+                                        onChange={(e) => handleUpdateContextVar(entry.id, 'sourceVar', e.target.value)}
+                                        disabled={sourcePromptVars.length === 0}
+                                      >
+                                        {sourcePromptVars.length === 0 ? (
+                                          <MenuItem value="">No source vars</MenuItem>
+                                        ) : (
+                                          sourcePromptVars.map((varName) => (
+                                            <MenuItem key={varName} value={varName}>
+                                              {varName}
+                                            </MenuItem>
+                                          ))
+                                        )}
+                                      </Select>
+                                    </FormControl>
+                                  )}
+                                  {entry.mode === 'custom' && (
+                                    <TextField
+                                      label="Value"
+                                      size="small"
+                                      fullWidth
+                                      value={entry.value}
+                                      onChange={(e) => handleUpdateContextVar(entry.id, 'value', e.target.value)}
+                                      placeholder="e.g. {{ client_id }} or 'billing inquiry'"
+                                    />
+                                  )}
+                                  {entry.mode === 'inherit' && (
+                                    <Typography variant="caption" color="text.secondary">
+                                      Uses the runtime value from the handoff context.
+                                    </Typography>
+                                  )}
+                                </Box>
+                              </Box>
+
+                              <Divider />
+
+                              <Box>
+                                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Target prompt context
+                                  </Typography>
+                                  <Stack direction="row" spacing={1}>
+                                    <Button
+                                      size="small"
+                                      variant="text"
+                                      onClick={() =>
+                                        handleOpenPromptDialog(
+                                          `${handoff.to_agent} prompt`,
+                                          targetAgent?.prompt_full || targetAgent?.prompt_preview,
+                                        )
+                                      }
+                                    >
+                                      View target prompt
+                                    </Button>
+                                    {entry.mode === 'map' && (
+                                      <Button
+                                        size="small"
+                                        variant="text"
+                                        onClick={() =>
+                                          handleOpenPromptDialog(
+                                            `${handoff.from_agent} prompt`,
+                                            sourceAgent?.prompt_full || sourceAgent?.prompt_preview,
+                                          )
+                                        }
+                                      >
+                                        View source prompt
+                                      </Button>
+                                    )}
+                                  </Stack>
+                                </Stack>
+                                <Paper
+                                  variant="outlined"
+                                  sx={{ p: 1.5, borderRadius: '10px', bgcolor: '#f8fafc' }}
+                                >
+                                  <Typography
+                                    component="div"
+                                    variant="caption"
+                                    sx={{
+                                      fontFamily: 'monospace',
+                                      whiteSpace: 'pre-wrap',
+                                      fontSize: 11,
+                                      lineHeight: 1.6,
+                                    }}
+                                  >
+                                    {renderPromptHighlights(
+                                      getPromptContextSnippet(
+                                        targetAgent?.prompt_full || targetAgent?.prompt_preview,
+                                        entry.key,
+                                      ),
+                                      [entry.key],
+                                    )}
+                                  </Typography>
+                                </Paper>
+                              </Box>
+                            </Stack>
+                          </AccordionDetails>
+                        </Accordion>
+                      ))
+                    )}
+                  </Stack>
+                </Paper>
+              </Stack>
+            </AccordionDetails>
+          </Accordion>
+
           <Divider />
 
           {/* Type selector */}
@@ -830,7 +1321,27 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
           Save
         </Button>
       </DialogActions>
-    </Dialog>
+      </Dialog>
+      <Dialog open={promptDialog.open} onClose={handleClosePromptDialog} maxWidth="md" fullWidth>
+        <DialogTitle>{promptDialog.title}</DialogTitle>
+        <DialogContent dividers>
+          <Typography
+            component="pre"
+            sx={{
+              fontFamily: 'monospace',
+              fontSize: 12,
+              whiteSpace: 'pre-wrap',
+              margin: 0,
+            }}
+          >
+            {promptDialog.content}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleClosePromptDialog}>Close</Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
 }
 
@@ -1955,6 +2466,7 @@ export default function ScenarioBuilder({
       type: config.handoff_type,
       share_context: true,
       handoff_condition: '', // User can define when to trigger this handoff
+      context_vars: {},
     };
 
     setConfig((prev) => ({

@@ -28,6 +28,7 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -85,6 +86,10 @@ class HandoffConfigSchema(BaseModel):
         default="",
         description="User-defined condition describing when to trigger this handoff. "
         "This text is injected into the source agent's system prompt.",
+    )
+    context_vars: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Extra context variables to pass to the target agent during handoff.",
     )
 
 
@@ -184,9 +189,50 @@ class AgentInfo(BaseModel):
     return_greeting: str | None = None
     tools: list[str] = []  # Keep for backward compatibility
     tool_details: list[ToolInfo] = []  # Full tool info with descriptions
+    prompt_preview: str | None = None  # Truncated prompt for UI context
+    prompt_full: str | None = None  # Full prompt for UI detail views
+    prompt_vars: list[str] = []  # Jinja vars referenced in prompts
+    handoff_context_vars: list[str] = []  # Jinja vars referenced in prompts (handoff_context.*)
     is_entry_point: bool = False
     is_session_agent: bool = False  # True if this is a dynamically created session agent
     session_id: str | None = None  # Session ID if this is a session agent
+
+
+_JINJA_VAR_RE = re.compile(
+    r"\{\{\s*([a-zA-Z0-9_.]+)(?:\s*\|[^}]*)?\s*\}\}"
+)
+_GET_VAR_RE = re.compile(r"([a-zA-Z0-9_.]+)\.get\(['\"]([a-zA-Z0-9_.]+)['\"]\)")
+
+
+def extract_prompt_vars(prompt_template: str | None) -> list[str]:
+    """Extract variable names from a Jinja prompt template."""
+    if not prompt_template:
+        return []
+
+    matches = {match.group(1).strip() for match in _JINJA_VAR_RE.finditer(prompt_template)}
+    for prefix, key in _GET_VAR_RE.findall(prompt_template):
+        if prefix and key:
+            matches.add(f"{prefix}.{key}")
+    cleaned = {m for m in matches if m and not m.endswith(".get")}
+    return sorted(cleaned)
+
+
+def build_prompt_preview(prompt_template: str | None, max_chars: int = 500) -> str | None:
+    """Build a truncated prompt preview for UI display."""
+    if not prompt_template:
+        return None
+
+    preview = prompt_template.strip()
+    if len(preview) <= max_chars:
+        return preview
+    return preview[:max_chars].rstrip() + "..."
+
+
+def extract_handoff_context_vars(prompt_template: str | None) -> list[str]:
+    """Extract handoff_context.* variable names from a Jinja prompt template."""
+    return [
+        var for var in extract_prompt_vars(prompt_template) if var.startswith("handoff_context.")
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -233,6 +279,7 @@ async def list_scenario_templates() -> dict[str, Any]:
                             "type": h.type,
                             "share_context": h.share_context,
                             "handoff_condition": h.handoff_condition,
+                            "context_vars": h.context_vars or {},
                         }
                         for h in scenario.handoffs
                     ],
@@ -291,6 +338,7 @@ async def get_scenario_template(template_id: str) -> dict[str, Any]:
                     "type": h.type,
                     "share_context": h.share_context,
                     "handoff_condition": h.handoff_condition,
+                    "context_vars": h.context_vars or {},
                 }
                 for h in scenario.handoffs
             ],
@@ -348,6 +396,10 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
 
     for name, agent in agents_registry.items():
         tool_names = agent.tool_names if hasattr(agent, "tool_names") else []
+        prompt_template = getattr(agent, "prompt_template", None)
+        prompt_vars = extract_prompt_vars(prompt_template)
+        handoff_context_vars = [var for var in prompt_vars if var.startswith("handoff_context.")]
+        prompt_preview = build_prompt_preview(prompt_template)
         agents_list.append(
             AgentInfo(
                 name=name,
@@ -356,6 +408,10 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
                 return_greeting=getattr(agent, "return_greeting", None),
                 tools=tool_names,
                 tool_details=get_tool_details(tool_names),
+                prompt_preview=prompt_preview,
+                prompt_full=prompt_template,
+                prompt_vars=prompt_vars,
+                handoff_context_vars=handoff_context_vars,
                 is_entry_point=name.lower() == "concierge"
                 or "concierge" in name.lower(),
                 is_session_agent=False,
@@ -378,6 +434,10 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
                 display_name = f"{agent.name} (session)"
 
             tool_names = agent.tool_names if hasattr(agent, "tool_names") else []
+            prompt_template = getattr(agent, "prompt_template", None)
+            prompt_vars = extract_prompt_vars(prompt_template)
+            handoff_context_vars = [var for var in prompt_vars if var.startswith("handoff_context.")]
+            prompt_preview = build_prompt_preview(prompt_template)
             agents_list.append(
                 AgentInfo(
                     name=display_name,
@@ -386,6 +446,10 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
                     return_greeting=getattr(agent, "return_greeting", None),
                     tools=tool_names,
                     tool_details=get_tool_details(tool_names),
+                    prompt_preview=prompt_preview,
+                    prompt_full=prompt_template,
+                    prompt_vars=prompt_vars,
+                    handoff_context_vars=handoff_context_vars,
                     is_entry_point=False,
                     is_session_agent=True,
                     session_id=session_id,
@@ -410,6 +474,10 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
                 agent_name = f"{agent.name} (session)"
 
             tool_names = agent.tool_names if hasattr(agent, "tool_names") else []
+            prompt_template = getattr(agent, "prompt_template", None)
+            prompt_vars = extract_prompt_vars(prompt_template)
+            handoff_context_vars = [var for var in prompt_vars if var.startswith("handoff_context.")]
+            prompt_preview = build_prompt_preview(prompt_template)
             agents_list.append(
                 AgentInfo(
                     name=agent_name,
@@ -418,6 +486,10 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
                     return_greeting=getattr(agent, "return_greeting", None),
                     tools=tool_names,
                     tool_details=get_tool_details(tool_names),
+                    prompt_preview=prompt_preview,
+                    prompt_full=prompt_template,
+                    prompt_vars=prompt_vars,
+                    handoff_context_vars=handoff_context_vars,
                     is_entry_point=False,
                     is_session_agent=True,
                     session_id=agent_session_id,
@@ -547,6 +619,7 @@ async def create_dynamic_scenario(
                 type=h.type,
                 share_context=h.share_context,
                 handoff_condition=h.handoff_condition,
+                context_vars=h.context_vars or {},
             )
         )
 
@@ -595,6 +668,7 @@ async def create_dynamic_scenario(
                     "type": h.type,
                     "share_context": h.share_context,
                     "handoff_condition": h.handoff_condition,
+                    "context_vars": h.context_vars or {},
                 }
                 for h in handoffs
             ],
@@ -643,6 +717,7 @@ async def get_session_scenario_config(
                     "type": h.type,
                     "share_context": h.share_context,
                     "handoff_condition": h.handoff_condition,
+                    "context_vars": h.context_vars or {},
                 }
                 for h in scenario.handoffs
             ],
@@ -731,6 +806,7 @@ async def update_session_scenario(
                 type=h.type,
                 share_context=h.share_context,
                 handoff_condition=h.handoff_condition,
+                context_vars=h.context_vars or {},
             )
         )
 
@@ -778,6 +854,7 @@ async def update_session_scenario(
                     "type": h.type,
                     "share_context": h.share_context,
                     "handoff_condition": h.handoff_condition,
+                    "context_vars": h.context_vars or {},
                 }
                 for h in handoffs
             ],
@@ -942,6 +1019,7 @@ async def list_scenarios_for_session(
                         "type": h.type,
                         "share_context": h.share_context,
                         "handoff_condition": h.handoff_condition,
+                        "context_vars": h.context_vars or {},
                     }
                     for h in scenario.handoffs
                 ],

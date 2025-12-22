@@ -1899,10 +1899,31 @@ export default function AgentBuilderContent({
                               />
                             }
                             label={
-                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, width: '100%' }}>
+                              <Box
+                                sx={{
+                                  display: 'flex',
+                                  alignItems: 'flex-start',
+                                  gap: 1,
+                                  width: '100%',
+                                  minWidth: 0,
+                                }}
+                              >
                                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Stack direction="row" alignItems="center" spacing={1}>
-                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  <Stack
+                                    direction="row"
+                                    alignItems="center"
+                                    spacing={1}
+                                    sx={{ flexWrap: 'wrap', minWidth: 0 }}
+                                  >
+                                    <Typography
+                                      variant="body2"
+                                      sx={{
+                                        fontWeight: 600,
+                                        minWidth: 0,
+                                        maxWidth: '100%',
+                                        overflowWrap: 'anywhere',
+                                      }}
+                                    >
                                       {tool.name}
                                     </Typography>
                                     {tool.is_handoff && (
@@ -1934,6 +1955,7 @@ export default function AgentBuilderContent({
                                 <Tooltip title="Tool details">
                                   <IconButton
                                     size="small"
+                                    sx={{ flexShrink: 0, alignSelf: 'flex-start' }}
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
@@ -1947,7 +1969,12 @@ export default function AgentBuilderContent({
                             }
                             sx={{
                               alignItems: 'flex-start',
-                              '& .MuiFormControlLabel-label': { width: '100%' },
+                              width: '100%',
+                              m: 0,
+                              '& .MuiFormControlLabel-label': {
+                                flex: 1,
+                                minWidth: 0,
+                              },
                             }}
                           />
                         ))}
