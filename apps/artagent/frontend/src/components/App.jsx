@@ -10,7 +10,7 @@ import {
 } from '@mui/material';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
-import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
+import SpeedRoundedIcon from '@mui/icons-material/SpeedRounded';
 import BuildRoundedIcon from '@mui/icons-material/BuildRounded';
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
@@ -19,13 +19,14 @@ import ProfileDetailsPanel from './ProfileDetailsPanel.jsx';
 import BackendIndicator from './BackendIndicator.jsx';
 import HelpButton from './HelpButton.jsx';
 import IndustryTag from './IndustryTag.jsx';
+import SessionSelector from './SessionSelector.jsx';
 import WaveformVisualization from './WaveformVisualization.jsx';
 import ConversationControls from './ConversationControls.jsx';
 import ChatBubble from './ChatBubble.jsx';
 import GraphCanvas from './graph/GraphCanvas.jsx';
 import GraphListView from './graph/GraphListView.jsx';
 import AgentTopologyPanel from './AgentTopologyPanel.jsx';
-import AgentDetailsPanel from './AgentDetailsPanel.jsx';
+import SessionPerformancePanel from './SessionPerformancePanel.jsx';
 import AgentBuilder from './AgentBuilder.jsx';
 import AgentScenarioBuilder from './AgentScenarioBuilder.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
@@ -164,6 +165,9 @@ function RealTimeVoiceApp() {
     return fallbackRealtimeStreamMode;
   });
   const [sessionProfiles, setSessionProfiles] = useState({});
+  const [sessionCoreMemory, setSessionCoreMemory] = useState(null);
+  const [sessionMetadata, setSessionMetadata] = useState(null);
+  const [sessionMetrics, setSessionMetrics] = useState(null);
   // Session ID must be declared before scenario helpers that use it
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   
@@ -276,9 +280,77 @@ function RealTimeVoiceApp() {
     }
   }, [sessionId, appendLog]);
 
+  // Fetch session core memory for performance analysis
+  const fetchSessionCoreMemory = useCallback(async (targetSessionId = sessionId) => {
+    if (!targetSessionId) return;
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/sessions/${encodeURIComponent(targetSessionId)}?include_memory=true&include_history=false`
+      );
+      if (!res.ok) {
+        setSessionCoreMemory(null);
+        setSessionMetadata(null);
+        return;
+      }
+      const data = await res.json();
+      setSessionCoreMemory(data.memory || null);
+      setSessionMetadata(data.session || null);
+    } catch (err) {
+      appendLog(`Session core memory fetch failed: ${err.message}`);
+      setSessionCoreMemory(null);
+      setSessionMetadata(null);
+    }
+  }, [sessionId, appendLog]);
+
+  const fetchSessionMetrics = useCallback(async (targetSessionId = sessionId) => {
+    if (!targetSessionId) return;
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/metrics/session/${encodeURIComponent(targetSessionId)}`
+      );
+      if (!res.ok) {
+        setSessionMetrics(null);
+        return;
+      }
+      const data = await res.json();
+      setSessionMetrics(data || null);
+    } catch (err) {
+      appendLog(`Session metrics fetch failed: ${err.message}`);
+      setSessionMetrics(null);
+    }
+  }, [sessionId, appendLog]);
+
   useEffect(() => {
     fetchSessionScenarioConfig();
-  }, [fetchSessionScenarioConfig]);
+    // Fetch core memory when session changes
+    fetchSessionCoreMemory();
+    fetchSessionMetrics();
+  }, [fetchSessionScenarioConfig, fetchSessionCoreMemory, fetchSessionMetrics]);
+
+  // Periodic refresh of core memory for real-time performance monitoring
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Only fetch if session performance panel is open
+      if (showAgentPanel && sessionId) {
+        fetchSessionCoreMemory();
+        fetchSessionMetrics();
+      }
+    }, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [showAgentPanel, sessionId, fetchSessionCoreMemory, fetchSessionMetrics]);
+
+  // Refresh core memory when messages change (indicating session activity)
+  useEffect(() => {
+    if (showAgentPanel && sessionId && messages.length > 0) {
+      // Debounce to avoid too frequent requests
+      const timeout = setTimeout(() => {
+        fetchSessionCoreMemory();
+        fetchSessionMetrics();
+      }, 1000);
+      return () => clearTimeout(timeout);
+    }
+  }, [messages.length, showAgentPanel, sessionId, fetchSessionCoreMemory, fetchSessionMetrics]);
 
   // Chat width resize listeners (placed after state initialization)
   useEffect(() => {
@@ -3815,7 +3887,7 @@ function RealTimeVoiceApp() {
               e.currentTarget.style.background = 'linear-gradient(145deg, #ffffff, #fafbfc)';
             }}
           >
-            <SmartToyRoundedIcon fontSize="small" />
+            <SpeedRoundedIcon fontSize="small" />
           </button>
 
           {/* Divider */}
@@ -4217,19 +4289,13 @@ function RealTimeVoiceApp() {
       open={showProfilePanel}
       onClose={() => setShowProfilePanel(false)}
     />
-    <AgentDetailsPanel
+    <SessionPerformancePanel
       open={showAgentPanel}
       onClose={() => setShowAgentPanel(false)}
-      agentName={resolvedAgentName}
-      agentDescription={activeAgentInfo?.description}
       sessionId={sessionId}
-      sessionAgentConfig={sessionAgentConfig}
-      lastUserMessage={lastUserMessage}
-      lastAssistantMessage={lastAssistantMessage}
-      recentTools={recentTools}
-      messages={messages}
-      agentTools={resolvedAgentTools}
-      handoffTools={resolvedHandoffTools}
+      coreMemory={sessionCoreMemory}
+      sessionMeta={sessionMetadata}
+      sessionMetrics={sessionMetrics}
     />
     <AgentBuilder
       open={showAgentBuilder}
@@ -4427,6 +4493,37 @@ function RealTimeVoiceApp() {
         // Keep the scenario set to custom if updating
         if (!getSessionScenario()?.startsWith('custom_')) {
           setSessionScenario('custom');
+        }
+      }}
+    />
+
+    {/* Session Selector */}
+    <SessionSelector
+      onSessionChange={(newSessionId, sessionDetails) => {
+        if (newSessionId) {
+          appendLog(`🔄 Switched to session: ${newSessionId}`);
+          appendSystemMessage(`📂 Session loaded: ${newSessionId.replace('session_', '')}`, {
+            tone: "info",
+            statusLabel: "Session Loaded",
+            statusCaption: sessionDetails ?
+              `Agents: ${sessionDetails.agents?.length || 0} • Scenarios: ${sessionDetails.scenarios?.length || 0}` :
+              undefined,
+          });
+
+          // Refresh session data
+          const sessionData = buildSessionProfile(null, newSessionId, activeSessionProfile);
+          if (sessionData && sessionData.sessionId === newSessionId) {
+            setActiveSessionProfile(sessionData);
+          }
+
+          // Reset UI state for new session
+          setMessages([]);
+          setGraphEvents([]);
+          setAgentInventory(null);
+
+          // Fetch new session data
+          fetchSessionAgentConfig(newSessionId);
+          fetchSessionScenarioConfig(newSessionId);
         }
       }}
     />

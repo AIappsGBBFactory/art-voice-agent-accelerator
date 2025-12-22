@@ -71,6 +71,37 @@ class TurnMetrics(BaseModel):
     )
 
 
+class LatencyBreakdownItem(BaseModel):
+    """Latency breakdown entry for a single stage."""
+
+    stage: str = Field(..., description="Latency stage name")
+    avg_ms: float = Field(..., description="Average latency in milliseconds")
+    min_ms: float = Field(..., description="Minimum latency in milliseconds")
+    max_ms: float = Field(..., description="Maximum latency in milliseconds")
+    p50_ms: float | None = Field(None, description="50th percentile (median)")
+    p95_ms: float | None = Field(None, description="95th percentile")
+    p99_ms: float | None = Field(None, description="99th percentile")
+    count: int = Field(..., description="Number of samples")
+    severity: str = Field("info", description="Severity level for the stage")
+    relative_pct: float = Field(0.0, description="Avg latency as percentage of max avg latency")
+
+
+class PerformanceInsight(BaseModel):
+    """Server-side performance insight derived from session metrics."""
+
+    type: str = Field(..., description="Insight type identifier")
+    stage: str | None = Field(None, description="Latency stage if applicable")
+    severity: str = Field("info", description="Severity level: info, warning, error")
+    message: str = Field(..., description="Human-readable insight message")
+
+
+class InsightsSummary(BaseModel):
+    """Summary for performance insights."""
+
+    severity: str = Field("info", description="Overall severity for insights")
+    count: int = Field(0, description="Total number of insights")
+
+
 class TokenUsage(BaseModel):
     """Token usage summary for a session."""
 
@@ -109,6 +140,10 @@ class SessionMetricsResponse(BaseModel):
         default_factory=dict,
         description="Latency statistics by stage (stt, llm_ttfb, llm_total, tts_ttfb, tts_total, total)",
     )
+    latency_breakdown: list[LatencyBreakdownItem] = Field(
+        default_factory=list,
+        description="Backend-computed latency breakdown entries for UI rendering",
+    )
 
     # Token usage
     token_usage: TokenUsage | None = Field(None, description="Token usage summary for the session")
@@ -116,6 +151,15 @@ class SessionMetricsResponse(BaseModel):
     # Per-turn breakdown (optional, can be large)
     turns: list[TurnMetrics] | None = Field(
         None, description="Detailed metrics per conversation turn"
+    )
+
+    # Insights
+    insights: list[PerformanceInsight] = Field(
+        default_factory=list,
+        description="Backend-derived performance insights from session metrics",
+    )
+    insights_summary: InsightsSummary | None = Field(
+        None, description="Summary of performance insights"
     )
 
     # Status

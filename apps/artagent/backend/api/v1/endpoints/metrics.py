@@ -19,6 +19,9 @@ from utils.ml_logging import get_logger
 from ..schemas.metrics import (
     ActiveSessionsResponse,
     LatencyStats,
+    LatencyBreakdownItem,
+    PerformanceInsight,
+    InsightsSummary,
     SessionMetricsResponse,
     TokenUsage,
     TurnMetrics,
@@ -235,6 +238,9 @@ async def get_session_metrics(
 
     # Parse metrics from Redis corememory
     latency_summary: dict[str, LatencyStats] = {}
+    latency_breakdown: list[LatencyBreakdownItem] = []
+    insights: list[PerformanceInsight] = []
+    insights_summary: InsightsSummary | None = None
     turns: list[TurnMetrics] = []
     token_usage = None
     turn_count = 0
@@ -266,6 +272,53 @@ async def get_session_metrics(
             for stage, samples in samples_by_stage.items():
                 latency_summary[stage] = _get_latency_stats(samples)
 
+            if latency_summary:
+                max_avg_ms = max((stats.avg_ms for stats in latency_summary.values()), default=0)
+                for stage, stats in sorted(latency_summary.items()):
+                    if stats.avg_ms >= 1000:
+                        severity = "error"
+                    elif stats.avg_ms >= 500:
+                        severity = "warning"
+                    else:
+                        severity = "success"
+
+                    relative_pct = (stats.avg_ms / max_avg_ms * 100) if max_avg_ms else 0.0
+
+                    latency_breakdown.append(
+                        LatencyBreakdownItem(
+                            stage=stage,
+                            avg_ms=stats.avg_ms,
+                            min_ms=stats.min_ms,
+                            max_ms=stats.max_ms,
+                            p50_ms=stats.p50_ms,
+                            p95_ms=stats.p95_ms,
+                            p99_ms=stats.p99_ms,
+                            count=stats.count,
+                            severity=severity,
+                            relative_pct=relative_pct,
+                        )
+                    )
+
+                    if severity in {"warning", "error"}:
+                        insights.append(
+                            PerformanceInsight(
+                                type="high_latency",
+                                stage=stage,
+                                severity=severity,
+                                message=f"{stage} averaging {stats.avg_ms:.1f}ms",
+                            )
+                        )
+
+                    if stats.count >= 10:
+                        insights.append(
+                            PerformanceInsight(
+                                type="high_frequency",
+                                stage=stage,
+                                severity="warning",
+                                message=f"{stage} recorded {stats.count} times",
+                            )
+                        )
+
         # Extract token usage if tracked in corememory
         token_data = corememory.get("token_usage", {})
         if token_data:
@@ -293,11 +346,27 @@ async def get_session_metrics(
         turn_count=turn_count,
         session_duration_ms=session_duration_ms,
         latency_summary=latency_summary,
+        latency_breakdown=latency_breakdown,
         token_usage=token_usage,
         turns=turns if include_turns and turns else None,
         status=status,
         error_count=0,
         start_time=start_time,
+        insights=insights,
+        insights_summary=(
+            InsightsSummary(
+                severity=(
+                    "error"
+                    if any(item.severity == "error" for item in insights)
+                    else "warning"
+                    if any(item.severity == "warning" for item in insights)
+                    else "info"
+                ),
+                count=len(insights),
+            )
+            if insights
+            else None
+        ),
     )
 
 

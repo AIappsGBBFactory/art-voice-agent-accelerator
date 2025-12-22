@@ -385,6 +385,10 @@ class MediaHandler:
             cancel_event=handler._tts_cancel_event,
         )
 
+        # Set active agent on TTS playback to ensure greetings use the correct voice
+        if start_agent_name:
+            handler._tts_playback.set_active_agent(start_agent_name)
+
         # Create speech cascade
         handler.speech_cascade = SpeechCascadeHandler(
             connection_id=session_key,

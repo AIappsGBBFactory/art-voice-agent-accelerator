@@ -24,6 +24,9 @@ from apps.artagent.backend.voice.shared.metrics_factory import (
     build_session_attributes,
     build_tts_attributes,
 )
+from apps.artagent.backend.voice.shared.core_memory_metrics import (
+    schedule_core_memory_update,
+)
 from utils.ml_logging import get_logger
 
 logger = get_logger("speech_cascade.metrics")
@@ -103,6 +106,7 @@ def record_stt_recognition(
     call_connection_id: str | None = None,
     turn_number: int | None = None,
     transcript_length: int | None = None,
+    memo_manager = None,
 ) -> None:
     """
     Record STT recognition latency metric.
@@ -114,6 +118,7 @@ def record_stt_recognition(
     :param call_connection_id: Call connection ID
     :param turn_number: Turn number within the conversation
     :param transcript_length: Length of final transcript in characters
+    :param memo_manager: Optional memo manager for core memory updates
     """
     attributes = build_session_attributes(
         session_id,
@@ -127,6 +132,16 @@ def record_stt_recognition(
     _stt_recognition_histogram.record(latency_ms, attributes=attributes)
     logger.debug("📊 STT recognition metric: %.2fms | session=%s", latency_ms, session_id)
 
+    # Also update core memory for frontend (async, off hot path)
+    schedule_core_memory_update(
+        memo_manager=memo_manager,
+        session_id=session_id,
+        metric_type="stt_latency",  # Use consistent naming with VoiceLive
+        value_ms=latency_ms,
+        metadata={"transcript_length": transcript_length},
+        turn_number=turn_number,
+    )
+
 
 def record_turn_processing(
     latency_ms: float,
@@ -135,6 +150,7 @@ def record_turn_processing(
     call_connection_id: str | None = None,
     turn_number: int | None = None,
     has_tool_calls: bool = False,
+    memo_manager = None,
 ) -> None:
     """
     Record turn processing latency metric.
@@ -144,6 +160,7 @@ def record_turn_processing(
     :param call_connection_id: Call connection ID
     :param turn_number: Turn number within the conversation
     :param has_tool_calls: Whether the turn included tool calls
+    :param memo_manager: Optional memo manager for core memory updates
     """
     attributes = build_session_attributes(
         session_id,
@@ -161,6 +178,16 @@ def record_turn_processing(
         latency_ms,
         session_id,
         has_tool_calls,
+    )
+
+    # Also update core memory for frontend (async, off hot path)
+    schedule_core_memory_update(
+        memo_manager=memo_manager,
+        session_id=session_id,
+        metric_type="turn_duration",  # Map to consistent naming
+        value_ms=latency_ms,
+        metadata={"has_tool_calls": has_tool_calls},
+        turn_number=turn_number,
     )
 
 
@@ -212,6 +239,7 @@ def record_tts_synthesis(
     text_length: int | None = None,
     audio_bytes: int | None = None,
     transport: str = "browser",
+    memo_manager = None,
 ) -> None:
     """
     Record TTS synthesis latency metric.
@@ -223,6 +251,7 @@ def record_tts_synthesis(
     :param text_length: Length of text synthesized
     :param audio_bytes: Size of audio output in bytes
     :param transport: Transport type (browser/acs)
+    :param memo_manager: Optional memo manager for core memory updates
     """
     attributes = build_tts_attributes(
         session_id,
@@ -244,6 +273,21 @@ def record_tts_synthesis(
         session_id,
         voice_name,
         text_length,
+    )
+
+    # Also update core memory for frontend (async, off hot path)
+    schedule_core_memory_update(
+        memo_manager=memo_manager,
+        session_id=session_id,
+        metric_type="tts_ttfb",  # Use consistent naming with VoiceLive
+        value_ms=latency_ms,
+        metadata={
+            "voice_name": voice_name,
+            "text_length": text_length,
+            "audio_bytes": audio_bytes,
+            "transport": transport,
+        },
+        turn_number=None,  # TTS events may not have turn numbers in speech cascade
     )
 
 

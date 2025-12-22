@@ -95,6 +95,7 @@ class VoiceConfigSchema(BaseModel):
     style: str = "chat"
     rate: str = "+0%"
     pitch: str = Field(default="+0%", description="Voice pitch: -50% to +50%")
+    endpoint_id: str | None = Field(default=None, description="Custom voice endpoint ID")
 
 
 class SpeechConfigSchema(BaseModel):
@@ -142,6 +143,9 @@ class SessionConfigSchema(BaseModel):
         default=240, ge=0, le=1000, description="Audio prefix padding"
     )
     tool_choice: str = Field(default="auto", description="Tool choice mode (auto, none, required)")
+    input_audio_transcription_settings: dict[str, Any] | None = Field(
+        default=None, description="VoiceLive input transcription settings (model, language)"
+    )
 
 
 class DynamicAgentConfig(BaseModel):
@@ -198,6 +202,8 @@ class AgentTemplateInfo(BaseModel):
     tools: list[str]
     voice: dict[str, Any] | None = None
     model: dict[str, Any] | None = None
+    cascade_model: dict[str, Any] | None = None
+    voicelive_model: dict[str, Any] | None = None
     is_entry_point: bool = False
     is_session_agent: bool = False
     session_id: str | None = None
@@ -460,8 +466,10 @@ async def list_agent_templates() -> dict[str, Any]:
             tools = raw.get("tools", [])
 
             # Get voice and model configs
-            voice = raw.get("voice")
-            model = raw.get("model")
+            voice = raw.get("voice") or defaults.get("voice", {})
+            model = raw.get("model") or defaults.get("model", {})
+            cascade_model = raw.get("cascade_model") or defaults.get("cascade_model")
+            voicelive_model = raw.get("voicelive_model") or defaults.get("voicelive_model")
 
             # Check if entry point
             handoff_config = raw.get("handoff", {})
@@ -483,6 +491,8 @@ async def list_agent_templates() -> dict[str, Any]:
                     tools=tools,
                     voice=voice,
                     model=model,
+                    cascade_model=cascade_model,
+                    voicelive_model=voicelive_model,
                     is_entry_point=is_entry_point,
                 )
             )
@@ -517,6 +527,8 @@ async def list_agent_templates() -> dict[str, Any]:
                     tools=agent.tool_names or [],
                     voice=agent.voice.to_dict() if agent.voice else None,
                     model=agent.model.to_dict() if agent.model else None,
+                    cascade_model=agent.cascade_model.to_dict() if agent.cascade_model else None,
+                    voicelive_model=agent.voicelive_model.to_dict() if agent.voicelive_model else None,
                     is_entry_point=False,
                     is_session_agent=True,
                     session_id=session_id,
@@ -580,6 +592,8 @@ async def get_agent_template(template_id: str) -> dict[str, Any]:
         tools = raw.get("tools", [])
         voice = raw.get("voice") or defaults.get("voice", {})
         model = raw.get("model") or defaults.get("model", {})
+        cascade_model = raw.get("cascade_model") or defaults.get("cascade_model", {})
+        voicelive_model = raw.get("voicelive_model") or defaults.get("voicelive_model", {})
         template_vars = raw.get("template_vars") or defaults.get("template_vars", {})
 
         return {
@@ -594,6 +608,8 @@ async def get_agent_template(template_id: str) -> dict[str, Any]:
                 "tools": tools,
                 "voice": voice,
                 "model": model,
+                "cascade_model": cascade_model,
+                "voicelive_model": voicelive_model,
                 "template_vars": template_vars,
                 "handoff": raw.get("handoff", {}),
             },
@@ -699,6 +715,7 @@ async def create_dynamic_agent(
         style=config.voice.style if config.voice else "chat",
         rate=config.voice.rate if config.voice else "+0%",
         pitch=config.voice.pitch if config.voice else "+0%",
+        endpoint_id=config.voice.endpoint_id if config.voice else None,
     )
 
     # Build speech config (STT / VAD settings)
@@ -732,6 +749,16 @@ async def create_dynamic_agent(
             },
             "tool_choice": config.session.tool_choice,
         }
+        if config.session.input_audio_transcription_settings:
+            session_dict["input_audio_transcription_settings"] = {
+                "model": config.session.input_audio_transcription_settings.get("model"),
+                "language": config.session.input_audio_transcription_settings.get("language"),
+            }
+        if config.session.input_audio_transcription_settings:
+            session_dict["input_audio_transcription_settings"] = {
+                "model": config.session.input_audio_transcription_settings.get("model"),
+                "language": config.session.input_audio_transcription_settings.get("language"),
+            }
 
     # Create the agent with mode-specific models
     agent = UnifiedAgent(
@@ -925,6 +952,7 @@ async def update_session_agent(
         style=config.voice.style if config.voice else "chat",
         rate=config.voice.rate if config.voice else "+0%",
         pitch=config.voice.pitch if config.voice else "+0%",
+        endpoint_id=config.voice.endpoint_id if config.voice else None,
     )
 
     # Build speech config (STT / VAD settings)

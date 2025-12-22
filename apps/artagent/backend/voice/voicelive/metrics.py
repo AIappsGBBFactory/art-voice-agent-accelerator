@@ -17,6 +17,9 @@ from apps.artagent.backend.voice.shared.metrics_factory import (
     LazyMeter,
     build_session_attributes,
 )
+from apps.artagent.backend.voice.shared.core_memory_metrics import (
+    schedule_core_memory_update,
+)
 from utils.ml_logging import get_logger
 
 logger = get_logger("voicelive.metrics")
@@ -74,6 +77,7 @@ def record_llm_ttft(
     session_id: str,
     turn_number: int,
     agent_name: str | None = None,
+    memo_manager = None,
 ) -> None:
     """
     Record LLM Time-To-First-Token metric.
@@ -82,6 +86,7 @@ def record_llm_ttft(
     :param session_id: Session identifier for correlation
     :param turn_number: Turn number within the conversation
     :param agent_name: Optional agent name handling the turn
+    :param memo_manager: Optional memo manager for core memory updates
     """
     attributes = build_session_attributes(
         session_id,
@@ -99,6 +104,16 @@ def record_llm_ttft(
         agent_name or "unknown",
     )
 
+    # Also update core memory for frontend (async, off hot path)
+    schedule_core_memory_update(
+        memo_manager=memo_manager,
+        session_id=session_id,
+        metric_type="llm_ttft",
+        value_ms=ttft_ms,
+        metadata={"agent": agent_name or "unknown"},
+        turn_number=turn_number,
+    )
+
 
 def record_tts_ttfb(
     ttfb_ms: float,
@@ -107,6 +122,7 @@ def record_tts_ttfb(
     turn_number: int,
     reference: str = "vad_end",
     agent_name: str | None = None,
+    memo_manager = None,
 ) -> None:
     """
     Record TTS Time-To-First-Byte metric (E2E latency).
@@ -116,6 +132,7 @@ def record_tts_ttfb(
     :param turn_number: Turn number within the conversation
     :param reference: Timing reference point (vad_end or turn_start)
     :param agent_name: Optional agent name handling the turn
+    :param memo_manager: Optional memo manager for core memory updates
     """
     attributes = build_session_attributes(
         session_id,
@@ -135,12 +152,23 @@ def record_tts_ttfb(
         agent_name or "unknown",
     )
 
+    # Also update core memory for frontend (async, off hot path)
+    schedule_core_memory_update(
+        memo_manager=memo_manager,
+        session_id=session_id,
+        metric_type="tts_ttfb",
+        value_ms=ttfb_ms,
+        metadata={"agent": agent_name or "unknown", "reference": reference},
+        turn_number=turn_number,
+    )
+
 
 def record_stt_latency(
     latency_ms: float,
     *,
     session_id: str,
     turn_number: int,
+    memo_manager = None,
 ) -> None:
     """
     Record STT latency metric.
@@ -148,6 +176,7 @@ def record_stt_latency(
     :param latency_ms: STT latency in milliseconds
     :param session_id: Session identifier for correlation
     :param turn_number: Turn number within the conversation
+    :param memo_manager: Optional memo manager for core memory updates
     """
     attributes = build_session_attributes(
         session_id,
@@ -163,6 +192,15 @@ def record_stt_latency(
         turn_number,
     )
 
+    # Also update core memory for frontend (async, off hot path)
+    schedule_core_memory_update(
+        memo_manager=memo_manager,
+        session_id=session_id,
+        metric_type="stt_latency",
+        value_ms=latency_ms,
+        turn_number=turn_number,
+    )
+
 
 def record_turn_complete(
     duration_ms: float,
@@ -173,6 +211,7 @@ def record_turn_complete(
     llm_ttft_ms: float | None = None,
     tts_ttfb_ms: float | None = None,
     agent_name: str | None = None,
+    memo_manager = None,
 ) -> None:
     """
     Record turn completion with all latency metrics.
@@ -188,6 +227,7 @@ def record_turn_complete(
     :param llm_ttft_ms: Optional LLM TTFT for the turn
     :param tts_ttfb_ms: Optional TTS TTFB for the turn
     :param agent_name: Optional agent name handling the turn
+    :param memo_manager: Optional memo manager for core memory updates
     """
     base_attributes = build_session_attributes(
         session_id,
@@ -216,6 +256,21 @@ def record_turn_complete(
         f"{tts_ttfb_ms:.2f}ms" if tts_ttfb_ms else "N/A",
         session_id,
         turn_number,
+    )
+
+    # Also update core memory for frontend (async, off hot path)
+    schedule_core_memory_update(
+        memo_manager=memo_manager,
+        session_id=session_id,
+        metric_type="turn_duration",
+        value_ms=duration_ms,
+        metadata={
+            "agent": agent_name or "unknown",
+            "stt_latency_ms": stt_latency_ms,
+            "llm_ttft_ms": llm_ttft_ms,
+            "tts_ttfb_ms": tts_ttfb_ms,
+        },
+        turn_number=turn_number,
     )
 
 

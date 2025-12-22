@@ -75,6 +75,7 @@ class VoiceConfig:
     style: str = "chat"
     rate: str = "+0%"
     pitch: str = "+0%"
+    endpoint_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VoiceConfig:
@@ -87,6 +88,7 @@ class VoiceConfig:
             style=data.get("style", cls.style),
             rate=data.get("rate", cls.rate),
             pitch=data.get("pitch", cls.pitch),
+            endpoint_id=data.get("endpoint_id"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -97,6 +99,7 @@ class VoiceConfig:
             "style": self.style,
             "rate": self.rate,
             "pitch": self.pitch,
+            "endpoint_id": self.endpoint_id,
         }
 
 
@@ -708,6 +711,10 @@ class UnifiedAgent:
         """
         try:
             from azure.ai.voicelive.models import AzureStandardVoice
+            try:
+                from azure.ai.voicelive.models import AzureCustomVoice
+            except ImportError:
+                AzureCustomVoice = None
         except ImportError:
             return None
 
@@ -715,6 +722,14 @@ class UnifiedAgent:
             return None
 
         voice_type = self.voice.type.lower().strip()
+
+        if voice_type in {"azure-custom", "azure_custom"}:
+            if AzureCustomVoice and self.voice.endpoint_id:
+                return AzureCustomVoice(
+                    name=self.voice.name,
+                    endpoint_id=self.voice.endpoint_id,
+                )
+            return AzureStandardVoice(name=self.voice.name)
 
         if voice_type in {"azure-standard", "azure_standard", "azure"}:
             optionals = {}

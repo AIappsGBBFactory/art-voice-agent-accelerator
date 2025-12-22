@@ -33,6 +33,6 @@ Key Files:
 - scenario_builder.py: REST API for creating dynamic scenarios at runtime
 """
 
-from . import agent_builder, browser, calls, health, media, scenario_builder
+from . import agent_builder, browser, calls, health, media, scenario_builder, sessions
 
-__all__ = ["health", "calls", "media", "browser", "agent_builder", "scenario_builder"]
+__all__ = ["health", "calls", "media", "browser", "agent_builder", "scenario_builder", "sessions"]

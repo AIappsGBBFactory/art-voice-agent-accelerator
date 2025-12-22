@@ -355,6 +355,11 @@ class VoiceHandler:
         handler._tts = TTSPlayback(context, app_state, latency_tool=latency_tool)
         context.tts_playback = handler._tts
 
+        # Set active agent on TTS playback to ensure greetings use the correct voice
+        start_agent_name = memory_manager.get_value_from_corememory("active_agent")
+        if start_agent_name:
+            handler._tts.set_active_agent(start_agent_name)
+
         # Create thread management components
         handler._barge_in_controller = BargeInController(
             session_key,
