@@ -29,15 +29,19 @@ import {
   CircularProgress,
   Collapse,
   Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControlLabel,
   IconButton,
-  InputAdornment,
   LinearProgress,
   List,
   ListItem,
   ListItemAvatar,
   ListItemIcon,
   ListItemText,
+  Paper,
   Radio,
   Slider,
   Stack,
@@ -61,11 +65,10 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import CheckIcon from '@mui/icons-material/Check';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import MemoryIcon from '@mui/icons-material/Memory';
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import StarIcon from '@mui/icons-material/Star';
 import EditIcon from '@mui/icons-material/Edit';
 import HearingIcon from '@mui/icons-material/Hearing';
+import CloseIcon from '@mui/icons-material/Close';
 import PersonIcon from '@mui/icons-material/Person';
 import BusinessIcon from '@mui/icons-material/Business';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
@@ -127,6 +130,11 @@ const styles = {
     },
     '& .MuiInputLabel-root': {
       color: '#a6adc8',
+      lineHeight: 1.2,
+      transform: 'translate(14px, 14px) scale(1)',
+    },
+    '& .MuiInputLabel-root.MuiInputLabel-shrink': {
+      transform: 'translate(14px, -18px) scale(0.75)',
     },
     '& .MuiInputLabel-root.Mui-focused': {
       color: '#89b4fa',
@@ -225,6 +233,25 @@ const TEMPLATE_VARIABLES = [
     icon: <BuildIcon fontSize="small" />,
     source: 'Agent Config',
   },
+];
+
+const TRANSCRIPTION_MODELS = [
+  { value: 'azure-speech', label: 'Azure Speech' },
+  { value: 'gpt-4o-transcribe', label: 'GPT-4o Transcribe' },
+  { value: 'whisper-1', label: 'Whisper-1' },
+];
+
+const TRANSCRIPTION_LANGUAGES = [
+  { value: 'en-US', label: 'English (US)' },
+  { value: 'en-GB', label: 'English (UK)' },
+  { value: 'es-ES', label: 'Spanish (ES)' },
+  { value: 'fr-FR', label: 'French (FR)' },
+  { value: 'de-DE', label: 'German (DE)' },
+  { value: 'it-IT', label: 'Italian (IT)' },
+  { value: 'pt-BR', label: 'Portuguese (BR)' },
+  { value: 'ja-JP', label: 'Japanese (JP)' },
+  { value: 'ko-KR', label: 'Korean (KR)' },
+  { value: 'zh-CN', label: 'Chinese (CN)' },
 ];
 
 const TEMPLATE_VARIABLE_DOCS = [
@@ -581,6 +608,309 @@ const InlineVariablePicker = React.memo(function InlineVariablePicker({ onInsert
   );
 });
 
+const getVoiceLabel = (agent) => {
+  const voice = agent?.voice || {};
+  return (
+    voice.display_name ||
+    voice.name ||
+    voice.voice_name ||
+    voice.voiceName ||
+    'Default'
+  );
+};
+
+const getModelName = (model) => {
+  const resolved = model || {};
+  return (
+    resolved.deployment_id ||
+    resolved.model_name ||
+    resolved.name ||
+    resolved.deployment ||
+    'Default'
+  );
+};
+
+const getModelLabel = (agent) => getModelName(agent?.model || agent?.cascade_model || agent?.voicelive_model);
+
+const getCascadeLabel = (agent) => getModelName(agent?.cascade_model);
+
+const getVoiceLiveLabel = (agent) => getModelName(agent?.voicelive_model);
+
+const formatToolName = (tool) => {
+  if (!tool) return '';
+  if (typeof tool === 'string') return tool;
+  return tool.name || tool.tool_name || String(tool);
+};
+
+function AgentDetailsDialog({ open, onClose, agent, loading }) {
+  const promptText =
+    agent?.prompt_full || agent?.prompt || agent?.prompt_preview || '';
+  const tools = (agent?.tools || []).map(formatToolName).filter(Boolean);
+  const voiceLabel = getVoiceLabel(agent);
+  const modelLabel = getModelLabel(agent);
+  const cascadeLabel = getCascadeLabel(agent);
+  const voiceLiveLabel = getVoiceLiveLabel(agent);
+  const isSessionAgent = Boolean(agent?.is_session_agent);
+  const promptIsPreview = !agent?.prompt_full && !agent?.prompt && !!agent?.prompt_preview;
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle sx={{ pb: 1 }}>
+        <Stack direction="row" alignItems="center" spacing={2}>
+          <Avatar sx={{ bgcolor: isSessionAgent ? '#6366f1' : '#0ea5e9' }}>
+            {agent?.name?.[0] || 'A'}
+          </Avatar>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                {agent?.name || 'Agent Details'}
+              </Typography>
+              {isSessionAgent && (
+                <Chip
+                  size="small"
+                  icon={<MemoryIcon sx={{ fontSize: 14 }} />}
+                  label="Session"
+                  sx={{ backgroundColor: '#eef2ff', color: '#4338ca' }}
+                />
+              )}
+              {agent?.is_entry_point && (
+                <Chip size="small" color="primary" label="Entry" />
+              )}
+            </Stack>
+            <Typography variant="body2" color="text.secondary" noWrap>
+              {agent?.description || 'No description provided'}
+            </Typography>
+          </Box>
+          <IconButton onClick={onClose} size="small">
+            <CloseIcon />
+          </IconButton>
+        </Stack>
+      </DialogTitle>
+      <DialogContent dividers sx={{ p: 0 }}>
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <Stack spacing={0}>
+            <Box sx={{ p: 2, borderBottom: '1px solid #e5e7eb' }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                Snapshot
+              </Typography>
+              <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ gap: 1 }}>
+                <Chip
+                  size="small"
+                  icon={<BuildIcon sx={{ fontSize: 14 }} />}
+                  label={`${tools.length} tools`}
+                />
+                <Chip
+                  size="small"
+                  icon={<RecordVoiceOverIcon sx={{ fontSize: 14 }} />}
+                  label={voiceLabel}
+                />
+                <Chip
+                  size="small"
+                  icon={<MemoryIcon sx={{ fontSize: 14 }} />}
+                  label={modelLabel}
+                />
+                <Chip
+                  size="small"
+                  icon={<MemoryIcon sx={{ fontSize: 14 }} />}
+                  label={`Cascade ${cascadeLabel}`}
+                />
+                <Chip
+                  size="small"
+                  icon={<HearingIcon sx={{ fontSize: 14 }} />}
+                  label={`VoiceLive ${voiceLiveLabel}`}
+                />
+                {isSessionAgent && agent?.session_id && (
+                  <Chip size="small" label={`Session ${agent.session_id}`} />
+                )}
+              </Stack>
+            </Box>
+
+            {(agent?.greeting || agent?.return_greeting) && (
+              <Box sx={{ p: 2, borderBottom: '1px solid #e5e7eb' }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                  Greetings
+                </Typography>
+                <Stack spacing={1}>
+                  {agent?.greeting && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Initial Greeting
+                      </Typography>
+                      <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2, mt: 0.5 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap' }}
+                        >
+                          {agent.greeting}
+                        </Typography>
+                      </Paper>
+                    </Box>
+                  )}
+                  {agent?.return_greeting && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Return Greeting
+                      </Typography>
+                      <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2, mt: 0.5 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap' }}
+                        >
+                          {agent.return_greeting}
+                        </Typography>
+                      </Paper>
+                    </Box>
+                  )}
+                </Stack>
+              </Box>
+            )}
+
+            <Box sx={{ p: 2, borderBottom: '1px solid #e5e7eb' }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                Prompt {promptIsPreview ? '(Preview)' : ''}
+              </Typography>
+              {promptText ? (
+                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2, maxHeight: 260, overflow: 'auto' }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap' }}
+                  >
+                    {promptText}
+                  </Typography>
+                </Paper>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No prompt available
+                </Typography>
+              )}
+            </Box>
+
+            <Box sx={{ p: 2 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                Tools
+              </Typography>
+              {tools.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No tools configured for this agent
+                </Typography>
+              ) : (
+                <Stack direction="row" flexWrap="wrap" gap={1}>
+                  {tools.map((tool) => (
+                    <Chip
+                      key={tool}
+                      label={tool}
+                      size="small"
+                      sx={{ fontFamily: 'monospace', fontSize: 11 }}
+                    />
+                  ))}
+                </Stack>
+              )}
+            </Box>
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function ToolDetailsDialog({ open, onClose, tool }) {
+  if (!tool) return null;
+
+  const parameters = tool.parameters ? JSON.stringify(tool.parameters, null, 2) : null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ pb: 1 }}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Box
+            sx={{
+              width: 32,
+              height: 32,
+              borderRadius: '50%',
+              backgroundColor: '#eef2ff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <BuildIcon sx={{ fontSize: 16, color: '#4338ca' }} />
+          </Box>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              {tool.name}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Tool details
+            </Typography>
+          </Box>
+          <IconButton onClick={onClose} size="small">
+            <CloseIcon />
+          </IconButton>
+        </Stack>
+      </DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+              Description
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {tool.description || 'No description provided.'}
+            </Typography>
+          </Box>
+
+          {tool.tags?.length > 0 && (
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                Tags
+              </Typography>
+              <Stack direction="row" flexWrap="wrap" gap={1}>
+                {tool.tags.map((tag) => (
+                  <Chip key={tag} size="small" label={tag} />
+                ))}
+              </Stack>
+            </Box>
+          )}
+
+          {parameters && (
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                Parameters
+              </Typography>
+              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2, backgroundColor: '#0f172a' }}>
+                <Typography
+                  component="pre"
+                  sx={{
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: '#e2e8f0',
+                    whiteSpace: 'pre-wrap',
+                    m: 0,
+                  }}
+                >
+                  {parameters}
+                </Typography>
+              </Paper>
+            </Box>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEFAULT PROMPT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -632,6 +962,9 @@ export default function AgentBuilderContent({
   const [availableTools, setAvailableTools] = useState([]);
   const [availableVoices, setAvailableVoices] = useState([]);
   const [availableTemplates, setAvailableTemplates] = useState([]);
+  const [detailAgent, setDetailAgent] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedTool, setSelectedTool] = useState(null);
   
   // Agent configuration state
   const [config, setConfig] = useState({
@@ -660,6 +993,7 @@ export default function AgentBuilderContent({
       style: 'chat',
       rate: '+0%',
       pitch: '+0%',
+      endpoint_id: '',
     },
     speech: {
       vad_silence_timeout_ms: 800,
@@ -675,6 +1009,10 @@ export default function AgentBuilderContent({
       silence_duration_ms: 700,
       prefix_padding_ms: 240,
       tool_choice: 'auto',
+      input_audio_transcription_settings: {
+        model: 'azure-speech',
+        language: 'en-US',
+      },
     },
     template_vars: {
       institution_name: 'Contoso Financial',
@@ -685,6 +1023,17 @@ export default function AgentBuilderContent({
   // Tool categories
   const [expandedCategories, setExpandedCategories] = useState({});
   const [toolFilter, setToolFilter] = useState('all');
+  const sessionTemplates = useMemo(() => {
+    const sessionItems = (availableTemplates || []).filter((t) => t.is_session_agent);
+    if (sessionId) {
+      return sessionItems.filter((t) => t.session_id === sessionId);
+    }
+    return sessionItems;
+  }, [availableTemplates, sessionId]);
+  const staticTemplates = useMemo(
+    () => (availableTemplates || []).filter((t) => !t.is_session_agent),
+    [availableTemplates],
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   // DATA FETCHING
@@ -748,7 +1097,14 @@ export default function AgentBuilderContent({
             voicelive_model: data.config.voicelive_model || prev.voicelive_model,
             voice: data.config.voice || prev.voice,
             speech: data.config.speech || prev.speech,
-            session: data.config.session || prev.session,
+            session: {
+              ...prev.session,
+              ...(data.config.session || {}),
+              input_audio_transcription_settings: {
+                ...(prev.session?.input_audio_transcription_settings || {}),
+                ...(data.config.session?.input_audio_transcription_settings || {}),
+              },
+            },
           }));
           setIsEditMode(true);
         }
@@ -798,6 +1154,7 @@ export default function AgentBuilderContent({
     return availableTools.filter((t) => !t.is_handoff);
   }, [availableTools, toolFilter]);
 
+
   // Compute used Jinja variables from prompt, greeting, return_greeting
   const usedVars = useMemo(() => {
     const fromGreeting = extractJinjaVariables(config.greeting);
@@ -824,6 +1181,19 @@ export default function AgentBuilderContent({
     }));
   }, []);
 
+  const handleSessionTranscriptionChange = useCallback((field, value) => {
+    setConfig((prev) => ({
+      ...prev,
+      session: {
+        ...(prev.session || {}),
+        input_audio_transcription_settings: {
+          ...(prev.session?.input_audio_transcription_settings || {}),
+          [field]: value,
+        },
+      },
+    }));
+  }, []);
+
   // Insert variable at cursor position in prompt textarea
   const handleInsertVariable = useCallback((varText) => {
     const textarea = promptTextareaRef.current;
@@ -846,6 +1216,8 @@ export default function AgentBuilderContent({
     }
   }, [config.prompt, handleConfigChange]);
 
+  const isCustomVoice = (config.voice?.type || 'azure-standard') === 'azure-custom';
+
   const handleToolToggle = useCallback((toolName) => {
     setConfig((prev) => ({
       ...prev,
@@ -853,6 +1225,28 @@ export default function AgentBuilderContent({
         ? prev.tools.filter((t) => t !== toolName)
         : [...prev.tools, toolName],
     }));
+  }, []);
+
+  const applyTemplateFromCache = useCallback((template) => {
+    if (!template) return;
+    setConfig((prev) => ({
+      ...prev,
+      name: template.name || prev.name,
+      description: template.description || '',
+      greeting: template.greeting || '',
+      return_greeting: template.return_greeting || '',
+      prompt:
+        template.prompt_full ||
+        template.prompt ||
+        template.prompt_preview ||
+        prev.prompt,
+      tools: template.tools || [],
+      cascade_model: template.cascade_model || prev.cascade_model,
+      voicelive_model: template.voicelive_model || prev.voicelive_model,
+      voice: template.voice || prev.voice,
+    }));
+    setSuccess(`Applied ${template.is_session_agent ? 'session agent' : 'template'}: ${template.name}`);
+    setTimeout(() => setSuccess(null), 3000);
   }, []);
 
   const handleApplyTemplate = useCallback(async (templateId) => {
@@ -872,6 +1266,8 @@ export default function AgentBuilderContent({
           return_greeting: template.return_greeting || '',
           prompt: template.prompt_full || template.prompt || DEFAULT_PROMPT,
           tools: template.tools || [],
+          cascade_model: template.cascade_model || prev.cascade_model,
+          voicelive_model: template.voicelive_model || prev.voicelive_model,
           voice: template.voice || prev.voice,
         }));
         setSuccess(`Applied template: ${template.name}`);
@@ -882,6 +1278,65 @@ export default function AgentBuilderContent({
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const handleApplyTemplateCard = useCallback(
+    (template) => {
+      if (!template) return;
+      if (template.is_session_agent || String(template.id || '').startsWith('session:')) {
+        applyTemplateFromCache(template);
+      } else {
+        handleApplyTemplate(template.id);
+      }
+    },
+    [applyTemplateFromCache, handleApplyTemplate],
+  );
+
+  const handleViewDetails = useCallback(async (template) => {
+    if (!template) return;
+    if (template.is_session_agent || String(template.id || '').startsWith('session:')) {
+      setDetailAgent(template);
+      return;
+    }
+    if (!template.id) {
+      setDetailAgent(template);
+      return;
+    }
+    setDetailAgent(template);
+    setDetailLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/agent-builder/templates/${template.id}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        const fullTemplate = data.template || {};
+        setDetailAgent({
+          ...template,
+          ...fullTemplate,
+          prompt_full: fullTemplate.prompt || template.prompt_full || template.prompt_preview,
+        });
+      } else {
+        setDetailAgent(template);
+      }
+    } catch (err) {
+      setDetailAgent(template);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  const handleCloseDetails = useCallback(() => {
+    setDetailAgent(null);
+    setDetailLoading(false);
+  }, []);
+
+  const handleOpenToolDetails = useCallback((tool) => {
+    setSelectedTool(tool);
+  }, []);
+
+  const handleCloseToolDetails = useCallback(() => {
+    setSelectedTool(null);
   }, []);
 
   const handleSave = async () => {
@@ -972,6 +1427,11 @@ export default function AgentBuilderContent({
           silence_duration_ms: 700,
           prefix_padding_ms: 240,
           tool_choice: 'auto',
+          input_audio_transcription_settings:
+            defaults?.session?.input_audio_transcription_settings || {
+              model: 'azure-speech',
+              language: 'en-US',
+            },
         },
         template_vars: defaults?.template_vars || config.template_vars,
       });
@@ -979,6 +1439,208 @@ export default function AgentBuilderContent({
     } catch {
       setError('Failed to reset');
     }
+  };
+
+  const renderAgentCard = (agent) => {
+    const toolCount = Array.isArray(agent?.tools) ? agent.tools.length : 0;
+    const voiceLabel = getVoiceLabel(agent);
+    const cascadeLabel = getCascadeLabel(agent);
+    const voiceLiveLabel = getVoiceLiveLabel(agent);
+    const isSessionAgent = Boolean(agent?.is_session_agent);
+
+    return (
+      <Card
+        key={agent?.id || agent?.name}
+        variant="outlined"
+        sx={{
+          minWidth: 260,
+          maxWidth: 320,
+          flex: '1 1 260px',
+          display: 'flex',
+          flexDirection: 'column',
+          borderRadius: '12px',
+          borderColor: isSessionAgent ? '#c7d2fe' : '#e5e7eb',
+          boxShadow: 'none',
+          '&:hover': {
+            borderColor: '#6366f1',
+            boxShadow: '0 4px 12px rgba(99,102,241,0.1)',
+          },
+        }}
+      >
+        <CardContent sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+            <Avatar sx={{ width: 32, height: 32, bgcolor: isSessionAgent ? '#6366f1' : '#0ea5e9' }}>
+              {agent?.name?.[0] || 'A'}
+            </Avatar>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600 }} noWrap>
+                {agent?.name || 'Agent'}
+              </Typography>
+            </Box>
+            {agent?.is_entry_point && (
+              <Chip size="small" color="primary" label="Entry" />
+            )}
+            {isSessionAgent && (
+              <Chip size="small" label="Session" sx={{ bgcolor: '#eef2ff', color: '#4338ca' }} />
+            )}
+          </Stack>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{
+              mb: 1.25,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}
+          >
+            {agent?.description || 'No description provided'}
+          </Typography>
+
+          <Box
+            sx={{
+              mb: 1.5,
+              px: 1,
+              py: 0.75,
+              borderRadius: '10px',
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e5e7eb',
+            }}
+          >
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: 'auto 1fr',
+                columnGap: 1,
+                rowGap: 0.75,
+                alignItems: 'center',
+              }}
+            >
+              <Box
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  px: 0.75,
+                  py: 0.25,
+                  borderRadius: '999px',
+                  backgroundColor: '#eef2ff',
+                  color: '#4338ca',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: 0.2,
+                }}
+              >
+                <BuildIcon sx={{ fontSize: 12 }} />
+                Tools
+              </Box>
+              <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a' }}>
+                {toolCount}
+              </Typography>
+
+              <Box
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  px: 0.75,
+                  py: 0.25,
+                  borderRadius: '999px',
+                  backgroundColor: '#eef2ff',
+                  color: '#4338ca',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: 0.2,
+                }}
+              >
+                <MemoryIcon sx={{ fontSize: 12 }} />
+                Cascade
+              </Box>
+              <Typography
+                variant="body2"
+                sx={{ fontWeight: 600, color: '#0f172a', wordBreak: 'break-word' }}
+                title={cascadeLabel}
+              >
+                {cascadeLabel}
+              </Typography>
+
+              <Box
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  px: 0.75,
+                  py: 0.25,
+                  borderRadius: '999px',
+                  backgroundColor: '#ecfeff',
+                  color: '#0e7490',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: 0.2,
+                }}
+              >
+                <HearingIcon sx={{ fontSize: 12 }} />
+                VoiceLive
+              </Box>
+              <Typography
+                variant="body2"
+                sx={{ fontWeight: 600, color: '#0f172a', wordBreak: 'break-word' }}
+                title={voiceLiveLabel}
+              >
+                {voiceLiveLabel}
+              </Typography>
+
+              <Box
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  px: 0.75,
+                  py: 0.25,
+                  borderRadius: '999px',
+                  backgroundColor: '#f0fdf4',
+                  color: '#15803d',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: 0.2,
+                }}
+              >
+                <RecordVoiceOverIcon sx={{ fontSize: 12 }} />
+                Voice
+              </Box>
+              <Typography
+                variant="body2"
+                sx={{ fontWeight: 600, color: '#0f172a', wordBreak: 'break-word' }}
+                title={voiceLabel}
+              >
+                {voiceLabel}
+              </Typography>
+            </Box>
+          </Box>
+
+          <Stack direction="row" spacing={1} sx={{ mt: 'auto' }}>
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<InfoOutlinedIcon />}
+              onClick={() => handleViewDetails(agent)}
+              sx={{ textTransform: 'none' }}
+            >
+              Details
+            </Button>
+            <Button
+              size="small"
+              variant={isSessionAgent ? 'contained' : 'outlined'}
+              onClick={() => handleApplyTemplateCard(agent)}
+              sx={{ textTransform: 'none' }}
+            >
+              {isSessionAgent ? 'Edit Agent' : 'Use Template'}
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
+    );
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1072,21 +1734,6 @@ export default function AgentBuilderContent({
                         multiline
                         rows={2}
                       />
-                      <TextField
-                        label="Handoff Trigger"
-                        value={config.handoff_trigger}
-                        onChange={(e) => handleConfigChange('handoff_trigger', e.target.value)}
-                        fullWidth
-                        placeholder={`handoff_${config.name.toLowerCase().replace(/\s+/g, '_')}`}
-                        helperText="Tool name for routing to this agent (auto-generated if empty)"
-                        InputProps={{
-                          startAdornment: (
-                            <InputAdornment position="start">
-                              <SwapHorizIcon fontSize="small" color="action" />
-                            </InputAdornment>
-                          ),
-                        }}
-                      />
                     </Stack>
                   </CardContent>
                 </Card>
@@ -1101,18 +1748,38 @@ export default function AgentBuilderContent({
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
                       Select an agent to edit or use as a starting template for a new agent.
                     </Typography>
-                    <Stack direction="row" flexWrap="wrap" gap={1}>
-                      {availableTemplates.map((t) => (
-                        <Chip
-                          key={t.id}
-                          label={t.name}
-                          icon={t.is_session_agent ? <SmartToyIcon fontSize="small" /> : <StarIcon fontSize="small" />}
-                          color={t.is_session_agent ? 'secondary' : 'default'}
-                          onClick={() => handleApplyTemplate(t.id)}
-                          sx={{ cursor: 'pointer' }}
-                        />
-                      ))}
-                      {availableTemplates.length === 0 && (
+                    <Stack spacing={2.5}>
+                      {sessionTemplates.length > 0 && (
+                        <Box>
+                          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+                            <MemoryIcon sx={{ fontSize: 16, color: '#4338ca' }} />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                              Session Memory Agents
+                            </Typography>
+                            <Chip size="small" label={sessionTemplates.length} />
+                          </Stack>
+                          <Stack direction="row" flexWrap="wrap" gap={1.5}>
+                            {sessionTemplates.map(renderAgentCard)}
+                          </Stack>
+                        </Box>
+                      )}
+
+                      {staticTemplates.length > 0 && (
+                        <Box>
+                          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+                            <FolderOpenIcon sx={{ fontSize: 16, color: '#0ea5e9' }} />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                              Built-in Templates
+                            </Typography>
+                            <Chip size="small" label={staticTemplates.length} />
+                          </Stack>
+                          <Stack direction="row" flexWrap="wrap" gap={1.5}>
+                            {staticTemplates.map(renderAgentCard)}
+                          </Stack>
+                        </Box>
+                      )}
+
+                      {sessionTemplates.length === 0 && staticTemplates.length === 0 && (
                         <Typography variant="body2" color="text.secondary">
                           No templates available
                         </Typography>
@@ -1233,13 +1900,56 @@ export default function AgentBuilderContent({
                               />
                             }
                             label={
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2">{tool.name}</Typography>
-                                {tool.is_handoff && (
-                                  <Chip label="handoff" size="small" color="secondary" sx={{ height: 18, fontSize: 10 }} />
-                                )}
-                              </Stack>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, width: '100%' }}>
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Stack direction="row" alignItems="center" spacing={1}>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                      {tool.name}
+                                    </Typography>
+                                    {tool.is_handoff && (
+                                      <Chip
+                                        label="handoff"
+                                        size="small"
+                                        color="secondary"
+                                        sx={{ height: 18, fontSize: 10 }}
+                                      />
+                                    )}
+                                    {(tool.tags || []).slice(0, 2).map((tag) => (
+                                      <Chip key={tag} label={tag} size="small" sx={{ height: 18, fontSize: 10 }} />
+                                    ))}
+                                  </Stack>
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{
+                                      display: 'block',
+                                      mt: 0.25,
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {tool.description || 'No description available.'}
+                                  </Typography>
+                                </Box>
+                                <Tooltip title="Tool details">
+                                  <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleOpenToolDetails(tool);
+                                    }}
+                                  >
+                                    <InfoOutlinedIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
                             }
+                            sx={{
+                              alignItems: 'flex-start',
+                              '& .MuiFormControlLabel-label': { width: '100%' },
+                            }}
                           />
                         ))}
                       </Stack>
@@ -1257,16 +1967,62 @@ export default function AgentBuilderContent({
                     🎙️ Voice Settings
                   </Typography>
                   <Stack spacing={2}>
-                    <Autocomplete
-                      options={availableVoices}
-                      getOptionLabel={(opt) => opt.display_name || opt.name}
-                      value={availableVoices.find((v) => v.name === config.voice?.name) || null}
-                      onChange={(e, v) => v && handleNestedConfigChange('voice', 'name', v.name)}
-                      renderInput={(params) => <TextField {...params} label="Voice" />}
-                    />
+                    {!isCustomVoice ? (
+                      <Autocomplete
+                        options={availableVoices}
+                        getOptionLabel={(opt) => opt.display_name || opt.name}
+                        value={availableVoices.find((v) => v.name === config.voice?.name) || null}
+                        onChange={(e, v) => v && handleNestedConfigChange('voice', 'name', v.name)}
+                        renderInput={(params) => <TextField {...params} label="Voice" />}
+                      />
+                    ) : (
+                      <TextField
+                        label="Custom Voice Name"
+                        value={config.voice?.name || ''}
+                        onChange={(e) => handleNestedConfigChange('voice', 'name', e.target.value)}
+                        fullWidth
+                        helperText="Custom voice name from your Azure Speech resource"
+                      />
+                    )}
                     <Stack direction="row" spacing={2}>
                       <TextField
-                        label="Speaking Rate"
+                        select
+                        label="Voice Type"
+                        value={config.voice?.type || 'azure-standard'}
+                        onChange={(e) => handleNestedConfigChange('voice', 'type', e.target.value)}
+                        fullWidth
+                        SelectProps={{ native: true }}
+                        helperText="Voice output type (TTS)"
+                      >
+                        <option value="azure-standard">Azure Standard</option>
+                        <option value="azure-custom">Azure Custom</option>
+                      </TextField>
+                      {isCustomVoice && (
+                        <TextField
+                          label="Custom Endpoint ID"
+                          value={config.voice?.endpoint_id || ''}
+                          onChange={(e) => handleNestedConfigChange('voice', 'endpoint_id', e.target.value)}
+                          fullWidth
+                          helperText="Endpoint ID for your custom voice deployment"
+                        />
+                      )}
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary">
+                      Voice settings control TTS output. Input transcription for VoiceLive is configured in VAD/Session.
+                      {' '}
+                      <Box
+                        component="a"
+                        href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live-how-to-customize"
+                        target="_blank"
+                        rel="noreferrer"
+                        sx={{ color: 'inherit', textDecoration: 'underline' }}
+                      >
+                        VoiceLive customization guide
+                      </Box>
+                    </Typography>
+                  <Stack direction="row" spacing={2}>
+                    <TextField
+                      label="Speaking Rate"
                         value={config.voice?.rate || '+0%'}
                         onChange={(e) => handleNestedConfigChange('voice', 'rate', e.target.value)}
                         fullWidth
@@ -1407,11 +2163,34 @@ export default function AgentBuilderContent({
                           max={1}
                           step={0.05}
                           marks={[
-                            { value: 0, label: '0 (Less Sensitive)' },
-                            { value: 0.5, label: '0.5' },
-                            { value: 1, label: '1 (More Sensitive)' },
+                            { value: 0 },
+                            { value: 0.5 },
+                            { value: 1 },
                           ]}
+                          sx={{
+                            px: 0,
+                          }}
                         />
+                        <Box
+                          sx={{
+                            px: 0,
+                            mt: 0.5,
+                            display: 'grid',
+                            gridTemplateColumns: '1fr auto 1fr',
+                            alignItems: 'center',
+                            color: 'text.secondary',
+                          }}
+                        >
+                          <Typography variant="caption" sx={{ justifySelf: 'start' }}>
+                            Less Sensitive
+                          </Typography>
+                          <Typography variant="caption" sx={{ justifySelf: 'center' }}>
+                            0.5
+                          </Typography>
+                          <Typography variant="caption" sx={{ justifySelf: 'end' }}>
+                            More Sensitive
+                          </Typography>
+                        </Box>
                       </Box>
                       <Stack direction="row" spacing={2}>
                         <TextField
@@ -1446,6 +2225,45 @@ export default function AgentBuilderContent({
                         <option value="none">None (no tools)</option>
                         <option value="required">Required (must use tool)</option>
                       </TextField>
+                      <Divider />
+                      <Box>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                          📝 VoiceLive Input Transcription
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                          Applies to VoiceLive (Realtime). Configure STT model and language for input transcription.
+                        </Typography>
+                        <Stack direction="row" spacing={2}>
+                          <TextField
+                            select
+                            label="Transcription Model"
+                            value={config.session?.input_audio_transcription_settings?.model || 'azure-speech'}
+                            onChange={(e) => handleSessionTranscriptionChange('model', e.target.value)}
+                            fullWidth
+                            SelectProps={{ native: true }}
+                          >
+                            {TRANSCRIPTION_MODELS.map((model) => (
+                              <option key={model.value} value={model.value}>
+                                {model.label}
+                              </option>
+                            ))}
+                          </TextField>
+                          <TextField
+                            select
+                            label="Language"
+                            value={config.session?.input_audio_transcription_settings?.language || 'en-US'}
+                            onChange={(e) => handleSessionTranscriptionChange('language', e.target.value)}
+                            fullWidth
+                            SelectProps={{ native: true }}
+                          >
+                            {TRANSCRIPTION_LANGUAGES.map((language) => (
+                              <option key={language.value} value={language.value}>
+                                {language.label}
+                              </option>
+                            ))}
+                          </TextField>
+                        </Stack>
+                      </Box>
                     </Stack>
                   </CardContent>
                 </Card>
@@ -1495,6 +2313,18 @@ export default function AgentBuilderContent({
           </>
         )}
       </Box>
+
+      <AgentDetailsDialog
+        open={Boolean(detailAgent) || detailLoading}
+        onClose={handleCloseDetails}
+        agent={detailAgent}
+        loading={detailLoading}
+      />
+      <ToolDetailsDialog
+        open={Boolean(selectedTool)}
+        onClose={handleCloseToolDetails}
+        tool={selectedTool}
+      />
 
       {/* Footer */}
       <Divider />

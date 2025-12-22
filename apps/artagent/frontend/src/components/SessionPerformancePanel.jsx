@@ -249,7 +249,7 @@ const SessionPerformancePanel = ({
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <SpeedRoundedIcon sx={{ color: '#0ea5e9' }} fontSize="small" />
           <Box>
-            <Typography sx={{ fontWeight: 800, fontSize: '15px', color: '#0f172a' }}>Session Performance</Typography>
+            <Typography sx={{ fontWeight: 800, fontSize: '15px', color: '#0f172a' }}>Session Performance (Beta)</Typography>
             <Typography sx={{ fontSize: '11px', color: '#64748b' }}>Real-time latency and bottleneck analysis</Typography>
           </Box>
         </Box>
