@@ -538,6 +538,7 @@ async def lifespan(app: FastAPI):
             WARM_POOL_BACKGROUND_REFRESH,
             WARM_POOL_ENABLED,
             WARM_POOL_REFRESH_INTERVAL,
+            WARM_POOL_RESTART_ON_FAILURE,
             WARM_POOL_SESSION_MAX_AGE,
             WARM_POOL_STT_SIZE,
             WARM_POOL_TTS_SIZE,
@@ -598,6 +599,31 @@ async def lifespan(app: FastAPI):
         # Log pool status
         tts_snapshot = app.state.tts_pool.snapshot()
         stt_snapshot = app.state.stt_pool.snapshot()
+        if WARM_POOL_ENABLED and WARM_POOL_RESTART_ON_FAILURE:
+            tts_failures = tts_snapshot.get("metrics", {}).get("warmup_failures", 0)
+            stt_failures = stt_snapshot.get("metrics", {}).get("warmup_failures", 0)
+            tts_target = tts_snapshot.get("warm_pool_target", 0)
+            stt_target = stt_snapshot.get("warm_pool_target", 0)
+            tts_ready = tts_snapshot.get("warm_pool_size", 0)
+            stt_ready = stt_snapshot.get("warm_pool_size", 0)
+
+            if (
+                tts_failures
+                or stt_failures
+                or (tts_target and tts_ready < tts_target)
+                or (stt_target and stt_ready < stt_target)
+            ):
+                logger.error(
+                    "Speech pool warmup failed; requesting restart (tts_failures=%s, stt_failures=%s, "
+                    "tts_ready=%s/%s, stt_ready=%s/%s)",
+                    tts_failures,
+                    stt_failures,
+                    tts_ready,
+                    tts_target,
+                    stt_ready,
+                    stt_target,
+                )
+                raise RuntimeError("Speech pool warmup failed")
         logger.debug(
             "Speech pools ready (TTS warm=%s, STT warm=%s)",
             tts_snapshot.get("warm_pool_size", 0),

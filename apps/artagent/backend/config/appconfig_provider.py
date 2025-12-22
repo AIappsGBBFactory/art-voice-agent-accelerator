@@ -162,6 +162,7 @@ APPCONFIG_KEY_MAP: dict[str, str] = {
     "app/pools/warm-stt-size": "WARM_POOL_STT_SIZE",
     "app/pools/warm-refresh-interval": "WARM_POOL_REFRESH_INTERVAL",
     "app/pools/warm-session-max-age": "WARM_POOL_SESSION_MAX_AGE",
+    "app/pools/warm-restart-on-failure": "WARM_POOL_RESTART_ON_FAILURE",
     # Connection Settings
     "app/connections/max-websocket": "MAX_WEBSOCKET_CONNECTIONS",
     "app/connections/queue-size": "CONNECTION_QUEUE_SIZE",

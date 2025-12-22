@@ -54,6 +54,7 @@ from .settings import (  # AI; Security; Voice; Connections; Monitoring; Speech 
     WARM_POOL_BACKGROUND_REFRESH,
     WARM_POOL_ENABLED,
     WARM_POOL_REFRESH_INTERVAL,
+    WARM_POOL_RESTART_ON_FAILURE,
     WARM_POOL_SESSION_MAX_AGE,
     WARM_POOL_STT_SIZE,
     WARM_POOL_TTS_SIZE,
@@ -78,6 +79,7 @@ class SpeechPoolConfig:
     warm_pool_background_refresh: bool = WARM_POOL_BACKGROUND_REFRESH
     warm_pool_refresh_interval: float = WARM_POOL_REFRESH_INTERVAL
     warm_pool_session_max_age: float = WARM_POOL_SESSION_MAX_AGE
+    warm_pool_restart_on_failure: bool = WARM_POOL_RESTART_ON_FAILURE
 
     def to_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}

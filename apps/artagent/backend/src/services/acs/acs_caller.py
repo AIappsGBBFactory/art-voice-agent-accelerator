@@ -64,8 +64,17 @@ def initialize_acs_caller_instance() -> AcsCaller | None:
     if _instance:
         return _instance
 
+    # Read configuration dynamically to get values set by App Configuration bootstrap
+    cfg = _get_config_dynamic()
+    acs_phone = cfg["ACS_SOURCE_PHONE_NUMBER"]
+    acs_conn_string = cfg["ACS_CONNECTION_STRING"]
+    acs_endpoint = cfg["ACS_ENDPOINT"]
+    base_url = cfg["BASE_URL"]
+    speech_endpoint = cfg["AZURE_SPEECH_ENDPOINT"]
+    storage_url = cfg["AZURE_STORAGE_CONTAINER_URL"]
+
     # Check if required ACS configuration is present
-    if not all([ACS_SOURCE_PHONE_NUMBER, BASE_URL]):
+    if not all([acs_phone, base_url]):
         logger.warning(
             "⚠️  ACS TELEPHONY DISABLED: Missing required environment variables "
             "(ACS_SOURCE_PHONE_NUMBER or BASE_URL). "
@@ -74,25 +83,25 @@ def initialize_acs_caller_instance() -> AcsCaller | None:
         )
         return None
 
-    callback_url = f"{BASE_URL.rstrip('/')}{ACS_CALL_CALLBACK_PATH}"
-    ws_url = construct_websocket_url(BASE_URL, ACS_WEBSOCKET_PATH)
+    callback_url = f"{base_url.rstrip('/')}{ACS_CALL_CALLBACK_PATH}"
+    ws_url = construct_websocket_url(base_url, ACS_WEBSOCKET_PATH)
     if not ws_url:
         logger.error("Could not build ACS media WebSocket URL; disabling outbound calls")
         return None
 
     try:
         _instance = AcsCaller(
-            source_number=ACS_SOURCE_PHONE_NUMBER,
-            acs_connection_string=ACS_CONNECTION_STRING,
-            acs_endpoint=ACS_ENDPOINT,
+            source_number=acs_phone,
+            acs_connection_string=acs_conn_string,
+            acs_endpoint=acs_endpoint,
             callback_url=callback_url,
             websocket_url=ws_url,
-            cognitive_services_endpoint=AZURE_SPEECH_ENDPOINT,
-            recording_storage_container_url=AZURE_STORAGE_CONTAINER_URL,
+            cognitive_services_endpoint=speech_endpoint,
+            recording_storage_container_url=storage_url,
         )
         logger.info(
             "AcsCaller initialised with phone: %s...",
-            ACS_SOURCE_PHONE_NUMBER[:4] if ACS_SOURCE_PHONE_NUMBER else "???",
+            acs_phone[:4] if acs_phone else "???",
         )
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Failed to initialise AcsCaller: %s", exc, exc_info=True)
