@@ -69,7 +69,6 @@ from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-from src.enums.monitoring import SpanAttr
 from utils.ml_logging import get_logger
 from utils.telemetry_decorators import ConversationTurnSpan
 
@@ -752,6 +751,29 @@ class VoiceLiveSDKHandler:
         if reset_cancel:
             self._set_metadata("tts_cancel_requested", False)
 
+    async def _start_turn_span(self) -> None:
+        await self._end_active_turn_span()
+        transport = (
+            self._transport.value
+            if hasattr(self._transport, "value")
+            else str(self._transport)
+        )
+        turn = ConversationTurnSpan(
+            call_connection_id=self.call_connection_id,
+            session_id=self.session_id,
+            turn_number=self._turn_number,
+            transport_type=transport,
+        )
+        await turn.__aenter__()
+        self._active_turn_span = turn
+
+    async def _end_active_turn_span(self) -> None:
+        turn = self._active_turn_span
+        if not turn:
+            return
+        self._active_turn_span = None
+        await turn.__aexit__(None, None, None)
+
     def _trigger_barge_in(
         self,
         trigger: str,
@@ -1327,6 +1349,17 @@ class VoiceLiveSDKHandler:
         if etype == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
             self._transcript_final_time = time.perf_counter()
             transcript = getattr(event, "transcript", "")
+            stt_latency_ms = None
+            if self._vad_end_time:
+                stt_latency_ms = (self._transcript_final_time - self._vad_end_time) * 1000
+            elif self._turn_start_time:
+                stt_latency_ms = (self._transcript_final_time - self._turn_start_time) * 1000
+            if self._active_turn_span and transcript:
+                self._active_turn_span.record_stt_complete(
+                    text=transcript,
+                    latency_ms=stt_latency_ms,
+                    language=getattr(event, "language", None),
+                )
             turn_id = self._messenger.resolve_user_turn_id(self._extract_item_id(event))
             if transcript and (
                 transcript != self._last_user_transcript or turn_id != self._last_user_turn_id
@@ -1352,6 +1385,11 @@ class VoiceLiveSDKHandler:
                 start_ref = self._vad_end_time or self._turn_start_time
                 ttfb_ms = (self._tts_first_audio_time - start_ref) * 1000
                 self._current_response_id = response_id
+                if self._active_turn_span:
+                    self._active_turn_span.add_metadata(
+                        "voicelive.response_id", response_id or "unknown"
+                    )
+                    self._active_turn_span.record_tts_first_audio()
 
                 # Record OTel metric for App Insights Performance view
                 record_tts_ttfb(
@@ -1362,27 +1400,13 @@ class VoiceLiveSDKHandler:
                     agent_name=self._messenger._active_agent_name or "unknown",
                 )
 
-                # Emit TTFB metric as a span for App Insights Performance tab
-                with tracer.start_as_current_span(
-                    "voicelive.tts.ttfb",
-                    kind=SpanKind.INTERNAL,
-                    attributes={
-                        SpanAttr.TURN_NUMBER.value: self._turn_number,
-                        SpanAttr.TURN_TTS_TTFB_MS.value: ttfb_ms,
-                        SpanAttr.SESSION_ID.value: self.session_id,
-                        SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id,
-                        "voicelive.response_id": response_id or "unknown",
-                        "latency.reference": "vad_end" if self._vad_end_time else "turn_start",
-                    },
-                ) as ttfb_span:
-                    ttfb_span.add_event("tts.first_audio", {"ttfb_ms": ttfb_ms})
-                    logger.info(
-                        "[VoiceLive] TTS TTFB | session=%s turn=%d ttfb_ms=%.2f ref=%s",
-                        self.session_id,
-                        self._turn_number,
-                        ttfb_ms,
-                        "vad_end" if self._vad_end_time else "turn_start",
-                    )
+                logger.info(
+                    "[VoiceLive] TTS TTFB | session=%s turn=%d ttfb_ms=%.2f ref=%s",
+                    self.session_id,
+                    self._turn_number,
+                    ttfb_ms,
+                    "vad_end" if self._vad_end_time else "turn_start",
+                )
 
             logger.debug(
                 "[VoiceLive] Audio delta received | session=%s response=%s bytes=%s",
@@ -1435,6 +1459,7 @@ class VoiceLiveSDKHandler:
             self._llm_first_token_time = None
             self._tts_first_audio_time = None
             self._current_response_id = None
+            await self._start_turn_span()
 
             self._active_response_ids.clear()
             energy = getattr(event, "speech_energy", None)
@@ -1453,6 +1478,8 @@ class VoiceLiveSDKHandler:
 
         elif etype == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
             self._vad_end_time = time.perf_counter()
+            if self._active_turn_span:
+                self._active_turn_span.record_tts_start()
             logger.debug("🎤 User paused speaking")
             logger.debug("🤖 Generating assistant reply")
             self._mark_audio_playback(False)
@@ -1497,10 +1524,14 @@ class VoiceLiveSDKHandler:
             )
 
         elif etype == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA:
-            if self._llm_first_token_time is None:
-                self._llm_first_token_time = time.perf_counter()
+            self.record_llm_first_token()
 
         elif etype == ServerEventType.RESPONSE_AUDIO_DONE:
+            tts_total_ms = None
+            if self._tts_first_audio_time:
+                tts_total_ms = (time.perf_counter() - self._tts_first_audio_time) * 1000
+            if self._active_turn_span:
+                self._active_turn_span.record_tts_complete(total_ms=tts_total_ms)
             logger.debug(
                 "[VoiceLiveSDK] Audio stream marked done | session=%s response=%s",
                 self.session_id,
@@ -2062,24 +2093,15 @@ class VoiceLiveSDKHandler:
                 agent_name=self._messenger._active_agent_name or "unknown",
             )
 
-            # Emit TTFT metric as a span for App Insights Performance tab
-            with tracer.start_as_current_span(
-                "voicelive.llm.ttft",
-                kind=SpanKind.INTERNAL,
-                attributes={
-                    SpanAttr.TURN_NUMBER.value: self._turn_number,
-                    SpanAttr.TURN_LLM_TTFB_MS.value: ttft_ms,
-                    SpanAttr.SESSION_ID.value: self.session_id,
-                    SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id,
-                },
-            ) as ttft_span:
-                ttft_span.add_event("llm.first_token", {"ttft_ms": ttft_ms})
-                logger.info(
-                    "[VoiceLive] LLM TTFT | session=%s turn=%d ttft_ms=%.2f",
-                    self.session_id,
-                    self._turn_number,
-                    ttft_ms,
-                )
+            if self._active_turn_span:
+                self._active_turn_span.record_llm_first_token()
+
+            logger.info(
+                "[VoiceLive] LLM TTFT | session=%s turn=%d ttft_ms=%.2f",
+                self.session_id,
+                self._turn_number,
+                ttft_ms,
+            )
 
     async def _finalize_turn_metrics(self) -> None:
         """Finalize and emit turn-level metrics when a turn completes."""
@@ -2130,45 +2152,19 @@ class VoiceLiveSDKHandler:
             agent_name=self._messenger._active_agent_name or "unknown",
         )
 
-        # Emit comprehensive turn metrics span
-        with tracer.start_as_current_span(
-            f"voicelive.turn.{self._turn_number}.complete",
-            kind=SpanKind.INTERNAL,
-            attributes={
-                SpanAttr.TURN_NUMBER.value: self._turn_number,
-                SpanAttr.TURN_TOTAL_LATENCY_MS.value: total_turn_duration_ms,  # Renamed concept, kept key
-                SpanAttr.SESSION_ID.value: self.session_id,
-                SpanAttr.CALL_CONNECTION_ID.value: self.call_connection_id,
-                SpanAttr.TURN_TRANSPORT_TYPE.value: self._transport,
-                "latency.reference": "vad_end" if self._vad_end_time else "turn_start",
-            },
-        ) as turn_span:
-            if stt_latency_ms is not None:
-                turn_span.set_attribute("turn.stt_latency_ms", stt_latency_ms)
-            if llm_ttft_ms is not None:
-                turn_span.set_attribute(SpanAttr.TURN_LLM_TTFB_MS.value, llm_ttft_ms)
-            if tts_ttfb_ms is not None:
-                turn_span.set_attribute(SpanAttr.TURN_TTS_TTFB_MS.value, tts_ttfb_ms)
-
-            turn_span.add_event(
-                "turn.complete",
-                {
-                    "turn.number": self._turn_number,
-                    "turn.duration_ms": total_turn_duration_ms,
-                    **({"stt_latency_ms": stt_latency_ms} if stt_latency_ms else {}),
-                    **({"llm_ttft_ms": llm_ttft_ms} if llm_ttft_ms else {}),
-                    **({"tts_ttfb_ms": tts_ttfb_ms} if tts_ttfb_ms else {}),
-                },
+        if self._active_turn_span:
+            self._active_turn_span.add_metadata(
+                "latency.reference", "vad_end" if self._vad_end_time else "turn_start"
             )
 
-            logger.info(
-                "[VoiceLive] Turn %d metrics | E2E: %s | STT: %s | LLM: %s | Duration: %.2f",
-                self._turn_number,
-                f"{tts_ttfb_ms:.0f}ms" if tts_ttfb_ms else "N/A",
-                f"{stt_latency_ms:.0f}ms" if stt_latency_ms else "N/A",
-                f"{llm_ttft_ms:.0f}ms" if llm_ttft_ms else "N/A",
-                total_turn_duration_ms,
-            )
+        logger.info(
+            "[VoiceLive] Turn %d metrics | E2E: %s | STT: %s | LLM: %s | Duration: %.2f",
+            self._turn_number,
+            f"{tts_ttfb_ms:.0f}ms" if tts_ttfb_ms else "N/A",
+            f"{stt_latency_ms:.0f}ms" if stt_latency_ms else "N/A",
+            f"{llm_ttft_ms:.0f}ms" if llm_ttft_ms else "N/A",
+            total_turn_duration_ms,
+        )
 
         # Send turn metrics to frontend via WebSocket
         try:
@@ -2193,6 +2189,8 @@ class VoiceLiveSDKHandler:
             )
         except Exception as e:
             logger.debug("Failed to send turn metrics to frontend: %s", e)
+
+        await self._end_active_turn_span()
 
         # Reset turn tracking state
         self._turn_start_time = None
