@@ -28,10 +28,10 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket
 from utils.ml_logging import get_logger
+from utils.telemetry_decorators import add_speech_tts_metrics, trace_speech
 
 if TYPE_CHECKING:
     from apps.artagent.backend.voice.shared.context import VoiceSessionContext
-    from src.tools.latency_tool import LatencyTool
 
 # Audio sample rates
 SAMPLE_RATE_BROWSER = 48000  # Browser WebAudio prefers 48kHz
@@ -55,8 +55,6 @@ class TTSPlayback:
         self,
         context: VoiceSessionContext,
         app_state: Any,
-        *,
-        latency_tool: LatencyTool | None = None,
     ):
         """
         Initialize TTS playback.
@@ -64,11 +62,9 @@ class TTSPlayback:
         Args:
             context: VoiceSessionContext with session, websocket, and agent info
             app_state: Application state with TTS pool and executor
-            latency_tool: Optional latency tracking
         """
         self._context = context
         self._app_state = app_state
-        self._latency_tool = latency_tool
         self._tts_lock = asyncio.Lock()
         self._is_playing = False
 
@@ -371,6 +367,7 @@ class TTSPlayback:
             finally:
                 self._is_playing = False
 
+    @trace_speech(operation="tts.synthesize")
     async def _synthesize(
         self,
         synth: Any,
@@ -409,6 +406,12 @@ class TTSPlayback:
 
         if result:
             logger.info("[%s] Synthesis complete: %d bytes", self._session_short, len(result))
+            add_speech_tts_metrics(
+                voice=voice,
+                audio_size_bytes=len(result),
+                text_length=len(text),
+                sample_rate=sample_rate,
+            )
         else:
             logger.warning("[%s] Synthesis returned None/empty", self._session_short)
 

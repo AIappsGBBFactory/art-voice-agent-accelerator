@@ -80,7 +80,6 @@ from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestra
 # Pool management
 from src.pools.session_manager import SessionContext
 from src.stateful.state_managment import MemoManager
-from src.tools.latency_tool import LatencyTool
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.enums.stream_modes import StreamMode
 from config import ACS_STREAMING_MODE, GREETING, STOP_WORDS
@@ -300,9 +299,6 @@ class VoiceHandler:
             config.transport.value,
         )
 
-        # Create latency tool
-        latency_tool = LatencyTool(memory_manager)
-
         # Get event loop
         try:
             event_loop = asyncio.get_running_loop()
@@ -323,7 +319,6 @@ class VoiceHandler:
             tts_tier=tts_tier,
             stt_tier=stt_tier,
             memo_manager=memory_manager,
-            latency_tool=latency_tool,
             session_context=SessionContext(
                 session_id=config.session_id,
                 memory_manager=memory_manager,
@@ -352,7 +347,7 @@ class VoiceHandler:
         handler._greeting_text = await handler._derive_greeting()
 
         # Create TTS Playback
-        handler._tts = TTSPlayback(context, app_state, latency_tool=latency_tool)
+        handler._tts = TTSPlayback(context, app_state)
         context.tts_playback = handler._tts
 
         # Set active agent on TTS playback to ensure greetings use the correct voice
@@ -387,7 +382,6 @@ class VoiceHandler:
             speech_queue=handler._speech_queue,
             thread_bridge=handler._thread_bridge,
             barge_in_controller=handler._barge_in_controller,
-            latency_tool=latency_tool,
         )
 
         # Store reference in context for external access
@@ -712,7 +706,6 @@ class VoiceHandler:
         ws.state.stt_tier = ctx.stt_tier
         ws.state.memo_manager = ctx.memo_manager
         ws.state.memory_manager = ctx.memo_manager  # Alias
-        ws.state.latency_tool = ctx.latency_tool
         ws.state.session_context = ctx.session_context
         ws.state.cancel_event = ctx.cancel_event
         ws.state.orchestration_tasks = ctx.orchestration_tasks
