@@ -46,6 +46,7 @@ import contextvars
 import inspect
 import json
 import os
+import re
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
@@ -1147,6 +1148,51 @@ class CascadeOrchestratorAdapter:
 
         return messages
 
+    def _sanitize_tts_text(self, text: str) -> str:
+        """Remove markdown so TTS only speaks plain text."""
+        if not text:
+            return ""
+        sanitized = text
+        sanitized = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", sanitized)
+        sanitized = re.sub(r"`{1,3}([^`]+)`{1,3}", r"\1", sanitized)
+        sanitized = sanitized.replace("\r", " ").replace("\n", " ")
+        sanitized = sanitized.replace("*", " ").replace("_", " ")
+        sanitized = sanitized.replace("~", " ").replace("`", " ")
+        sanitized = re.sub(r"\s+", " ", sanitized)
+        return sanitized
+
+    def _find_tts_boundary(self, text: str, terms: str, min_index: int) -> int:
+        """Return first punctuation boundary that is safe to split on."""
+        if not text:
+            return -1
+        for match in re.finditer(rf"[{re.escape(terms)}]", text):
+            idx = match.start()
+            if idx < min_index:
+                continue
+            next_char = text[idx + 1 : idx + 2]
+            if next_char and not next_char.isspace():
+                if next_char in "\"')]}":
+                    after = text[idx + 2 : idx + 3]
+                    if after and not after.isspace():
+                        continue
+                else:
+                    continue
+            if text[idx] == ".":
+                prev_char = text[idx - 1 : idx]
+                if prev_char.isdigit() and next_char.isdigit():
+                    continue
+            return idx
+        return -1
+
+    def _split_tts_buffer(self, text: str, end_index: int) -> tuple[str, str]:
+        """Split text at end_index, keeping trailing whitespace with the left chunk."""
+        if not text:
+            return "", ""
+        end = max(0, min(end_index, len(text)))
+        while end < len(text) and text[end].isspace():
+            end += 1
+        return text[:end], text[end:]
+
     async def _process_llm(
         self,
         messages: list[dict[str, Any]],
@@ -1240,6 +1286,8 @@ class CascadeOrchestratorAdapter:
                 "session.id": self.config.session_id or "",
                 "rt.session.id": self.config.session_id or "",
                 "rt.call.connection_id": self.config.call_connection_id or "",
+                # Azure Monitor semantic conventions
+                "dependency.type": "Azure OpenAI",
                 "peer.service": "azure-openai",
                 "component": "cascade_adapter",
                 "cascade.streaming": True,
@@ -1264,15 +1312,10 @@ class CascadeOrchestratorAdapter:
                 loop = asyncio.get_running_loop()
                 tool_call_detected = False  # Track if tool calls are streaming
 
-                # Sentence buffer state for aggressive TTS streaming
+                # Sentence buffer state for sentence-based TTS streaming
                 sentence_buffer = ""
                 # Primary breaks: sentence endings
                 primary_terms = ".!?"
-                # Secondary breaks: natural pause points (colon, semicolon, newline)
-                # Note: comma excluded to avoid breaking numbers like "100,000"
-                secondary_terms = ";:\n"
-                min_chunk = 15  # Minimum chars before dispatching
-                max_buffer = 80  # Force dispatch if buffer exceeds this (even without breaks)
 
                 def _put_chunk(text: str) -> None:
                     """Thread-safe put to async queue."""
@@ -1281,11 +1324,17 @@ class CascadeOrchestratorAdapter:
                     if tool_call_detected:
                         return
                     if text and text.strip():
-                        loop.call_soon_threadsafe(tts_queue.put_nowait, text.strip())
+                        loop.call_soon_threadsafe(tts_queue.put_nowait, text)
+
+                # Capture current OpenTelemetry context to propagate into thread
+                from opentelemetry import context as otel_context
+                current_context = otel_context.get_current()
 
                 def _streaming_completion():
                     """Run in thread - consumes OpenAI stream."""
                     nonlocal sentence_buffer, tool_call_detected
+                    # Attach the parent span context in the thread
+                    token = otel_context.attach(current_context)
                     try:
                         logger.debug(
                             "Starting OpenAI stream | model=%s messages=%d tools=%d temp=%.2f",
@@ -1295,106 +1344,101 @@ class CascadeOrchestratorAdapter:
                             temperature,
                         )
                         chunk_count = 0
-                        for chunk in client.chat.completions.create(
-                            model=model_name,
-                            messages=messages,
-                            tools=tools if tools else None,
-                            stream=True,
-                            timeout=60,
-                            temperature=temperature,
-                            top_p=top_p,
-                            max_tokens=max_tokens,
-                        ):
-                            chunk_count += 1
-                            if not getattr(chunk, "choices", None):
-                                continue
-                            choice = chunk.choices[0]
-                            delta = getattr(choice, "delta", None)
-                            if not delta:
-                                continue
 
-                            # Tool calls - aggregate streamed chunks by index
-                            # Check tool calls FIRST to detect before dispatching text
-                            if getattr(delta, "tool_calls", None):
-                                if not tool_call_detected:
-                                    tool_call_detected = True
-                                    logger.debug("Tool call detected - suppressing TTS output")
-                                for tc in delta.tool_calls:
-                                    # Use explicit None check - index=0 is valid!
-                                    tc_idx = getattr(tc, "index", None)
-                                    if tc_idx is None:
-                                        tc_idx = len(tool_buffers)
-                                    tc_key = f"tool_{tc_idx}"
+                        # Create a span for the OpenAI streaming call
+                        with tracer.start_as_current_span(
+                            f"openai.chat.completions.create (streaming)",
+                            kind=SpanKind.CLIENT,
+                            attributes={
+                                "dependency.type": "Azure OpenAI",
+                                "peer.service": "azure-openai",
+                                "gen_ai.operation.name": "chat",
+                                "gen_ai.request.model": model_name,
+                                "gen_ai.request.temperature": temperature,
+                                "gen_ai.request.top_p": top_p,
+                                "gen_ai.request.max_tokens": max_tokens,
+                                "gen_ai.streaming": True,
+                            },
+                        ) as openai_span:
+                            for chunk in client.chat.completions.create(
+                                model=model_name,
+                                messages=messages,
+                                tools=tools if tools else None,
+                                stream=True,
+                                timeout=60,
+                                temperature=temperature,
+                                top_p=top_p,
+                                max_tokens=max_tokens,
+                            ):
+                                chunk_count += 1
+                                if not getattr(chunk, "choices", None):
+                                    continue
+                                choice = chunk.choices[0]
+                                delta = getattr(choice, "delta", None)
+                                if not delta:
+                                    continue
 
-                                    if tc_key not in tool_buffers:
-                                        tool_buffers[tc_key] = {
-                                            "id": getattr(tc, "id", None) or tc_key,
-                                            "name": "",
-                                            "arguments": "",
-                                        }
+                                # Tool calls - aggregate streamed chunks by index
+                                # Check tool calls FIRST to detect before dispatching text
+                                if getattr(delta, "tool_calls", None):
+                                    if not tool_call_detected:
+                                        tool_call_detected = True
+                                        logger.debug("Tool call detected - suppressing TTS output")
+                                    for tc in delta.tool_calls:
+                                        # Use explicit None check - index=0 is valid!
+                                        tc_idx = getattr(tc, "index", None)
+                                        if tc_idx is None:
+                                            tc_idx = len(tool_buffers)
+                                        tc_key = f"tool_{tc_idx}"
 
-                                    buf = tool_buffers[tc_key]
-                                    tc_id = getattr(tc, "id", None)
-                                    if tc_id:
-                                        buf["id"] = tc_id
-                                    fn = getattr(tc, "function", None)
-                                    if fn:
-                                        fn_name = getattr(fn, "name", None)
-                                        if fn_name:
-                                            buf["name"] = fn_name
-                                        fn_args = getattr(fn, "arguments", None)
-                                        if fn_args:
-                                            buf["arguments"] += fn_args
+                                        if tc_key not in tool_buffers:
+                                            tool_buffers[tc_key] = {
+                                                "id": getattr(tc, "id", None) or tc_key,
+                                                "name": "",
+                                                "arguments": "",
+                                            }
 
-                            # Text content - collect but only TTS if no tool calls
-                            if getattr(delta, "content", None):
-                                text = delta.content
-                                collected_text.append(text)
-                                sentence_buffer += text
+                                        buf = tool_buffers[tc_key]
+                                        tc_id = getattr(tc, "id", None)
+                                        if tc_id:
+                                            buf["id"] = tc_id
+                                        fn = getattr(tc, "function", None)
+                                        if fn:
+                                            fn_name = getattr(fn, "name", None)
+                                            if fn_name:
+                                                buf["name"] = fn_name
+                                            fn_args = getattr(fn, "arguments", None)
+                                            if fn_args:
+                                                buf["arguments"] += fn_args
 
-                                # Aggressive TTS streaming - dispatch as soon as we have a break point
-                                while len(sentence_buffer) >= min_chunk:
-                                    # First try primary breaks (sentence endings)
-                                    term_idx = -1
-                                    for t in primary_terms:
-                                        idx = sentence_buffer.rfind(t)
-                                        if idx > term_idx:
-                                            term_idx = idx
+                                # Text content - collect but only TTS if no tool calls
+                                if getattr(delta, "content", None):
+                                    text = delta.content
+                                    collected_text.append(text)
+                                    sentence_buffer += self._sanitize_tts_text(text)
 
-                                    # If no sentence end, try secondary breaks (commas, colons, etc.)
-                                    if term_idx < min_chunk - 5:
-                                        for t in secondary_terms:
-                                            idx = sentence_buffer.rfind(t)
-                                            if idx > term_idx:
-                                                term_idx = idx
-
-                                    # If found a break point, dispatch up to it
-                                    if term_idx >= min_chunk - 5:
-                                        dispatch = sentence_buffer[: term_idx + 1]
-                                        sentence_buffer = sentence_buffer[term_idx + 1 :]
+                                    # Dispatch only on sentence boundaries.
+                                    while True:
+                                        term_idx = self._find_tts_boundary(
+                                            sentence_buffer, primary_terms, 0
+                                        )
+                                        if term_idx < 0:
+                                            break
+                                        dispatch, sentence_buffer = self._split_tts_buffer(
+                                            sentence_buffer, term_idx + 1
+                                        )
                                         _put_chunk(dispatch)
-                                    # Force dispatch if buffer is getting too long (no break point found)
-                                    elif len(sentence_buffer) >= max_buffer:
-                                        # Find last space to avoid cutting mid-word
-                                        space_idx = sentence_buffer.rfind(" ", 0, max_buffer)
-                                        if space_idx > min_chunk:
-                                            dispatch = sentence_buffer[:space_idx]
-                                            sentence_buffer = sentence_buffer[space_idx + 1:]
-                                        else:
-                                            dispatch = sentence_buffer[:max_buffer]
-                                            sentence_buffer = sentence_buffer[max_buffer:]
-                                        _put_chunk(dispatch)
-                                    else:
-                                        break
 
-                        logger.debug("OpenAI stream completed | chunks=%d", chunk_count)
-                        # Flush remaining buffer (only if no tool calls)
-                        if sentence_buffer.strip():
-                            _put_chunk(sentence_buffer)
+                            logger.debug("OpenAI stream completed | chunks=%d", chunk_count)
+                            # Flush remaining buffer (only if no tool calls)
+                            if sentence_buffer.strip():
+                                _put_chunk(sentence_buffer)
                     except Exception as e:
                         logger.error("OpenAI stream error: %s", e)
                         stream_error.append(e)
                     finally:
+                        # Detach the context
+                        otel_context.detach(token)
                         # Signal end
                         loop.call_soon_threadsafe(tts_queue.put_nowait, None)
 
@@ -1661,31 +1705,28 @@ class CascadeOrchestratorAdapter:
         min_chunk: int = 40,
     ) -> None:
         """
-        Emit TTS chunks in small batches to reduce latency.
+        Emit TTS chunks based on sentence boundaries.
 
-        Splits by sentence boundaries when possible, otherwise falls back to
-        fixed-size slices to ensure early audio playback.
+        Splits by sentence boundaries and flushes any remaining text at end.
         """
         try:
-            segments: list[str] = []
-            buf = ""
-            for part in text.split():
-                if buf:
-                    candidate = f"{buf} {part}"
-                else:
-                    candidate = part
-                buf = candidate
-                if any(buf.endswith(p) for p in (".", "!", "?", ";")) and len(buf) >= min_chunk:
-                    segments.append(buf.strip())
-                    buf = ""
-            if buf:
-                segments.append(buf.strip())
+            sanitized = self._sanitize_tts_text(text).strip()
+            if not sanitized:
+                return
 
-            # Fallback: no sentence boundaries, chunk by size
-            if len(segments) == 1 and len(segments[0]) > min_chunk * 2:
-                s = segments.pop()
-                for i in range(0, len(s), min_chunk * 2):
-                    segments.append(s[i : i + min_chunk * 2].strip())
+            segments: list[str] = []
+            buffer = sanitized
+            primary_terms = ".!?"
+            while True:
+                term_idx = self._find_tts_boundary(buffer, primary_terms, 0)
+                if term_idx < 0:
+                    break
+                segment, buffer = self._split_tts_buffer(buffer, term_idx + 1)
+                if segment.strip():
+                    segments.append(segment)
+
+            if buffer.strip():
+                segments.append(buffer)
 
             for segment in segments:
                 result = on_tts_chunk(segment)
