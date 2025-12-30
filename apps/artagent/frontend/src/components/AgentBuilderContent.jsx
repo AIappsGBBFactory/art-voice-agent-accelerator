@@ -164,6 +164,62 @@ const styles = {
   },
 };
 
+const CASCADE_MODEL_PRESETS = [
+  { id: 'gpt-4o', label: 'gpt-4o' },
+  { id: 'gpt-4o-mini', label: 'gpt-4o-mini' },
+  { id: 'gpt-4.1', label: 'gpt-4.1' },
+  { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+  { id: 'gpt-4', label: 'gpt-4' },
+  { id: 'gpt-5', label: 'gpt-5' },
+  { id: 'gpt-5-mini', label: 'gpt-5-mini' },
+  { id: 'gpt-5-nano', label: 'gpt-5-nano' },
+  { id: 'o3-mini', label: 'o3-mini' },
+  { id: 'o3', label: 'o3' },
+  { id: 'o1', label: 'o1' },
+];
+
+const VOICELIVE_MODEL_PRESETS = [
+  { id: 'gpt-realtime', label: 'gpt-realtime' },
+  { id: 'gpt-realtime-mini', label: 'gpt-realtime-mini' },
+  { id: 'gpt-4o', label: 'gpt-4o' },
+  { id: 'gpt-4o-mini', label: 'gpt-4o-mini' },
+  { id: 'gpt-4.1', label: 'gpt-4.1' },
+  { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+  { id: 'gpt-5', label: 'gpt-5' },
+  { id: 'gpt-5-mini', label: 'gpt-5-mini' },
+  { id: 'gpt-5-nano', label: 'gpt-5-nano' },
+  { id: 'gpt-5-chat', label: 'gpt-5-chat' },
+  { id: 'phi4-mm-realtime', label: 'phi4-mm-realtime' },
+  { id: 'phi4-mini', label: 'phi4-mini' },
+];
+
+const detectEndpointPreference = (deploymentId) => {
+  const name = (deploymentId || '').toLowerCase();
+  if (!name) {
+    return 'chat';
+  }
+  if (name.includes('gpt-4')) {
+    return 'chat';
+  }
+  if (name.includes('gpt-5') || name.includes('o1') || name.includes('o3') || name.includes('o4')) {
+    return 'responses';
+  }
+  return 'responses';
+};
+
+const resolveEndpointPreference = (modelConfig) => {
+  if (!modelConfig) {
+    return 'chat';
+  }
+  const preference = modelConfig.endpoint_preference;
+  if (preference && preference !== 'auto') {
+    return preference;
+  }
+  return detectEndpointPreference(
+    modelConfig.deployment_id || modelConfig.model_name || modelConfig.name
+  );
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB PANEL
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -980,6 +1036,7 @@ export default function AgentBuilderContent({
     cascade_model: {
       deployment_id: 'gpt-4o',
       endpoint_preference: 'auto',
+      api_version: 'v1',
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 4096,
@@ -1033,6 +1090,37 @@ export default function AgentBuilderContent({
       agent_name: 'Assistant',
     },
   });
+
+  const cascadeEndpointPreference = useMemo(
+    () => resolveEndpointPreference(config.cascade_model),
+    [config.cascade_model],
+  );
+  const voiceliveEndpointPreference = useMemo(
+    () => resolveEndpointPreference(config.voicelive_model),
+    [config.voicelive_model],
+  );
+  const cascadeModelPreset = useMemo(() => {
+    const deploymentId = (config.cascade_model?.deployment_id || '').trim();
+    return CASCADE_MODEL_PRESETS.some((preset) => preset.id === deploymentId)
+      ? deploymentId
+      : 'custom';
+  }, [config.cascade_model?.deployment_id]);
+  const voiceliveModelPreset = useMemo(() => {
+    const deploymentId = (config.voicelive_model?.deployment_id || '').trim();
+    return VOICELIVE_MODEL_PRESETS.some((preset) => preset.id === deploymentId)
+      ? deploymentId
+      : 'custom';
+  }, [config.voicelive_model?.deployment_id]);
+  const isCascadeCustom = cascadeModelPreset === 'custom';
+  const isVoiceliveCustom = voiceliveModelPreset === 'custom';
+  const cascadeOverrideValue = (config.cascade_model?.deployment_id || '').trim();
+  const voiceliveOverrideValue = (config.voicelive_model?.deployment_id || '').trim();
+  const isCascadeOverrideMissing = isCascadeCustom && !cascadeOverrideValue;
+  const isVoiceliveOverrideMissing = isVoiceliveCustom && !voiceliveOverrideValue;
+  const cascadeApiVersionValue = useMemo(
+    () => (config.cascade_model?.api_version || 'v1').trim(),
+    [config.cascade_model?.api_version],
+  );
 
   // Tool categories
   const [expandedCategories, setExpandedCategories] = useState({});
@@ -1357,6 +1445,7 @@ export default function AgentBuilderContent({
     setError(null);
 
     try {
+      const cascadeApiVersion = config.cascade_model?.api_version || 'v1';
       const payload = {
         name: config.name,
         description: config.description,
@@ -1365,8 +1454,15 @@ export default function AgentBuilderContent({
         handoff_trigger: config.handoff_trigger,
         prompt: config.prompt,
         tools: config.tools,
-        cascade_model: config.cascade_model,
-        voicelive_model: config.voicelive_model,
+        cascade_model: {
+          ...config.cascade_model,
+          endpoint_preference: cascadeEndpointPreference,
+          api_version: cascadeApiVersion,
+        },
+        voicelive_model: {
+          ...config.voicelive_model,
+          endpoint_preference: voiceliveEndpointPreference,
+        },
         voice: config.voice,
         speech: config.speech,
         session: config.session,
@@ -2100,6 +2196,13 @@ export default function AgentBuilderContent({
             {/* TAB 4: MODEL */}
             <TabPanel value={activeTab} index={4}>
               <Stack spacing={2}>
+                <Alert severity="info" icon={<WarningAmberIcon />} sx={{ borderRadius: '12px' }}>
+                  <AlertTitle sx={{ fontWeight: 600 }}>Foundry Deployment Required</AlertTitle>
+                  <Typography variant="body2">
+                    Model names must match deployments in your connected Foundry/Azure OpenAI resource.
+                  </Typography>
+                </Alert>
+
                 {/* Cascade Model Configuration */}
                 <Accordion defaultExpanded>
                   <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -2113,13 +2216,54 @@ export default function AgentBuilderContent({
                   <AccordionDetails>
                     <Stack spacing={3}>
                       <TextField
-                        label="Deployment ID"
-                        value={config.cascade_model?.deployment_id || 'gpt-4o'}
-                        onChange={(e) => handleNestedConfigChange('cascade_model', 'deployment_id', e.target.value)}
+                        select
+                        label="Model (Preset)"
+                        value={cascadeModelPreset}
+                        onChange={(e) => {
+                          const selected = e.target.value;
+                          handleNestedConfigChange(
+                            'cascade_model',
+                            'deployment_id',
+                            selected === 'custom' ? '' : selected
+                          );
+                        }}
                         fullWidth
-                        helperText="Azure OpenAI deployment name"
                         size="small"
-                      />
+                        helperText="Select a base model (override below if needed)"
+                        SelectProps={{ native: true }}
+                      >
+                        {CASCADE_MODEL_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                        <option value="custom">Custom</option>
+                      </TextField>
+
+                      {isCascadeCustom && (
+                        <TextField
+                          label="Deployment Name (Override)"
+                          value={config.cascade_model?.deployment_id || ''}
+                          onChange={(e) => handleNestedConfigChange('cascade_model', 'deployment_id', e.target.value)}
+                          fullWidth
+                          required={isCascadeCustom}
+                          error={isCascadeOverrideMissing}
+                          helperText={
+                            isCascadeOverrideMissing
+                              ? 'Required when Custom is selected. Must be deployed to your Foundry/Azure OpenAI resource.'
+                              : 'Overrides the preset. Must be deployed to your Foundry/Azure OpenAI resource.'
+                          }
+                          size="small"
+                          sx={{
+                            '& .MuiOutlinedInput-root': {
+                              backgroundColor: '#fff7ed',
+                              '& fieldset': { borderColor: '#fdba74' },
+                              '&:hover fieldset': { borderColor: '#fb923c' },
+                              '&.Mui-focused fieldset': { borderColor: '#f97316' },
+                            },
+                          }}
+                        />
+                      )}
 
                       <TextField
                         select
@@ -2128,13 +2272,28 @@ export default function AgentBuilderContent({
                         onChange={(e) => handleNestedConfigChange('cascade_model', 'endpoint_preference', e.target.value)}
                         fullWidth
                         size="small"
-                        helperText="API endpoint to use for this model"
+                        helperText={
+                          config.cascade_model?.endpoint_preference === 'auto'
+                            ? `Auto: ${cascadeEndpointPreference === 'responses' ? 'Responses API' : 'Chat Completions'}`
+                            : 'API endpoint to use for this model'
+                        }
                         SelectProps={{ native: true }}
                       >
                         <option value="auto">Auto (detect from model/parameters)</option>
                         <option value="chat">Chat Completions (/chat/completions)</option>
                         <option value="responses">Responses API (/responses)</option>
                       </TextField>
+
+                      {cascadeEndpointPreference === 'responses' && (
+                        <TextField
+                          label="Responses API Version"
+                          value={cascadeApiVersionValue}
+                          fullWidth
+                          size="small"
+                          disabled
+                          helperText="Responses API version is managed by the backend (UI configuration coming soon)."
+                        />
+                      )}
 
                       <Divider />
 
@@ -2165,7 +2324,7 @@ export default function AgentBuilderContent({
                       </Box>
 
                       {/* Show chat completions parameters */}
-                      {config.cascade_model?.endpoint_preference === 'chat' && (
+                      {cascadeEndpointPreference === 'chat' && (
                         <>
                           <Box>
                             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
@@ -2220,11 +2379,11 @@ export default function AgentBuilderContent({
                       )}
 
                       {/* Show responses API parameters */}
-                      {config.cascade_model?.endpoint_preference === 'responses' && (
+                      {cascadeEndpointPreference === 'responses' && (
                         <>
                           <Alert severity="info" sx={{ borderRadius: '8px' }}>
                             <Typography variant="caption">
-                              Responses API parameters (for o1/o3/o4/GPT-5 models)
+                              Responses API parameters (for o-reasoning/GPT-5 models)
                             </Typography>
                           </Alert>
 
@@ -2365,13 +2524,54 @@ export default function AgentBuilderContent({
                   <AccordionDetails>
                     <Stack spacing={3}>
                       <TextField
-                        label="Deployment ID"
-                        value={config.voicelive_model?.deployment_id || 'gpt-realtime'}
-                        onChange={(e) => handleNestedConfigChange('voicelive_model', 'deployment_id', e.target.value)}
+                        select
+                        label="Model (Preset)"
+                        value={voiceliveModelPreset}
+                        onChange={(e) => {
+                          const selected = e.target.value;
+                          handleNestedConfigChange(
+                            'voicelive_model',
+                            'deployment_id',
+                            selected === 'custom' ? '' : selected
+                          );
+                        }}
                         fullWidth
-                        helperText="Azure OpenAI realtime deployment name"
                         size="small"
-                      />
+                        helperText="Select a base model (override below if needed)"
+                        SelectProps={{ native: true }}
+                      >
+                        {VOICELIVE_MODEL_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                        <option value="custom">Custom</option>
+                      </TextField>
+
+                      {isVoiceliveCustom && (
+                        <TextField
+                          label="Deployment Name (Override)"
+                          value={config.voicelive_model?.deployment_id || ''}
+                          onChange={(e) => handleNestedConfigChange('voicelive_model', 'deployment_id', e.target.value)}
+                          fullWidth
+                          required={isVoiceliveCustom}
+                          error={isVoiceliveOverrideMissing}
+                          helperText={
+                            isVoiceliveOverrideMissing
+                              ? 'Required when Custom is selected. Must be deployed to your Foundry/Azure OpenAI resource.'
+                              : 'Overrides the preset. Must be deployed to your Foundry/Azure OpenAI resource.'
+                          }
+                          size="small"
+                          sx={{
+                            '& .MuiOutlinedInput-root': {
+                              backgroundColor: '#fff7ed',
+                              '& fieldset': { borderColor: '#fdba74' },
+                              '&:hover fieldset': { borderColor: '#fb923c' },
+                              '&.Mui-focused fieldset': { borderColor: '#f97316' },
+                            },
+                          }}
+                        />
+                      )}
 
                       <TextField
                         select
@@ -2380,13 +2580,22 @@ export default function AgentBuilderContent({
                         onChange={(e) => handleNestedConfigChange('voicelive_model', 'endpoint_preference', e.target.value)}
                         fullWidth
                         size="small"
-                        helperText="API endpoint to use for this model"
+                        helperText={
+                          config.voicelive_model?.endpoint_preference === 'auto'
+                            ? `Auto: ${voiceliveEndpointPreference === 'responses' ? 'Responses API' : 'Chat Completions'}`
+                          : 'API endpoint to use for this model'
+                        }
                         SelectProps={{ native: true }}
                       >
                         <option value="auto">Auto (detect from model/parameters)</option>
                         <option value="chat">Chat Completions (/chat/completions)</option>
                         <option value="responses">Responses API (/responses)</option>
                       </TextField>
+
+                      <Typography variant="caption" color="text.secondary">
+                        VoiceLive models must be deployed to your connected Foundry resource. Foundry agents/BYOM chat
+                        completions are not yet wired in this demo.
+                      </Typography>
 
                       <Divider />
 
@@ -2417,7 +2626,7 @@ export default function AgentBuilderContent({
                       </Box>
 
                       {/* Chat completions parameters */}
-                      {config.voicelive_model?.endpoint_preference === 'chat' && (
+                      {voiceliveEndpointPreference === 'chat' && (
                         <>
                           <Box>
                             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
@@ -2472,11 +2681,11 @@ export default function AgentBuilderContent({
                       )}
 
                       {/* Responses API parameters */}
-                      {config.voicelive_model?.endpoint_preference === 'responses' && (
+                      {voiceliveEndpointPreference === 'responses' && (
                         <>
                           <Alert severity="info" sx={{ borderRadius: '8px' }}>
                             <Typography variant="caption">
-                              Responses API parameters (for o1/o3/o4/GPT-5 models)
+                              Responses API parameters (for o-reasoning/GPT-5 models)
                             </Typography>
                           </Alert>
 
