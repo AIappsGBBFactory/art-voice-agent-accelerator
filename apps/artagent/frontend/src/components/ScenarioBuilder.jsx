@@ -215,6 +215,63 @@ const renderPromptHighlights = (text, vars) => {
   return parts;
 };
 
+const buildHandoffInstructions = (handoffs, agentName) => {
+  if (!agentName) return '';
+  const outgoing = (handoffs || []).filter((handoff) => handoff?.from_agent === agentName);
+  if (outgoing.length === 0) return '';
+  const lines = [
+    '## Agent Handoff Instructions',
+    '',
+    'You can transfer the conversation to other specialized agents when appropriate.',
+    'Use the `handoff_to_agent` tool with the target agent name and reason.',
+    'Call the tool immediately without announcing the transfer - the target agent will greet the customer.',
+    '',
+    '**Available Handoff Targets:**',
+    '',
+  ];
+  outgoing.forEach((handoff) => {
+    const targetAgent = handoff?.to_agent || 'the target agent';
+    let condition = (handoff?.handoff_condition || '').trim();
+    if (!condition) {
+      condition = `When the customer's needs are better served by ${targetAgent}.`;
+    }
+    lines.push(
+      `- **${targetAgent}** - call \`handoff_to_agent(target_agent="${targetAgent}", reason="...")\``
+    );
+    condition.split('\n').forEach((line) => {
+      if (line.trim()) {
+        lines.push(`  ${line.trim()}`);
+      }
+    });
+    lines.push('');
+  });
+  return lines.join('\n');
+};
+
+const buildRuntimePrompt = (prompt, handoffs, agentName) => {
+  const instructions = buildHandoffInstructions(handoffs, agentName);
+  if (!instructions) return prompt || '';
+  if (!prompt) return instructions;
+  return `${prompt}\n\n${instructions}`;
+};
+
+const getRuntimePromptPreview = (prompt, maxLines = 14) => {
+  if (!prompt) return '';
+  const lines = prompt.split('\n');
+  const markerIndex = lines.findIndex((line) => line.includes('## Agent Handoff Instructions'));
+  let start = 0;
+  if (markerIndex !== -1) {
+    start = Math.max(0, markerIndex - 3);
+  } else if (lines.length > maxLines) {
+    start = Math.max(0, lines.length - maxLines);
+  }
+  const end = Math.min(lines.length, start + maxLines);
+  const snippet = lines.slice(start, end).join('\n');
+  const prefix = start > 0 ? '...\n' : '';
+  const suffix = end < lines.length ? '\n...' : '';
+  return `${prefix}${snippet}${suffix}`;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // FLOW NODE COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -698,7 +755,7 @@ const HANDOFF_CONDITION_PATTERNS = [
 // HANDOFF EDITOR DIALOG
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete }) {
+function HandoffEditorDialog({ open, onClose, handoff, agents, handoffs, onSave, onDelete }) {
   const [type, setType] = useState(handoff?.type || 'announced');
   const [shareContext, setShareContext] = useState(handoff?.share_context !== false);
   const [handoffCondition, setHandoffCondition] = useState(handoff?.handoff_condition || '');
@@ -721,6 +778,34 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
   const targetPromptVars = useMemo(
     () => Array.from(new Set((targetAgent?.prompt_vars || []).filter(Boolean))),
     [targetAgent],
+  );
+  const runtimeHandoffs = useMemo(() => {
+    if (!handoff) return handoffs || [];
+    const baseHandoffs = Array.isArray(handoffs) ? handoffs : [];
+    let matched = false;
+    const updated = baseHandoffs.map((edge) => {
+      if (
+        edge.from_agent === handoff.from_agent &&
+        edge.to_agent === handoff.to_agent
+      ) {
+        matched = true;
+        return { ...edge, handoff_condition: handoffCondition };
+      }
+      return edge;
+    });
+    if (!matched) {
+      updated.push({ ...handoff, handoff_condition: handoffCondition });
+    }
+    return updated;
+  }, [handoffs, handoff, handoffCondition]);
+  const runtimePrompt = useMemo(() => {
+    if (!handoff?.from_agent) return '';
+    const basePrompt = sourceAgent?.prompt_full || sourceAgent?.prompt_preview || '';
+    return buildRuntimePrompt(basePrompt, runtimeHandoffs, handoff.from_agent);
+  }, [handoff, runtimeHandoffs, sourceAgent]);
+  const runtimePromptPreview = useMemo(
+    () => getRuntimePromptPreview(runtimePrompt, 14),
+    [runtimePrompt],
   );
 
   useEffect(() => {
@@ -963,6 +1048,40 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
                 },
               }}
             />
+            <Paper
+              variant="outlined"
+              sx={{ mt: 1.5, p: 1.5, borderRadius: '12px', bgcolor: '#f8fafc' }}
+            >
+              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Runtime system prompt preview (with handoff instructions)
+                </Typography>
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={() =>
+                    handleOpenPromptDialog(
+                      `${handoff.from_agent} runtime prompt`,
+                      runtimePrompt || 'No prompt available.',
+                    )
+                  }
+                >
+                  View full prompt
+                </Button>
+              </Stack>
+              <Typography
+                component="div"
+                variant="caption"
+                sx={{
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                  fontSize: 11,
+                  lineHeight: 1.6,
+                }}
+              >
+                {runtimePromptPreview || 'No prompt available.'}
+              </Typography>
+            </Paper>
           </Box>
 
           <Accordion
@@ -3240,6 +3359,7 @@ export default function ScenarioBuilder({
         onClose={() => setEditingHandoff(null)}
         handoff={editingHandoff}
         agents={availableAgents}
+        handoffs={config.handoffs}
         onSave={handleUpdateHandoff}
         onDelete={() => editingHandoff && handleDeleteHandoff(editingHandoff)}
       />

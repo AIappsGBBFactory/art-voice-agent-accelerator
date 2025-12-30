@@ -1076,10 +1076,14 @@ class CascadeOrchestratorAdapter:
                 except Exception as e:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                     logger.exception("Turn processing failed: %s", e)
+
+                    # Extract user-friendly error message
+                    error_details = self._extract_error_details(e)
+
                     return OrchestratorResult(
                         response_text="",
                         agent_name=self._active_agent,
-                        error=str(e),
+                        error=error_details,
                     )
 
     def _build_messages(
@@ -1233,17 +1237,12 @@ class CascadeOrchestratorAdapter:
         # Get model configuration from current agent (prefers cascade_model over generic model)
         agent = self.current_agent_config
         model_name = self.config.model_name  # Default from adapter config
-        temperature = 0.7  # Default
-        top_p = 0.9  # Default
-        max_tokens = 4096  # Default
+        model_config = None
 
         if agent:
             # Use get_model_for_mode to pick cascade_model if available, else fallback to model
             model_config = agent.get_model_for_mode("cascade")
             model_name = model_config.deployment_id or model_name
-            temperature = model_config.temperature
-            top_p = model_config.top_p
-            max_tokens = model_config.max_tokens
 
         # Safety: prevent infinite tool loops
         if _iteration >= _max_iterations:
@@ -1270,6 +1269,12 @@ class CascadeOrchestratorAdapter:
         all_tool_calls: list[dict[str, Any]] = []
         output_tokens = 0
 
+        # Prepare streaming parameters early for telemetry
+        streaming_params = self._prepare_streaming_params(model_config, model_name, messages, tools)
+        temp_attr = streaming_params.get("temperature")
+        top_p_attr = streaming_params.get("top_p")
+        max_tokens_attr = streaming_params.get("max_tokens") or streaming_params.get("max_completion_tokens")
+
         # Create span with GenAI semantic conventions
         with tracer.start_as_current_span(
             f"invoke_agent {self._active_agent}",
@@ -1280,9 +1285,9 @@ class CascadeOrchestratorAdapter:
                 "gen_ai.agent.description": f"Voice agent: {self._active_agent}",
                 "gen_ai.provider.name": "azure.ai.openai",
                 "gen_ai.request.model": model_name,
-                "gen_ai.request.temperature": temperature,
-                "gen_ai.request.top_p": top_p,
-                "gen_ai.request.max_tokens": max_tokens,
+                "gen_ai.request.temperature": temp_attr,
+                "gen_ai.request.top_p": top_p_attr,
+                "gen_ai.request.max_tokens": max_tokens_attr,
                 "session.id": self.config.session_id or "",
                 "rt.session.id": self.config.session_id or "",
                 "rt.call.connection_id": self.config.call_connection_id or "",
@@ -1296,10 +1301,10 @@ class CascadeOrchestratorAdapter:
         ) as span:
             try:
                 logger.info(
-                    "Starting LLM request (streaming) | agent=%s model=%s temp=%.2f iteration=%d tools=%d",
+                    "Starting LLM request (streaming) | agent=%s model=%s temp=%s iteration=%d tools=%d",
                     self._active_agent,
                     model_name,
-                    temperature,
+                    temp_attr if temp_attr is not None else "N/A",
                     _iteration,
                     len(tools) if tools else 0,
                 )
@@ -1336,14 +1341,22 @@ class CascadeOrchestratorAdapter:
                     # Attach the parent span context in the thread
                     token = otel_context.attach(current_context)
                     try:
+                        # Use pre-prepared streaming parameters
+                        api_params = streaming_params
+
                         logger.debug(
-                            "Starting OpenAI stream | model=%s messages=%d tools=%d temp=%.2f",
+                            "Starting OpenAI stream | model=%s messages=%d tools=%d params=%s",
                             model_name,
                             len(messages),
                             len(tools) if tools else 0,
-                            temperature,
+                            {k: v for k, v in api_params.items() if k not in ["messages", "tools"]},
                         )
                         chunk_count = 0
+
+                        # Extract telemetry values for span attributes
+                        temp_value = api_params.get("temperature")
+                        top_p_value = api_params.get("top_p")
+                        max_tokens_value = api_params.get("max_tokens") or api_params.get("max_completion_tokens")
 
                         # Create a span for the OpenAI streaming call
                         with tracer.start_as_current_span(
@@ -1354,22 +1367,13 @@ class CascadeOrchestratorAdapter:
                                 "peer.service": "azure-openai",
                                 "gen_ai.operation.name": "chat",
                                 "gen_ai.request.model": model_name,
-                                "gen_ai.request.temperature": temperature,
-                                "gen_ai.request.top_p": top_p,
-                                "gen_ai.request.max_tokens": max_tokens,
+                                "gen_ai.request.temperature": temp_value,
+                                "gen_ai.request.top_p": top_p_value,
+                                "gen_ai.request.max_tokens": max_tokens_value,
                                 "gen_ai.streaming": True,
                             },
                         ) as openai_span:
-                            for chunk in client.chat.completions.create(
-                                model=model_name,
-                                messages=messages,
-                                tools=tools if tools else None,
-                                stream=True,
-                                timeout=60,
-                                temperature=temperature,
-                                top_p=top_p,
-                                max_tokens=max_tokens,
-                            ):
+                            for chunk in client.chat.completions.create(**api_params):
                                 chunk_count += 1
                                 if not getattr(chunk, "choices", None):
                                     continue
@@ -1734,6 +1738,202 @@ class CascadeOrchestratorAdapter:
                     await result
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("TTS chunk dispatch failed: %s", exc)
+
+    def _prepare_streaming_params(
+        self,
+        model_config: Any,
+        model_name: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+    ) -> dict[str, Any]:
+        """
+        Prepare API parameters for streaming LLM calls.
+
+        Handles parameter differences between:
+        - Standard models (gpt-4, gpt-4o): temperature, top_p, max_tokens
+        - Reasoning models (o1, o3): max_completion_tokens only
+        - GPT-5 models: max_completion_tokens (responses API)
+
+        Args:
+            model_config: ModelConfig instance (or None for defaults)
+            model_name: Deployment ID
+            messages: Conversation messages
+            tools: Tool definitions
+
+        Returns:
+            Dict of parameters for client.chat.completions.create()
+        """
+        params = {
+            "model": model_name,
+            "messages": messages,
+            "stream": True,
+            "timeout": 60,
+        }
+
+        # Add tools if present
+        if tools:
+            params["tools"] = tools
+
+        # Use defaults if no model_config - try to detect from model name
+        if not model_config:
+            # Auto-detect from model name
+            model_name_lower = model_name.lower()
+            if any(x in model_name_lower for x in ["gpt-5", "o1", "o3", "o4"]):
+                # Use max_completion_tokens for newer models
+                params["max_completion_tokens"] = 4096
+                logger.debug(f"No model_config, detected newer model from name: {model_name}")
+            else:
+                params["temperature"] = 0.7
+                params["top_p"] = 0.9
+                params["max_tokens"] = 4096
+            return params
+
+        # Get model family for parameter selection
+        model_family = getattr(model_config, "model_family", None)
+
+        # Auto-detect if not set
+        if not model_family:
+            deployment_lower = model_name.lower()
+            if "gpt-5" in deployment_lower:
+                model_family = "gpt-5"
+            elif "o1" in deployment_lower:
+                model_family = "o1"
+            elif "o3" in deployment_lower:
+                model_family = "o3"
+            elif "o4" in deployment_lower:
+                model_family = "o4"
+            elif "gpt-4" in deployment_lower:
+                model_family = "gpt-4"
+            else:
+                model_family = "unknown"
+            logger.debug(f"Auto-detected model_family={model_family} from model_name={model_name}")
+
+        logger.debug(
+            f"Preparing streaming params | model={model_name} family={model_family} "
+            f"has_max_completion_tokens={hasattr(model_config, 'max_completion_tokens')} "
+            f"has_max_tokens={hasattr(model_config, 'max_tokens')}"
+        )
+
+        # Reasoning models (o1, o3) and GPT-5 use max_completion_tokens, no temperature/top_p
+        if model_family in ["o1", "o3", "o4", "gpt-5"]:
+            logger.debug(f"Using max_completion_tokens for {model_family} model")
+            max_completion_tokens = getattr(model_config, "max_completion_tokens", None)
+            if max_completion_tokens:
+                params["max_completion_tokens"] = max_completion_tokens
+            else:
+                # Fallback: convert max_tokens to max_completion_tokens
+                max_tokens = getattr(model_config, "max_tokens", None)
+                if max_tokens:
+                    params["max_completion_tokens"] = max_tokens
+                    logger.debug(
+                        f"Converting max_tokens={max_tokens} to max_completion_tokens for {model_family} model"
+                    )
+                else:
+                    # Default fallback
+                    params["max_completion_tokens"] = 4096
+                    logger.debug(f"Using default max_completion_tokens=4096 for {model_family} model")
+        else:
+            # Standard models support temperature, top_p, max_tokens
+            logger.debug(f"Using standard parameters for {model_family} model")
+            temperature = getattr(model_config, "temperature", None)
+            if temperature is not None:
+                params["temperature"] = temperature
+
+            top_p = getattr(model_config, "top_p", None)
+            if top_p is not None:
+                params["top_p"] = top_p
+
+            max_tokens = getattr(model_config, "max_tokens", None)
+            if max_tokens:
+                params["max_tokens"] = max_tokens
+
+        logger.debug(f"Final streaming params (excluding messages/tools): {dict((k, v) for k, v in params.items() if k not in ['messages', 'tools'])}")
+        return params
+
+    def _extract_error_details(self, exception: Exception) -> str:
+        """
+        Extract user-friendly error details from various exception types.
+
+        Returns a JSON string with error code and message for frontend display.
+        """
+        import json
+
+        error_str = str(exception)
+
+        # OpenAI API errors - extract code and message
+        if "Error code:" in error_str:
+            try:
+                # Parse OpenAI error format: "Error code: 404 - {'error': {'code': 'DeploymentNotFound', ...}}"
+                if "DeploymentNotFound" in error_str:
+                    return json.dumps({
+                        "code": "DeploymentNotFound",
+                        "message": "The specified model deployment was not found. Please check your model configuration.",
+                        "details": "Verify that the deployment ID matches your Azure OpenAI deployment name."
+                    })
+                elif "RateLimitError" in error_str or "429" in error_str:
+                    return json.dumps({
+                        "code": "RateLimitExceeded",
+                        "message": "Too many requests. Please wait a moment and try again.",
+                        "details": "You've exceeded the rate limit for this deployment."
+                    })
+                elif "InvalidApiKey" in error_str or "401" in error_str:
+                    return json.dumps({
+                        "code": "AuthenticationError",
+                        "message": "Authentication failed. Please check your API configuration.",
+                        "details": "The API key or authentication token is invalid or expired."
+                    })
+                elif "ContentFilter" in error_str:
+                    return json.dumps({
+                        "code": "ContentFiltered",
+                        "message": "Your request was flagged by content filters.",
+                        "details": "Please rephrase your request to comply with usage policies."
+                    })
+                elif "ContextLengthExceeded" in error_str or "maximum context length" in error_str:
+                    return json.dumps({
+                        "code": "ContextLengthExceeded",
+                        "message": "The conversation is too long for the model's context window.",
+                        "details": "Try starting a new conversation or shortening your message."
+                    })
+                elif "unsupported_parameter" in error_str.lower() or "UnsupportedParameter" in error_str:
+                    # Extract which parameter is unsupported
+                    param_match = None
+                    if "'max_tokens'" in error_str:
+                        param_match = "max_tokens"
+                    elif "param" in error_str:
+                        import re
+                        match = re.search(r"'param':\s*'([^']+)'", error_str)
+                        if match:
+                            param_match = match.group(1)
+
+                    return json.dumps({
+                        "code": "UnsupportedParameter",
+                        "message": f"The parameter '{param_match or 'provided'}' is not supported by this model.",
+                        "details": "This model may require the responses API endpoint. Try setting endpoint_preference to 'responses' in your agent configuration, or check that you're using compatible parameters for your model."
+                    })
+                else:
+                    # Generic OpenAI error
+                    return json.dumps({
+                        "code": "APIError",
+                        "message": "An error occurred while processing your request.",
+                        "details": error_str[:200]  # Truncate long error messages
+                    })
+            except Exception:
+                pass
+
+        # Connection errors
+        if "connection" in error_str.lower() or "timeout" in error_str.lower():
+            return json.dumps({
+                "code": "ConnectionError",
+                "message": "Unable to connect to the AI service.",
+                "details": "Please check your network connection and try again."
+            })
+
+        # Generic fallback
+        return json.dumps({
+            "code": "UnknownError",
+            "message": "An unexpected error occurred.",
+            "details": error_str[:200]  # Truncate long error messages
+        })
 
     async def cancel_current(self) -> None:
         """Signal cancellation for barge-in."""

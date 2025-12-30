@@ -44,7 +44,9 @@ import {
   ListItemAvatar,
   ListItemIcon,
   ListItemText,
+  MenuItem,
   Radio,
+  Select,
   Slider,
   Stack,
   Tab,
@@ -796,18 +798,30 @@ export default function AgentBuilder({
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 4096,
+      verbosity: 0,
+      min_p: null,
+      typical_p: null,
+      reasoning_effort: null,
     },
     voicelive_model: {
       deployment_id: 'gpt-realtime',
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 4096,
+      verbosity: 0,
+      min_p: null,
+      typical_p: null,
+      reasoning_effort: null,
     },
     model: {
       deployment_id: 'gpt-4o',
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 4096,
+      verbosity: 0,
+      min_p: null,
+      typical_p: null,
+      reasoning_effort: null,
     },
     voice: {
       name: 'en-US-AvaMultilingualNeural',
@@ -1156,8 +1170,8 @@ export default function AgentBuilder({
       // Apply template to config
       // Build cascade_model and voicelive_model from template's model or use defaults
       const templateModel = template.model || {};
-      const cascadeDefaults = { deployment_id: 'gpt-4o', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
-      const voiceliveDefaults = { deployment_id: 'gpt-realtime', temperature: 0.7, top_p: 0.9, max_tokens: 4096 };
+      const cascadeDefaults = { deployment_id: 'gpt-4o', temperature: 0.7, top_p: 0.9, max_tokens: 4096, verbosity: 0, min_p: null, typical_p: null, reasoning_effort: null };
+      const voiceliveDefaults = { deployment_id: 'gpt-realtime', temperature: 0.7, top_p: 0.9, max_tokens: 4096, verbosity: 0, min_p: null, typical_p: null, reasoning_effort: null };
       
       setConfig(prev => ({
         ...prev,
@@ -1209,12 +1223,20 @@ export default function AgentBuilder({
           temperature: config.cascade_model?.temperature ?? 0.7,
           top_p: config.cascade_model?.top_p ?? 0.9,
           max_tokens: config.cascade_model?.max_tokens ?? 4096,
+          verbosity: config.cascade_model?.verbosity ?? 0,
+          min_p: config.cascade_model?.min_p ?? null,
+          typical_p: config.cascade_model?.typical_p ?? null,
+          reasoning_effort: config.cascade_model?.reasoning_effort ?? null,
         },
         voicelive_model: {
           deployment_id: config.voicelive_model?.deployment_id || 'gpt-realtime',
           temperature: config.voicelive_model?.temperature ?? 0.7,
           top_p: config.voicelive_model?.top_p ?? 0.9,
           max_tokens: config.voicelive_model?.max_tokens ?? 4096,
+          verbosity: config.voicelive_model?.verbosity ?? 0,
+          min_p: config.voicelive_model?.min_p ?? null,
+          typical_p: config.voicelive_model?.typical_p ?? null,
+          reasoning_effort: config.voicelive_model?.reasoning_effort ?? null,
         },
         voice: {
           name: config.voice.name,
@@ -2756,6 +2778,119 @@ export default function AgentBuilder({
                             { value: 16384, label: '16K' },
                           ]}
                         />
+                      </Box>
+
+                      <Box>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2" fontWeight={500}>Verbosity Level</Typography>
+                            <Tooltip title="Output detail level. 0=Minimal (fastest, best for real-time), 1=Standard, 2=Detailed (includes reasoning)">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                          <Chip label={config.cascade_model?.verbosity ?? 0} size="small" color="primary" />
+                        </Stack>
+                        <Slider
+                          value={config.cascade_model?.verbosity ?? 0}
+                          onChange={(_e, v) => {
+                            handleNestedConfigChange('cascade_model', 'verbosity', v);
+                            handleNestedConfigChange('voicelive_model', 'verbosity', v);
+                          }}
+                          min={0}
+                          max={2}
+                          step={1}
+                          marks={[
+                            { value: 0, label: 'Minimal' },
+                            { value: 1, label: 'Standard' },
+                            { value: 2, label: 'Detailed' },
+                          ]}
+                        />
+                      </Box>
+
+                      <Box>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2" fontWeight={500}>Min P (Minimum Probability)</Typography>
+                            <Tooltip title="Minimum probability threshold for token selection. Lower values allow more diversity. Leave blank for default.">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                          <Chip label={config.cascade_model?.min_p ?? 'Auto'} size="small" color="primary" />
+                        </Stack>
+                        <Slider
+                          value={config.cascade_model?.min_p ?? 0}
+                          onChange={(_e, v) => {
+                            const val = v === 0 ? null : v;
+                            handleNestedConfigChange('cascade_model', 'min_p', val);
+                            handleNestedConfigChange('voicelive_model', 'min_p', val);
+                          }}
+                          min={0}
+                          max={0.5}
+                          step={0.01}
+                          marks={[
+                            { value: 0, label: 'Auto' },
+                            { value: 0.05, label: '0.05' },
+                            { value: 0.1, label: '0.1' },
+                            { value: 0.2, label: '0.2' },
+                          ]}
+                        />
+                      </Box>
+
+                      <Box>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2" fontWeight={500}>Typical P (Typical Sampling)</Typography>
+                            <Tooltip title="Typical sampling parameter for controlling output quality. Lower values = more typical outputs. Leave blank for default.">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                          <Chip label={config.cascade_model?.typical_p ?? 'Auto'} size="small" color="primary" />
+                        </Stack>
+                        <Slider
+                          value={config.cascade_model?.typical_p ?? 0}
+                          onChange={(_e, v) => {
+                            const val = v === 0 ? null : v;
+                            handleNestedConfigChange('cascade_model', 'typical_p', val);
+                            handleNestedConfigChange('voicelive_model', 'typical_p', val);
+                          }}
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          marks={[
+                            { value: 0, label: 'Auto' },
+                            { value: 0.5, label: '0.5' },
+                            { value: 0.8, label: '0.8' },
+                            { value: 1, label: '1.0' },
+                          ]}
+                        />
+                      </Box>
+
+                      <Box>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2" fontWeight={500}>Reasoning Effort (o1/o3 Models)</Typography>
+                            <Tooltip title="Amount of reasoning compute for o1/o3 models. Higher effort = more thorough reasoning. Not applicable for other models.">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                          <Chip label={config.cascade_model?.reasoning_effort || 'Auto'} size="small" color="primary" />
+                        </Stack>
+                        <Select
+                          value={config.cascade_model?.reasoning_effort || ''}
+                          onChange={(e) => {
+                            const val = e.target.value || null;
+                            handleNestedConfigChange('cascade_model', 'reasoning_effort', val);
+                            handleNestedConfigChange('voicelive_model', 'reasoning_effort', val);
+                          }}
+                          size="small"
+                          fullWidth
+                          displayEmpty
+                        >
+                          <MenuItem value="">Auto (model default)</MenuItem>
+                          <MenuItem value="low">Low</MenuItem>
+                          <MenuItem value="medium">Medium</MenuItem>
+                          <MenuItem value="high">High</MenuItem>
+                        </Select>
                       </Box>
                     </Stack>
                   </CardContent>
