@@ -84,9 +84,35 @@ class ModelConfigSchema(BaseModel):
     """Model configuration schema."""
 
     deployment_id: str = "gpt-4o"
+    name: str | None = None
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     top_p: float = Field(default=0.9, ge=0.0, le=1.0)
     max_tokens: int = Field(default=4096, ge=1, le=16384)
+
+    # Responses API parameters
+    endpoint_preference: str = Field(
+        default="auto",
+        description="Endpoint selection: 'auto' (smart routing), 'chat' (chat/completions), 'responses' (responses API)"
+    )
+    verbosity: int = Field(default=0, ge=0, le=2, description="Response verbosity: 0=minimal, 1=standard, 2=detailed")
+    min_p: float | None = Field(default=None, ge=0.0, le=1.0, description="Minimum probability threshold")
+    typical_p: float | None = Field(default=None, ge=0.0, le=1.0, description="Typical sampling parameter")
+    reasoning_effort: str | None = Field(
+        default=None,
+        description="Reasoning effort level: 'low', 'medium', 'high' (for o1/o3/o4 models)"
+    )
+    include_reasoning: bool = Field(default=False, description="Include reasoning tokens in response")
+    max_completion_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        le=32768,
+        description="Max completion tokens (for reasoning models and responses API)"
+    )
+
+    # Enhanced parameters
+    store: bool | None = Field(default=None, description="Store conversation for training")
+    metadata: dict[str, Any] | None = Field(default=None, description="Custom metadata")
+    response_format: dict[str, Any] | None = Field(default=None, description="Structured output format")
 
 
 class VoiceConfigSchema(BaseModel):
@@ -845,18 +871,41 @@ async def create_dynamic_agent(
     if config.cascade_model:
         cascade_model = ModelConfig(
             deployment_id=config.cascade_model.deployment_id,
+            name=config.cascade_model.name,
             temperature=config.cascade_model.temperature,
             top_p=config.cascade_model.top_p,
             max_tokens=config.cascade_model.max_tokens,
+            # Responses API parameters
+            endpoint_preference=config.cascade_model.endpoint_preference,
+            verbosity=config.cascade_model.verbosity,
+            min_p=config.cascade_model.min_p,
+            typical_p=config.cascade_model.typical_p,
+            reasoning_effort=config.cascade_model.reasoning_effort,
+            include_reasoning=config.cascade_model.include_reasoning,
+            max_completion_tokens=config.cascade_model.max_completion_tokens,
+            store=config.cascade_model.store,
+            metadata=config.cascade_model.metadata,
+            response_format=config.cascade_model.response_format,
         )
     elif config.model:
         # Fallback: use legacy model, but swap realtime for gpt-4o
         base_id = config.model.deployment_id
         cascade_model = ModelConfig(
             deployment_id="gpt-4o" if "realtime" in base_id.lower() else base_id,
+            name=config.model.name,
             temperature=config.model.temperature,
             top_p=config.model.top_p,
             max_tokens=config.model.max_tokens,
+            endpoint_preference=config.model.endpoint_preference,
+            verbosity=config.model.verbosity,
+            min_p=config.model.min_p,
+            typical_p=config.model.typical_p,
+            reasoning_effort=config.model.reasoning_effort,
+            include_reasoning=config.model.include_reasoning,
+            max_completion_tokens=config.model.max_completion_tokens,
+            store=config.model.store,
+            metadata=config.model.metadata,
+            response_format=config.model.response_format,
         )
     else:
         cascade_model = ModelConfig(
@@ -865,23 +914,45 @@ async def create_dynamic_agent(
             top_p=0.9,
             max_tokens=4096,
         )
-    
+
     # VoiceLive model (for realtime API mode)
     if config.voicelive_model:
         voicelive_model = ModelConfig(
             deployment_id=config.voicelive_model.deployment_id,
+            name=config.voicelive_model.name,
             temperature=config.voicelive_model.temperature,
             top_p=config.voicelive_model.top_p,
             max_tokens=config.voicelive_model.max_tokens,
+            endpoint_preference=config.voicelive_model.endpoint_preference,
+            verbosity=config.voicelive_model.verbosity,
+            min_p=config.voicelive_model.min_p,
+            typical_p=config.voicelive_model.typical_p,
+            reasoning_effort=config.voicelive_model.reasoning_effort,
+            include_reasoning=config.voicelive_model.include_reasoning,
+            max_completion_tokens=config.voicelive_model.max_completion_tokens,
+            store=config.voicelive_model.store,
+            metadata=config.voicelive_model.metadata,
+            response_format=config.voicelive_model.response_format,
         )
     elif config.model:
         # Fallback: use legacy model, but ensure realtime for voicelive
         base_id = config.model.deployment_id
         voicelive_model = ModelConfig(
             deployment_id=base_id if "realtime" in base_id.lower() else "gpt-realtime",
+            name=config.model.name,
             temperature=config.model.temperature,
             top_p=config.model.top_p,
             max_tokens=config.model.max_tokens,
+            endpoint_preference=config.model.endpoint_preference,
+            verbosity=config.model.verbosity,
+            min_p=config.model.min_p,
+            typical_p=config.model.typical_p,
+            reasoning_effort=config.model.reasoning_effort,
+            include_reasoning=config.model.include_reasoning,
+            max_completion_tokens=config.model.max_completion_tokens,
+            store=config.model.store,
+            metadata=config.model.metadata,
+            response_format=config.model.response_format,
         )
     else:
         voicelive_model = ModelConfig(
@@ -1087,17 +1158,39 @@ async def update_session_agent(
     if config.cascade_model:
         cascade_model = ModelConfig(
             deployment_id=config.cascade_model.deployment_id,
+            name=config.cascade_model.name,
             temperature=config.cascade_model.temperature,
             top_p=config.cascade_model.top_p,
             max_tokens=config.cascade_model.max_tokens,
+            endpoint_preference=config.cascade_model.endpoint_preference,
+            verbosity=config.cascade_model.verbosity,
+            min_p=config.cascade_model.min_p,
+            typical_p=config.cascade_model.typical_p,
+            reasoning_effort=config.cascade_model.reasoning_effort,
+            include_reasoning=config.cascade_model.include_reasoning,
+            max_completion_tokens=config.cascade_model.max_completion_tokens,
+            store=config.cascade_model.store,
+            metadata=config.cascade_model.metadata,
+            response_format=config.cascade_model.response_format,
         )
     elif config.model:
         base_id = config.model.deployment_id
         cascade_model = ModelConfig(
             deployment_id="gpt-4o" if "realtime" in base_id.lower() else base_id,
+            name=config.model.name,
             temperature=config.model.temperature,
             top_p=config.model.top_p,
             max_tokens=config.model.max_tokens,
+            endpoint_preference=config.model.endpoint_preference,
+            verbosity=config.model.verbosity,
+            min_p=config.model.min_p,
+            typical_p=config.model.typical_p,
+            reasoning_effort=config.model.reasoning_effort,
+            include_reasoning=config.model.include_reasoning,
+            max_completion_tokens=config.model.max_completion_tokens,
+            store=config.model.store,
+            metadata=config.model.metadata,
+            response_format=config.model.response_format,
         )
     else:
         cascade_model = ModelConfig(
@@ -1106,21 +1199,43 @@ async def update_session_agent(
             top_p=0.9,
             max_tokens=4096,
         )
-    
+
     if config.voicelive_model:
         voicelive_model = ModelConfig(
             deployment_id=config.voicelive_model.deployment_id,
+            name=config.voicelive_model.name,
             temperature=config.voicelive_model.temperature,
             top_p=config.voicelive_model.top_p,
             max_tokens=config.voicelive_model.max_tokens,
+            endpoint_preference=config.voicelive_model.endpoint_preference,
+            verbosity=config.voicelive_model.verbosity,
+            min_p=config.voicelive_model.min_p,
+            typical_p=config.voicelive_model.typical_p,
+            reasoning_effort=config.voicelive_model.reasoning_effort,
+            include_reasoning=config.voicelive_model.include_reasoning,
+            max_completion_tokens=config.voicelive_model.max_completion_tokens,
+            store=config.voicelive_model.store,
+            metadata=config.voicelive_model.metadata,
+            response_format=config.voicelive_model.response_format,
         )
     elif config.model:
         base_id = config.model.deployment_id
         voicelive_model = ModelConfig(
             deployment_id=base_id if "realtime" in base_id.lower() else "gpt-realtime",
+            name=config.model.name,
             temperature=config.model.temperature,
             top_p=config.model.top_p,
             max_tokens=config.model.max_tokens,
+            endpoint_preference=config.model.endpoint_preference,
+            verbosity=config.model.verbosity,
+            min_p=config.model.min_p,
+            typical_p=config.model.typical_p,
+            reasoning_effort=config.model.reasoning_effort,
+            include_reasoning=config.model.include_reasoning,
+            max_completion_tokens=config.model.max_completion_tokens,
+            store=config.model.store,
+            metadata=config.model.metadata,
+            response_format=config.model.response_format,
         )
     else:
         voicelive_model = ModelConfig(
