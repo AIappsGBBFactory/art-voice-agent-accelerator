@@ -42,6 +42,20 @@ footer() {
 # Helpers
 # ============================================================================
 
+# Helper to safely get azd env value (returns empty string on error/not found)
+get_azd_env_value() {
+    local value
+    # Get only the first line to avoid capturing warning messages
+    value=$(azd env get-value "$1" 2>/dev/null | head -n1)
+    local exit_code=${PIPESTATUS[0]}
+    # Return empty if command failed or output is an error message
+    if [[ $exit_code -ne 0 ]] || [[ -z "$value" ]] || [[ "$value" == ERROR:* ]] || [[ "$value" == *"not found"* ]]; then
+        echo ""
+    else
+        echo "$value"
+    fi
+}
+
 get_deployer_identity() {
     local name=""
     
@@ -70,6 +84,8 @@ resolve_location() {
     # 1. Already set via environment
     if [[ -n "${AZURE_LOCATION:-}" ]]; then
         info "Using AZURE_LOCATION from environment: $AZURE_LOCATION"
+        # Ensure it's also in azd env for downstream scripts
+        azd env set AZURE_LOCATION "$AZURE_LOCATION" 2>/dev/null || true
         return 0
     fi
     
@@ -80,6 +96,7 @@ resolve_location() {
         if [[ -n "$AZURE_LOCATION" ]]; then
             info "Resolved location from $env_tfvars: $AZURE_LOCATION"
             export AZURE_LOCATION
+            azd env set AZURE_LOCATION "$AZURE_LOCATION"
             return 0
         fi
     fi
@@ -91,6 +108,7 @@ resolve_location() {
         if [[ -n "$AZURE_LOCATION" ]]; then
             info "Resolved location from default tfvars: $AZURE_LOCATION"
             export AZURE_LOCATION
+            azd env set AZURE_LOCATION "$AZURE_LOCATION"
             return 0
         fi
     fi
@@ -101,6 +119,8 @@ resolve_location() {
         read -rp "│ Enter Azure location (e.g., eastus, westus2): " AZURE_LOCATION
         if [[ -n "$AZURE_LOCATION" ]]; then
             export AZURE_LOCATION
+            # Save to azd env so downstream scripts (e.g., initialize-terraform.sh) can access it
+            azd env set AZURE_LOCATION "$AZURE_LOCATION"
             return 0
         fi
     fi
@@ -135,7 +155,7 @@ configure_terraform_backend() {
     
     # Check if LOCAL_STATE is set in azd env
     if [[ -z "$local_state" ]]; then
-        local_state=$(azd env get-value LOCAL_STATE 2>/dev/null || echo "")
+        local_state=$(get_azd_env_value LOCAL_STATE)
     fi
     
     if [[ "$local_state" == "true" ]]; then
@@ -214,16 +234,26 @@ generate_provider_conf_json() {
     
     # Try to get from azd env if not set
     if [[ -z "$rs_resource_group" ]]; then
-        rs_resource_group=$(azd env get-value RS_RESOURCE_GROUP 2>/dev/null || echo "")
+        rs_resource_group=$(get_azd_env_value RS_RESOURCE_GROUP)
     fi
     if [[ -z "$rs_storage_account" ]]; then
-        rs_storage_account=$(azd env get-value RS_STORAGE_ACCOUNT 2>/dev/null || echo "")
+        rs_storage_account=$(get_azd_env_value RS_STORAGE_ACCOUNT)
     fi
     if [[ -z "$rs_container_name" ]]; then
-        rs_container_name=$(azd env get-value RS_CONTAINER_NAME 2>/dev/null || echo "")
+        rs_container_name=$(get_azd_env_value RS_CONTAINER_NAME)
     fi
     
-    # Validate required values
+    # Check if using local state - skip validation if so
+    local local_state="${LOCAL_STATE:-}"
+    if [[ -z "$local_state" ]]; then
+        local_state=$(get_azd_env_value LOCAL_STATE)
+    fi
+    if [[ "$local_state" == "true" ]]; then
+        info "Using local state - skipping provider.conf.json generation"
+        return 0
+    fi
+    
+    # Validate required values (only for remote state)
     if [[ -z "$rs_resource_group" || -z "$rs_storage_account" || -z "$rs_container_name" ]]; then
         warn "Remote state variables not fully configured"
         warn "Set RS_RESOURCE_GROUP, RS_STORAGE_ACCOUNT, RS_CONTAINER_NAME via 'azd env set'"
@@ -331,7 +361,7 @@ provider_terraform() {
     # Run remote state initialization (only if not using local state)
     local local_state="${LOCAL_STATE:-}"
     if [[ -z "$local_state" ]]; then
-        local_state=$(azd env get-value LOCAL_STATE 2>/dev/null) || local_state=""
+        local_state=$(get_azd_env_value LOCAL_STATE)
     fi
     
     local tf_init="$SCRIPT_DIR/helpers/initialize-terraform.sh"
@@ -340,10 +370,23 @@ provider_terraform() {
         log "Setting up Terraform remote state..."
         bash "$tf_init"
         
-        # Generate provider.conf.json AFTER initialize-terraform.sh
-        # This ensures RS_* variables are set (either existing or newly created)
-        log ""
-        generate_provider_conf_json
+        # Re-check LOCAL_STATE after initialize-terraform.sh runs
+        # User may have chosen local state interactively
+        # Use head -n1 to avoid capturing warning messages from azd
+        local_state=$(azd env get-value LOCAL_STATE 2>/dev/null | head -n1 || echo "")
+        # Filter out any error messages that might be in the output
+        [[ "$local_state" == ERROR:* ]] && local_state=""
+        [[ "$local_state" == *"not found"* ]] && local_state=""
+        
+        # Only generate provider.conf.json if still using remote state
+        if [[ "$local_state" == "true" ]]; then
+            # User selected local state - reconfigure backend
+            info "User selected local state - reconfiguring backend..."
+            configure_terraform_backend
+        else
+            log ""
+            generate_provider_conf_json
+        fi
     elif [[ "$local_state" == "true" ]]; then
         info "Using local state - skipping remote state initialization"
     else
