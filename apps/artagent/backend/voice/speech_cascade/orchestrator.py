@@ -69,6 +69,7 @@ from apps.artagent.backend.voice.shared.session_state import (
     sync_state_from_memo,
     sync_state_to_memo,
 )
+from apps.artagent.backend.voice.speech_cascade.tts_processor import TTSTextProcessor
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
@@ -727,26 +728,42 @@ class CascadeOrchestratorAdapter:
 
     async def process_turn(
         self,
-        context: OrchestratorContext,
+        context: OrchestratorContext | None = None,
         *,
+        user_text: str | None = None,
+        memo_manager: MemoManager | None = None,
         on_tts_chunk: Callable[[str], Awaitable[None]] | None = None,
         on_tool_start: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         on_tool_end: Callable[[str, Any], Awaitable[None]] | None = None,
     ) -> OrchestratorResult:
         """
-        Process a conversation turn using the cascade pattern.
+        Process a conversation turn - UNIFIED ENTRY POINT.
+
+        This is the single entry point for turn processing. Supports two calling patterns:
+
+        Pattern 1 (Full context):
+            result = await adapter.process_turn(context=orchestrator_context)
+
+        Pattern 2 (Direct MemoManager - simplified):
+            result = await adapter.process_turn(
+                user_text="Hello",
+                memo_manager=cm,
+                on_tts_chunk=my_callback
+            )
 
         Flow:
-        1. Extract MemoManager from context
-        2. Build messages from history + user input
-        3. Call LLM with streaming
-        4. Handle tool calls / handoffs
-        5. Record conversation to history
-        6. Sync state to MemoManager
+        1. Build/extract context and MemoManager
+        2. Sync state from MemoManager (if provided)
+        3. Build messages from history + user input
+        4. Call LLM with streaming
+        5. Handle tool calls / handoffs
+        6. Record conversation to history
+        7. Sync state to MemoManager
 
         Args:
-            context: OrchestratorContext with user input and state
-
+            context: OrchestratorContext with user input and state (Pattern 1)
+            user_text: User's input text (Pattern 2)
+            memo_manager: MemoManager for state management (Pattern 2)
             on_tts_chunk: Callback for streaming TTS chunks
             on_tool_start: Callback when tool execution starts
             on_tool_end: Callback when tool execution completes
@@ -756,12 +773,40 @@ class CascadeOrchestratorAdapter:
         """
         self._cancel_event.clear()
         self._metrics.start_turn()  # Increments turn count and resets TTFT tracking
-        self._last_user_message = context.user_text
 
-        # Extract and preserve MemoManager reference for this turn
-        self._current_memo_manager = (
-            context.metadata.get("memo_manager") if context.metadata else None
-        )
+        # Support both calling patterns: context OR direct parameters
+        if context is None:
+            # Pattern 2: Build context from parameters
+            if memo_manager:
+                self.sync_from_memo_manager(memo_manager)
+                self._current_memo_manager = memo_manager
+
+                # Get history and append current user message
+                history = list(memo_manager.get_history(self._active_agent) or [])
+                if user_text:
+                    memo_manager.append_to_history(self._active_agent, "user", user_text)
+
+                # Build context using helper (eliminates duplication)
+                session_context = self._build_session_context(memo_manager)
+            else:
+                history = []
+                session_context = {}
+
+            context = OrchestratorContext(
+                session_id=self.config.session_id or "",
+                websocket=None,
+                call_connection_id=self.config.call_connection_id,
+                user_text=user_text or "",
+                conversation_history=history,
+                metadata=session_context,
+            )
+        else:
+            # Pattern 1: Extract from provided context
+            self._current_memo_manager = (
+                context.metadata.get("memo_manager") if context.metadata else None
+            )
+
+        self._last_user_message = context.user_text
         turn_id = context.metadata.get("run_id", "") if context.metadata else ""
 
         agent = self.current_agent_config
@@ -1153,49 +1198,16 @@ class CascadeOrchestratorAdapter:
         return messages
 
     def _sanitize_tts_text(self, text: str) -> str:
-        """Remove markdown so TTS only speaks plain text."""
-        if not text:
-            return ""
-        sanitized = text
-        sanitized = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", sanitized)
-        sanitized = re.sub(r"`{1,3}([^`]+)`{1,3}", r"\1", sanitized)
-        sanitized = sanitized.replace("\r", " ").replace("\n", " ")
-        sanitized = sanitized.replace("*", " ").replace("_", " ")
-        sanitized = sanitized.replace("~", " ").replace("`", " ")
-        sanitized = re.sub(r"\s+", " ", sanitized)
-        return sanitized
+        """Remove markdown so TTS only speaks plain text. DEPRECATED: Use TTSTextProcessor."""
+        return TTSTextProcessor.sanitize_tts_text(text)
 
     def _find_tts_boundary(self, text: str, terms: str, min_index: int) -> int:
-        """Return first punctuation boundary that is safe to split on."""
-        if not text:
-            return -1
-        for match in re.finditer(rf"[{re.escape(terms)}]", text):
-            idx = match.start()
-            if idx < min_index:
-                continue
-            next_char = text[idx + 1 : idx + 2]
-            if next_char and not next_char.isspace():
-                if next_char in "\"')]}":
-                    after = text[idx + 2 : idx + 3]
-                    if after and not after.isspace():
-                        continue
-                else:
-                    continue
-            if text[idx] == ".":
-                prev_char = text[idx - 1 : idx]
-                if prev_char.isdigit() and next_char.isdigit():
-                    continue
-            return idx
-        return -1
+        """Return first punctuation boundary that is safe to split on. DEPRECATED: Use TTSTextProcessor."""
+        return TTSTextProcessor.find_tts_boundary(text, terms, min_index)
 
     def _split_tts_buffer(self, text: str, end_index: int) -> tuple[str, str]:
-        """Split text at end_index, keeping trailing whitespace with the left chunk."""
-        if not text:
-            return "", ""
-        end = max(0, min(end_index, len(text)))
-        while end < len(text) and text[end].isspace():
-            end += 1
-        return text[:end], text[end:]
+        """Split text at end_index, keeping trailing whitespace with the left chunk. DEPRECATED: Use TTSTextProcessor."""
+        return TTSTextProcessor.split_tts_buffer(text, end_index)
 
     async def _process_llm(
         self,
@@ -1252,16 +1264,27 @@ class CascadeOrchestratorAdapter:
             )
             return ("", [])
 
-        # Use existing OpenAI client
+        # Use AzureOpenAIManager for dual-endpoint support (chat vs responses)
+        # This enables proper routing based on model_config.endpoint_preference
         try:
+            from src.aoai.manager import AzureOpenAIManager
             from src.aoai.client import get_client as get_aoai_client
 
+            # Get the raw client for streaming (manager doesn't support streaming yet)
             client = get_aoai_client()
             if client is None:
                 logger.error("AOAI client is None - not initialized")
                 return ("I'm having trouble connecting to the AI service.", [])
+
+            # Also get manager instance for future non-streaming support
+            # Initialize manager with session context for tracing
+            manager = AzureOpenAIManager(
+                call_connection_id=self.config.call_connection_id,
+                session_id=self.config.session_id,
+                enable_tracing=True,
+            )
         except ImportError as e:
-            logger.error("Failed to import AOAI client: %s", e)
+            logger.error("Failed to import AOAI client/manager: %s", e)
             return ("I'm having trouble connecting to the AI service.", [])
 
         response_text = ""
@@ -1358,9 +1381,15 @@ class CascadeOrchestratorAdapter:
                         top_p_value = api_params.get("top_p")
                         max_tokens_value = api_params.get("max_tokens") or api_params.get("max_completion_tokens")
 
+                        # Detect which endpoint to use based on model config
+                        use_responses_endpoint = manager._should_use_responses_endpoint(
+                            model_config, **api_params
+                        ) if model_config else False
+                        endpoint_name = "responses" if use_responses_endpoint else "chat.completions"
+
                         # Create a span for the OpenAI streaming call
                         with tracer.start_as_current_span(
-                            f"openai.chat.completions.create (streaming)",
+                            f"openai.{endpoint_name}.create (streaming)",
                             kind=SpanKind.CLIENT,
                             attributes={
                                 "dependency.type": "Azure OpenAI",
@@ -1371,9 +1400,25 @@ class CascadeOrchestratorAdapter:
                                 "gen_ai.request.top_p": top_p_value,
                                 "gen_ai.request.max_tokens": max_tokens_value,
                                 "gen_ai.streaming": True,
+                                "gen_ai.endpoint_type": "responses" if use_responses_endpoint else "chat",
                             },
                         ) as openai_span:
-                            for chunk in client.chat.completions.create(**api_params):
+                            # Route to appropriate endpoint
+                            if use_responses_endpoint:
+                                # Use responses API for streaming
+                                try:
+                                    stream = client.responses.create(**api_params)
+                                except AttributeError:
+                                    # Fallback if responses endpoint not available in SDK
+                                    logger.warning(
+                                        "Responses endpoint not available in SDK, falling back to chat/completions"
+                                    )
+                                    stream = client.chat.completions.create(**api_params)
+                            else:
+                                # Use chat completions API
+                                stream = client.chat.completions.create(**api_params)
+
+                            for chunk in stream:
                                 chunk_count += 1
                                 if not getattr(chunk, "choices", None):
                                     continue
@@ -1697,7 +1742,8 @@ class CascadeOrchestratorAdapter:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
                 logger.exception("LLM processing failed: %s", e)
-                response_text = "I apologize, I encountered an error processing your request."
+                response_text = "I apologize, I encountered an error processing your request. Please ensure the selected agent model is available in your Azure AI Foundry resource."
+                
 
         return response_text, all_tool_calls
 
@@ -1747,12 +1793,11 @@ class CascadeOrchestratorAdapter:
         tools: list[dict] | None,
     ) -> dict[str, Any]:
         """
-        Prepare API parameters for streaming LLM calls.
+        Prepare API parameters for streaming LLM calls using manager's logic.
 
-        Handles parameter differences between:
-        - Standard models (gpt-4, gpt-4o): temperature, top_p, max_tokens
-        - Reasoning models (o1, o3): max_completion_tokens only
-        - GPT-5 models: max_completion_tokens (responses API)
+        Delegates to AzureOpenAIManager for consistent parameter handling
+        across chat and responses endpoints. This ensures proper routing
+        based on model_config.endpoint_preference.
 
         Args:
             model_config: ModelConfig instance (or None for defaults)
@@ -1761,94 +1806,63 @@ class CascadeOrchestratorAdapter:
             tools: Tool definitions
 
         Returns:
-            Dict of parameters for client.chat.completions.create()
+            Dict of parameters for the appropriate endpoint
         """
-        params = {
-            "model": model_name,
-            "messages": messages,
-            "stream": True,
-            "timeout": 60,
-        }
+        try:
+            from src.aoai.manager import AzureOpenAIManager
 
-        # Add tools if present
-        if tools:
-            params["tools"] = tools
+            # Create a temporary manager instance to use its helper methods
+            temp_manager = AzureOpenAIManager(enable_tracing=False)
 
-        # Use defaults if no model_config - try to detect from model name
-        if not model_config:
-            # Auto-detect from model name
-            model_name_lower = model_name.lower()
-            if any(x in model_name_lower for x in ["gpt-5", "o1", "o3", "o4"]):
-                # Use max_completion_tokens for newer models
-                params["max_completion_tokens"] = 4096
-                logger.debug(f"No model_config, detected newer model from name: {model_name}")
+            # Determine which endpoint to use - CRITICAL: pass stream=True
+            use_responses = temp_manager._should_use_responses_endpoint(
+                model_config if model_config else type('obj', (object,), {'endpoint_preference': 'auto'})(),
+                stream=True  # Let manager know this is streaming
+            )
+
+            # Build params using manager's logic
+            if use_responses:
+                params = temp_manager._prepare_responses_params(
+                    model_config if model_config else type('obj', (object,), {'deployment_id': model_name})(),
+                    messages,
+                    stream=True,  # Pass stream flag
+                )
             else:
-                params["temperature"] = 0.7
-                params["top_p"] = 0.9
-                params["max_tokens"] = 4096
+                params = temp_manager._prepare_chat_params(
+                    model_config if model_config else type('obj', (object,), {'deployment_id': model_name})(),
+                    messages,
+                    stream=True,  # Pass stream flag
+                )
+
+            # Add tools (stream and timeout already set by manager methods or added above)
+            if not params.get("stream"):
+                params["stream"] = True
+            if "timeout" not in params:
+                params["timeout"] = 60
+            if tools:
+                params["tools"] = tools
+
+            logger.debug(
+                f"Prepared streaming params using manager | endpoint={'responses' if use_responses else 'chat'} "
+                f"params={dict((k, v) for k, v in params.items() if k not in ['messages', 'tools'])}"
+            )
+
             return params
 
-        # Get model family for parameter selection
-        model_family = getattr(model_config, "model_family", None)
-
-        # Auto-detect if not set
-        if not model_family:
-            deployment_lower = model_name.lower()
-            if "gpt-5" in deployment_lower:
-                model_family = "gpt-5"
-            elif "o1" in deployment_lower:
-                model_family = "o1"
-            elif "o3" in deployment_lower:
-                model_family = "o3"
-            elif "o4" in deployment_lower:
-                model_family = "o4"
-            elif "gpt-4" in deployment_lower:
-                model_family = "gpt-4"
-            else:
-                model_family = "unknown"
-            logger.debug(f"Auto-detected model_family={model_family} from model_name={model_name}")
-
-        logger.debug(
-            f"Preparing streaming params | model={model_name} family={model_family} "
-            f"has_max_completion_tokens={hasattr(model_config, 'max_completion_tokens')} "
-            f"has_max_tokens={hasattr(model_config, 'max_tokens')}"
-        )
-
-        # Reasoning models (o1, o3) and GPT-5 use max_completion_tokens, no temperature/top_p
-        if model_family in ["o1", "o3", "o4", "gpt-5"]:
-            logger.debug(f"Using max_completion_tokens for {model_family} model")
-            max_completion_tokens = getattr(model_config, "max_completion_tokens", None)
-            if max_completion_tokens:
-                params["max_completion_tokens"] = max_completion_tokens
-            else:
-                # Fallback: convert max_tokens to max_completion_tokens
-                max_tokens = getattr(model_config, "max_tokens", None)
-                if max_tokens:
-                    params["max_completion_tokens"] = max_tokens
-                    logger.debug(
-                        f"Converting max_tokens={max_tokens} to max_completion_tokens for {model_family} model"
-                    )
-                else:
-                    # Default fallback
-                    params["max_completion_tokens"] = 4096
-                    logger.debug(f"Using default max_completion_tokens=4096 for {model_family} model")
-        else:
-            # Standard models support temperature, top_p, max_tokens
-            logger.debug(f"Using standard parameters for {model_family} model")
-            temperature = getattr(model_config, "temperature", None)
-            if temperature is not None:
-                params["temperature"] = temperature
-
-            top_p = getattr(model_config, "top_p", None)
-            if top_p is not None:
-                params["top_p"] = top_p
-
-            max_tokens = getattr(model_config, "max_tokens", None)
-            if max_tokens:
-                params["max_tokens"] = max_tokens
-
-        logger.debug(f"Final streaming params (excluding messages/tools): {dict((k, v) for k, v in params.items() if k not in ['messages', 'tools'])}")
-        return params
+        except ImportError:
+            # Fallback to basic params if manager not available
+            logger.warning("AzureOpenAIManager not available, using basic params")
+            params = {
+                "model": model_name,
+                "messages": messages,
+                "stream": True,
+                "timeout": 60,
+                "temperature": 0.7,
+                "max_tokens": 4096,
+            }
+            if tools:
+                params["tools"] = tools
+            return params
 
     def _extract_error_details(self, exception: Exception) -> str:
         """
@@ -2185,16 +2199,19 @@ class CascadeOrchestratorAdapter:
         on_tts_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> str | None:
         """
-        Process user input in cascade pattern.
+        DEPRECATED: Process user input in cascade pattern.
 
-        This is the main entry point called by SpeechCascadeHandler.
-        
-        Flow:
-        1. Sync state from MemoManager
-        2. Build history (with cross-agent context)
-        3. Build context and call process_turn
-        4. Fire-and-forget Redis persistence
-        5. Return response
+        This method is deprecated and will be removed in a future version.
+        Use process_turn() directly instead:
+
+            result = await adapter.process_turn(
+                user_text=transcript,
+                memo_manager=cm,
+                on_tts_chunk=on_tts_chunk
+            )
+            return result.response_text
+
+        This is now a thin compatibility shim that calls process_turn().
 
         Args:
             transcript: User's transcribed speech
@@ -2204,84 +2221,16 @@ class CascadeOrchestratorAdapter:
         Returns:
             Full response text (or None if cancelled/error)
         """
-        # 1. Sync orchestrator state from MemoManager
-        self.sync_from_memo_manager(cm)
-        
-        # Store reference for use in process_turn
-        self._current_memo_manager = cm
-
-        # 2. Build conversation history using helper
-        history = self._get_conversation_history(cm)
-
-        # 3. Build context and process
-
-        # Pull existing history for active agent
-        # IMPORTANT: Make a copy of the history list to avoid reference issues.
-        # get_history() returns a reference to the internal list, so we must copy
-        # it BEFORE appending the new user message. Otherwise, the history list
-        # will include the current user message, and _build_messages() will add
-        # it again, causing duplicate user messages.
-        history = []
-        try:
-            history = list(cm.get_history(self._active_agent) or [])
-        except Exception:
-            history = []
-
-        logger.info(
-            "📜 History before turn | agent=%s history_count=%d transcript=%s",
-            self._active_agent,
-            len(history),
-            transcript[:50] if transcript else "(none)",
-        )
-
-        # Persist user turn into history for continuity
-        # This happens AFTER we copy the history, so it doesn't affect the copy
-        if transcript:
-            try:
-                cm.append_to_history(self._active_agent, "user", transcript)
-            except Exception:
-                logger.debug("Failed to append user turn to history", exc_info=True)
-
-        # Build session context from MemoManager for prompt rendering
-        session_context = {
-            "memo_manager": cm,
-            # Session profile and context for Jinja templates
-            "session_profile": cm.get_value_from_corememory("session_profile"),
-            "caller_name": cm.get_value_from_corememory("caller_name"),
-            "client_id": cm.get_value_from_corememory("client_id"),
-            "customer_intelligence": cm.get_value_from_corememory("customer_intelligence"),
-            "institution_name": cm.get_value_from_corememory("institution_name"),
-            "active_agent": cm.get_value_from_corememory("active_agent"),
-            "previous_agent": cm.get_value_from_corememory("previous_agent"),
-            "visited_agents": cm.get_value_from_corememory("visited_agents"),
-            "handoff_context": cm.get_value_from_corememory("handoff_context"),
-        }
-
-        # Build context
-        context = OrchestratorContext(
-            session_id=self.config.session_id or "",
-            websocket=None,
-            call_connection_id=self.config.call_connection_id,
+        # Call unified process_turn with Pattern 2 (direct MemoManager)
+        result = await self.process_turn(
             user_text=transcript,
-            conversation_history=history,
-            metadata=self._build_session_context(cm),
+            memo_manager=cm,
+            on_tts_chunk=on_tts_chunk,
         )
 
-        result = await self.process_turn(context, on_tts_chunk=on_tts_chunk)
-
-        # 4. Handle errors/interrupts
-        if result.error:
-            logger.error("Turn processing error: %s", result.error)
+        # Return text response (or None for errors/interrupts)
+        if result.error or result.interrupted:
             return None
-        if result.interrupted:
-            return None
-
-        if result.response_text:
-            try:
-                cm.append_to_history(self._active_agent, "assistant", result.response_text)
-            except Exception:
-                logger.debug("Failed to append assistant turn to history", exc_info=True)
-
         return result.response_text
 
     async def _persist_to_redis_background(self, cm: MemoManager) -> None:
@@ -2295,13 +2244,23 @@ class CascadeOrchestratorAdapter:
         self,
     ) -> Callable[[MemoManager, str], Awaitable[str | None]]:
         """
-        Return a function compatible with SpeechCascadeHandler.
+        DEPRECATED: Return a function compatible with SpeechCascadeHandler.
 
-        Usage:
+        This method is deprecated and will be removed in a future version.
+        Use the adapter instance directly with process_turn():
+
+            # Instead of:
             handler = SpeechCascadeHandler(
                 orchestrator_func=adapter.as_orchestrator_func(),
-                ...
             )
+
+            # Use:
+            async def orchestrator_func(cm, transcript):
+                result = await adapter.process_turn(
+                    user_text=transcript,
+                    memo_manager=cm
+                )
+                return result.response_text
 
         Returns:
             Callable matching the legacy orchestrator signature
@@ -2317,7 +2276,7 @@ class CascadeOrchestratorAdapter:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Factory Functions
+# Factory Functions (DEPRECATED - Use CascadeOrchestratorAdapter.create())
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -2332,7 +2291,15 @@ def get_cascade_orchestrator(
     **kwargs,
 ) -> CascadeOrchestratorAdapter:
     """
-    Create a CascadeOrchestratorAdapter instance with scenario support.
+    DEPRECATED: Create a CascadeOrchestratorAdapter instance with scenario support.
+
+    This function is deprecated. Use CascadeOrchestratorAdapter.create() directly:
+
+        adapter = CascadeOrchestratorAdapter.create(
+            start_agent="MyAgent",
+            session_id="session_123",
+            call_connection_id="call_456",
+        )
 
     Resolution order for start_agent and agents:
     1. Explicit start_agent parameter
@@ -2393,11 +2360,21 @@ def create_cascade_orchestrator_func(
     app_state: Any | None = None,
 ) -> Callable[[MemoManager, str], Awaitable[str | None]]:
     """
-    Create an orchestrator function for SpeechCascadeHandler.
+    DEPRECATED: Create an orchestrator function for SpeechCascadeHandler.
 
-    Supports scenario-based configuration for start agent and agents.
+    This function is deprecated. Use CascadeOrchestratorAdapter.create() and
+    process_turn() directly:
 
-    Usage:
+        adapter = CascadeOrchestratorAdapter.create(start_agent="MyAgent")
+
+        async def orchestrator_func(cm, transcript):
+            result = await adapter.process_turn(
+                user_text=transcript,
+                memo_manager=cm,
+            )
+            return result.response_text
+
+    Usage (legacy):
         handler = SpeechCascadeHandler(
             orchestrator_func=create_cascade_orchestrator_func(
                 # Let scenario determine start_agent

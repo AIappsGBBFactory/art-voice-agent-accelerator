@@ -255,21 +255,147 @@ const buildRuntimePrompt = (prompt, handoffs, agentName) => {
   return `${prompt}\n\n${instructions}`;
 };
 
-const getRuntimePromptPreview = (prompt, maxLines = 14) => {
-  if (!prompt) return '';
-  const lines = prompt.split('\n');
-  const markerIndex = lines.findIndex((line) => line.includes('## Agent Handoff Instructions'));
-  let start = 0;
-  if (markerIndex !== -1) {
-    start = Math.max(0, markerIndex - 3);
-  } else if (lines.length > maxLines) {
-    start = Math.max(0, lines.length - maxLines);
+const getRuntimePromptPreview = (prompt) => {
+  if (!prompt) return { text: '', hasHandoffInstructions: false };
+
+  const hasHandoffInstructions = prompt.includes('## Agent Handoff Instructions');
+
+  return {
+    text: prompt,
+    hasHandoffInstructions
+  };
+};
+
+// Component to render highlighted runtime prompt preview
+const HighlightedPromptPreview = ({ previewData, targetAgent }) => {
+  const handoffRef = useRef(null);
+
+  useEffect(() => {
+    // Auto-scroll to the handoff section when it exists or updates
+    if (handoffRef.current && previewData?.hasHandoffInstructions) {
+      handoffRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }
+  }, [previewData?.text, previewData?.hasHandoffInstructions]);
+
+  if (!previewData || !previewData.text) {
+    return <span>No prompt available.</span>;
   }
-  const end = Math.min(lines.length, start + maxLines);
-  const snippet = lines.slice(start, end).join('\n');
-  const prefix = start > 0 ? '...\n' : '';
-  const suffix = end < lines.length ? '\n...' : '';
-  return `${prefix}${snippet}${suffix}`;
+
+  const { text, hasHandoffInstructions } = previewData;
+
+  if (!hasHandoffInstructions) {
+    return <span>{text}</span>;
+  }
+
+  // Split by the handoff instructions marker
+  const parts = text.split('## Agent Handoff Instructions');
+
+  if (parts.length === 1) {
+    return <span>{text}</span>;
+  }
+
+  const beforeHandoff = parts[0];
+  const handoffSection = parts[1];
+
+  // If we have a specific target agent to highlight, parse the handoff section
+  if (targetAgent) {
+    // Find the specific target agent section
+    const targetMarker = `- **${targetAgent}**`;
+    const handoffLines = handoffSection.split('\n');
+
+    let targetStartIdx = -1;
+    let targetEndIdx = -1;
+
+    // Find where our target agent section starts
+    for (let i = 0; i < handoffLines.length; i++) {
+      if (handoffLines[i].includes(targetMarker)) {
+        targetStartIdx = i;
+        break;
+      }
+    }
+
+    // Find where our target agent section ends (next agent or end)
+    if (targetStartIdx !== -1) {
+      for (let i = targetStartIdx + 1; i < handoffLines.length; i++) {
+        if (handoffLines[i].trim().startsWith('- **') && handoffLines[i].includes('**')) {
+          targetEndIdx = i;
+          break;
+        }
+      }
+      if (targetEndIdx === -1) {
+        targetEndIdx = handoffLines.length;
+      }
+    }
+
+    // Reconstruct with highlighting only the target section
+    if (targetStartIdx !== -1) {
+      const beforeTarget = handoffLines.slice(0, targetStartIdx).join('\n');
+      const targetSection = handoffLines.slice(targetStartIdx, targetEndIdx).join('\n');
+      const afterTarget = handoffLines.slice(targetEndIdx).join('\n');
+
+      return (
+        <>
+          <span>{beforeHandoff}</span>
+          <span
+            style={{
+              backgroundColor: '#fef3c7',
+              color: '#92400e',
+              padding: '2px 4px',
+              borderRadius: '3px',
+              fontWeight: 600,
+            }}
+          >
+            ## Agent Handoff Instructions
+          </span>
+          <span>{beforeTarget}</span>
+          <span
+            ref={handoffRef}
+            style={{
+              backgroundColor: '#fef9e7',
+              display: 'inline-block',
+              paddingLeft: '4px',
+              borderLeft: '3px solid #fbbf24',
+            }}
+          >
+            {targetSection}
+          </span>
+          <span>{afterTarget}</span>
+        </>
+      );
+    }
+  }
+
+  // Fallback: highlight entire handoff section
+  return (
+    <>
+      <span>{beforeHandoff}</span>
+      <span
+        ref={handoffRef}
+        style={{
+          backgroundColor: '#fef3c7',
+          color: '#92400e',
+          padding: '2px 4px',
+          borderRadius: '3px',
+          fontWeight: 600,
+        }}
+      >
+        ## Agent Handoff Instructions
+      </span>
+      <span
+        style={{
+          backgroundColor: '#fef9e7',
+          display: 'inline-block',
+          paddingLeft: '4px',
+          borderLeft: '3px solid #fbbf24',
+        }}
+      >
+        {handoffSection}
+      </span>
+    </>
+  );
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -850,12 +976,21 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, handoffs, onSave,
     return buildRuntimePrompt(basePrompt, runtimeHandoffs, handoff.from_agent);
   }, [handoff, runtimeHandoffs, sourceAgent]);
   const runtimePromptPreview = useMemo(
-    () => getRuntimePromptPreview(runtimePrompt, 14),
+    () => getRuntimePromptPreview(runtimePrompt),
     [runtimePrompt],
   );
 
+  // Track the handoff identity to only reset state when editing a different handoff
+  const handoffKey = handoff ? `${handoff.from_agent}::${handoff.to_agent}` : null;
+  const prevHandoffKeyRef = useRef(null);
+
   useEffect(() => {
-    if (handoff) {
+    // Only reset state when editing a different handoff (or when dialog first opens)
+    const handoffChanged = prevHandoffKeyRef.current !== handoffKey;
+
+    if (handoff && handoffChanged) {
+      prevHandoffKeyRef.current = handoffKey;
+
       setType(handoff.type || 'announced');
       setShareContext(handoff.share_context !== false);
       setHandoffCondition(handoff.handoff_condition || '');
@@ -895,7 +1030,7 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, handoffs, onSave,
       );
       setSelectedPattern(matchingPattern?.id || (handoff.handoff_condition ? 'custom' : null));
     }
-  }, [handoff, targetPromptVars]);
+  }, [handoffKey, targetPromptVars, handoff]);
 
   const handlePatternSelect = (patternId) => {
     const pattern = HANDOFF_CONDITION_PATTERNS.find(p => p.id === patternId);
@@ -1100,7 +1235,7 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, handoffs, onSave,
             >
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                 <Typography variant="caption" color="text.secondary">
-                  Runtime system prompt preview (with handoff instructions)
+                  Full runtime system prompt (auto-focused on handoff instructions)
                 </Typography>
                 <Button
                   size="small"
@@ -1112,26 +1247,105 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, handoffs, onSave,
                     )
                   }
                 >
-                  View full prompt
+                  View in dialog
                 </Button>
               </Stack>
-              <Typography
-                component="div"
-                variant="caption"
+              <Box
                 sx={{
-                  fontFamily: 'monospace',
-                  whiteSpace: 'pre-wrap',
-                  fontSize: 11,
-                  lineHeight: 1.6,
+                  maxHeight: '300px',
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  p: 1.5,
+                  backgroundColor: '#fafafa',
+                  '&::-webkit-scrollbar': {
+                    width: '8px',
+                  },
+                  '&::-webkit-scrollbar-track': {
+                    backgroundColor: '#f1f5f9',
+                    borderRadius: '4px',
+                  },
+                  '&::-webkit-scrollbar-thumb': {
+                    backgroundColor: '#cbd5e1',
+                    borderRadius: '4px',
+                    '&:hover': {
+                      backgroundColor: '#94a3b8',
+                    },
+                  },
                 }}
               >
-                {runtimePromptPreview || 'No prompt available.'}
-              </Typography>
+                <Typography
+                  component="div"
+                  variant="caption"
+                  sx={{
+                    fontFamily: 'monospace',
+                    whiteSpace: 'pre-wrap',
+                    fontSize: 11,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  <HighlightedPromptPreview
+                    previewData={runtimePromptPreview}
+                    targetAgent={handoff?.to_agent}
+                  />
+                </Typography>
+              </Box>
             </Paper>
           </Box>
 
+          <Divider />
+
+          {/* Type selector */}
+          <Box>
+            <Typography variant="subtitle2" gutterBottom>
+              Handoff Type
+            </Typography>
+            <ToggleButtonGroup
+              value={type}
+              exclusive
+              onChange={(e, v) => v && setType(v)}
+              size="small"
+              fullWidth
+            >
+              <ToggleButton value="announced" sx={{ textTransform: 'none' }}>
+                <VolumeUpIcon sx={{ mr: 1, color: colors.announced }} />
+                Announced
+              </ToggleButton>
+              <ToggleButton value="discrete" sx={{ textTransform: 'none' }}>
+                <VolumeOffIcon sx={{ mr: 1, color: colors.discrete }} />
+                Discrete (Silent)
+              </ToggleButton>
+            </ToggleButtonGroup>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              {type === 'announced'
+                ? 'Target agent will greet/announce the transfer'
+                : 'Silent handoff - agent continues conversation naturally'}
+            </Typography>
+          </Box>
+
+          {/* Share context */}
+          <FormControlLabel
+            control={
+              <Switch
+                checked={shareContext}
+                onChange={(e) => setShareContext(e.target.checked)}
+              />
+            }
+            label={
+              <Box>
+                <Typography variant="body2">Share conversation context</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Pass chat history and memory to target agent
+                </Typography>
+              </Box>
+            }
+          />
+
+          <Divider />
+
+          {/* Advanced Config - Collapsed by default */}
           <Accordion
-            defaultExpanded
             sx={{
               borderRadius: '12px',
               border: '1px solid #e5e7eb',
@@ -1426,54 +1640,6 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, handoffs, onSave,
               </Stack>
             </AccordionDetails>
           </Accordion>
-
-          <Divider />
-
-          {/* Type selector */}
-          <Box>
-            <Typography variant="subtitle2" gutterBottom>
-              Handoff Type
-            </Typography>
-            <ToggleButtonGroup
-              value={type}
-              exclusive
-              onChange={(e, v) => v && setType(v)}
-              size="small"
-              fullWidth
-            >
-              <ToggleButton value="announced" sx={{ textTransform: 'none' }}>
-                <VolumeUpIcon sx={{ mr: 1, color: colors.announced }} />
-                Announced
-              </ToggleButton>
-              <ToggleButton value="discrete" sx={{ textTransform: 'none' }}>
-                <VolumeOffIcon sx={{ mr: 1, color: colors.discrete }} />
-                Discrete (Silent)
-              </ToggleButton>
-            </ToggleButtonGroup>
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-              {type === 'announced'
-                ? 'Target agent will greet/announce the transfer'
-                : 'Silent handoff - agent continues conversation naturally'}
-            </Typography>
-          </Box>
-
-          {/* Share context */}
-          <FormControlLabel
-            control={
-              <Switch
-                checked={shareContext}
-                onChange={(e) => setShareContext(e.target.checked)}
-              />
-            }
-            label={
-              <Box>
-                <Typography variant="body2">Share conversation context</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Pass chat history and memory to target agent
-                </Typography>
-              </Box>
-            }
-          />
         </Stack>
       </DialogContent>
       <DialogActions>

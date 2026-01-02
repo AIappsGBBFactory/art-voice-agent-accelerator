@@ -90,6 +90,7 @@ dependencies = [
     # Database drivers
     "pymongo>=4.6.0",
     "rapidfuzz>=3.13.0",
+    "ipykernel>=7.1.0",
 ]
 
 [project.urls]
@@ -274,4 +275,10 @@ package-dir = {"" = "."}
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*", "apps*", "utils*"]
+
+[dependency-groups]
+dev = [
+    "ipywidgets>=8.1.8",
+    "pandas>=2.3.3",
+]
 

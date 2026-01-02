@@ -28,27 +28,50 @@ Usage:
     )
 """
 
-from .handler import (
-    BargeInController,
-    ResponseSender,
-    RouteTurnThread,
-    SpeechCascadeHandler,
-    SpeechEvent,
-    SpeechEventType,
-    SpeechSDKThread,
-    ThreadBridge,
-    TranscriptEmitter,
-)
+# Orchestrator is lightweight - direct import for evaluation use cases
+from .orchestrator import CascadeOrchestratorAdapter, StateKeys
+
+# Metrics are lightweight - direct import
 from .metrics import (
     record_barge_in,
     record_stt_recognition,
     record_turn_processing,
 )
-from .orchestrator import CascadeOrchestratorAdapter, StateKeys
-from .tts import SAMPLE_RATE_ACS, SAMPLE_RATE_BROWSER, TTSPlayback
+
+# Heavy handler components are lazy-loaded to avoid Speech SDK dependencies
+# when only using orchestrator (e.g., in Jupyter notebooks for evaluation)
+_HANDLER_EXPORTS = {
+    "BargeInController",
+    "ResponseSender",
+    "RouteTurnThread",
+    "SpeechCascadeHandler",
+    "SpeechEvent",
+    "SpeechEventType",
+    "SpeechSDKThread",
+    "ThreadBridge",
+    "TranscriptEmitter",
+}
+
+_TTS_EXPORTS = {
+    "TTSPlayback",
+    "SAMPLE_RATE_ACS",
+    "SAMPLE_RATE_BROWSER",
+}
+
+
+def __getattr__(name: str):
+    """Lazy import for handler and TTS components."""
+    if name in _HANDLER_EXPORTS:
+        from . import handler
+        return getattr(handler, name)
+    if name in _TTS_EXPORTS:
+        from . import tts
+        return getattr(tts, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
-    # Handler components
+    # Handler components (lazy-loaded)
     "SpeechCascadeHandler",
     "SpeechEvent",
     "SpeechEventType",
@@ -58,14 +81,14 @@ __all__ = [
     "BargeInController",
     "ResponseSender",
     "TranscriptEmitter",
-    # Unified TTS Playback
+    # Unified TTS Playback (lazy-loaded)
     "TTSPlayback",
     "SAMPLE_RATE_BROWSER",
     "SAMPLE_RATE_ACS",
-    # Orchestrator shim
+    # Orchestrator shim (direct import)
     "CascadeOrchestratorAdapter",
     "StateKeys",  # Re-export of SessionStateKeys for backward compatibility
-    # Metrics
+    # Metrics (direct import)
     "record_stt_recognition",
     "record_turn_processing",
     "record_barge_in",

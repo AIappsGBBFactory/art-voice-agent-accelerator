@@ -13,11 +13,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import openai
+from azure.identity import get_bearer_token_provider
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-from utils.azure_auth import get_bearer_token_provider, get_credential
+from utils.azure_auth import get_credential
 from utils.ml_logging import get_logger
 from utils.trace_context import TraceContext
 
@@ -1196,6 +1197,9 @@ class AzureOpenAIManager:
         """
         Determine which endpoint to use based on model configuration and parameters.
 
+        IMPORTANT: For real-time voice scenarios, this method prioritizes /chat/completions
+        for streaming to ensure optimal latency and compatibility.
+
         Args:
             model_config: ModelConfig instance with endpoint preferences
             **kwargs: Runtime parameters that may indicate endpoint preference
@@ -1203,6 +1207,13 @@ class AzureOpenAIManager:
         Returns:
             True if /responses endpoint should be used, False for /chat/completions
         """
+        # CRITICAL: Current responses API doesn't properly support streaming with conversation history
+        # Disable responses endpoint for streaming until SDK is updated
+        # This ensures optimal performance for real-time voice scenarios
+        if kwargs.get("stream", False):
+            logger.debug("Using /chat/completions endpoint (streaming not well-supported by responses API - optimal for real-time)")
+            return False
+
         # Handle case where model_config might not have the new attributes
         if not hasattr(model_config, "endpoint_preference"):
             return False
@@ -1229,7 +1240,8 @@ class AzureOpenAIManager:
                 logger.debug("Using /responses endpoint (new parameters detected in config)")
                 return True
 
-            # Check model family - GPT-5 and reasoning models use responses endpoint
+            # Check model family - GPT-5 and reasoning models prefer responses endpoint
+            # However, for real-time scenarios, /chat/completions may still be preferred
             model_family = getattr(model_config, "model_family", None)
             if model_family in ["o1", "o3", "o4", "gpt-5"]:
                 logger.debug(f"Using /responses endpoint (model family: {model_family})")
@@ -1240,8 +1252,8 @@ class AzureOpenAIManager:
                 logger.debug("Using /responses endpoint (new parameters in kwargs)")
                 return True
 
-        # Default to chat/completions for safety
-        logger.debug("Using /chat/completions endpoint (default)")
+        # Default to chat/completions for safety and optimal real-time performance
+        logger.debug("Using /chat/completions endpoint (default - optimal for real-time)")
         return False
 
     def _prepare_chat_params(
@@ -1268,22 +1280,55 @@ class AzureOpenAIManager:
             "messages": messages,
         }
 
-        # Get model family for special handling
-        model_family = getattr(model_config, "model_family", "unknown")
+        # Get model family for special handling - auto-detect from deployment_id if not set
+        model_family = getattr(model_config, "model_family", None)
+        deployment_id = getattr(model_config, "deployment_id", "").lower()
+        
+        if not model_family:
+            # Auto-detect model family from deployment_id
+            if "o1" in deployment_id:
+                model_family = "o1"
+            elif "o3" in deployment_id:
+                model_family = "o3"
+            elif "o4" in deployment_id:
+                model_family = "o4"
+            elif "gpt-5" in deployment_id or "gpt5" in deployment_id:
+                model_family = "gpt-5"
+            elif "gpt-4.1" in deployment_id or "gpt4.1" in deployment_id:
+                model_family = "gpt-4.1"
+            else:
+                model_family = "gpt-4"  # Default to gpt-4 for legacy models
 
-        # Special handling for o1/o3 reasoning models - they don't support temperature/top_p
-        if model_family in ["o1", "o3"]:
-            # For reasoning models on chat endpoint, use max_completion_tokens
+        # New-generation models use max_completion_tokens (o1/o3/o4, gpt-5, gpt-4.1)
+        uses_max_completion_tokens = model_family in ["o1", "o3", "o4", "gpt-5", "gpt-4.1"]
+        
+        # Models that don't support custom temperature/top_p values
+        # o-series: reasoning models, temperature not supported
+        # gpt-5: only supports default temperature (1)
+        no_custom_temperature = model_family in ["o1", "o3", "o4", "gpt-5"]
+
+        if uses_max_completion_tokens:
+            # For new-gen models, use max_completion_tokens (NEVER max_tokens)
             max_completion_tokens = getattr(model_config, "max_completion_tokens", None)
             if max_completion_tokens:
                 params["max_completion_tokens"] = max_completion_tokens
             else:
-                # Fallback: convert max_tokens to max_completion_tokens for o1/o3
+                # Fallback: convert max_tokens to max_completion_tokens
                 max_tokens = getattr(model_config, "max_tokens", None)
                 if max_tokens:
                     params["max_completion_tokens"] = max_tokens
+                    
+            # Add temperature/top_p only for models that support custom values (gpt-4.1)
+            if not no_custom_temperature:
+                temperature = getattr(model_config, "temperature", None)
+                if temperature is not None:
+                    params["temperature"] = temperature
+
+                top_p = getattr(model_config, "top_p", None)
+                if top_p is not None:
+                    params["top_p"] = top_p
         else:
-            # Standard models support temperature, top_p, max_tokens
+            # Legacy models (gpt-4o, etc.) support temperature, top_p, max_tokens
             temperature = getattr(model_config, "temperature", None)
             if temperature is not None:
                 params["temperature"] = temperature
@@ -1309,13 +1354,23 @@ class AzureOpenAIManager:
         self, model_config: Any, messages: list[dict], **kwargs
     ) -> dict[str, Any]:
         """
-        Build parameters for /responses endpoint.
+        Build parameters for /responses endpoint optimized for real-time scenarios.
 
         Parameter Rules for Responses API:
         - Supports: temperature, top_p, min_p, typical_p
         - Supports: reasoning_effort, include_reasoning, verbosity
         - Token limit: max_completion_tokens (NEVER use max_tokens)
         - Enhanced: response_format, store, metadata
+
+        Real-Time Optimizations:
+        - Verbosity defaults to 0 (minimal) for lowest latency
+        - Reasoning effort defaults to "low" for reasoning models
+        - Token limits capped for faster responses
+        - Efficient conversation history formatting
+
+        Note: The responses API signature varies by SDK version:
+        - Newer versions (>=1.50.0): Support 'messages' parameter (chat-like)
+        - Older versions: Only support 'input' parameter (single string)
 
         Args:
             model_config: ModelConfig instance
@@ -1325,9 +1380,40 @@ class AzureOpenAIManager:
         Returns:
             Dict of parameters for responses.create()
         """
+        # Responses API currently only supports 'input' parameter (single string)
+        # not 'messages' array. Convert messages to input format.
+        #
+        # For streaming conversations with history, we need to format the conversation
+        # context into a single input string that includes the conversation.
+        #
+        # Future SDK versions may support 'messages' directly.
+
+        # Build input from messages - optimized for real-time (minimal formatting)
+        if len(messages) == 1 and messages[0].get("role") == "user":
+            # Simple case: single user message
+            input_text = messages[0].get("content", "")
+        else:
+            # Complex case: format conversation history into input
+            # OPTIMIZATION: Use compact formatting to reduce token usage
+            input_parts = []
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                # Skip empty messages to reduce tokens
+                if not content or not content.strip():
+                    continue
+                # Use compact role prefixes
+                if role == "system":
+                    input_parts.append(f"System: {content}")
+                elif role == "user":
+                    input_parts.append(f"User: {content}")
+                elif role == "assistant":
+                    input_parts.append(f"Assistant: {content}")
+            input_text = "\n\n".join(input_parts)  # Double newline for better separation
+
         params = {
             "model": model_config.deployment_id,
-            "messages": messages,
+            "input": input_text or "Hello",
         }
 
         # All sampling parameters (responses endpoint supports more than chat)
@@ -1347,19 +1433,34 @@ class AzureOpenAIManager:
         if typical_p is not None:
             params["typical_p"] = typical_p
 
-        # Reasoning parameters
+        # Reasoning parameters - OPTIMIZED FOR REAL-TIME
         reasoning_effort = getattr(model_config, "reasoning_effort", None)
         if reasoning_effort:
             params["reasoning_effort"] = reasoning_effort
+        else:
+            # Real-time optimization: Default to "low" reasoning for reasoning models
+            model_family = getattr(model_config, "model_family", None)
+            deployment_id = getattr(model_config, "deployment_id", "").lower()
+            is_reasoning_model = (
+                model_family in ["o1", "o3", "o4"] or
+                any(x in deployment_id for x in ["o1", "o3", "o4"])
+            )
+            if is_reasoning_model:
+                params["reasoning_effort"] = "low"
+                logger.debug("Real-time optimization: Setting reasoning_effort=low for reasoning model")
 
         include_reasoning = getattr(model_config, "include_reasoning", False)
         if include_reasoning:
             params["include_reasoning"] = True
 
-        # Verbosity and output control (only include if non-default)
+        # Verbosity and output control - OPTIMIZED FOR REAL-TIME
+        # ALWAYS send verbosity explicitly for real-time scenarios
         verbosity = getattr(model_config, "verbosity", 0)
-        if verbosity != 0:  # Only send if not minimal (default for real-time)
-            params["verbosity"] = verbosity
+        params["verbosity"] = verbosity  # Explicitly set (0=minimal for real-time)
+
+        # Log if using non-optimal verbosity for real-time
+        if verbosity > 0:
+            logger.debug(f"Non-optimal real-time verbosity: {verbosity} (recommend 0 for minimal latency)")
 
         store = getattr(model_config, "store", None)
         if store is not None:
@@ -1370,16 +1471,21 @@ class AzureOpenAIManager:
             params["metadata"] = metadata
 
         # Token limits - Responses API ONLY supports max_completion_tokens
-        # Use max_completion_tokens if explicitly set, otherwise convert max_tokens
+        # REAL-TIME OPTIMIZATION: Cap tokens for faster responses
         max_completion_tokens = getattr(model_config, "max_completion_tokens", None)
         if max_completion_tokens:
-            params["max_completion_tokens"] = max_completion_tokens
+            # Cap at reasonable limit for real-time (reduce latency)
+            params["max_completion_tokens"] = min(max_completion_tokens, 4096)
+            if max_completion_tokens > 4096:
+                logger.debug(f"Real-time optimization: Capping max_completion_tokens from {max_completion_tokens} to 4096")
         else:
             # Fallback: convert max_tokens to max_completion_tokens for responses API
             max_tokens = getattr(model_config, "max_tokens", None)
             if max_tokens:
-                params["max_completion_tokens"] = max_tokens
-                logger.debug(f"Converting max_tokens={max_tokens} to max_completion_tokens for responses API")
+                # Cap for real-time
+                capped_tokens = min(max_tokens, 4096)
+                params["max_completion_tokens"] = capped_tokens
+                logger.debug(f"Converting max_tokens={max_tokens} to max_completion_tokens={capped_tokens} for responses API")
 
         # Enhanced response format
         response_format = getattr(model_config, "response_format", None)
@@ -1394,8 +1500,10 @@ class AzureOpenAIManager:
             elif key == "max_tokens" and value is not None:
                 # Convert max_tokens to max_completion_tokens if provided in kwargs
                 if "max_completion_tokens" not in params:
-                    params["max_completion_tokens"] = value
-                    logger.debug(f"Converting kwargs max_tokens={value} to max_completion_tokens for responses API")
+                    # Cap for real-time
+                    capped_value = min(value, 4096)
+                    params["max_completion_tokens"] = capped_value
+                    logger.debug(f"Converting kwargs max_tokens={value} to max_completion_tokens={capped_value} for responses API")
 
         return params
 
@@ -1570,6 +1678,40 @@ class AzureOpenAIManager:
                     params = self._prepare_responses_params(model_config, messages, stream=stream, **kwargs)
                 else:
                     params = self._prepare_chat_params(model_config, messages, stream=stream, **kwargs)
+
+                log_config = {
+                    "deployment_id": getattr(model_config, "deployment_id", None),
+                    "endpoint_preference": getattr(model_config, "endpoint_preference", None),
+                    "api_version": getattr(model_config, "api_version", None),
+                    "temperature": getattr(model_config, "temperature", None),
+                    "top_p": getattr(model_config, "top_p", None),
+                    "max_tokens": getattr(model_config, "max_tokens", None),
+                    "max_completion_tokens": getattr(model_config, "max_completion_tokens", None),
+                    "min_p": getattr(model_config, "min_p", None),
+                    "typical_p": getattr(model_config, "typical_p", None),
+                    "reasoning_effort": getattr(model_config, "reasoning_effort", None),
+                    "include_reasoning": getattr(model_config, "include_reasoning", False),
+                    "verbosity": getattr(model_config, "verbosity", None),
+                    "model_family": getattr(model_config, "model_family", None),
+                    "endpoint_type": endpoint_type,
+                    "stream": stream,
+                }
+                log_params = {}
+                for key, value in params.items():
+                    if key in {"messages"}:
+                        continue
+                    if key == "tools" and isinstance(value, list):
+                        log_params["tools"] = f"{len(value)} tools"
+                        continue
+                    if key == "metadata" and isinstance(value, dict):
+                        log_params["metadata_keys"] = list(value.keys())
+                        continue
+                    if key == "response_format" and isinstance(value, dict):
+                        log_params["response_format_keys"] = list(value.keys())
+                        continue
+                    log_params[key] = value
+
+                logger.info("AOAI invoke config=%s params=%s", log_config, log_params)
 
                 # 4. Call the appropriate endpoint with CLIENT span
                 with tracer.start_as_current_span(

@@ -72,6 +72,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from utils.ml_logging import get_logger
 from utils.telemetry_decorators import ConversationTurnSpan
 
+from .dtmf_processor import DTMFProcessor
 from .metrics import (
     record_llm_ttft,
     record_stt_latency,
@@ -719,10 +720,12 @@ class VoiceLiveSDKHandler:
         self._stop_audio_pending = False
         self._response_audio_frames: dict[str, int] = {}
         self._fallback_audio_frame_index = 0
-        self._dtmf_digits: list[str] = []
-        self._dtmf_flush_task: asyncio.Task | None = None
-        self._dtmf_flush_delay = _DTMF_FLUSH_DELAY_SECONDS
-        self._dtmf_lock = asyncio.Lock()
+        # DTMFProcessor handles tone buffering, timing, and callbacks
+        self._dtmf_processor = DTMFProcessor(
+            session_id=session_id,
+            on_sequence=self._on_dtmf_sequence,
+            flush_delay=_DTMF_FLUSH_DELAY_SECONDS,
+        )
         self._last_user_transcript: str | None = None
         self._last_user_turn_id: str | None = None
 
@@ -1126,15 +1129,8 @@ class VoiceLiveSDKHandler:
                     self.session_id,
                 )
 
-            if self._dtmf_flush_task:
-                self._dtmf_flush_task.cancel()
-                try:
-                    await self._dtmf_flush_task
-                except asyncio.CancelledError:
-                    pass
-                finally:
-                    self._dtmf_flush_task = None
-            self._dtmf_digits.clear()
+            # Cleanup DTMFProcessor
+            await self._dtmf_processor.cleanup()
 
             if self._event_task:
                 self._event_task.cancel()
@@ -1687,66 +1683,31 @@ class VoiceLiveSDKHandler:
         await self._send_error(event)
 
     async def _handle_dtmf_tone(self, raw_tone: Any) -> None:
-        normalized = self._normalize_dtmf_tone(raw_tone)
-        if not normalized:
-            logger.debug("Ignoring invalid DTMF tone %s | session=%s", raw_tone, self.session_id)
+        """Delegate DTMF tone handling to the DTMFProcessor."""
+        await self._dtmf_processor.handle_tone(raw_tone)
+
+    async def _on_dtmf_sequence(self, sequence: str, reason: str) -> None:
+        """Callback invoked by DTMFProcessor when a DTMF sequence is ready."""
+        if not sequence or not self._connection:
             return
-
-        if normalized == "#":
-            self._cancel_dtmf_flush_timer()
-            await self._flush_dtmf_buffer(reason="terminator")
-            return
-        if normalized == "*":
-            await self._clear_dtmf_buffer()
-            return
-
-        async with self._dtmf_lock:
-            self._dtmf_digits.append(normalized)
-            buffer_len = len(self._dtmf_digits)
-        logger.info(
-            "Received DTMF tone %s (buffer_len=%s) | session=%s",
-            normalized,
-            buffer_len,
-            self.session_id,
-        )
-        self._schedule_dtmf_flush()
-
-    def _schedule_dtmf_flush(self) -> None:
-        self._cancel_dtmf_flush_timer()
-        self._dtmf_flush_task = asyncio.create_task(self._delayed_dtmf_flush())
-
-    def _cancel_dtmf_flush_timer(self) -> None:
-        if self._dtmf_flush_task:
-            self._dtmf_flush_task.cancel()
-            self._dtmf_flush_task = None
-
-    async def _delayed_dtmf_flush(self) -> None:
+        item = {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": sequence}],
+        }
         try:
-            await asyncio.sleep(self._dtmf_flush_delay)
-            await self._flush_dtmf_buffer(reason="timeout")
-        except asyncio.CancelledError:
-            return
-        finally:
-            self._dtmf_flush_task = None
-
-    async def _flush_dtmf_buffer(self, *, reason: str) -> None:
-        async with self._dtmf_lock:
-            if not self._dtmf_digits:
-                return
-            sequence = "".join(self._dtmf_digits)
-            self._dtmf_digits.clear()
-        await self._send_dtmf_user_message(sequence, reason=reason)
-
-    async def _clear_dtmf_buffer(self) -> None:
-        self._cancel_dtmf_flush_timer()
-        async with self._dtmf_lock:
-            if self._dtmf_digits:
-                logger.info(
-                    "Clearing DTMF buffer without forwarding (buffer_len=%s) | session=%s",
-                    len(self._dtmf_digits),
-                    self.session_id,
-                )
-            self._dtmf_digits.clear()
+            await self._connection.conversation.item.create(item=item)
+            await self._connection.response.create()
+            logger.info(
+                "Forwarded DTMF sequence (%s digits) via %s | session=%s",
+                len(sequence),
+                reason,
+                self.session_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to forward DTMF digits to VoiceLive | session=%s", self.session_id
+            )
 
     async def send_text_message(self, text: str) -> None:
         """Send a text message from the user to the VoiceLive conversation.
@@ -1801,63 +1762,6 @@ class VoiceLiveSDKHandler:
                 "Failed to forward user text to VoiceLive | session=%s",
                 self.session_id,
             )
-
-    async def _send_dtmf_user_message(self, digits: str, *, reason: str) -> None:
-        if not digits or not self._connection:
-            return
-        item = {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": digits}],
-        }
-        try:
-            await self._connection.conversation.item.create(item=item)
-            await self._connection.response.create()
-            logger.info(
-                "Forwarded DTMF sequence (%s digits) via %s | session=%s",
-                len(digits),
-                reason,
-                self.session_id,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to forward DTMF digits to VoiceLive | session=%s", self.session_id
-            )
-
-    @staticmethod
-    def _normalize_dtmf_tone(raw_tone: Any) -> str | None:
-        if raw_tone is None:
-            return None
-        tone = str(raw_tone).strip().lower()
-        tone_map = {
-            "0": "0",
-            "zero": "0",
-            "1": "1",
-            "one": "1",
-            "2": "2",
-            "two": "2",
-            "3": "3",
-            "three": "3",
-            "4": "4",
-            "four": "4",
-            "5": "5",
-            "five": "5",
-            "6": "6",
-            "six": "6",
-            "7": "7",
-            "seven": "7",
-            "8": "8",
-            "eight": "8",
-            "9": "9",
-            "nine": "9",
-            "*": "*",
-            "star": "*",
-            "asterisk": "*",
-            "#": "#",
-            "pound": "#",
-            "hash": "#",
-        }
-        return tone_map.get(tone)
 
     def _to_pcm_bytes(self, audio_payload: Any) -> bytes | None:
         if isinstance(audio_payload, bytes):

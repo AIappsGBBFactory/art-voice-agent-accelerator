@@ -135,6 +135,7 @@ class ModelConfig:
 
     # Endpoint selection
     endpoint_preference: str = "auto"  # "auto", "chat", "responses"
+    api_version: str | None = "v1"  # Responses API version (optional override)
 
     # Model metadata (auto-detected)
     model_family: str | None = None  # Auto-detect from deployment_id
@@ -220,6 +221,7 @@ class ModelConfig:
             metadata=data.get("metadata"),
             response_format=data.get("response_format"),
             endpoint_preference=data.get("endpoint_preference", "auto"),
+            api_version=data.get("api_version", "v1"),
             model_family=data.get("model_family"),
         )
 
@@ -260,6 +262,8 @@ class ModelConfig:
             result["response_format"] = self.response_format
         if self.endpoint_preference != "auto":
             result["endpoint_preference"] = self.endpoint_preference
+        if self.api_version:
+            result["api_version"] = self.api_version
         if self.model_family:
             result["model_family"] = self.model_family
 

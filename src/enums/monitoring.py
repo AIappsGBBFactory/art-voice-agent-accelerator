@@ -87,7 +87,7 @@ class SpanAttr(str, Enum):
     GENAI_SERVER_TIME_TO_FIRST_TOKEN = "gen_ai.server.time_to_first_token"
 
     # ── Responses Endpoint & Advanced Model Support ──────────────────────────
-    # OpenAI /responses endpoint specific attributes (for o1/o3/o4/gpt-5)
+    # OpenAI /responses endpoint specific attributes (for o-reasoning/gpt-5)
     GENAI_ENDPOINT_TYPE = "gen_ai.endpoint.type"  # "chat" or "responses"
     GENAI_REASONING_TOKENS = "gen_ai.usage.reasoning_tokens"  # Reasoning tokens used
     GENAI_REASONING_EFFORT = "gen_ai.request.reasoning_effort"  # "low", "medium", "high"

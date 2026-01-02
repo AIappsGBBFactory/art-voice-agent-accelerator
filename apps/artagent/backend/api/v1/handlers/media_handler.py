@@ -514,7 +514,7 @@ class MediaHandler:
                     return return_greeting
             active = (memory_manager.get_value_from_corememory("active_agent", "") or "").strip()
             if active:
-                return f'Specialist "{active}" is ready to continue assisting you.'
+                return return_greeting
             return "Session resumed with your previous assistant."
 
         # Agent config greeting (from unified agent YAML)
