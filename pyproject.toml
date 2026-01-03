@@ -275,3 +275,10 @@ package-dir = {"" = "."}
 where = ["."]
 include = ["src*", "apps*", "utils*"]
 
+[dependency-groups]
+dev = [
+    "ipykernel>=7.1.0",
+    "ipywidgets>=8.1.8",
+    "pandas>=2.3.3",
+]
+
