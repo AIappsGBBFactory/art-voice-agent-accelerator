@@ -1082,11 +1082,15 @@ class StreamingSpeechRecognizerFromBytes:
                 logger.debug("STT connection warmed successfully (recognizer pre-configured)")
                 return True
             else:
-                logger.warning("STT warmup: recognizer or push_stream not created")
+                logger.warning(
+                    "STT warmup failed: recognizer=%s, push_stream=%s. Check Azure Speech credentials.",
+                    "created" if self.speech_recognizer is not None else "NULL",
+                    "created" if self.push_stream is not None else "NULL"
+                )
                 return False
 
         except Exception as e:
-            logger.warning("STT connection warmup failed: %s", e)
+            logger.warning("STT connection warmup failed: %s (%s)", e, type(e).__name__, exc_info=True)
             return False
 
     def write_bytes(self, audio_chunk: bytes) -> None:
