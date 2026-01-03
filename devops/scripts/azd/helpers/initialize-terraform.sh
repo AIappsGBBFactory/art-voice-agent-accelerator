@@ -40,12 +40,18 @@ check_dependencies() {
 # Get azd environment variable value
 get_azd_env() {
     local value
-    value=$(azd env get-value "$1" 2>/dev/null)
-    # Return empty string if command failed or returned error-like content
-    if [[ $? -eq 0 ]] && [[ -n "$value" ]]; then
-        echo "$value"
-    else
+    # Get only the first line to avoid capturing warning messages from azd
+    value=$(azd env get-value "$1" 2>/dev/null | head -n1)
+    local exit_code=${PIPESTATUS[0]}
+    
+    # Return empty string if:
+    # - Command failed (non-zero exit code)
+    # - Value is empty
+    # - Value contains error messages (starts with ERROR: or contains 'not found')
+    if [[ $exit_code -ne 0 ]] || [[ -z "$value" ]] || [[ "$value" == ERROR:* ]] || [[ "$value" == *"not found"* ]]; then
         echo ""
+    else
+        echo "$value"
     fi
 }
 
@@ -317,9 +323,9 @@ main() {
         return 0
     fi
 
-    # Get environment values
-    local env_name=$(get_azd_env "AZURE_ENV_NAME")
-    local location=$(get_azd_env "AZURE_LOCATION")
+    # Get environment values (check shell env first, then azd env)
+    local env_name="${AZURE_ENV_NAME:-$(get_azd_env "AZURE_ENV_NAME")}"
+    local location="${AZURE_LOCATION:-$(get_azd_env "AZURE_LOCATION")}"
     local sub_id=$(az account show --query id -o tsv)
     
     if [[ -z "$env_name" ]]; then

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "art-voice-agent-accelerator"
-version = "1.0.0"
+version = "2.0.0-beta"
 description = "Real-time voice agent with Azure AI and Apps Service"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -274,4 +274,11 @@ package-dir = {"" = "."}
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*", "apps*", "utils*"]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.1.0",
+    "ipywidgets>=8.1.8",
+    "pandas>=2.3.3",
+]
 
