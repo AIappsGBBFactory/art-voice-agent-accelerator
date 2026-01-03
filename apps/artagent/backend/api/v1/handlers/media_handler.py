@@ -87,7 +87,6 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from src.enums.stream_modes import StreamMode
 from src.pools.session_manager import SessionContext
 from src.stateful.state_managment import MemoManager
-from src.tools.latency_tool import LatencyTool
 from utils.ml_logging import get_logger
 
 logger = get_logger("api.v1.handlers.media_handler")
@@ -225,7 +224,6 @@ class MediaHandler:
         # Resources
         self._tts_client: Any = None
         self._stt_client: Any = None
-        self._latency_tool: LatencyTool | None = None
         self._tts_tier = None
         self._stt_tier = None
 
@@ -279,7 +277,6 @@ class MediaHandler:
             memory_manager.set_corememory("scenario_name", config.scenario)
 
         handler = cls(config, memory_manager, app_state)
-        handler._latency_tool = LatencyTool(memory_manager)
 
         # Acquire pools
         try:
@@ -381,7 +378,6 @@ class MediaHandler:
             websocket=config.websocket,
             app_state=app_state,
             session_id=config.session_id,
-            latency_tool=handler._latency_tool,
             cancel_event=handler._tts_cancel_event,
         )
 
@@ -401,7 +397,6 @@ class MediaHandler:
             on_partial_transcript=handler._on_partial_transcript,
             on_user_transcript=handler._on_user_transcript,
             on_tts_request=handler._on_tts_request,
-            latency_tool=handler._latency_tool,
             redis_mgr=redis_mgr,
         )
 
@@ -519,7 +514,7 @@ class MediaHandler:
                     return return_greeting
             active = (memory_manager.get_value_from_corememory("active_agent", "") or "").strip()
             if active:
-                return f'Specialist "{active}" is ready to continue assisting you.'
+                return return_greeting
             return "Session resumed with your previous assistant."
 
         # Agent config greeting (from unified agent YAML)
@@ -578,7 +573,6 @@ class MediaHandler:
             )
             ws.state.tts_client = tts
             ws.state.stt_client = stt
-            ws.state.lt = self._latency_tool
             ws.state.cm = mm
             ws.state.session_id = self._session_id
             ws.state.stream_mode = self._stream_mode
@@ -1300,7 +1294,6 @@ class MediaHandler:
             "transport": self._transport.value,
             "tts_client": self._tts_client,
             "stt_client": self._stt_client,
-            "lt": self._latency_tool,
         }
 
     # ACS-specific operations

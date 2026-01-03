@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import WebSocket
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-from src.tools.latency_tool import LatencyTool
 from utils.ml_logging import get_logger
 
 from .metrics import record_tts_streaming, record_tts_synthesis
@@ -60,7 +59,6 @@ class TTSPlayback:
         app_state: Any,
         session_id: str,
         *,
-        latency_tool: LatencyTool | None = None,
         cancel_event: asyncio.Event | None = None,
     ):
         """
@@ -70,14 +68,12 @@ class TTSPlayback:
             websocket: WebSocket connection for audio streaming
             app_state: Application state with TTS pool and unified agents
             session_id: Session ID for agent lookup and logging
-            latency_tool: Optional latency tracking
             cancel_event: Event to signal TTS cancellation (barge-in)
         """
         self._ws = websocket
         self._app_state = app_state
         self._session_id = session_id
         self._session_short = session_id[-8:] if session_id else "unknown"
-        self._latency_tool = latency_tool
         self._cancel_event = cancel_event or asyncio.Event()
         self._tts_lock = asyncio.Lock()
         self._is_playing = False
