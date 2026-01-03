@@ -41,8 +41,10 @@ import {
   ListItemAvatar,
   ListItemIcon,
   ListItemText,
+  MenuItem,
   Paper,
   Radio,
+  Select,
   Slider,
   Stack,
   Tab,
@@ -160,6 +162,62 @@ const styles = {
       boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
     },
   },
+};
+
+const CASCADE_MODEL_PRESETS = [
+  { id: 'gpt-4o', label: 'gpt-4o' },
+  { id: 'gpt-4o-mini', label: 'gpt-4o-mini' },
+  { id: 'gpt-4.1', label: 'gpt-4.1' },
+  { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+  { id: 'gpt-4', label: 'gpt-4' },
+  { id: 'gpt-5', label: 'gpt-5' },
+  { id: 'gpt-5-mini', label: 'gpt-5-mini' },
+  { id: 'gpt-5-nano', label: 'gpt-5-nano' },
+  { id: 'o3-mini', label: 'o3-mini' },
+  { id: 'o3', label: 'o3' },
+  { id: 'o1', label: 'o1' },
+];
+
+const VOICELIVE_MODEL_PRESETS = [
+  { id: 'gpt-realtime', label: 'gpt-realtime' },
+  { id: 'gpt-realtime-mini', label: 'gpt-realtime-mini' },
+  { id: 'gpt-4o', label: 'gpt-4o' },
+  { id: 'gpt-4o-mini', label: 'gpt-4o-mini' },
+  { id: 'gpt-4.1', label: 'gpt-4.1' },
+  { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+  { id: 'gpt-5', label: 'gpt-5' },
+  { id: 'gpt-5-mini', label: 'gpt-5-mini' },
+  { id: 'gpt-5-nano', label: 'gpt-5-nano' },
+  { id: 'gpt-5-chat', label: 'gpt-5-chat' },
+  { id: 'phi4-mm-realtime', label: 'phi4-mm-realtime' },
+  { id: 'phi4-mini', label: 'phi4-mini' },
+];
+
+const detectEndpointPreference = (deploymentId) => {
+  const name = (deploymentId || '').toLowerCase();
+  if (!name) {
+    return 'chat';
+  }
+  if (name.includes('gpt-4')) {
+    return 'chat';
+  }
+  if (name.includes('gpt-5') || name.includes('o1') || name.includes('o3') || name.includes('o4')) {
+    return 'responses';
+  }
+  return 'responses';
+};
+
+const resolveEndpointPreference = (modelConfig) => {
+  if (!modelConfig) {
+    return 'chat';
+  }
+  const preference = modelConfig.endpoint_preference;
+  if (preference && preference !== 'auto') {
+    return preference;
+  }
+  return detectEndpointPreference(
+    modelConfig.deployment_id || modelConfig.model_name || modelConfig.name
+  );
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -977,15 +1035,28 @@ export default function AgentBuilderContent({
     tools: [],
     cascade_model: {
       deployment_id: 'gpt-4o',
+      endpoint_preference: 'auto',
+      api_version: 'v1',
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 4096,
+      verbosity: 0,
+      min_p: null,
+      typical_p: null,
+      reasoning_effort: null,
+      include_reasoning: false,
     },
     voicelive_model: {
       deployment_id: 'gpt-realtime',
+      endpoint_preference: 'auto',
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 4096,
+      verbosity: 0,
+      min_p: null,
+      typical_p: null,
+      reasoning_effort: null,
+      include_reasoning: false,
     },
     voice: {
       name: 'en-US-AvaMultilingualNeural',
@@ -1019,6 +1090,37 @@ export default function AgentBuilderContent({
       agent_name: 'Assistant',
     },
   });
+
+  const cascadeEndpointPreference = useMemo(
+    () => resolveEndpointPreference(config.cascade_model),
+    [config.cascade_model],
+  );
+  const voiceliveEndpointPreference = useMemo(
+    () => resolveEndpointPreference(config.voicelive_model),
+    [config.voicelive_model],
+  );
+  const cascadeModelPreset = useMemo(() => {
+    const deploymentId = (config.cascade_model?.deployment_id || '').trim();
+    return CASCADE_MODEL_PRESETS.some((preset) => preset.id === deploymentId)
+      ? deploymentId
+      : 'custom';
+  }, [config.cascade_model?.deployment_id]);
+  const voiceliveModelPreset = useMemo(() => {
+    const deploymentId = (config.voicelive_model?.deployment_id || '').trim();
+    return VOICELIVE_MODEL_PRESETS.some((preset) => preset.id === deploymentId)
+      ? deploymentId
+      : 'custom';
+  }, [config.voicelive_model?.deployment_id]);
+  const isCascadeCustom = cascadeModelPreset === 'custom';
+  const isVoiceliveCustom = voiceliveModelPreset === 'custom';
+  const cascadeOverrideValue = (config.cascade_model?.deployment_id || '').trim();
+  const voiceliveOverrideValue = (config.voicelive_model?.deployment_id || '').trim();
+  const isCascadeOverrideMissing = isCascadeCustom && !cascadeOverrideValue;
+  const isVoiceliveOverrideMissing = isVoiceliveCustom && !voiceliveOverrideValue;
+  const cascadeApiVersionValue = useMemo(
+    () => (config.cascade_model?.api_version || 'v1').trim(),
+    [config.cascade_model?.api_version],
+  );
 
   // Tool categories
   const [expandedCategories, setExpandedCategories] = useState({});
@@ -1343,6 +1445,7 @@ export default function AgentBuilderContent({
     setError(null);
 
     try {
+      const cascadeApiVersion = config.cascade_model?.api_version || 'v1';
       const payload = {
         name: config.name,
         description: config.description,
@@ -1351,8 +1454,15 @@ export default function AgentBuilderContent({
         handoff_trigger: config.handoff_trigger,
         prompt: config.prompt,
         tools: config.tools,
-        cascade_model: config.cascade_model,
-        voicelive_model: config.voicelive_model,
+        cascade_model: {
+          ...config.cascade_model,
+          endpoint_preference: cascadeEndpointPreference,
+          api_version: cascadeApiVersion,
+        },
+        voicelive_model: {
+          ...config.voicelive_model,
+          endpoint_preference: voiceliveEndpointPreference,
+        },
         voice: config.voice,
         speech: config.speech,
         session: config.session,
@@ -2085,70 +2195,623 @@ export default function AgentBuilderContent({
 
             {/* TAB 4: MODEL */}
             <TabPanel value={activeTab} index={4}>
-              <Stack spacing={3}>
-                <Card variant="outlined" sx={styles.sectionCard}>
-                  <CardContent>
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
-                      ⚡ Cascade Mode Model (STT → LLM → TTS)
-                    </Typography>
-                    <TextField
-                      label="Deployment ID"
-                      value={config.cascade_model?.deployment_id || 'gpt-4o'}
-                      onChange={(e) => handleNestedConfigChange('cascade_model', 'deployment_id', e.target.value)}
-                      fullWidth
-                      helperText="Azure OpenAI deployment name"
-                    />
-                    <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
-                      <TextField
-                        label="Temperature"
-                        type="number"
-                        value={config.cascade_model?.temperature ?? 0.7}
-                        onChange={(e) => handleNestedConfigChange('cascade_model', 'temperature', parseFloat(e.target.value))}
-                        inputProps={{ min: 0, max: 2, step: 0.1 }}
-                        size="small"
-                      />
-                      <TextField
-                        label="Max Tokens"
-                        type="number"
-                        value={config.cascade_model?.max_tokens ?? 4096}
-                        onChange={(e) => handleNestedConfigChange('cascade_model', 'max_tokens', parseInt(e.target.value))}
-                        size="small"
-                      />
-                    </Stack>
-                  </CardContent>
-                </Card>
+              <Stack spacing={2}>
+                <Alert severity="info" icon={<WarningAmberIcon />} sx={{ borderRadius: '12px' }}>
+                  <AlertTitle sx={{ fontWeight: 600 }}>Foundry Deployment Required</AlertTitle>
+                  <Typography variant="body2">
+                    Model names must match deployments in your connected Foundry/Azure OpenAI resource.
+                  </Typography>
+                </Alert>
 
-                <Card variant="outlined" sx={styles.sectionCard}>
-                  <CardContent>
-                    <Typography variant="subtitle2" color="primary" sx={{ mb: 2, fontWeight: 600 }}>
-                      🎤 VoiceLive Mode Model (Realtime API)
-                    </Typography>
-                    <TextField
-                      label="Deployment ID"
-                      value={config.voicelive_model?.deployment_id || 'gpt-realtime'}
-                      onChange={(e) => handleNestedConfigChange('voicelive_model', 'deployment_id', e.target.value)}
-                      fullWidth
-                      helperText="Azure OpenAI realtime deployment name"
-                    />
-                    <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
-                      <TextField
-                        label="Temperature"
-                        type="number"
-                        value={config.voicelive_model?.temperature ?? 0.7}
-                        onChange={(e) => handleNestedConfigChange('voicelive_model', 'temperature', parseFloat(e.target.value))}
-                        inputProps={{ min: 0, max: 2, step: 0.1 }}
-                        size="small"
-                      />
-                      <TextField
-                        label="Max Tokens"
-                        type="number"
-                        value={config.voicelive_model?.max_tokens ?? 4096}
-                        onChange={(e) => handleNestedConfigChange('voicelive_model', 'max_tokens', parseInt(e.target.value))}
-                        size="small"
-                      />
+                {/* Cascade Model Configuration */}
+                <Accordion defaultExpanded>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <Chip label="Cascade Mode" color="primary" size="small" />
+                      <Typography variant="subtitle2" fontWeight={600}>
+                        STT → LLM → TTS Pipeline
+                      </Typography>
                     </Stack>
-                  </CardContent>
-                </Card>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Stack spacing={3}>
+                      <TextField
+                        select
+                        label="Model (Preset)"
+                        value={cascadeModelPreset}
+                        onChange={(e) => {
+                          const selected = e.target.value;
+                          handleNestedConfigChange(
+                            'cascade_model',
+                            'deployment_id',
+                            selected === 'custom' ? '' : selected
+                          );
+                        }}
+                        fullWidth
+                        size="small"
+                        helperText="Select a base model (override below if needed)"
+                        SelectProps={{ native: true }}
+                      >
+                        {CASCADE_MODEL_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                        <option value="custom">Custom</option>
+                      </TextField>
+
+                      {isCascadeCustom && (
+                        <TextField
+                          label="Deployment Name (Override)"
+                          value={config.cascade_model?.deployment_id || ''}
+                          onChange={(e) => handleNestedConfigChange('cascade_model', 'deployment_id', e.target.value)}
+                          fullWidth
+                          required={isCascadeCustom}
+                          error={isCascadeOverrideMissing}
+                          helperText={
+                            isCascadeOverrideMissing
+                              ? 'Required when Custom is selected. Must be deployed to your Foundry/Azure OpenAI resource.'
+                              : 'Overrides the preset. Must be deployed to your Foundry/Azure OpenAI resource.'
+                          }
+                          size="small"
+                          sx={{
+                            '& .MuiOutlinedInput-root': {
+                              backgroundColor: '#fff7ed',
+                              '& fieldset': { borderColor: '#fdba74' },
+                              '&:hover fieldset': { borderColor: '#fb923c' },
+                              '&.Mui-focused fieldset': { borderColor: '#f97316' },
+                            },
+                          }}
+                        />
+                      )}
+
+                      <TextField
+                        select
+                        label="Endpoint"
+                        value={config.cascade_model?.endpoint_preference || 'auto'}
+                        onChange={(e) => handleNestedConfigChange('cascade_model', 'endpoint_preference', e.target.value)}
+                        fullWidth
+                        size="small"
+                        helperText={
+                          config.cascade_model?.endpoint_preference === 'auto'
+                            ? `Auto: ${cascadeEndpointPreference === 'responses' ? 'Responses API' : 'Chat Completions'}`
+                            : 'API endpoint to use for this model'
+                        }
+                        SelectProps={{ native: true }}
+                      >
+                        <option value="auto">Auto (detect from model/parameters)</option>
+                        <option value="chat">Chat Completions (/chat/completions)</option>
+                        <option value="responses">Responses API (/responses)</option>
+                      </TextField>
+
+                      {cascadeEndpointPreference === 'responses' && (
+                        <TextField
+                          label="Responses API Version"
+                          value={cascadeApiVersionValue}
+                          fullWidth
+                          size="small"
+                          disabled
+                          helperText="Responses API version is managed by the backend (UI configuration coming soon)."
+                        />
+                      )}
+
+                      <Divider />
+
+                      {/* Shared parameters (show for both) */}
+                      <Box>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2" fontWeight={500}>Temperature</Typography>
+                            <Tooltip title="Controls randomness. Lower = focused, Higher = creative.">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                          <Chip label={config.cascade_model?.temperature ?? 0.7} size="small" color="primary" />
+                        </Stack>
+                        <Slider
+                          value={config.cascade_model?.temperature ?? 0.7}
+                          onChange={(_e, v) => handleNestedConfigChange('cascade_model', 'temperature', v)}
+                          min={0}
+                          max={2}
+                          step={0.1}
+                          marks={[
+                            { value: 0, label: 'Focused' },
+                            { value: 0.7, label: '0.7' },
+                            { value: 1, label: 'Balanced' },
+                            { value: 2, label: 'Creative' },
+                          ]}
+                        />
+                      </Box>
+
+                      {/* Show chat completions parameters */}
+                      {cascadeEndpointPreference === 'chat' && (
+                        <>
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Top P (Nucleus Sampling)</Typography>
+                                <Tooltip title="Controls diversity via nucleus sampling.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.cascade_model?.top_p ?? 0.9} size="small" color="primary" />
+                            </Stack>
+                            <Slider
+                              value={config.cascade_model?.top_p ?? 0.9}
+                              onChange={(_e, v) => handleNestedConfigChange('cascade_model', 'top_p', v)}
+                              min={0}
+                              max={1}
+                              step={0.05}
+                              marks={[
+                                { value: 0.1, label: '0.1' },
+                                { value: 0.5, label: '0.5' },
+                                { value: 0.9, label: '0.9' },
+                                { value: 1, label: '1.0' },
+                              ]}
+                            />
+                          </Box>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Max Tokens</Typography>
+                                <Tooltip title="Maximum tokens in response. Higher = longer responses but more latency.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={`${(config.cascade_model?.max_tokens ?? 4096).toLocaleString()} tokens`} size="small" color="primary" />
+                            </Stack>
+                            <Slider
+                              value={config.cascade_model?.max_tokens ?? 4096}
+                              onChange={(_e, v) => handleNestedConfigChange('cascade_model', 'max_tokens', v)}
+                              min={256}
+                              max={16384}
+                              step={256}
+                              marks={[
+                                { value: 1024, label: '1K' },
+                                { value: 4096, label: '4K' },
+                                { value: 8192, label: '8K' },
+                                { value: 16384, label: '16K' },
+                              ]}
+                            />
+                          </Box>
+                        </>
+                      )}
+
+                      {/* Show responses API parameters */}
+                      {cascadeEndpointPreference === 'responses' && (
+                        <>
+                          <Alert severity="info" sx={{ borderRadius: '8px' }}>
+                            <Typography variant="caption">
+                              Responses API parameters (for o-reasoning/GPT-5 models)
+                            </Typography>
+                          </Alert>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Verbosity Level</Typography>
+                                <Tooltip title="0=Minimal (fastest, realtime), 1=Standard, 2=Detailed">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.cascade_model?.verbosity ?? 0} size="small" color="secondary" />
+                            </Stack>
+                            <Slider
+                              value={config.cascade_model?.verbosity ?? 0}
+                              onChange={(_e, v) => handleNestedConfigChange('cascade_model', 'verbosity', v)}
+                              min={0}
+                              max={2}
+                              step={1}
+                              marks={[
+                                { value: 0, label: 'Minimal' },
+                                { value: 1, label: 'Standard' },
+                                { value: 2, label: 'Detailed' },
+                              ]}
+                            />
+                          </Box>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Min P</Typography>
+                                <Tooltip title="Minimum probability threshold for token selection.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.cascade_model?.min_p ?? 'Auto'} size="small" color="secondary" />
+                            </Stack>
+                            <Slider
+                              value={config.cascade_model?.min_p ?? 0}
+                              onChange={(_e, v) => {
+                                const val = v === 0 ? null : v;
+                                handleNestedConfigChange('cascade_model', 'min_p', val);
+                              }}
+                              min={0}
+                              max={0.5}
+                              step={0.01}
+                              marks={[
+                                { value: 0, label: 'Auto' },
+                                { value: 0.1, label: '0.1' },
+                                { value: 0.2, label: '0.2' },
+                              ]}
+                            />
+                          </Box>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Typical P</Typography>
+                                <Tooltip title="Typical sampling parameter for quality control.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.cascade_model?.typical_p ?? 'Auto'} size="small" color="secondary" />
+                            </Stack>
+                            <Slider
+                              value={config.cascade_model?.typical_p ?? 0}
+                              onChange={(_e, v) => {
+                                const val = v === 0 ? null : v;
+                                handleNestedConfigChange('cascade_model', 'typical_p', val);
+                              }}
+                              min={0}
+                              max={1}
+                              step={0.05}
+                              marks={[
+                                { value: 0, label: 'Auto' },
+                                { value: 0.5, label: '0.5' },
+                                { value: 1, label: '1.0' },
+                              ]}
+                            />
+                          </Box>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Reasoning Effort</Typography>
+                                <Tooltip title="Compute effort for o1/o3 reasoning models.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.cascade_model?.reasoning_effort || 'Auto'} size="small" color="secondary" />
+                            </Stack>
+                            <Select
+                              value={config.cascade_model?.reasoning_effort || ''}
+                              onChange={(e) => handleNestedConfigChange('cascade_model', 'reasoning_effort', e.target.value || null)}
+                              size="small"
+                              fullWidth
+                              displayEmpty
+                            >
+                              <MenuItem value="">Auto</MenuItem>
+                              <MenuItem value="low">Low</MenuItem>
+                              <MenuItem value="medium">Medium</MenuItem>
+                              <MenuItem value="high">High</MenuItem>
+                            </Select>
+                          </Box>
+
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={config.cascade_model?.include_reasoning ?? false}
+                                onChange={(e) => handleNestedConfigChange('cascade_model', 'include_reasoning', e.target.checked)}
+                              />
+                            }
+                            label={
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2">Include Reasoning Tokens</Typography>
+                                <Tooltip title="Include reasoning process in response (o1/o3 models)">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                            }
+                          />
+                        </>
+                      )}
+                    </Stack>
+                  </AccordionDetails>
+                </Accordion>
+
+                {/* VoiceLive Model Configuration */}
+                <Accordion defaultExpanded>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <Chip label="VoiceLive Mode" color="secondary" size="small" />
+                      <Typography variant="subtitle2" fontWeight={600}>
+                        Realtime Audio API
+                      </Typography>
+                    </Stack>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Stack spacing={3}>
+                      <TextField
+                        select
+                        label="Model (Preset)"
+                        value={voiceliveModelPreset}
+                        onChange={(e) => {
+                          const selected = e.target.value;
+                          handleNestedConfigChange(
+                            'voicelive_model',
+                            'deployment_id',
+                            selected === 'custom' ? '' : selected
+                          );
+                        }}
+                        fullWidth
+                        size="small"
+                        helperText="Select a base model (override below if needed)"
+                        SelectProps={{ native: true }}
+                      >
+                        {VOICELIVE_MODEL_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                        <option value="custom">Custom</option>
+                      </TextField>
+
+                      {isVoiceliveCustom && (
+                        <TextField
+                          label="Deployment Name (Override)"
+                          value={config.voicelive_model?.deployment_id || ''}
+                          onChange={(e) => handleNestedConfigChange('voicelive_model', 'deployment_id', e.target.value)}
+                          fullWidth
+                          required={isVoiceliveCustom}
+                          error={isVoiceliveOverrideMissing}
+                          helperText={
+                            isVoiceliveOverrideMissing
+                              ? 'Required when Custom is selected. Must be deployed to your Foundry/Azure OpenAI resource.'
+                              : 'Overrides the preset. Must be deployed to your Foundry/Azure OpenAI resource.'
+                          }
+                          size="small"
+                          sx={{
+                            '& .MuiOutlinedInput-root': {
+                              backgroundColor: '#fff7ed',
+                              '& fieldset': { borderColor: '#fdba74' },
+                              '&:hover fieldset': { borderColor: '#fb923c' },
+                              '&.Mui-focused fieldset': { borderColor: '#f97316' },
+                            },
+                          }}
+                        />
+                      )}
+
+                      <TextField
+                        select
+                        label="Endpoint"
+                        value={config.voicelive_model?.endpoint_preference || 'auto'}
+                        onChange={(e) => handleNestedConfigChange('voicelive_model', 'endpoint_preference', e.target.value)}
+                        fullWidth
+                        size="small"
+                        helperText={
+                          config.voicelive_model?.endpoint_preference === 'auto'
+                            ? `Auto: ${voiceliveEndpointPreference === 'responses' ? 'Responses API' : 'Chat Completions'}`
+                          : 'API endpoint to use for this model'
+                        }
+                        SelectProps={{ native: true }}
+                      >
+                        <option value="auto">Auto (detect from model/parameters)</option>
+                        <option value="chat">Chat Completions (/chat/completions)</option>
+                        <option value="responses">Responses API (/responses)</option>
+                      </TextField>
+
+                      <Typography variant="caption" color="text.secondary">
+                        VoiceLive models must be deployed to your connected Foundry resource. Foundry agents/BYOM chat
+                        completions are not yet wired in this demo.
+                      </Typography>
+
+                      <Divider />
+
+                      {/* Shared parameters */}
+                      <Box>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Typography variant="body2" fontWeight={500}>Temperature</Typography>
+                            <Tooltip title="Controls randomness. Lower = focused, Higher = creative.">
+                              <InfoOutlinedIcon fontSize="small" color="action" />
+                            </Tooltip>
+                          </Stack>
+                          <Chip label={config.voicelive_model?.temperature ?? 0.7} size="small" color="primary" />
+                        </Stack>
+                        <Slider
+                          value={config.voicelive_model?.temperature ?? 0.7}
+                          onChange={(_e, v) => handleNestedConfigChange('voicelive_model', 'temperature', v)}
+                          min={0}
+                          max={2}
+                          step={0.1}
+                          marks={[
+                            { value: 0, label: 'Focused' },
+                            { value: 0.7, label: '0.7' },
+                            { value: 1, label: 'Balanced' },
+                            { value: 2, label: 'Creative' },
+                          ]}
+                        />
+                      </Box>
+
+                      {/* Chat completions parameters */}
+                      {voiceliveEndpointPreference === 'chat' && (
+                        <>
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Top P (Nucleus Sampling)</Typography>
+                                <Tooltip title="Controls diversity via nucleus sampling.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.voicelive_model?.top_p ?? 0.9} size="small" color="primary" />
+                            </Stack>
+                            <Slider
+                              value={config.voicelive_model?.top_p ?? 0.9}
+                              onChange={(_e, v) => handleNestedConfigChange('voicelive_model', 'top_p', v)}
+                              min={0}
+                              max={1}
+                              step={0.05}
+                              marks={[
+                                { value: 0.1, label: '0.1' },
+                                { value: 0.5, label: '0.5' },
+                                { value: 0.9, label: '0.9' },
+                                { value: 1, label: '1.0' },
+                              ]}
+                            />
+                          </Box>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Max Tokens</Typography>
+                                <Tooltip title="Maximum tokens in response.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={`${(config.voicelive_model?.max_tokens ?? 4096).toLocaleString()} tokens`} size="small" color="primary" />
+                            </Stack>
+                            <Slider
+                              value={config.voicelive_model?.max_tokens ?? 4096}
+                              onChange={(_e, v) => handleNestedConfigChange('voicelive_model', 'max_tokens', v)}
+                              min={256}
+                              max={16384}
+                              step={256}
+                              marks={[
+                                { value: 1024, label: '1K' },
+                                { value: 4096, label: '4K' },
+                                { value: 8192, label: '8K' },
+                                { value: 16384, label: '16K' },
+                              ]}
+                            />
+                          </Box>
+                        </>
+                      )}
+
+                      {/* Responses API parameters */}
+                      {voiceliveEndpointPreference === 'responses' && (
+                        <>
+                          <Alert severity="info" sx={{ borderRadius: '8px' }}>
+                            <Typography variant="caption">
+                              Responses API parameters (for o-reasoning/GPT-5 models)
+                            </Typography>
+                          </Alert>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Verbosity Level</Typography>
+                                <Tooltip title="0=Minimal (fastest, realtime), 1=Standard, 2=Detailed">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.voicelive_model?.verbosity ?? 0} size="small" color="secondary" />
+                            </Stack>
+                            <Slider
+                              value={config.voicelive_model?.verbosity ?? 0}
+                              onChange={(_e, v) => handleNestedConfigChange('voicelive_model', 'verbosity', v)}
+                              min={0}
+                              max={2}
+                              step={1}
+                              marks={[
+                                { value: 0, label: 'Minimal' },
+                                { value: 1, label: 'Standard' },
+                                { value: 2, label: 'Detailed' },
+                              ]}
+                            />
+                          </Box>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Min P</Typography>
+                                <Tooltip title="Minimum probability threshold for token selection.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.voicelive_model?.min_p ?? 'Auto'} size="small" color="secondary" />
+                            </Stack>
+                            <Slider
+                              value={config.voicelive_model?.min_p ?? 0}
+                              onChange={(_e, v) => {
+                                const val = v === 0 ? null : v;
+                                handleNestedConfigChange('voicelive_model', 'min_p', val);
+                              }}
+                              min={0}
+                              max={0.5}
+                              step={0.01}
+                              marks={[
+                                { value: 0, label: 'Auto' },
+                                { value: 0.1, label: '0.1' },
+                                { value: 0.2, label: '0.2' },
+                              ]}
+                            />
+                          </Box>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Typical P</Typography>
+                                <Tooltip title="Typical sampling parameter.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.voicelive_model?.typical_p ?? 'Auto'} size="small" color="secondary" />
+                            </Stack>
+                            <Slider
+                              value={config.voicelive_model?.typical_p ?? 0}
+                              onChange={(_e, v) => {
+                                const val = v === 0 ? null : v;
+                                handleNestedConfigChange('voicelive_model', 'typical_p', val);
+                              }}
+                              min={0}
+                              max={1}
+                              step={0.05}
+                              marks={[
+                                { value: 0, label: 'Auto' },
+                                { value: 0.5, label: '0.5' },
+                                { value: 1, label: '1.0' },
+                              ]}
+                            />
+                          </Box>
+
+                          <Box>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2" fontWeight={500}>Reasoning Effort</Typography>
+                                <Tooltip title="Compute effort for o1/o3 models.">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                              <Chip label={config.voicelive_model?.reasoning_effort || 'Auto'} size="small" color="secondary" />
+                            </Stack>
+                            <Select
+                              value={config.voicelive_model?.reasoning_effort || ''}
+                              onChange={(e) => handleNestedConfigChange('voicelive_model', 'reasoning_effort', e.target.value || null)}
+                              size="small"
+                              fullWidth
+                              displayEmpty
+                            >
+                              <MenuItem value="">Auto</MenuItem>
+                              <MenuItem value="low">Low</MenuItem>
+                              <MenuItem value="medium">Medium</MenuItem>
+                              <MenuItem value="high">High</MenuItem>
+                            </Select>
+                          </Box>
+
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={config.voicelive_model?.include_reasoning ?? false}
+                                onChange={(e) => handleNestedConfigChange('voicelive_model', 'include_reasoning', e.target.checked)}
+                              />
+                            }
+                            label={
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Typography variant="body2">Include Reasoning Tokens</Typography>
+                                <Tooltip title="Include reasoning process in response (o1/o3 models)">
+                                  <InfoOutlinedIcon fontSize="small" color="action" />
+                                </Tooltip>
+                              </Stack>
+                            }
+                          />
+                        </>
+                      )}
+                    </Stack>
+                  </AccordionDetails>
+                </Accordion>
               </Stack>
             </TabPanel>
 

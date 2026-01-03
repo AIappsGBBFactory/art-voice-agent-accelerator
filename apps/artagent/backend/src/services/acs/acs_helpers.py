@@ -13,6 +13,7 @@ This module provides helper functions and utilities for integrating with Azure C
 
 import asyncio
 import json
+from urllib.parse import urlsplit
 
 
 class MediaCancelledException(Exception):
@@ -53,23 +54,29 @@ def construct_websocket_url(base_url: str, path: str) -> str | None:
         logger.warning("BASE_URL contains placeholder. Please update environment variable.")
         return None
 
-    base_url_clean = base_url.strip("/")
     path_clean = path.strip("/")
 
-    if base_url.startswith("https://"):
-        base_url_clean = base_url.replace("https://", "").strip("/")
-        ws_url = f"wss://{base_url_clean}/{path_clean}"
-        logger.info(f"Constructed WebSocket URL: {ws_url}")
-        return ws_url
-    elif base_url.startswith("http://"):
-        logger.warning("BASE_URL starts with http://. ACS Media Streaming usually requires wss://.")
-        base_url_clean = base_url.replace("http://", "").strip("/")
-        ws_url = f"ws://{base_url_clean}/{path_clean}"
-        logger.info(f"Constructed WebSocket URL: {ws_url}")
-        return ws_url
-    else:
+    parsed = urlsplit(base_url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"https", "http"} or not parsed.netloc:
         logger.error(f"Cannot determine WebSocket protocol (wss/ws) from BASE_URL: {base_url}")
         return None
+
+    ws_scheme = "wss" if scheme == "https" else "ws"
+    if scheme == "http":
+        logger.warning("BASE_URL starts with http://. ACS Media Streaming usually requires wss://.")
+
+    prefix = parsed.path.strip("/")
+    if prefix and path_clean.startswith(prefix):
+        full_path = path_clean
+    elif prefix and path_clean:
+        full_path = f"{prefix}/{path_clean}"
+    else:
+        full_path = prefix or path_clean
+
+    ws_url = f"{ws_scheme}://{parsed.netloc}/{full_path}" if full_path else f"{ws_scheme}://{parsed.netloc}"
+    logger.info(f"Constructed WebSocket URL: {ws_url}")
+    return ws_url
 
 
 def initialize_acs_caller_instance() -> AcsCaller | None:

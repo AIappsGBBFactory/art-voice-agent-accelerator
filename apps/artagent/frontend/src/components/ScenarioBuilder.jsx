@@ -119,102 +119,6 @@ const connectionColors = [
   '#a855f7', // purple
 ];
 
-const parseSimpleJinjaVar = (value) => {
-  if (typeof value !== 'string') return null;
-  const match = value.match(/^\s*\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}\s*$/);
-  return match ? match[1] : null;
-};
-
-const stringifyContextValue = (value) => {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value);
-  } catch (err) {
-    return String(value);
-  }
-};
-
-const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const truncateText = (value, maxLength = 32) => {
-  if (value === null || value === undefined) return '';
-  const text = String(value).replace(/\s+/g, ' ').trim();
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 1)}…`;
-};
-
-const buildVarAliases = (varName) => {
-  if (!varName) return [];
-  if (!varName.includes('.')) return [varName];
-  const parts = varName.split('.');
-  const key = parts.pop();
-  const root = parts.join('.');
-  return [
-    varName,
-    `${root}.get('${key}')`,
-    `${root}.get("${key}")`,
-    `${root}['${key}']`,
-    `${root}["${key}"]`,
-  ];
-};
-
-const getPromptContextSnippet = (prompt, varName, maxLines = 4) => {
-  if (!prompt) return '';
-  const lines = prompt.split('\n');
-  if (!varName) {
-    const fallback = lines.slice(0, maxLines).join('\n');
-    return lines.length > maxLines ? `${fallback}\n…` : fallback;
-  }
-  const aliases = buildVarAliases(varName);
-  const firstIndex = lines.findIndex((line) =>
-    aliases.some((alias) => alias && line.includes(alias))
-  );
-  if (firstIndex === -1) {
-    const fallback = lines.slice(0, maxLines).join('\n');
-    return lines.length > maxLines ? `${fallback}\n…` : fallback;
-  }
-  const start = Math.max(0, firstIndex - 1);
-  const end = Math.min(lines.length, start + maxLines);
-  const snippet = lines.slice(start, end).join('\n');
-  return end < lines.length ? `${snippet}\n…` : snippet;
-};
-
-const renderPromptHighlights = (text, vars) => {
-  if (!text) return 'No prompt preview available.';
-  const uniqueVars = Array.from(new Set(vars || [])).filter(Boolean);
-  if (uniqueVars.length === 0) return text;
-  const aliases = uniqueVars.flatMap(buildVarAliases).filter(Boolean);
-  if (aliases.length === 0) return text;
-  const pattern = aliases.map(escapeRegExp).join('|');
-  if (!pattern) return text;
-  const regex = new RegExp(`\\{\\{[^}]*(${pattern})[^}]*\\}\\}`, 'g');
-  const parts = [];
-  let lastIndex = 0;
-  let matchIndex = 0;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
-    }
-    parts.push(
-      <Box
-        component="span"
-        key={`hl-${match.index}-${matchIndex}`}
-        sx={{ bgcolor: 'rgba(99, 102, 241, 0.15)', borderRadius: '4px', px: 0.5 }}
-      >
-        {match[0]}
-      </Box>
-    );
-    lastIndex = regex.lastIndex;
-    matchIndex += 1;
-  }
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-  return parts;
-};
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // FLOW NODE COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -461,7 +365,20 @@ function FlowNode({
 // CONNECTION ARROW COMPONENT (SVG)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorIndex = 0 }) {
+function ConnectionArrow({
+  from,
+  to,
+  type,
+  isSelected,
+  isHighlighted,
+  onClick,
+  onMouseEnter,
+  onMouseLeave,
+  onDelete,
+  colorIndex = 0,
+  isBidirectional = false,
+  offsetSign = 0,
+}) {
   // Get connection color from palette
   const connectionColor = connectionColors[colorIndex % connectionColors.length];
   
@@ -470,19 +387,28 @@ function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorI
   
   let startX, startY, endX, endY;
   
+  const edgeInset = 10;
+  const anchorInset = 12;
+  const verticalSign = isBidirectional
+    ? offsetSign
+    : (to.y < from.y ? -1 : 1);
+  const anchorY = isBidirectional || isBackward
+    ? (verticalSign < 0 ? anchorInset : NODE_HEIGHT - anchorInset)
+    : NODE_HEIGHT / 2;
+
   if (isBackward) {
     // Backward: connect LEFT side of source → RIGHT side of target
     // This creates a short, direct path instead of looping around
-    startX = from.x;
-    startY = from.y + NODE_HEIGHT / 2;
-    endX = to.x + NODE_WIDTH;
-    endY = to.y + NODE_HEIGHT / 2;
+    startX = from.x - edgeInset;
+    startY = from.y + anchorY;
+    endX = to.x + NODE_WIDTH + edgeInset;
+    endY = to.y + anchorY;
   } else {
     // Forward: connect RIGHT side of source → LEFT side of target
-    startX = from.x + NODE_WIDTH;
-    startY = from.y + NODE_HEIGHT / 2;
-    endX = to.x;
-    endY = to.y + NODE_HEIGHT / 2;
+    startX = from.x + NODE_WIDTH + edgeInset;
+    startY = from.y + anchorY;
+    endX = to.x - edgeInset;
+    endY = to.y + anchorY;
   }
   
   const dx = endX - startX;
@@ -492,13 +418,14 @@ function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorI
   
   // Simple S-curve for all connections
   const curvature = Math.min(60, Math.max(30, distance * 0.35));
+  const returnLift = isBackward ? (verticalSign < 0 ? -28 : 28) : 0;
   
   let path;
   if (isBackward) {
     // Backward: curve to the left
     path = `M ${startX} ${startY} 
-            C ${startX - curvature} ${startY}, 
-              ${endX + curvature + arrowOffset} ${endY}, 
+            C ${startX - curvature} ${startY + returnLift}, 
+              ${endX + curvature + arrowOffset} ${endY + returnLift}, 
               ${endX + arrowOffset} ${endY}`;
   } else {
     // Forward: curve to the right
@@ -511,17 +438,30 @@ function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorI
   // Calculate label position (midpoint)
   const labelX = (startX + endX) / 2;
   const labelY = (startY + endY) / 2;
-  const labelOffsetY = isSelected ? 25 : 18;
+  const labelOffsetY = isBidirectional || isBackward
+    ? (verticalSign < 0 ? -16 : 18)
+    : (isSelected ? 25 : 18);
   
   // Use connection color from palette (unique per arrow)
   const arrowColor = connectionColor;
+
+  const directionGlyph = isBackward ? '←' : '→';
+  const typeGlyph = type === 'announced' ? '🔊' : '🔇';
+  const labelText = `${directionGlyph}${typeGlyph}`;
+  const labelWidth = 32;
   
   // Determine marker based on direction
-  const markerPrefix = isBackward ? 'arrowhead-back' : 'arrowhead';
-  const markerId = `${markerPrefix}-${colorIndex}${isSelected ? '-selected' : ''}`;
+  const markerId = `arrowhead-${colorIndex}${isSelected ? '-selected' : ''}`;
   
+  const isEmphasized = Boolean(isSelected || isHighlighted);
+
   return (
-    <g style={{ cursor: 'pointer' }} onClick={onClick}>
+    <g
+      style={{ cursor: 'pointer' }}
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
       {/* Invisible wider path for easier clicking */}
       <path
         d={path}
@@ -533,9 +473,19 @@ function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorI
       <path
         d={path}
         fill="none"
+        stroke="#0f172a"
+        strokeWidth={isEmphasized ? 4.5 : 4}
+        strokeLinecap="round"
+        strokeOpacity={isEmphasized ? 0.25 : 0.15}
+      />
+      <path
+        d={path}
+        fill="none"
         stroke={isSelected ? colors.selected.border : arrowColor}
-        strokeWidth={isSelected ? 3 : 2}
+        strokeWidth={isEmphasized ? 3.4 : 2.6}
         strokeDasharray={type === 'discrete' ? '8,4' : 'none'}
+        strokeLinecap="round"
+        strokeOpacity={isEmphasized ? 1 : 0.9}
         markerEnd={`url(#${markerId})`}
         style={{ transition: 'stroke 0.2s, stroke-width 0.2s' }}
       />
@@ -553,9 +503,9 @@ function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorI
       {/* Type label with background for visibility */}
       <g>
         <rect
-          x={labelX - 12}
+          x={labelX - labelWidth / 2}
           y={labelY + labelOffsetY - 10}
-          width={24}
+          width={labelWidth}
           height={16}
           rx={4}
           fill="white"
@@ -571,7 +521,7 @@ function ConnectionArrow({ from, to, type, isSelected, onClick, onDelete, colorI
           fontSize="10"
           fontWeight="600"
         >
-          {type === 'announced' ? '🔊' : '🔇'}
+          {labelText}
         </text>
       </g>
     </g>
@@ -698,33 +648,20 @@ const HANDOFF_CONDITION_PATTERNS = [
 // HANDOFF EDITOR DIALOG
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete }) {
+function HandoffEditorDialog({ open, onClose, handoff, agents, handoffs, onSave, onDelete }) {
   const [type, setType] = useState(handoff?.type || 'announced');
   const [shareContext, setShareContext] = useState(handoff?.share_context !== false);
   const [handoffCondition, setHandoffCondition] = useState(handoff?.handoff_condition || '');
   const [selectedPattern, setSelectedPattern] = useState(null);
   const [showPatternPicker, setShowPatternPicker] = useState(false);
-  const [contextVarEntries, setContextVarEntries] = useState([]);
-  const [expandedMappingId, setExpandedMappingId] = useState(null);
-  const [promptDialog, setPromptDialog] = useState({
-    open: false,
-    title: '',
-    content: '',
-  });
-
-  const sourceAgent = agents?.find(a => a.name === handoff?.from_agent);
-  const targetAgent = agents?.find(a => a.name === handoff?.to_agent);
-  const sourcePromptVars = useMemo(
-    () => Array.from(new Set((sourceAgent?.prompt_vars || []).filter(Boolean))),
-    [sourceAgent],
-  );
-  const targetPromptVars = useMemo(
-    () => Array.from(new Set((targetAgent?.prompt_vars || []).filter(Boolean))),
-    [targetAgent],
-  );
 
   useEffect(() => {
-    if (handoff) {
+    // Only reset state when editing a different handoff (or when dialog first opens)
+    const handoffChanged = prevHandoffKeyRef.current !== handoffKey;
+
+    if (handoff && handoffChanged) {
+      prevHandoffKeyRef.current = handoffKey;
+
       setType(handoff.type || 'announced');
       setShareContext(handoff.share_context !== false);
       setHandoffCondition(handoff.handoff_condition || '');
@@ -764,7 +701,7 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
       );
       setSelectedPattern(matchingPattern?.id || (handoff.handoff_condition ? 'custom' : null));
     }
-  }, [handoff, targetPromptVars]);
+  }, [handoff]);
 
   const handlePatternSelect = (patternId) => {
     const pattern = HANDOFF_CONDITION_PATTERNS.find(p => p.id === patternId);
@@ -965,8 +902,58 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
             />
           </Box>
 
+          <Divider />
+
+          {/* Type selector */}
+          <Box>
+            <Typography variant="subtitle2" gutterBottom>
+              Handoff Type
+            </Typography>
+            <ToggleButtonGroup
+              value={type}
+              exclusive
+              onChange={(e, v) => v && setType(v)}
+              size="small"
+              fullWidth
+            >
+              <ToggleButton value="announced" sx={{ textTransform: 'none' }}>
+                <VolumeUpIcon sx={{ mr: 1, color: colors.announced }} />
+                Announced
+              </ToggleButton>
+              <ToggleButton value="discrete" sx={{ textTransform: 'none' }}>
+                <VolumeOffIcon sx={{ mr: 1, color: colors.discrete }} />
+                Discrete (Silent)
+              </ToggleButton>
+            </ToggleButtonGroup>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              {type === 'announced'
+                ? 'Target agent will greet/announce the transfer'
+                : 'Silent handoff - agent continues conversation naturally'}
+            </Typography>
+          </Box>
+
+          {/* Share context */}
+          <FormControlLabel
+            control={
+              <Switch
+                checked={shareContext}
+                onChange={(e) => setShareContext(e.target.checked)}
+              />
+            }
+            label={
+              <Box>
+                <Typography variant="body2">Share conversation context</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Pass chat history and memory to target agent
+                </Typography>
+              </Box>
+            }
+          />
+
+          <Divider />
+
+          {/* Advanced Config - Collapsed by default */}
           <Accordion
-            defaultExpanded
             sx={{
               borderRadius: '12px',
               border: '1px solid #e5e7eb',
@@ -1261,54 +1248,6 @@ function HandoffEditorDialog({ open, onClose, handoff, agents, onSave, onDelete 
               </Stack>
             </AccordionDetails>
           </Accordion>
-
-          <Divider />
-
-          {/* Type selector */}
-          <Box>
-            <Typography variant="subtitle2" gutterBottom>
-              Handoff Type
-            </Typography>
-            <ToggleButtonGroup
-              value={type}
-              exclusive
-              onChange={(e, v) => v && setType(v)}
-              size="small"
-              fullWidth
-            >
-              <ToggleButton value="announced" sx={{ textTransform: 'none' }}>
-                <VolumeUpIcon sx={{ mr: 1, color: colors.announced }} />
-                Announced
-              </ToggleButton>
-              <ToggleButton value="discrete" sx={{ textTransform: 'none' }}>
-                <VolumeOffIcon sx={{ mr: 1, color: colors.discrete }} />
-                Discrete (Silent)
-              </ToggleButton>
-            </ToggleButtonGroup>
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-              {type === 'announced'
-                ? 'Target agent will greet/announce the transfer'
-                : 'Silent handoff - agent continues conversation naturally'}
-            </Typography>
-          </Box>
-
-          {/* Share context */}
-          <FormControlLabel
-            control={
-              <Switch
-                checked={shareContext}
-                onChange={(e) => setShareContext(e.target.checked)}
-              />
-            }
-            label={
-              <Box>
-                <Typography variant="body2">Share conversation context</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Pass chat history and memory to target agent
-                </Typography>
-              </Box>
-            }
-          />
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -2204,6 +2143,7 @@ export default function ScenarioBuilder({
   // UI state
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
+  const [hoveredEdge, setHoveredEdge] = useState(null);
   const [addHandoffAnchor, setAddHandoffAnchor] = useState(null);
   const [addHandoffFrom, setAddHandoffFrom] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -2211,6 +2151,11 @@ export default function ScenarioBuilder({
   const [viewingAgent, setViewingAgent] = useState(null);
 
   const canvasRef = useRef(null);
+
+  const isSameHandoff = useCallback((left, right) => {
+    if (!left || !right) return false;
+    return left.from_agent === right.from_agent && left.to_agent === right.to_agent;
+  }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
   // DATA FETCHING
@@ -2443,12 +2388,51 @@ export default function ScenarioBuilder({
     return { positions, agentsInGraph: Array.from(agentsInGraph) };
   }, [config.start_agent, config.handoffs]);
 
+  const handoffPairs = useMemo(() => {
+    const pairs = new Set();
+    config.handoffs.forEach((handoff) => {
+      if (handoff?.from_agent && handoff?.to_agent) {
+        pairs.add(`${handoff.from_agent}::${handoff.to_agent}`);
+      }
+    });
+    return pairs;
+  }, [config.handoffs]);
+
   // ─────────────────────────────────────────────────────────────────────────
   // HANDLERS
   // ─────────────────────────────────────────────────────────────────────────
 
   const handleSetStartAgent = useCallback((agentName) => {
-    setConfig((prev) => ({ ...prev, start_agent: agentName }));
+    setConfig((prev) => {
+      if (prev.start_agent === agentName) {
+        return prev;
+      }
+      if (!prev.start_agent) {
+        return { ...prev, start_agent: agentName };
+      }
+
+      const preserved = prev.handoffs.filter((h) => h.from_agent !== prev.start_agent);
+      const seen = new Set(preserved.map((h) => `${h.from_agent}::${h.to_agent}`));
+      const remapped = [];
+      prev.handoffs.forEach((handoff) => {
+        if (handoff.from_agent !== prev.start_agent) {
+          return;
+        }
+        const next = { ...handoff, from_agent: agentName };
+        const key = `${next.from_agent}::${next.to_agent}`;
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        remapped.push(next);
+      });
+
+      return {
+        ...prev,
+        start_agent: agentName,
+        handoffs: [...preserved, ...remapped],
+      };
+    });
   }, []);
 
   const handleOpenAddHandoff = useCallback((agent, event) => {
@@ -3000,27 +2984,13 @@ export default function ScenarioBuilder({
                     <marker
                       key={`arrowhead-${idx}`}
                       id={`arrowhead-${idx}`}
-                      markerWidth="10"
-                      markerHeight="7"
-                      refX="9"
-                      refY="3.5"
+                      markerWidth="12"
+                      markerHeight="9"
+                      refX="10"
+                      refY="4.5"
                       orient="auto"
                     >
-                      <polygon points="0 0, 10 3.5, 0 7" fill={color} />
-                    </marker>
-                  ))}
-                  {/* Backward arrow markers (pointing left) - one for each color */}
-                  {connectionColors.map((color, idx) => (
-                    <marker
-                      key={`arrowhead-back-${idx}`}
-                      id={`arrowhead-back-${idx}`}
-                      markerWidth="10"
-                      markerHeight="7"
-                      refX="1"
-                      refY="3.5"
-                      orient="auto"
-                    >
-                      <polygon points="10 0, 0 3.5, 10 7" fill={color} />
+                      <polygon points="0 0, 12 4.5, 0 9" fill={color} />
                     </marker>
                   ))}
                   {/* Selected state markers (forward) */}
@@ -3028,27 +2998,13 @@ export default function ScenarioBuilder({
                     <marker
                       key={`arrowhead-${idx}-selected`}
                       id={`arrowhead-${idx}-selected`}
-                      markerWidth="10"
-                      markerHeight="7"
-                      refX="9"
-                      refY="3.5"
+                      markerWidth="12"
+                      markerHeight="9"
+                      refX="10"
+                      refY="4.5"
                       orient="auto"
                     >
-                      <polygon points="0 0, 10 3.5, 0 7" fill={colors.selected.border} />
-                    </marker>
-                  ))}
-                  {/* Selected state markers (backward) */}
-                  {connectionColors.map((color, idx) => (
-                    <marker
-                      key={`arrowhead-back-${idx}-selected`}
-                      id={`arrowhead-back-${idx}-selected`}
-                      markerWidth="10"
-                      markerHeight="7"
-                      refX="1"
-                      refY="3.5"
-                      orient="auto"
-                    >
-                      <polygon points="10 0, 0 3.5, 10 7" fill={colors.selected.border} />
+                      <polygon points="0 0, 12 4.5, 0 9" fill={colors.selected.border} />
                     </marker>
                   ))}
                 </defs>
@@ -3059,6 +3015,9 @@ export default function ScenarioBuilder({
                     const fromPos = graphLayout.positions[handoff.from_agent];
                     const toPos = graphLayout.positions[handoff.to_agent];
                     if (!fromPos || !toPos) return null;
+                    const reverseKey = `${handoff.to_agent}::${handoff.from_agent}`;
+                    const isBidirectional = handoffPairs.has(reverseKey);
+                    const offsetSign = handoff.from_agent < handoff.to_agent ? 1 : -1;
 
                     return (
                       <ConnectionArrow
@@ -3067,11 +3026,16 @@ export default function ScenarioBuilder({
                         to={toPos}
                         type={handoff.type}
                         colorIndex={idx}
-                        isSelected={selectedEdge === handoff}
+                        isBidirectional={isBidirectional}
+                        offsetSign={offsetSign}
+                        isSelected={isSameHandoff(handoff, selectedEdge)}
+                        isHighlighted={isSameHandoff(handoff, hoveredEdge)}
                         onClick={() => {
                           setSelectedEdge(handoff);
                           setEditingHandoff(handoff);
                         }}
+                        onMouseEnter={() => setHoveredEdge(handoff)}
+                        onMouseLeave={() => setHoveredEdge(null)}
                         onDelete={() => handleDeleteHandoff(handoff)}
                       />
                     );
@@ -3159,6 +3123,7 @@ export default function ScenarioBuilder({
                 {config.handoffs.map((h, i) => {
                   const handoffColor = connectionColors[i % connectionColors.length];
                   const hasCondition = h.handoff_condition && h.handoff_condition.trim().length > 0;
+                  const isActive = isSameHandoff(h, selectedEdge) || isSameHandoff(h, hoveredEdge);
                   return (
                     <Tooltip
                       key={i}
@@ -3171,14 +3136,21 @@ export default function ScenarioBuilder({
                         size="small"
                         variant="outlined"
                         icon={h.type === 'announced' ? <VolumeUpIcon sx={{ color: `${handoffColor} !important` }} /> : <VolumeOffIcon sx={{ color: `${handoffColor} !important` }} />}
-                        onClick={() => setEditingHandoff(h)}
+                        onClick={() => {
+                          setSelectedEdge(h);
+                          setEditingHandoff(h);
+                        }}
+                        onMouseEnter={() => setHoveredEdge(h)}
+                        onMouseLeave={() => setHoveredEdge(null)}
                         onDelete={() => handleDeleteHandoff(h)}
                         sx={{
                           justifyContent: 'flex-start',
                           height: 28,
                           fontSize: 11,
                           borderColor: handoffColor,
-                          borderWidth: hasCondition ? 3 : 2,
+                          borderWidth: isActive ? 3 : hasCondition ? 3 : 2,
+                          backgroundColor: isActive ? `${handoffColor}1a` : 'transparent',
+                          boxShadow: isActive ? `0 0 0 2px ${handoffColor}33` : 'none',
                           '&:hover': {
                             borderColor: handoffColor,
                             backgroundColor: `${handoffColor}15`,
@@ -3240,6 +3212,7 @@ export default function ScenarioBuilder({
         onClose={() => setEditingHandoff(null)}
         handoff={editingHandoff}
         agents={availableAgents}
+        handoffs={config.handoffs}
         onSave={handleUpdateHandoff}
         onDelete={() => editingHandoff && handleDeleteHandoff(editingHandoff)}
       />
