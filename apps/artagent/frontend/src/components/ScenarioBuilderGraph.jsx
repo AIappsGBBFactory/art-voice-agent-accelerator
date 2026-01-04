@@ -1803,48 +1803,51 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
               </Paper>
 
               {/* Output Port (bottom) - click to start connection */}
-              <Tooltip 
-                title={connectingFrom === node.id ? 'Click to cancel' : 'Click to connect to another agent'}
-                arrow
-                placement="bottom"
-              >
-                <Box
-                  onClick={(e) => handleOutputPortClick(node.id, e)}
-                  sx={{
-                    position: 'absolute',
-                    bottom: -10,
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    width: connectingFrom === node.id ? 24 : 20,
-                    height: connectingFrom === node.id ? 24 : 20,
-                    borderRadius: '50%',
-                    backgroundColor: connectingFrom === node.id ? '#3b82f6' : '#6366f1',
-                    border: `2px solid ${connectingFrom === node.id ? '#1d4ed8' : '#4f46e5'}`,
-                    cursor: 'pointer',
-                    zIndex: 10,
-                    transition: 'all 0.15s ease',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: connectingFrom === node.id ? '0 0 12px rgba(59, 130, 246, 0.6)' : 'none',
-                    animation: connectingFrom === node.id ? 'activePulse 1s infinite' : 'none',
-                    '@keyframes activePulse': {
-                      '0%, 100%': { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.6)' },
-                      '50%': { boxShadow: '0 0 0 6px rgba(59, 130, 246, 0)' },
-                    },
-                    '&:hover': {
-                      transform: 'translateX(-50%) scale(1.2)',
-                      boxShadow: '0 0 12px rgba(99, 102, 241, 0.6)',
-                    },
-                  }}
+              {/* Hide when another node is in connecting mode (unless this is the source) */}
+              {(!connectingFrom || connectingFrom === node.id) && (
+                <Tooltip 
+                  title={connectingFrom === node.id ? 'Click to cancel' : 'Click to connect to another agent'}
+                  arrow
+                  placement="bottom"
                 >
-                  {connectingFrom === node.id ? (
-                    <CloseIcon sx={{ fontSize: 12, color: 'white' }} />
-                  ) : (
-                    <AddIcon sx={{ fontSize: 12, color: 'white' }} />
-                  )}
-                </Box>
-              </Tooltip>
+                  <Box
+                    onClick={(e) => handleOutputPortClick(node.id, e)}
+                    sx={{
+                      position: 'absolute',
+                      bottom: -10,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      width: connectingFrom === node.id ? 24 : 20,
+                      height: connectingFrom === node.id ? 24 : 20,
+                      borderRadius: '50%',
+                      backgroundColor: connectingFrom === node.id ? '#3b82f6' : '#6366f1',
+                      border: `2px solid ${connectingFrom === node.id ? '#1d4ed8' : '#4f46e5'}`,
+                      cursor: 'pointer',
+                      zIndex: 10,
+                      transition: 'all 0.15s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: connectingFrom === node.id ? '0 0 12px rgba(59, 130, 246, 0.6)' : 'none',
+                      animation: connectingFrom === node.id ? 'activePulse 1s infinite' : 'none',
+                      '@keyframes activePulse': {
+                        '0%, 100%': { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.6)' },
+                        '50%': { boxShadow: '0 0 0 6px rgba(59, 130, 246, 0)' },
+                      },
+                      '&:hover': {
+                        transform: 'translateX(-50%) scale(1.2)',
+                        boxShadow: '0 0 12px rgba(99, 102, 241, 0.6)',
+                      },
+                    }}
+                  >
+                    {connectingFrom === node.id ? (
+                      <CloseIcon sx={{ fontSize: 12, color: 'white' }} />
+                    ) : (
+                      <AddIcon sx={{ fontSize: 12, color: 'white' }} />
+                    )}
+                  </Box>
+                </Tooltip>
+              )}
             </Box>
           );
         })}
