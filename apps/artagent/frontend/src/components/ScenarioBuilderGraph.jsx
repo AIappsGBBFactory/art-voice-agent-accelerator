@@ -314,6 +314,7 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
   const [handoffCondition, setHandoffCondition] = useState(handoff?.handoff_condition || '');
   const [selectedPattern, setSelectedPattern] = useState(null);
   const [showPatternPicker, setShowPatternPicker] = useState(false);
+  const [showFullPrompt, setShowFullPrompt] = useState(false);
   
   // Editable source and target agents
   const [fromAgent, setFromAgent] = useState(handoff?.from_agent || '');
@@ -588,6 +589,72 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
               <AutoFixHighIcon sx={{ fontSize: 16, color: '#6366f1' }} />
               When should this handoff happen?
             </Typography>
+
+            {/* Source Agent Full Prompt - Expandable */}
+            <Accordion 
+              expanded={showFullPrompt} 
+              onChange={() => setShowFullPrompt(!showFullPrompt)}
+              sx={{ 
+                mb: 2, 
+                border: '1px solid #e5e7eb', 
+                borderRadius: '8px !important',
+                '&:before': { display: 'none' },
+                boxShadow: 'none',
+              }}
+            >
+              <AccordionSummary
+                expandIcon={<ExpandMoreIcon />}
+                sx={{ 
+                  backgroundColor: '#f8fafc', 
+                  borderRadius: '8px',
+                  minHeight: 48,
+                  '&.Mui-expanded': { minHeight: 48 },
+                }}
+              >
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <DescriptionIcon sx={{ fontSize: 16, color: '#6366f1' }} />
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    View {fromAgent}'s Full System Prompt
+                  </Typography>
+                  <Chip 
+                    label="Read-only" 
+                    size="small" 
+                    sx={{ 
+                      height: 20, 
+                      fontSize: 10, 
+                      backgroundColor: '#e0e7ff', 
+                      color: '#4338ca' 
+                    }} 
+                  />
+                </Stack>
+              </AccordionSummary>
+              <AccordionDetails sx={{ p: 0 }}>
+                <Box
+                  sx={{
+                    maxHeight: '300px',
+                    overflowY: 'auto',
+                    p: 2,
+                    backgroundColor: '#fafafa',
+                    borderTop: '1px solid #e5e7eb',
+                  }}
+                >
+                  <Typography
+                    component="pre"
+                    variant="caption"
+                    sx={{ 
+                      fontFamily: 'monospace', 
+                      whiteSpace: 'pre-wrap', 
+                      fontSize: 11, 
+                      lineHeight: 1.6,
+                      margin: 0,
+                      color: '#374151',
+                    }}
+                  >
+                    {sourceAgent?.prompt_full || sourceAgent?.prompt_preview || 'No system prompt available for this agent.'}
+                  </Typography>
+                </Box>
+              </AccordionDetails>
+            </Accordion>
             
             {/* Quick pattern chips */}
             <Box sx={{ mb: 2 }}>
