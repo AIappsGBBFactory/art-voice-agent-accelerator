@@ -44,6 +44,8 @@ This document covers Terraform infrastructure details for advanced users who nee
 └──────────────────────┴──────────────────────────────────────────┘
 ```
 
+> 📖 **For a detailed list of all resources with private networking documentation, see [Infrastructure Resources Guide](../docs/deployment/infrastructure-resources.md)**
+
 ---
 
 ## ⚙️ Terraform Configuration
@@ -145,6 +147,7 @@ az appconfig kv list --endpoint $AZURE_APPCONFIG_ENDPOINT --auth-mode login
 
 | Topic | Link |
 |-------|------|
+| **Infrastructure Resources** | [Resource List & Private Networking](../docs/deployment/infrastructure-resources.md) |
 | **Getting Started** | [Quickstart](../docs/getting-started/quickstart.md) |
 | **Local Development** | [Local Dev Guide](../docs/getting-started/local-development.md) |
 | **Production Deployment** | [Production Guide](../docs/deployment/production.md) |

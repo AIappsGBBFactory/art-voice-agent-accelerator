@@ -87,6 +87,7 @@ nav:
     - Archive: architecture/archive/README.md
   - Deployment:
     - Deployment Guide: deployment/README.md
+    - Infrastructure Resources: deployment/infrastructure-resources.md
     - Phone Number Setup: deployment/phone-number-setup.md
     - Production: deployment/production.md
     - CI/CD: deployment/cicd.md
