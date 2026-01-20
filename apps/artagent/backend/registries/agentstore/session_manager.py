@@ -22,10 +22,10 @@ Usage:
     )
 
     # Get agent with overrides applied
-    agent = session_mgr.get_agent("BankingConcierge")
+    agent = session_mgr.get_agent("EricaConcierge")
 
     # Modify agent at runtime
-    session_mgr.update_agent_prompt("BankingConcierge", "New prompt...")
+    session_mgr.update_agent_prompt("EricaConcierge", "New prompt...")
     await session_mgr.persist()
 """
 
@@ -280,10 +280,10 @@ class SessionAgentManager:
         )
 
         # Get agent with overrides
-        agent = mgr.get_agent("BankingConcierge")
+        agent = mgr.get_agent("EricaConcierge")
 
         # Modify at runtime
-        mgr.update_agent_prompt("BankingConcierge", "New prompt...")
+        mgr.update_agent_prompt("EricaConcierge", "New prompt...")
         await mgr.persist()
     """
 
