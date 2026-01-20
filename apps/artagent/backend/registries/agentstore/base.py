@@ -598,7 +598,7 @@ class UnifiedAgent:
         Render the greeting template with context.
 
         Uses Jinja2 templating to render greeting with variables like:
-        - {{ agent_name | default('Erica') }}
+        - {{ agent_name | default('Assistant') }}
         - {{ institution_name | default('Contoso Bank') }}
 
         Args:
