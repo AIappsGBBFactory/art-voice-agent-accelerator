@@ -76,25 +76,28 @@ python -m tests.evaluation.cli compare \
 
 ```
 evaluation/
-├── __init__.py              # Package exports (v0.2.0)
-├── README.md               # Quick start guide
-├── VALIDATION.md           # Test results (Phases 1-2)
-├── PHASE1_COMPLETE.md      # Phase 1 details
-├── PHASE3_SIMPLIFIED.md    # Phase 3 architecture
-├── SUMMARY.md              # This file
+├── __init__.py              # Package exports (v0.3.0)
+├── README.md                # Quick start guide
+├── SUMMARY.md               # This file
 │
-├── schemas.py              # Pydantic models (273 lines)
-├── recorder.py             # EventRecorder (327 lines)
-├── wrappers.py             # Wrapper pattern (299 lines)
-├── scorer.py               # Scoring + comparison (747 lines)
+├── schemas.py               # Pydantic models (~370 lines)
+├── recorder.py              # EventRecorder (~270 lines)
+├── wrappers.py              # Wrapper pattern (~230 lines)
+├── scorer.py                # Scoring + comparison (~580 lines)
+├── validator.py             # Expectation validation (~260 lines)
+├── foundry_exporter.py      # Azure AI Foundry integration (~450 lines)
 │
-├── mocks.py                # Test doubles (142 lines) ⭐ NEW
-├── scenario_runner.py      # Runners (400 lines) ⭐ NEW
+├── mocks.py                 # Test doubles (~140 lines)
+├── scenario_runner.py       # Runners (~600 lines)
 │
-└── cli/
-    ├── __init__.py
-    ├── __main__.py         # Unified CLI (300 lines) ⭐ NEW
-    └── run.py             # Legacy scorer (kept for compatibility)
+├── conftest.py              # pytest fixtures
+├── test_scenarios.py        # E2E pytest tests
+│
+├── cli/
+│   └── __main__.py          # Unified CLI (score, scenario, compare, submit)
+│
+└── scenarios/               # YAML test scenarios
+    └── ab_tests/            # A/B comparison scenarios
 ```
 
 **Total:** ~2,500 lines of well-organized, focused code

@@ -55,11 +55,13 @@ evaluation/
 ├── recorder.py              # EventRecorder
 ├── wrappers.py              # EvaluationOrchestratorWrapper
 ├── scorer.py                # MetricsScorer
-├── validate_phases.py       # Validation tests
+├── validator.py             # Expectation validation
+├── scenario_runner.py       # ScenarioRunner + ComparisonRunner
+├── foundry_exporter.py      # Azure AI Foundry integration
 ├── cli/
-│   └── run.py              # CLI interface
-├── README.md               # This file
-└── VALIDATION.md           # Validated features
+│   └── __main__.py          # Unified CLI (score, scenario, compare, submit)
+├── README.md                # This file
+└── scenarios/               # YAML test scenarios
 ```
 
 ## Key Principles

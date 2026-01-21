@@ -443,7 +443,7 @@ class ScenarioRunner:
             )
 
             # Store in session registry - orchestrator will pick this up
-            set_session_agent(session_id, modified_agent, notify_adapter=False)
+            set_session_agent(session_id, modified_agent)
 
             # Also update our local agents dict for the orchestrator creation
             modified_agents[agent_name] = modified_agent
