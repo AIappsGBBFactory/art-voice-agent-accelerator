@@ -75,7 +75,7 @@ python -m tests.evaluation.cli compare \
 ## 📁 File Structure
 
 ```
-evaluation/
+tests/evaluation/
 ├── __init__.py              # Package exports (v0.3.0)
 ├── README.md                # Quick start guide
 ├── SUMMARY.md               # This file
@@ -93,11 +93,8 @@ evaluation/
 ├── conftest.py              # pytest fixtures
 ├── test_scenarios.py        # E2E pytest tests
 │
-├── cli/
-│   └── __main__.py          # Unified CLI (score, scenario, compare, submit)
-│
-└── scenarios/               # YAML test scenarios
-    └── ab_tests/            # A/B comparison scenarios
+└── cli/
+    └── __main__.py          # Unified CLI (score, scenario, compare, submit)
 ```
 
 **Total:** ~2,500 lines of well-organized, focused code
@@ -266,10 +263,8 @@ When you run A/B comparisons, you get:
 ## 📚 Documentation
 
 - **README.md** - Quick start and usage
-- **VALIDATION.md** - Test results and status
-- **PHASE1_COMPLETE.md** - Core instrumentation details
-- **PHASE3_SIMPLIFIED.md** - Architecture decisions
-- **model-evals.md** - Full specification and examples
+- **SUMMARY.md** - This file
+- **[model-evaluation.md](../../docs/testing/model-evaluation.md)** - Full specification and examples
 
 ## ✨ Conclusion
 
@@ -287,6 +282,5 @@ The framework is **ready for orchestrator integration** to enable real scenario 
 ---
 
 **Status:** Phase 3 Complete (Framework Ready) ✅
-**Version:** 0.2.0
+**Version:** 0.3.0
 **Next:** Connect to real orchestrator
-**Your YAML:** `fraud_detection_comparison.yaml` validated and ready! 🎉

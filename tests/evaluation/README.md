@@ -4,11 +4,7 @@ Model-to-model evaluation framework for voice agent orchestration.
 
 ## Quick Links
 
-📚 **[Full Documentation](../../../../docs/testing/model-evaluation.md)** - Complete guide with examples
-
-📋 **[Validation Status](./VALIDATION.md)** - What's been validated
-
-📝 **[Phase 3 Simplification](./PHASE3_SIMPLIFIED.md)** - Consolidated architecture
+📚 **[Full Documentation](../../docs/testing/model-evaluation.md)** - Complete guide with examples
 
 ## Quick Start
 
@@ -98,6 +94,95 @@ python apps/artagent/backend/evaluation/validate_phases.py --phase 1
 - **MockMemoManager**: Minimal test mocks
 - **Mock Orchestrator**: Scenario runner uses a built-in mock that simulates tool calls listed in `expectations.tools_called`; no production orchestrator required
 - **Unified CLI**: Single entry point with subcommands
+
+## Scenario Types
+
+### 1. Template-Based Scenarios (scenario_template)
+
+Reference a pre-defined scenario from scenariostore:
+
+```yaml
+scenario_name: my_banking_test
+scenario_template: banking  # References scenariostore/banking/orchestration.yaml
+turns:
+  - turn_id: turn_1
+    user_input: "Check my balance"
+    expectations:
+      tools_called: [get_account_balance]
+```
+
+### 2. Session-Based Scenarios (session_config)
+
+Define agent list, handoffs, and routing directly in the YAML - like the backend's
+orchestrator.yml but for evaluations. This is useful when you want to:
+
+- Test with all discovered agents or a custom subset
+- Define ad-hoc handoff routing without modifying scenariostore
+- Run evaluations with different agent combinations
+
+```yaml
+scenario_name: multi_agent_test
+session_config:
+  # Agent selection: "all" or list of names
+  agents:
+    - BankingConcierge
+    - CardRecommendation
+    - InvestmentAdvisor
+
+  # Or use patterns to filter agents
+  # agent_patterns: ["^Banking.*", "^Card.*"]
+
+  # Exclude specific agents
+  # exclude_agents: [TestAgent]
+
+  # Starting agent
+  start_agent: BankingConcierge
+
+  # Explicit handoff routing
+  handoffs:
+    - from: BankingConcierge
+      to: CardRecommendation
+      tool: handoff_card_recommendation
+      type: discrete
+      handoff_condition: |
+        Transfer when customer asks about credit cards.
+
+  # Enable dynamic routing via handoff_to_agent
+  generic_handoff:
+    enabled: true
+    allowed_targets: []  # Empty = all agents
+
+turns:
+  - turn_id: turn_1
+    user_input: "Tell me about credit cards"
+    expectations:
+      tools_called: [handoff_to_agent]
+      handoff:
+        to_agent: CardRecommendation
+```
+
+### 3. A/B Comparison Scenarios
+
+Compare models or configurations across variants:
+
+```yaml
+comparison_name: gpt4o_vs_o3_mini
+scenario_template: banking
+variants:
+  - variant_id: gpt4o
+    agent_overrides:
+      - agent: BankingConcierge
+        model_override: {deployment_id: gpt-4o}
+  - variant_id: o3_mini
+    agent_overrides:
+      - agent: BankingConcierge
+        model_override: {deployment_id: o3-mini}
+turns:
+  - turn_id: turn_1
+    user_input: "Check my balance"
+```
+
+See `scenarios/session_based/` for complete examples.
 
 ## Documentation
 

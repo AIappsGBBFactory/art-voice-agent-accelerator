@@ -83,7 +83,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tests.evaluation.scenario_runner import ComparisonRunner
+from tests.evaluation.scenario_runner import ComparisonRunner, ScenarioRunner
 from tests.evaluation.foundry_exporter import submit_to_foundry
 from tests.evaluation.scorer import MetricsScorer
 from tests.evaluation.validator import ExpectationValidator, TurnValidationResult
@@ -96,6 +96,14 @@ logger = get_logger(__name__)
 def discover_ab_scenarios() -> list[Path]:
     """Discover all A/B test scenarios."""
     scenarios_dir = Path(__file__).parent / "scenarios" / "ab_tests"
+    if not scenarios_dir.exists():
+        return []
+    return sorted(scenarios_dir.glob("*.yaml"))
+
+
+def discover_session_scenarios() -> list[Path]:
+    """Discover session-based evaluation scenarios."""
+    scenarios_dir = Path(__file__).parent / "scenarios" / "session_based"
     if not scenarios_dir.exists():
         return []
     return sorted(scenarios_dir.glob("*.yaml"))
@@ -137,6 +145,7 @@ def get_thresholds(scenario_thresholds: dict[str, Any] | None = None) -> dict[st
 
 # Parametrize tests with discovered scenarios
 AB_SCENARIOS = discover_ab_scenarios()
+SESSION_SCENARIOS = discover_session_scenarios()
 SINGLE_SCENARIOS = discover_single_scenarios()
 
 
@@ -302,8 +311,229 @@ async def test_ab_comparison_e2e(
 
 
 # =============================================================================
+# SESSION-BASED SCENARIO TESTS
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.evaluation
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "scenario_path",
+    SESSION_SCENARIOS,
+    ids=[get_scenario_id(s) for s in SESSION_SCENARIOS],
+)
+async def test_session_scenario_e2e(
+    scenario_path: Path,
+    eval_output_dir: Path,
+    submit_to_foundry_flag: bool,
+    foundry_endpoint: str | None,
+    foundry_model: str,
+) -> None:
+    """
+    End-to-end session-based scenario test.
+
+    Steps:
+    1. Run session scenario (multi-agent with dynamic routing)
+    2. Validate turn expectations
+    3. Assert metric thresholds
+    4. Optionally submit to Foundry
+    """
+    logger.info(f"🚀 Running E2E session scenario: {scenario_path.name}")
+
+    # Create output directory for this scenario
+    scenario_output = eval_output_dir / scenario_path.stem
+    scenario_output.mkdir(parents=True, exist_ok=True)
+
+    # --- STEP 1: Run Scenario ---
+    runner = ScenarioRunner(
+        scenario_path=scenario_path,
+        output_dir=scenario_output,
+    )
+
+    summary = await runner.run()
+
+    # Basic validation - ensure we got results
+    assert summary is not None, "Scenario run should return a summary"
+    assert summary.total_turns > 0, "Scenario should have at least 1 turn"
+
+    # Load scenario YAML for expectations
+    with open(scenario_path) as f:
+        scenario_yaml = yaml.safe_load(f)
+
+    # --- STEP 2: Validate Expectations ---
+    validator = ExpectationValidator()
+    scorer = MetricsScorer()
+
+    # Find events file
+    events_files = list(scenario_output.rglob("*_events.jsonl"))
+    if not events_files:
+        pytest.fail(f"No events.jsonl found in {scenario_output}")
+
+    events = scorer.load_events(events_files[0])
+
+    # Compute groundedness scores for validation
+    groundedness_scores = {}
+    for event in events:
+        gs = scorer.compute_groundedness(event)
+        groundedness_scores[event.turn_id] = gs["grounded_span_ratio"]
+
+    # Validate against expectations
+    validation_results = validator.validate_run(
+        events=events,
+        scenario=scenario_yaml,
+        groundedness_scores=groundedness_scores,
+    )
+
+    # Log validation report
+    report = validator.format_report(validation_results)
+    logger.info(f"\n{scenario_path.stem}:\n{report}")
+
+    # Save validation report
+    validation_path = scenario_output / "validation_report.json"
+    with open(validation_path, "w") as f:
+        json.dump(
+            [
+                {
+                    "turn_id": r.turn_id,
+                    "passed": r.passed,
+                    "failed_checks": r.failed_checks,
+                    "checks": [
+                        {
+                            "check_name": c.check_name,
+                            "passed": c.passed,
+                            "message": c.message,
+                            "expected": str(c.expected),
+                            "actual": str(c.actual),
+                        }
+                        for c in r.checks
+                    ],
+                }
+                for r in validation_results
+            ],
+            f,
+            indent=2,
+        )
+
+    # --- STEP 3: Submit to Foundry (if enabled) ---
+    if submit_to_foundry_flag:
+        foundry_files = list(scenario_output.rglob("foundry_eval.jsonl"))
+        if foundry_files:
+            data_path = foundry_files[0]
+            config_path = data_path.parent / "foundry_evaluators.json"
+            eval_name = f"{scenario_path.stem}_{data_path.parent.name.split('_')[-1]}"
+
+            try:
+                result = await submit_to_foundry(
+                    data_path=data_path,
+                    evaluators_config_path=config_path if config_path.exists() else None,
+                    project_endpoint=foundry_endpoint,
+                    evaluation_name=eval_name,
+                    model_deployment_name=foundry_model,
+                )
+                studio_url = result.get("studio_url")
+                if studio_url:
+                    logger.info(f"🔗 View in portal: {studio_url}")
+            except Exception as e:
+                logger.error(f"❌ Foundry submission failed: {e}")
+
+    # --- STEP 4: Assert Expectations Pass ---
+    failed_turns = [v for v in validation_results if not v.passed]
+    assert len(failed_turns) == 0, (
+        f"Scenario failed {len(failed_turns)} expectation checks:\n"
+        + "\n".join(v.message for v in failed_turns)
+    )
+
+    # --- STEP 5: Assert Metric Thresholds ---
+    thresholds = get_thresholds(scenario_yaml.get("thresholds"))
+
+    # Tool precision
+    precision = summary.tool_metrics.get("precision", 0)
+    assert precision >= thresholds["min_tool_precision"], (
+        f"Tool precision {precision:.2%} below threshold {thresholds['min_tool_precision']:.2%}"
+    )
+
+    # Tool recall
+    recall = summary.tool_metrics.get("recall", 0)
+    assert recall >= thresholds["min_tool_recall"], (
+        f"Tool recall {recall:.2%} below threshold {thresholds['min_tool_recall']:.2%}"
+    )
+
+    # Latency
+    p95 = summary.latency_metrics.get("e2e_p95_ms", 0)
+    assert p95 <= thresholds["max_latency_p95_ms"], (
+        f"P95 latency {p95:.0f}ms exceeds threshold {thresholds['max_latency_p95_ms']}ms"
+    )
+
+    # Groundedness
+    grounded = summary.groundedness_metrics.get("avg_grounded_span_ratio", 0)
+    assert grounded >= thresholds["min_grounded_ratio"], (
+        f"Groundedness {grounded:.2%} below threshold {thresholds['min_grounded_ratio']:.2%}"
+    )
+
+    logger.info(f"✅ Session scenario passed all thresholds")
+
+
+# =============================================================================
 # EXPECTATION-ONLY TESTS (Fast - use existing data)
 # =============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.evaluation
+@pytest.mark.parametrize(
+    "scenario_path",
+    SESSION_SCENARIOS,
+    ids=[get_scenario_id(s) for s in SESSION_SCENARIOS],
+)
+async def test_session_expectations_from_existing_data(
+    scenario_path: Path,
+    eval_output_dir: Path,
+) -> None:
+    """
+    Validate expectations against existing session data (no re-execution).
+
+    Use this for fast iteration when tuning expectations for session scenarios.
+    """
+    scenario_output = eval_output_dir / scenario_path.stem
+
+    # Check if data exists
+    if not scenario_output.exists():
+        pytest.skip(f"No existing data at {scenario_output}. Run test_session_scenario_e2e first.")
+
+    # Load scenario YAML
+    with open(scenario_path) as f:
+        scenario_yaml = yaml.safe_load(f)
+
+    validator = ExpectationValidator()
+    scorer = MetricsScorer()
+
+    # Find events file (session scenarios use *_events.jsonl pattern)
+    events_files = list(scenario_output.rglob("*_events.jsonl"))
+    if not events_files:
+        pytest.skip("No events data found")
+
+    events = scorer.load_events(events_files[0])
+
+    # Compute groundedness
+    groundedness_scores = {}
+    for event in events:
+        gs = scorer.compute_groundedness(event)
+        groundedness_scores[event.turn_id] = gs["grounded_span_ratio"]
+
+    # Validate
+    validation_results = validator.validate_run(
+        events=events,
+        scenario=scenario_yaml,
+        groundedness_scores=groundedness_scores,
+    )
+
+    # Assert
+    failed = [v for v in validation_results if not v.passed]
+    assert len(failed) == 0, (
+        f"Scenario {scenario_path.stem} failed {len(failed)} checks:\n"
+        + "\n".join(v.message for v in failed)
+    )
 
 
 @pytest.mark.asyncio
@@ -551,6 +781,127 @@ class TestEvaluationMetrics:
             return None
 
         with open(comparison_files[0]) as f:
+            return json.load(f)
+
+    def _load_scenario_thresholds(self, scenario_path: Path) -> dict[str, Any] | None:
+        """Load threshold overrides from scenario YAML."""
+        with open(scenario_path) as f:
+            scenario_yaml = yaml.safe_load(f)
+        return scenario_yaml.get("thresholds")
+
+
+class TestSessionMetrics:
+    """Test evaluation metric thresholds against existing session scenario data."""
+
+    @pytest.mark.evaluation
+    @pytest.mark.parametrize(
+        "scenario_path",
+        SESSION_SCENARIOS,
+        ids=[get_scenario_id(s) for s in SESSION_SCENARIOS],
+    )
+    def test_tool_precision_threshold(
+        self,
+        scenario_path: Path,
+        eval_output_dir: Path,
+    ) -> None:
+        """Verify session scenario meets minimum tool precision."""
+        summary = self._load_summary(scenario_path, eval_output_dir)
+        if not summary:
+            pytest.skip("No summary data found")
+
+        scenario_thresholds = self._load_scenario_thresholds(scenario_path)
+        threshold = get_thresholds(scenario_thresholds)["min_tool_precision"]
+
+        precision = summary.get("tool_metrics", {}).get("precision", 0)
+        assert precision >= threshold, (
+            f"precision {precision:.2%} < {threshold:.2%}"
+        )
+
+    @pytest.mark.evaluation
+    @pytest.mark.parametrize(
+        "scenario_path",
+        SESSION_SCENARIOS,
+        ids=[get_scenario_id(s) for s in SESSION_SCENARIOS],
+    )
+    def test_tool_recall_threshold(
+        self,
+        scenario_path: Path,
+        eval_output_dir: Path,
+    ) -> None:
+        """Verify session scenario meets minimum tool recall."""
+        summary = self._load_summary(scenario_path, eval_output_dir)
+        if not summary:
+            pytest.skip("No summary data found")
+
+        scenario_thresholds = self._load_scenario_thresholds(scenario_path)
+        threshold = get_thresholds(scenario_thresholds)["min_tool_recall"]
+
+        recall = summary.get("tool_metrics", {}).get("recall", 0)
+        assert recall >= threshold, (
+            f"recall {recall:.2%} < {threshold:.2%}"
+        )
+
+    @pytest.mark.evaluation
+    @pytest.mark.parametrize(
+        "scenario_path",
+        SESSION_SCENARIOS,
+        ids=[get_scenario_id(s) for s in SESSION_SCENARIOS],
+    )
+    def test_latency_threshold(
+        self,
+        scenario_path: Path,
+        eval_output_dir: Path,
+    ) -> None:
+        """Verify session scenario meets maximum latency threshold."""
+        summary = self._load_summary(scenario_path, eval_output_dir)
+        if not summary:
+            pytest.skip("No summary data found")
+
+        scenario_thresholds = self._load_scenario_thresholds(scenario_path)
+        threshold = get_thresholds(scenario_thresholds)["max_latency_p95_ms"]
+
+        p95 = summary.get("latency_metrics", {}).get("e2e_p95_ms", 0)
+        assert p95 <= threshold, (
+            f"P95 {p95:.0f}ms > {threshold}ms"
+        )
+
+    @pytest.mark.evaluation
+    @pytest.mark.parametrize(
+        "scenario_path",
+        SESSION_SCENARIOS,
+        ids=[get_scenario_id(s) for s in SESSION_SCENARIOS],
+    )
+    def test_groundedness_threshold(
+        self,
+        scenario_path: Path,
+        eval_output_dir: Path,
+    ) -> None:
+        """Verify session scenario meets minimum groundedness ratio."""
+        summary = self._load_summary(scenario_path, eval_output_dir)
+        if not summary:
+            pytest.skip("No summary data found")
+
+        scenario_thresholds = self._load_scenario_thresholds(scenario_path)
+        threshold = get_thresholds(scenario_thresholds)["min_grounded_ratio"]
+
+        grounded = summary.get("groundedness_metrics", {}).get("avg_grounded_span_ratio", 0)
+        assert grounded >= threshold, (
+            f"groundedness {grounded:.2%} < {threshold:.2%}"
+        )
+
+    def _load_summary(
+        self,
+        scenario_path: Path,
+        eval_output_dir: Path,
+    ) -> dict | None:
+        """Load run_summary.json for a session scenario."""
+        scenario_output = eval_output_dir / scenario_path.stem
+
+        summary_files = list(scenario_output.rglob("run_summary.json"))
+        if not summary_files:
+            return None
+
+        with open(summary_files[0]) as f:
             return json.load(f)
 
     def _load_scenario_thresholds(self, scenario_path: Path) -> dict[str, Any] | None:

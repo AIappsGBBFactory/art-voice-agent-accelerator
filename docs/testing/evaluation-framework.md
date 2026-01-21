@@ -53,9 +53,9 @@ flowchart TB
 ### Running a Scenario
 
 ```bash
-# Run a single scenario
-python -m tests.evaluation.scenario_runner \
-    tests/evaluation/scenarios/ab_tests/fraud_detection_comparison.yaml
+# Run a single scenario via CLI
+python -m tests.evaluation.cli scenario \
+    --input tests/evaluation/scenarios/ab_tests/fraud_detection_comparison.yaml
 
 # Run via pytest (recommended)
 pytest tests/evaluation/test_scenarios.py -v
@@ -68,14 +68,13 @@ pytest tests/evaluation/test_scenarios.py --submit-to-foundry
 
 ```bash
 # Score events from a JSONL file
-python -m tests.evaluation.cli.run \
+python -m tests.evaluation.cli score \
     --input runs/test_001_events.jsonl
 
-# With scenario expectations
-python -m tests.evaluation.cli.run \
+# With custom output directory
+python -m tests.evaluation.cli score \
     --input runs/test_001_events.jsonl \
-    --scenario tests/evaluation/scenarios/ab_tests/fraud_detection_comparison.yaml \
-    --verbose
+    --output runs/test_001_scores
 ```
 
 ### Output Files
@@ -371,18 +370,55 @@ Key design principles:
 
 ## CLI Reference
 
-### `run` Command
+The unified CLI provides four subcommands:
+
+### `score` Command
 
 Score recorded events:
 
 ```bash
-python -m tests.evaluation.cli.run [OPTIONS]
+python -m tests.evaluation.cli score [OPTIONS]
 
 Options:
   -i, --input PATH     Path to events.jsonl file (required)
-  -s, --scenario PATH  Path to scenario YAML for expectations
   -o, --output PATH    Output directory (default: input file parent)
-  -v, --verbose        Verbose output with per-turn details
+```
+
+### `scenario` Command
+
+Run a single scenario:
+
+```bash
+python -m tests.evaluation.cli scenario [OPTIONS]
+
+Options:
+  -i, --input PATH     Path to scenario YAML file (required)
+  -o, --output PATH    Output directory for results
+```
+
+### `compare` Command
+
+Run A/B comparison:
+
+```bash
+python -m tests.evaluation.cli compare [OPTIONS]
+
+Options:
+  -i, --input PATH     Path to comparison YAML file (required)
+  -o, --output PATH    Output directory for results
+```
+
+### `submit` Command
+
+Submit to Azure AI Foundry:
+
+```bash
+python -m tests.evaluation.cli submit [OPTIONS]
+
+Options:
+  -i, --input PATH     Path to events.jsonl file (required)
+  -p, --project NAME   Foundry project name (required)
+  -e, --experiment     Experiment name (optional)
 ```
 
 ### Pytest Integration

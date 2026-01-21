@@ -43,6 +43,7 @@ from tests.evaluation.recorder import EventRecorder
 from tests.evaluation.schemas import (
     FoundryExportConfig,
     RunSummary,
+    SessionAgentConfig,
 )
 from tests.evaluation.scorer import MetricsScorer
 from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
@@ -247,6 +248,22 @@ class ScenarioRunner:
                     f"See tests/evaluation/scenarios/ for examples."
                 )
             raise ValueError("Scenario must have 'turns' field with test cases")
+
+        # Validate session_config if present
+        if "session_config" in scenario:
+            session_config = scenario["session_config"]
+            if not isinstance(session_config, dict):
+                raise ValueError("session_config must be a dictionary")
+            if "start_agent" not in session_config:
+                raise ValueError("session_config must have 'start_agent' field")
+
+            # Log session_config details
+            agents_spec = session_config.get("agents", "all")
+            start_agent = session_config.get("start_agent")
+            handoffs_count = len(session_config.get("handoffs", []))
+            logger.info(
+                f"Session-based scenario | agents={agents_spec} start={start_agent} handoffs={handoffs_count}"
+            )
 
         logger.info(f"Loaded scenario: {scenario['scenario_name']}")
         return scenario
@@ -458,15 +475,124 @@ class ScenarioRunner:
 
         return modified_agents
 
+    def _create_orchestrator_from_session_config(
+        self,
+        session_config: SessionAgentConfig,
+        session_id: str,
+        agent_overrides: list[dict[str, Any]] | None = None,
+    ) -> tuple[Any, str]:
+        """
+        Create orchestrator using session_config like scenariostore orchestrator.yml.
+
+        This allows evaluation scenarios to define their own agent list, handoffs,
+        and routing without needing a pre-defined scenario in scenariostore.
+
+        Args:
+            session_config: SessionAgentConfig with agents, start_agent, handoffs
+            session_id: The evaluation session ID
+            agent_overrides: Optional model overrides for specific agents
+
+        Returns:
+            Tuple of (orchestrator, start_agent_name)
+        """
+        # Discover all available agents
+        all_agents = discover_agents()
+        if not all_agents:
+            logger.warning("No agents discovered; falling back to mock orchestrator")
+            return _MockOrchestrator(
+                agent_name=session_config.start_agent,
+                model_override=None,
+            ), session_config.start_agent
+
+        # Filter agents based on session_config
+        agent_list = session_config.get_agent_list(all_agents)
+        if not agent_list:
+            logger.warning(
+                "Session config filtered all agents; using all discovered agents"
+            )
+            agent_list = list(all_agents.keys())
+
+        logger.info(
+            "Session-based scenario | agents=%s start=%s handoffs=%d",
+            agent_list,
+            session_config.start_agent,
+            len(session_config.handoffs),
+        )
+
+        # Filter to just the agents we need
+        filtered_agents = {k: v for k, v in all_agents.items() if k in agent_list}
+
+        # Apply model overrides if provided
+        if agent_overrides:
+            filtered_agents = self._create_session_agents_with_overrides(
+                session_id, agent_overrides, filtered_agents
+            )
+
+        # Validate start agent
+        start_agent = session_config.start_agent
+        if start_agent not in filtered_agents:
+            logger.warning(
+                "start_agent '%s' not in filtered agents; using first available",
+                start_agent,
+            )
+            start_agent = agent_list[0] if agent_list else next(iter(filtered_agents.keys()))
+
+        # Build handoff map from session_config handoffs
+        handoff_map: dict[str, str] = {}
+        for h in session_config.handoffs:
+            if h.tool and h.to_agent:
+                handoff_map[h.tool] = h.to_agent
+
+        # Also build from agent declarations (handoff.trigger) for agents in our list
+        for agent_name, agent in filtered_agents.items():
+            if hasattr(agent, "handoff") and hasattr(agent.handoff, "trigger"):
+                trigger = agent.handoff.trigger
+                if trigger and trigger not in handoff_map:
+                    handoff_map[trigger] = agent_name
+
+        # If generic_handoff enabled, ensure handoff_to_agent is available
+        generic_config = session_config.generic_handoff or {}
+        if generic_config.get("enabled", False):
+            # The handoff_to_agent tool handles routing dynamically
+            # We just need to ensure all agents are reachable
+            logger.info(
+                "Generic handoff enabled | allowed_targets=%s",
+                generic_config.get("allowed_targets", "(all)"),
+            )
+
+        logger.info(
+            "Creating CascadeOrchestratorAdapter from session_config | "
+            "start=%s agents=%d handoff_routes=%d",
+            start_agent,
+            len(filtered_agents),
+            len(handoff_map),
+        )
+
+        adapter = CascadeOrchestratorAdapter.create(
+            start_agent=start_agent,
+            session_id=session_id,
+            agents=filtered_agents,
+            handoff_map=handoff_map,
+            streaming=False,
+        )
+
+        return adapter, start_agent
+
     async def run(self) -> RunSummary:
         """
         Run the scenario and return summary.
+
+        Supports three scenario types:
+        1. scenario_template - References a scenariostore orchestration config
+        2. session_config - Inline orchestration config (like orchestrator.yml)
+        3. Legacy - Simple agent + model_override for single-agent scenarios
 
         Returns:
             RunSummary with aggregated metrics
         """
         scenario_name = self.scenario["scenario_name"]
         scenario_template = self.scenario.get("scenario_template")
+        session_config_data = self.scenario.get("session_config")
         agent_name = self.scenario.get("agent", "unknown")
 
         logger.info(f"Running scenario: {scenario_name}")
@@ -493,14 +619,33 @@ class ScenarioRunner:
         run_id = f"{scenario_name}_{int(time.time())}"
         recorder = EventRecorder(run_id=run_id, output_dir=self.output_dir)
 
-        # Create orchestrator with session-scoped agent overrides
-        orchestrator, start_agent = self._create_orchestrator_with_overrides(
-            agent_name,
-            session_id,
-            model_override,
-            agent_overrides,
-            scenario_name=scenario_template,
-        )
+        # Determine which orchestrator creation method to use
+        if session_config_data:
+            # New: Session-based scenario with inline orchestration config
+            logger.info("Using session_config for orchestrator creation")
+            try:
+                session_config = SessionAgentConfig.model_validate(session_config_data)
+            except Exception as e:
+                logger.error(f"Invalid session_config: {e}")
+                raise ValueError(f"Invalid session_config in scenario: {e}") from e
+
+            orchestrator, start_agent = self._create_orchestrator_from_session_config(
+                session_config,
+                session_id,
+                agent_overrides,
+            )
+            # Store session_config name for context
+            memo_manager.set_value_in_corememory("session_config", True)
+        else:
+            # Existing: Use scenario_template or legacy approach
+            orchestrator, start_agent = self._create_orchestrator_with_overrides(
+                agent_name,
+                session_id,
+                model_override,
+                agent_overrides,
+                scenario_name=scenario_template,
+            )
+
         # Ensure we track the resolved start agent for histories/context
         agent_name = start_agent
         use_mock = isinstance(orchestrator, _MockOrchestrator)
