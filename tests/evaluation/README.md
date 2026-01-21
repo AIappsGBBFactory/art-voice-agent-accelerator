@@ -15,7 +15,7 @@ Model-to-model evaluation framework for voice agent orchestration.
 ### 1. Record Events
 
 ```python
-from apps.artagent.backend.evaluation import (
+from tests.evaluation import (
     EventRecorder,
     EvaluationOrchestratorWrapper
 )
@@ -33,16 +33,16 @@ await eval_orch.process_turn(context)
 
 ```bash
 # Score existing events
-python -m apps.artagent.backend.evaluation.cli score \
+python -m tests.evaluation.cli score \
     --input runs/test_001_events.jsonl \
     --output runs/test_001_scores
 
 # Run a scenario
-python -m apps.artagent.backend.evaluation.cli scenario \
+python -m tests.evaluation.cli scenario \
     --input tests/eval_scenarios/fraud_basic.yaml
 
 # Run A/B comparison
-python -m apps.artagent.backend.evaluation.cli compare \
+python -m tests.evaluation.cli compare \
     --input tests/eval_scenarios/ab_tests/fraud_detection_comparison.yaml
 ```
 
@@ -94,6 +94,7 @@ python apps/artagent/backend/evaluation/validate_phases.py --phase 1
 - **ScenarioRunner**: Executes YAML scenarios
 - **ComparisonRunner**: Runs A/B tests
 - **MockMemoManager**: Minimal test mocks
+- **Mock Orchestrator**: Scenario runner uses a built-in mock that simulates tool calls listed in `expectations.tools_called`; no production orchestrator required
 - **Unified CLI**: Single entry point with subcommands
 
 ## Documentation

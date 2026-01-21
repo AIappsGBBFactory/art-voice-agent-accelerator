@@ -6,15 +6,15 @@ Evaluation CLI - Score Events
 Score recorded events from JSONL file.
 
 Usage:
-    python -m apps.artagent.backend.evaluation.cli.run --input runs/test_001_events.jsonl
+    python -m tests.evaluation.cli.run --input runs/test_001_events.jsonl
 
     # With scenario expectations
-    python -m apps.artagent.backend.evaluation.cli.run \
+    python -m tests.evaluation.cli.run \
         --input runs/test_001_events.jsonl \
-        --scenario tests/eval_scenarios/fraud_detection_basic.yaml
+        --scenario tests/evaluation/scenarios/ab_tests/fraud_detection_basic.yaml
 
     # Custom output directory
-    python -m apps.artagent.backend.evaluation.cli.run \
+    python -m tests.evaluation.cli.run \
         --input runs/test_001_events.jsonl \
         --output runs/test_001
 
@@ -33,8 +33,8 @@ from typing import Optional
 
 import yaml
 
-from apps.artagent.backend.evaluation.schemas import ScenarioExpectations
-from apps.artagent.backend.evaluation.scorer import MetricsScorer
+from tests.evaluation.schemas import ScenarioExpectations
+from tests.evaluation.scorer import MetricsScorer
 from utils.ml_logging import get_logger
 
 logger = get_logger(__name__)

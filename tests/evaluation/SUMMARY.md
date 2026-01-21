@@ -36,7 +36,7 @@ A **simplified, consolidated** evaluation framework for model-to-model testing w
 Your `fraud_detection_comparison.yaml` is now supported:
 
 ```bash
-python -m apps.artagent.backend.evaluation.cli compare \
+python -m tests.evaluation.cli compare \
     --input tests/eval_scenarios/ab_tests/fraud_detection_comparison.yaml \
     --output runs/ab_test_results
 ```
@@ -47,7 +47,7 @@ python -m apps.artagent.backend.evaluation.cli compare \
 ┌─────────────────────────────────────────────────────────────┐
 │ UNIFIED CLI (Single Entry Point)                           │
 ├─────────────────────────────────────────────────────────────┤
-│  python -m apps.artagent.backend.evaluation.cli             │
+│  python -m tests.evaluation.cli             │
 │  ├── score      # Score existing events                     │
 │  ├── scenario   # Run YAML scenario                         │
 │  └── compare    # Run A/B comparison                        │
@@ -104,27 +104,27 @@ evaluation/
 
 ### Example 1: Score Existing Events
 ```bash
-python -m apps.artagent.backend.evaluation.cli score \
+python -m tests.evaluation.cli score \
     --input runs/test_001_events.jsonl \
     --output runs/results
 ```
 
 ### Example 2: Run Single Scenario
 ```bash
-python -m apps.artagent.backend.evaluation.cli scenario \
+python -m tests.evaluation.cli scenario \
     --input tests/eval_scenarios/fraud_detection_basic.yaml
 ```
 
 ### Example 3: Run A/B Comparison (Your Use Case!)
 ```bash
-python -m apps.artagent.backend.evaluation.cli compare \
+python -m tests.evaluation.cli compare \
     --input tests/eval_scenarios/ab_tests/fraud_detection_comparison.yaml \
     --output runs/gpt4o_vs_o1
 ```
 
 ### Example 4: Programmatic Usage
 ```python
-from apps.artagent.backend.evaluation import (
+from tests.evaluation import (
     ComparisonRunner,
     MetricsScorer,
 )

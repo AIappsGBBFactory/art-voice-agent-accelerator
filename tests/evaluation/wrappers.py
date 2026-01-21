@@ -19,8 +19,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
-from apps.artagent.backend.evaluation.recorder import EventRecorder
-from apps.artagent.backend.evaluation.schemas import EvalModelConfig
+from tests.evaluation.recorder import EventRecorder
+from tests.evaluation.schemas import EvalModelConfig
 from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
@@ -141,8 +141,10 @@ class EvaluationOrchestratorWrapper:
             turn_end = time.perf_counter()
             final_agent = getattr(self._orchestrator, "_active_agent", None) or active_agent
 
-            # Extract model config from orchestrator state
+            # Extract model config from orchestrator state, with fallback to metadata override
             model_config = self._extract_model_config(final_agent)
+            if model_config.model_name == "unknown":
+                model_config = self._fallback_model_config(context.metadata)
 
             self._recorder.record_turn_end(
                 turn_id=turn_id,
@@ -262,6 +264,31 @@ class EvaluationOrchestratorWrapper:
         return EvalModelConfig(
             model_name="unknown",
             endpoint_used="chat",
+        )
+
+    def _fallback_model_config(self, metadata: dict[str, Any] | None) -> EvalModelConfig:
+        """Best-effort model config from metadata overrides when extraction fails."""
+
+        override = metadata.get("model_override") if metadata else None
+        if not isinstance(override, dict):
+            override = {}
+
+        model_name = override.get("deployment_id", "unknown")
+        endpoint_pref = override.get("endpoint_preference", "chat") or "chat"
+
+        return EvalModelConfig(
+            model_name=model_name,
+            model_family=override.get("model_family"),
+            endpoint_used=endpoint_pref,
+            temperature=override.get("temperature"),
+            top_p=override.get("top_p"),
+            max_tokens=override.get("max_tokens"),
+            max_completion_tokens=override.get("max_completion_tokens"),
+            verbosity=override.get("verbosity"),
+            reasoning_effort=override.get("reasoning_effort"),
+            include_reasoning=override.get("include_reasoning"),
+            min_p=override.get("min_p"),
+            typical_p=override.get("typical_p"),
         )
 
     def _detect_endpoint(self, model: Any) -> str:

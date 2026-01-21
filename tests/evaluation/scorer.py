@@ -22,7 +22,8 @@ from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 
-from apps.artagent.backend.evaluation.schemas import (
+from tests.evaluation.schemas import (
+    PerTurnSummary,
     RunSummary,
     ScenarioExpectations,
     TurnEvent,
@@ -70,7 +71,7 @@ class MetricsScorer:
             Precision score (0.0 to 1.0)
         """
         if not actual_calls:
-            return 1.0  # No false positives
+            return 1.0 if not expected_calls else 0.0
 
         executed_expected = len(set(actual_calls) & set(expected_calls))
         return executed_expected / len(actual_calls)
@@ -373,16 +374,33 @@ class MetricsScorer:
         total_reasoning_tokens = 0
         model_breakdown: Dict[str, Dict[str, Any]] = {}
 
-        # Simple pricing (update with actual pricing)
+        # Azure OpenAI / OpenAI API pricing per 1K tokens (Jan 2026)
+        # Source: https://platform.openai.com/docs/pricing
+        # Note: Reasoning tokens billed as output tokens for o-series models
         pricing = {
+            # GPT-4.1 series
+            "gpt-4.1": {"input_per_1k": 0.002, "output_per_1k": 0.008},
+            "gpt-4.1-mini": {"input_per_1k": 0.0004, "output_per_1k": 0.0016},
+            "gpt-4.1-nano": {"input_per_1k": 0.0001, "output_per_1k": 0.0004},
+            # GPT-4o series
             "gpt-4o": {"input_per_1k": 0.0025, "output_per_1k": 0.01},
+            "gpt-4o-2024-08-06": {"input_per_1k": 0.0025, "output_per_1k": 0.01},
+            "gpt-4o-2024-11-20": {"input_per_1k": 0.0025, "output_per_1k": 0.01},
+            "gpt-4o-mini": {"input_per_1k": 0.00015, "output_per_1k": 0.0006},
+            # o-series reasoning models (reasoning tokens billed as output)
+            "o1": {"input_per_1k": 0.015, "output_per_1k": 0.06},
+            "o1-preview": {"input_per_1k": 0.015, "output_per_1k": 0.06},
+            "o1-mini": {"input_per_1k": 0.0011, "output_per_1k": 0.0044},
+            "o3": {"input_per_1k": 0.002, "output_per_1k": 0.008},
+            "o3-mini": {"input_per_1k": 0.0011, "output_per_1k": 0.0044},
+            "o4-mini": {"input_per_1k": 0.0011, "output_per_1k": 0.0044},
+            # Legacy GPT-4
             "gpt-4": {"input_per_1k": 0.03, "output_per_1k": 0.06},
-            "o1-preview": {
-                "input_per_1k": 0.015,
-                "output_per_1k": 0.06,
-                "reasoning_per_1k": 0.06,
-            },
-            "default": {"input_per_1k": 0.005, "output_per_1k": 0.015},
+            "gpt-4-turbo": {"input_per_1k": 0.01, "output_per_1k": 0.03},
+            # GPT-3.5
+            "gpt-3.5-turbo": {"input_per_1k": 0.0005, "output_per_1k": 0.0015},
+            # Default fallback
+            "default": {"input_per_1k": 0.002, "output_per_1k": 0.008},
         }
 
         for turn in turns:
@@ -413,10 +431,10 @@ class MetricsScorer:
 
             # Get pricing for this model
             model_pricing = pricing.get(model_name, pricing["default"])
+            # Note: Reasoning tokens are billed at output token rate per OpenAI pricing
             breakdown["cost_usd"] += (
                 (input_tok / 1000) * model_pricing.get("input_per_1k", 0)
-                + (output_tok / 1000) * model_pricing.get("output_per_1k", 0)
-                + (reasoning_tok / 1000) * model_pricing.get("reasoning_per_1k", 0)
+                + ((output_tok + reasoning_tok) / 1000) * model_pricing.get("output_per_1k", 0)
             )
 
         total_cost = sum(b["cost_usd"] for b in model_breakdown.values())
@@ -500,8 +518,22 @@ class MetricsScorer:
         if not turns:
             raise ValueError("No turns to score")
 
-        # Score all turns
-        scores = [self.score_turn(turn) for turn in turns]
+        # Extract per-turn expectations from YAML BEFORE scoring
+        turn_expectations_map: Dict[str, List[str]] = {}
+        if expectations and "turns" in expectations:
+            for turn_spec in expectations["turns"]:
+                tid = turn_spec.get("turn_id", "")
+                exp = turn_spec.get("expectations", {})
+                turn_expectations_map[tid] = exp.get("tools_called", [])
+
+        # Score all turns WITH expectations
+        scores = []
+        for turn in turns:
+            turn_key = turn.turn_id.split(":")[-1] if ":" in turn.turn_id else turn.turn_id
+            expected_tools = turn_expectations_map.get(turn_key, [])
+            # Create a ScenarioExpectations-like object for the scorer
+            turn_expectations = ScenarioExpectations(tools_called=expected_tools) if expected_tools else None
+            scores.append(self.score_turn(turn, expectations=turn_expectations))
 
         # Aggregate tool metrics
         tool_metrics = {
@@ -543,6 +575,30 @@ class MetricsScorer:
         # Cost analysis
         cost_analysis = self.compute_cost_analysis(turns)
 
+        # Build per-turn summaries for transparency
+        # (turn_expectations_map already extracted above for scoring)
+        per_turn_metrics = []
+        for turn, score in zip(turns, scores):
+            # Extract turn number from turn_id (e.g., "scenario:turn_1" -> "turn_1")
+            turn_key = turn.turn_id.split(":")[-1] if ":" in turn.turn_id else turn.turn_id
+            expected_tools = turn_expectations_map.get(turn_key, [])
+
+            per_turn_metrics.append(
+                PerTurnSummary(
+                    turn_id=turn.turn_id,
+                    agent_name=turn.agent_name,
+                    model_used=turn.eval_model_config.model_name,
+                    e2e_ms=turn.e2e_ms,
+                    tools_expected=expected_tools,
+                    tools_called=[tc.name for tc in turn.tool_calls],
+                    tool_precision=score.tool_precision,
+                    tool_recall=score.tool_recall,
+                    grounded_span_ratio=score.grounded_span_ratio,
+                    response_length=len(turn.response_text),
+                    error=turn.error,
+                )
+            )
+
         # Get first turn's config for summary
         first_turn = turns[0]
 
@@ -552,6 +608,7 @@ class MetricsScorer:
             agent_name=first_turn.agent_name,
             total_turns=len(turns),
             eval_model_config=first_turn.eval_model_config,
+            per_turn_metrics=per_turn_metrics,
             tool_metrics=tool_metrics,
             latency_metrics=latency_metrics,
             groundedness_metrics=groundedness_metrics,

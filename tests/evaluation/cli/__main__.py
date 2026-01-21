@@ -7,15 +7,15 @@ Unified CLI for running evaluations with subcommands.
 
 Usage:
     # Score existing events
-    python -m apps.artagent.backend.evaluation.cli score \
+    python -m tests.evaluation.cli score \
         --input runs/test_001_events.jsonl
 
     # Run a single scenario
-    python -m apps.artagent.backend.evaluation.cli scenario \
+    python -m tests.evaluation.cli scenario \
         --input tests/eval_scenarios/fraud_basic.yaml
 
     # Run A/B comparison
-    python -m apps.artagent.backend.evaluation.cli compare \
+    python -m tests.evaluation.cli compare \
         --input tests/eval_scenarios/ab_tests/fraud_detection_comparison.yaml
 
 Consolidation:
@@ -35,6 +35,45 @@ from utils.ml_logging import get_logger
 logger = get_logger(__name__)
 
 
+def _bootstrap_runtime(verbose: bool = False) -> dict[str, str | bool | None]:
+    """Mirror runtime config loading for evaluations."""
+
+    status: dict[str, str | bool | None] = {"env_file": None, "appconfig": False}
+
+    try:
+        from apps.artagent.backend.lifecycle import bootstrap as lifecycle_bootstrap
+        from config.appconfig_provider import bootstrap_appconfig, get_provider_status
+    except Exception as exc:  # noqa: BLE001 - narrow scope and continue
+        logger.warning("Bootstrap modules unavailable: %s", exc)
+        return status
+
+    try:
+        env_file = lifecycle_bootstrap.load_environment()
+        status["env_file"] = str(env_file) if env_file else None
+        logger.info("Environment loaded from %s", env_file or "ambient environment")
+    except Exception as exc:  # noqa: BLE001 - fallback to ambient env
+        logger.warning("Environment load skipped: %s", exc)
+
+    try:
+        # Use provider directly to respect "enabled" flag and return value
+        appconfig_loaded = bootstrap_appconfig()
+        provider_status = get_provider_status()
+        status["appconfig"] = appconfig_loaded and provider_status.get("loaded", False)
+
+        if status["appconfig"]:
+            logger.info(
+                "App Config loaded | endpoint=%s label=%s",
+                provider_status.get("endpoint"),
+                provider_status.get("label"),
+            )
+        else:
+            logger.info("App Config not configured; using environment variables")
+    except Exception as exc:  # noqa: BLE001 - leave status as-is
+        logger.warning("App Config load failed: %s", exc)
+
+    return status
+
+
 # =============================================================================
 # Subcommand: score
 # =============================================================================
@@ -42,7 +81,7 @@ logger = get_logger(__name__)
 
 def cmd_score(args: argparse.Namespace) -> int:
     """Score existing events from JSONL file."""
-    from apps.artagent.backend.evaluation.scorer import MetricsScorer
+    from tests.evaluation.scorer import MetricsScorer
 
     # Validate input
     if not args.input.exists():
@@ -138,7 +177,7 @@ def cmd_score(args: argparse.Namespace) -> int:
 
 def cmd_scenario(args: argparse.Namespace) -> int:
     """Run a single scenario from YAML."""
-    from apps.artagent.backend.evaluation.scenario_runner import ScenarioRunner
+    from tests.evaluation.scenario_runner import ScenarioRunner
 
     try:
         runner = ScenarioRunner(
@@ -172,7 +211,7 @@ def cmd_scenario(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     """Run A/B comparison from YAML."""
-    from apps.artagent.backend.evaluation.scenario_runner import ComparisonRunner
+    from tests.evaluation.scenario_runner import ComparisonRunner
 
     try:
         runner = ComparisonRunner(
@@ -196,6 +235,79 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     except Exception as e:
         logger.exception(f"❌ Error running comparison: {e}")
+        return 1
+
+
+# =============================================================================
+# Subcommand: submit (Foundry cloud evaluation)
+# =============================================================================
+
+
+def cmd_submit(args: argparse.Namespace) -> int:
+    """Submit evaluation to Azure AI Foundry for cloud evaluation."""
+    from tests.evaluation.foundry_exporter import submit_to_foundry_sync
+
+    try:
+        # Find data and config files
+        data_path = args.data
+        config_path = args.config
+
+        # If data_path is a directory, look for foundry_eval.jsonl
+        if data_path.is_dir():
+            jsonl_files = list(data_path.glob("**/foundry_eval.jsonl"))
+            if not jsonl_files:
+                logger.error(f"❌ No foundry_eval.jsonl found in {data_path}")
+                return 1
+            data_path = jsonl_files[0]
+            logger.info(f"Found data file: {data_path}")
+
+        # If config not provided, look for it next to data file
+        if not config_path:
+            potential_config = data_path.parent / "foundry_evaluators.json"
+            if potential_config.exists():
+                config_path = potential_config
+                logger.info(f"Found config file: {config_path}")
+
+        # Submit to Foundry
+        result = submit_to_foundry_sync(
+            data_path=data_path,
+            evaluators_config_path=config_path,
+            project_endpoint=args.endpoint,
+            dataset_name=args.dataset_name,
+            evaluation_name=args.evaluation_name,
+            model_deployment_name=args.model_deployment,
+        )
+
+        print("\n" + "=" * 60)
+        print("🚀 FOUNDRY EVALUATION COMPLETE")
+        print("=" * 60)
+        print(f"  Name:           {result['evaluation_name']}")
+        print(f"  Status:         {result['status']}")
+        print(f"  Rows Evaluated: {result['rows_evaluated']}")
+        print(f"  Output Path:    {result['output_path']}")
+        print(f"\n  Metrics:")
+        for metric, value in result.get('metrics', {}).items():
+            if isinstance(value, float):
+                print(f"    {metric}: {value:.3f}")
+            else:
+                print(f"    {metric}: {value}")
+        if result.get('studio_url'):
+            print(f"\n  🔗 AI Foundry Studio URL:")
+            print(f"     {result['studio_url']}")
+        print("=" * 60 + "\n")
+
+        return 0
+
+    except ValueError as e:
+        logger.error(f"❌ Configuration error: {e}")
+        return 1
+
+    except ImportError as e:
+        logger.error(f"❌ Missing dependency: {e}")
+        return 1
+
+    except Exception as e:
+        logger.exception(f"❌ Error submitting to Foundry: {e}")
         return 1
 
 
@@ -298,8 +410,56 @@ def main():
     )
     compare_parser.set_defaults(func=cmd_compare)
 
+    # -------------------------------------------------------------------------
+    # Subcommand: submit (Foundry cloud evaluation)
+    # -------------------------------------------------------------------------
+    submit_parser = subparsers.add_parser(
+        "submit",
+        help="Submit evaluation data to Azure AI Foundry for cloud evaluation",
+    )
+    submit_parser.add_argument(
+        "--data",
+        "-d",
+        required=True,
+        type=Path,
+        help="Path to foundry_eval.jsonl file or directory containing it",
+    )
+    submit_parser.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        help="Path to foundry_evaluators.json (optional, auto-detected if next to data)",
+    )
+    submit_parser.add_argument(
+        "--endpoint",
+        "-e",
+        type=str,
+        help="Azure AI Foundry project endpoint (default: AZURE_AI_FOUNDRY_PROJECT_ENDPOINT from config)",
+    )
+    submit_parser.add_argument(
+        "--dataset-name",
+        type=str,
+        help="Name for the uploaded dataset (default: auto-generated)",
+    )
+    submit_parser.add_argument(
+        "--evaluation-name",
+        type=str,
+        help="Name for the evaluation run (default: auto-generated)",
+    )
+    submit_parser.add_argument(
+        "--model-deployment",
+        "-m",
+        type=str,
+        default="gpt-4o",
+        help="Model deployment for AI-based evaluators (default: gpt-4o)",
+    )
+    submit_parser.set_defaults(func=cmd_submit)
+
     # Parse and execute
     args = parser.parse_args()
+
+    # Ensure environment/App Config match runtime pipeline before loading orchestrator
+    _bootstrap_runtime(verbose=args.verbose)
 
     # Execute subcommand
     return args.func(args)

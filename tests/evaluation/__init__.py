@@ -33,7 +33,7 @@ if _ENV in ["production", "prod", "staging"]:
         "\n"
         "This package is for testing/CI only.\n"
         "Check your imports and remove any references to:\n"
-        "    apps.artagent.backend.evaluation\n"
+        "    tests.evaluation\n"
         "\n"
         f"Current ENV={_ENV}\n"
     )
@@ -78,17 +78,17 @@ except Exception:
 # PACKAGE EXPORTS
 # =============================================================================
 
-from apps.artagent.backend.evaluation.mocks import (
+from tests.evaluation.mocks import (
     MockMemoManager,
     MockOrchestratorContext,
     build_context,
 )
-from apps.artagent.backend.evaluation.recorder import EventRecorder
-from apps.artagent.backend.evaluation.scenario_runner import (
+from tests.evaluation.recorder import EventRecorder
+from tests.evaluation.scenario_runner import (
     ComparisonRunner,
     ScenarioRunner,
 )
-from apps.artagent.backend.evaluation.schemas import (
+from tests.evaluation.schemas import (
     EvalModelConfig,
     EvidenceBlob,
     HandoffEvent,
@@ -98,10 +98,15 @@ from apps.artagent.backend.evaluation.schemas import (
     TurnEvent,
     TurnScore,
 )
-from apps.artagent.backend.evaluation.scorer import MetricsScorer
-from apps.artagent.backend.evaluation.wrappers import EvaluationOrchestratorWrapper
+from tests.evaluation.scorer import MetricsScorer
+from tests.evaluation.validator import (
+    ExpectationValidator,
+    TurnValidationResult,
+    ValidationResult,
+)
+from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
 
-__version__ = "0.2.0"  # Phase 3 complete
+__version__ = "0.3.0"  # Phase 4: E2E pytest integration
 
 __all__ = [
     # Core components
@@ -111,6 +116,10 @@ __all__ = [
     # Scenario runners
     "ScenarioRunner",
     "ComparisonRunner",
+    # Expectation validation
+    "ExpectationValidator",
+    "ValidationResult",
+    "TurnValidationResult",
     # Mocks
     "MockMemoManager",
     "MockOrchestratorContext",

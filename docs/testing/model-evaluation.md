@@ -29,7 +29,7 @@ The evaluation framework provides tools to measure agent performance across mult
 Wrap your orchestrator to automatically record events:
 
 ```python
-from apps.artagent.backend.evaluation import (
+from tests.evaluation import (
     EventRecorder,
     EvaluationOrchestratorWrapper
 )
@@ -63,7 +63,7 @@ result = await eval_orchestrator.process_turn(context)
 Use the CLI to compute metrics:
 
 ```bash
-python -m apps.artagent.backend.evaluation.cli.run \
+python -m tests.evaluation.cli.run \
     --input runs/fraud_test_001_events.jsonl \
     --output runs/fraud_test_001_scores
 ```
@@ -256,7 +256,7 @@ Computes metrics from recorded events.
 **Basic Usage:**
 
 ```python
-from apps.artagent.backend.evaluation.scorer import MetricsScorer
+from tests.evaluation.scorer import MetricsScorer
 
 scorer = MetricsScorer()
 
@@ -275,7 +275,7 @@ summary = scorer.generate_summary(events)
 Score events from command line:
 
 ```bash
-python -m apps.artagent.backend.evaluation.cli.run \
+python -m tests.evaluation.cli.run \
     --input <events.jsonl> \
     --output <output_dir> \
     --verbose
@@ -288,6 +288,77 @@ python -m apps.artagent.backend.evaluation.cli.run \
 | `--input` | Path to events.jsonl file | Required |
 | `--output` | Output directory | Same as input directory |
 | `--verbose` | Show detailed output | False |
+
+### ScenarioRunner (Phase 3)
+
+Run evaluation scenarios from YAML files:
+
+```python
+from tests.evaluation.scenario_runner import ScenarioRunner
+import asyncio
+
+async def run_scenario():
+    runner = ScenarioRunner(output_dir="runs/my_eval")
+    summary = await runner.run_scenario("tests/eval_scenarios/fraud_test.yaml")
+    print(f"Precision: {summary.tool_metrics['precision']:.2%}")
+
+asyncio.run(run_scenario())
+```
+
+**CLI Usage:**
+
+```bash
+# Run a single scenario
+python -m tests.evaluation.scenario_runner \
+    tests/eval_scenarios/fraud_detection_basic.yaml
+```
+
+### ComparisonRunner (A/B Testing)
+
+Compare multiple agent configurations:
+
+```python
+from tests.evaluation.scenario_runner import ComparisonRunner
+import asyncio
+
+async def compare():
+    runner = ComparisonRunner(output_dir="runs/ab_test")
+    results = await runner.run_comparison("tests/eval_scenarios/model_ab.yaml")
+    
+    for variant, summary in results.items():
+        print(f"{variant}: {summary.cost_analysis['estimated_cost_usd']:.4f}")
+
+asyncio.run(compare())
+```
+
+### Azure AI Foundry Integration
+
+Export and evaluate with Azure AI Foundry:
+
+```python
+from tests.evaluation.foundry_exporter import (
+    FoundryExporter,
+    submit_to_foundry,
+)
+from pathlib import Path
+
+# Export events to Foundry format
+exporter = FoundryExporter()
+exporter.export_for_foundry(
+    events_path=Path("runs/test/events.jsonl"),
+    output_path=Path("runs/test/foundry_dataset.jsonl"),
+)
+
+# Submit to Azure AI Foundry (async)
+await submit_to_foundry(
+    dataset_path=Path("runs/test/foundry_dataset.jsonl"),
+    project_name="voice-agent-evals",
+    experiment_name="fraud-v2",
+    evaluators=["relevance", "groundedness", "coherence"],
+)
+```
+
+> See [Evaluation Framework Reference](evaluation-framework.md) for complete details.
 
 ## Event Schema
 
@@ -365,11 +436,11 @@ Track if responses stay concise:
 
 ```bash
 # Before prompt change
-python -m apps.artagent.backend.evaluation.cli.run \
+python -m tests.evaluation.cli.run \
     --input baseline_events.jsonl
 
 # After prompt change
-python -m apps.artagent.backend.evaluation.cli.run \
+python -m tests.evaluation.cli.run \
     --input new_prompt_events.jsonl
 
 # Compare verbosity_metrics in both summary.json files
@@ -408,9 +479,9 @@ python apps/artagent/backend/evaluation/validate_phases.py --phase 2
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 1 | Complete | Recording and instrumentation |
-| Phase 2 | Complete | Metrics scoring |
-| Phase 3 | Planned | Scenario runner (YAML-based) |
+| Phase 1 | ✅ Complete | Recording and instrumentation |
+| Phase 2 | ✅ Complete | Metrics scoring |
+| Phase 3 | ✅ Complete | Scenario runner (YAML-based) |
 | Phase 4 | Planned | CI integration |
 | Phase 5 | Planned | Cost optimization |
 
@@ -429,19 +500,6 @@ python apps/artagent/backend/evaluation/validate_phases.py --phase 2
 
     - Add normalization for numbers and dates
     - Consider LLM-as-judge for semantic validation
-
-!!! info "No Scenario Runner"
-    **Current state:**
-
-    - Manual conversation recording required
-    - No automated multi-turn scenarios
-    - No YAML scenario support
-
-    **Planned for Phase 3:**
-
-    - YAML scenario definitions
-    - Automated multi-turn execution
-    - Expected behavior validation
 
 !!! info "No CI Integration"
     **Current state:**
@@ -489,12 +547,18 @@ Check:
 
 Planned enhancements:
 
-- **Phase 3**: YAML scenario runner for repeatable tests
 - **Phase 4**: CI integration with golden test baselines
 - **Phase 5**: Cost optimization and agent selection
 
+> **Note**: Phase 3 (Scenario Runner) is now complete! See:
+>
+> - [Evaluation Framework Reference](evaluation-framework.md) for usage
+> - [Scenario YAML Reference](evaluation-scenarios.md) for scenario format
+
 ## Related Documentation
 
+- [Evaluation Framework Reference](evaluation-framework.md) - Comprehensive guide to all components
+- [Scenario YAML Reference](evaluation-scenarios.md) - Complete scenario format specification
 - [Package README](../../apps/artagent/backend/evaluation/README.md) - Package overview
 - [Validation Manifest](../../apps/artagent/backend/evaluation/VALIDATION.md) - Validated features
 

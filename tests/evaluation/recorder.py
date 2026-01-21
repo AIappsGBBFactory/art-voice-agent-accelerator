@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from apps.artagent.backend.evaluation.schemas import (
+from tests.evaluation.schemas import (
     EvalModelConfig,
     EvidenceBlob,
     HandoffEvent,

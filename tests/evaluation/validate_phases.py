@@ -50,7 +50,7 @@ def validate_phase1() -> List[Tuple[str, bool, str]]:
     # Test 1: Evaluation package imports successfully
     test_name = "Test 1: Evaluation package imports successfully"
     try:
-        from apps.artagent.backend.evaluation import (
+        from tests.evaluation import (
             EventRecorder,
             EvaluationOrchestratorWrapper,
             TurnEvent,
@@ -78,7 +78,7 @@ def validate_phase1() -> List[Tuple[str, bool, str]]:
     # Test 3: Schemas imported successfully
     test_name = "Test 3: Schemas imported successfully"
     try:
-        from apps.artagent.backend.evaluation.schemas import (
+        from tests.evaluation.schemas import (
             TurnEvent,
             ToolCall,
             HandoffEvent,
@@ -96,7 +96,7 @@ def validate_phase1() -> List[Tuple[str, bool, str]]:
     # Test 4: Import guards configured
     test_name = "Test 4: Import guards configured"
     try:
-        import apps.artagent.backend.evaluation as eval_pkg
+        import tests.evaluation as eval_pkg
 
         # Check for forbidden paths in metadata
         package_info = eval_pkg.get_package_info()
@@ -213,7 +213,7 @@ def validate_phase1() -> List[Tuple[str, bool, str]]:
         found_imports = []
         for prod_dir in prod_dirs:
             result = subprocess.run(
-                ["grep", "-r", "from apps.artagent.backend.evaluation", prod_dir],
+                ["grep", "-r", "from tests.evaluation", prod_dir],
                 capture_output=True,
                 text=True,
             )
@@ -254,7 +254,7 @@ def validate_phase2() -> List[Tuple[str, bool, str]]:
     # Test 1: MetricsScorer imports successfully
     test_name = "Test 1: MetricsScorer imports successfully"
     try:
-        from apps.artagent.backend.evaluation.scorer import MetricsScorer
+        from tests.evaluation.scorer import MetricsScorer
 
         results.append((test_name, True, "MetricsScorer imported"))
     except Exception as e:
@@ -264,8 +264,8 @@ def validate_phase2() -> List[Tuple[str, bool, str]]:
     # Test 2: MetricsScorer loads and scores events
     test_name = "Test 2: MetricsScorer loads and scores events"
     try:
-        from apps.artagent.backend.evaluation import EventRecorder
-        from apps.artagent.backend.evaluation.scorer import MetricsScorer
+        from tests.evaluation import EventRecorder
+        from tests.evaluation.scorer import MetricsScorer
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
@@ -330,7 +330,7 @@ def validate_phase2() -> List[Tuple[str, bool, str]]:
             [
                 sys.executable,
                 "-m",
-                "apps.artagent.backend.evaluation.cli.run",
+                "tests.evaluation.cli.run",
                 "--help",
             ],
             capture_output=True,
@@ -356,7 +356,7 @@ def validate_phase2() -> List[Tuple[str, bool, str]]:
     test_name = "Test 4: CLI can score events.jsonl"
     try:
         import subprocess
-        from apps.artagent.backend.evaluation import EventRecorder
+        from tests.evaluation import EventRecorder
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
@@ -383,7 +383,7 @@ def validate_phase2() -> List[Tuple[str, bool, str]]:
                 [
                     sys.executable,
                     "-m",
-                    "apps.artagent.backend.evaluation.cli.run",
+                    "tests.evaluation.cli.run",
                     "--input",
                     str(recorder.output_path),
                     "--output",
@@ -427,8 +427,8 @@ def validate_phase2() -> List[Tuple[str, bool, str]]:
     # Test 5: API-aware scoring works
     test_name = "Test 5: API-aware scoring (verbosity adjustments)"
     try:
-        from apps.artagent.backend.evaluation.scorer import MetricsScorer
-        from apps.artagent.backend.evaluation.schemas import TurnEvent, EvalModelConfig
+        from tests.evaluation.scorer import MetricsScorer
+        from tests.evaluation.schemas import TurnEvent, EvalModelConfig
 
         # Create events with different API configs
         chat_event = TurnEvent(
@@ -499,8 +499,8 @@ def validate_phase2() -> List[Tuple[str, bool, str]]:
     # Test 6: Groundedness computation works
     test_name = "Test 6: Groundedness (string matching)"
     try:
-        from apps.artagent.backend.evaluation.scorer import MetricsScorer
-        from apps.artagent.backend.evaluation.schemas import (
+        from tests.evaluation.scorer import MetricsScorer
+        from tests.evaluation.schemas import (
             TurnEvent,
             EvidenceBlob,
             EvalModelConfig,
