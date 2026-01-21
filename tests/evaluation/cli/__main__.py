@@ -97,7 +97,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     scenario_name = None
     if args.scenario:
         import yaml
-        with open(args.scenario) as f:
+        with open(args.scenario, encoding="utf-8") as f:
             scenario_data = yaml.safe_load(f)
             scenario_name = scenario_data.get("scenario_name")
             logger.info(f"Loaded scenario: {scenario_name}")
@@ -132,7 +132,7 @@ def cmd_score(args: argparse.Namespace) -> int:
 
         # Write scores
         scores_path = output_dir / "scores.jsonl"
-        with open(scores_path, "w") as f:
+        with open(scores_path, "w", encoding="utf-8") as f:
             for score in scores:
                 f.write(score.model_dump_json() + "\n")
 
@@ -146,7 +146,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         )
 
         summary_path = output_dir / "summary.json"
-        with open(summary_path, "w") as f:
+        with open(summary_path, "w", encoding="utf-8") as f:
             f.write(summary.model_dump_json(indent=2))
 
         logger.info(f"✅ Wrote summary to: {summary_path}")

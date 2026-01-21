@@ -253,7 +253,7 @@ class FoundryExporter:
 
         # Convert and write events
         rows_written = 0
-        with open(jsonl_path, "w") as f:
+        with open(jsonl_path, "w", encoding="utf-8") as f:
             for event in events:
                 row = self.event_to_foundry_row(event, expectations)
                 f.write(row.model_dump_json(exclude_none=True) + "\n")
@@ -316,7 +316,7 @@ class FoundryExporter:
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
         config = self.generate_evaluator_config_json()
-        with open(config_path, "w") as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
         logger.info(f"Foundry evaluator config saved | path={config_path}")
@@ -537,7 +537,7 @@ async def submit_to_foundry(
     evaluator_config = {}
 
     if evaluators_config_path and evaluators_config_path.exists():
-        with open(evaluators_config_path) as f:
+        with open(evaluators_config_path, encoding="utf-8") as f:
             config_data = json.load(f)
 
         for eval_cfg in config_data.get("evaluators", []):
@@ -591,22 +591,37 @@ async def submit_to_foundry(
                 }
             }
     else:
+        # Check what fields are available in the data to determine which evaluators to use
+        has_ground_truth = False
+        try:
+            with open(data_path, encoding="utf-8") as f:
+                first_line = f.readline()
+                if first_line:
+                    first_record = json.loads(first_line)
+                    has_ground_truth = bool(first_record.get("ground_truth"))
+        except (json.JSONDecodeError, IOError):
+            pass
+
         # Default evaluators with correct keyword names for portal display
         evaluators["coherence"] = CoherenceEvaluator(model_config=model_config)
-        evaluators["f1_score"] = F1ScoreEvaluator()
-
         evaluator_config["coherence"] = {
             "column_mapping": {
                 "query": "${data.query}",
                 "response": "${data.response}",
             }
         }
-        evaluator_config["f1_score"] = {
-            "column_mapping": {
-                "response": "${data.response}",
-                "ground_truth": "${data.ground_truth}",
+
+        # Only add F1 evaluator if ground_truth is available in the data
+        if has_ground_truth:
+            evaluators["f1_score"] = F1ScoreEvaluator()
+            evaluator_config["f1_score"] = {
+                "column_mapping": {
+                    "response": "${data.response}",
+                    "ground_truth": "${data.ground_truth}",
+                }
             }
-        }
+        else:
+            logger.info("Skipping F1ScoreEvaluator (no ground_truth in data)")
 
     logger.info(f"Running evaluation with {len(evaluators)} evaluators: {list(evaluators.keys())}")
 

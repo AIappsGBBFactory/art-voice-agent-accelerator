@@ -289,7 +289,7 @@ class EventRecorder:
         )
 
         # Write to JSONL (append mode)
-        with open(self.output_path, "a") as f:
+        with open(self.output_path, "a", encoding="utf-8") as f:
             f.write(event.model_dump_json() + "\n")
 
         logger.info(
@@ -322,7 +322,7 @@ class EventRecorder:
         if not self.output_path.exists():
             return events
 
-        with open(self.output_path) as f:
+        with open(self.output_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     events.append(TurnEvent.model_validate_json(line))

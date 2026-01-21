@@ -634,7 +634,7 @@ class MetricsScorer:
             List of TurnEvent objects
         """
         events = []
-        with open(events_path) as f:
+        with open(events_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     events.append(TurnEvent.model_validate_json(line))

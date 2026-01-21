@@ -229,7 +229,7 @@ class ScenarioRunner:
         """Load and validate scenario YAML."""
         logger.info(f"Loading scenario from: {path}")
 
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             scenario = yaml.safe_load(f)
 
         # Basic validation - fall back to 'name' if 'scenario_name' not provided
@@ -708,7 +708,7 @@ class ScenarioRunner:
         # Save summary
         summary_path = self.output_dir / run_id / "summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(summary_path, "w") as f:
+        with open(summary_path, "w", encoding="utf-8") as f:
             f.write(summary.model_dump_json(indent=2))
 
         # Persist a lightweight session manifest for replay/reference
@@ -723,7 +723,7 @@ class ScenarioRunner:
             "summary_path": str(summary_path),
         }
         manifest_path = summary_path.parent / "session.json"
-        with open(manifest_path, "w") as mf:
+        with open(manifest_path, "w", encoding="utf-8") as mf:
             json.dump(session_manifest, mf, indent=2)
 
         # Export to Azure AI Foundry format if configured
@@ -737,7 +737,7 @@ class ScenarioRunner:
             if "config" in foundry_paths:
                 session_manifest["foundry_config_path"] = str(foundry_paths.get("config"))
             # Update manifest with foundry paths
-            with open(manifest_path, "w") as mf:
+            with open(manifest_path, "w", encoding="utf-8") as mf:
                 json.dump(session_manifest, mf, indent=2)
 
         logger.info(f"Scenario complete! Summary: {summary_path}")
@@ -821,7 +821,7 @@ class ComparisonRunner:
         """Load and validate comparison YAML."""
         logger.info(f"Loading comparison from: {path}")
 
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             comparison = yaml.safe_load(f)
 
         # Validate
@@ -886,7 +886,7 @@ class ComparisonRunner:
 
             # Create temporary scenario file
             scenario_path = comparison_dir / f"{variant_id}_scenario.yaml"
-            with open(scenario_path, "w") as f:
+            with open(scenario_path, "w", encoding="utf-8") as f:
                 yaml.dump(scenario, f)
 
             # Run scenario
@@ -1002,7 +1002,7 @@ class ComparisonRunner:
 
         # Save comparison report
         comparison_path = output_dir / "comparison.json"
-        with open(comparison_path, "w") as f:
+        with open(comparison_path, "w", encoding="utf-8") as f:
             import json
             json.dump(report, f, indent=2)
 
@@ -1124,7 +1124,7 @@ Examples:
         sys.exit(1)
 
     # Auto-detect comparison vs single scenario
-    with open(args.scenario_path) as f:
+    with open(args.scenario_path, encoding="utf-8") as f:
         scenario_data = yaml.safe_load(f)
 
     is_comparison = args.comparison or "variants" in scenario_data

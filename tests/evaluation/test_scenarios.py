@@ -191,7 +191,7 @@ async def test_ab_comparison_e2e(
     assert len(results) >= 2, f"A/B comparison should have at least 2 variants, got {len(results)}"
 
     # Load scenario YAML for expectations (also needed to get comparison_name)
-    with open(scenario_path) as f:
+    with open(scenario_path, encoding="utf-8") as f:
         scenario_yaml = yaml.safe_load(f)
 
     # Get the actual comparison directory (includes comparison_name)
@@ -236,7 +236,7 @@ async def test_ab_comparison_e2e(
 
         # Save validation report
         validation_path = variant_dir / "validation_report.json"
-        with open(validation_path, "w") as f:
+        with open(validation_path, "w", encoding="utf-8") as f:
             json.dump(
                 [
                     {
@@ -358,7 +358,7 @@ async def test_session_scenario_e2e(
     assert summary.total_turns > 0, "Scenario should have at least 1 turn"
 
     # Load scenario YAML for expectations
-    with open(scenario_path) as f:
+    with open(scenario_path, encoding="utf-8") as f:
         scenario_yaml = yaml.safe_load(f)
 
     # --- STEP 2: Validate Expectations ---
@@ -391,7 +391,7 @@ async def test_session_scenario_e2e(
 
     # Save validation report
     validation_path = scenario_output / "validation_report.json"
-    with open(validation_path, "w") as f:
+    with open(validation_path, "w", encoding="utf-8") as f:
         json.dump(
             [
                 {
@@ -502,7 +502,7 @@ async def test_session_expectations_from_existing_data(
         pytest.skip(f"No existing data at {scenario_output}. Run test_session_scenario_e2e first.")
 
     # Load scenario YAML
-    with open(scenario_path) as f:
+    with open(scenario_path, encoding="utf-8") as f:
         scenario_yaml = yaml.safe_load(f)
 
     validator = ExpectationValidator()
@@ -559,7 +559,7 @@ async def test_expectations_from_existing_data(
         pytest.skip(f"No existing data at {scenario_output}. Run test_ab_comparison_e2e first.")
 
     # Load scenario YAML
-    with open(scenario_path) as f:
+    with open(scenario_path, encoding="utf-8") as f:
         scenario_yaml = yaml.safe_load(f)
 
     validator = ExpectationValidator()
@@ -656,7 +656,7 @@ async def _submit_variants_to_foundry(
 
             # Save Foundry result
             foundry_result_path = variant_dir / "foundry_result.json"
-            with open(foundry_result_path, "w") as f:
+            with open(foundry_result_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, indent=2, default=str)
 
         except Exception as e:
@@ -780,12 +780,12 @@ class TestEvaluationMetrics:
         if not comparison_files:
             return None
 
-        with open(comparison_files[0]) as f:
+        with open(comparison_files[0], encoding="utf-8") as f:
             return json.load(f)
 
     def _load_scenario_thresholds(self, scenario_path: Path) -> dict[str, Any] | None:
         """Load threshold overrides from scenario YAML."""
-        with open(scenario_path) as f:
+        with open(scenario_path, encoding="utf-8") as f:
             scenario_yaml = yaml.safe_load(f)
         return scenario_yaml.get("thresholds")
 
@@ -901,12 +901,12 @@ class TestSessionMetrics:
         if not summary_files:
             return None
 
-        with open(summary_files[0]) as f:
+        with open(summary_files[0], encoding="utf-8") as f:
             return json.load(f)
 
     def _load_scenario_thresholds(self, scenario_path: Path) -> dict[str, Any] | None:
         """Load threshold overrides from scenario YAML."""
-        with open(scenario_path) as f:
+        with open(scenario_path, encoding="utf-8") as f:
             scenario_yaml = yaml.safe_load(f)
         return scenario_yaml.get("thresholds")
 

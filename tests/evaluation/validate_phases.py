@@ -146,7 +146,7 @@ def validate_phase1() -> List[Tuple[str, bool, str]]:
 
             # Verify file was created
             if recorder.output_path.exists():
-                with open(recorder.output_path) as f:
+                with open(recorder.output_path, encoding="utf-8") as f:
                     events = [json.loads(line) for line in f]
                     if len(events) == 1 and events[0]["turn_id"] == "turn1":
                         results.append(
@@ -399,7 +399,7 @@ def validate_phase2() -> List[Tuple[str, bool, str]]:
 
             if scores_file.exists() and summary_file.exists():
                 # Verify content
-                with open(summary_file) as f:
+                with open(summary_file, encoding="utf-8") as f:
                     summary = json.load(f)
                     if "total_turns" in summary and summary["total_turns"] == 1:
                         results.append(
