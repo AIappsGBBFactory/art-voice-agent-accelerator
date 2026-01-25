@@ -119,10 +119,9 @@ def display_config_info():
     for key, value in config_vars.items():
         print(f"  {key}: {value}")
 
-    # Optionally show API key if set (masked)
+    # Optionally show API key status if set (do not log any part of the key)
     if api_key:
-        masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
-        print(f"  Azure OpenAI API Key: {masked_key}")
+        print("  Azure OpenAI API Key: *** set ***")
 
     print("\n" + "="*80 + "\n")
 
