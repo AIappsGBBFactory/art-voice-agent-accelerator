@@ -110,6 +110,7 @@ nav:
   - Guides:
     - Repository Structure: guides/repository-structure.md
     - Utilities & Services: guides/utilities.md
+    - Tools & Service Integration: guides/tools.md
 extra_css:
   - assets/oad-styles.css
 
