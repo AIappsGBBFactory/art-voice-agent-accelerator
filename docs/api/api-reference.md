@@ -60,8 +60,10 @@ To deploy and configure the backend service:
 Once deployed, verify your backend is running:
 
 ```bash
-curl -X GET https://<your-backend-url>.azurecontainerapps.io/api/v1/health
+curl -X GET https://<your-backend-url>/api/v1/health
 ```
+
+> See the [Getting Started Guide](../getting-started/README.md) for your actual backend URL after deployment.
 
 ## 🔗 Related Documentation
 
