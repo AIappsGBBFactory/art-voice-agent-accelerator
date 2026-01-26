@@ -3707,7 +3707,11 @@ function RealTimeVoiceApp() {
                 {[
                   { id: 'banking', icon: '🏦', label: 'Banking' },
                   { id: 'insurance', icon: '🛡️', label: 'Insurance' },
-                ].map(({ id, icon, label }) => (
+                ].map(({ id, icon, label }) => {
+                  // Check active state - match both direct id and custom_id formats
+                  const currentScenario = getSessionScenario();
+                  const isActive = currentScenario === id || currentScenario === `custom_${id}`;
+                  return (
                   <button
                     key={id}
                     onClick={async () => {
@@ -3727,6 +3731,7 @@ function RealTimeVoiceApp() {
                         appendLog(`Failed to apply template: ${err.message}`);
                       }
                       
+                      // Use plain id (not custom_ prefix) for industry templates
                       setSessionScenario(id);
                       if (templateStartAgent) {
                         currentAgentRef.current = templateStartAgent;
@@ -3756,12 +3761,12 @@ function RealTimeVoiceApp() {
                       padding: '10px 14px',
                       borderRadius: '10px',
                       border: 'none',
-                      background: getSessionScenario() === id 
+                      background: isActive 
                         ? 'linear-gradient(135deg, rgba(99,102,241,0.1), rgba(79,70,229,0.08))' 
                         : 'transparent',
-                      color: getSessionScenario() === id ? '#4f46e5' : '#64748b',
+                      color: isActive ? '#4f46e5' : '#64748b',
                       fontSize: '13px',
-                      fontWeight: getSessionScenario() === id ? '600' : '500',
+                      fontWeight: isActive ? '600' : '500',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
@@ -3770,26 +3775,41 @@ function RealTimeVoiceApp() {
                       textAlign: 'left',
                     }}
                     onMouseEnter={(e) => {
-                      if (getSessionScenario() !== id) {
+                      if (!isActive) {
                         e.currentTarget.style.background = 'rgba(148,163,184,0.06)';
                       }
                     }}
                     onMouseLeave={(e) => {
-                      if (getSessionScenario() !== id) {
+                      if (!isActive) {
                         e.currentTarget.style.background = 'transparent';
                       }
                     }}
                   >
                     <span style={{ fontSize: '16px' }}>{icon}</span>
                     <span>{label}</span>
-                    {getSessionScenario() === id && (
+                    {isActive && (
                       <span style={{ marginLeft: 'auto', fontSize: '14px', color: '#4f46e5' }}>✓</span>
                     )}
                   </button>
-                ))}
+                );
+                })}
 
                 {/* Custom Scenarios (show all custom scenarios for the session) */}
-                {sessionScenarioConfig?.scenarios?.length > 0 && (
+                {sessionScenarioConfig?.scenarios?.length > 0 && (() => {
+                  // Industry template names that should not appear in custom scenarios
+                  const industryTemplateNames = new Set(['banking', 'insurance', 'default']);
+                  // Deduplicate scenarios by name (case-insensitive), keeping latest version
+                  // Also filter out scenarios that match industry template names
+                  const seenNames = new Set();
+                  const uniqueScenarios = sessionScenarioConfig.scenarios.filter((scenario) => {
+                    const normalizedName = scenario.name?.toLowerCase();
+                    if (!normalizedName || seenNames.has(normalizedName)) return false;
+                    // Skip scenarios that match industry template names (they belong in that section)
+                    if (industryTemplateNames.has(normalizedName)) return false;
+                    seenNames.add(normalizedName);
+                    return true;
+                  });
+                  return uniqueScenarios.length > 0 ? (
                   <>
                     <div style={{
                       margin: '8px 0 4px',
@@ -3808,10 +3828,10 @@ function RealTimeVoiceApp() {
                         gap: '4px',
                       }}>
                         <span style={{ fontSize: '12px' }}>🎭</span>
-                        Custom Scenarios ({sessionScenarioConfig.scenarios.length})
+                        Custom Scenarios ({uniqueScenarios.length})
                       </div>
                     </div>
-                    {sessionScenarioConfig.scenarios.map((scenario, index) => {
+                    {uniqueScenarios.map((scenario, index) => {
                       const scenarioKey = `custom_${scenario.name.replace(/\s+/g, '_').toLowerCase()}`;
                       const isActive = getSessionScenario() === scenarioKey;
                       const scenarioIcon = scenario.icon || '🎭';
@@ -3876,7 +3896,7 @@ function RealTimeVoiceApp() {
                             gap: '10px',
                             transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                             textAlign: 'left',
-                            marginBottom: index < sessionScenarioConfig.scenarios.length - 1 ? '4px' : 0,
+                            marginBottom: index < uniqueScenarios.length - 1 ? '4px' : 0,
                           }}
                           onMouseEnter={(e) => {
                             if (!isActive) {
@@ -3913,7 +3933,7 @@ function RealTimeVoiceApp() {
                       );
                     })}
                   </>
-                )}
+                ) : null; })()}
 
                 <button
                   type="button"
