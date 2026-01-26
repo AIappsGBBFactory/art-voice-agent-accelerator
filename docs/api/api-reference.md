@@ -60,12 +60,12 @@ To deploy and configure the backend service:
 Once deployed, verify your backend is running:
 
 ```bash
-curl -X GET https://your-backend-url/api/v1/health
+curl -X GET https://<your-backend-url>.azurecontainerapps.io/api/v1/health
 ```
 
 ## 🔗 Related Documentation
 
-- **[API Overview](README.md)** - Endpoint listing and WebSocket details
+- **[Complete Endpoint Listing](README.md)** - Detailed endpoints, WebSocket specifications, and streaming modes
 - **[Getting Started](../getting-started/README.md)** - Deployment and setup guide
 - **[Architecture](../architecture/README.md)** - System design and components
 - **[Speech Architecture](../architecture/speech/README.md)** - Audio processing and streaming modes
