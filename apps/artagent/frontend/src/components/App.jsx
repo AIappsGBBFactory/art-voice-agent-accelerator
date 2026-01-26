@@ -544,13 +544,9 @@ function RealTimeVoiceApp() {
     setPendingSessionId(sessionId);
   }, [sessionId]);
 
-  useEffect(() => {
-    if (sessionAgentConfig?.config?.name) {
-      const name = sessionAgentConfig.config.name;
-      setSelectedAgentName((prev) => prev || name);
-      currentAgentRef.current = name;
-    }
-  }, [sessionAgentConfig]);
+  // Note: Removed auto-setting of currentAgentRef from sessionAgentConfig
+  // to prevent Agent Builder creations from overriding scenario start_agent.
+  // The agent is only set when explicitly selected by user or scenario.
 
   useEffect(() => {
     let cancelled = false;
@@ -1465,6 +1461,8 @@ function RealTimeVoiceApp() {
     setSessionProfiles({});
     setSessionAgentConfig(null); // Clear session-specific agent config
     setSessionScenarioConfig(null); // Clear session-specific scenario config
+    setAgentInventory(null); // Clear agent inventory to remove session-specific agents
+    setSelectedAgentName(null); // Clear selected agent
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       logger.info('🔌 Closing WebSocket for session reset...');
       try {
@@ -1486,13 +1484,15 @@ function RealTimeVoiceApp() {
     setMicMuted(false);
     closeRelaySocket("session reset");
     appendLog(`🔄️ Session reset - new session ID: ${newSessionId}`);
+    // Re-fetch agent inventory for the new session (without old session agents)
     setTimeout(() => {
+      fetchAgentInventory();
       appendSystemMessage(
         "Session restarted with new ID. Ready for a fresh conversation!",
         { tone: "success" },
       );
     }, 500);
-  }, [appendLog, appendSystemMessage, closeRelaySocket, setSessionId, setSessionProfiles, setMessages, setActiveSpeaker, setCallActive, setShowPhoneInput]);
+  }, [appendLog, appendSystemMessage, closeRelaySocket, setSessionId, setSessionProfiles, setMessages, setActiveSpeaker, setCallActive, setShowPhoneInput, fetchAgentInventory]);
 
   const handleMuteToggle = useCallback(() => {
     if (!recording) {
@@ -4565,9 +4565,17 @@ function RealTimeVoiceApp() {
           statusCaption: `Agents: ${scenarioConfig.agents?.length || 0} · Handoffs: ${scenarioConfig.handoffs?.length || 0}`,
           statusLabel: "Scenario Active",
         });
-        // Refresh scenario configuration and set to custom scenario
+        // Refresh scenario configuration and set to the proper custom scenario key
         fetchSessionScenarioConfig();
-        setSessionScenario('custom');
+        const scenarioKey = scenarioConfig.name 
+          ? `custom_${scenarioConfig.name.replace(/\s+/g, '_').toLowerCase()}`
+          : 'custom';
+        setSessionScenario(scenarioKey);
+        // Update start agent in session
+        if (scenarioConfig.start_agent) {
+          currentAgentRef.current = scenarioConfig.start_agent;
+          setSelectedAgentName(scenarioConfig.start_agent);
+        }
       }}
       onScenarioUpdated={(scenarioConfig) => {
         appendLog(`✏️ Scenario updated: ${scenarioConfig.name || 'Custom Scenario'}`);
@@ -4577,9 +4585,15 @@ function RealTimeVoiceApp() {
           statusLabel: "Scenario Updated",
         });
         fetchSessionScenarioConfig();
-        // Keep the scenario set to custom if updating
-        if (!getSessionScenario()?.startsWith('custom_')) {
-          setSessionScenario('custom');
+        // Set to the proper custom scenario key
+        const scenarioKey = scenarioConfig.name 
+          ? `custom_${scenarioConfig.name.replace(/\s+/g, '_').toLowerCase()}`
+          : 'custom';
+        setSessionScenario(scenarioKey);
+        // Update start agent in session
+        if (scenarioConfig.start_agent) {
+          currentAgentRef.current = scenarioConfig.start_agent;
+          setSelectedAgentName(scenarioConfig.start_agent);
         }
       }}
     />
