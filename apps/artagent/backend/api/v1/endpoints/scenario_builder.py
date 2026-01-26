@@ -185,6 +185,7 @@ class AgentInfo(BaseModel):
 
     name: str
     description: str
+    original_name: str | None = None  # Original unmodified agent name for matching (before any display modifications)
     greeting: str | None = None
     return_greeting: str | None = None
     tools: list[str] = []  # Keep for backward compatibility
@@ -480,6 +481,7 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
             # Check if this session agent already exists in static registry
             existing_names = {a.name for a in agents_list}
             display_name = agent.name
+            original_name = agent.name  # Store original name before any modification for frontend matching
 
             # If duplicate name, suffix with (session)
             if display_name in existing_names:
@@ -493,6 +495,7 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
             agents_list.append(
                 AgentInfo(
                     name=display_name,
+                    original_name=original_name,
                     description=agent.description or f"Dynamic agent for session {session_id[:8]}",
                     greeting=agent.greeting,
                     return_greeting=getattr(agent, "return_greeting", None),
@@ -524,6 +527,7 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
             # Check if this session agent already exists in static registry
             existing_names = {a.name for a in agents_list}
             agent_name = agent.name
+            original_name = agent.name  # Store original name before any modification for frontend matching
 
             # If duplicate name, suffix with session ID
             if agent_name in existing_names:
@@ -537,6 +541,7 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
             agents_list.append(
                 AgentInfo(
                     name=agent_name,
+                    original_name=original_name,
                     description=agent.description or f"Dynamic agent for session {agent_session_id[:8]}",
                     greeting=agent.greeting,
                     return_greeting=getattr(agent, "return_greeting", None),

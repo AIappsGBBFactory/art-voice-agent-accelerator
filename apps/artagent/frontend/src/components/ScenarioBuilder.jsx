@@ -2669,7 +2669,14 @@ export default function ScenarioBuilder({
   useEffect(() => {
     if (availableAgents.length === 0) return;
     
-    const validAgentNames = new Set(availableAgents.map(a => a.name));
+    // Include both display name and original_name for custom session agents
+    // This handles cases where session agents are renamed to "{name} (session)" but
+    // the scenario config still references the original agent name
+    const validAgentNames = new Set();
+    availableAgents.forEach(a => {
+      validAgentNames.add(a.name);
+      if (a.original_name) validAgentNames.add(a.original_name);
+    });
     const invalidAgentsFound = [];
     
     setConfig((prev) => {

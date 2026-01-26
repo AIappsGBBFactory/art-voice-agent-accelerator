@@ -90,6 +90,7 @@ const colors = {
   session: { bg: '#fef3c7', border: '#f59e0b', avatar: '#d97706', text: '#92400e' },
   selected: { bg: '#dbeafe', border: '#3b82f6', avatar: '#2563eb', text: '#1e40af' },
   invalid: { bg: '#fef2f2', border: '#ef4444', avatar: '#dc2626', text: '#991b1b' },
+  unreachable: { bg: '#fff7ed', border: '#f97316', avatar: '#ea580c', text: '#c2410c' },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1101,11 +1102,18 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
         const agent = agents.find(a => a.name === agentName);
         const x = startX + idx * (nodeWidth + horizontalGap);
         
-        // Check if node has any connections (is it floating?)
+        // Check if node has any connections and its connectivity state
         const hasIncoming = (config.handoffs || []).some(h => h.to_agent === agentName);
         const hasOutgoing = (config.handoffs || []).some(h => h.from_agent === agentName);
         const isStartAgent = agentName === config.start_agent;
-        const isFloating = !isStartAgent && !hasIncoming;
+        
+        // Differentiate between connection states:
+        // - isOrphaned: No connections at all (truly needs a connection)
+        // - isUnreachable: Has outgoing but no incoming (connected but can't be reached from start)
+        // - isFloating: Either orphaned or unreachable (for backwards compat with warnings panel)
+        const isOrphaned = !isStartAgent && !hasIncoming && !hasOutgoing;
+        const isUnreachable = !isStartAgent && !hasIncoming && hasOutgoing;
+        const isFloating = isOrphaned; // Only truly disconnected agents show "Needs connection"
         
         result.push({
           id: agentName,
@@ -1117,6 +1125,8 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
           isStart: isStartAgent,
           isSession: agent?.is_session_agent || false,
           isFloating,
+          isOrphaned,
+          isUnreachable,
           hasOutgoing,
           agent,
         });
@@ -1506,7 +1516,8 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
   // Get color scheme for node
   const getNodeColors = (node) => {
     if (selectedNode === node.id || connectingFrom === node.id) return colors.selected;
-    if (node.isFloating) return colors.invalid; // Floating nodes are invalid
+    if (node.isFloating) return colors.invalid; // Orphaned nodes need connection
+    if (node.isUnreachable) return colors.unreachable; // Has outgoing but unreachable from start
     if (node.isStart) return colors.start;
     if (node.isSession) return colors.session;
     return colors.active;
@@ -1847,6 +1858,34 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
                   >
                     <Typography variant="caption" sx={{ color: '#dc2626', fontWeight: 600, fontSize: 9 }}>
                       ⚠️ Needs connection
+                    </Typography>
+                  </Box>
+                </Tooltip>
+              )}
+
+              {/* Unreachable warning - has outgoing but no incoming */}
+              {node.isUnreachable && (
+                <Tooltip title="This agent has outgoing connections but cannot be reached from the start agent. Connect another agent to this one.">
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      top: -24,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      backgroundColor: '#fff7ed',
+                      border: '1px solid #fdba74',
+                      borderRadius: '8px',
+                      px: 1,
+                      py: 0.25,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      whiteSpace: 'nowrap',
+                      zIndex: 20,
+                    }}
+                  >
+                    <Typography variant="caption" sx={{ color: '#c2410c', fontWeight: 600, fontSize: 9 }}>
+                      ⚠️ Unreachable
                     </Typography>
                   </Box>
                 </Tooltip>
@@ -2291,8 +2330,8 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
             </>
           )}
 
-          {/* Floating agents warning */}
-          {nodes.some(n => n.isFloating) && (
+          {/* Floating or unreachable agents warning */}
+          {nodes.some(n => n.isFloating || n.isUnreachable) && (
             <Paper 
               variant="outlined" 
               sx={{ 
@@ -2303,10 +2342,12 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
               }}
             >
               <Typography variant="caption" sx={{ color: '#dc2626', fontWeight: 600 }}>
-                ⚠️ Floating Agents
+                ⚠️ {nodes.some(n => n.isFloating) ? 'Floating Agents' : 'Unreachable Agents'}
               </Typography>
               <Typography variant="caption" sx={{ display: 'block', color: '#991b1b', mt: 0.5 }}>
-                Some agents need incoming connections. Drag from an output port to connect them.
+                {nodes.some(n => n.isFloating) 
+                  ? 'Some agents need incoming connections. Drag from an output port to connect them.'
+                  : 'Some agents cannot be reached from the start. Connect them to the main flow.'}
               </Typography>
             </Paper>
           )}
