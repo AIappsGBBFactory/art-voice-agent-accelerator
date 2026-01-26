@@ -90,7 +90,6 @@ const colors = {
   session: { bg: '#fef3c7', border: '#f59e0b', avatar: '#d97706', text: '#92400e' },
   selected: { bg: '#dbeafe', border: '#3b82f6', avatar: '#2563eb', text: '#1e40af' },
   invalid: { bg: '#fef2f2', border: '#ef4444', avatar: '#dc2626', text: '#991b1b' },
-  unreachable: { bg: '#fff7ed', border: '#f97316', avatar: '#ea580c', text: '#c2410c' },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1102,18 +1101,11 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
         const agent = agents.find(a => a.name === agentName);
         const x = startX + idx * (nodeWidth + horizontalGap);
         
-        // Check if node has any connections and its connectivity state
+        // Check if node has any connections (is it floating?)
         const hasIncoming = (config.handoffs || []).some(h => h.to_agent === agentName);
         const hasOutgoing = (config.handoffs || []).some(h => h.from_agent === agentName);
         const isStartAgent = agentName === config.start_agent;
-        
-        // Differentiate between connection states:
-        // - isOrphaned: No connections at all (truly needs a connection)
-        // - isUnreachable: Has outgoing but no incoming (connected but can't be reached from start)
-        // - isFloating: Either orphaned or unreachable (for backwards compat with warnings panel)
-        const isOrphaned = !isStartAgent && !hasIncoming && !hasOutgoing;
-        const isUnreachable = !isStartAgent && !hasIncoming && hasOutgoing;
-        const isFloating = isOrphaned; // Only truly disconnected agents show "Needs connection"
+        const isFloating = !isStartAgent && !hasIncoming;
         
         result.push({
           id: agentName,
@@ -1123,10 +1115,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
           width: nodeWidth,
           height: nodeHeight,
           isStart: isStartAgent,
-          isSession: agent?.is_session_agent || false,
           isFloating,
-          isOrphaned,
-          isUnreachable,
           hasOutgoing,
           agent,
         });
@@ -1516,8 +1505,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
   // Get color scheme for node
   const getNodeColors = (node) => {
     if (selectedNode === node.id || connectingFrom === node.id) return colors.selected;
-    if (node.isFloating) return colors.invalid; // Orphaned nodes need connection
-    if (node.isUnreachable) return colors.unreachable; // Has outgoing but unreachable from start
+    if (node.isFloating) return colors.invalid; // Floating nodes are invalid
     if (node.isStart) return colors.start;
     if (node.isSession) return colors.session;
     return colors.active;
@@ -1585,7 +1573,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
 
         <Box sx={{ flex: 1, overflowY: 'auto', p: 1 }}>
           {availableAgents.map(agent => {
-            const colorScheme = agent.is_session_agent ? colors.session : colors.active;
+            const colorScheme = colors.active;
             return (
               <Paper
                 key={agent.name}
@@ -1651,18 +1639,6 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
                       <SettingsIcon sx={{ fontSize: 14, color: '#94a3b8' }} />
                     </IconButton>
                   </Tooltip>
-                  {agent.is_session_agent && (
-                    <Chip
-                      size="small"
-                      label="Custom"
-                      sx={{
-                        height: 18,
-                        fontSize: 9,
-                        backgroundColor: colors.session.bg,
-                        color: colors.session.avatar,
-                      }}
-                    />
-                  )}
                 </Stack>
               </Paper>
             );
@@ -1858,34 +1834,6 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
                   >
                     <Typography variant="caption" sx={{ color: '#dc2626', fontWeight: 600, fontSize: 9 }}>
                       ⚠️ Needs connection
-                    </Typography>
-                  </Box>
-                </Tooltip>
-              )}
-
-              {/* Unreachable warning - has outgoing but no incoming */}
-              {node.isUnreachable && (
-                <Tooltip title="This agent has outgoing connections but cannot be reached from the start agent. Connect another agent to this one.">
-                  <Box
-                    sx={{
-                      position: 'absolute',
-                      top: -24,
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      backgroundColor: '#fff7ed',
-                      border: '1px solid #fdba74',
-                      borderRadius: '8px',
-                      px: 1,
-                      py: 0.25,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 0.5,
-                      whiteSpace: 'nowrap',
-                      zIndex: 20,
-                    }}
-                  >
-                    <Typography variant="caption" sx={{ color: '#c2410c', fontWeight: 600, fontSize: 9 }}>
-                      ⚠️ Unreachable
                     </Typography>
                   </Box>
                 </Tooltip>
@@ -2330,8 +2278,8 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
             </>
           )}
 
-          {/* Floating or unreachable agents warning */}
-          {nodes.some(n => n.isFloating || n.isUnreachable) && (
+          {/* Floating agents warning */}
+          {nodes.some(n => n.isFloating) && (
             <Paper 
               variant="outlined" 
               sx={{ 
@@ -2342,12 +2290,10 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
               }}
             >
               <Typography variant="caption" sx={{ color: '#dc2626', fontWeight: 600 }}>
-                ⚠️ {nodes.some(n => n.isFloating) ? 'Floating Agents' : 'Unreachable Agents'}
+                ⚠️ Floating Agents
               </Typography>
               <Typography variant="caption" sx={{ display: 'block', color: '#991b1b', mt: 0.5 }}>
-                {nodes.some(n => n.isFloating) 
-                  ? 'Some agents need incoming connections. Drag from an output port to connect them.'
-                  : 'Some agents cannot be reached from the start. Connect them to the main flow.'}
+                Some agents need incoming connections. Drag from an output port to connect them.
               </Typography>
             </Paper>
           )}
@@ -2394,6 +2340,7 @@ export default function ScenarioBuilderGraph({
   // Data
   const [availableAgents, setAvailableAgents] = useState([]);
   const [availableTemplates, setAvailableTemplates] = useState([]);
+  const [sessionScenarios, setSessionScenarios] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
 
   // Scenario config
@@ -2423,6 +2370,35 @@ export default function ScenarioBuilderGraph({
     '🎭', '🎯', '🎪', '🏛️', '🏦', '🏥', '🏢', '📞', '💬', '🤖',
     '🎧', '📱', '💼', '🛒', '🍔', '✈️', '🏨', '🚗', '📚', '⚖️',
   ];
+  const defaultTemplate = useMemo(() => {
+    if (!availableTemplates.length) return null;
+    return (
+      availableTemplates.find((template) => template.id === 'banking') ||
+      availableTemplates.find((template) => template.id === 'default') ||
+      availableTemplates[0]
+    );
+  }, [availableTemplates]);
+  const sessionScenarioItems = useMemo(() => {
+    if (!defaultTemplate) return sessionScenarios;
+    const exists = sessionScenarios.some(
+      (scenario) =>
+        (scenario.name || '').toLowerCase() === (defaultTemplate.name || '').toLowerCase()
+    );
+    if (exists) return sessionScenarios;
+    return [
+      {
+        name: defaultTemplate.name,
+        description: defaultTemplate.description,
+        icon: defaultTemplate.icon,
+        start_agent: defaultTemplate.start_agent,
+        handoff_type: defaultTemplate.handoff_type,
+        handoffs: defaultTemplate.handoffs || [],
+        global_template_vars: defaultTemplate.global_template_vars || {},
+        is_default_template: true,
+      },
+      ...sessionScenarios,
+    ];
+  }, [defaultTemplate, sessionScenarios]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // DATA FETCHING
@@ -2455,6 +2431,24 @@ export default function ScenarioBuilderGraph({
     }
   }, []);
 
+  const fetchSessionScenarios = useCallback(async () => {
+    if (!sessionId) {
+      setSessionScenarios([]);
+      return;
+    }
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/scenario-builder/session/${encodeURIComponent(sessionId)}/scenarios`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setSessionScenarios(data.scenarios || []);
+      }
+    } catch (err) {
+      logger.error('Failed to fetch session scenarios:', err);
+    }
+  }, [sessionId]);
+
   const fetchExistingScenario = useCallback(async () => {
     if (!sessionId) return;
     try {
@@ -2486,9 +2480,16 @@ export default function ScenarioBuilderGraph({
     Promise.all([
       fetchAvailableAgents(),
       fetchAvailableTemplates(),
+      fetchSessionScenarios(),
       editMode ? fetchExistingScenario() : Promise.resolve(),
     ]).finally(() => setLoading(false));
-  }, [fetchAvailableAgents, fetchAvailableTemplates, fetchExistingScenario, editMode]);
+  }, [
+    fetchAvailableAgents,
+    fetchAvailableTemplates,
+    fetchSessionScenarios,
+    fetchExistingScenario,
+    editMode,
+  ]);
 
   useEffect(() => {
     if (existingConfig) {
@@ -2536,6 +2537,22 @@ export default function ScenarioBuilderGraph({
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const handleApplySessionScenario = useCallback((scenario, scenarioKey) => {
+    if (!scenario) return;
+    setConfig({
+      name: scenario.name || 'Custom Scenario',
+      description: scenario.description || '',
+      icon: scenario.icon || '🎭',
+      start_agent: scenario.start_agent,
+      handoff_type: scenario.handoff_type || 'announced',
+      handoffs: scenario.handoffs || [],
+      global_template_vars: scenario.global_template_vars || {},
+    });
+    setSelectedTemplate(scenarioKey || `session:${scenario.name || 'custom'}`);
+    setSuccess(`Loaded session scenario: ${scenario.name || 'Custom Scenario'}`);
+    setTimeout(() => setSuccess(null), 3000);
   }, []);
 
   const handleSave = async () => {
@@ -2592,6 +2609,9 @@ export default function ScenarioBuilderGraph({
         onScenarioCreated(data.config || config);
       }
 
+      // Refresh data to show saved changes immediately
+      fetchSessionScenarios();
+      fetchAvailableAgents();
       setSuccess(editMode ? 'Scenario updated!' : 'Scenario created!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -2630,6 +2650,7 @@ export default function ScenarioBuilderGraph({
     setError(null);
     setSuccess('Scenario reset');
     setTimeout(() => setSuccess(null), 2000);
+    fetchSessionScenarios();
   };
 
   const handleExportScenario = () => {
@@ -2829,22 +2850,51 @@ export default function ScenarioBuilderGraph({
         </Stack>
 
         {/* Templates */}
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-          <Typography variant="caption" color="text.secondary">
-            Templates:
-          </Typography>
-          {availableTemplates.map((template) => (
-            <Chip
-              key={template.id}
-              label={template.name}
-              size="small"
-              icon={selectedTemplate === template.id ? <CheckIcon /> : <HubIcon fontSize="small" />}
-              color={selectedTemplate === template.id ? 'primary' : 'default'}
-              variant={selectedTemplate === template.id ? 'filled' : 'outlined'}
-              onClick={() => handleApplyTemplate(template.id)}
-              sx={{ cursor: 'pointer' }}
-            />
-          ))}
+        <Stack spacing={1.2}>
+          <Box>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                Session Scenarios
+              </Typography>
+              <Chip size="small" label={sessionScenarioItems.length} />
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+              Stored in session state. Click to load and edit.
+            </Typography>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              {sessionScenarioItems.length > 0 ? (
+                sessionScenarioItems.map((scenario, index) => {
+                  const scenarioKey = `session:${scenario.name || index}`;
+                  return (
+                    <Chip
+                      key={scenarioKey}
+                      label={
+                        scenario.is_default_template
+                          ? `${scenario.icon || '🎭'} ${scenario.name || 'Default'} (default)`
+                          : `${scenario.icon || '🎭'} ${scenario.name || 'Custom Scenario'}`
+                      }
+                      size="small"
+                      icon={
+                        selectedTemplate === scenarioKey
+                          ? <CheckIcon />
+                          : scenario.is_active
+                            ? <AutoFixHighIcon fontSize="small" />
+                            : <EditIcon fontSize="small" />
+                      }
+                      color={selectedTemplate === scenarioKey ? 'primary' : 'default'}
+                      variant={selectedTemplate === scenarioKey ? 'filled' : 'outlined'}
+                      onClick={() => handleApplySessionScenario(scenario, scenarioKey)}
+                      sx={{ cursor: 'pointer' }}
+                    />
+                  );
+                })
+              ) : (
+                <Typography variant="caption" color="text.secondary">
+                  {sessionId ? 'No session scenarios yet.' : 'Connect a session to load scenarios.'}
+                </Typography>
+              )}
+            </Stack>
+          </Box>
         </Stack>
 
         {/* Settings panel */}
@@ -3110,7 +3160,7 @@ export default function ScenarioBuilderGraph({
               : 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
           }}
         >
-          {saving ? 'Saving...' : editMode ? 'Update Scenario' : 'Create Scenario'}
+          {saving ? 'Saving Scenario...' : 'Save Scenario'}
         </Button>
       </Box>
     </Box>

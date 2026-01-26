@@ -308,7 +308,7 @@ async def get_401k_details(args: Get401kDetailsArgs) -> Dict[str, Any]:
             )
         
         logger.info(
-            "✅ 401(k) details retrieved | client=%s accounts=%d merrill=%d total=$%,.2f",
+            "✅ 401(k) details retrieved | client=%s accounts=%d merrill=%d total=$%.2f",
             client_id, len(accounts), len(merrill_accounts), total_retirement_balance
         )
         
@@ -982,7 +982,7 @@ register_tool(
     tags={"investments", "retirement", "knowledge_base"},
 )
 # NOTE: schedule_advisor_consultation is NOT registered here because
-# handoff_bank_advisor in handoffs.py handles Merrill advisor callbacks.
+# handoff_bank_advisor in handoffs.py handles financial advisor callbacks.
 # The function is kept for reference but the prompt uses handoff_bank_advisor.
 # register_tool(
 #     "schedule_advisor_consultation",

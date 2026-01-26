@@ -285,12 +285,19 @@ jobs:
               # Core
               EventRecorder,
               MetricsScorer,
+              HookRegistry,
           )
           
           # Import additional schemas from submodule
           from tests.evaluation.schemas import SessionAgentConfig
           
           print('✅ All module imports successful')
+          print('')
+          
+          # Verify registries can be instantiated
+          hook_registry = HookRegistry()
+          print(f'✅ HookRegistry created')
+          
           print('')
           print('🎉 All module integrations verified!')
           "
@@ -306,6 +313,7 @@ jobs:
           echo "| Module | Components |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|------------|" >> $GITHUB_STEP_SUMMARY
           echo "| schemas | ModelProfile, TurnEvent, ScenarioExpectations |" >> $GITHUB_STEP_SUMMARY
+          echo "| hooks | HookRegistry |" >> $GITHUB_STEP_SUMMARY
           echo "| core | EventRecorder, MetricsScorer |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
