@@ -51,6 +51,7 @@ terraform init && terraform apply
 | **Azure OpenAI** | GPT-4o model for conversations | S0 tier, managed identity auth |
 | **Speech Services** | Real-time STT/TTS processing | S0 tier, integrated with ACS |
 | **Communication Services** | Voice calls, messaging, WebRTC | US data location, phone number ready, cognitive services linked |
+| **Speech Containers** | Self-hosted STT/TTS (optional) | ACA dedicated workload profiles, high CPU/memory |
 
 ### 🗄️ Data & Storage Layer
 | Service | Purpose | Configuration |
@@ -143,6 +144,63 @@ AZURE_SPEECH_ENDPOINT="https://{region}.api.cognitive.microsoft.com/"
 
 The **domain endpoint** is specifically used for ACS integration, while the **regional endpoint** is available for direct Speech SDK operations.
 
+### 🎤 Self-Hosted Speech Containers (Optional)
+
+This infrastructure supports **optional deployment of Azure Cognitive Services Speech containers** for self-hosted STT (Speech-to-Text) and TTS (Text-to-Speech) capabilities with lower latency and data residency compliance.
+
+#### 🏗️ Architecture
+
+Speech containers are deployed on **Azure Container Apps with Dedicated Workload Profiles** to meet the high CPU/memory requirements:
+
+| Container | CPU | Memory | Workload Profile |
+|-----------|-----|--------|------------------|
+| **Speech-to-Text (STT)** | 4 cores | 8GB | D8 (8 vCPU, 32GB) |
+| **Neural Text-to-Speech (TTS)** | 6 cores | 12GB | D8 (8 vCPU, 32GB) |
+
+#### 🚀 Enabling Speech Containers
+
+```hcl
+# In terraform.tfvars
+enable_speech_containers = true
+speech_workload_profile_type = "D8"  # Supports up to 8 vCPU, 32GB memory
+
+# STT Configuration
+stt_container_tag = "4.8.0-amd64-en-us"  # Use locale-specific tag
+stt_container_cpu = 4
+stt_container_memory = "8Gi"
+
+# TTS Configuration  
+tts_container_tag = "2.21.0-amd64-en-us-arianeural"  # Use voice-specific tag
+tts_container_cpu = 6
+tts_container_memory = "12Gi"
+```
+
+#### 📋 Container Image Tags
+
+- **STT**: [mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text/tags](https://mcr.microsoft.com/artifact/mar/azure-cognitive-services/speechservices/speech-to-text/tags)
+- **TTS**: [mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech/tags](https://mcr.microsoft.com/artifact/mar/azure-cognitive-services/speechservices/neural-text-to-speech/tags)
+
+#### 🔐 Authentication
+
+Speech containers use **billing endpoint authentication** with the Azure Speech Services cognitive account. The API key is stored as a Container App secret.
+
+```python
+# Using Speech SDK with self-hosted container
+from azure.cognitiveservices.speech import SpeechConfig
+
+# For STT container
+speech_config = SpeechConfig(host="https://<stt-container-fqdn>")
+
+# For TTS container
+speech_config = SpeechConfig(host="https://<tts-container-fqdn>")
+```
+
+#### 💰 Cost Considerations
+
+- **Consumption profile**: Max 4 vCPU, 8GB - insufficient for TTS requirements
+- **Dedicated D8 profile**: ~$0.27/hour per instance (billed while running)
+- **Recommendation**: Use min_replicas=1 for cost optimization, scale up based on demand
+
 ## 🔐 Security & RBAC
 
 ### 🛡️ Security Features
@@ -174,6 +232,12 @@ The **domain endpoint** is specifically used for ACS integration, while the **re
 | `disable_local_auth` | Use managed identity only | `true` | |
 | `model_deployments` | Model deployments | `[gpt-4o]` | |
 | `redis_sku` | Redis Enterprise SKU | `MemoryOptimized_M10` | |
+| `enable_speech_containers` | Deploy self-hosted STT/TTS containers | `false` | |
+| `speech_workload_profile_type` | ACA workload profile (D4/D8/D16/E4/E8) | `D8` | |
+| `stt_container_cpu` | CPU cores for STT container | `4` | |
+| `stt_container_memory` | Memory for STT container | `8Gi` | |
+| `tts_container_cpu` | CPU cores for TTS container | `6` | |
+| `tts_container_memory` | Memory for TTS container | `12Gi` | |
 
 ### 🚀 Container Apps Deployment
 

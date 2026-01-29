@@ -69,6 +69,22 @@ class StreamingConversationTranscriberFromBytes:
         self.cfg = self._create_speech_config()
 
     def _create_speech_config(self) -> SpeechConfig:
+        # Check for container mode first
+        use_containers = os.getenv("SPEECH_USE_CONTAINERS", "false").lower() in ("true", "1", "yes")
+        stt_container_endpoint = os.getenv("STT_CONTAINER_ENDPOINT", "")
+        container_api_key = os.getenv("SPEECH_CONTAINER_API_KEY", "")
+
+        if use_containers and stt_container_endpoint:
+            logger.info(f"Creating SpeechConfig for STT container at {stt_container_endpoint}")
+            speech_config = SpeechConfig(host=stt_container_endpoint)
+            if container_api_key:
+                # Use set_property since subscription_key property is read-only
+                speech_config.set_property(
+                    PropertyId.SpeechServiceConnection_Key,
+                    container_api_key
+                )
+            return speech_config
+
         if self.key:
             return SpeechConfig(subscription=self.key, region=self.region)
         credential = get_credential()

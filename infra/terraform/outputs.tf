@@ -231,6 +231,12 @@ output "ai_foundry_project_endpoint" {
   value       = module.ai_foundry.project_endpoint
 }
 
+# Uppercase version for AZD env export (used by sync-appconfig.sh)
+output "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" {
+  description = "Azure AI Foundry project endpoint (uppercase for AZD env export)"
+  value       = module.ai_foundry.project_endpoint
+}
+
 output "ai_foundry_project_identity_principal_id" {
   description = "Managed identity principal ID assigned to the AI Foundry project"
   value       = module.ai_foundry.project_identity_principal_id
@@ -249,6 +255,23 @@ output "AZURE_VOICELIVE_RESOURCE_ID" {
 output "AZURE_VOICELIVE_MODEL" {
   description = "Azure Voice Live model deployment name"
   value       = var.enable_voice_live && length(local.voice_live_model_names) > 0 ? local.voice_live_model_names[0] : ""
+}
+
+# ============================================================================
+# SPEECH CONTAINERS (Self-hosted STT/TTS)
+# ============================================================================
+# Note: Container endpoint outputs (STT_CONTAINER_ENDPOINT, TTS_CONTAINER_ENDPOINT)
+# are defined in speech-containers.tf alongside the container resources.
+
+output "SPEECH_USE_CONTAINERS" {
+  description = "Whether speech containers are enabled"
+  value       = var.enable_speech_containers
+}
+
+output "SPEECH_CONTAINER_API_KEY" {
+  description = "API key for speech container billing (sensitive)"
+  value       = var.enable_speech_containers ? azurerm_cognitive_account.speech[0].primary_access_key : ""
+  sensitive   = true
 }
 
 # ============================================================================

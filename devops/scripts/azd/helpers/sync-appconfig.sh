@@ -77,9 +77,12 @@ if [[ ! "$ENDPOINT" =~ \.azconfig\.io$ ]]; then
     exit 1
 fi
 
+# Config file is optional - warn if not found but continue
+HAS_CONFIG_FILE=true
 if [[ ! -f "$CONFIG_FILE" ]]; then
-    fail "Config file not found: $CONFIG_FILE"
-    exit 1
+    warn "Config file not found: $CONFIG_FILE"
+    warn "Will sync infrastructure keys only (from azd env)"
+    HAS_CONFIG_FILE=false
 fi
 
 # ============================================================================
@@ -188,7 +191,13 @@ add_kv "azure/voicelive/model" "$(get_azd_value AZURE_VOICELIVE_MODEL)"
 add_kv "azure/voicelive/resource-id" "$(get_azd_value AZURE_VOICELIVE_RESOURCE_ID)"
 
 # AI Foundry (for Evaluations SDK)
-add_kv "azure/ai-foundry/project-endpoint" "$(get_azd_value ai_foundry_project_endpoint)"
+add_kv "azure/ai-foundry/project-endpoint" "$(get_azd_value AZURE_AI_FOUNDRY_PROJECT_ENDPOINT)"
+
+# Speech Containers (self-hosted STT/TTS)
+add_kv "azure/speech-containers/enabled" "$(get_azd_value SPEECH_USE_CONTAINERS)"
+add_kv "azure/speech-containers/stt-endpoint" "$(get_azd_value STT_CONTAINER_ENDPOINT)"
+add_kv "azure/speech-containers/tts-endpoint" "$(get_azd_value TTS_CONTAINER_ENDPOINT)"
+add_kv "azure/speech-containers/api-key" "$(get_azd_value SPEECH_CONTAINER_API_KEY)"
 
 # Environment metadata
 add_kv "app/environment" "$(get_azd_value AZURE_ENV_NAME)"
@@ -198,19 +207,24 @@ log "  ✓ Collected infrastructure keys"
 # ============================================================================
 # SECTION 2: Application Settings from config/appconfig.json
 # ============================================================================
-log ""
-log "Collecting application settings from config file..."
+if [[ "$HAS_CONFIG_FILE" == "true" ]]; then
+    log ""
+    log "Collecting application settings from config file..."
 
-# Process each section
-for section in pools connections session voice aoai warm-pool monitoring; do
-    keys=$(jq -r ".[\"$section\"] // {} | keys[]" "$CONFIG_FILE" 2>/dev/null || echo "")
-    for key in $keys; do
-        value=$(jq -r ".[\"$section\"][\"$key\"]" "$CONFIG_FILE")
-        add_kv "app/$section/$key" "$value"
+    # Process each section
+    for section in pools connections session voice aoai warm-pool monitoring; do
+        keys=$(jq -r ".[\"$section\"] // {} | keys[]" "$CONFIG_FILE" 2>/dev/null || echo "")
+        for key in $keys; do
+            value=$(jq -r ".[\"$section\"][\"$key\"]" "$CONFIG_FILE")
+            add_kv "app/$section/$key" "$value"
+        done
     done
-done
 
-log "  ✓ Collected application settings"
+    log "  ✓ Collected application settings"
+else
+    log ""
+    log "Skipping application settings (no config file)"
+fi
 
 # Add sentinel for refresh trigger
 add_kv "app/sentinel" "v$(date +%s)"
@@ -269,55 +283,57 @@ fi
 # ============================================================================
 # SECTION 4: Feature Flags (must be set individually)
 # ============================================================================
-log ""
-log "Syncing feature flags..."
 feature_count=0
-features=$(jq -r '.features // {} | keys[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+if [[ "$HAS_CONFIG_FILE" == "true" ]]; then
+    log ""
+    log "Syncing feature flags..."
+    features=$(jq -r '.features // {} | keys[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
-if [[ -n "$features" ]]; then
-    for feature in $features; do
-        enabled=$(jq -r ".features[\"$feature\"]" "$CONFIG_FILE")
-        
-        if [[ "$DRY_RUN" == "true" ]]; then
-            log "  [DRY-RUN] Would set feature: $feature = $enabled"
-            continue
-        fi
-        
-        label_arg=""
-        [[ -n "$LABEL" ]] && label_arg="--label $LABEL"
-        
-        az appconfig feature set \
-            --endpoint "$ENDPOINT" \
-            --feature "$feature" \
-            $label_arg \
-            --auth-mode login \
-            --yes \
-            --output none 2>/dev/null || true
-        
-        if [[ "$enabled" == "true" ]]; then
-            az appconfig feature enable \
+    if [[ -n "$features" ]]; then
+        for feature in $features; do
+            enabled=$(jq -r ".features[\"$feature\"]" "$CONFIG_FILE")
+            
+            if [[ "$DRY_RUN" == "true" ]]; then
+                log "  [DRY-RUN] Would set feature: $feature = $enabled"
+                continue
+            fi
+            
+            label_arg=""
+            [[ -n "$LABEL" ]] && label_arg="--label $LABEL"
+            
+            az appconfig feature set \
                 --endpoint "$ENDPOINT" \
                 --feature "$feature" \
                 $label_arg \
                 --auth-mode login \
                 --yes \
                 --output none 2>/dev/null || true
-        else
-            az appconfig feature disable \
-                --endpoint "$ENDPOINT" \
-                --feature "$feature" \
-                $label_arg \
-                --auth-mode login \
-                --yes \
-                --output none 2>/dev/null || true
-        fi
-        
-        feature_count=$((feature_count + 1))
-        log "  ✓ $feature = $enabled"
-    done
-    success "Set $feature_count feature flags"
-else
-    log "  No feature flags defined"
+            
+            if [[ "$enabled" == "true" ]]; then
+                az appconfig feature enable \
+                    --endpoint "$ENDPOINT" \
+                    --feature "$feature" \
+                    $label_arg \
+                    --auth-mode login \
+                    --yes \
+                    --output none 2>/dev/null || true
+            else
+                az appconfig feature disable \
+                    --endpoint "$ENDPOINT" \
+                    --feature "$feature" \
+                    $label_arg \
+                    --auth-mode login \
+                    --yes \
+                    --output none 2>/dev/null || true
+            fi
+            
+            feature_count=$((feature_count + 1))
+            log "  ✓ $feature = $enabled"
+        done
+        success "Set $feature_count feature flags"
+    else
+        log "  No feature flags defined"
+    fi
 fi
 
 echo "├─────────────────────────────────────────────────────────────"

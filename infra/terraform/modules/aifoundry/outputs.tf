@@ -23,6 +23,11 @@ output "project_name" {
   value       = azapi_resource.ai_foundry_project.name
 }
 
+output "project_endpoint" {
+  description = "Endpoint URI for the AI Foundry project (used for Evaluations SDK, Agent SDK)."
+  value       = "https://${var.location}.api.azureml.ms/discovery/workspaces/${local.project_id_guid}"
+}
+
 output "project_identity_principal_id" {
   description = "Principal ID of the AI Foundry project managed identity."
   value       = try(azapi_resource.ai_foundry_project.output.identity.principalId, null)

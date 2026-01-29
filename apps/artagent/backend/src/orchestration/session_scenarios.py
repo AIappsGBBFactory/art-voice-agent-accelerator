@@ -390,17 +390,6 @@ def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> Non
         # Also store legacy format for backward compatibility
         memo.set_corememory(SCENARIO_KEY_CONFIG, _serialize_scenario(scenario))
         
-        # CRITICAL: Update active_agent to the scenario's start_agent
-        # This ensures that when a new orchestrator syncs from MemoManager,
-        # it starts with the correct agent for the new scenario (not the old one)
-        if scenario.start_agent:
-            memo.set_corememory("active_agent", scenario.start_agent)
-            logger.debug(
-                "Set active_agent to scenario start_agent | session=%s agent=%s",
-                session_id,
-                scenario.start_agent,
-            )
-        
         # Schedule async persistence with proper error handling
         import asyncio
         try:
@@ -654,17 +643,6 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
         
         # Also store legacy format for backward compatibility
         memo.set_corememory(SCENARIO_KEY_CONFIG, _serialize_scenario(scenario))
-        
-        # CRITICAL: Update active_agent to the scenario's start_agent
-        # This ensures that when a new orchestrator syncs from MemoManager,
-        # it starts with the correct agent for the new scenario (not the old one)
-        if scenario.start_agent:
-            memo.set_corememory("active_agent", scenario.start_agent)
-            logger.debug(
-                "Set active_agent to scenario start_agent | session=%s agent=%s",
-                session_id,
-                scenario.start_agent,
-            )
         
         # Await persistence to ensure completion
         await memo.persist_to_redis_async(_redis_manager)

@@ -8,9 +8,12 @@ and frame-based audio processing.
 
 import asyncio
 import html
+import json
 import os
 import re
 import time
+import urllib.request
+import urllib.error
 from collections.abc import Callable
 
 import azure.cognitiveservices.speech as speechsdk
@@ -31,6 +34,65 @@ load_dotenv()
 
 # Initialize logger
 logger = get_logger(__name__)
+
+# Module-level cache for TTS container voice
+_container_voice_cache: dict[str, str | None] = {}
+
+
+def _fetch_container_voice(endpoint: str, api_key: str | None = None) -> str | None:
+    """Fetch the available voice from a TTS container.
+
+    TTS containers typically only have one voice installed, so we query the
+    voices/list endpoint to discover which voice is available.
+
+    Args:
+        endpoint: The TTS container endpoint (e.g., http://localhost:5000)
+        api_key: Optional API key for billing/authentication
+
+    Returns:
+        The voice name (ShortName) if found, None otherwise.
+    """
+    if endpoint in _container_voice_cache:
+        return _container_voice_cache[endpoint]
+
+    voices_url = f"{endpoint}/cognitiveservices/voices/list"
+    logger.info(f"Fetching available voices from TTS container: {voices_url}")
+
+    try:
+        req = urllib.request.Request(voices_url)
+        req.add_header("Accept", "application/json")
+        if api_key:
+            req.add_header("Ocp-Apim-Subscription-Key", api_key)
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        if isinstance(data, list) and len(data) > 0:
+            # Get the first (usually only) voice
+            voice = data[0].get("ShortName") or data[0].get("Name")
+            _container_voice_cache[endpoint] = voice
+            logger.info(
+                f"TTS container at {endpoint} has voice: {voice} "
+                f"(total voices available: {len(data)})"
+            )
+            return voice
+        else:
+            logger.warning(f"No voices found in TTS container at {endpoint}")
+            _container_voice_cache[endpoint] = None
+            return None
+
+    except urllib.error.URLError as e:
+        logger.warning(f"Failed to fetch voices from TTS container: {e}")
+        _container_voice_cache[endpoint] = None
+        return None
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON response from TTS container voices endpoint: {e}")
+        _container_voice_cache[endpoint] = None
+        return None
+    except Exception as e:
+        logger.warning(f"Error fetching TTS container voices: {e}")
+        _container_voice_cache[endpoint] = None
+        return None
 
 _SENTENCE_END = re.compile(r"([.!?；？！。]+|\n)")
 
@@ -720,6 +782,7 @@ class SpeechSynthesizer:
             - call_connection_id: Reset to None
             - _session_span: End and clear any active tracing span
             - _prepared_voices: Clear cached voice warmup state (if exists)
+            - _speaker: Close cached speaker synthesizer to release resources
 
         Thread Safety:
             - Safe to call from any thread
@@ -746,6 +809,57 @@ class SpeechSynthesizer:
         if hasattr(self, "_prepared_voices"):
             delattr(self, "_prepared_voices")
 
+        # Close cached speaker synthesizer to release resources
+        if self._speaker is not None:
+            try:
+                # Stop any ongoing synthesis
+                self._speaker.stop_speaking_async()
+            except Exception:
+                pass
+            self._speaker = None
+
+    def close(self) -> None:
+        """Release all resources held by this synthesizer.
+
+        Call this method when the synthesizer is no longer needed to ensure
+        proper cleanup of SDK resources, WebSocket connections, and cached state.
+        This prevents memory leaks in long-running applications.
+
+        Resources released:
+            - Speaker synthesizer (if cached)
+            - Token manager reference
+            - Active tracing spans
+
+        Note:
+            Does NOT clear self.cfg to allow potential reuse after close.
+            For full cleanup including config, delete the instance.
+
+        Example:
+            ```python
+            synthesizer = SpeechSynthesizer(region="eastus")
+            try:
+                audio = synthesizer.synthesize_speech("Hello")
+            finally:
+                synthesizer.close()
+            ```
+        """
+        # Clear session state first
+        self.clear_session_state()
+
+        # Clear token manager reference (will be re-acquired on next use if needed)
+        self._token_manager = None
+
+        logger.debug("SpeechSynthesizer resources released")
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures resources are released."""
+        self.close()
+        return False
+
     def _create_speech_config(self):
         """Create and configure Azure Speech SDK configuration with flexible authentication.
 
@@ -755,12 +869,17 @@ class SpeechSynthesizer:
         error handling for various deployment scenarios.
 
         Authentication Flow:
-        1. API Key Method (preferred if available):
+        1. Container Mode (if enabled):
+           - Uses self-hosted TTS container with API key for billing
+           - Lower latency when containers are co-located with app
+           - Full data residency control
+
+        2. API Key Method (preferred if available):
            - Uses subscription key and region for direct authentication
            - Simple and reliable for development and testing
            - Credentials from constructor parameters or environment variables
 
-        2. Azure Default Credentials (production recommended):
+        3. Azure Default Credentials (production recommended):
            - Leverages Azure AD authentication with automatic token refresh
            - Supports managed identity, service principal, and credential chains
            - Requires AZURE_SPEECH_RESOURCE_ID environment variable
@@ -781,6 +900,9 @@ class SpeechSynthesizer:
             - output_format: Set to 24kHz 16-bit mono PCM for high quality
 
         Environment Variables Used:
+            - SPEECH_USE_CONTAINERS: Enable container mode (true/false)
+            - TTS_CONTAINER_ENDPOINT: Container endpoint URL (e.g., http://host:5000)
+            - SPEECH_CONTAINER_API_KEY: API key for container billing
             - AZURE_SPEECH_KEY: Subscription key for API authentication
             - AZURE_SPEECH_REGION: Azure region for service endpoint
             - AZURE_SPEECH_ENDPOINT: Custom endpoint URL (optional)
@@ -825,7 +947,39 @@ class SpeechSynthesizer:
             token freshness and handle credential rotation. The configuration
             should be cached at the instance level to avoid repeated auth calls.
         """
-        if self.key:
+        # Check for container mode first
+        use_containers = os.getenv("SPEECH_USE_CONTAINERS", "false").lower() in ("true", "1", "yes")
+        tts_container_endpoint = os.getenv("TTS_CONTAINER_ENDPOINT", "")
+        container_api_key = os.getenv("SPEECH_CONTAINER_API_KEY", "")
+
+        if use_containers and tts_container_endpoint:
+            logger.info(f"Creating SpeechConfig for TTS container at {tts_container_endpoint}")
+            # Container endpoint format: http://host:5000
+            speech_config = speechsdk.SpeechConfig(host=tts_container_endpoint)
+            if container_api_key:
+                # Use set_property since subscription_key property is read-only
+                speech_config.set_property(
+                    speechsdk.PropertyId.SpeechServiceConnection_Key,
+                    container_api_key
+                )
+
+            # Fetch and validate available voice from container
+            container_voice = _fetch_container_voice(tts_container_endpoint, container_api_key)
+            if container_voice:
+                if container_voice != self.voice:
+                    logger.warning(
+                        f"TTS container voice mismatch: requested '{self.voice}' "
+                        f"but container only has '{container_voice}'. Using container voice."
+                    )
+                    self.voice = container_voice
+                else:
+                    logger.info(f"TTS container voice matches requested voice: {self.voice}")
+            else:
+                logger.warning(
+                    f"Could not determine TTS container voice. "
+                    f"Attempting synthesis with requested voice '{self.voice}' - may fail."
+                )
+        elif self.key:
             logger.info("Creating SpeechConfig with API key authentication")
             speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
         else:

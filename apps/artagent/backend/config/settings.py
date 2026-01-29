@@ -154,6 +154,31 @@ AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY") or os.environ.get(
 )
 AZURE_SPEECH_RESOURCE_ID: str = os.getenv("AZURE_SPEECH_RESOURCE_ID", "")
 
+# ==============================================================================
+# SPEECH CONTAINERS (Self-hosted STT/TTS)
+# ==============================================================================
+# When SPEECH_USE_CONTAINERS=true, the app uses self-hosted speech containers
+# instead of the Azure Speech cloud service. This provides:
+# - Lower latency (containers can be co-located with the app)
+# - Data residency control (audio never leaves your network)
+# - Cost optimization for high-volume workloads
+#
+# Container images:
+# - STT: mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text
+# - TTS: mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech
+# ==============================================================================
+
+SPEECH_USE_CONTAINERS: bool = _env_bool("SPEECH_USE_CONTAINERS", False)
+
+# STT Container endpoint (e.g., ws://stt-container.internal:5000 or http://stt-container.internal:5000)
+STT_CONTAINER_ENDPOINT: str = os.getenv("STT_CONTAINER_ENDPOINT", "")
+
+# TTS Container endpoint (e.g., http://tts-container.internal:5000)
+TTS_CONTAINER_ENDPOINT: str = os.getenv("TTS_CONTAINER_ENDPOINT", "")
+
+# API key for container billing (from the Speech resource used for billing)
+SPEECH_CONTAINER_API_KEY: str = os.getenv("SPEECH_CONTAINER_API_KEY", "")
+
 # Azure Voice Live (preview)
 # Note: Uses AZURE_VOICELIVE_* format to match VoiceLiveSettings pydantic model
 AZURE_VOICE_LIVE_ENDPOINT: str = os.getenv("AZURE_VOICELIVE_ENDPOINT", "") or os.getenv(

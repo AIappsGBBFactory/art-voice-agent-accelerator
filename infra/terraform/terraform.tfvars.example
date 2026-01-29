@@ -47,3 +47,31 @@ model_deployments = [
       capacity = 50
     }
   ]
+
+# ============================================================================
+# SPEECH CONTAINERS CONFIGURATION (Azure Container Instances)
+# ============================================================================
+# Enable Azure Cognitive Services Speech containers for self-hosted STT/TTS
+# Deploys on Azure Container Instances for simplified management
+
+# Enable speech containers deployment
+enable_speech_containers = false
+
+# STT Container configuration
+# Image: mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text
+# Tags: https://mcr.microsoft.com/artifact/mar/azure-cognitive-services/speechservices/speech-to-text/tags
+stt_container_tag    = "latest"  # Use locale-specific tag for production, e.g., "4.8.0-amd64-en-us"
+stt_container_cpu    = 8         # MS recommended: 8 cores (minimum 4)
+stt_container_memory = 16        # MS recommended: 8-16GB (add 4-8GB for model loading)
+
+# TTS Container configuration
+# Image: mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech
+# Tags: https://mcr.microsoft.com/artifact/mar/azure-cognitive-services/speechservices/neural-text-to-speech/tags
+tts_container_tag    = "latest"  # Use voice-specific tag for production, e.g., "2.21.0-amd64-en-us-arianeural"
+tts_container_cpu    = 8         # MS recommended: 8 cores (minimum 6)
+tts_container_memory = 16        # MS recommended: 16GB (minimum 12GB)
+
+# Network configuration
+# Set to true to expose speech containers with public IP
+# Set to false requires VNet integration for private access
+speech_container_external_ingress = true

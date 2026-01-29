@@ -289,5 +289,98 @@ variable "stt_pool_size" {
     condition     = var.stt_pool_size >= 10 && var.stt_pool_size <= 500
     error_message = "STT pool size must be between 10 and 500."
   }
+}
 
+# ============================================================================
+# SPEECH CONTAINERS CONFIGURATION (Azure Container Instances)
+# ============================================================================
+
+variable "enable_speech_containers" {
+  description = "Enable deployment of Azure Speech containers (STT/TTS) on Container Instances"
+  type        = bool
+  default     = true
+}
+
+variable "speech_container_location" {
+  description = "Azure region for speech containers. If not set, uses var.location"
+  type        = string
+  default     = null
+}
+
+variable "speech_container_external_ingress" {
+  description = "Enable public IP for speech containers. Set to false for private-only access (requires VNet integration)."
+  type        = bool
+  default     = true
+}
+
+variable "speech_container_log_level" {
+  description = "Log level for speech containers (Debug, Information, Warning, Error)"
+  type        = string
+  default     = "Information"
+  validation {
+    condition     = contains(["Debug", "Information", "Warning", "Error"], var.speech_container_log_level)
+    error_message = "Log level must be one of: Debug, Information, Warning, Error"
+  }
+}
+
+# STT Container Configuration
+variable "stt_container_tag" {
+  description = <<-EOT
+    Tag for STT container image. Use locale-specific tags for production.
+    Examples: latest, 4.8.0-amd64-en-us, 4.8.0-amd64-es-es
+    See: https://mcr.microsoft.com/artifact/mar/azure-cognitive-services/speechservices/speech-to-text/tags
+  EOT
+  type        = string
+  default     = "latest"
+}
+
+variable "stt_container_cpu" {
+  description = "CPU cores for STT container. MS recommended: 8 cores, minimum: 4 cores"
+  type        = number
+  default     = 8
+  validation {
+    condition     = var.stt_container_cpu >= 4 && var.stt_container_cpu <= 16
+    error_message = "STT container CPU must be between 4 and 16 cores."
+  }
+}
+
+variable "stt_container_memory" {
+  description = "Memory in GB for STT container. MS recommended: 8-16GB (add 4-8GB for model loading)"
+  type        = number
+  default     = 16
+  validation {
+    condition     = var.stt_container_memory >= 8 && var.stt_container_memory <= 32
+    error_message = "STT container memory must be between 8 and 32 GB."
+  }
+}
+
+# TTS Container Configuration
+variable "tts_container_tag" {
+  description = <<-EOT
+    Tag for TTS container image. Use voice-specific tags for production.
+    Examples: latest, 2.21.0-amd64-en-us-arianeural, 2.21.0-amd64-es-es-elviraneural
+    See: https://mcr.microsoft.com/artifact/mar/azure-cognitive-services/speechservices/neural-text-to-speech/tags
+  EOT
+  type        = string
+  default     = "latest"
+}
+
+variable "tts_container_cpu" {
+  description = "CPU cores for TTS container. MS recommended: 8 cores, minimum: 6 cores"
+  type        = number
+  default     = 8
+  validation {
+    condition     = var.tts_container_cpu >= 6 && var.tts_container_cpu <= 16
+    error_message = "TTS container CPU must be between 6 and 16 cores."
+  }
+}
+
+variable "tts_container_memory" {
+  description = "Memory in GB for TTS container. MS recommended: 16GB, minimum: 12GB"
+  type        = number
+  default     = 16
+  validation {
+    condition     = var.tts_container_memory >= 12 && var.tts_container_memory <= 32
+    error_message = "TTS container memory must be between 12 and 32 GB."
+  }
 }

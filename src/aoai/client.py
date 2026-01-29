@@ -163,6 +163,21 @@ def main() -> None:
 # Lazy client initialization to allow OpenTelemetry instrumentation to be set up first.
 # The instrumentor must monkey-patch the openai module BEFORE any clients are created.
 _client_instance = None
+_client_lock = __import__("threading").Lock()
+
+
+def reset_client() -> None:
+    """
+    Reset the cached Azure OpenAI client.
+    
+    Call this when encountering 401 authentication errors to force
+    re-creation of the client with fresh credentials on next use.
+    """
+    global _client_instance, client
+    with _client_lock:
+        _client_instance = None
+        client = None
+        logger.info("Azure OpenAI client reset - will be recreated on next use")
 
 
 def get_client():
@@ -179,22 +194,23 @@ def get_client():
         ValueError: If AZURE_OPENAI_ENDPOINT is not configured.
     """
     global _client_instance
-    if _client_instance is None:
-        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-        if not endpoint:
-            # Log all env vars that start with AZURE_ for debugging
-            azure_vars = {
-                k: v[:50] + "..." if len(v) > 50 else v
-                for k, v in os.environ.items()
-                if k.startswith("AZURE_")
-            }
-            logger.error("AZURE_OPENAI_ENDPOINT not available. Azure env vars: %s", azure_vars)
-            raise ValueError(
-                "AZURE_OPENAI_ENDPOINT must be provided via environment variable. "
-                "Ensure Azure App Configuration has loaded or set the variable directly."
-            )
-        _client_instance = create_azure_openai_client()
-    return _client_instance
+    with _client_lock:
+        if _client_instance is None:
+            endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+            if not endpoint:
+                # Log all env vars that start with AZURE_ for debugging
+                azure_vars = {
+                    k: v[:50] + "..." if len(v) > 50 else v
+                    for k, v in os.environ.items()
+                    if k.startswith("AZURE_")
+                }
+                logger.error("AZURE_OPENAI_ENDPOINT not available. Azure env vars: %s", azure_vars)
+                raise ValueError(
+                    "AZURE_OPENAI_ENDPOINT must be provided via environment variable. "
+                    "Ensure Azure App Configuration has loaded or set the variable directly."
+                )
+            _client_instance = create_azure_openai_client()
+        return _client_instance
 
 
 # For backwards compatibility, provide 'client' as a property-like access
@@ -338,6 +354,7 @@ def test_responses_endpoint(deployment: str, prompt: str = "test") -> bool:
 __all__ = [
     "client",
     "get_client",
+    "reset_client",
     "create_azure_openai_client",
     "_init_client",
     "warm_openai_connection",

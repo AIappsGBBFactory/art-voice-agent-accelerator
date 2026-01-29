@@ -1378,7 +1378,7 @@ class CascadeOrchestratorAdapter:
         # This enables proper routing based on model_config.endpoint_preference
         try:
             from src.aoai.manager import AzureOpenAIManager
-            from src.aoai.client import get_client as get_aoai_client
+            from src.aoai.client import get_client as get_aoai_client, reset_client
 
             # Get the raw client for streaming (manager doesn't support streaming yet)
             client = get_aoai_client()
@@ -1942,9 +1942,20 @@ class CascadeOrchestratorAdapter:
                 span.set_status(Status(StatusCode.OK))
 
             except Exception as e:
-                span.set_status(Status(StatusCode.ERROR, str(e)))
+                error_str = str(e)
+                span.set_status(Status(StatusCode.ERROR, error_str))
                 span.record_exception(e)
                 logger.exception("LLM processing failed: %s", e)
+                
+                # Check for 401 authentication errors and reset client for next attempt
+                if "401" in error_str or "Unauthorized" in error_str or "expired" in error_str.lower():
+                    logger.warning("Authentication error detected - resetting AOAI client for next request")
+                    try:
+                        from src.aoai.client import reset_client
+                        reset_client()
+                    except Exception as reset_err:
+                        logger.debug("Failed to reset AOAI client: %s", reset_err)
+                
                 response_text = "I apologize, I encountered an error processing your request. Please ensure the selected agent model is available in your Azure AI Foundry resource."
                 
 

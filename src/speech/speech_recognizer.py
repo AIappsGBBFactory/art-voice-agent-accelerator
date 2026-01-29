@@ -372,8 +372,9 @@ class StreamingSpeechRecognizerFromBytes:
         for authentication in cloud environments.
 
         Authentication Methods:
-            1. API Key: Uses subscription key and region (traditional method)
-            2. Default Credentials: Uses managed identity, service principal,
+            1. Container Mode: Uses self-hosted speech containers with API key
+            2. API Key: Uses subscription key and region (traditional method)
+            3. Default Credentials: Uses managed identity, service principal,
                or developer credentials (recommended for production)
 
         Returns:
@@ -381,6 +382,9 @@ class StreamingSpeechRecognizerFromBytes:
                 use with recognition services.
 
         Environment Variables:
+            - SPEECH_USE_CONTAINERS: Enable container mode (true/false)
+            - STT_CONTAINER_ENDPOINT: Container endpoint URL (e.g., ws://host:5000)
+            - SPEECH_CONTAINER_API_KEY: API key for container billing
             - AZURE_SPEECH_KEY: API key for subscription-based auth
             - AZURE_SPEECH_REGION: Azure region for Speech services
             - AZURE_SPEECH_ENDPOINT: Custom endpoint URL (optional)
@@ -401,6 +405,24 @@ class StreamingSpeechRecognizerFromBytes:
             For Default Credentials, the identity must have the "Cognitive
             Services User" RBAC role assigned for the Speech resource.
         """
+        # Check for container mode first
+        use_containers = os.getenv("SPEECH_USE_CONTAINERS", "false").lower() in ("true", "1", "yes")
+        stt_container_endpoint = os.getenv("STT_CONTAINER_ENDPOINT", "")
+        container_api_key = os.getenv("SPEECH_CONTAINER_API_KEY", "")
+
+        if use_containers and stt_container_endpoint:
+            logger.info(f"Creating SpeechConfig for STT container at {stt_container_endpoint}")
+            # Container endpoint format: ws://host:5000 or http://host:5000
+            # The SDK expects the host endpoint, it will append the correct path
+            speech_config = speechsdk.SpeechConfig(host=stt_container_endpoint)
+            if container_api_key:
+                # Use set_property since subscription_key property is read-only
+                speech_config.set_property(
+                    speechsdk.PropertyId.SpeechServiceConnection_Key,
+                    container_api_key
+                )
+            return speech_config
+
         if self.key:
             # Use API key authentication if provided
             logger.info("Creating SpeechConfig with API key authentication")

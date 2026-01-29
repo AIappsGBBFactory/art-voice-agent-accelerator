@@ -154,6 +154,11 @@ APPCONFIG_KEY_MAP: dict[str, str] = {
     "azure/appinsights/connection-string": "APPLICATIONINSIGHTS_CONNECTION_STRING",
     # AI Foundry
     "azure/ai-foundry/project-endpoint": "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT",
+    # Speech Containers (self-hosted STT/TTS on ACI)
+    "azure/speech-containers/enabled": "SPEECH_USE_CONTAINERS",
+    "azure/speech-containers/stt-endpoint": "STT_CONTAINER_ENDPOINT",
+    "azure/speech-containers/tts-endpoint": "TTS_CONTAINER_ENDPOINT",
+    "azure/speech-containers/api-key": "SPEECH_CONTAINER_API_KEY",
     # Pool Settings
     "app/pools/tts-size": "POOL_SIZE_TTS",
     "app/pools/stt-size": "POOL_SIZE_STT",
