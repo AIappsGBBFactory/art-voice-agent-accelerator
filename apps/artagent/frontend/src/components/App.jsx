@@ -1165,6 +1165,9 @@ function RealTimeVoiceApp() {
   // Throttle hot-path UI updates for streaming text
   const lastSttPartialUpdateRef = useRef(0);
   const lastAssistantStreamUpdateRef = useRef(0);
+  // Buffer to accumulate streaming text between throttled UI updates
+  // This prevents dropped deltas when VoiceLive sends rapid character-level updates
+  const assistantStreamBufferRef = useRef({ turnId: null, text: "" });
 
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
@@ -1844,6 +1847,7 @@ function RealTimeVoiceApp() {
       )}${emailParam}&scenario=${encodeURIComponent(currentScenario)}`;
       resetMetrics(sessionId);
       assistantStreamGenerationRef.current = 0;
+      assistantStreamBufferRef.current = { turnId: null, text: "" };
       terminationReasonRef.current = null;
       resampleWarningRef.current = false;
       audioInitFailedRef.current = false;
@@ -2952,6 +2956,9 @@ function RealTimeVoiceApp() {
       }
 
       if (type === "assistant_cancelled") {
+        // Clear streaming buffer when response is cancelled
+        assistantStreamBufferRef.current = { turnId: null, text: "" };
+        
         const turnId =
           payload.turn_id ||
           payload.turnId ||
@@ -2998,19 +3005,30 @@ function RealTimeVoiceApp() {
           payload.responseId ||
           null;
 
+        // Always accumulate streaming text into buffer (prevents dropped deltas)
+        // Reset buffer if this is a new turn/response
+        const buffer = assistantStreamBufferRef.current;
+        if (buffer.turnId !== turnId) {
+          buffer.turnId = turnId;
+          buffer.text = txt; // Start fresh for new turn
+        } else {
+          buffer.text += txt; // Accumulate for same turn
+        }
+
         if (shouldUpdateUi) {
           lastAssistantStreamUpdateRef.current = now;
+          // Use accumulated buffer text instead of just current delta
+          const accumulatedText = buffer.text;
+          
           if (turnId) {
             updateTurnMessage(
               turnId,
-              (current) => {
-                const previousText =
-                  current?.streamGeneration === streamGeneration
-                    ? current?.text ?? ""
-                    : "";
+              () => {
+                // For streaming, we replace with full accumulated text (not append)
+                // because the buffer already contains all deltas since last update
                 return {
                   speaker: streamingSpeaker,
-                  text: `${previousText}${txt}`,
+                  text: accumulatedText,
                   streaming: true,
                   streamGeneration,
                   cancelled: false,
@@ -3020,7 +3038,7 @@ function RealTimeVoiceApp() {
               {
                 initial: () => ({
                   speaker: streamingSpeaker,
-                  text: txt,
+                  text: accumulatedText,
                   streaming: true,
                   streamGeneration,
                   turnId,
@@ -3040,7 +3058,7 @@ function RealTimeVoiceApp() {
                   i === prev.length - 1
                     ? {
                         ...m,
-                        text: m.text + txt,
+                        text: accumulatedText,
                         cancelled: false,
                         cancelReason: undefined,
                       }
@@ -3051,7 +3069,7 @@ function RealTimeVoiceApp() {
                 ...prev,
                 {
                   speaker: streamingSpeaker,
-                  text: txt,
+                  text: accumulatedText,
                   streaming: true,
                   streamGeneration,
                   cancelled: false,
@@ -3068,6 +3086,9 @@ function RealTimeVoiceApp() {
       }
 
       if (msgType === "assistant" || msgType === "status" || speaker === "Concierge") {
+        // Clear streaming buffer when final message arrives
+        assistantStreamBufferRef.current = { turnId: null, text: "" };
+        
         if (msgType === "status") {
           const normalizedStatus = (txt || "").toLowerCase();
           if (
@@ -4402,6 +4423,7 @@ function RealTimeVoiceApp() {
       coreMemory={sessionCoreMemory}
       sessionMeta={sessionMetadata}
       sessionMetrics={sessionMetrics}
+      scenarioConfig={sessionScenarioConfig}
     />
     <AgentBuilder
       open={showAgentBuilder}

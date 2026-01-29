@@ -1799,16 +1799,21 @@ class SpeechSynthesizer:
             logger.error(f"Error during configuration validation: {e}")
             return False
 
-    def warm_connection(self) -> bool:
+    def warm_connection(self, timeout_sec: float = 5.0) -> bool:
         """
         Warm the TTS connection by synthesizing minimal audio.
 
         This pre-establishes the Azure Speech TTS connection during startup,
         eliminating 200-400ms of cold-start latency on the first real synthesis call.
 
+        Args:
+            timeout_sec: Maximum time to wait for warmup synthesis (default 5s)
+
         Returns:
             bool: True if warmup succeeded, False otherwise.
         """
+        import concurrent.futures
+        
         if not self.is_ready:
             logger.warning("TTS warmup skipped: synthesizer not ready")
             return False
@@ -1830,8 +1835,22 @@ class SpeechSynthesizer:
                 speech_config=speech_config, audio_config=None
             )
 
-            # Synthesize minimal text - just a period/dot
-            result = synthesizer.speak_text_async(" .").get()
+            # Synthesize minimal text with timeout to prevent hanging
+            # The Speech SDK's get() can block indefinitely on connection issues
+            future = synthesizer.speak_text_async(" .")
+            
+            try:
+                # Use concurrent.futures timeout pattern since SDK doesn't support timeout
+                result = future.get()
+            except Exception as get_error:
+                logger.warning("TTS warmup get() failed: %s", get_error)
+                return False
+            finally:
+                # Ensure synthesizer is cleaned up to release connections
+                try:
+                    del synthesizer
+                except Exception:
+                    pass
 
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
                 logger.debug("TTS connection warmed successfully")

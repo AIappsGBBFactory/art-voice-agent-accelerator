@@ -75,6 +75,9 @@ import WarningIcon from '@mui/icons-material/Warning';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import EditIcon from '@mui/icons-material/Edit';
+import InsightsIcon from '@mui/icons-material/Insights';
+import TimelineIcon from '@mui/icons-material/Timeline';
+import RouteIcon from '@mui/icons-material/Route';
 
 import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';

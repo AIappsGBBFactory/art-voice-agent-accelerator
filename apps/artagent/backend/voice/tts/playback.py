@@ -502,10 +502,33 @@ class TTSPlayback:
             rate=rate,
         )
 
-        if executor:
-            result = await loop.run_in_executor(executor, synth_func)
-        else:
-            result = await loop.run_in_executor(None, synth_func)
+        # Add timeout to prevent indefinite blocking on Speech SDK issues
+        # The "Codec decoding is not started within 2s" error can cause hangs
+        # Dynamic timeout: base 10s + ~1s per 100 chars (Azure TTS is ~100-200 words/sec)
+        base_timeout = 10.0
+        per_char_timeout = len(text) / 100.0  # ~1 second per 100 chars
+        synthesis_timeout = min(base_timeout + per_char_timeout, 120.0)  # Cap at 2 minutes
+        
+        try:
+            if executor:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(executor, synth_func),
+                    timeout=synthesis_timeout
+                )
+            else:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, synth_func),
+                    timeout=synthesis_timeout
+                )
+        except asyncio.TimeoutError:
+            logger.error(
+                "[%s] TTS synthesis timed out after %.1fs (voice=%s, text_len=%d)",
+                self._session_short,
+                synthesis_timeout,
+                voice,
+                len(text),
+            )
+            return None
 
         if result:
             logger.info("[%s] Synthesis complete: %d bytes", self._session_short, len(result))

@@ -535,9 +535,29 @@ async def send_tts_audio(
                 style=style,
                 rate=eff_rate,
             )
-            if executor:
-                return await loop.run_in_executor(executor, synth_partial)
-            return await loop.run_in_executor(None, synth_partial)
+            # Dynamic timeout: base 10s + ~1s per 100 chars (Azure TTS is ~100-200 words/sec)
+            base_timeout = 10.0
+            per_char_timeout = len(text) / 100.0
+            synthesis_timeout = min(base_timeout + per_char_timeout, 120.0)
+            try:
+                if executor:
+                    return await asyncio.wait_for(
+                        loop.run_in_executor(executor, synth_partial),
+                        timeout=synthesis_timeout
+                    )
+                return await asyncio.wait_for(
+                    loop.run_in_executor(None, synth_partial),
+                    timeout=synthesis_timeout
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "[%s] TTS synthesis timed out after %.1fs (voice=%s, run=%s)",
+                    session_id,
+                    synthesis_timeout,
+                    voice_to_use,
+                    run_id,
+                )
+                return b""
 
         synthesis_task = asyncio.create_task(_synthesize())
         cancel_wait: asyncio.Task[None] | None = None
@@ -773,28 +793,58 @@ async def send_response_to_acs(
                 voice_to_use,
                 len(text),
             )
-            pcm_bytes = await asyncio.to_thread(
-                synth.synthesize_to_pcm,
-                text,
-                voice_to_use,
-                TTS_SAMPLE_RATE_ACS,
-                style,
-                eff_rate,
+            # Dynamic timeout: base 10s + ~1s per 100 chars
+            base_timeout = 10.0
+            per_char_timeout = len(text) / 100.0
+            synthesis_timeout = min(base_timeout + per_char_timeout, 120.0)
+            pcm_bytes = await asyncio.wait_for(
+                asyncio.to_thread(
+                    synth.synthesize_to_pcm,
+                    text,
+                    voice_to_use,
+                    TTS_SAMPLE_RATE_ACS,
+                    style,
+                    eff_rate,
+                ),
+                timeout=synthesis_timeout
             )
+        except asyncio.TimeoutError:
+            logger.error(
+                "ACS MEDIA: TTS synthesis timed out after %.1fs (run=%s, voice=%s)",
+                synthesis_timeout,
+                run_id,
+                voice_to_use,
+            )
+            playback_status = "synthesis_timeout"
+            _record_status(playback_status)
+            return None
         except RuntimeError as synth_err:
             logger.warning(
                 "ACS MEDIA: Primary TTS failed (run=%s). Retrying without style/rate. error=%s",
                 run_id,
                 synth_err,
             )
-            pcm_bytes = await asyncio.to_thread(
-                synth.synthesize_to_pcm,
-                text,
-                voice_to_use,
-                TTS_SAMPLE_RATE_ACS,
-                "",
-                "",
-            )
+            try:
+                pcm_bytes = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        synth.synthesize_to_pcm,
+                        text,
+                        voice_to_use,
+                        TTS_SAMPLE_RATE_ACS,
+                        "",
+                        "",
+                    ),
+                    timeout=synthesis_timeout
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "ACS MEDIA: TTS retry synthesis timed out after %.1fs (run=%s)",
+                    synthesis_timeout,
+                    run_id,
+                )
+                playback_status = "synthesis_timeout"
+                _record_status(playback_status)
+                return None
         except Exception as e:
             logger.error(
                 "Failed to produce ACS audio (run=%s): %s | text_preview=%s",
