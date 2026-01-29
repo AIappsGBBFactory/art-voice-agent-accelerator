@@ -134,6 +134,8 @@ export default function AgentScenarioBuilder({
       if (newMode === 'scenarios') {
         setEditingAgentFromScenario(null);
         setEditingAgentSessionId(null);
+        // Force remount of scenario builder to show blank canvas
+        setRefreshKey((prev) => prev + 1);
       }
       setMode(newMode);
     }
