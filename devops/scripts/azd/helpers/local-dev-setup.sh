@@ -222,4 +222,8 @@ main() {
     esac
 }
 
-main "$@"
+# Only run main() if script is executed directly (not when sourced)
+# This allows postprovision.sh to source the file and call functions individually
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

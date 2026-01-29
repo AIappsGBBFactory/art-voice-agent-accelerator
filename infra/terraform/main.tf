@@ -24,6 +24,10 @@ terraform {
     azapi = {
       source = "Azure/azapi"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -37,12 +41,12 @@ provider "azurerm" {
     }
     app_configuration {
       purge_soft_delete_on_destroy = true
-      recover_soft_deleted = true
+      recover_soft_deleted         = true
     }
     cognitive_account {
       purge_soft_delete_on_destroy = true
-      
-    }    
+
+    }
   }
   storage_use_azuread = true
 }

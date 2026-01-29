@@ -170,10 +170,14 @@ AZURE_SPEECH_RESOURCE_ID: str = os.getenv("AZURE_SPEECH_RESOURCE_ID", "")
 
 SPEECH_USE_CONTAINERS: bool = _env_bool("SPEECH_USE_CONTAINERS", False)
 
-# STT Container endpoint (e.g., ws://stt-container.internal:5000 or http://stt-container.internal:5000)
+# STT Container endpoint
+# Without TLS: ws://stt-container:5000
+# With TLS:    wss://stt-container:443
 STT_CONTAINER_ENDPOINT: str = os.getenv("STT_CONTAINER_ENDPOINT", "")
 
-# TTS Container endpoint (e.g., http://tts-container.internal:5000)
+# TTS Container endpoint
+# Without TLS: http://tts-container:5000
+# With TLS:    https://tts-container:443
 TTS_CONTAINER_ENDPOINT: str = os.getenv("TTS_CONTAINER_ENDPOINT", "")
 
 # API key for container billing (from the Speech resource used for billing)

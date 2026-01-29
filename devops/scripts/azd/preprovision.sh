@@ -406,6 +406,15 @@ provider_terraform() {
     
     log ""
     
+    # Run speech containers setup (optional beta feature)
+    local speech_setup="$SCRIPT_DIR/helpers/speech-containers-setup.sh"
+    if [[ -f "$speech_setup" ]]; then
+        log "Running speech containers setup..."
+        AZD_LOG_IN_BOX=true bash "$speech_setup"
+    fi
+    
+    log ""
+    
     # Set Terraform variables via azd env
     # In CI, the workflow may pre-set TF_VAR_* - check before overwriting
     if is_ci; then

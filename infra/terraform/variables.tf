@@ -384,3 +384,33 @@ variable "tts_container_memory" {
     error_message = "TTS container memory must be between 12 and 32 GB."
   }
 }
+
+# TLS Configuration for Speech Containers
+variable "speech_container_enable_tls" {
+  description = "Enable TLS termination via nginx sidecar for speech containers"
+  type        = bool
+  default     = false
+}
+
+variable "speech_container_tls_cert_base64" {
+  description = <<-EOT
+    Base64-encoded TLS certificate (PEM format) for speech container HTTPS/WSS endpoints.
+    Generate with: cat ssl.crt | base64
+    For production, use a certificate from a trusted CA.
+    If not provided and TLS is enabled, a self-signed certificate will be generated.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "speech_container_tls_key_base64" {
+  description = <<-EOT
+    Base64-encoded TLS private key (PEM format) for speech container HTTPS/WSS endpoints.
+    Generate with: cat ssl.key | base64
+    Must match the TLS certificate.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}

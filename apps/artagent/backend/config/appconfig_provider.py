@@ -158,6 +158,7 @@ APPCONFIG_KEY_MAP: dict[str, str] = {
     "azure/speech-containers/enabled": "SPEECH_USE_CONTAINERS",
     "azure/speech-containers/stt-endpoint": "STT_CONTAINER_ENDPOINT",
     "azure/speech-containers/tts-endpoint": "TTS_CONTAINER_ENDPOINT",
+    "azure/speech-containers/tls-enabled": "SPEECH_CONTAINER_TLS_ENABLED",
     "azure/speech-containers/api-key": "SPEECH_CONTAINER_API_KEY",
     # Pool Settings
     "app/pools/tts-size": "POOL_SIZE_TTS",

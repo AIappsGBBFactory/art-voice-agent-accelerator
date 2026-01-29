@@ -195,8 +195,31 @@ add_kv "azure/ai-foundry/project-endpoint" "$(get_azd_value AZURE_AI_FOUNDRY_PRO
 
 # Speech Containers (self-hosted STT/TTS)
 add_kv "azure/speech-containers/enabled" "$(get_azd_value SPEECH_USE_CONTAINERS)"
-add_kv "azure/speech-containers/stt-endpoint" "$(get_azd_value STT_CONTAINER_ENDPOINT)"
-add_kv "azure/speech-containers/tts-endpoint" "$(get_azd_value TTS_CONTAINER_ENDPOINT)"
+
+# Get speech container endpoints and TLS setting
+stt_endpoint="$(get_azd_value STT_CONTAINER_ENDPOINT)"
+tts_endpoint="$(get_azd_value TTS_CONTAINER_ENDPOINT)"
+speech_tls_enabled="$(get_azd_value TF_VAR_speech_container_enable_tls)"
+
+# Force HTTPS/WSS if TLS is enabled (handles race conditions in provisioning)
+if [[ "$speech_tls_enabled" == "true" ]]; then
+    # Convert STT: ws:// -> wss://, port 5000 -> 443
+    if [[ -n "$stt_endpoint" && "$stt_endpoint" == ws://* ]]; then
+        stt_endpoint="${stt_endpoint/ws:\/\//wss://}"
+        stt_endpoint="${stt_endpoint/:5000/:443}"
+        log "  ↳ STT endpoint forced to WSS (TLS enabled)"
+    fi
+    # Convert TTS: http:// -> https://, port 5000 -> 443
+    if [[ -n "$tts_endpoint" && "$tts_endpoint" == http://* ]]; then
+        tts_endpoint="${tts_endpoint/http:\/\//https://}"
+        tts_endpoint="${tts_endpoint/:5000/:443}"
+        log "  ↳ TTS endpoint forced to HTTPS (TLS enabled)"
+    fi
+fi
+
+add_kv "azure/speech-containers/stt-endpoint" "$stt_endpoint"
+add_kv "azure/speech-containers/tts-endpoint" "$tts_endpoint"
+add_kv "azure/speech-containers/tls-enabled" "$speech_tls_enabled"
 add_kv "azure/speech-containers/api-key" "$(get_azd_value SPEECH_CONTAINER_API_KEY)"
 
 # Environment metadata
