@@ -8,7 +8,8 @@
 #   3. App Config URL updates (known only after deploy)
 #   4. App Config settings sync
 #   5. Local development environment setup
-#   6. EasyAuth configuration (optional, interactive)
+#   6. Speech container TLS certificate instructions (if self-signed)
+#   7. EasyAuth configuration (optional, interactive)
 # ============================================================================
 
 set -euo pipefail
@@ -454,11 +455,94 @@ task_generate_env_local() {
 }
 
 # ============================================================================
-# Task 6: Enable EasyAuth (Optional)
+# Task 6: Speech Container TLS Certificate (Optional)
+# ============================================================================
+
+task_speech_container_tls() {
+    local use_containers tls_enabled cert_base64
+    use_containers=$(azd_get "SPEECH_USE_CONTAINERS" "false")
+    tls_enabled=$(azd_get "SPEECH_CONTAINER_TLS_ENABLED" "false")
+    
+    # Also check TF_VAR variants (may be set but not yet synced)
+    [[ "$use_containers" != "true" ]] && use_containers=$(azd_get "TF_VAR_enable_speech_containers" "false")
+    [[ "$tls_enabled" != "true" ]] && tls_enabled=$(azd_get "TF_VAR_speech_container_enable_tls" "false")
+    
+    # Skip if containers or TLS not enabled
+    if [[ "$use_containers" != "true" || "$tls_enabled" != "true" ]]; then
+        return 0
+    fi
+    
+    header "🔒 Task 6: Speech Container TLS Certificate"
+    
+    cert_base64=$(azd_get "TF_VAR_speech_container_tls_cert_base64" "")
+    
+    if [[ -z "$cert_base64" ]]; then
+        warn "TLS certificate not found in environment"
+        log "Set TF_VAR_speech_container_tls_cert_base64 to your certificate (base64 encoded)"
+        footer
+        return 0
+    fi
+    
+    # Extract the certificate to a temp file
+    local cert_file="/tmp/speech-container-cert.pem"
+    echo "$cert_base64" | base64 -d > "$cert_file" 2>/dev/null
+    
+    if [[ ! -s "$cert_file" ]]; then
+        warn "Failed to decode TLS certificate"
+        footer
+        return 0
+    fi
+    
+    # Show certificate details
+    local subject issuer
+    subject=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | sed 's/subject=//')
+    issuer=$(openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null | sed 's/issuer=//')
+    
+    log "Self-signed TLS certificate detected for speech containers"
+    log "  Subject: $subject"
+    log ""
+    warn "For local development, you need to trust this certificate."
+    warn "Without this, you'll see SSL handshake errors when connecting to"
+    warn "the speech containers from your local machine."
+    log ""
+    log "Certificate extracted to: $cert_file"
+    log ""
+    
+    if [[ "$(uname)" == "Darwin" ]]; then
+        log "${CYAN}macOS Instructions:${NC}"
+        log "  Run this command to trust the certificate:"
+        log ""
+        log "  ${GREEN}sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $cert_file${NC}"
+        log ""
+        log "  You'll be prompted for your password."
+        log ""
+        log "  To remove the trust later:"
+        log "  ${DIM}sudo security delete-certificate -c \"artagent-speech.eastus.azurecontainer.io\"${NC}"
+    else
+        log "${CYAN}Linux Instructions:${NC}"
+        log "  Copy the certificate to the system trust store:"
+        log ""
+        log "  ${GREEN}sudo cp $cert_file /usr/local/share/ca-certificates/speech-container.crt${NC}"
+        log "  ${GREEN}sudo update-ca-certificates${NC}"
+        log ""
+        log "  For RHEL/CentOS:"
+        log "  ${GREEN}sudo cp $cert_file /etc/pki/ca-trust/source/anchors/${NC}"
+        log "  ${GREEN}sudo update-ca-trust${NC}"
+    fi
+    
+    log ""
+    log "${DIM}Note: This is only needed for local development. Deployed containers${NC}"
+    log "${DIM}communicate internally and don't require this certificate trust.${NC}"
+    
+    footer
+}
+
+# ============================================================================
+# Task 7: Enable EasyAuth (Optional)
 # ============================================================================
 
 task_enable_easyauth() {
-    header "🔐 Task 6: Frontend Authentication (EasyAuth)"
+    header "🔐 Task 7: Frontend Authentication (EasyAuth)"
     
     local easyauth_script="$HELPERS_DIR/enable-easyauth.sh"
     
@@ -577,6 +661,7 @@ main() {
     task_update_urls || true
     task_sync_appconfig || true
     task_generate_env_local || true
+    task_speech_container_tls || true
     task_enable_easyauth || true
     show_summary
 }

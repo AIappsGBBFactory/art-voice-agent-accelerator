@@ -72,6 +72,34 @@ Now write the code:
 4. Run tests and formatters before committing
 
 ---
+### Issue Tracking with bd
+
+**CRITICAL**: This project uses **bd** for ALL task tracking. Do NOT create markdown TODO lists.
+
+#### MCP Server Integration
+
+An MCP server for beads/bd is available, enabling seamless integration with Claude for task tracking and automation. Use this when available to leverage Claude's capabilities for issue management.
+
+#### Essential Commands
+
+```bash
+# Find work
+bd ready --json                    # Unblocked issues
+bd stale --days 30 --json          # Forgotten issues
+
+# Create and manage (ALWAYS include --description)
+bd create "Title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
+bd update <id> --status in_progress --json
+bd close <id> --reason "Done" --json
+
+# Search
+bd list --status open --priority 1 --json
+bd show <id> --json
+
+# Sync (CRITICAL at end of session!)
+bd sync  # Force immediate export/commit/push
+```
+---
 
 ## 🎯 Core Principles
 
@@ -101,4 +129,5 @@ For task-specific guidance, see **skills/**:
 | `add-tool` | Adding a tool to the registry |
 | `add-endpoint` | Adding a FastAPI endpoint |
 | `add-voice-handler` | Adding voice processing logic |
+
 
