@@ -653,44 +653,42 @@ class ScenarioRunner:
             streaming=False,
         )
 
-        # NOTE: ScenarioConfig injection temporarily disabled to debug empty responses
-        # TODO: Re-enable once root cause is found
         # Build ScenarioConfig from session_config for HandoffService
         # This enables generic handoffs in evaluation scenarios
-        # scenario_handoffs = []
-        # for h in session_config.handoffs:
-        #     scenario_handoffs.append(ScenarioHandoffConfig(
-        #         from_agent=h.from_agent,
-        #         to_agent=h.to_agent,
-        #         tool=h.tool,
-        #         type=h.type or "announced",
-        #         share_context=h.share_context if h.share_context is not None else True,
-        #     ))
+        scenario_handoffs = []
+        for h in session_config.handoffs:
+            scenario_handoffs.append(ScenarioHandoffConfig(
+                from_agent=h.from_agent,
+                to_agent=h.to_agent,
+                tool=h.tool,
+                type=h.type or "announced",
+                share_context=h.share_context if h.share_context is not None else True,
+            ))
 
-        # generic_cfg = GenericHandoffConfig(
-        #     enabled=generic_config.get("enabled", False),
-        #     allowed_targets=generic_config.get("allowed_targets", []),
-        #     default_type=generic_config.get("default_type", "announced"),
-        #     share_context=generic_config.get("share_context", True),
-        # )
+        generic_cfg = GenericHandoffConfig(
+            enabled=generic_config.get("enabled", False),
+            allowed_targets=generic_config.get("allowed_targets", []),
+            default_type=generic_config.get("default_type", "announced"),
+            share_context=generic_config.get("share_context", True),
+        )
 
-        # scenario_obj = ScenarioConfig(
-        #     name=f"eval_{session_id}",
-        #     agents=list(filtered_agents.keys()),
-        #     start_agent=start_agent,
-        #     handoff_type=session_config.handoff_type or "announced",
-        #     handoffs=scenario_handoffs,
-        #     generic_handoff=generic_cfg,
-        # )
+        scenario_obj = ScenarioConfig(
+            name=f"eval_{session_id}",
+            agents=list(filtered_agents.keys()),
+            start_agent=start_agent,
+            handoff_type=session_config.handoff_type or "announced",
+            handoffs=scenario_handoffs,
+            generic_handoff=generic_cfg,
+        )
 
         # Inject cached config so HandoffService uses our scenario
-        # adapter._cached_orchestrator_config = OrchestratorConfigResult(
-        #     start_agent=start_agent,
-        #     agents=filtered_agents,
-        #     handoff_map=handoff_map,
-        #     scenario=scenario_obj,
-        #     scenario_name=f"eval_{session_id}",
-        # )
+        adapter._cached_orchestrator_config = OrchestratorConfigResult(
+            start_agent=start_agent,
+            agents=filtered_agents,
+            handoff_map=handoff_map,
+            scenario=scenario_obj,
+            scenario_name=f"eval_{session_id}",
+        )
 
         return adapter, start_agent
 

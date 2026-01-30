@@ -151,7 +151,12 @@ async def main(args: argparse.Namespace) -> None:
     # Setup Azure Identity credential for OIDC
     credential = DefaultAzureCredential()
     auth_callback = AzureIdentityTokenCallback(credential)
-    auth_properties = {"OIDC_CALLBACK": auth_callback}
+    auth_properties = {
+        "OIDC_CALLBACK": auth_callback,
+    }
+    
+    # Allow Cosmos DB MongoDB cluster hosts for OIDC
+    os.environ.setdefault("MONGODB_OIDC_ALLOWED_HOSTS", "*.mongocluster.cosmos.azure.com")
 
     # Override connection string for OIDC
     connection_string = f"mongodb+srv://{cluster_name}.global.mongocluster.cosmos.azure.com/"

@@ -2121,6 +2121,14 @@ function RealTimeVoiceApp() {
           return prev;
         }
 
+        // If the speaker changed (e.g., after handoff), create a new message
+        // instead of overwriting the previous agent's bubble
+        if (patch.speaker && current.speaker && patch.speaker !== current.speaker) {
+          const base = typeof initial === "function" ? initial() : initial;
+          const newMsg = base ? { ...base, ...patch } : { ...patch, turnId: `${turnId}_${patch.speaker}` };
+          return [...prev, newMsg];
+        }
+
         const next = [...prev];
         next[index] = { ...current, ...patch, turnId };
         return next;
@@ -2377,6 +2385,9 @@ function RealTimeVoiceApp() {
               text: reasonText,
               ts: payload.ts || payload.timestamp,
             });
+            // Reset streaming state on agent handoff to force new bubble for new agent
+            assistantStreamGenerationRef.current += 1;
+            assistantStreamBufferRef.current = { turnId: null, text: "" };
           }
           if (label !== "System" && label !== "User") {
             currentAgentRef.current = label;
@@ -3154,9 +3165,11 @@ function RealTimeVoiceApp() {
           );
         } else {
           setMessages((prev) => {
+            // Only finalize a streaming message if it belongs to the same speaker
+            // This prevents handoff responses from overwriting previous agent's bubbles
             for (let idx = prev.length - 1; idx >= 0; idx -= 1) {
               const candidate = prev[idx];
-              if (candidate?.streaming) {
+              if (candidate?.streaming && candidate?.speaker === assistantSpeaker) {
                 return prev.map((m, i) =>
                   i === idx
                     ? {

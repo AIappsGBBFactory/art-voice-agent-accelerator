@@ -105,10 +105,15 @@ set_kv() {
     [[ -n "$LABEL" ]] && cmd_args+=(--label "$LABEL")
     [[ -n "$content_type" ]] && cmd_args+=(--content-type "$content_type")
     
-    if az appconfig kv set "${cmd_args[@]}" 2>/dev/null; then
+    local error_output
+    if error_output=$(az appconfig kv set "${cmd_args[@]}" 2>&1); then
         return 0
     else
         warn "Failed to set: $key"
+        # Show the error message (first line only, cleaned up)
+        local error_msg
+        error_msg=$(echo "$error_output" | head -1 | sed 's/^ERROR: //')
+        [[ -n "$error_msg" ]] && log "  └─ $error_msg"
         return 1
     fi
 }
@@ -184,7 +189,19 @@ set_kv "azure/voicelive/model" "$(get_azd_value AZURE_VOICELIVE_MODEL)" && ((cou
 set_kv "azure/voicelive/resource-id" "$(get_azd_value AZURE_VOICELIVE_RESOURCE_ID)" && ((count++)) || ((errors++))
 
 # AI Foundry (for Evaluations SDK)
-set_kv "azure/ai-foundry/project-endpoint" "$(get_azd_value ai_foundry_project_endpoint)" && ((count++)) || ((errors++))
+# Derive project endpoint from project_id since azapi doesn't expose it directly
+# Pattern: https://<account-name>.services.ai.azure.com/api/projects/<project-name>
+ai_foundry_project_id=$(get_azd_value ai_foundry_project_id)
+if [[ -n "$ai_foundry_project_id" ]]; then
+    # Extract account name and project name from resource ID
+    # Format: .../accounts/<account-name>/projects/<project-name>
+    account_name=$(echo "$ai_foundry_project_id" | sed -n 's|.*/accounts/\([^/]*\)/projects/.*|\1|p')
+    project_name=$(echo "$ai_foundry_project_id" | sed -n 's|.*/projects/\([^/]*\)$|\1|p')
+    if [[ -n "$account_name" && -n "$project_name" ]]; then
+        ai_foundry_project_endpoint="https://${account_name}.services.ai.azure.com/api/projects/${project_name}"
+        set_kv "azure/ai-foundry/project-endpoint" "$ai_foundry_project_endpoint" && ((count++)) || ((errors++))
+    fi
+fi
 
 # Application Services
 cardapi_url=$(get_azd_value CARDAPI_BACKEND_URL)
@@ -196,7 +213,7 @@ fi
 # CardAPI MCP server endpoint
 cardapi_url=$(get_azd_value CARDAPI_CONTAINER_APP_URL)
 if [[ -n "$cardapi_url" ]]; then
-    add_kv "app/cardapi/mcp-url" "$cardapi_url"
+    set_kv "app/cardapi/mcp-url" "$cardapi_url"
 fi
 
 # Environment metadata

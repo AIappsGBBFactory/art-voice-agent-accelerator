@@ -217,7 +217,7 @@ task_cardapi_provision() {
 # ============================================================================
 
 task_phone_number() {
-    header "📞 Task 3: Phone Number Configuration"
+    header "📞 Task 2: Phone Number Configuration"
     
     local endpoint label
     endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT")
@@ -321,11 +321,11 @@ task_phone_number() {
 }
 
 # ============================================================================
-# Task 4: App Configuration URL Updates
+# Task 3: App Configuration URL Updates
 # ============================================================================
 
 task_update_urls() {
-    header "🌐 Task 4: App Configuration URL Updates"
+    header "🌐 Task 3: App Configuration URL Updates"
     
     local endpoint label backend_url
     endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT")
@@ -442,11 +442,11 @@ task_sync_appconfig() {
 }
 
 # ============================================================================
-# Task 6: Generate Local Development Environment File
+# Task 5: Generate Local Development Environment File
 # ============================================================================
 
 task_generate_env_local() {
-    header "🧑‍💻 Task 6: Local Development Environment"
+    header "🧑‍💻 Task 5: Local Development Environment"
     
     local setup_script="$HELPERS_DIR/local-dev-setup.sh"
     local env_file=".env.local"
@@ -487,14 +487,8 @@ task_generate_env_local() {
             log "(Auto-selecting Y in 10 seconds...)"
             local choice
             if read -t 10 -r -p "│ Update AZURE_APPCONFIG_* in .env.local? [Y/n]: " choice; then
-            log "(Auto-selecting Y in 10 seconds...)"
-            local choice
-            if read -t 10 -r -p "│ Update AZURE_APPCONFIG_* in .env.local? [Y/n]: " choice; then
                 : # Got input
             else
-                echo ""
-                info "No input received, updating App Config settings"
-                choice="Y"
                 echo ""
                 info "No input received, updating App Config settings"
                 choice="Y"
@@ -518,17 +512,15 @@ task_generate_env_local() {
     
     export AZD_LOG_IN_BOX=false
     
-    export AZD_LOG_IN_BOX=false
-    
     footer
 }
 
 # ============================================================================
-# Task 7: Enable EasyAuth (Optional)
+# Task 6: Enable EasyAuth (Optional)
 # ============================================================================
 
 task_enable_easyauth() {
-    header "🔐 Task 7: Frontend Authentication (EasyAuth)"
+    header "🔐 Task 6: Frontend Authentication (EasyAuth)"
     
     local easyauth_script="$HELPERS_DIR/enable-easyauth.sh"
     

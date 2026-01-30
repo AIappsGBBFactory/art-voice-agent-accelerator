@@ -111,6 +111,9 @@ def main():
             import warnings
             warnings.filterwarnings("ignore", message=".*CosmosDB.*")
             
+            # Allow Cosmos DB MongoDB cluster hosts for OIDC
+            os.environ.setdefault("MONGODB_OIDC_ALLOWED_HOSTS", "*.mongocluster.cosmos.azure.com")
+            
             client = MongoClient(
                 oidc_connection_string,
                 connectTimeoutMS=120000,

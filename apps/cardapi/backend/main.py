@@ -227,6 +227,9 @@ async def load_decline_codes() -> None:
             "OIDC_CALLBACK": auth_callback,
         }
         
+        # Allow Cosmos DB MongoDB cluster hosts for OIDC
+        os.environ.setdefault("MONGODB_OIDC_ALLOWED_HOSTS", "*.mongocluster.cosmos.azure.com")
+        
         # Build OIDC connection string
         oidc_connection_string = f"mongodb+srv://{cluster_name}.mongocluster.cosmos.azure.com/"
         
