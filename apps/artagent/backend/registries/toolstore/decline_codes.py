@@ -71,23 +71,23 @@ search_decline_codes_schema: dict[str, Any] = {
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# MCP server endpoint - loaded from App Configuration (set during postprovision)
-# Defaults to localhost for local development
-def get_mcp_server_url() -> str:
-    """Get the cardapi MCP server URL from app config or environment.
+# CardAPI backend endpoint - loaded from App Configuration (set during postprovision)
+# Defaults to localhost:8000 for local development (matches launch.json Card API config)
+def get_cardapi_url() -> str:
+    """Get the cardapi backend URL from app config or environment.
     
     Priority:
-    1. CARDAPI_MCP_URL environment variable (set by app config loading)
+    1. CARDAPI_URL environment variable (set by app config loading)
     2. Localhost default (for local development)
     """
-    url = os.getenv("CARDAPI_MCP_URL")
+    url = os.getenv("CARDAPI_URL")
     if url:
-        return url
-    return "http://localhost:8001"
+        return url.rstrip("/")
+    return "http://localhost:8000"
 
 
-MCP_SERVER_URL = get_mcp_server_url()
-MCP_REQUEST_TIMEOUT = 10.0  # seconds
+CARDAPI_URL = get_cardapi_url()
+CARDAPI_REQUEST_TIMEOUT = 10.0  # seconds
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -96,7 +96,7 @@ MCP_REQUEST_TIMEOUT = 10.0  # seconds
 
 
 async def lookup_decline_code(args: dict[str, Any]) -> dict[str, Any]:
-    """Look up a specific decline code via MCP server."""
+    """Look up a specific decline code via CardAPI backend."""
     code = (args.get("code") or "").strip()
 
     if not code:
@@ -108,11 +108,10 @@ async def lookup_decline_code(args: dict[str, Any]) -> dict[str, Any]:
     try:
         logger.info("Looking up decline code: %s", code)
         
-        async with httpx.AsyncClient(timeout=MCP_REQUEST_TIMEOUT) as client:
-            # Call MCP server endpoint for decline code lookup
+        async with httpx.AsyncClient(timeout=CARDAPI_REQUEST_TIMEOUT) as client:
+            # Call CardAPI backend directly
             response = await client.get(
-                f"{MCP_SERVER_URL}/tools/lookup_decline_code",
-                params={"code": code},
+                f"{CARDAPI_URL}/api/v1/codes/{code}",
             )
             response.raise_for_status()
             
@@ -126,7 +125,7 @@ async def lookup_decline_code(args: dict[str, Any]) -> dict[str, Any]:
             }
 
     except httpx.HTTPStatusError as e:
-        error_msg = f"Decline code lookup failed: {e.status_code} {e.response.text}"
+        error_msg = f"Decline code lookup failed: {e.response.status_code} {e.response.text}"
         logger.warning(error_msg)
         return {
             "success": False,
@@ -134,7 +133,7 @@ async def lookup_decline_code(args: dict[str, Any]) -> dict[str, Any]:
             "error": str(e),
         }
     except httpx.ConnectError:
-        error_msg = f"Could not connect to MCP server at {MCP_SERVER_URL}"
+        error_msg = f"Could not connect to CardAPI at {CARDAPI_URL}"
         logger.error(error_msg)
         return {
             "success": False,
@@ -164,13 +163,13 @@ async def search_decline_codes(args: dict[str, Any]) -> dict[str, Any]:
     try:
         logger.info("Searching decline codes: query=%s, type=%s", query, code_type)
         
-        params = {"query": query}
+        params: dict[str, str] = {"q": query}
         if code_type:
             params["code_type"] = code_type
         
-        async with httpx.AsyncClient(timeout=MCP_REQUEST_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=CARDAPI_REQUEST_TIMEOUT) as client:
             response = await client.get(
-                f"{MCP_SERVER_URL}/tools/search_decline_codes",
+                f"{CARDAPI_URL}/api/v1/search",
                 params=params,
             )
             response.raise_for_status()
@@ -182,12 +181,12 @@ async def search_decline_codes(args: dict[str, Any]) -> dict[str, Any]:
                 "success": True,
                 "query": query,
                 "code_type": code_type,
-                "results": data.get("results", []),
-                "count": len(data.get("results", [])),
+                "results": data.get("codes", []),
+                "count": data.get("total", 0),
             }
 
     except httpx.HTTPStatusError as e:
-        error_msg = f"Decline code search failed: {e.status_code} {e.response.text}"
+        error_msg = f"Decline code search failed: {e.response.status_code} {e.response.text}"
         logger.warning(error_msg)
         return {
             "success": False,
@@ -195,7 +194,7 @@ async def search_decline_codes(args: dict[str, Any]) -> dict[str, Any]:
             "error": str(e),
         }
     except httpx.ConnectError:
-        error_msg = f"Could not connect to MCP server at {MCP_SERVER_URL}"
+        error_msg = f"Could not connect to CardAPI at {CARDAPI_URL}"
         logger.error(error_msg)
         return {
             "success": False,

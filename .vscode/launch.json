@@ -37,7 +37,8 @@
             ],
             "jinja": true,
             "env": {
-                "PYTHONPATH": "${workspaceFolder}"
+                "PYTHONPATH": "${workspaceFolder}",
+                "CARDAPI_URL": "http://localhost:8000"
             },
             "envFile": "${workspaceFolder}/.env.local"
         },

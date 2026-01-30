@@ -332,7 +332,7 @@ Before making changes, consider:
 | Redis key structure | `MemoManager`, `ConversationManager`, all consumers |
 | Speech processing | Both orchestrators, audio queue handlers |
 | API endpoints | Frontend calls, load tests, API docs |
-| Configuration | `config/appconfig.json`, `.env`, Terraform outputs |
+| Configuration | `.env` and `.env.local`, Terraform outputs, Azure App Config |
 | Pool sizes | Performance tests, Container Apps resource limits |
 
 ---
