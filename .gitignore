@@ -434,3 +434,7 @@ provider.conf.json
 .archive
 
 runs/
+
+# CardAPI Copilot instructions
+apps/CardDeclineAPI.md
+apps/DeclineCodes.md

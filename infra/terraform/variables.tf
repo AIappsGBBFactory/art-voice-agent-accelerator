@@ -184,7 +184,7 @@ variable "model_deployments" {
       name     = "o3-mini"
       version  = "2025-01-31"
       sku_name = "DataZoneStandard"
-      capacity = 150
+      capacity = 50
     },
     {
       name     = "gpt-5.1"

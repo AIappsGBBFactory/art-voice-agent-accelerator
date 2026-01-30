@@ -153,11 +153,141 @@ trigger_config_refresh() {
 # }
 
 # ============================================================================
-# Task 2: ACS Phone Number Configuration
+# Task 1: CardAPI Data Provisioning
+# ============================================================================
+
+task_cardapi_provision() {
+    header "💾 Task 1: CardAPI Data Provisioning"
+    
+    local rg keyvault
+    rg=$(azd_get "AZURE_RESOURCE_GROUP")
+    keyvault=$(az keyvault list --resource-group "$rg" --query "[0].name" -o tsv 2>/dev/null || echo "")
+    
+    if [[ -z "$keyvault" ]]; then
+        warn "Could not find Key Vault"
+        footer
+        return 1
+    fi
+    
+    # Get OIDC connection string from Key Vault (uses Azure Managed Identity)
+    local oidc_conn_str
+    oidc_conn_str=$(az keyvault secret show --vault-name "$keyvault" --name "cosmos-entra-connection-string" --query value -o tsv 2>/dev/null || echo "")
+    
+    if [[ -z "$oidc_conn_str" ]]; then
+        warn "OIDC connection string not available in Key Vault"
+        footer
+        return 1
+    fi
+    
+    log "Connecting to Cosmos DB via Azure Identity (OIDC)..."
+    
+    # Export environment variables for provisioning script - OIDC auth path
+    export AZURE_COSMOS_CONNECTION_STRING="$oidc_conn_str"
+    export AZURE_COSMOS_DATABASE_NAME="cardapi"
+    export AZURE_COSMOS_COLLECTION_NAME="declinecodes"
+    
+    local provision_script="$(pwd)/apps/cardapi/scripts/provision_data.py"
+    if [[ ! -f "$provision_script" ]]; then
+        warn "Provisioning script not found: $provision_script"
+        footer
+        return 1
+    fi
+    
+    # Install provisioning script dependencies
+    local provision_reqs="$(pwd)/apps/cardapi/scripts/requirements.txt"
+    if [[ -f "$provision_reqs" ]]; then
+        log "Installing provisioning dependencies..."
+        pip3 install -q -r "$provision_reqs" 2>/dev/null || warn "Failed to install provisioning dependencies"
+    fi
+    
+    # Run provisioning script (prefix output with box border)
+    if python3 "$provision_script" 2>&1 | sed 's/^/│ /'; then
+        success "CardAPI data provisioned"
+    else
+        warn "CardAPI data provisioning may have failed (non-critical)"
+    fi
+    
+    # Clean up environment variables
+    unset AZURE_COSMOS_CONNECTION_STRING
+    
+    footer
+}
+
+# ============================================================================
+# Task 2: CardAPI App Configuration Setup
+# ============================================================================
+
+task_cardapi_appconfig() {
+    header "⚙️  Task 2: CardAPI App Configuration"
+    
+    local endpoint label keyvault
+    endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT" "")
+    label=$(azd_get "AZURE_ENV_NAME" "")
+    
+    if [[ -z "$endpoint" ]]; then
+        warn "AZURE_APPCONFIG_ENDPOINT not set, skipping"
+        footer
+        return 0
+    fi
+    
+    # Get Key Vault name
+    local rg
+    rg=$(azd_get "AZURE_RESOURCE_GROUP")
+    keyvault=$(az keyvault list --resource-group "$rg" --query "[0].name" -o tsv 2>/dev/null || echo "")
+    if [[ -z "$keyvault" ]]; then
+        warn "Could not find Key Vault"
+        footer
+        return 1
+    fi
+    
+    # Get Key Vault URI for creating Key Vault references
+    local kv_uri
+    kv_uri=$(az keyvault show --name "$keyvault" --query "properties.vaultUri" -o tsv 2>/dev/null || echo "")
+    if [[ -z "$kv_uri" ]]; then
+        warn "Could not determine Key Vault URI"
+        footer
+        return 1
+    fi
+    
+    # Get the Key Vault secret ID for cosmos-entra-connection-string
+    local secret_id
+    secret_id=$(az keyvault secret show \
+        --vault-name "$keyvault" \
+        --name "cosmos-entra-connection-string" \
+        --query "id" -o tsv 2>/dev/null || echo "")
+    
+    if [[ -z "$secret_id" ]]; then
+        warn "Could not get secret ID for cosmos-entra-connection-string"
+        footer
+        return 1
+    fi
+    
+    local label_arg=""
+    [[ -n "$label" ]] && label_arg="--label $label"
+    
+    # Set the Cosmos connection string in App Configuration as a Key Vault reference
+    # Use set-keyvault instead of kv set to properly create a Key Vault reference
+    if az appconfig kv set-keyvault \
+        --endpoint "$endpoint" \
+        --key "azure/cosmos/connection-string" \
+        --secret-identifier "$secret_id" \
+        $label_arg \
+        --auth-mode login \
+        --yes 2>&1 | grep -q "azure/cosmos/connection-string"; then
+        success "CardAPI Cosmos config added to App Configuration"
+    else
+        warn "Failed to set CardAPI cosmos config in App Configuration"
+    fi
+    
+    footer
+}
+
+# ============================================================================
+# Task 3: ACS Phone Number Configuration
 # ============================================================================
 
 task_phone_number() {
-    header "📞 Task 2: Phone Number Configuration"
+    header "📞 Task 3: Phone Number Configuration"
     
     local endpoint label
     endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT")
@@ -261,11 +391,11 @@ task_phone_number() {
 }
 
 # ============================================================================
-# Task 3: App Configuration URL Updates
+# Task 4: App Configuration URL Updates
 # ============================================================================
 
 task_update_urls() {
-    header "🌐 Task 3: App Configuration URL Updates"
+    header "🌐 Task 4: App Configuration URL Updates"
     
     local endpoint label backend_url
     endpoint=$(azd_get "AZURE_APPCONFIG_ENDPOINT")
@@ -347,11 +477,11 @@ show_summary() {
 }
 
 # ============================================================================
-# Task 4: Sync App Configuration Settings
+# Task 5: Sync App Configuration Settings
 # ============================================================================
 
 task_sync_appconfig() {
-    header "📦 Task 4: App Configuration Settings"
+    header "📦 Task 5: App Configuration Settings"
     
     local sync_script="$HELPERS_DIR/sync-appconfig.sh"
     local config_file="$SCRIPT_DIR/../../../config/appconfig.json"
@@ -389,11 +519,11 @@ task_sync_appconfig() {
 }
 
 # ============================================================================
-# Task 5: Generate Local Development Environment File
+# Task 6: Generate Local Development Environment File
 # ============================================================================
 
 task_generate_env_local() {
-    header "🧑‍💻 Task 5: Local Development Environment"
+    header "🧑‍💻 Task 6: Local Development Environment"
     
     local setup_script="$HELPERS_DIR/local-dev-setup.sh"
     local env_file=".env.local"
@@ -417,6 +547,9 @@ task_generate_env_local() {
         return 1
     fi
     
+    # Set box logging for all output
+    export AZD_LOG_IN_BOX=true
+    
     if [[ -f "$env_file" ]]; then
         if is_ci; then
             info "Existing .env.local found (CI mode) - updating App Config settings only"
@@ -425,10 +558,14 @@ task_generate_env_local() {
             success "Updated App Config settings in .env.local"
         else
             log "Existing .env.local found. Update App Config settings only?"
-            if read -r -p "│ Update AZURE_APPCONFIG_* in .env.local? [Y/n]: " choice; then
+            log "(Auto-selecting Y in 10 seconds...)"
+            local choice
+            if read -t 10 -r -p "│ Update AZURE_APPCONFIG_* in .env.local? [Y/n]: " choice; then
                 : # Got input
             else
-                choice="n"
+                echo ""
+                info "No input received, updating App Config settings"
+                choice="Y"
             fi
             if [[ -z "$choice" || "$choice" =~ ^[Yy]$ ]]; then
                 upsert_env_var "$env_file" "AZURE_APPCONFIG_ENDPOINT" "$appconfig_endpoint"
@@ -440,25 +577,24 @@ task_generate_env_local() {
         fi
     else
         log "Generating .env.local for local development..."
-        local prior_log_in_box="${AZD_LOG_IN_BOX:-false}"
-        AZD_LOG_IN_BOX=true
         if generate_minimal_env "$env_file"; then
             success ".env.local created"
         else
             warn "Failed to generate .env.local"
         fi
-        AZD_LOG_IN_BOX="$prior_log_in_box"
     fi
+    
+    export AZD_LOG_IN_BOX=false
     
     footer
 }
 
 # ============================================================================
-# Task 6: Enable EasyAuth (Optional)
+# Task 7: Enable EasyAuth (Optional)
 # ============================================================================
 
 task_enable_easyauth() {
-    header "🔐 Task 6: Frontend Authentication (EasyAuth)"
+    header "🔐 Task 7: Frontend Authentication (EasyAuth)"
     
     local easyauth_script="$HELPERS_DIR/enable-easyauth.sh"
     
@@ -572,7 +708,9 @@ main() {
     is_ci && info "CI/CD mode" || info "Interactive mode"
     footer
     
-    # task_cosmos_init || true
+    #task_cosmos_init || true
+    task_cardapi_provision || true
+    #task_cardapi_appconfig || true
     task_phone_number || true
     task_update_urls || true
     task_sync_appconfig || true

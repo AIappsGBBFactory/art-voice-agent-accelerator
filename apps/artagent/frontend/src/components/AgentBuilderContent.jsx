@@ -2104,7 +2104,7 @@ export default function AgentBuilderContent({
                 </Stack>
 
                 {Object.entries(toolsByCategory).map(([category, tools]) => (
-                  <Accordion key={category} defaultExpanded>
+                  <Accordion key={category} defaultExpanded={false}>
                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                       <Typography variant="subtitle2">{category}</Typography>
                       <Chip
@@ -2114,97 +2114,85 @@ export default function AgentBuilderContent({
                       />
                     </AccordionSummary>
                     <AccordionDetails>
-                      <Stack spacing={1}>
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(2, 1fr)',
+                          gap: 1,
+                        }}
+                      >
                         {tools.map((tool) => (
-                          <FormControlLabel
+                          <Box
                             key={tool.name}
-                            control={
-                              <Checkbox
-                                checked={config.tools.includes(tool.name)}
-                                onChange={() => handleToolToggle(tool.name)}
-                              />
-                            }
-                            label={
-                              <Box
+                            onClick={() => handleToolToggle(tool.name)}
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              gap: 1,
+                              p: 1,
+                              borderRadius: 1,
+                              border: '1px solid',
+                              borderColor: config.tools.includes(tool.name) ? 'primary.main' : 'divider',
+                              bgcolor: config.tools.includes(tool.name) ? 'primary.50' : 'transparent',
+                              cursor: 'pointer',
+                              '&:hover': { bgcolor: 'action.hover' },
+                              minWidth: 0,
+                            }}
+                          >
+                            <Checkbox
+                              checked={config.tools.includes(tool.name)}
+                              size="small"
+                              sx={{ p: 0, mt: 0.25 }}
+                            />
+                            <Box sx={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                              <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexWrap: 'wrap' }}>
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    fontWeight: 600,
+                                    fontSize: '0.8rem',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {tool.name}
+                                </Typography>
+                                {tool.is_handoff && (
+                                  <Chip label="handoff" size="small" color="secondary" sx={{ height: 16, fontSize: 9 }} />
+                                )}
+                              </Stack>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
                                 sx={{
-                                  display: 'flex',
-                                  alignItems: 'flex-start',
-                                  gap: 1,
-                                  width: '100%',
-                                  minWidth: 0,
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  fontSize: '0.7rem',
+                                  lineHeight: 1.3,
                                 }}
                               >
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Stack
-                                    direction="row"
-                                    alignItems="center"
-                                    spacing={1}
-                                    sx={{ flexWrap: 'wrap', minWidth: 0 }}
-                                  >
-                                    <Typography
-                                      variant="body2"
-                                      sx={{
-                                        fontWeight: 600,
-                                        minWidth: 0,
-                                        maxWidth: '100%',
-                                        overflowWrap: 'anywhere',
-                                      }}
-                                    >
-                                      {tool.name}
-                                    </Typography>
-                                    {tool.is_handoff && (
-                                      <Chip
-                                        label="handoff"
-                                        size="small"
-                                        color="secondary"
-                                        sx={{ height: 18, fontSize: 10 }}
-                                      />
-                                    )}
-                                    {(tool.tags || []).slice(0, 2).map((tag) => (
-                                      <Chip key={tag} label={tag} size="small" sx={{ height: 18, fontSize: 10 }} />
-                                    ))}
-                                  </Stack>
-                                  <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                    sx={{
-                                      display: 'block',
-                                      mt: 0.25,
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    {tool.description || 'No description available.'}
-                                  </Typography>
-                                </Box>
-                                <Tooltip title="Tool details">
-                                  <IconButton
-                                    size="small"
-                                    sx={{ flexShrink: 0, alignSelf: 'flex-start' }}
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      handleOpenToolDetails(tool);
-                                    }}
-                                  >
-                                    <InfoOutlinedIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              </Box>
-                            }
-                            sx={{
-                              alignItems: 'flex-start',
-                              width: '100%',
-                              m: 0,
-                              '& .MuiFormControlLabel-label': {
-                                flex: 1,
-                                minWidth: 0,
-                              },
-                            }}
-                          />
+                                {tool.description || 'No description available.'}
+                              </Typography>
+                            </Box>
+                            <Tooltip title="Tool details">
+                              <IconButton
+                                size="small"
+                                sx={{ p: 0.25, flexShrink: 0 }}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleOpenToolDetails(tool);
+                                }}
+                              >
+                                <InfoOutlinedIcon sx={{ fontSize: 16 }} />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
                         ))}
-                      </Stack>
+                      </Box>
                     </AccordionDetails>
                   </Accordion>
                 ))}

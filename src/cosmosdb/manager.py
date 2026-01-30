@@ -139,6 +139,7 @@ class CosmosDBMongoCoreManager:
                 auth_callback = AzureIdentityTokenCallback(credential)
                 auth_properties = {"OIDC_CALLBACK": auth_callback}
 
+
                 # Build connection string for OIDC with required parameters
                 connection_string = (
                     f"mongodb+srv://{cluster_name}.global.mongocluster.cosmos.azure.com/"

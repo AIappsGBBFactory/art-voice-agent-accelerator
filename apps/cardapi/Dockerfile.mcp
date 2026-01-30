@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Ensure shared modules (utils, etc.) are importable
+ENV PYTHONPATH="/app"
+ENV PORT=80
+
+# Copy requirements (from repo root context)
+COPY apps/cardapi/mcp_app/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy shared utils
+COPY utils/ /app/utils/
+
+# Copy MCP server
+COPY apps/cardapi/mcp_app/ /app/mcp_app/
+
+WORKDIR /app/mcp_app
+
+EXPOSE 80
+
+CMD ["sh", "-c", "python service.py"]

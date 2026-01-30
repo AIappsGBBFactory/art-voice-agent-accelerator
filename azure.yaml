@@ -28,6 +28,26 @@ services:
       platform: linux/amd64
       remoteBuild: true
 
+  cardapi-be:
+    project: .
+    host: containerapp
+    language: python
+    docker:
+      path: ./apps/cardapi/Dockerfile.backend
+      context: .
+      platform: linux/amd64
+      remoteBuild: true
+
+  cardapi-mcp:
+    project: .
+    host: containerapp
+    language: python
+    docker:
+      path: ./apps/cardapi/Dockerfile.mcp
+      context: .
+      platform: linux/amd64
+      remoteBuild: true
+
 
 hooks:
   preprovision:

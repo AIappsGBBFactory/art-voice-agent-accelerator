@@ -147,8 +147,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Module | Description |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| test_generators.py | Turn templates & generators |" >> $GITHUB_STEP_SUMMARY
-          echo "| test_hooks.py | Evaluation hooks system |" >> $GITHUB_STEP_SUMMARY
           echo "| test_metrics.py | Pluggable metrics |" >> $GITHUB_STEP_SUMMARY
           echo "| test_scenarios.py | End-to-end scenario tests |" >> $GITHUB_STEP_SUMMARY
 
@@ -285,19 +283,12 @@ jobs:
               # Core
               EventRecorder,
               MetricsScorer,
-              HookRegistry,
           )
           
           # Import additional schemas from submodule
           from tests.evaluation.schemas import SessionAgentConfig
           
           print('✅ All module imports successful')
-          print('')
-          
-          # Verify registries can be instantiated
-          hook_registry = HookRegistry()
-          print(f'✅ HookRegistry created')
-          
           print('')
           print('🎉 All module integrations verified!')
           "
@@ -313,7 +304,6 @@ jobs:
           echo "| Module | Components |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|------------|" >> $GITHUB_STEP_SUMMARY
           echo "| schemas | ModelProfile, TurnEvent, ScenarioExpectations |" >> $GITHUB_STEP_SUMMARY
-          echo "| hooks | HookRegistry |" >> $GITHUB_STEP_SUMMARY
           echo "| core | EventRecorder, MetricsScorer |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
@@ -342,9 +332,8 @@ jobs:
           echo "## Framework Components Tested" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Schemas**: Pydantic models for configs, events, results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Hooks**: Extensible evaluation hooks (on_turn_complete, pre_score)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Generators**: Turn templates and dynamic content generation" >> $GITHUB_STEP_SUMMARY
           echo "- **Metrics**: Pluggable metrics (tool precision, latency, cost, etc.)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scenarios**: End-to-end scenario validation" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📖 See [Evaluation Framework Docs](https://azure-samples.github.io/art-voice-agent-accelerator/testing/model-evaluation/) for details." >> $GITHUB_STEP_SUMMARY
 

@@ -186,5 +186,6 @@ Traced operations include:
 ## Related Documentation
 
 - [Streaming Modes](README.md) — Mode selection and comparison
+- [Pricing & Deployment Options](pricing-and-deployment.md) — Cost analysis, containers, breakeven
 - [ACS Call Flows](../acs/README.md) — Telephony integration
 - [Session Management](../data/README.md) — State persistence

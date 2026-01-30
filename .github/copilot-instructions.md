@@ -83,6 +83,38 @@ Now write the code:
 
 ---
 
+## 🎫 Issue Tracking with bd
+
+**CRITICAL**: This project uses **bd** (beads) for ALL task tracking. Do NOT create markdown TODO lists.
+
+### Essential Commands
+
+```bash
+# Find work
+bd ready --json                    # Unblocked issues
+bd stale --days 30 --json          # Forgotten issues
+
+# Create and manage (ALWAYS include --description)
+bd create "Title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
+bd update <id> --status in_progress --json
+bd close <id> --reason "Done" --json
+
+# Search
+bd list --status open --priority 1 --json
+bd show <id> --json
+
+# Sync (CRITICAL at end of session!)
+bd sync  # Force immediate export/commit/push
+```
+
+### Git Workflow
+
+- Always commit `.beads/issues.jsonl` with code changes
+- Run `bd sync` at end of work sessions
+- Install git hooks: `bd hooks install` (ensures DB ↔ JSONL consistency)
+
+---
+
 ## 📚 Quick Reference
 
 For detailed guidance, see the instruction files:

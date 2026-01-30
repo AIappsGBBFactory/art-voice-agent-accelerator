@@ -1728,6 +1728,12 @@ class CascadeOrchestratorAdapter:
                 output_tokens = stream_usage.get("output_tokens", 0)
                 
                 # Fallback to estimate if stream didn't provide usage
+                if input_tokens == 0 and messages:
+                    # Estimate ~4 chars per token for input messages
+                    total_chars = sum(len(str(m.get("content", ""))) for m in messages if isinstance(m, dict))
+                    input_tokens = max(total_chars // 4, 1)
+                    logger.debug("Using estimated input_tokens=%d (stream usage not available)", input_tokens)
+                
                 if output_tokens == 0 and response_text:
                     output_tokens = len(response_text) // 4
                     logger.debug("Using estimated output_tokens=%d (stream usage not available)", output_tokens)

@@ -1165,6 +1165,9 @@ function RealTimeVoiceApp() {
   // Throttle hot-path UI updates for streaming text
   const lastSttPartialUpdateRef = useRef(0);
   const lastAssistantStreamUpdateRef = useRef(0);
+  // Buffer to accumulate streaming text between throttled UI updates
+  // This prevents dropped deltas when VoiceLive sends rapid character-level updates
+  const assistantStreamBufferRef = useRef({ turnId: null, text: "" });
 
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
@@ -1844,6 +1847,7 @@ function RealTimeVoiceApp() {
       )}${emailParam}&scenario=${encodeURIComponent(currentScenario)}`;
       resetMetrics(sessionId);
       assistantStreamGenerationRef.current = 0;
+      assistantStreamBufferRef.current = { turnId: null, text: "" };
       terminationReasonRef.current = null;
       resampleWarningRef.current = false;
       audioInitFailedRef.current = false;
@@ -2952,6 +2956,9 @@ function RealTimeVoiceApp() {
       }
 
       if (type === "assistant_cancelled") {
+        // Clear streaming buffer when response is cancelled
+        assistantStreamBufferRef.current = { turnId: null, text: "" };
+        
         const turnId =
           payload.turn_id ||
           payload.turnId ||
@@ -2998,19 +3005,30 @@ function RealTimeVoiceApp() {
           payload.responseId ||
           null;
 
+        // Always accumulate streaming text into buffer (prevents dropped deltas)
+        // Reset buffer if this is a new turn/response
+        const buffer = assistantStreamBufferRef.current;
+        if (buffer.turnId !== turnId) {
+          buffer.turnId = turnId;
+          buffer.text = txt; // Start fresh for new turn
+        } else {
+          buffer.text += txt; // Accumulate for same turn
+        }
+
         if (shouldUpdateUi) {
           lastAssistantStreamUpdateRef.current = now;
+          // Use accumulated buffer text instead of just current delta
+          const accumulatedText = buffer.text;
+          
           if (turnId) {
             updateTurnMessage(
               turnId,
-              (current) => {
-                const previousText =
-                  current?.streamGeneration === streamGeneration
-                    ? current?.text ?? ""
-                    : "";
+              () => {
+                // For streaming, we replace with full accumulated text (not append)
+                // because the buffer already contains all deltas since last update
                 return {
                   speaker: streamingSpeaker,
-                  text: `${previousText}${txt}`,
+                  text: accumulatedText,
                   streaming: true,
                   streamGeneration,
                   cancelled: false,
@@ -3020,7 +3038,7 @@ function RealTimeVoiceApp() {
               {
                 initial: () => ({
                   speaker: streamingSpeaker,
-                  text: txt,
+                  text: accumulatedText,
                   streaming: true,
                   streamGeneration,
                   turnId,
@@ -3040,7 +3058,7 @@ function RealTimeVoiceApp() {
                   i === prev.length - 1
                     ? {
                         ...m,
-                        text: m.text + txt,
+                        text: accumulatedText,
                         cancelled: false,
                         cancelReason: undefined,
                       }
@@ -3051,7 +3069,7 @@ function RealTimeVoiceApp() {
                 ...prev,
                 {
                   speaker: streamingSpeaker,
-                  text: txt,
+                  text: accumulatedText,
                   streaming: true,
                   streamGeneration,
                   cancelled: false,
@@ -3068,6 +3086,9 @@ function RealTimeVoiceApp() {
       }
 
       if (msgType === "assistant" || msgType === "status" || speaker === "Concierge") {
+        // Clear streaming buffer when final message arrives
+        assistantStreamBufferRef.current = { turnId: null, text: "" };
+        
         if (msgType === "status") {
           const normalizedStatus = (txt || "").toLowerCase();
           if (
@@ -3693,119 +3714,128 @@ function RealTimeVoiceApp() {
                 minWidth: '200px',
                 zIndex: 1400,
               }}>
-                {/* Built-in Scenarios */}
-                <div style={{
-                  padding: '4px 8px 6px',
-                  fontSize: '10px',
-                  fontWeight: '600',
-                  color: '#94a3b8',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px',
-                }}>
-                  Industry Templates
-                </div>
-                {[
-                  { id: 'banking', icon: '🏦', label: 'Banking' },
-                  { id: 'insurance', icon: '🛡️', label: 'Insurance' },
-                ].map(({ id, icon, label }) => {
-                  // Check active state - match both direct id and custom_id formats
-                  const currentScenario = getSessionScenario();
-                  const isActive = currentScenario === id || currentScenario === `custom_${id}`;
-                  return (
-                  <button
-                    key={id}
-                    onClick={async () => {
-                      let templateStartAgent = null;
-                      // Apply industry template to session on backend
-                      try {
-                        const response = await fetch(
-                          `${API_BASE_URL}/api/v1/scenario-builder/session/${sessionId}/apply-template?template_id=${encodeURIComponent(id)}`,
-                          { method: 'POST' }
-                        );
-                        if (response.ok) {
-                          const data = await response.json();
-                          templateStartAgent = data?.scenario?.start_agent || null;
-                        }
-                        appendLog(`${icon} Applied ${label} template to session ${sessionId}`);
-                      } catch (err) {
-                        appendLog(`Failed to apply template: ${err.message}`);
-                      }
-                      
-                      // Use plain id (not custom_ prefix) for industry templates
-                      setSessionScenario(id);
-                      if (templateStartAgent) {
-                        currentAgentRef.current = templateStartAgent;
-                        setSelectedAgentName(templateStartAgent);
-                      }
-                      setShowScenarioMenu(false);
-                      appendLog(`${icon} Switched to ${label} for session ${sessionId}`);
-                      
-                      if (callActive) {
-                        // ACS mode: restart the call with new scenario
-                        appendLog(`🔄 Restarting call with ${label} scenario...`);
-                        terminateACSCall();
-                        setTimeout(() => {
-                          handlePhoneButtonClick();
-                        }, 500);
-                      } else if (recording) {
-                        // Browser recording mode: reconnect WebSocket with new scenario
-                        appendLog(`🔄 Reconnecting with ${label} scenario...`);
-                        handleMicToggle(); // Stop current recording
-                        setTimeout(() => {
-                          handleMicToggle(); // Start new recording with new scenario
-                        }, 500);
-                      }
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '10px 14px',
-                      borderRadius: '10px',
-                      border: 'none',
-                      background: isActive 
-                        ? 'linear-gradient(135deg, rgba(99,102,241,0.1), rgba(79,70,229,0.08))' 
-                        : 'transparent',
-                      color: isActive ? '#4f46e5' : '#64748b',
-                      fontSize: '13px',
-                      fontWeight: isActive ? '600' : '500',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                      textAlign: 'left',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActive) {
-                        e.currentTarget.style.background = 'rgba(148,163,184,0.06)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActive) {
-                        e.currentTarget.style.background = 'transparent';
-                      }
-                    }}
-                  >
-                    <span style={{ fontSize: '16px' }}>{icon}</span>
-                    <span>{label}</span>
-                    {isActive && (
-                      <span style={{ marginLeft: 'auto', fontSize: '14px', color: '#4f46e5' }}>✓</span>
-                    )}
-                  </button>
-                );
-                })}
+                {/* Built-in Scenarios (dynamically loaded from backend) */}
+                {(sessionScenarioConfig?.builtin_scenarios || []).length > 0 && (
+                  <>
+                    <div style={{
+                      padding: '4px 8px 6px',
+                      fontSize: '10px',
+                      fontWeight: '600',
+                      color: '#94a3b8',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      Industry Templates
+                    </div>
+                    {(sessionScenarioConfig?.builtin_scenarios || []).map((scenario) => {
+                      const id = scenario.name?.toLowerCase().replace(/\s+/g, '_') || 'unknown';
+                      const icon = scenario.icon || '🎭';
+                      const label = scenario.name || 'Scenario';
+                      // Check active state - only use frontend state, not backend is_active flag
+                      const currentScenario = getSessionScenario();
+                      const isActive = currentScenario === id || currentScenario === `custom_${id}`;
+                      return (
+                        <button
+                          key={id}
+                          onClick={async () => {
+                            let templateStartAgent = scenario.start_agent || null;
+                            // Apply industry template to session on backend
+                            try {
+                              const response = await fetch(
+                                `${API_BASE_URL}/api/v1/scenario-builder/session/${sessionId}/apply-template?template_id=${encodeURIComponent(id)}`,
+                                { method: 'POST' }
+                              );
+                              if (response.ok) {
+                                const data = await response.json();
+                                templateStartAgent = data?.scenario?.start_agent || templateStartAgent;
+                              }
+                              appendLog(`${icon} Applied ${label} template to session ${sessionId}`);
+                            } catch (err) {
+                              appendLog(`Failed to apply template: ${err.message}`);
+                            }
+                            
+                            // Use plain id (not custom_ prefix) for industry templates
+                            setSessionScenario(id);
+                            if (templateStartAgent) {
+                              currentAgentRef.current = templateStartAgent;
+                              setSelectedAgentName(templateStartAgent);
+                            }
+                            setShowScenarioMenu(false);
+                            appendLog(`${icon} Switched to ${label} for session ${sessionId}`);
+                            
+                            if (callActive) {
+                              // ACS mode: restart the call with new scenario
+                              appendLog(`🔄 Restarting call with ${label} scenario...`);
+                              terminateACSCall();
+                              setTimeout(() => {
+                                handlePhoneButtonClick();
+                              }, 500);
+                            } else if (recording) {
+                              // Browser recording mode: reconnect WebSocket with new scenario
+                              appendLog(`🔄 Reconnecting with ${label} scenario...`);
+                              handleMicToggle(); // Stop current recording
+                              setTimeout(() => {
+                                handleMicToggle(); // Start new recording with new scenario
+                              }, 500);
+                            }
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            borderRadius: '10px',
+                            border: 'none',
+                            background: isActive 
+                              ? 'linear-gradient(135deg, rgba(99,102,241,0.1), rgba(79,70,229,0.08))' 
+                              : 'transparent',
+                            color: isActive ? '#4f46e5' : '#64748b',
+                            fontSize: '13px',
+                            fontWeight: isActive ? '600' : '500',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                            textAlign: 'left',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isActive) {
+                              e.currentTarget.style.background = 'rgba(148,163,184,0.06)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isActive) {
+                              e.currentTarget.style.background = 'transparent';
+                            }
+                          }}
+                        >
+                          <span style={{ fontSize: '16px' }}>{icon}</span>
+                          <span>{label}</span>
+                          {isActive && (
+                            <span style={{ marginLeft: 'auto', fontSize: '14px', color: '#4f46e5' }}>✓</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
 
-                {/* Custom Scenarios (show all custom scenarios for the session) */}
-                {sessionScenarioConfig?.scenarios?.length > 0 && (() => {
-                  // Industry template names that should not appear in custom scenarios
-                  const industryTemplateNames = new Set(['banking', 'insurance', 'default']);
-                  // Deduplicate scenarios by name (case-insensitive), keeping latest version
-                  // Also filter out scenarios that match industry template names
+                {/* Custom Scenarios (show only user-modified scenarios, not duplicates of industry templates) */}
+                {(() => {
+                  // Use custom_scenarios array directly (backend already separates builtin vs custom)
+                  const customScenarios = sessionScenarioConfig?.custom_scenarios || [];
+                  // Get builtin template names to filter them out
+                  const builtinNames = new Set(
+                    (sessionScenarioConfig?.builtin_scenarios || []).map(
+                      (s) => s.name?.toLowerCase()
+                    )
+                  );
+                  // Deduplicate by name (case-insensitive) and exclude scenarios matching builtin templates
                   const seenNames = new Set();
-                  const uniqueScenarios = sessionScenarioConfig.scenarios.filter((scenario) => {
+                  const uniqueScenarios = customScenarios.filter((scenario) => {
                     const normalizedName = scenario.name?.toLowerCase();
                     if (!normalizedName || seenNames.has(normalizedName)) return false;
-                    // Skip scenarios that match industry template names (they belong in that section)
-                    if (industryTemplateNames.has(normalizedName)) return false;
+                    // Exclude scenarios that match builtin template names
+                    if (builtinNames.has(normalizedName)) return false;
                     seenNames.add(normalizedName);
                     return true;
                   });
@@ -3944,7 +3974,7 @@ function RealTimeVoiceApp() {
                   }}
                   style={{
                     width: '100%',
-                    marginTop: sessionScenarioConfig?.scenarios?.length > 0 ? '10px' : '6px',
+                    marginTop: sessionScenarioConfig?.custom_scenarios?.length > 0 ? '10px' : '6px',
                     padding: '10px 14px',
                     borderRadius: '10px',
                     border: '1px dashed rgba(59,130,246,0.35)',
@@ -4402,6 +4432,7 @@ function RealTimeVoiceApp() {
       coreMemory={sessionCoreMemory}
       sessionMeta={sessionMetadata}
       sessionMetrics={sessionMetrics}
+      scenarioConfig={sessionScenarioConfig}
     />
     <AgentBuilder
       open={showAgentBuilder}
@@ -4496,10 +4527,10 @@ function RealTimeVoiceApp() {
       initialMode={builderInitialMode}
       sessionId={sessionId}
       sessionProfile={activeSessionProfile}
-      scenarioEditMode={sessionScenarioConfig?.scenarios?.length > 0}
+      scenarioEditMode={sessionScenarioConfig?.custom_scenarios?.length > 0}
       existingScenarioConfig={
-        sessionScenarioConfig?.scenarios?.find(s => s.is_active) || 
-        sessionScenarioConfig?.scenarios?.[0] || 
+        sessionScenarioConfig?.custom_scenarios?.find(s => s.is_active) || 
+        sessionScenarioConfig?.custom_scenarios?.[0] || 
         null
       }
       onAgentCreated={(agentConfig) => {

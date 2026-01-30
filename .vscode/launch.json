@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         { // Added React Debug Configuration
-            "name": "[RT Agent] React App: Browser Debug",
+            "name": "[ART Agent] React App: Browser Debug",
             "type": "msedge", // or "chrome"
             "request": "launch",
             "url": "http://localhost:5173", // Ensure this matches your Vite dev server port
@@ -14,31 +14,64 @@
             "sourceMapPathOverrides": {
             "webpack:///src/*": "${webRoot}/src/*",
             "webpack:///*": "${webRoot}/*"
-            }
+            },
+            "preLaunchTask": "Start Frontend Dev Server"
         },
 
         {
-            "name": "[RT Agent] Python Debugger: FastAPI",
+            "name": "[ART Agent] Python Debugger: FastAPI",
             "type": "debugpy",
             "request": "launch",
             "module": "uvicorn",
             "python": "${command:python.interpreterPath}",
             "args": [
-            "apps.artagent.backend.main:app",
-            // Watch only the app backend directory for reloads so changes under tests/ won't trigger reloads
-            "--reload",
-            "--reload-dir",
-            "${workspaceFolder}/apps/artagent/backend",
-            "--port",
-            "8010"
-            // "--log-level",
-            // "debug"
+                "apps.artagent.backend.main:app",
+                // Watch only the app backend directory for reloads so changes under tests/ won't trigger reloads
+                "--reload",
+                "--reload-dir",
+                "${workspaceFolder}/apps/artagent/backend",
+                "--port",
+                "8010"
+                // "--log-level",
+                // "debug"
             ],
             "jinja": true,
             "env": {
-            "PYTHONPATH": "${workspaceFolder}"
+                "PYTHONPATH": "${workspaceFolder}"
             },
             "envFile": "${workspaceFolder}/.env.local"
         },
+
+        {
+            "name": "[Card API] Python Debugger: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "python": "${command:python.interpreterPath}",
+            "args": [
+                "apps.cardapi.backend.main:app",
+                "--reload",
+                "--reload-dir",
+                "${workspaceFolder}/apps/cardapi/backend",
+                "--port",
+                "8000"
+            ],
+            "jinja": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+            "envFile": "${workspaceFolder}/.env.local"
+        },
+    ],
+    "compounds": [
+        {
+            "name": "[All] ART Agent + Card API",
+            "configurations": [
+                "[ART Agent] React App: Browser Debug"
+                "[ART Agent] Python Debugger: FastAPI",
+                "[Card API] Python Debugger: FastAPI",
+            ],
+            "stopAll": true
+        }
     ]
 }

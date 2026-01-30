@@ -2422,10 +2422,11 @@ export default function ScenarioBuilder({
             const sessionData = await sessionResponse.json();
             
             // Add session-custom scenarios first (marked as custom)
-            // Deduplicate by name (case-insensitive) to avoid duplicates
-            if (sessionData.scenarios && sessionData.scenarios.length > 0) {
+            // Use custom_scenarios array (backend separates builtin vs custom)
+            const customScenarios = sessionData.custom_scenarios || [];
+            if (customScenarios.length > 0) {
               const seenNames = new Set();
-              const uniqueScenarios = sessionData.scenarios.filter((scenario) => {
+              const uniqueScenarios = customScenarios.filter((scenario) => {
                 const normalizedName = scenario.name?.toLowerCase();
                 if (!normalizedName || seenNames.has(normalizedName)) return false;
                 seenNames.add(normalizedName);

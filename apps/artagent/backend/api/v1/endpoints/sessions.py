@@ -793,7 +793,7 @@ async def get_session_details(
         except Exception as e:
             logger.warning(f"Failed to fetch additional configs for {session_id}: {e}")
 
-        logger.info(f"Retrieved detailed session data for {session_id}")
+        logger.debug(f"Retrieved detailed session data for {session_id}")
 
         return SessionDetailResponse(**response_data)
 
