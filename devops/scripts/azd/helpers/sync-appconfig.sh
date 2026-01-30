@@ -192,6 +192,13 @@ if [[ -n "$cardapi_url" ]]; then
     set_kv "app/cardapi/url" "$cardapi_url" && ((count++)) || ((errors++))
 fi
 
+# Application Services
+# CardAPI MCP server endpoint
+cardapi_url=$(get_azd_value CARDAPI_CONTAINER_APP_URL)
+if [[ -n "$cardapi_url" ]]; then
+    add_kv "app/cardapi/mcp-url" "$cardapi_url"
+fi
+
 # Environment metadata
 set_kv "app/environment" "$(get_azd_value AZURE_ENV_NAME)" && ((count++)) || ((errors++))
 
