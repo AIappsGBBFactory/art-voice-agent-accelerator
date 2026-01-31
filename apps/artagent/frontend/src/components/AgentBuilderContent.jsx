@@ -78,6 +78,10 @@ import BusinessIcon from '@mui/icons-material/Business';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import BadgeIcon from '@mui/icons-material/Badge';
 import InsightsIcon from '@mui/icons-material/Insights';
+import AddIcon from '@mui/icons-material/Add';
+import LinkIcon from '@mui/icons-material/Link';
+import LinkOffIcon from '@mui/icons-material/LinkOff';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
@@ -1019,6 +1023,18 @@ export default function AgentBuilderContent({
   const [showExportInstructions, setShowExportInstructions] = useState(false);
   const [exportedYaml, setExportedYaml] = useState('');
 
+  // MCP Server Management state
+  const [mcpServers, setMcpServers] = useState([]);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [showAddMcpDialog, setShowAddMcpDialog] = useState(false);
+  const [mcpTestResult, setMcpTestResult] = useState(null);
+  const [newMcpServer, setNewMcpServer] = useState({
+    name: '',
+    url: '',
+    transport: 'sse',
+    timeout: 30,
+  });
+
   // Agent configuration state
   const [config, setConfig] = useState({
     name: 'Custom Agent',
@@ -1228,6 +1244,107 @@ export default function AgentBuilderContent({
     }
   }, [sessionId, editMode]);
 
+  // MCP Server Management functions
+  const fetchMcpServers = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/mcp/servers`);
+      if (response.ok) {
+        const data = await response.json();
+        setMcpServers(data.servers || []);
+      }
+    } catch (err) {
+      logger.error('Failed to fetch MCP servers:', err);
+    }
+  }, []);
+
+  const handleTestMcpConnection = useCallback(async () => {
+    if (!newMcpServer.name || !newMcpServer.url) {
+      setError('Please enter server name and URL');
+      return;
+    }
+    setMcpLoading(true);
+    setMcpTestResult(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/mcp/servers/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newMcpServer),
+      });
+      const data = await response.json();
+      setMcpTestResult(data);
+      if (data.connected && data.tools_count > 0) {
+        setSuccess(`Connected! Found ${data.tools_count} tools`);
+      } else if (data.connected) {
+        setSuccess('Connected, but no tools discovered');
+      } else {
+        setError(data.error || 'Connection failed');
+      }
+    } catch (err) {
+      setError(`Connection test failed: ${err.message}`);
+    } finally {
+      setMcpLoading(false);
+      setTimeout(() => { setSuccess(null); setError(null); }, 3000);
+    }
+  }, [newMcpServer]);
+
+  const handleAddMcpServer = useCallback(async () => {
+    if (!newMcpServer.name || !newMcpServer.url) {
+      setError('Please enter server name and URL');
+      return;
+    }
+    setMcpLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/mcp/servers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newMcpServer),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSuccess(`MCP server "${newMcpServer.name}" added with ${data.server?.tools_count || 0} tools`);
+        setShowAddMcpDialog(false);
+        setNewMcpServer({ name: '', url: '', transport: 'sse', timeout: 30 });
+        setMcpTestResult(null);
+        // Refresh servers and tools
+        await Promise.all([fetchMcpServers(), fetchAvailableTools()]);
+      } else {
+        const errData = await response.json();
+        setError(errData.detail || 'Failed to add MCP server');
+      }
+    } catch (err) {
+      setError(`Failed to add MCP server: ${err.message}`);
+    } finally {
+      setMcpLoading(false);
+      setTimeout(() => { setSuccess(null); setError(null); }, 3000);
+    }
+  }, [newMcpServer, fetchMcpServers, fetchAvailableTools]);
+
+  const handleRemoveMcpServer = useCallback(async (serverName) => {
+    if (!window.confirm(`Remove MCP server "${serverName}" and unregister its tools?`)) {
+      return;
+    }
+    setMcpLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/mcp/servers/${serverName}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSuccess(`Removed MCP server "${serverName}" and ${data.tools_removed || 0} tools`);
+        // Refresh servers and tools
+        await Promise.all([fetchMcpServers(), fetchAvailableTools()]);
+      } else {
+        const errData = await response.json();
+        setError(errData.detail || 'Failed to remove MCP server');
+      }
+    } catch (err) {
+      setError(`Failed to remove MCP server: ${err.message}`);
+    } finally {
+      setMcpLoading(false);
+      setTimeout(() => { setSuccess(null); setError(null); }, 3000);
+    }
+  }, [fetchMcpServers, fetchAvailableTools]);
+
   useEffect(() => {
     setLoading(true);
     Promise.all([
@@ -1235,8 +1352,9 @@ export default function AgentBuilderContent({
       fetchAvailableVoices(),
       fetchAvailableTemplates(),
       fetchExistingConfig(),
+      fetchMcpServers(),
     ]).finally(() => setLoading(false));
-  }, [fetchAvailableTools, fetchAvailableVoices, fetchAvailableTemplates, fetchExistingConfig]);
+  }, [fetchAvailableTools, fetchAvailableVoices, fetchAvailableTemplates, fetchExistingConfig, fetchMcpServers]);
 
   // Apply existing config
   useEffect(() => {

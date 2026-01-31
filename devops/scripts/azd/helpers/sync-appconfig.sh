@@ -203,14 +203,7 @@ if [[ -n "$ai_foundry_project_id" ]]; then
     fi
 fi
 
-# Application Services
-cardapi_url=$(get_azd_value CARDAPI_BACKEND_URL)
-if [[ -n "$cardapi_url" ]]; then
-    set_kv "app/cardapi/url" "$cardapi_url" && ((count++)) || ((errors++))
-fi
-
-# Application Services
-# CardAPI MCP server endpoint
+# CardAPI MCP server endpoint (self-contained, direct Cosmos DB access)
 cardapi_url=$(get_azd_value CARDAPI_CONTAINER_APP_URL)
 if [[ -n "$cardapi_url" ]]; then
     set_kv "app/cardapi/mcp-url" "$cardapi_url"
