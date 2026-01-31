@@ -6,17 +6,23 @@ REST endpoints for dynamically managing MCP (Model Context Protocol) servers
 at runtime. Allows users to connect to new MCP servers, discover their tools,
 and make those tools available to agents.
 
+Supports OAuth/OBO authentication flows for secured MCP servers.
+
 Endpoints:
-    GET  /api/v1/mcp/servers         - List configured MCP servers with status
-    POST /api/v1/mcp/servers         - Add new MCP server connection
-    POST /api/v1/mcp/servers/test    - Test connection and discover tools
-    DELETE /api/v1/mcp/servers/{name} - Remove server and unregister its tools
+    GET  /api/v1/mcp/servers              - List configured MCP servers with status
+    POST /api/v1/mcp/servers              - Add new MCP server connection
+    POST /api/v1/mcp/servers/test         - Test connection and discover tools
+    DELETE /api/v1/mcp/servers/{name}     - Remove server and unregister its tools
+    POST /api/v1/mcp/oauth/start          - Start OAuth flow for an MCP server
+    POST /api/v1/mcp/oauth/callback       - Complete OAuth flow (exchange code for token)
 """
 
 from __future__ import annotations
 
+import secrets
 import time
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -49,13 +55,26 @@ router = APIRouter()
 # IN-MEMORY RUNTIME SERVER REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
 # Runtime-added MCP servers (not from environment variables)
-# Key: server name, Value: MCPServerConfig
-_RUNTIME_MCP_SERVERS: dict[str, MCPServerConfig] = {}
+# Key: server name, Value: dict with config, headers, and oauth tokens
+_RUNTIME_MCP_SERVERS: dict[str, dict[str, Any]] = {}
+
+# Pending OAuth states (state -> {name, redirect_uri, code_verifier, ...})
+_OAUTH_PENDING_STATES: dict[str, dict[str, Any]] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # REQUEST/RESPONSE SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+class OAuthConfig(BaseModel):
+    """OAuth configuration for an MCP server."""
+
+    client_id: str = Field(..., description="OAuth client ID")
+    auth_url: str = Field(..., description="Authorization endpoint URL")
+    token_url: str = Field(..., description="Token endpoint URL")
+    scope: str = Field(default="", description="OAuth scopes (space-separated)")
+    client_secret: str | None = Field(default=None, description="Client secret (if required)")
 
 
 class MCPServerRequest(BaseModel):
@@ -82,6 +101,18 @@ class MCPServerRequest(BaseModel):
         le=120.0,
         description="Request timeout in seconds",
     )
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Custom HTTP headers (e.g., Authorization, Accept). Supports OBO tokens.",
+    )
+    auth_token: str | None = Field(
+        default=None,
+        description="Bearer token for Authorization header (convenience field, merged into headers)",
+    )
+    oauth: OAuthConfig | None = Field(
+        default=None,
+        description="OAuth configuration for servers requiring OAuth authentication",
+    )
 
 
 class MCPServerInfo(BaseModel):
@@ -96,6 +127,7 @@ class MCPServerInfo(BaseModel):
     tool_names: list[str]
     error: str | None = None
     source: str  # "environment" or "runtime"
+    has_auth: bool = False  # Whether auth headers are configured
 
 
 class MCPToolInfo(BaseModel):
@@ -120,6 +152,38 @@ class MCPTestResponse(BaseModel):
     response_time_ms: float
 
 
+class OAuthStartRequest(BaseModel):
+    """Request to start OAuth flow for an MCP server."""
+
+    name: str = Field(..., description="MCP server name")
+    url: str = Field(..., description="MCP server URL")
+    oauth: OAuthConfig = Field(..., description="OAuth configuration")
+    redirect_uri: str = Field(..., description="URI to redirect after OAuth completes")
+
+
+class OAuthStartResponse(BaseModel):
+    """Response containing the OAuth authorization URL."""
+
+    auth_url: str = Field(..., description="Full authorization URL to redirect user to")
+    state: str = Field(..., description="State parameter for CSRF protection")
+
+
+class OAuthCallbackRequest(BaseModel):
+    """Request to complete OAuth flow with auth code."""
+
+    code: str = Field(..., description="Authorization code from OAuth callback")
+    state: str = Field(..., description="State parameter from OAuth callback")
+
+
+class OAuthCallbackResponse(BaseModel):
+    """Response from OAuth callback - server is now authenticated."""
+
+    success: bool
+    server_name: str
+    message: str
+    has_token: bool = False
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -137,22 +201,37 @@ def _get_all_servers() -> dict[str, dict[str, Any]]:
     # Environment-configured servers
     for server_config in get_enabled_mcp_servers():
         name = server_config["name"]
-        servers[name] = {**server_config, "source": "environment"}
+        servers[name] = {**server_config, "source": "environment", "headers": {}}
 
     # Runtime-added servers
     for name, config in _RUNTIME_MCP_SERVERS.items():
         servers[name] = {
-            "name": config.name,
-            "url": config.url,
-            "transport": config.transport.value if hasattr(config.transport, 'value') else str(config.transport),
-            "timeout": config.timeout,
+            "name": config["name"],
+            "url": config["url"],
+            "transport": config["transport"],
+            "timeout": config["timeout"],
+            "headers": config.get("headers", {}),
             "source": "runtime",
         }
 
     return servers
 
 
-async def _check_server_health(url: str, timeout: float = 5.0) -> tuple[bool, dict[str, Any] | None, str | None]:
+def _merge_auth_headers(headers: dict[str, str], auth_token: str | None) -> dict[str, str]:
+    """Merge explicit headers with auth_token convenience field."""
+    merged = dict(headers) if headers else {}
+    if auth_token:
+        # Only set if not already present in headers
+        if "Authorization" not in merged and "authorization" not in merged:
+            merged["Authorization"] = f"Bearer {auth_token}"
+    return merged
+
+
+async def _check_server_health(
+    url: str,
+    timeout: float = 5.0,
+    headers: dict[str, str] | None = None,
+) -> tuple[bool, dict[str, Any] | None, str | None]:
     """
     Check health of an MCP server.
 
@@ -160,9 +239,10 @@ async def _check_server_health(url: str, timeout: float = 5.0) -> tuple[bool, di
         Tuple of (is_healthy, health_data, error_message)
     """
     health_url = f"{url.rstrip('/')}/health"
+    request_headers = headers or {}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(health_url)
+            response = await client.get(health_url, headers=request_headers)
             if response.status_code == 200:
                 try:
                     data = response.json()
@@ -184,6 +264,7 @@ async def _discover_and_register_tools(
     url: str,
     transport: str,
     timeout: float,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, list[str], str | None]:
     """
     Connect to MCP server, discover tools, and register them.
@@ -197,6 +278,7 @@ async def _discover_and_register_tools(
             url=url,
             transport=MCPTransport(transport),
             timeout=timeout,
+            headers=headers or {},
         )
         session = MCPClientSession(config)
 
@@ -212,23 +294,43 @@ async def _discover_and_register_tools(
             prefixed_name = f"{name}_{tool_info.name}"
             tool_names.append(prefixed_name)
 
-            # Create executor that calls the MCP server
+            # Create executor that calls the MCP server with auth headers
             original_name = tool_info.name
             server_url = url
             server_timeout = timeout
+            server_headers = dict(headers) if headers else {}
 
-            def make_executor(tool_original_name: str, mcp_url: str, mcp_timeout: float):
+            def make_executor(
+                tool_original_name: str,
+                mcp_url: str,
+                mcp_timeout: float,
+                mcp_headers: dict[str, str],
+            ):
                 async def executor(args: dict) -> dict:
-                    """Execute MCP tool via HTTP endpoint."""
+                    """Execute MCP tool via HTTP endpoint with authentication."""
                     tool_endpoint = f"{mcp_url.rstrip('/')}/tools/{tool_original_name}"
                     try:
                         async with httpx.AsyncClient(timeout=mcp_timeout) as client:
-                            response = await client.get(tool_endpoint, params=args)
+                            response = await client.get(
+                                tool_endpoint,
+                                params=args,
+                                headers=mcp_headers,
+                            )
                             if response.status_code == 200:
                                 data = response.json()
                                 if "result" in data:
                                     return {"success": True, "result": data["result"]}
                                 return {"success": True, "result": data}
+                            elif response.status_code == 401:
+                                return {
+                                    "success": False,
+                                    "error": "Authentication failed (401). Token may have expired.",
+                                }
+                            elif response.status_code == 403:
+                                return {
+                                    "success": False,
+                                    "error": "Access denied (403). Insufficient permissions.",
+                                }
                             else:
                                 return {
                                     "success": False,
@@ -240,7 +342,7 @@ async def _discover_and_register_tools(
                         return {"success": False, "error": f"MCP tool execution failed: {e}"}
                 return executor
 
-            executor = make_executor(original_name, server_url, server_timeout)
+            executor = make_executor(original_name, server_url, server_timeout, server_headers)
 
             schema = {
                 "name": prefixed_name,
@@ -293,9 +395,12 @@ async def list_mcp_servers(request: Request) -> dict[str, Any]:
         url = config["url"]
         timeout = config.get("timeout", MCP_SERVER_TIMEOUT)
         source = config.get("source", "unknown")
+        headers = config.get("headers", {})
 
-        # Check health
-        is_healthy, health_data, error = await _check_server_health(url, timeout=min(timeout, 5.0))
+        # Check health (with auth headers if configured)
+        is_healthy, health_data, error = await _check_server_health(
+            url, timeout=min(timeout, 5.0), headers=headers
+        )
 
         # Get registered tools for this server
         registered_tools = list_mcp_tools(mcp_server=name)
@@ -315,6 +420,7 @@ async def list_mcp_servers(request: Request) -> dict[str, Any]:
                 tool_names=tool_names,
                 error=error,
                 source=source,
+                has_auth=bool(headers.get("Authorization") or headers.get("authorization")),
             )
         )
 
@@ -367,20 +473,26 @@ async def add_mcp_server(
             detail="URL must start with http:// or https://",
         )
 
-    # Check health first
-    is_healthy, health_data, error = await _check_server_health(server.url, timeout=server.timeout)
+    # Merge headers with auth_token convenience field
+    merged_headers = _merge_auth_headers(server.headers, server.auth_token)
+
+    # Check health first (with auth headers)
+    is_healthy, health_data, error = await _check_server_health(
+        server.url, timeout=server.timeout, headers=merged_headers
+    )
     if not is_healthy:
         raise HTTPException(
             status_code=503,
             detail=f"Cannot connect to MCP server at {server.url}: {error}",
         )
 
-    # Discover and register tools
+    # Discover and register tools (with auth headers)
     tools_count, tool_names, register_error = await _discover_and_register_tools(
         name=server.name,
         url=server.url,
         transport=server.transport,
         timeout=server.timeout,
+        headers=merged_headers,
     )
 
     if register_error:
@@ -389,13 +501,14 @@ async def add_mcp_server(
             detail=f"Connected to server but failed to register tools: {register_error}",
         )
 
-    # Store in runtime registry
-    _RUNTIME_MCP_SERVERS[server.name] = MCPServerConfig(
-        name=server.name,
-        url=server.url,
-        transport=MCPTransport(server.transport),
-        timeout=server.timeout,
-    )
+    # Store in runtime registry (including headers for tool execution)
+    _RUNTIME_MCP_SERVERS[server.name] = {
+        "name": server.name,
+        "url": server.url,
+        "transport": server.transport,
+        "timeout": server.timeout,
+        "headers": merged_headers,
+    }
 
     logger.info(
         f"Added MCP server '{server.name}' at {server.url} with {tools_count} tools: {tool_names}"
@@ -413,6 +526,7 @@ async def add_mcp_server(
             "tools_count": tools_count,
             "tool_names": tool_names,
             "source": "runtime",
+            "has_auth": bool(merged_headers.get("Authorization")),
         },
         "response_time_ms": round((time.time() - start) * 1000, 2),
     }
@@ -433,8 +547,15 @@ async def test_mcp_server(
 
     This is a read-only operation - tools are NOT registered.
     Use POST /servers to actually add the server and register tools.
+
+    Supports authentication via:
+    - auth_token: Convenience field for Bearer token (sets Authorization header)
+    - headers: Custom headers dict for any auth scheme
     """
     start = time.time()
+
+    # Merge auth headers
+    merged_headers = _merge_auth_headers(server.headers, server.auth_token)
 
     # Validate URL format
     if not server.url.startswith(("http://", "https://")):
@@ -449,7 +570,9 @@ async def test_mcp_server(
         )
 
     # Check health
-    is_healthy, health_data, error = await _check_server_health(server.url, timeout=server.timeout)
+    is_healthy, health_data, error = await _check_server_health(
+        server.url, timeout=server.timeout, headers=merged_headers
+    )
     if not is_healthy:
         return MCPTestResponse(
             status="unhealthy",
@@ -469,6 +592,7 @@ async def test_mcp_server(
             url=server.url,
             transport=MCPTransport(server.transport),
             timeout=server.timeout,
+            headers=merged_headers if merged_headers else None,
         )
         session = MCPClientSession(config)
 
@@ -596,4 +720,214 @@ async def list_all_mcp_tools(
         "by_server": by_server,
         "filter": {"server": server} if server else None,
         "response_time_ms": round((time.time() - start) * 1000, 2),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OAUTH ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _generate_pkce_verifier() -> str:
+    """Generate a PKCE code verifier."""
+    return secrets.token_urlsafe(32)
+
+
+def _generate_pkce_challenge(verifier: str) -> str:
+    """Generate a PKCE code challenge (S256)."""
+    import base64
+    import hashlib
+
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+@router.post(
+    "/oauth/start",
+    response_model=OAuthStartResponse,
+    summary="Start OAuth Flow",
+    description="Start OAuth authentication flow for an MCP server. Returns the authorization URL.",
+    tags=["MCP", "OAuth"],
+)
+async def oauth_start(
+    request: OAuthStartRequest,
+) -> OAuthStartResponse:
+    """
+    Start OAuth flow for authenticating with an MCP server.
+
+    Generates PKCE challenge and returns the full authorization URL.
+    The frontend should redirect/popup to this URL for user authentication.
+    """
+    # Generate state and PKCE values
+    state = secrets.token_urlsafe(32)
+    code_verifier = _generate_pkce_verifier()
+    code_challenge = _generate_pkce_challenge(code_verifier)
+
+    # Store pending OAuth state
+    _OAUTH_PENDING_STATES[state] = {
+        "name": request.name,
+        "url": request.url,
+        "oauth": request.oauth.model_dump(),
+        "redirect_uri": request.redirect_uri,
+        "code_verifier": code_verifier,
+        "created_at": time.time(),
+    }
+
+    # Build authorization URL
+    params = {
+        "client_id": request.oauth.client_id,
+        "response_type": "code",
+        "redirect_uri": request.redirect_uri,
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+    }
+    if request.oauth.scope:
+        params["scope"] = request.oauth.scope
+
+    auth_url = f"{request.oauth.auth_url}?{urlencode(params)}"
+
+    logger.info(f"Started OAuth flow for MCP server '{request.name}' (state={state[:8]}...)")
+
+    return OAuthStartResponse(auth_url=auth_url, state=state)
+
+
+@router.post(
+    "/oauth/callback",
+    response_model=OAuthCallbackResponse,
+    summary="Complete OAuth Flow",
+    description="Complete OAuth flow by exchanging the authorization code for an access token.",
+    tags=["MCP", "OAuth"],
+)
+async def oauth_callback(
+    request: OAuthCallbackRequest,
+) -> OAuthCallbackResponse:
+    """
+    Complete OAuth flow by exchanging the authorization code for tokens.
+
+    The obtained access token is automatically stored and used for MCP server requests.
+    """
+    # Validate state
+    pending = _OAUTH_PENDING_STATES.pop(request.state, None)
+    if not pending:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired OAuth state. Please restart the authentication flow.",
+        )
+
+    # Check state expiry (10 minute limit)
+    if time.time() - pending["created_at"] > 600:
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth state expired. Please restart the authentication flow.",
+        )
+
+    oauth_config = pending["oauth"]
+
+    # Exchange code for token
+    token_data = {
+        "grant_type": "authorization_code",
+        "client_id": oauth_config["client_id"],
+        "code": request.code,
+        "redirect_uri": pending["redirect_uri"],
+        "code_verifier": pending["code_verifier"],
+    }
+    if oauth_config.get("client_secret"):
+        token_data["client_secret"] = oauth_config["client_secret"]
+
+    logger.info(
+        f"Exchanging OAuth code for token at '{oauth_config['token_url']}' "
+        f"for MCP server '{pending['name']}'"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                oauth_config["token_url"],
+                data=token_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+            if response.status_code != 200:
+                error_detail = response.text[:500] if response.text else "Unknown error"
+                logger.warning(
+                    f"OAuth token exchange failed for '{pending['name']}': "
+                    f"status={response.status_code}, url={oauth_config['token_url']}, detail={error_detail}"
+                )
+                # Pass through the actual status code for better debugging
+                raise HTTPException(
+                    status_code=response.status_code if response.status_code in (400, 401, 403, 405) else 400,
+                    detail=f"Token exchange failed (HTTP {response.status_code}): {error_detail}",
+                )
+
+            tokens = response.json()
+            access_token = tokens.get("access_token")
+            if not access_token:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No access_token in token response",
+                )
+
+    except httpx.RequestError as e:
+        logger.error(f"OAuth token exchange request failed: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to contact token endpoint: {e}",
+        )
+
+    # Store the token with the MCP server config
+    server_name = pending["name"]
+    if server_name in _RUNTIME_MCP_SERVERS:
+        # Update existing server with new token
+        _RUNTIME_MCP_SERVERS[server_name]["headers"]["Authorization"] = f"Bearer {access_token}"
+        _RUNTIME_MCP_SERVERS[server_name]["oauth_tokens"] = tokens
+        logger.info(f"Updated OAuth token for existing MCP server '{server_name}'")
+    else:
+        # Store pending config for when server is added
+        _RUNTIME_MCP_SERVERS[server_name] = {
+            "name": server_name,
+            "url": pending["url"],
+            "transport": "sse",
+            "timeout": MCP_SERVER_TIMEOUT,
+            "headers": {"Authorization": f"Bearer {access_token}"},
+            "oauth_config": oauth_config,
+            "oauth_tokens": tokens,
+        }
+        logger.info(f"Stored OAuth config for MCP server '{server_name}'")
+
+    return OAuthCallbackResponse(
+        success=True,
+        server_name=server_name,
+        message=f"Successfully authenticated with MCP server '{server_name}'",
+        has_token=True,
+    )
+
+
+@router.get(
+    "/oauth/status/{name}",
+    response_model=dict[str, Any],
+    summary="Check OAuth Status",
+    description="Check if an MCP server has valid OAuth tokens.",
+    tags=["MCP", "OAuth"],
+)
+async def oauth_status(
+    name: str,
+) -> dict[str, Any]:
+    """Check OAuth authentication status for an MCP server."""
+    if name in _RUNTIME_MCP_SERVERS:
+        config = _RUNTIME_MCP_SERVERS[name]
+        has_token = "Authorization" in config.get("headers", {})
+        has_oauth = "oauth_tokens" in config
+        return {
+            "server": name,
+            "authenticated": has_token,
+            "oauth_configured": has_oauth,
+            "has_refresh_token": bool(config.get("oauth_tokens", {}).get("refresh_token")),
+        }
+
+    return {
+        "server": name,
+        "authenticated": False,
+        "oauth_configured": False,
+        "has_refresh_token": False,
     }

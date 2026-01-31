@@ -37,32 +37,11 @@
             "jinja": true,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}",
-                "CARDAPI_URL": "http://localhost:8000",
                 "MCP_SERVER_CARDAPI_URL": "http://localhost:8080"
             },
             "envFile": "${workspaceFolder}/.env.local"
         },
 
-        {
-            "name": "[Card API] Python Debugger: FastAPI",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "uvicorn",
-            "python": "${command:python.interpreterPath}",
-            "args": [
-                "apps.cardapi.backend.main:app",
-                "--reload",
-                "--reload-dir",
-                "${workspaceFolder}/apps/cardapi/backend",
-                "--port",
-                "8000"
-            ],
-            "jinja": true,
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            },
-            "envFile": "${workspaceFolder}/.env.local"
-        },
 
         {
             "name": "[Card API] MCP Server",

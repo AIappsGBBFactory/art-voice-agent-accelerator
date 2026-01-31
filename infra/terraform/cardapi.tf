@@ -108,7 +108,7 @@ resource "azurerm_container_app" "cardapi_mcp" {
 
   ingress {
     external_enabled = true  # MCP server exposed for external tool calls
-    target_port      = 80
+    target_port      = 8080
     traffic_weight {
       percentage      = 100
       latest_revision = true
@@ -128,19 +128,19 @@ resource "azurerm_container_app" "cardapi_mcp" {
       # Health probes for the embedded HTTP server
       liveness_probe {
         transport = "HTTP"
-        port      = 80
+        port      = 8080
         path      = "/health"
       }
 
       readiness_probe {
         transport = "HTTP"
-        port      = 80
+        port      = 8080
         path      = "/ready"
       }
 
       startup_probe {
         transport = "HTTP"
-        port      = 80
+        port      = 8080
         path      = "/health"
       }
 
@@ -177,7 +177,7 @@ resource "azurerm_container_app" "cardapi_mcp" {
 
       env {
         name  = "PORT"
-        value = "80"
+        value = "8080"
       }
 
       env {

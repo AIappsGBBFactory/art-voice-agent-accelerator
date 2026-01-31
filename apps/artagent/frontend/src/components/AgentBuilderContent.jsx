@@ -1033,7 +1033,16 @@ export default function AgentBuilderContent({
     url: '',
     transport: 'sse',
     timeout: 30,
+    auth_token: '',
+    auth_method: 'none', // 'none', 'token', or 'oauth'
+    oauth: {
+      client_id: '',
+      auth_url: '',
+      token_url: '',
+      scope: '',
+    },
   });
+  const [oauthPending, setOauthPending] = useState(null); // { state, popup }
 
   // Agent configuration state
   const [config, setConfig] = useState({
@@ -1303,7 +1312,7 @@ export default function AgentBuilderContent({
         const data = await response.json();
         setSuccess(`MCP server "${newMcpServer.name}" added with ${data.server?.tools_count || 0} tools`);
         setShowAddMcpDialog(false);
-        setNewMcpServer({ name: '', url: '', transport: 'sse', timeout: 30 });
+        setNewMcpServer({ name: '', url: '', transport: 'sse', timeout: 30, auth_token: '', auth_method: 'none', oauth: { client_id: '', auth_url: '', token_url: '', scope: '' } });
         setMcpTestResult(null);
         // Refresh servers and tools
         await Promise.all([fetchMcpServers(), fetchAvailableTools()]);
@@ -1344,6 +1353,109 @@ export default function AgentBuilderContent({
       setTimeout(() => { setSuccess(null); setError(null); }, 3000);
     }
   }, [fetchMcpServers, fetchAvailableTools]);
+
+  // OAuth flow for MCP servers
+  const handleStartOAuth = useCallback(async () => {
+    if (!newMcpServer.name || !newMcpServer.url) {
+      setError('Server name and URL are required');
+      return;
+    }
+    if (!newMcpServer.oauth.client_id || !newMcpServer.oauth.auth_url || !newMcpServer.oauth.token_url) {
+      setError('OAuth client ID, auth URL, and token URL are required');
+      return;
+    }
+
+    setMcpLoading(true);
+    try {
+      // Generate redirect URI (OAuth callback page)
+      const redirectUri = `${window.location.origin}/oauth/callback.html`;
+
+      const response = await fetch(`${API_BASE_URL}/api/v1/mcp/oauth/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newMcpServer.name,
+          url: newMcpServer.url,
+          oauth: newMcpServer.oauth,
+          redirect_uri: redirectUri,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Open OAuth popup
+        const popup = window.open(
+          data.auth_url,
+          'mcp_oauth',
+          'width=500,height=700,menubar=no,toolbar=no,location=yes'
+        );
+        setOauthPending({ state: data.state, popup });
+      } else {
+        const errData = await response.json();
+        setError(errData.detail || 'Failed to start OAuth flow');
+      }
+    } catch (err) {
+      setError(`Failed to start OAuth: ${err.message}`);
+    } finally {
+      setMcpLoading(false);
+    }
+  }, [newMcpServer]);
+
+  // Handle OAuth callback message from popup
+  useEffect(() => {
+    const handleOAuthMessage = async (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== 'oauth_callback') return;
+
+      const { code, state, error: oauthError } = event.data;
+
+      if (oauthError) {
+        setError(`OAuth failed: ${oauthError}`);
+        setOauthPending(null);
+        return;
+      }
+
+      if (!oauthPending || oauthPending.state !== state) {
+        setError('OAuth state mismatch');
+        setOauthPending(null);
+        return;
+      }
+
+      // Close popup
+      oauthPending.popup?.close();
+
+      // Exchange code for token
+      setMcpLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/mcp/oauth/callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, state }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setSuccess(data.message || 'OAuth authentication successful');
+          // Refresh servers to show the authenticated server
+          await fetchMcpServers();
+          // Test the connection now that we're authenticated
+          handleTestMcpConnection();
+        } else {
+          const errData = await response.json();
+          setError(errData.detail || 'Failed to complete OAuth');
+        }
+      } catch (err) {
+        setError(`OAuth callback failed: ${err.message}`);
+      } finally {
+        setMcpLoading(false);
+        setOauthPending(null);
+        setTimeout(() => { setSuccess(null); setError(null); }, 3000);
+      }
+    };
+
+    window.addEventListener('message', handleOAuthMessage);
+    return () => window.removeEventListener('message', handleOAuthMessage);
+  }, [oauthPending, fetchMcpServers, handleTestMcpConnection]);
 
   useEffect(() => {
     setLoading(true);
@@ -2282,6 +2394,135 @@ export default function AgentBuilderContent({
                     </Box>
                   </Paper>
                 )}
+
+                {/* MCP Server Management */}
+                <Accordion
+                  sx={{
+                    '&:before': { display: 'none' },
+                    boxShadow: 'none',
+                    border: '1px solid',
+                    borderColor: '#a5b4fc',
+                    borderRadius: '8px !important',
+                    backgroundColor: '#eef2ff',
+                    '&.Mui-expanded': { margin: 0 },
+                  }}
+                >
+                  <AccordionSummary
+                    expandIcon={<ExpandMoreIcon />}
+                    sx={{
+                      minHeight: 44,
+                      '&.Mui-expanded': { minHeight: 44 },
+                      '& .MuiAccordionSummary-content': { my: 1 },
+                    }}
+                  >
+                    <Stack direction="row" alignItems="center" spacing={1} sx={{ width: '100%' }}>
+                      <LinkIcon sx={{ color: '#4f46e5', fontSize: 18 }} />
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#4f46e5' }}>
+                        MCP Servers
+                      </Typography>
+                      <Chip
+                        size="small"
+                        label={mcpServers.length}
+                        color="primary"
+                        sx={{ height: 20, fontSize: 11 }}
+                      />
+                    </Stack>
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ pt: 0, pb: 1.5, backgroundColor: '#fff' }}>
+                    <Stack spacing={1.5}>
+                      <Typography variant="caption" color="text.secondary">
+                        Connect to MCP servers to discover additional tools. Runtime-added servers persist for this session.
+                      </Typography>
+
+                      {/* Connected Servers */}
+                      {mcpServers.length > 0 && (
+                        <Stack spacing={1}>
+                          {mcpServers.map((server) => (
+                            <Paper
+                              key={server.name}
+                              variant="outlined"
+                              sx={{
+                                p: 1,
+                                borderColor: server.status === 'healthy' ? '#86efac' : '#fca5a5',
+                                backgroundColor: server.status === 'healthy' ? '#f0fdf4' : '#fef2f2',
+                              }}
+                            >
+                              <Stack direction="row" alignItems="center" justifyContent="space-between">
+                                <Stack direction="row" alignItems="center" spacing={1}>
+                                  {server.status === 'healthy' ? (
+                                    <LinkIcon sx={{ color: '#22c55e', fontSize: 16 }} />
+                                  ) : (
+                                    <LinkOffIcon sx={{ color: '#ef4444', fontSize: 16 }} />
+                                  )}
+                                  <Box>
+                                    <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>
+                                      {server.name}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                                      {server.url} • {server.tools_count} tools
+                                      {server.source === 'environment' && (
+                                        <Chip
+                                          label="env"
+                                          size="small"
+                                          sx={{ ml: 0.5, height: 14, fontSize: 9 }}
+                                        />
+                                      )}
+                                    </Typography>
+                                  </Box>
+                                </Stack>
+                                <Stack direction="row" spacing={0.5}>
+                                  {server.source === 'runtime' && (
+                                    <Tooltip title="Remove server">
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => handleRemoveMcpServer(server.name)}
+                                        disabled={mcpLoading}
+                                      >
+                                        <DeleteIcon sx={{ fontSize: 16, color: '#ef4444' }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                </Stack>
+                              </Stack>
+                              {server.tool_names?.length > 0 && (
+                                <Box sx={{ mt: 1, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                  {server.tool_names.slice(0, 5).map((tool) => (
+                                    <Chip
+                                      key={tool}
+                                      label={tool}
+                                      size="small"
+                                      variant="outlined"
+                                      color="info"
+                                      sx={{ height: 18, fontSize: 9, fontFamily: 'monospace' }}
+                                    />
+                                  ))}
+                                  {server.tool_names.length > 5 && (
+                                    <Chip
+                                      label={`+${server.tool_names.length - 5} more`}
+                                      size="small"
+                                      sx={{ height: 18, fontSize: 9 }}
+                                    />
+                                  )}
+                                </Box>
+                              )}
+                            </Paper>
+                          ))}
+                        </Stack>
+                      )}
+
+                      {/* Add Server Button */}
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<AddIcon />}
+                        onClick={() => setShowAddMcpDialog(true)}
+                        sx={{ textTransform: 'none', borderStyle: 'dashed' }}
+                      >
+                        Add MCP Server
+                      </Button>
+                    </Stack>
+                  </AccordionDetails>
+                </Accordion>
 
                 {/* Tools by Category */}
                 {Object.entries(toolsByCategory).map(([category, tools], catIdx) => (
@@ -3335,6 +3576,267 @@ export default function AgentBuilderContent({
         onClose={handleCloseToolDetails}
         tool={selectedTool}
       />
+
+      {/* Add MCP Server Dialog */}
+      <Dialog
+        open={showAddMcpDialog}
+        onClose={() => {
+          setShowAddMcpDialog(false);
+          setMcpTestResult(null);
+          setNewMcpServer({ name: '', url: '', transport: 'sse', timeout: 30, auth_token: '', auth_method: 'none', oauth: { client_id: '', auth_url: '', token_url: '', scope: '' } });
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <LinkIcon color="primary" />
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Add MCP Server
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Connect to an MCP server to discover and register its tools
+            </Typography>
+          </Box>
+          <IconButton
+            onClick={() => {
+              setShowAddMcpDialog(false);
+              setMcpTestResult(null);
+              setNewMcpServer({ name: '', url: '', transport: 'sse', timeout: 30, auth_token: '', auth_method: 'none', oauth: { client_id: '', auth_url: '', token_url: '', scope: '' } });
+            }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+
+        <DialogContent dividers>
+          <Stack spacing={2.5}>
+            <TextField
+              label="Server Name"
+              value={newMcpServer.name}
+              onChange={(e) => setNewMcpServer((prev) => ({ ...prev, name: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') }))}
+              fullWidth
+              required
+              placeholder="e.g., knowledge, cardapi"
+              helperText="Unique identifier (lowercase, alphanumeric, hyphens, underscores)"
+              inputProps={{ pattern: '[a-z0-9_-]+' }}
+            />
+
+            <TextField
+              label="Server URL"
+              value={newMcpServer.url}
+              onChange={(e) => setNewMcpServer((prev) => ({ ...prev, url: e.target.value }))}
+              fullWidth
+              required
+              placeholder="http://localhost:8080"
+              helperText="HTTP endpoint of the MCP server"
+            />
+
+            <Stack direction="row" spacing={2}>
+              <TextField
+                select
+                label="Transport"
+                value={newMcpServer.transport}
+                onChange={(e) => setNewMcpServer((prev) => ({ ...prev, transport: e.target.value }))}
+                sx={{ minWidth: 120 }}
+                SelectProps={{ native: true }}
+              >
+                <option value="sse">SSE</option>
+                <option value="http">HTTP</option>
+                <option value="stdio">STDIO</option>
+              </TextField>
+
+              <TextField
+                label="Timeout (s)"
+                type="number"
+                value={newMcpServer.timeout}
+                onChange={(e) => setNewMcpServer((prev) => ({ ...prev, timeout: parseInt(e.target.value) || 30 }))}
+                inputProps={{ min: 1, max: 120 }}
+                sx={{ width: 100 }}
+              />
+            </Stack>
+
+            {/* Authentication Section */}
+            <Box>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                Authentication
+              </Typography>
+              <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+                {['none', 'token', 'oauth'].map((method) => (
+                  <Chip
+                    key={method}
+                    label={method === 'none' ? 'None' : method === 'token' ? 'Bearer Token' : 'OAuth 2.0'}
+                    onClick={() => setNewMcpServer((prev) => ({ ...prev, auth_method: method }))}
+                    color={newMcpServer.auth_method === method ? 'primary' : 'default'}
+                    variant={newMcpServer.auth_method === method ? 'filled' : 'outlined'}
+                    sx={{ cursor: 'pointer' }}
+                  />
+                ))}
+              </Stack>
+
+              {newMcpServer.auth_method === 'token' && (
+                <TextField
+                  label="Bearer Token"
+                  value={newMcpServer.auth_token}
+                  onChange={(e) => setNewMcpServer((prev) => ({ ...prev, auth_token: e.target.value }))}
+                  fullWidth
+                  type="password"
+                  placeholder="Enter your access token"
+                  helperText="Token will be sent as 'Authorization: Bearer <token>' header"
+                />
+              )}
+
+              {newMcpServer.auth_method === 'oauth' && (
+                <Stack spacing={2}>
+                  <TextField
+                    label="Client ID"
+                    value={newMcpServer.oauth.client_id}
+                    onChange={(e) => setNewMcpServer((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, client_id: e.target.value }
+                    }))}
+                    fullWidth
+                    required
+                    placeholder="OAuth application client ID"
+                  />
+                  <TextField
+                    label="Authorization URL"
+                    value={newMcpServer.oauth.auth_url}
+                    onChange={(e) => setNewMcpServer((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, auth_url: e.target.value }
+                    }))}
+                    fullWidth
+                    required
+                    placeholder="https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
+                  />
+                  <TextField
+                    label="Token URL"
+                    value={newMcpServer.oauth.token_url}
+                    onChange={(e) => setNewMcpServer((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, token_url: e.target.value }
+                    }))}
+                    fullWidth
+                    required
+                    placeholder="https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+                  />
+                  <TextField
+                    label="Scopes (Optional)"
+                    value={newMcpServer.oauth.scope}
+                    onChange={(e) => setNewMcpServer((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, scope: e.target.value }
+                    }))}
+                    fullWidth
+                    placeholder="api://example/.default openid profile"
+                    helperText="Space-separated OAuth scopes"
+                  />
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    onClick={handleStartOAuth}
+                    disabled={mcpLoading || !newMcpServer.oauth.client_id || !newMcpServer.oauth.auth_url || !newMcpServer.oauth.token_url}
+                    startIcon={oauthPending ? <CircularProgress size={16} /> : <LinkIcon />}
+                    fullWidth
+                  >
+                    {oauthPending ? 'Waiting for OAuth...' : 'Connect with OAuth'}
+                  </Button>
+                  <Typography variant="caption" color="text.secondary">
+                    Opens a popup window for OAuth authentication. After authorizing, the token will be used automatically.
+                  </Typography>
+                </Stack>
+              )}
+            </Box>
+
+            {/* Test Results */}
+            {mcpTestResult && (
+              <Paper
+                variant="outlined"
+                sx={{
+                  p: 2,
+                  borderColor: mcpTestResult.connected ? '#86efac' : '#fca5a5',
+                  backgroundColor: mcpTestResult.connected ? '#f0fdf4' : '#fef2f2',
+                }}
+              >
+                <Stack spacing={1}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    {mcpTestResult.connected ? (
+                      <CheckIcon sx={{ color: '#22c55e' }} />
+                    ) : (
+                      <WarningAmberIcon sx={{ color: '#ef4444' }} />
+                    )}
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      {mcpTestResult.connected ? 'Connection Successful' : 'Connection Failed'}
+                    </Typography>
+                  </Stack>
+
+                  {mcpTestResult.connected && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">
+                        Discovered {mcpTestResult.tools_count} tool(s) in {mcpTestResult.response_time_ms}ms
+                      </Typography>
+                      {mcpTestResult.tools?.length > 0 && (
+                        <Box sx={{ mt: 1 }}>
+                          <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+                            Available Tools:
+                          </Typography>
+                          <Stack direction="row" flexWrap="wrap" gap={0.5}>
+                            {mcpTestResult.tools.map((tool) => (
+                              <Tooltip key={tool.prefixed_name} title={tool.description}>
+                                <Chip
+                                  label={tool.prefixed_name}
+                                  size="small"
+                                  color="info"
+                                  sx={{ fontFamily: 'monospace', fontSize: 11 }}
+                                />
+                              </Tooltip>
+                            ))}
+                          </Stack>
+                        </Box>
+                      )}
+                    </>
+                  )}
+
+                  {mcpTestResult.error && (
+                    <Typography variant="body2" color="error">
+                      {mcpTestResult.error}
+                    </Typography>
+                  )}
+                </Stack>
+              </Paper>
+            )}
+          </Stack>
+        </DialogContent>
+
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => {
+              setShowAddMcpDialog(false);
+              setMcpTestResult(null);
+              setNewMcpServer({ name: '', url: '', transport: 'sse', timeout: 30, auth_token: '', auth_method: 'none', oauth: { client_id: '', auth_url: '', token_url: '', scope: '' } });
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={handleTestMcpConnection}
+            disabled={mcpLoading || !newMcpServer.name || !newMcpServer.url}
+            startIcon={mcpLoading ? <CircularProgress size={16} /> : <LinkIcon />}
+          >
+            Test Connection
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleAddMcpServer}
+            disabled={mcpLoading || !newMcpServer.name || !newMcpServer.url}
+            startIcon={mcpLoading ? <CircularProgress size={16} color="inherit" /> : <AddIcon />}
+          >
+            Add Server
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Footer */}
       <Divider />
