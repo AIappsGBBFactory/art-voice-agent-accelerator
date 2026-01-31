@@ -197,6 +197,11 @@ APPCONFIG_KEY_MAP: dict[str, str] = {
     "app/cardapi/url": "CARDAPI_URL",
     # Application Services
     "app/cardapi/mcp-url": "CARDAPI_MCP_URL",
+    # MCP Server Configuration
+    "app/mcp/servers/cardapi/url": "MCP_SERVER_CARDAPI_URL",
+    "app/mcp/servers/cardapi/timeout": "MCP_SERVER_CARDAPI_TIMEOUT",
+    "app/mcp/servers/cardapi/transport": "MCP_SERVER_CARDAPI_TRANSPORT",
+    "app/mcp/enabled-servers": "MCP_ENABLED_SERVERS",
     # Environment
     "app/environment": "ENVIRONMENT",
     # Application URLs (set by postprovision)

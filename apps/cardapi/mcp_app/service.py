@@ -295,22 +295,12 @@ async def get_code_resource(code: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TOOLS
+# TOOL IMPLEMENTATIONS (callable directly for HTTP handlers)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool()
-async def lookup_decline_code(code: str) -> str:
-    """
-    Look up a specific card decline code to get its description, detailed information,
-    recommended actions, customer service scripts (with resolved content), orchestrator
-    actions, contextual rules, and escalation requirements.
-
-    Use this when you know the exact decline code.
-
-    Args:
-        code: The decline code to look up (e.g., '02', '51', 'C1', 'RT')
-    """
+async def _lookup_decline_code_impl(code: str) -> str:
+    """Implementation for lookup_decline_code tool."""
     logger.info(f"Looking up decline code: {code}")
 
     data = _find_code(code)
@@ -380,19 +370,8 @@ async def lookup_decline_code(code: str) -> str:
     return result
 
 
-@mcp.tool()
-async def search_decline_codes(query: str, code_type: str | None = None) -> str:
-    """
-    Search for decline codes by description, information, or action keywords.
-    Returns complete policy pack data including scripts, orchestrator actions,
-    and escalation info.
-
-    Use this when you need to find codes related to a specific issue or symptom.
-
-    Args:
-        query: Search query (e.g., 'insufficient funds', 'expired', 'PIN')
-        code_type: Optional filter by 'numeric' (Base24) or 'alphanumeric' (FAST)
-    """
+async def _search_decline_codes_impl(query: str, code_type: str | None = None) -> str:
+    """Implementation for search_decline_codes tool."""
     logger.info(f"Searching for decline codes: query='{query}', type={code_type}")
 
     matching_codes = _search_codes(query, code_type)
@@ -413,17 +392,8 @@ async def search_decline_codes(query: str, code_type: str | None = None) -> str:
     return result
 
 
-@mcp.tool()
-async def get_all_decline_codes(code_type: str | None = None) -> str:
-    """
-    Get all available decline codes with complete policy pack data (scripts,
-    orchestrator actions, escalation), optionally filtered by type.
-
-    Use this to browse all codes or get an overview.
-
-    Args:
-        code_type: Optional filter by 'numeric' (Base24) or 'alphanumeric' (FAST)
-    """
+async def _get_all_decline_codes_impl(code_type: str | None = None) -> str:
+    """Implementation for get_all_decline_codes tool."""
     logger.info(f"Getting all decline codes, type filter: {code_type}")
 
     codes = _get_all_codes(code_type)
@@ -441,12 +411,8 @@ async def get_all_decline_codes(code_type: str | None = None) -> str:
     return result
 
 
-@mcp.tool()
-async def get_decline_codes_metadata() -> str:
-    """
-    Get metadata about the decline codes database, including total counts
-    and system information.
-    """
+async def _get_decline_codes_metadata_impl() -> str:
+    """Implementation for get_decline_codes_metadata tool."""
     logger.info("Retrieving decline codes metadata")
 
     metadata = _decline_codes_data.get("metadata", {})
@@ -471,6 +437,65 @@ async def get_decline_codes_metadata() -> str:
 
     logger.info(f"Metadata retrieved: {numeric_count} numeric, {alphanumeric_count} alphanumeric codes")
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MCP TOOL REGISTRATIONS (wrappers that call implementations)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+async def lookup_decline_code(code: str) -> str:
+    """
+    Look up a specific card decline code to get its description, detailed information,
+    recommended actions, customer service scripts (with resolved content), orchestrator
+    actions, contextual rules, and escalation requirements.
+
+    Use this when you know the exact decline code.
+
+    Args:
+        code: The decline code to look up (e.g., '02', '51', 'C1', 'RT')
+    """
+    return await _lookup_decline_code_impl(code)
+
+
+@mcp.tool()
+async def search_decline_codes(query: str, code_type: str | None = None) -> str:
+    """
+    Search for decline codes by description, information, or action keywords.
+    Returns complete policy pack data including scripts, orchestrator actions,
+    and escalation info.
+
+    Use this when you need to find codes related to a specific issue or symptom.
+
+    Args:
+        query: Search query (e.g., 'insufficient funds', 'expired', 'PIN')
+        code_type: Optional filter by 'numeric' (Base24) or 'alphanumeric' (FAST)
+    """
+    return await _search_decline_codes_impl(query, code_type)
+
+
+@mcp.tool()
+async def get_all_decline_codes(code_type: str | None = None) -> str:
+    """
+    Get all available decline codes with complete policy pack data (scripts,
+    orchestrator actions, escalation), optionally filtered by type.
+
+    Use this to browse all codes or get an overview.
+
+    Args:
+        code_type: Optional filter by 'numeric' (Base24) or 'alphanumeric' (FAST)
+    """
+    return await _get_all_decline_codes_impl(code_type)
+
+
+@mcp.tool()
+async def get_decline_codes_metadata() -> str:
+    """
+    Get metadata about the decline codes database, including total counts
+    and system information.
+    """
+    return await _get_decline_codes_metadata_impl()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -541,8 +566,72 @@ Use the lookup_decline_code tool to get escalation information."""
 
 
 async def health_check(request: web.Request) -> web.Response:
-    """Simple health check endpoint for Container Apps probes."""
-    return web.Response(text='{"status":"healthy"}', content_type="application/json")
+    """Health check endpoint for Container Apps probes.
+    
+    Returns status, tools_count, and tool_names for MCP startup validation.
+    """
+    # Get registered tools from FastMCP tool manager
+    tools = mcp._tool_manager._tools
+    tool_names = list(tools.keys())
+    
+    response = {
+        "status": "healthy",
+        "tools_count": len(tools),
+        "tool_names": tool_names,
+    }
+    return web.json_response(response)
+
+
+async def tools_list(request: web.Request) -> web.Response:
+    """List all available tools with their full schemas.
+    
+    Returns tool definitions in a format compatible with MCP client discovery.
+    """
+    try:
+        tools = mcp._tool_manager._tools
+        tool_list = []
+        
+        for name, tool in tools.items():
+            # Extract input schema safely
+            input_schema = {"type": "object", "properties": {}}
+            try:
+                if hasattr(tool, 'parameters') and tool.parameters is not None:
+                    input_schema = tool.parameters.model_json_schema()
+                elif hasattr(tool, 'fn'):
+                    # Try to inspect function signature
+                    import inspect
+                    sig = inspect.signature(tool.fn)
+                    props = {}
+                    required = []
+                    for param_name, param in sig.parameters.items():
+                        if param_name == 'self':
+                            continue
+                        param_type = "string"
+                        if param.annotation != inspect.Parameter.empty:
+                            if param.annotation == str or param.annotation == "str":
+                                param_type = "string"
+                            elif param.annotation == int:
+                                param_type = "integer"
+                            elif param.annotation == bool:
+                                param_type = "boolean"
+                        props[param_name] = {"type": param_type}
+                        if param.default == inspect.Parameter.empty:
+                            required.append(param_name)
+                    input_schema = {"type": "object", "properties": props, "required": required}
+            except Exception as e:
+                logger.debug(f"Failed to get schema for tool {name}: {e}")
+            
+            tool_info = {
+                "name": name,
+                "description": getattr(tool, 'description', None) or f"Tool: {name}",
+                "input_schema": input_schema,
+            }
+            tool_list.append(tool_info)
+        
+        return web.json_response({"tools": tool_list})
+    except Exception as e:
+        logger.error(f"tools_list failed: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 async def tool_lookup_decline_code_http(request: web.Request) -> web.Response:
@@ -551,8 +640,12 @@ async def tool_lookup_decline_code_http(request: web.Request) -> web.Response:
     if not code:
         return web.json_response({"success": False, "message": "code is required"}, status=400)
 
-    result = await lookup_decline_code(code)
-    return web.json_response({"success": True, "result": result})
+    try:
+        result = await _lookup_decline_code_impl(code)
+        return web.json_response({"success": True, "result": result})
+    except Exception as e:
+        logger.error(f"lookup_decline_code failed: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 async def tool_search_decline_codes_http(request: web.Request) -> web.Response:
@@ -562,8 +655,34 @@ async def tool_search_decline_codes_http(request: web.Request) -> web.Response:
     if not query:
         return web.json_response({"success": False, "message": "query is required"}, status=400)
 
-    result = await search_decline_codes(query=query, code_type=code_type)
-    return web.json_response({"success": True, "result": result})
+    try:
+        result = await _search_decline_codes_impl(query=query, code_type=code_type)
+        return web.json_response({"success": True, "result": result})
+    except Exception as e:
+        logger.error(f"search_decline_codes failed: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def tool_get_all_decline_codes_http(request: web.Request) -> web.Response:
+    """HTTP wrapper for get_all_decline_codes tool."""
+    code_type = (request.query.get("code_type") or "").strip() or None
+    
+    try:
+        result = await _get_all_decline_codes_impl(code_type=code_type)
+        return web.json_response({"success": True, "result": result})
+    except Exception as e:
+        logger.error(f"get_all_decline_codes failed: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def tool_get_decline_codes_metadata_http(request: web.Request) -> web.Response:
+    """HTTP wrapper for get_decline_codes_metadata tool."""
+    try:
+        result = await _get_decline_codes_metadata_impl()
+        return web.json_response({"success": True, "result": result})
+    except Exception as e:
+        logger.error(f"get_decline_codes_metadata failed: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 async def run_health_server() -> None:
@@ -571,14 +690,35 @@ async def run_health_server() -> None:
     try:
         http_app = web.Application()
 
+        # Add error handling middleware
+        @web.middleware
+        async def error_middleware(request, handler):
+            try:
+                return await handler(request)
+            except web.HTTPException:
+                raise  # Let aiohttp handle HTTP exceptions
+            except Exception as e:
+                logger.error(f"Unhandled error in {request.path}: {e}", exc_info=True)
+                return web.json_response(
+                    {"success": False, "error": str(e), "path": request.path},
+                    status=500
+                )
+        
+        http_app.middlewares.append(error_middleware)
+
         # Health endpoints
         http_app.router.add_get("/health", health_check)
         http_app.router.add_get("/ready", health_check)
         http_app.router.add_get("/", health_check)
 
+        # Tool discovery endpoint (for MCP client)
+        http_app.router.add_get("/tools/list", tools_list)
+
         # Tool endpoints (for direct HTTP access)
         http_app.router.add_get("/tools/lookup_decline_code", tool_lookup_decline_code_http)
         http_app.router.add_get("/tools/search_decline_codes", tool_search_decline_codes_http)
+        http_app.router.add_get("/tools/get_all_decline_codes", tool_get_all_decline_codes_http)
+        http_app.router.add_get("/tools/get_decline_codes_metadata", tool_get_decline_codes_metadata_http)
 
         runner = web.AppRunner(http_app, access_log=None)
         await runner.setup()

@@ -1252,14 +1252,47 @@ export default function AgentBuilderContent({
   // COMPUTED
   // ─────────────────────────────────────────────────────────────────────────
 
+  // Organize tools into categories with handoffs first, then MCP, then others
   const toolsByCategory = useMemo(() => {
     const grouped = {};
-    availableTools.forEach((tool) => {
-      const category = tool.is_handoff ? 'Handoffs' : (tool.tags?.[0] || 'General');
+    
+    // Sort tools to ensure handoffs appear first
+    const sortedTools = [...availableTools].sort((a, b) => {
+      // Handoffs first
+      if (a.is_handoff && !b.is_handoff) return -1;
+      if (!a.is_handoff && b.is_handoff) return 1;
+      // Then sort by name
+      return a.name.localeCompare(b.name);
+    });
+    
+    sortedTools.forEach((tool) => {
+      let category;
+      if (tool.is_handoff) {
+        category = '🔀 Handoffs';
+      } else if (tool.source === 'mcp') {
+        category = `🔌 MCP: ${tool.mcp_server || 'unknown'}`;
+      } else {
+        category = tool.tags?.[0] || 'General';
+      }
       if (!grouped[category]) grouped[category] = [];
       grouped[category].push(tool);
     });
-    return grouped;
+    
+    // Sort categories to put Handoffs first, then MCP, then others
+    const sortedKeys = Object.keys(grouped).sort((a, b) => {
+      if (a.startsWith('🔀')) return -1;
+      if (b.startsWith('🔀')) return 1;
+      if (a.startsWith('🔌')) return -1;
+      if (b.startsWith('🔌')) return 1;
+      return a.localeCompare(b);
+    });
+    
+    const sortedGrouped = {};
+    sortedKeys.forEach(key => {
+      sortedGrouped[key] = grouped[key];
+    });
+    
+    return sortedGrouped;
   }, [availableTools]);
 
 
@@ -2086,6 +2119,7 @@ export default function AgentBuilderContent({
             {/* TAB 2: TOOLS */}
             <TabPanel value={activeTab} index={2}>
               <Stack spacing={2}>
+                {/* Header with selected count and catalog link */}
                 <Stack direction="row" justifyContent="space-between" alignItems="center">
                   <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>
                     🛠️ Available Tools ({config.tools.length} selected)
@@ -2103,96 +2137,153 @@ export default function AgentBuilderContent({
                   </Button>
                 </Stack>
 
-                {Object.entries(toolsByCategory).map(([category, tools]) => (
-                  <Accordion key={category} defaultExpanded={false}>
-                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                      <Typography variant="subtitle2">{category}</Typography>
-                      <Chip
-                        size="small"
-                        label={`${tools.filter((t) => config.tools.includes(t.name)).length}/${tools.length}`}
-                        sx={{ ml: 2 }}
-                      />
-                    </AccordionSummary>
-                    <AccordionDetails>
-                      <Box
-                        sx={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(2, 1fr)',
-                          gap: 1,
-                        }}
-                      >
-                        {tools.map((tool) => (
-                          <Box
-                            key={tool.name}
-                            onClick={() => handleToolToggle(tool.name)}
-                            sx={{
-                              display: 'flex',
-                              alignItems: 'flex-start',
-                              gap: 1,
-                              p: 1,
-                              borderRadius: 1,
-                              border: '1px solid',
-                              borderColor: config.tools.includes(tool.name) ? 'primary.main' : 'divider',
-                              bgcolor: config.tools.includes(tool.name) ? 'primary.50' : 'transparent',
-                              cursor: 'pointer',
-                              '&:hover': { bgcolor: 'action.hover' },
-                              minWidth: 0,
+                {/* Selected Tools Summary (chips at top) */}
+                {config.tools.length > 0 && (
+                  <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'primary.50', borderColor: 'primary.200' }}>
+                    <Typography variant="caption" color="primary.dark" sx={{ fontWeight: 600, mb: 1, display: 'block' }}>
+                      Selected Tools:
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      {config.tools.map((toolName) => {
+                        const tool = availableTools.find(t => t.name === toolName);
+                        return (
+                          <Chip
+                            key={toolName}
+                            label={toolName}
+                            size="small"
+                            onDelete={() => handleToolToggle(toolName)}
+                            color={tool?.is_handoff ? 'secondary' : tool?.source === 'mcp' ? 'info' : 'default'}
+                            sx={{ 
+                              height: 24, 
+                              fontSize: 11,
+                              '& .MuiChip-label': { px: 1 },
                             }}
-                          >
-                            <Checkbox
-                              checked={config.tools.includes(tool.name)}
-                              size="small"
-                              sx={{ p: 0, mt: 0.25 }}
-                            />
-                            <Box sx={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                              <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexWrap: 'wrap' }}>
-                                <Typography
-                                  variant="body2"
-                                  sx={{
-                                    fontWeight: 600,
-                                    fontSize: '0.8rem',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {tool.name}
-                                </Typography>
-                                {tool.is_handoff && (
-                                  <Chip label="handoff" size="small" color="secondary" sx={{ height: 16, fontSize: 9 }} />
-                                )}
-                              </Stack>
-                              <Typography
-                                variant="caption"
-                                color="text.secondary"
-                                sx={{
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 2,
-                                  WebkitBoxOrient: 'vertical',
-                                  overflow: 'hidden',
-                                  fontSize: '0.7rem',
-                                  lineHeight: 1.3,
-                                }}
-                              >
-                                {tool.description || 'No description available.'}
-                              </Typography>
-                            </Box>
-                            <Tooltip title="Tool details">
+                          />
+                        );
+                      })}
+                    </Box>
+                  </Paper>
+                )}
+
+                {/* Tools by Category */}
+                {Object.entries(toolsByCategory).map(([category, tools], catIdx) => (
+                  <Accordion 
+                    key={category} 
+                    defaultExpanded={catIdx === 0}
+                    sx={{
+                      '&:before': { display: 'none' },
+                      boxShadow: 'none',
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      borderRadius: '8px !important',
+                      '&.Mui-expanded': { margin: 0 },
+                    }}
+                  >
+                    <AccordionSummary 
+                      expandIcon={<ExpandMoreIcon />}
+                      sx={{ 
+                        minHeight: 44,
+                        '&.Mui-expanded': { minHeight: 44 },
+                        '& .MuiAccordionSummary-content': { my: 1 },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={1} sx={{ width: '100%' }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>{category}</Typography>
+                        <Chip
+                          size="small"
+                          label={`${tools.filter((t) => config.tools.includes(t.name)).length}/${tools.length}`}
+                          color={tools.some(t => config.tools.includes(t.name)) ? 'primary' : 'default'}
+                          sx={{ height: 20, fontSize: 11 }}
+                        />
+                      </Stack>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ pt: 0, pb: 1.5 }}>
+                      <List dense disablePadding>
+                        {tools.map((tool) => (
+                          <ListItem
+                            key={tool.name}
+                            dense
+                            disablePadding
+                            secondaryAction={
                               <IconButton
+                                edge="end"
                                 size="small"
-                                sx={{ p: 0.25, flexShrink: 0 }}
                                 onClick={(e) => {
-                                  e.preventDefault();
                                   e.stopPropagation();
                                   handleOpenToolDetails(tool);
                                 }}
                               >
                                 <InfoOutlinedIcon sx={{ fontSize: 16 }} />
                               </IconButton>
-                            </Tooltip>
-                          </Box>
+                            }
+                            sx={{
+                              py: 0.5,
+                              px: 1,
+                              mb: 0.5,
+                              borderRadius: 1,
+                              border: '1px solid',
+                              borderColor: config.tools.includes(tool.name) ? 'primary.main' : 'transparent',
+                              bgcolor: config.tools.includes(tool.name) ? 'primary.50' : 'transparent',
+                              '&:hover': { bgcolor: 'action.hover' },
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => handleToolToggle(tool.name)}
+                          >
+                            <ListItemIcon sx={{ minWidth: 32 }}>
+                              <Checkbox
+                                checked={config.tools.includes(tool.name)}
+                                size="small"
+                                sx={{ p: 0 }}
+                              />
+                            </ListItemIcon>
+                            <ListItemText
+                              primary={
+                                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexWrap: 'wrap' }}>
+                                  <Typography
+                                    variant="body2"
+                                    sx={{
+                                      fontWeight: 500,
+                                      fontSize: '0.8rem',
+                                      fontFamily: 'monospace',
+                                    }}
+                                  >
+                                    {tool.name}
+                                  </Typography>
+                                  {tool.is_handoff && (
+                                    <Chip 
+                                      label="handoff" 
+                                      size="small" 
+                                      color="secondary" 
+                                      sx={{ height: 16, fontSize: 9, ml: 0.5 }} 
+                                    />
+                                  )}
+                                  {tool.source === 'mcp' && (
+                                    <Chip 
+                                      label={`MCP: ${tool.mcp_server}`} 
+                                      size="small" 
+                                      color="info"
+                                      variant="outlined"
+                                      sx={{ height: 16, fontSize: 9, ml: 0.5 }} 
+                                    />
+                                  )}
+                                </Stack>
+                              }
+                              secondary={tool.description || 'No description'}
+                              secondaryTypographyProps={{
+                                sx: {
+                                  fontSize: '0.7rem',
+                                  lineHeight: 1.3,
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  pr: 3,
+                                },
+                              }}
+                            />
+                          </ListItem>
                         ))}
-                      </Box>
+                      </List>
                     </AccordionDetails>
                   </Accordion>
                 ))}
