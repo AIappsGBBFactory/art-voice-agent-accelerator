@@ -476,6 +476,19 @@ show_summary() {
     log "  ✔ Uses managed identity for authentication"
     log "  ✔ More secure (no credentials stored)"
     log ""
+    
+    # Save auth config to azd env for sync-appconfig.sh
+    if command -v azd &>/dev/null; then
+        log "Saving auth config to azd environment..."
+        azd env set CARDAPI_MCP_AUTH_ENABLED "true" 2>/dev/null || true
+        azd env set CARDAPI_MCP_APP_ID "$APP_ID" 2>/dev/null || true
+        success "Saved to azd env: CARDAPI_MCP_AUTH_ENABLED=true, CARDAPI_MCP_APP_ID=$APP_ID"
+        log ""
+        log "Run sync-appconfig.sh to push to App Configuration:"
+        log "  ./devops/scripts/azd/helpers/sync-appconfig.sh"
+        log ""
+    fi
+    
     log "Test the authentication:"
     log "  curl -I ${APP_ENDPOINT}"
     log ""

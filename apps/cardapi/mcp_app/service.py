@@ -38,6 +38,66 @@ HEALTH_PORT = int(os.getenv("MCP_SERVER_PORT", "8080"))
 # Path to local JSON file (for development fallback)
 LOCAL_DATA_FILE = Path(__file__).parent.parent / "database" / "decline_codes_policy_pack.json"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BOOTSTRAP: Load configuration from Azure App Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _bootstrap_appconfig() -> None:
+    """Load configuration from Azure App Configuration at startup.
+    
+    Resolves Key Vault references for secrets like AZURE_COSMOS_CONNECTION_STRING.
+    """
+    try:
+        from azure.appconfiguration import AzureAppConfigurationClient, SecretReferenceConfigurationSetting
+        from azure.identity import DefaultAzureCredential
+        from azure.keyvault.secrets import SecretClient
+        
+        endpoint = os.getenv("AZURE_APPCONFIG_ENDPOINT")
+        label = os.getenv("AZURE_APPCONFIG_LABEL", "")
+        
+        if not endpoint:
+            logger.info("No AZURE_APPCONFIG_ENDPOINT; using direct env vars")
+            return
+        
+        logger.info(f"Loading config from App Configuration: {endpoint}")
+        credential = DefaultAzureCredential()
+        client = AzureAppConfigurationClient(endpoint, credential)
+        
+        # Load Cosmos connection string
+        try:
+            kv = client.get_configuration_setting(key="azure/cosmos/connection-string", label=label)
+            if kv:
+                if isinstance(kv, SecretReferenceConfigurationSetting):
+                    # Resolve Key Vault reference
+                    secret_id = kv.secret_id
+                    vault_url = secret_id.split('/secrets/')[0]
+                    secret_name = secret_id.split('/secrets/')[1].split('/')[0]
+                    
+                    kv_client = SecretClient(vault_url=vault_url, credential=credential)
+                    secret = kv_client.get_secret(secret_name)
+                    connection_string = secret.value
+                    logger.info(f"Resolved Cosmos connection from Key Vault")
+                else:
+                    connection_string = kv.value
+                    logger.info("Loaded Cosmos connection from App Config")
+                
+                os.environ["AZURE_COSMOS_CONNECTION_STRING"] = connection_string
+        except Exception as e:
+            logger.warning(f"Could not load azure/cosmos/connection-string: {e}")
+        
+        # NOTE: Database/collection names are set by Terraform env vars (cardapi/declinecodes)
+        # and should NOT be overridden from App Config (which has main backend's db)
+                
+    except Exception as e:
+        logger.warning(f"App Configuration bootstrap failed: {e}")
+
+
+# Run bootstrap at module load (before FastMCP init)
+_bootstrap_appconfig()
+
+
 # Initialize FastMCP server
 mcp = FastMCP(
     name="card-decline-codes",

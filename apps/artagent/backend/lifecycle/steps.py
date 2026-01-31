@@ -438,6 +438,8 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
     discovers their tools, and registers them in the central tool registry
     so agents can reference them by name.
     
+    For EasyAuth-protected servers, acquires tokens using Managed Identity.
+    
     Required servers (MCP_REQUIRED_SERVERS) must be healthy or startup fails.
     Optional servers log warnings but continue.
     """
@@ -452,6 +454,9 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
         MCPClientSession,
         MCPServerConfig,
         MCPTransport,
+    )
+    from apps.artagent.backend.registries.toolstore.mcp.auth import (
+        get_mcp_auth_headers,
     )
     from apps.artagent.backend.registries.toolstore.registry import (
         register_mcp_tool,
@@ -480,6 +485,20 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
             url = server["url"]
             transport = server.get("transport", "sse")
             timeout = server.get("timeout", 30.0)
+            auth_enabled = server.get("auth_enabled", False)
+            app_id = server.get("app_id", "")
+            
+            # Get auth headers if server requires authentication
+            auth_headers: dict[str, str] = {}
+            if auth_enabled:
+                if not app_id:
+                    logger.error(f"MCP server '{name}' has auth enabled but no app_id configured")
+                else:
+                    auth_headers = await get_mcp_auth_headers(app_id)
+                    if auth_headers:
+                        logger.info(f"Acquired auth token for MCP server '{name}'")
+                    else:
+                        logger.warning(f"Failed to acquire auth token for MCP server '{name}'")
             
             # First check health endpoint
             health_url = f"{url.rstrip('/')}/health"
@@ -490,7 +509,7 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
             
             try:
                 async with httpx.AsyncClient(timeout=MCP_SERVER_TIMEOUT) as client:
-                    response = await client.get(health_url)
+                    response = await client.get(health_url, headers=auth_headers)
                     is_healthy = response.status_code == 200
                     
                     if is_healthy:
@@ -535,10 +554,30 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
                             server_timeout = timeout
                             
                             # Create executor that calls the MCP server's HTTP tool endpoint
-                            def make_executor(tool_original_name: str, tool_prefixed_name: str, mcp_url: str, mcp_timeout: float):
+                            def make_executor(
+                                tool_original_name: str,
+                                tool_prefixed_name: str,
+                                mcp_url: str,
+                                mcp_timeout: float,
+                                mcp_auth_enabled: bool,
+                                mcp_app_id: str,
+                            ):
                                 async def executor(args: dict) -> dict:
                                     """Execute MCP tool via HTTP endpoint."""
                                     import httpx
+                                    from apps.artagent.backend.registries.toolstore.mcp.auth import (
+                                        get_mcp_auth_headers,
+                                    )
+                                    
+                                    # Acquire fresh auth headers if needed
+                                    exec_headers: dict[str, str] = {}
+                                    if mcp_auth_enabled and mcp_app_id:
+                                        exec_headers = await get_mcp_auth_headers(mcp_app_id)
+                                        if not exec_headers:
+                                            return {
+                                                "success": False,
+                                                "error": "Failed to acquire auth token for MCP server",
+                                            }
                                     
                                     # Try the /tools/{tool_name} endpoint with GET params
                                     tool_endpoint = f"{mcp_url.rstrip('/')}/tools/{tool_original_name}"
@@ -546,7 +585,7 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
                                     try:
                                         async with httpx.AsyncClient(timeout=mcp_timeout) as client:
                                             # Most MCP tool endpoints use GET with query params
-                                            response = await client.get(tool_endpoint, params=args)
+                                            response = await client.get(tool_endpoint, params=args, headers=exec_headers)
                                             
                                             if response.status_code == 200:
                                                 data = response.json()
@@ -571,7 +610,14 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
                                         }
                                 return executor
                             
-                            executor = make_executor(original_name, prefixed_name, server_url, server_timeout)
+                            executor = make_executor(
+                                original_name,
+                                prefixed_name,
+                                server_url,
+                                server_timeout,
+                                auth_enabled,
+                                app_id,
+                            )
                             
                             schema = {
                                 "name": prefixed_name,

@@ -207,7 +207,7 @@ class MCPClientSession:
                 )
                 return
         except Exception as e:
-            logger.debug(f"Dynamic tool discovery failed for {self.config.name}, using fallback: {e}")
+            logger.warning(f"Dynamic tool discovery failed for {self.config.name}, using fallback: {e}")
 
         # Fallback: hardcoded schemas for known CardAPI tools
         try:

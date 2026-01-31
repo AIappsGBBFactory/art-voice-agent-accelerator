@@ -47,8 +47,22 @@ resource "azurerm_role_assignment" "keyvault_cardapi_mcp_secrets" {
 # CARD API - COSMOS DB MONGODB USER (READ ACCESS)
 # ============================================================================
 
-# Create a MongoDB user for cardapi_mcp with access to the shared Cosmos DB
-# Note: Cosmos DB MongoDB vCore only supports 'dbOwner' role on 'admin' database
+# Create a MongoDB user for cardapi_mcp with access to the shared Cosmos DB.
+# NOTE: Cosmos DB MongoDB vCore currently only supports assigning the 'dbOwner'
+# role on the 'admin' database for Microsoft Entra ID principals. This grants
+# broader privileges than required for the CardAPI MCP server, which is intended
+# to perform read-only operations only.
+#
+# SECURITY IMPLICATIONS:
+# - The managed identity technically has permissions to perform write operations.
+# - Application code MUST treat this connection as read-only and MUST NOT issue
+#   any write/DDL operations.
+# - Platform/operations teams MUST configure monitoring/alerting on Cosmos DB
+#   (e.g., diagnostic logs or activity logs) to detect and investigate any write
+#   operations performed by this identity.
+# - Where Cosmos DB introduces more granular roles or read-only connection
+#   mechanisms, this configuration SHOULD be updated to remove the 'dbOwner'
+#   assignment or switch to a read-only connection string.
 resource "azapi_resource" "cardapi_mcp_db_user" {
   type      = "Microsoft.DocumentDB/mongoClusters/users@2025-04-01-preview"
   name      = azurerm_user_assigned_identity.cardapi_mcp.principal_id

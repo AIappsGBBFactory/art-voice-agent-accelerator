@@ -127,7 +127,11 @@ main() {
             return 0
         fi
     else
-        read -rp "│ Delete remote state storage account? This is permanent. [y/N]: " choice
+        local input_timeout="${AZD_INPUT_TIMEOUT:-30}"
+        if ! read -r -t "$input_timeout" -p "│ Delete remote state storage account? This is permanent. [y/N]: " choice; then
+            info "No input received after ${input_timeout}s. Keeping remote state storage account."
+            choice="n"
+        fi
     fi
 
     if echo "$choice" | grep -Eiq '^(y|yes)$'; then

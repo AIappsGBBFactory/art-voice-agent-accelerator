@@ -214,16 +214,22 @@ AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: str = os.getenv("AZURE_AI_FOUNDRY_PROJECT_END
 #   MCP_SERVER_<NAME>_URL - HTTP endpoint for the MCP server
 #   MCP_SERVER_<NAME>_TIMEOUT - Request timeout in seconds (default: 30)
 #   MCP_SERVER_<NAME>_TRANSPORT - Transport type: sse, http, stdio (default: sse)
+#   MCP_SERVER_<NAME>_AUTH_ENABLED - Enable managed identity auth (default: false)
+#   MCP_SERVER_<NAME>_APP_ID - Entra ID app ID for token scope (required if auth enabled)
 #
 # Example:
-#   MCP_SERVER_CARDAPI_URL=http://cardapi-mcp:80
+#   MCP_SERVER_CARDAPI_URL=https://cardapi-mcp-xxx.azurecontainerapps.io
 #   MCP_SERVER_CARDAPI_TIMEOUT=30
+#   MCP_SERVER_CARDAPI_AUTH_ENABLED=true
+#   MCP_SERVER_CARDAPI_APP_ID=api://cardapi-mcp-xxx-easyauth
 # ==============================================================================
 
 # Card Decline API MCP Server
 MCP_SERVER_CARDAPI_URL: str = os.getenv("MCP_SERVER_CARDAPI_URL", os.getenv("CARDAPI_MCP_URL", ""))
 MCP_SERVER_CARDAPI_TIMEOUT: float = _env_float("MCP_SERVER_CARDAPI_TIMEOUT", 30.0)
 MCP_SERVER_CARDAPI_TRANSPORT: str = os.getenv("MCP_SERVER_CARDAPI_TRANSPORT", "sse")
+MCP_SERVER_CARDAPI_AUTH_ENABLED: bool = _env_bool("MCP_SERVER_CARDAPI_AUTH_ENABLED", False)
+MCP_SERVER_CARDAPI_APP_ID: str = os.getenv("MCP_SERVER_CARDAPI_APP_ID", "")
 
 # Additional MCP servers can be configured similarly:
 # MCP_SERVER_KNOWLEDGE_URL: str = os.getenv("MCP_SERVER_KNOWLEDGE_URL", "")
@@ -248,7 +254,7 @@ def get_mcp_server_config(server_name: str) -> dict:
         server_name: Name of the MCP server (case-insensitive)
 
     Returns:
-        Dict with url, timeout, transport keys, or empty dict if not configured
+        Dict with url, timeout, transport, auth_enabled, app_id keys, or empty dict if not configured
     """
     name_upper = server_name.upper()
     url = os.getenv(f"MCP_SERVER_{name_upper}_URL", "")
@@ -260,6 +266,8 @@ def get_mcp_server_config(server_name: str) -> dict:
         "url": url,
         "timeout": _env_float(f"MCP_SERVER_{name_upper}_TIMEOUT", 30.0),
         "transport": os.getenv(f"MCP_SERVER_{name_upper}_TRANSPORT", "sse"),
+        "auth_enabled": _env_bool(f"MCP_SERVER_{name_upper}_AUTH_ENABLED", False),
+        "app_id": os.getenv(f"MCP_SERVER_{name_upper}_APP_ID", ""),
     }
 
 

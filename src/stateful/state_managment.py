@@ -1367,16 +1367,28 @@ class MemoManager:
             if not tool_info:
                 continue
 
-            # Create executor that proxies to MCP manager
-            async def make_executor(name: str):
+            # Create executor that proxies to MCP manager.
+            # Validation must happen at execution time since manager may be
+            # cleaned up between registration and invocation.
+            def make_executor(name: str):
                 async def executor(args: dict[str, Any]) -> dict[str, Any]:
-                    if not self._mcp_manager:
-                        return {"success": False, "error": "MCP manager not initialized"}
-                    return await self._mcp_manager.execute_tool(name, args)
+                    # Validate manager state at execution time, not capture time
+                    if self._mcp_manager is None:
+                        return {
+                            "success": False,
+                            "error": "MCP session has been cleaned up",
+                        }
+                    try:
+                        return await self._mcp_manager.execute_tool(name, args)
+                    except Exception as e:
+                        return {
+                            "success": False,
+                            "error": f"MCP tool execution failed: {e}",
+                        }
 
                 return executor
 
-            executor = await make_executor(tool_name)
+            executor = make_executor(tool_name)
 
             schema = {
                 "name": tool_name,
