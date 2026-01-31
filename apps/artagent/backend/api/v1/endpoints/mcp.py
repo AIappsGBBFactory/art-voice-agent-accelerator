@@ -217,6 +217,46 @@ def _get_all_servers() -> dict[str, dict[str, Any]]:
     return servers
 
 
+async def _sync_app_state_mcp_status(app_state: Any) -> None:
+    """
+    Sync app.state.mcp_servers_status with current MCP server state.
+    
+    This ensures the readiness endpoint returns accurate MCP server info
+    after runtime changes (add/remove servers).
+    """
+    all_servers = _get_all_servers()
+    mcp_status: dict[str, dict] = {}
+    
+    for name, config in all_servers.items():
+        url = config["url"]
+        headers = config.get("headers", {})
+        
+        # Quick health check
+        is_healthy, health_data, error = await _check_server_health(
+            url, timeout=min(config.get("timeout", 5.0), 5.0), headers=headers
+        )
+        
+        # Get tool count from health data or registry
+        tools_count = 0
+        tool_names: list[str] = []
+        if health_data:
+            tools_count = health_data.get("tools_count", 0)
+            tool_names = health_data.get("tool_names", [])
+        if not tool_names:
+            tool_names = list_mcp_tools(mcp_server=name)
+            tools_count = len(tool_names)
+        
+        mcp_status[name] = {
+            "status": "healthy" if is_healthy else "unhealthy",
+            "url": url,
+            "tools_count": tools_count,
+            "tool_names": tool_names,
+            "error": error,
+        }
+    
+    app_state.mcp_servers_status = mcp_status
+
+
 def _merge_auth_headers(headers: dict[str, str], auth_token: str | None) -> dict[str, str]:
     """Merge explicit headers with auth_token convenience field."""
     merged = dict(headers) if headers else {}
@@ -514,6 +554,9 @@ async def add_mcp_server(
         f"Added MCP server '{server.name}' at {server.url} with {tools_count} tools: {tool_names}"
     )
 
+    # Sync app.state.mcp_servers_status so readiness endpoint reflects the change
+    await _sync_app_state_mcp_status(request.app.state)
+
     return {
         "status": "success",
         "message": f"MCP server '{server.name}' added successfully",
@@ -669,6 +712,9 @@ async def remove_mcp_server(
     del _RUNTIME_MCP_SERVERS[name]
 
     logger.info(f"Removed MCP server '{name}' and {tools_removed} tools")
+
+    # Sync app.state.mcp_servers_status so readiness endpoint reflects the change
+    await _sync_app_state_mcp_status(request.app.state)
 
     return {
         "status": "success",
