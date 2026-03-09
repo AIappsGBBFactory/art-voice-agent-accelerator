@@ -3555,7 +3555,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             turnId,
             (current) => ({
               ...messageOptions,
-              text: txt ?? current?.text ?? "",
+              text: txt || current?.text || "",
               streaming: false,
               cancelled: false,
               cancelReason: undefined,
@@ -3563,6 +3563,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             {
               // Pass speaker so we can find messages with speaker-qualified turnIds after handoff
               speaker: assistantSpeaker,
+              // Don't create new message if this is just a finalize signal (no text)
+              createIfMissing: !!txt,
               initial: () => ({
                 ...messageOptions,
                 streaming: false,
@@ -3583,6 +3585,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     ? {
                         ...m,
                         ...messageOptions,
+                        text: txt || m.text || "",
                         streaming: false,
                         cancelled: false,
                         cancelReason: undefined,
@@ -3591,6 +3594,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                 );
               }
             }
+            // Don't create a new empty message when this is just a finalize signal
+            if (!txt) return prev;
             return pushIfChanged(prev, {
               ...messageOptions,
               cancelled: false,
@@ -3643,14 +3648,36 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
 
       if (type === "tool_start") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            speaker: "Assistant",
-            isTool: true,
-            text: `🛠️ tool ${payload.tool} started 🔄`,
-          },
-        ]);
+        // Cancel any active streaming message — the LLM may have dispatched
+        // text chunks before the tool call was detected in the same stream.
+        // Incrementing streamGeneration prevents the post-tool response from
+        // merging into the pre-tool bubble, and we remove the orphaned
+        // streaming message since the post-tool LLM call will produce the
+        // real response.
+        assistantStreamGenerationRef.current += 1;
+        assistantStreamBufferRef.current = { turnId: null, text: "" };
+        setMessages((prev) => {
+          // Remove the last message if it was still streaming (pre-tool text leak)
+          const last = prev.at(-1);
+          if (last?.streaming && !last?.isTool) {
+            return [
+              ...prev.slice(0, -1),
+              {
+                speaker: "Assistant",
+                isTool: true,
+                text: `🛠️ tool ${payload.tool} started 🔄`,
+              },
+            ];
+          }
+          return [
+            ...prev,
+            {
+              speaker: "Assistant",
+              isTool: true,
+              text: `🛠️ tool ${payload.tool} started 🔄`,
+            },
+          ];
+        });
         appendGraphEvent({
           kind: "tool",
           from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),

@@ -1092,12 +1092,11 @@ Contoso Bank
         "success": True,
         "email_sent": email_sent,
         "email_error": email_error,
-        "verification_code": code,
         "email": email,
         "card_name": card.name,
         "expires_in_hours": 24,
         "redis_stored": redis_stored,
-        "message": f"Verification code sent to {email}. Please ask the customer to check their email and provide the 6-digit code.",
+        "message": f"Verification code sent to {email}. Ask the customer to check their email and read back the 6-digit code. Do NOT reveal the code yourself.",
     }
 
 

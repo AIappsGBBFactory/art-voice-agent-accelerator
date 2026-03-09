@@ -96,7 +96,21 @@ export default function useWebSocket({
 
         case "assistant":
         case "status":
-          append({ speaker: "Assistant", text: txt });
+          setMessages((prev) => {
+            const last = prev.at(-1);
+            // If the last message is still streaming, finalize it in-place
+            // instead of appending a duplicate bubble
+            if (last?.streaming && last.speaker === "Assistant") {
+              return prev.map((m, i) =>
+                i === prev.length - 1
+                  ? { ...m, text: txt || m.text, streaming: false }
+                  : m
+              );
+            }
+            // Don't create a new empty message for finalize-only signals
+            if (!txt) return prev;
+            return [...prev, { speaker: "Assistant", text: txt }];
+          });
           addMindMapNode?.({
             speaker: "Assistant",
             text: txt,

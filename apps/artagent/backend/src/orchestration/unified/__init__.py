@@ -542,12 +542,19 @@ async def route_turn(
             # Register agent switch callback on adapter
             adapter.set_on_agent_switch(on_agent_switch)
 
+            # Track whether response text was streamed to frontend via on_tts_chunk.
+            # This local flag is immune to external cache manipulation (unlike ws.state cache)
+            # and is used to decide whether the final envelope needs content.
+            _chunks_were_streamed = False
+
             # Define TTS chunk callback - uses speech_cascade's queue_tts for proper sequencing
             async def on_tts_chunk(text: str) -> None:
                 """Queue TTS and broadcast structured assistant streaming envelopes."""
+                nonlocal _chunks_were_streamed
                 if not text or not text.strip():
                     return
 
+                _chunks_were_streamed = True
                 normalized = text.strip()
                 stream_cache = _ensure_stream_cache(ws)
                 stream_cache.append(normalized)
@@ -618,8 +625,17 @@ async def route_turn(
                 )
 
             async def on_tool_start(tool_name: str, arguments_raw: object) -> None:
+                nonlocal _chunks_were_streamed
                 if not tool_name:
                     return
+                # Reset streaming flag — pre-tool text was already removed
+                # by the frontend's tool_start handler.  The post-tool LLM
+                # call will set this flag again if it streams chunks.
+                _chunks_were_streamed = False
+                # Clear stream cache so _emit_to_ui dedup stays consistent
+                pre_tool_cache = getattr(ws.state, _STREAM_CACHE_ATTR, None)
+                if pre_tool_cache is not None:
+                    pre_tool_cache.clear()
                 try:
                     args = _parse_tool_arguments(arguments_raw)
                     call_id = uuid.uuid4().hex[:10]
@@ -698,11 +714,9 @@ async def route_turn(
                 # creating a duplicate when turn_id was advanced for tool calls
                 session_scope = CascadeSessionScope.get_current()
                 effective_turn_id = session_scope.get_effective_turn_id() if session_scope else run_id
-                
+
                 payload = {
                     "type": "assistant",
-                    "message": result.response_text,
-                    "content": result.response_text,
                     "streaming": False,
                     "turn_id": effective_turn_id,
                     "response_id": effective_turn_id,
@@ -713,6 +727,11 @@ async def route_turn(
                     "active_agent_label": final_label,
                     "run_id": run_id,
                 }
+                # Only include full text when it was NOT already streamed.
+                # Uses a local flag that can't be cleared by external handlers.
+                if not _chunks_were_streamed:
+                    payload["message"] = result.response_text
+                    payload["content"] = result.response_text
                 # Add error details if present
                 if result.error:
                     payload["error"] = result.error
@@ -743,6 +762,11 @@ async def route_turn(
                     )
                 except Exception:
                     logger.debug("Failed to emit assistant_final envelope", exc_info=True)
+                finally:
+                    # Clear stream cache for next turn
+                    _sc = getattr(ws.state, _STREAM_CACHE_ATTR, None)
+                    if _sc is not None:
+                        _sc.clear()
             else:
                 logger.warning("No response_text to send as final envelope | turn_id=%s", run_id)
 

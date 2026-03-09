@@ -422,8 +422,9 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
       setActiveSpeaker("Assistant");
       setMessages(prev => {
         if (prev.at(-1)?.streaming) {
-          return prev.map((m,i)=> i===prev.length-1 ? {...m, text:txt, streaming:false} : m);
+          return prev.map((m,i)=> i===prev.length-1 ? {...m, text:txt || m.text, streaming:false} : m);
         }
+        if (!txt) return prev;
         return pushIfChanged(prev, { speaker:"Assistant", text:txt });
       });
 
