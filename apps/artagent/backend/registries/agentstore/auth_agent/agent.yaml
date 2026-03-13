@@ -86,6 +86,8 @@ speech:
 tools:
   # MFA & Identity Verification (Customer)
   - verify_client_identity
+  - enroll_voiceprint
+  - verify_voiceprint
   - send_mfa_code
   - verify_mfa_code
   - resend_mfa_code

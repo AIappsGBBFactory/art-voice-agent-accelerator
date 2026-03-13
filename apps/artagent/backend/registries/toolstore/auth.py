@@ -14,7 +14,13 @@ import re
 import string
 from typing import TYPE_CHECKING, Any
 
+from opentelemetry import metrics, trace
+from opentelemetry.trace import StatusCode
+
 from apps.artagent.backend.registries.toolstore.registry import register_tool
+from apps.artagent.backend.voice.shared.context import VoiceSessionContext
+from src.enums.monitoring import SpanAttr
+from src.speech.speaker_recognition import SpeakerRecognitionService
 from utils.ml_logging import get_logger
 
 try:  # pragma: no cover - optional dependency during tests
@@ -32,6 +38,44 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.cosmosdb.manager import CosmosDBMongoCoreManager
 
 logger = get_logger("agents.tools.auth")
+
+# ── Voiceprint OTel instrumentation ──────────────────────────────────────────
+_tracer = trace.get_tracer("artagent.voiceprint")
+_meter = metrics.get_meter("artagent.voiceprint")
+
+_voiceprint_enroll_counter = _meter.create_counter(
+    "voiceprint.enroll.attempts",
+    description="Number of voiceprint enrollment attempts",
+)
+_voiceprint_enroll_success = _meter.create_counter(
+    "voiceprint.enroll.success",
+    description="Number of successful voiceprint enrollments",
+)
+_voiceprint_enroll_errors = _meter.create_counter(
+    "voiceprint.enroll.errors",
+    description="Number of voiceprint enrollment errors",
+)
+_voiceprint_verify_counter = _meter.create_counter(
+    "voiceprint.verify.attempts",
+    description="Number of voiceprint verification attempts",
+)
+_voiceprint_verify_match = _meter.create_counter(
+    "voiceprint.verify.match",
+    description="Number of successful voiceprint verification matches",
+)
+_voiceprint_verify_mismatch = _meter.create_counter(
+    "voiceprint.verify.mismatch",
+    description="Number of voiceprint verification mismatches",
+)
+_voiceprint_verify_errors = _meter.create_counter(
+    "voiceprint.verify.errors",
+    description="Number of voiceprint verification errors",
+)
+_voiceprint_duration = _meter.create_histogram(
+    "voiceprint.operation.duration_ms",
+    description="Duration of voiceprint operations in milliseconds",
+    unit="ms",
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -51,6 +95,39 @@ verify_client_identity_schema: dict[str, Any] = {
             "ssn_last_4": {"type": "string", "description": "Last 4 digits of SSN"},
         },
         "required": ["full_name", "ssn_last_4"],
+    },
+}
+
+enroll_voiceprint_schema: dict[str, Any] = {
+    "name": "enroll_voiceprint",
+    "description": (
+        "Enroll the current caller's voice as a biometric voiceprint. "
+        "Requires the caller to be already identified via name and SSN. "
+        "The system will use recent audio from the call for enrollment."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "full_name": {"type": "string", "description": "Caller's full legal name"},
+            "ssn_last_4": {"type": "string", "description": "Last 4 digits of SSN"},
+        },
+        "required": ["full_name", "ssn_last_4"],
+    },
+}
+
+verify_voiceprint_schema: dict[str, Any] = {
+    "name": "verify_voiceprint",
+    "description": (
+        "Verify the caller's identity using their biometric voiceprint. "
+        "This is an alternative to SSN verification for enrolled users. "
+        "Requires the caller's name to look up their stored voiceprint profile."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "full_name": {"type": "string", "description": "Caller's full legal name"},
+        },
+        "required": ["full_name"],
     },
 }
 
@@ -552,7 +629,7 @@ async def verify_cc_caller(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def verify_client_identity(args: dict[str, Any]) -> dict[str, Any]:
+async def verify_client_identity(args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     """Verify caller identity using Cosmos DB first, then fall back to mock data."""
     raw_full_name = (args.get("full_name") or "").strip()
     normalized_full_name = raw_full_name.lower()
@@ -586,6 +663,202 @@ async def verify_client_identity(args: dict[str, Any]) -> dict[str, Any]:
         "message": "Could not verify identity. Please check your information.",
         "data_source": "cosmos",
     }
+
+
+async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    """Enroll the current caller's voice as a biometric voiceprint."""
+    import time as _time
+
+    full_name = (args.get("full_name") or "").strip()
+    ssn_last_4 = (args.get("ssn_last_4") or "").strip()
+    context: VoiceSessionContext | None = kwargs.get("context")
+    t0 = _time.monotonic()
+
+    _voiceprint_enroll_counter.add(1, {SpanAttr.VOICEPRINT_USER_NAME: full_name})
+
+    with _tracer.start_as_current_span(
+        "voiceprint.enroll",
+        attributes={
+            SpanAttr.VOICEPRINT_OPERATION: "enroll",
+            SpanAttr.VOICEPRINT_USER_NAME: full_name,
+        },
+    ) as span:
+        if not context or not context.recent_audio_buffer:
+            span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "audio")
+            span.set_status(StatusCode.ERROR, "no audio buffer")
+            _voiceprint_enroll_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "audio"})
+            return {
+                "success": False,
+                "message": "Unable to enroll: No audio data captured from the call yet. Please keep talking for a few more seconds.",
+            }
+
+        audio_bytes = len(context.recent_audio_buffer)
+        span.set_attribute(SpanAttr.VOICEPRINT_AUDIO_BYTES, audio_bytes)
+
+        # Verify identity first
+        user, _ = await _lookup_user_in_cosmos(full_name, ssn_last_4)
+        if not user:
+            span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "identity")
+            span.set_status(StatusCode.ERROR, "user not found")
+            _voiceprint_enroll_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "identity"})
+            return {"success": False, "message": "User must be verified via SSN before voice enrollment."}
+
+        try:
+            service = SpeakerRecognitionService()
+
+            # 1. Create a voice profile
+            profile_id = await asyncio.to_thread(service.create_profile)
+            span.set_attribute(SpanAttr.VOICEPRINT_PROFILE_ID, profile_id)
+
+            # 2. Enroll using recent audio
+            audio_data = bytes(context.recent_audio_buffer)
+            success = await asyncio.to_thread(service.enroll_profile, profile_id, audio_data)
+
+            elapsed_ms = (_time.monotonic() - t0) * 1000
+            _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "enroll"})
+
+            if not success:
+                span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, False)
+                span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "audio")
+                _voiceprint_enroll_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "audio"})
+                return {
+                    "success": False,
+                    "message": "Voice enrollment failed. We might need more audio. Please continue the conversation and try again.",
+                }
+
+            # 3. Save profile_id to user record in Cosmos
+            cosmos = _get_demo_users_manager()
+            if cosmos:
+                user_id = user.get("_id")
+                await asyncio.to_thread(
+                    cosmos.update_document,
+                    {"_id": user_id},
+                    {"$set": {"voice_profile_id": profile_id}},
+                )
+
+            span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, True)
+            _voiceprint_enroll_success.add(1)
+            logger.info("Voiceprint enrolled for %s (profile=%s, audio=%d bytes, %.0fms)", full_name, profile_id, audio_bytes, elapsed_ms)
+            return {
+                "success": True,
+                "message": f"Voiceprint successfully enrolled for {full_name}. You can now be verified by your voice in future calls.",
+                "voice_profile_id": profile_id,
+            }
+
+        except Exception as exc:
+            elapsed_ms = (_time.monotonic() - t0) * 1000
+            _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "enroll"})
+            error_type = "config" if "region" in str(exc).lower() or "endpoint" in str(exc).lower() else "service"
+            span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, False)
+            span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, error_type)
+            span.set_status(StatusCode.ERROR, str(exc))
+            span.record_exception(exc)
+            _voiceprint_enroll_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: error_type})
+            logger.error("Voice enrollment error (%s): %s", error_type, exc, exc_info=True)
+            return {
+                "success": False,
+                "voiceprint_unavailable": True,
+                "message": "Voiceprint service is temporarily unavailable. Please continue with standard verification.",
+            }
+
+
+async def verify_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    """Verify the caller's identity using their biometric voiceprint."""
+    import time as _time
+
+    full_name = (args.get("full_name") or "").strip()
+    context: VoiceSessionContext | None = kwargs.get("context")
+    t0 = _time.monotonic()
+
+    _voiceprint_verify_counter.add(1, {SpanAttr.VOICEPRINT_USER_NAME: full_name})
+
+    with _tracer.start_as_current_span(
+        "voiceprint.verify",
+        attributes={
+            SpanAttr.VOICEPRINT_OPERATION: "verify",
+            SpanAttr.VOICEPRINT_USER_NAME: full_name,
+        },
+    ) as span:
+        if not context or not context.recent_audio_buffer:
+            span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "audio")
+            span.set_status(StatusCode.ERROR, "no audio buffer")
+            _voiceprint_verify_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "audio"})
+            return {
+                "success": False,
+                "message": "Unable to verify: No audio data captured. Please speak clearly into the microphone.",
+            }
+
+        audio_bytes = len(context.recent_audio_buffer)
+        span.set_attribute(SpanAttr.VOICEPRINT_AUDIO_BYTES, audio_bytes)
+
+        # Lookup user to get their profile_id
+        cosmos = _get_demo_users_manager()
+        if not cosmos:
+            span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "service")
+            span.set_status(StatusCode.ERROR, "database offline")
+            _voiceprint_verify_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "service"})
+            return {"success": False, "message": "Voice verification unavailable (database offline)."}
+
+        query = {"full_name": {"$regex": f"^{re.escape(full_name)}$", "$options": "i"}}
+        user = await asyncio.to_thread(cosmos.read_document, query)
+
+        if not user or not user.get("voice_profile_id"):
+            span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "profile_missing")
+            _voiceprint_verify_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "profile_missing"})
+            return {
+                "success": False,
+                "message": f"No voiceprint profile found for {full_name}. Please verify via SSN first and enroll your voice.",
+            }
+
+        profile_id = user["voice_profile_id"]
+        span.set_attribute(SpanAttr.VOICEPRINT_PROFILE_ID, profile_id)
+
+        try:
+            service = SpeakerRecognitionService()
+            audio_data = bytes(context.recent_audio_buffer)
+
+            result = await asyncio.to_thread(service.verify_speaker, profile_id, audio_data)
+
+            elapsed_ms = (_time.monotonic() - t0) * 1000
+            _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "verify"})
+
+            score = result.get("score")
+            matched = bool(result.get("match"))
+            span.set_attribute(SpanAttr.VOICEPRINT_VERIFY_MATCH, matched)
+            if score is not None:
+                span.set_attribute(SpanAttr.VOICEPRINT_VERIFY_SCORE, score)
+
+            if matched:
+                span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, True)
+                _voiceprint_verify_match.add(1)
+                logger.info("Voiceprint verified for %s (profile=%s, score=%.3f, %.0fms)", full_name, profile_id, score or 0, elapsed_ms)
+                return _format_identity_success(user, source="voiceprint")
+            else:
+                span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, False)
+                _voiceprint_verify_mismatch.add(1)
+                logger.info("Voiceprint mismatch for %s (profile=%s, score=%.3f, %.0fms)", full_name, profile_id, score or 0, elapsed_ms)
+                return {
+                    "success": False,
+                    "authenticated": False,
+                    "message": "Voice biometric mismatch. Identity could not be verified by voice.",
+                    "score": score,
+                }
+
+        except Exception as exc:
+            elapsed_ms = (_time.monotonic() - t0) * 1000
+            _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "verify"})
+            error_type = "config" if "region" in str(exc).lower() or "endpoint" in str(exc).lower() else "service"
+            span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, False)
+            span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, error_type)
+            span.set_status(StatusCode.ERROR, str(exc))
+            span.record_exception(exc)
+            _voiceprint_verify_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: error_type})
+            logger.error("Voice verification error (%s): %s", error_type, exc, exc_info=True)
+            return {
+                "success": False,
+                "voiceprint_unavailable": True,
+                "message": "Voiceprint service is temporarily unavailable. Please continue with standard verification.",
+            }
 
 
 async def send_mfa_code(args: dict[str, Any]) -> dict[str, Any]:
@@ -651,7 +924,24 @@ async def resend_mfa_code(args: dict[str, Any]) -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 register_tool(
-    "verify_client_identity", verify_client_identity_schema, verify_client_identity, tags={"auth"}
+    "verify_client_identity",
+    verify_client_identity_schema,
+    verify_client_identity,
+    tags={"auth", "identity"},
+)
+
+register_tool(
+    "enroll_voiceprint",
+    enroll_voiceprint_schema,
+    enroll_voiceprint,
+    tags={"auth", "voiceprint", "enrollment"},
+)
+
+register_tool(
+    "verify_voiceprint",
+    verify_voiceprint_schema,
+    verify_voiceprint,
+    tags={"auth", "voiceprint", "verification"},
 )
 register_tool("send_mfa_code", send_mfa_code_schema, send_mfa_code, tags={"auth", "mfa"})
 register_tool("verify_mfa_code", verify_mfa_code_schema, verify_mfa_code, tags={"auth", "mfa"})

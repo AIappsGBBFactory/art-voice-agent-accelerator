@@ -163,6 +163,8 @@ class StreamingSpeechRecognizerFromBytes:
         enable_tracing: bool = True,
         # Phrase list biasing ------------------------------------------
         initial_phrases: Iterable[str] | None = None,
+        # Session context ----------------------------------------------
+        context: Any = None,
     ):
         """
         Initialize the streaming speech recognizer with comprehensive configuration.
@@ -1143,6 +1145,17 @@ class StreamingSpeechRecognizerFromBytes:
         logger.debug(
             f"write_bytes called: {len(audio_chunk)} bytes, has_push_stream={self.push_stream is not None}"
         )
+        
+        # Buffer audio for Voice Biometrics if context is provided
+        if self.context and hasattr(self.context, 'recent_audio_buffer'):
+            self.context.recent_audio_buffer.extend(audio_chunk)
+            
+            # Keep only the most recent audio up to max_buffer_size
+            max_size = getattr(self.context, 'max_buffer_size', 320000)
+            if len(self.context.recent_audio_buffer) > max_size:
+                # Remove from the beginning (oldest audio)
+                del self.context.recent_audio_buffer[:len(self.context.recent_audio_buffer) - max_size]
+                
         if self.push_stream:
             if self.enable_tracing and self._session_span:
                 try:

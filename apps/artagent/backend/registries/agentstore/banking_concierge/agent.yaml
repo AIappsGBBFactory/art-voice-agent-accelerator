@@ -133,6 +133,8 @@ speech:
 tools:
   # Identity & Profile
   - verify_client_identity
+  - enroll_voiceprint
+  - verify_voiceprint
   - get_user_profile
   
   # Account Operations

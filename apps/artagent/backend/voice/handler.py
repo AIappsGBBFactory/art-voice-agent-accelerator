@@ -361,6 +361,10 @@ class VoiceHandler:
             event_loop=event_loop,
         )
 
+        # Set context on STT client for Voice Biometrics buffering
+        if hasattr(stt_client, "context"):
+            stt_client.context = context
+
         # Set websocket (private field)
         context._websocket = config.websocket
 
@@ -680,6 +684,11 @@ class VoiceHandler:
         try:
             tts_client = self._context.tts_client
             stt_client = self._context.stt_client
+            
+            # Clear context for Voice Biometrics buffering to avoid memory leaks
+            if hasattr(stt_client, "context"):
+                stt_client.context = None
+                
             await self._app_state.tts_pool.release_for_session(session_key, tts_client)
             await self._app_state.stt_pool.release_for_session(session_key, stt_client)
             logger.info("[%s] Released TTS/STT pools", self._session_short)

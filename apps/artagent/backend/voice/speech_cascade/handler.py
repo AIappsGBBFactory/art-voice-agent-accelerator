@@ -958,6 +958,7 @@ class SpeechCascadeHandler:
         orchestrator_func: Callable,
         recognizer: StreamingSpeechRecognizerFromBytes | None = None,
         memory_manager: MemoManager | None = None,
+        context: Any | None = None,
         *,
         on_barge_in: Callable[[], Awaitable[None]] | None = None,
         on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
@@ -977,6 +978,7 @@ class SpeechCascadeHandler:
             orchestrator_func: Orchestrator function for conversation management.
             recognizer: Speech recognition client instance.
             memory_manager: Memory manager for conversation state.
+            context: Optional voice session context for audio buffering.
             on_barge_in: Callback for barge-in events (transport-specific).
             on_greeting: Callback for greeting playback.
             on_announcement: Callback for announcement playback.
@@ -992,6 +994,7 @@ class SpeechCascadeHandler:
         self.orchestrator_func = orchestrator_func
         self.memory_manager = memory_manager
         self._redis_mgr = redis_mgr
+        self.context = context
 
         # Store callbacks for transport layer coordination
         self.on_user_transcript = on_user_transcript
@@ -1004,6 +1007,7 @@ class SpeechCascadeHandler:
             audio_format="pcm",
             use_semantic_segmentation=False,
             enable_diarisation=False,
+            context=self.context,
         )
 
         # Cross-thread communication

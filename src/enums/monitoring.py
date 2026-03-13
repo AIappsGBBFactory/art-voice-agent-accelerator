@@ -128,6 +128,18 @@ class SpanAttr(str, Enum):
     TTS_OUTPUT_FORMAT = "tts.output.format"
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # SPEAKER RECOGNITION / VOICEPRINT ATTRIBUTES
+    # ═══════════════════════════════════════════════════════════════════════════
+    VOICEPRINT_OPERATION = "voiceprint.operation"  # "enroll" or "verify"
+    VOICEPRINT_PROFILE_ID = "voiceprint.profile_id"
+    VOICEPRINT_SUCCESS = "voiceprint.success"
+    VOICEPRINT_ERROR_TYPE = "voiceprint.error_type"  # "config", "audio", "service", "profile_missing"
+    VOICEPRINT_AUDIO_BYTES = "voiceprint.audio_bytes"
+    VOICEPRINT_VERIFY_SCORE = "voiceprint.verify.score"
+    VOICEPRINT_VERIFY_MATCH = "voiceprint.verify.match"
+    VOICEPRINT_USER_NAME = "voiceprint.user_name"
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # CONVERSATION TURN ATTRIBUTES - Per-turn latency tracking
     # ═══════════════════════════════════════════════════════════════════════════
     TURN_ID = "turn.id"

@@ -694,6 +694,13 @@ async def readiness_check(
     )
     health_checks.append(auth_config_status)
 
+    # Check Speaker Recognition / Voiceprint service
+    voiceprint_status = await fast_ping(
+        _check_voiceprint_fast,
+        component="voiceprint",
+    )
+    health_checks.append(voiceprint_status)
+
     # Determine overall status
     failed_checks = [check for check in health_checks if check.status != "healthy"]
     if failed_checks:
@@ -1293,6 +1300,41 @@ async def _check_appconfig_fast() -> ServiceCheck:
             error=f"App Configuration check failed: {str(e)}",
             check_time_ms=round((time.time() - start) * 1000, 2),
         )
+
+
+async def _check_voiceprint_fast() -> ServiceCheck:
+    """Check whether the Speaker Recognition / Voiceprint service can be instantiated."""
+    start = time.time()
+
+    cfg = _get_config_dynamic()
+    region = cfg["AZURE_SPEECH_REGION"]
+    endpoint = cfg["AZURE_SPEECH_ENDPOINT"]
+    key_present = bool(cfg["AZURE_SPEECH_KEY"])
+    resource_id_present = bool(cfg["AZURE_SPEECH_RESOURCE_ID"])
+
+    if not region and not endpoint:
+        return ServiceCheck(
+            component="voiceprint",
+            status="unhealthy",
+            error="AZURE_SPEECH_REGION and AZURE_SPEECH_ENDPOINT both missing — SpeakerRecognitionService cannot initialise",
+            check_time_ms=round((time.time() - start) * 1000, 2),
+        )
+
+    if not key_present and not resource_id_present:
+        return ServiceCheck(
+            component="voiceprint",
+            status="degraded",
+            error="No AZURE_SPEECH_KEY or AZURE_SPEECH_RESOURCE_ID — speaker recognition may fail at runtime",
+            check_time_ms=round((time.time() - start) * 1000, 2),
+            details=f"region={'set' if region else 'missing'}, endpoint={'set' if endpoint else 'missing'}",
+        )
+
+    return ServiceCheck(
+        component="voiceprint",
+        status="healthy",
+        check_time_ms=round((time.time() - start) * 1000, 2),
+        details=f"region={'set' if region else 'missing'}, endpoint={'set' if endpoint else 'missing'}, auth={'key' if key_present else 'managed_identity'}",
+    )
 
 
 def _normalize_tools(agent_obj: Any) -> dict[str, list[str]]:

@@ -155,6 +155,11 @@ AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY") or os.environ.get(
 )
 AZURE_SPEECH_RESOURCE_ID: str = os.getenv("AZURE_SPEECH_RESOURCE_ID", "")
 
+# Speaker Recognition (VoicePrint)
+SPEAKER_RECOGNITION_CONFIDENCE_THRESHOLD: float = _env_float(
+    "SPEAKER_RECOGNITION_CONFIDENCE_THRESHOLD", 0.7
+)
+
 # Azure Voice Live (preview)
 # Note: Uses AZURE_VOICELIVE_* format to match VoiceLiveSettings pydantic model
 AZURE_VOICE_LIVE_ENDPOINT: str = os.getenv("AZURE_VOICELIVE_ENDPOINT", "") or os.getenv(
