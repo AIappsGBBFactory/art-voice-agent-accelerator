@@ -1108,6 +1108,7 @@ class VoiceHandler:
         ws.state.cancel_event = ctx.cancel_event
         ws.state.orchestration_tasks = ctx.orchestration_tasks
         ws.state.event_loop = ctx.event_loop
+        ws.state.voice_context = ctx  # Full VoiceSessionContext for voiceprint tools
 
     async def _initialize_active_agent(self) -> None:
         """Initialize active agent from scenario config or session agent."""

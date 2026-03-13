@@ -422,6 +422,11 @@ async def route_turn(
     app_state = ws.app.state
     adapter = _get_or_create_adapter(session_id, call_connection_id, app_state, memo_manager=cm)
 
+    # Inject voice session context for voiceprint tools (audio buffer access)
+    voice_context = getattr(ws.state, "voice_context", None)
+    if voice_context is not None:
+        adapter._voice_context = voice_context
+
     # Sync adapter state from MemoManager
     adapter.sync_from_memo_manager(cm)
 

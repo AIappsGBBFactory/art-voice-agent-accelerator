@@ -11,7 +11,7 @@ It integrates with OpenTelemetry for observability, enabling detailed tracing an
 import json
 import os
 from collections.abc import Callable, Iterable
-from typing import Final
+from typing import Any, Final
 
 import azure.cognitiveservices.speech as speechsdk
 from dotenv import load_dotenv
@@ -259,6 +259,7 @@ class StreamingSpeechRecognizerFromBytes:
         self.audio_format = audio_format  # either "pcm" or "any"
         self.use_semantic = use_semantic_segmentation
 
+        self.context = context
         self.call_connection_id = call_connection_id or "unknown"
         self.enable_tracing = enable_tracing
         self._token_manager: SpeechTokenManager | None = None

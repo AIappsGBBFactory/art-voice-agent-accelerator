@@ -695,13 +695,20 @@ async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
         audio_bytes = len(context.recent_audio_buffer)
         span.set_attribute(SpanAttr.VOICEPRINT_AUDIO_BYTES, audio_bytes)
 
-        # Verify identity first
-        user, _ = await _lookup_user_in_cosmos(full_name, ssn_last_4)
+        # Verify identity first (Cosmos DB, then mock fallback)
+        user, cosmos_failure = await _lookup_user_in_cosmos(full_name, ssn_last_4)
         if not user:
-            span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "identity")
-            span.set_status(StatusCode.ERROR, "user not found")
-            _voiceprint_enroll_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "identity"})
-            return {"success": False, "message": "User must be verified via SSN before voice enrollment."}
+            # Fall back to mock data (same as verify_client_identity)
+            normalized = full_name.lower()
+            mock_user = _MOCK_USERS.get((normalized, ssn_last_4))
+            if mock_user:
+                _log_mock_usage(full_name, ssn_last_4, cosmos_failure)
+                user = mock_user
+            else:
+                span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "identity")
+                span.set_status(StatusCode.ERROR, "user not found")
+                _voiceprint_enroll_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "identity"})
+                return {"success": False, "message": "User must be verified via SSN before voice enrollment."}
 
         try:
             service = SpeakerRecognitionService()

@@ -515,12 +515,12 @@ class UnifiedAgent:
         self._load_custom_tools()
         return get_tool_executor(tool_name)
 
-    async def execute_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def execute_tool(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         """Execute a tool by name with the given arguments."""
         from apps.artagent.backend.registries.toolstore import execute_tool, initialize_tools
 
         initialize_tools()
-        return await execute_tool(tool_name, args)
+        return await execute_tool(tool_name, args, **kwargs)
 
     # ═══════════════════════════════════════════════════════════════════
     # PROMPT RENDERING

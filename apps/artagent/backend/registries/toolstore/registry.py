@@ -272,8 +272,16 @@ def _prepare_args(
     if not params:
         return [], {}
 
-    if len(params) == 1:
-        param = params[0]
+    # Filter out **kwargs — it shouldn't affect how we decide to pass args
+    positional_params = [
+        p for p in params if p.kind not in (
+            inspect.Parameter.VAR_KEYWORD,
+            inspect.Parameter.VAR_POSITIONAL,
+        )
+    ]
+
+    if len(positional_params) <= 1 and positional_params:
+        param = positional_params[0]
         annotation = param.annotation
         if annotation is not inspect._empty and inspect.isclass(annotation):
             try:
@@ -283,14 +291,18 @@ def _prepare_args(
                 pass
         return [raw_args], {}
 
+    if not positional_params:
+        return [], raw_args
+
     return [], raw_args
 
 
-async def execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+async def execute_tool(name: str, arguments: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     """
     Execute a registered tool with the given arguments.
 
     Handles both sync and async executors.
+    Extra kwargs (e.g. context) are forwarded to tools that accept **kwargs.
     """
     defn = _TOOL_DEFINITIONS.get(name)
     if not defn:
@@ -302,6 +314,14 @@ async def execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
     fn = defn.executor
     positional, keyword = _prepare_args(fn, arguments)
+
+    # Forward extra kwargs (e.g. context) to tools that accept **kwargs
+    sig = inspect.signature(fn)
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+    if has_var_keyword:
+        keyword.update(kwargs)
 
     try:
         if inspect.iscoroutinefunction(fn):

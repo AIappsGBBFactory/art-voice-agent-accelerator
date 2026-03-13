@@ -784,6 +784,10 @@ class VoiceLiveSDKHandler:
         self._last_user_transcript: str | None = None
         self._last_user_turn_id: str | None = None
 
+        # Audio buffer for voiceprint enrollment/verification
+        self._recent_audio_buffer: bytearray = bytearray()
+        self._max_audio_buffer_size: int = 320000  # ~10s of 16kHz 16-bit PCM
+
         # Turn-level latency tracking
         self._turn_number: int = 0
         self._active_turn_span: ConversationTurnSpan | None = None
@@ -1100,6 +1104,8 @@ class VoiceLiveSDKHandler:
                     model_name=self._settings.azure_voicelive_model,
                     memo_manager=memo_manager,
                 )
+                # Share audio buffer with orchestrator for voiceprint tools
+                self._orchestrator._audio_buffer = self._recent_audio_buffer
                 span.set_attribute("voicelive.start_agent", effective_start_agent)
 
                 # Register orchestrator for scenario updates
@@ -1347,6 +1353,11 @@ class VoiceLiveSDKHandler:
         """Forward raw PCM frames (e.g., from realtime WS) to VoiceLive."""
         if not self._running or not self._connection or not audio_bytes:
             return
+
+        # Buffer audio for voiceprint enrollment/verification
+        self._recent_audio_buffer.extend(audio_bytes)
+        if len(self._recent_audio_buffer) > self._max_audio_buffer_size:
+            del self._recent_audio_buffer[: len(self._recent_audio_buffer) - self._max_audio_buffer_size]
 
         try:
             encoded = base64.b64encode(audio_bytes).decode("utf-8")

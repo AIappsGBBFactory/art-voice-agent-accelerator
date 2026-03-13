@@ -212,6 +212,13 @@ async def _auto_load_user_context(system_vars: dict[str, Any]) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+class _AudioBufferContext:
+    """Lightweight context wrapper providing audio buffer access for voiceprint tools."""
+
+    def __init__(self, buffer: bytearray):
+        self.recent_audio_buffer = buffer
+
+
 class LiveOrchestrator:
     """
     Orchestrates agent switching and tool execution for VoiceLive multi-agent system.
@@ -275,6 +282,9 @@ class LiveOrchestrator:
 
         # MemoManager for session state continuity (consistent with CascadeOrchestratorAdapter)
         self._memo_manager: MemoManager | None = memo_manager
+
+        # Audio buffer reference for voiceprint tools (set by VoiceLiveSDKHandler)
+        self._audio_buffer: bytearray | None = None
 
         # Unified metrics tracking (tokens, TTFT, turn count)
         self._metrics = OrchestratorMetrics(
@@ -1695,7 +1705,11 @@ class LiveOrchestrator:
                     kind=trace.SpanKind.INTERNAL,
                     attributes={"tool.name": name},
                 ):
-                    result = await execute_tool(name, args)
+                    # Pass audio buffer context for voiceprint tools
+                    tool_kwargs: dict[str, Any] = {}
+                    if self._audio_buffer is not None:
+                        tool_kwargs["context"] = _AudioBufferContext(self._audio_buffer)
+                    result = await execute_tool(name, args, **tool_kwargs)
             except Exception as exc:
                 notify_status = "error"
                 notify_error = str(exc)
@@ -2195,7 +2209,10 @@ class LiveOrchestrator:
                 logger.debug("Failed to emit pre-transfer status update", exc_info=True)
 
         try:
-            result = await execute_tool(tool_name, args)
+            transfer_kwargs: dict[str, Any] = {}
+            if self._audio_buffer is not None:
+                transfer_kwargs["context"] = _AudioBufferContext(self._audio_buffer)
+            result = await execute_tool(tool_name, args, **transfer_kwargs)
         except Exception:
             self._call_center_triggered = False
             logger.exception("Automatic call center transfer failed unexpectedly")

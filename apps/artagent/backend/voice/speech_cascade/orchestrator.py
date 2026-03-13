@@ -273,6 +273,9 @@ class CascadeOrchestratorAdapter:
     _current_memo_manager: MemoManager | None = field(default=None, init=False)
     _session_vars: dict[str, Any] = field(default_factory=dict, init=False)
 
+    # Voice session context (for voiceprint tools that need audio buffer)
+    _voice_context: Any | None = field(default=None, init=False)
+
     # Unified metrics tracking (replaces individual token/timing fields)
     _metrics: OrchestratorMetrics = field(default=None, init=False)  # type: ignore
 
@@ -1965,7 +1968,11 @@ class CascadeOrchestratorAdapter:
                                         client_id = cm.get_value_from_corememory("client_id")
                                         if client_id:
                                             args["_client_id"] = client_id
-                                    result = await agent.execute_tool(tool_name, args)
+                                    # Pass voice context for voiceprint tools
+                                    tool_kwargs = {}
+                                    if self._voice_context is not None:
+                                        tool_kwargs["context"] = self._voice_context
+                                    result = await agent.execute_tool(tool_name, args, **tool_kwargs)
                                     logger.info(
                                         "Tool executed | name=%s result_keys=%s",
                                         tool_name,
