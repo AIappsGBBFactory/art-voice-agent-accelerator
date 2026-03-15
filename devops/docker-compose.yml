@@ -13,6 +13,14 @@ services:
       - "8080:8080"
     
 
+  speakerid:
+    platform: linux/amd64
+    build:
+      context: ./
+      dockerfile: ./apps/speakerid/Dockerfile
+    ports:
+      - "8002:8000"
+
   # Be sure to run the devtunnel if developing locally
   # and to update the root .env file with the tunnel URL
   backend:

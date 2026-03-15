@@ -28,6 +28,16 @@ services:
       platform: linux/amd64
       remoteBuild: true
 
+  speakerid:
+    project: .
+    host: containerapp
+    language: python
+    docker:
+      path: ./apps/speakerid/Dockerfile
+      context: .
+      platform: linux/amd64
+      remoteBuild: true
+
   cardapi-mcp:
     project: .
     host: containerapp

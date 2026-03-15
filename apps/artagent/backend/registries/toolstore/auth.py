@@ -713,43 +713,29 @@ async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
         try:
             service = SpeakerRecognitionService()
 
-            # 1. Create a voice profile
-            profile_id = await asyncio.to_thread(service.create_profile)
-            span.set_attribute(SpanAttr.VOICEPRINT_PROFILE_ID, profile_id)
-
-            # 2. Enroll using recent audio
+            # Extract speaker embedding from recent audio
             audio_data = bytes(context.recent_audio_buffer)
-            success = await asyncio.to_thread(service.enroll_profile, profile_id, audio_data)
+            embedding = await asyncio.to_thread(service.get_embedding, audio_data)
 
             elapsed_ms = (_time.monotonic() - t0) * 1000
             _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "enroll"})
 
-            if not success:
-                span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, False)
-                span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "audio")
-                _voiceprint_enroll_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "audio"})
-                return {
-                    "success": False,
-                    "message": "Voice enrollment failed. We might need more audio. Please continue the conversation and try again.",
-                }
-
-            # 3. Save profile_id to user record in Cosmos
+            # Save embedding to user record in Cosmos
             cosmos = _get_demo_users_manager()
             if cosmos:
                 user_id = user.get("_id")
                 await asyncio.to_thread(
                     cosmos.update_document,
                     {"_id": user_id},
-                    {"$set": {"voice_profile_id": profile_id}},
+                    {"$set": {"voice_embedding": embedding}},
                 )
 
             span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, True)
             _voiceprint_enroll_success.add(1)
-            logger.info("Voiceprint enrolled for %s (profile=%s, audio=%d bytes, %.0fms)", full_name, profile_id, audio_bytes, elapsed_ms)
+            logger.info("Voiceprint enrolled for %s (embedding=%d dims, audio=%d bytes, %.0fms)", full_name, len(embedding), audio_bytes, elapsed_ms)
             return {
                 "success": True,
                 "message": f"Voiceprint successfully enrolled for {full_name}. You can now be verified by your voice in future calls.",
-                "voice_profile_id": profile_id,
             }
 
         except Exception as exc:
@@ -809,22 +795,21 @@ async def verify_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
         query = {"full_name": {"$regex": f"^{re.escape(full_name)}$", "$options": "i"}}
         user = await asyncio.to_thread(cosmos.read_document, query)
 
-        if not user or not user.get("voice_profile_id"):
+        if not user or not user.get("voice_embedding"):
             span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, "profile_missing")
             _voiceprint_verify_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: "profile_missing"})
             return {
                 "success": False,
-                "message": f"No voiceprint profile found for {full_name}. Please verify via SSN first and enroll your voice.",
+                "message": f"No voiceprint enrolled for {full_name}. Please verify via SSN first and enroll your voice.",
             }
 
-        profile_id = user["voice_profile_id"]
-        span.set_attribute(SpanAttr.VOICEPRINT_PROFILE_ID, profile_id)
+        stored_embedding = user["voice_embedding"]
 
         try:
             service = SpeakerRecognitionService()
             audio_data = bytes(context.recent_audio_buffer)
 
-            result = await asyncio.to_thread(service.verify_speaker, profile_id, audio_data)
+            result = await asyncio.to_thread(service.verify, audio_data, stored_embedding)
 
             elapsed_ms = (_time.monotonic() - t0) * 1000
             _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "verify"})
@@ -838,12 +823,12 @@ async def verify_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
             if matched:
                 span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, True)
                 _voiceprint_verify_match.add(1)
-                logger.info("Voiceprint verified for %s (profile=%s, score=%.3f, %.0fms)", full_name, profile_id, score or 0, elapsed_ms)
+                logger.info("Voiceprint verified for %s (score=%.3f, %.0fms)", full_name, score or 0, elapsed_ms)
                 return _format_identity_success(user, source="voiceprint")
             else:
                 span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, False)
                 _voiceprint_verify_mismatch.add(1)
-                logger.info("Voiceprint mismatch for %s (profile=%s, score=%.3f, %.0fms)", full_name, profile_id, score or 0, elapsed_ms)
+                logger.info("Voiceprint mismatch for %s (score=%.3f, %.0fms)", full_name, score or 0, elapsed_ms)
                 return {
                     "success": False,
                     "authenticated": False,
@@ -854,13 +839,13 @@ async def verify_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
         except Exception as exc:
             elapsed_ms = (_time.monotonic() - t0) * 1000
             _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "verify"})
-            error_type = "config" if "region" in str(exc).lower() or "endpoint" in str(exc).lower() else "service"
+            error_type = "service"
             span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, False)
             span.set_attribute(SpanAttr.VOICEPRINT_ERROR_TYPE, error_type)
             span.set_status(StatusCode.ERROR, str(exc))
             span.record_exception(exc)
             _voiceprint_verify_errors.add(1, {SpanAttr.VOICEPRINT_ERROR_TYPE: error_type})
-            logger.error("Voice verification error (%s): %s", error_type, exc, exc_info=True)
+            logger.error("Voice verification error: %s", exc, exc_info=True)
             return {
                 "success": False,
                 "voiceprint_unavailable": True,
