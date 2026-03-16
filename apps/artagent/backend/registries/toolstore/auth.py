@@ -726,7 +726,11 @@ async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
                 user_id = user.get("_id") or user.get("client_id")
                 await asyncio.to_thread(
                     cosmos.upsert_document,
-                    {"voice_embedding": embedding},
+                    {
+                        "voice_embedding": embedding,
+                        "full_name": user.get("full_name") or full_name,
+                        "client_id": user.get("client_id") or user_id,
+                    },
                     {"_id": user_id},
                 )
 
