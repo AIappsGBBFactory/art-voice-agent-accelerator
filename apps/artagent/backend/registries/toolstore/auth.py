@@ -723,11 +723,11 @@ async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
             # Save embedding to user record in Cosmos
             cosmos = _get_demo_users_manager()
             if cosmos:
-                user_id = user.get("_id")
+                user_id = user.get("_id") or user.get("client_id")
                 await asyncio.to_thread(
-                    cosmos.update_document,
+                    cosmos.upsert_document,
+                    {"voice_embedding": embedding},
                     {"_id": user_id},
-                    {"$set": {"voice_embedding": embedding}},
                 )
 
             span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, True)
