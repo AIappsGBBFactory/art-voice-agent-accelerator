@@ -17,6 +17,7 @@ import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './Strea
 import ProfileButton from './ProfileButton.jsx';
 import ProfileDetailsPanel from './ProfileDetailsPanel.jsx';
 import BackendIndicator from './BackendIndicator.jsx';
+import FeatureFlagsToggle from './FeatureFlagsToggle.jsx';
 import HelpButton from './HelpButton.jsx';
 import IndustryTag from './IndustryTag.jsx';
 import SessionSelector from './SessionSelector.jsx';
@@ -4649,6 +4650,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             compact={true}
           />
           
+          {/* Feature Flags */}
+          <FeatureFlagsToggle />
+
           {/* Help Button */}
           <HelpButton />
         </div>

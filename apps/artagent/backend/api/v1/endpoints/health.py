@@ -19,9 +19,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from config import (
+    get_feature_flag,
     get_provider_status,
     refresh_appconfig_cache,
 )
+from apps.artagent.backend.config.appconfig_provider import FEATURE_FLAG_MAP
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -944,6 +946,49 @@ async def appconfig_refresh(request: Request):
             },
             status_code=500,
         )
+
+
+@router.get(
+    "/feature-flags",
+    summary="Get Feature Flags",
+    description="Get current state of all feature flags.",
+    tags=["Health"],
+)
+async def get_feature_flags():
+    """Return all feature flags and their current values."""
+    flags = {}
+    for flag_name, env_var in FEATURE_FLAG_MAP.items():
+        flags[flag_name] = {
+            "enabled": get_feature_flag(flag_name),
+            "env_var": env_var,
+        }
+    return {"flags": flags}
+
+
+@router.put(
+    "/feature-flags/{flag_name}",
+    summary="Toggle Feature Flag",
+    description="Enable or disable a feature flag at runtime.",
+    tags=["Health"],
+)
+async def set_feature_flag(flag_name: str, request: Request):
+    """Toggle a feature flag by setting its environment variable."""
+    if flag_name not in FEATURE_FLAG_MAP:
+        raise HTTPException(status_code=404, detail=f"Unknown feature flag: {flag_name}")
+
+    body = await request.json()
+    enabled = bool(body.get("enabled", False))
+    env_var = FEATURE_FLAG_MAP[flag_name]
+
+    os.environ[env_var] = "true" if enabled else "false"
+    logger.info("Feature flag '%s' (%s) set to %s", flag_name, env_var, enabled)
+
+    return {
+        "flag": flag_name,
+        "enabled": enabled,
+        "env_var": env_var,
+        "message": f"Feature flag '{flag_name}' {'enabled' if enabled else 'disabled'}",
+    }
 
 
 async def _check_redis_fast(redis_manager) -> ServiceCheck:
