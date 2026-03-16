@@ -233,6 +233,12 @@ resource "azurerm_container_app" "backend" {
         name  = "PYTHONUNBUFFERED"
         value = "1"
       }
+
+      # Speaker ID service (voice biometric verification)
+      env {
+        name  = "SPEAKERID_SERVICE_URL"
+        value = "https://${azurerm_container_app.speakerid.ingress[0].fqdn}"
+      }
     }
   }
 

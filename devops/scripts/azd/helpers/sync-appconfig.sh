@@ -202,6 +202,9 @@ set_kv "azure/storage/container-url" "$(get_azd_value AZURE_STORAGE_CONTAINER_UR
 # App Insights
 set_kv "azure/appinsights/connection-string" "$(get_azd_value APPLICATIONINSIGHTS_CONNECTION_STRING)" && ((++count)) || errors+=("azure/appinsights/connection-string")
 
+# Speaker ID (voice biometric verification)
+set_kv "azure/speakerid/service-url" "$(get_azd_value SPEAKERID_SERVICE_URL)" && ((++count)) || errors+=("azure/speakerid/service-url")
+
 # Voice Live (optional)
 set_kv "azure/voicelive/endpoint" "$(get_azd_value AZURE_VOICELIVE_ENDPOINT)" && ((++count)) || errors+=("azure/voicelive/endpoint")
 set_kv "azure/voicelive/model" "$(get_azd_value AZURE_VOICELIVE_MODEL)" && ((++count)) || errors+=("azure/voicelive/model")

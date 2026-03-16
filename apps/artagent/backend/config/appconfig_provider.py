@@ -145,6 +145,8 @@ APPCONFIG_KEY_MAP: dict[str, str] = {
     # Storage
     "azure/storage/account-name": "AZURE_STORAGE_ACCOUNT_NAME",
     "azure/storage/container-url": "AZURE_STORAGE_CONTAINER_URL",
+    # Speaker ID (voice biometric verification)
+    "azure/speakerid/service-url": "SPEAKERID_SERVICE_URL",
     # Voice Live (note: VoiceLiveSettings expects AZURE_VOICELIVE_* format)
     "azure/voicelive/endpoint": "AZURE_VOICELIVE_ENDPOINT",
     "azure/voicelive/model": "AZURE_VOICELIVE_MODEL",
