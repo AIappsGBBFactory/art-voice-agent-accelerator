@@ -105,7 +105,7 @@ class EmbeddingResponse(BaseModel):
 class VerifyRequest(BaseModel):
     audio: str = Field(..., description="Base64-encoded WAV audio")
     embedding: list[float] = Field(..., description="Stored speaker embedding")
-    threshold: float = Field(default=0.25, description="Cosine similarity threshold")
+    threshold: float = Field(default=0.40, description="Cosine similarity threshold")
 
 
 class VerifyResponse(BaseModel):

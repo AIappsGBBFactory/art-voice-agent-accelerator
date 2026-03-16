@@ -72,7 +72,7 @@ class SpeakerRecognitionService:
         self,
         audio_data: bytes,
         stored_embedding: list[float],
-        threshold: float = 0.25,
+        threshold: float = 0.40,
     ) -> dict[str, Any]:
         """
         Verify a speaker against a stored embedding.
