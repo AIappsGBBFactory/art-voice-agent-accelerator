@@ -1359,6 +1359,17 @@ class VoiceLiveSDKHandler:
         if len(self._recent_audio_buffer) > self._max_audio_buffer_size:
             del self._recent_audio_buffer[: len(self._recent_audio_buffer) - self._max_audio_buffer_size]
 
+        # Trigger passive voice verification after ~3s of audio (96000 bytes at 16kHz 16-bit)
+        if (
+            self._orchestrator is not None
+            and not self._orchestrator._passive_voice_checked
+            and len(self._recent_audio_buffer) >= 96000
+            and self._orchestrator._voiceprint_enabled
+        ):
+            self._orchestrator._passive_voice_task = asyncio.create_task(
+                self._orchestrator.try_passive_voice_verification()
+            )
+
         try:
             encoded = base64.b64encode(audio_bytes).decode("utf-8")
         except Exception:

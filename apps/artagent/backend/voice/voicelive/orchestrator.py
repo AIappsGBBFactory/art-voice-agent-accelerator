@@ -47,6 +47,8 @@ from apps.artagent.backend.registries.toolstore import (
     execute_tool,
     initialize_tools,
 )
+from apps.artagent.backend.registries.toolstore.auth import passive_verify_all_voiceprints
+from config import ENABLE_VOICEPRINT
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
 from apps.artagent.backend.voice.shared.handoff_service import HandoffService
@@ -285,6 +287,15 @@ class LiveOrchestrator:
 
         # Audio buffer reference for voiceprint tools (set by VoiceLiveSDKHandler)
         self._audio_buffer: bytearray | None = None
+
+        # Voiceprint feature flag
+        self._voiceprint_enabled: bool = ENABLE_VOICEPRINT
+
+        # Passive voice biometric verification state
+        self._passive_voice_checked: bool = False
+        self._passive_voice_verified: bool = False
+        self._passive_voice_user: dict[str, Any] | None = None
+        self._passive_voice_task: asyncio.Task | None = None
 
         # Unified metrics tracking (tokens, TTFT, turn count)
         self._metrics = OrchestratorMetrics(
@@ -828,6 +839,22 @@ class LiveOrchestrator:
                     agent._agent.name if hasattr(agent, '_agent') else None,
                 )
 
+            # Inject passive voice verification result if available
+            if self._voiceprint_enabled and self._passive_voice_verified and self._passive_voice_user:
+                pv_name = self._passive_voice_user.get("full_name", "unknown")
+                pv_score = self._passive_voice_user.get("voice_score", 0)
+                pv_client_id = self._passive_voice_user.get("client_id", "")
+                passive_section = (
+                    "\n\n# PASSIVE VOICE BIOMETRIC VERIFICATION RESULT\n"
+                    f"The caller has been **automatically identified by voice biometrics** as: **{pv_name}** "
+                    f"(client_id: {pv_client_id}, confidence score: {pv_score:.3f}).\n"
+                    "- You do NOT need to ask for their SSN or name for identity verification.\n"
+                    "- Greet them by name and proceed directly to helping them.\n"
+                    "- If they need services requiring authentication, they are already verified.\n"
+                    "- You may still offer voiceprint enrollment if they don't have one yet (but they clearly do in this case).\n"
+                )
+                base_instructions = f"{base_instructions}{passive_section}"
+
             # Build conversation recap to append to instructions
             # This is critical for realtime models which tend to forget context
             conversation_recap = self._build_conversation_recap()
@@ -895,6 +922,79 @@ class LiveOrchestrator:
             parts.append(f'You last said: "{last_resp}"')
 
         return "\n".join(parts) if parts else ""
+
+    async def try_passive_voice_verification(self) -> None:
+        """
+        Attempt passive voice biometric verification using buffered audio.
+
+        Called by VoiceLiveSDKHandler once enough audio has been buffered (~3s).
+        Runs in the background — does not block audio processing.
+        If a match is found, sets _passive_voice_verified and _passive_voice_user,
+        which will be injected into the agent's session instructions on the next update.
+        """
+        if self._passive_voice_checked:
+            return
+        self._passive_voice_checked = True
+
+        if not self._audio_buffer or len(self._audio_buffer) < 48000:
+            # Need at least ~1.5s of audio for a meaningful embedding
+            logger.debug("Passive voiceprint: Not enough audio (%d bytes)", len(self._audio_buffer) if self._audio_buffer else 0)
+            return
+
+        audio_snapshot = bytes(self._audio_buffer)
+        logger.info("Passive voiceprint: Starting check (%d bytes audio)", len(audio_snapshot))
+
+        try:
+            matched_user = await passive_verify_all_voiceprints(audio_snapshot)
+            if matched_user:
+                self._passive_voice_verified = True
+                self._passive_voice_user = matched_user
+                logger.info(
+                    "✓ Passive voice verification: identified as %s (score=%.3f)",
+                    matched_user.get("full_name"),
+                    matched_user.get("voice_score", 0),
+                )
+                # Inject into system_vars so prompt template can also see it
+                self._system_vars["passive_voice_verified"] = True
+                self._system_vars["passive_voice_user"] = matched_user.get("full_name")
+                self._system_vars["passive_voice_client_id"] = matched_user.get("client_id")
+                # Also set client_id and caller_name so auto-profile-loading works
+                self._system_vars["client_id"] = matched_user.get("client_id")
+                self._system_vars["caller_name"] = matched_user.get("full_name")
+                # Auto-load user profile for the matched user
+                await _auto_load_user_context(self._system_vars)
+                # Trigger a session instruction update to inform the agent
+                await self._update_session_context()
+
+                # CRITICAL: Also inject a conversation item so the model sees
+                # the verification as a concrete event, not just an instruction
+                # change. session.update() alone is not reliably picked up by
+                # the realtime model for the next response.
+                pv_name = matched_user.get("full_name", "unknown")
+                pv_client_id = matched_user.get("client_id", "")
+                verification_msg = (
+                    f"[SYSTEM: Voice biometric verification complete. "
+                    f"Caller automatically identified as {pv_name} "
+                    f"(client_id: {pv_client_id}). "
+                    f"Caller is already authenticated — do NOT ask for name, "
+                    f"SSN, or any identity verification. Greet them by name.]"
+                )
+                try:
+                    text_part = InputTextContentPart(text=verification_msg)
+                    system_item = UserMessageItem(content=[text_part])
+                    await self.conn.conversation.item.create(item=system_item)
+                    logger.info(
+                        "Passive voiceprint: Injected verification context as conversation item"
+                    )
+                except Exception:
+                    logger.debug(
+                        "Passive voiceprint: Failed to inject conversation item",
+                        exc_info=True,
+                    )
+            else:
+                logger.info("Passive voice verification: No match found")
+        except Exception as exc:
+            logger.warning("Passive voice verification error: %s", exc, exc_info=True)
 
     def _schedule_throttled_session_update(self) -> None:
         """
@@ -1009,7 +1109,8 @@ class LiveOrchestrator:
             logger.info("[Orchestrator] Starting with agent: %s", self.active)
             orch_start_ts = time.perf_counter()
             self._system_vars = dict(system_vars or {})
-            
+            self._system_vars["voiceprint_enabled"] = self._voiceprint_enabled
+
             # Initialize MCP servers for the active agent (non-blocking)
             t0 = time.perf_counter()
             await self._init_mcp_for_agent(self.active)

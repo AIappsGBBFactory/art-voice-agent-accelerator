@@ -192,6 +192,12 @@ class VoiceSessionContext:
     recent_audio_buffer: bytearray = field(default_factory=bytearray, repr=False)
     max_buffer_size: int = 320000  # ~10 seconds of 16kHz 16-bit PCM
 
+    # ─── Passive Voice Verification ───
+    passive_voice_verified: bool = False
+    passive_voice_user: dict | None = field(default=None, repr=False)
+    passive_voice_score: float | None = None
+    passive_voice_checked: bool = False  # True once passive check has been attempted
+
     # ─── Task Management ───
     orchestration_tasks: set = field(default_factory=set)
     current_tts_task: asyncio.Task | None = None

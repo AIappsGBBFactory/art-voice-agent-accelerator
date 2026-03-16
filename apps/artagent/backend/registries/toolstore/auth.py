@@ -19,6 +19,7 @@ from opentelemetry.trace import StatusCode
 
 from apps.artagent.backend.registries.toolstore.registry import register_tool
 from apps.artagent.backend.voice.shared.context import VoiceSessionContext
+from config import ENABLE_VOICEPRINT
 from src.enums.monitoring import SpanAttr
 from src.speech.speaker_recognition import SpeakerRecognitionService
 from utils.ml_logging import get_logger
@@ -667,6 +668,9 @@ async def verify_client_identity(args: dict[str, Any], **kwargs: Any) -> dict[st
 
 async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     """Enroll the current caller's voice as a biometric voiceprint."""
+    if not ENABLE_VOICEPRINT:
+        return {"success": False, "voiceprint_unavailable": True, "message": "Voiceprint features are currently disabled."}
+
     import time as _time
 
     full_name = (args.get("full_name") or "").strip()
@@ -721,9 +725,28 @@ async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
             _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "enroll"})
 
             # Save embedding to user record in Cosmos
+            # Strategy: find the existing Cosmos record first (by _id or name)
+            # so we merge the voiceprint into the full profile, not a bare stub.
             cosmos = _get_demo_users_manager()
             if cosmos:
                 user_id = user.get("_id") or user.get("client_id")
+                upsert_query: dict[str, Any] = {"_id": user_id}
+
+                # If user came from mock data (no _id from Cosmos), try to find
+                # an existing Cosmos record by name to merge into instead
+                if "_id" not in user:
+                    name_query = {
+                        "full_name": {"$regex": f"^{re.escape(full_name)}$", "$options": "i"}
+                    }
+                    existing = await asyncio.to_thread(cosmos.read_document, name_query)
+                    if existing:
+                        upsert_query = {"_id": existing["_id"]}
+                        user_id = existing["_id"]
+                        logger.info(
+                            "Voiceprint enrollment: merging into existing Cosmos record _id=%s (instead of mock client_id=%s)",
+                            user_id, user.get("client_id"),
+                        )
+
                 await asyncio.to_thread(
                     cosmos.upsert_document,
                     {
@@ -731,7 +754,7 @@ async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
                         "full_name": user.get("full_name") or full_name,
                         "client_id": user.get("client_id") or user_id,
                     },
-                    {"_id": user_id},
+                    upsert_query,
                 )
 
             span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, True)
@@ -761,6 +784,9 @@ async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
 
 async def verify_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     """Verify the caller's identity using their biometric voiceprint."""
+    if not ENABLE_VOICEPRINT:
+        return {"success": False, "voiceprint_unavailable": True, "message": "Voiceprint features are currently disabled."}
+
     import time as _time
 
     full_name = (args.get("full_name") or "").strip()
@@ -855,6 +881,104 @@ async def verify_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
                 "voiceprint_unavailable": True,
                 "message": "Voiceprint service is temporarily unavailable. Please continue with standard verification.",
             }
+
+
+async def passive_verify_all_voiceprints(audio_data: bytes) -> dict[str, Any] | None:
+    """
+    Compare audio against ALL enrolled voiceprints in Cosmos DB.
+
+    Returns the matched user dict with 'voice_score' if a match is found,
+    or None if no match or if the service is unavailable.
+
+    This is used for passive/automatic voice biometric verification —
+    the system checks the caller's identity in the background without
+    requiring them to explicitly ask for verification.
+    """
+    if not ENABLE_VOICEPRINT:
+        logger.debug("Passive voiceprint: disabled by ENABLE_VOICEPRINT flag")
+        return None
+
+    import time as _time
+
+    t0 = _time.monotonic()
+
+    cosmos = _get_demo_users_manager()
+    if not cosmos:
+        logger.debug("Passive voiceprint: Cosmos unavailable")
+        return None
+
+    try:
+        # Find all users with enrolled voiceprints
+        enrolled_users = await asyncio.to_thread(
+            cosmos.query_documents,
+            {"voice_embedding": {"$exists": True}},
+            projection={"full_name": 1, "client_id": 1, "voice_embedding": 1, "_id": 1},
+        )
+
+        if not enrolled_users:
+            logger.debug("Passive voiceprint: No enrolled users found")
+            return None
+
+        logger.info(
+            "Passive voiceprint: Checking %d enrolled users (%d bytes audio)",
+            len(enrolled_users),
+            len(audio_data),
+        )
+
+        service = SpeakerRecognitionService()
+
+        best_match: dict[str, Any] | None = None
+        best_score: float = 0.0
+
+        for user in enrolled_users:
+            embedding = user.get("voice_embedding")
+            if not embedding:
+                continue
+
+            try:
+                result = await asyncio.to_thread(
+                    service.verify, audio_data, embedding
+                )
+                score = result.get("score", 0.0)
+                matched = bool(result.get("match"))
+
+                user_name = user.get("full_name", "unknown")
+                logger.info(
+                    "Passive voiceprint: %s → score=%.3f match=%s",
+                    user_name, score, matched,
+                )
+
+                if matched and score > best_score:
+                    best_score = score
+                    best_match = {
+                        "full_name": user.get("full_name"),
+                        "client_id": user.get("client_id") or str(user.get("_id")),
+                        "voice_score": score,
+                    }
+            except Exception as exc:
+                logger.warning(
+                    "Passive voiceprint: Error checking user %s: %s",
+                    user.get("full_name"), exc,
+                )
+                continue
+
+        elapsed_ms = (_time.monotonic() - t0) * 1000
+        _voiceprint_duration.record(elapsed_ms, {SpanAttr.VOICEPRINT_OPERATION: "passive_verify"})
+
+        if best_match:
+            _voiceprint_verify_match.add(1)
+            logger.info(
+                "Passive voiceprint MATCH: %s (score=%.3f, %.0fms)",
+                best_match["full_name"], best_score, elapsed_ms,
+            )
+        else:
+            logger.info("Passive voiceprint: No match found (%.0fms)", elapsed_ms)
+
+        return best_match
+
+    except Exception as exc:
+        logger.warning("Passive voiceprint error: %s", exc, exc_info=True)
+        return None
 
 
 async def send_mfa_code(args: dict[str, Any]) -> dict[str, Any]:

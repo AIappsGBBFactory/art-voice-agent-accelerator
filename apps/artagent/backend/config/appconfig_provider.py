@@ -218,6 +218,7 @@ FEATURE_FLAG_MAP: dict[str, str] = {
     "performance-logging": "ENABLE_PERFORMANCE_LOGGING",
     "tracing": "ENABLE_TRACING",
     "connection-limits": "ENABLE_CONNECTION_LIMITS",
+    "voiceprint": "ENABLE_VOICEPRINT",
 }
 
 

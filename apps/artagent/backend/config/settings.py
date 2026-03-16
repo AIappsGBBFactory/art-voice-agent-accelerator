@@ -380,6 +380,7 @@ WARM_POOL_MAX_RETRIES: int = _env_int("WARM_POOL_MAX_RETRIES", 2)
 DTMF_VALIDATION_ENABLED: bool = _env_bool("DTMF_VALIDATION_ENABLED", False)
 ENABLE_AUTH_VALIDATION: bool = _env_bool("ENABLE_AUTH_VALIDATION", False)
 ENABLE_ACS_CALL_RECORDING: bool = _env_bool("ENABLE_ACS_CALL_RECORDING", False)
+ENABLE_VOICEPRINT: bool = _env_bool("ENABLE_VOICEPRINT", True)
 
 # Environment
 DEBUG_MODE: bool = _env_bool("DEBUG", False)
