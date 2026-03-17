@@ -536,6 +536,12 @@ class LiveOrchestrator:
         self._system_vars.clear()
         self.visited_agents.clear()
 
+        # Reset passive voice verification state to prevent identity leaking between calls
+        self._passive_voice_checked = False
+        self._passive_voice_verified = False
+        self._passive_voice_user = None
+        self._audio_buffer = None
+
         logger.debug("[LiveOrchestrator] Cleanup complete")
 
     def update_scenario(

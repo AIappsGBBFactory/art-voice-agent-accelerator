@@ -1272,6 +1272,9 @@ class VoiceLiveSDKHandler:
                     self._connection_cm = None
                     self._connection = None
 
+            # Clear audio buffer to prevent voice data leaking into the next session
+            self._recent_audio_buffer.clear()
+
             # Cleanup orchestrator resources (greeting tasks, references)
             if self._orchestrator:
                 try:
