@@ -19,7 +19,7 @@ from opentelemetry.trace import StatusCode
 
 from apps.artagent.backend.registries.toolstore.registry import register_tool
 from apps.artagent.backend.voice.shared.context import VoiceSessionContext
-from config import ENABLE_VOICEPRINT
+from config import get_feature_flag
 from src.enums.monitoring import SpanAttr
 from src.speech.speaker_recognition import SpeakerRecognitionService
 from utils.ml_logging import get_logger
@@ -679,7 +679,7 @@ async def verify_client_identity(args: dict[str, Any], **kwargs: Any) -> dict[st
 
 async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     """Enroll the current caller's voice as a biometric voiceprint."""
-    if not ENABLE_VOICEPRINT:
+    if not get_feature_flag("voiceprint"):
         return {"success": False, "voiceprint_unavailable": True, "message": "Voiceprint features are currently disabled."}
 
     import time as _time
@@ -795,7 +795,7 @@ async def enroll_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
 
 async def verify_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
     """Verify the caller's identity using their biometric voiceprint."""
-    if not ENABLE_VOICEPRINT:
+    if not get_feature_flag("voiceprint"):
         return {"success": False, "voiceprint_unavailable": True, "message": "Voiceprint features are currently disabled."}
 
     import time as _time
@@ -906,7 +906,7 @@ async def passive_verify_all_voiceprints(audio_data: bytes) -> dict[str, Any] | 
     the system checks the caller's identity in the background without
     requiring them to explicitly ask for verification.
     """
-    if not ENABLE_VOICEPRINT:
+    if not get_feature_flag("voiceprint"):
         logger.debug("Passive voiceprint: disabled by ENABLE_VOICEPRINT flag")
         return None
 

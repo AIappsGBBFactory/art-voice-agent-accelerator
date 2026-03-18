@@ -48,7 +48,7 @@ from apps.artagent.backend.registries.toolstore import (
     initialize_tools,
 )
 from apps.artagent.backend.registries.toolstore.auth import passive_verify_all_voiceprints
-from config import ENABLE_VOICEPRINT
+from config import get_feature_flag
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
 from apps.artagent.backend.voice.shared.handoff_service import HandoffService
@@ -289,7 +289,7 @@ class LiveOrchestrator:
         self._audio_buffer: bytearray | None = None
 
         # Voiceprint feature flag
-        self._voiceprint_enabled: bool = ENABLE_VOICEPRINT
+        self._voiceprint_enabled: bool = get_feature_flag("voiceprint")
 
         # Passive voice biometric verification state
         self._passive_voice_checked: bool = False
