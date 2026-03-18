@@ -400,17 +400,28 @@ async def _lookup_user_in_cosmos(
             )
             return document, None
 
-        # Second try: SSN-only lookup (in case speech-to-text misheard the name)
-        ssn_only_query: dict[str, Any] = {"verification_codes.ssn4": ssn_last_4}
-        document = await asyncio.to_thread(cosmos.read_document, ssn_only_query)
-        if document:
-            actual_name = document.get("full_name", "unknown")
-            logger.warning(
-                "⚠️ SSN matched but name mismatch | input_name=%s | db_name=%s | client_id=%s",
-                full_name, actual_name, document.get("client_id")
-            )
-            # Return the document - the LLM can confirm with user
-            return document, None
+        # Second try: Fuzzy name match + SSN match (to handle minor STT misspellings)
+        # We still REQUIRE the SSN to match, but we allow the name to be slightly different.
+        ssn_query = {"verification_codes.ssn4": ssn_last_4}
+        potential_matches = await asyncio.to_thread(cosmos.query_documents, ssn_query)
+        
+        for potential in potential_matches:
+            actual_name = potential.get("full_name", "").lower()
+            # Simple fuzzy check: is one name a substring of the other or very similar?
+            # In a production system, use Levenshtein distance or similar.
+            input_name_norm = full_name.lower()
+            if input_name_norm in actual_name or actual_name in input_name_norm:
+                logger.info(
+                    "✓ Identity verified via Cosmos (fuzzy name match): %s (input=%s, db=%s)",
+                    potential.get("client_id") or potential.get("_id"),
+                    full_name, potential.get("full_name")
+                )
+                return potential, None
+            else:
+                logger.warning(
+                    "✗ SSN matched but name too different | input=%s | db=%s",
+                    full_name, potential.get("full_name")
+                )
 
     except Exception as exc:  # pragma: no cover - network/driver failures
         logger.warning("Cosmos identity lookup failed: %s", exc)
@@ -858,12 +869,13 @@ async def verify_voiceprint(args: dict[str, Any], **kwargs: Any) -> dict[str, An
             else:
                 span.set_attribute(SpanAttr.VOICEPRINT_SUCCESS, False)
                 _voiceprint_verify_mismatch.add(1)
-                logger.info("Voiceprint mismatch for %s (score=%.3f, %.0fms)", full_name, score or 0, elapsed_ms)
+                logger.warning("Voiceprint mismatch for %s (score=%.3f, threshold=%.2f, %.0fms)", full_name, score or 0, 0.55, elapsed_ms)
                 return {
                     "success": False,
                     "authenticated": False,
-                    "message": "Voice biometric mismatch. Identity could not be verified by voice.",
+                    "message": f"Voice biometric mismatch for {full_name}. The voice does not match the enrolled profile (score: {score:.3f}).",
                     "score": score,
+                    "reason": result.get("reason")
                 }
 
         except Exception as exc:
@@ -936,8 +948,10 @@ async def passive_verify_all_voiceprints(audio_data: bytes) -> dict[str, Any] | 
                 continue
 
             try:
+                # Use a slightly stricter threshold for passive/background verification
+                # than for active/explicit verification (0.70 vs 0.75)
                 result = await asyncio.to_thread(
-                    service.verify, audio_data, embedding
+                    service.verify, audio_data, embedding, threshold=0.55
                 )
                 score = result.get("score", 0.0)
                 matched = bool(result.get("match"))

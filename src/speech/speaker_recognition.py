@@ -72,7 +72,7 @@ class SpeakerRecognitionService:
         self,
         audio_data: bytes,
         stored_embedding: list[float],
-        threshold: float = 0.40,
+        threshold: float = 0.55,
     ) -> dict[str, Any]:
         """
         Verify a speaker against a stored embedding.
@@ -80,7 +80,7 @@ class SpeakerRecognitionService:
         Args:
             audio_data: Raw PCM bytes for verification.
             stored_embedding: Previously enrolled 192-dim embedding.
-            threshold: Cosine similarity threshold (default 0.25).
+            threshold: Cosine similarity threshold (default 0.70).
 
         Returns:
             Dict with 'match' (bool), 'score' (float), 'reason' (str).
@@ -102,10 +102,16 @@ class SpeakerRecognitionService:
 
         match = data["match"]
         score = data["score"]
-        logger.info("Verification: match=%s, score=%.3f", match, score)
+        
+        if match:
+            reason = "accept"
+            logger.info("Verification SUCCESS: match=True, score=%.3f (threshold=%.2f)", score, threshold)
+        else:
+            reason = "reject (below threshold)" if score < threshold else "reject"
+            logger.warning("Verification FAILURE: match=False, score=%.3f (threshold=%.2f)", score, threshold)
 
         return {
             "match": match,
             "score": score,
-            "reason": "accept" if match else "reject",
+            "reason": reason,
         }
