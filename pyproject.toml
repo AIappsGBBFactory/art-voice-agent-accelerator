@@ -36,8 +36,8 @@ dependencies = [
     "starlette>=0.27.0",
     "redis>=5.0.0",
     "redis-entraid>=1.0.0",
-    "aiohttp>=3.13.3",
-    "python-multipart>=0.0.6",
+    "aiohttp>=3.13.4",
+    "python-multipart>=0.0.26",
     "pyjwt",
     # Azure services
     "azure-cosmos>=4.5.0",
@@ -66,7 +66,7 @@ dependencies = [
     "opentelemetry-instrumentation-urllib==0.58b0",
     "opentelemetry-instrumentation-urllib3==0.58b0",
     # Azure + misc
-    "azure-core>=1.38.0",
+    "azure-core>=1.39.0",
     "urllib3>=2.6.3",
     "colorama>=0.4.6",
     # AI and OpenAI integration
@@ -78,7 +78,7 @@ dependencies = [
     "websockets>=12.0",
     # Data processing and YAML configuration
     "numpy>=1.24.0",
-    "python-dotenv>=1.0.0",
+    "python-dotenv>=1.2.2",
     "python-json-logger>=2.0.0",
     "jinja2>=3.1.0",
     "typing-extensions>=4.8.0",
@@ -98,7 +98,7 @@ Tracker = "https://github.com/aiappsgbbfactory/art-voice-agent-accelerator/issue
 [project.optional-dependencies]
 dev = [
     # Testing
-    "pytest>=7.4.0",
+    "pytest>=9.0.3",
     "pytest-asyncio",
     "pytest-cov",
     "anyio",
@@ -142,7 +142,7 @@ audio = [
 # Duplicates dev deps to avoid self-reference issues with some tools
 dev-all = [
     # Testing
-    "pytest>=7.4.0",
+    "pytest>=9.0.3",
     "pytest-asyncio",
     "pytest-cov",
     "anyio",
