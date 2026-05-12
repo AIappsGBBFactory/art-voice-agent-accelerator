@@ -89,6 +89,8 @@ class OrchestratorConfigResult:
     scenario_name: str | None = None
     template_vars: dict[str, Any] = field(default_factory=dict)
 
+    is_session_scoped: bool = False
+
     @property
     def has_scenario(self) -> bool:
         """Whether a scenario is active."""
@@ -154,18 +156,43 @@ def _get_scenario_agents(scenario_name: str) -> dict[str, Any]:
         return _load_base_agents()
 
 
-def _build_agents_from_session_scenario(scenario: ScenarioConfig) -> dict[str, Any]:
+def _build_agents_from_session_scenario(
+    scenario: ScenarioConfig, session_id: str | None = None
+) -> dict[str, Any]:
     """
     Build agent registry from a session-scoped scenario.
     
     Session scenarios specify which agents to include via ScenarioConfig.agents list (list of names).
     If the list is empty, all base agents are included.
     
+    Session agents (dynamically created via customer research builder etc.) are merged
+    into the base agents so they can be found by the scenario filter.
+    
     Note: We preserve UnifiedAgent objects as-is to maintain compatibility with downstream
     orchestrator adapters that expect UnifiedAgent instances.
     """
     # Start with base agents (dict of UnifiedAgent objects)
     base_agents = _load_base_agents()
+
+    # Merge session agents so dynamically-created agents are discoverable
+    if session_id:
+        try:
+            from apps.artagent.backend.src.orchestration.session_agents import (
+                get_session_agents,
+            )
+
+            session_agents = get_session_agents(session_id)
+            if session_agents:
+                for name, agent in session_agents.items():
+                    key = agent_key(name)
+                    base_agents[key] = agent
+                logger.info(
+                    "Merged session agents into base | session=%s added=%s",
+                    session_id,
+                    list(session_agents.keys()),
+                )
+        except ImportError as e:
+            logger.warning("Failed to import get_session_agents: %s", e)
     
     # If scenario specifies agent list, filter to only those agents
     if scenario.agents:
@@ -183,7 +210,6 @@ def _build_agents_from_session_scenario(scenario: ScenarioConfig) -> dict[str, A
                     "Scenario agent '%s' not found in base agents, skipping",
                     agent_name,
                 )
-        base_agents = filtered_agents
         base_agents = filtered_agents
     
     logger.debug(
@@ -275,6 +301,7 @@ def resolve_orchestrator_config(
         result.scenario = session_scenario
         result.scenario_name = getattr(session_scenario, "name", "custom")
         result.template_vars = session_scenario.global_template_vars.copy()
+        result.is_session_scoped = True
         
         # Use session scenario start_agent if not explicitly overridden
         if start_agent is None and session_scenario.start_agent:
@@ -282,7 +309,9 @@ def resolve_orchestrator_config(
         
         # Build agents from session scenario
         if agents is None:
-            result.agents = _build_agents_from_session_scenario(session_scenario)
+            result.agents = _build_agents_from_session_scenario(
+                session_scenario, session_id=session_id
+            )
         
         # Build handoff map: merge scenario-defined with agent-derived (scenario takes precedence)
         if handoff_map is None:

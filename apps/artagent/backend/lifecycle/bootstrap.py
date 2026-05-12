@@ -52,7 +52,9 @@ def load_environment() -> Path | None:
 
     for env_file in candidates:
         if env_file.exists():
-            load_dotenv(env_file, override=False)
+            # .env.local files override existing vars (local dev takes priority)
+            is_local = env_file.name == ".env.local"
+            load_dotenv(env_file, override=is_local)
             return env_file
 
     return None

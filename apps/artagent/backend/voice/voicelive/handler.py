@@ -44,7 +44,7 @@ from apps.artagent.backend.voice.shared import (
     resolve_orchestrator_config,
 )
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
-from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
+from apps.artagent.backend.src.orchestration.session_agents import get_session_agent, get_session_agents
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VoiceLive Channel Imports (local to voice_channels)
@@ -1008,30 +1008,43 @@ class VoiceLiveSDKHandler:
                     # Merge scenario agents if scenario is active
                     if orchestrator_config and orchestrator_config.has_scenario:
                         if orchestrator_config.agents:
-                            merged_agents = dict(agents)
-                            merged_agents.update(orchestrator_config.agents)
-                            agents = merged_agents
+                            if orchestrator_config.is_session_scoped:
+                                # Session scenarios: use ONLY the filtered scenario agents
+                                # (already includes session agents from config resolver)
+                                agents = dict(orchestrator_config.agents)
+                            else:
+                                # File-based scenarios: merge into base agents
+                                merged_agents = dict(agents)
+                                merged_agents.update(orchestrator_config.agents)
+                                agents = merged_agents
                         logger.info(
-                            "Loaded scenario configuration | scenario=%s start_agent=%s",
+                            "Loaded scenario configuration | scenario=%s start_agent=%s session_scoped=%s",
                             orchestrator_config.scenario_name,
                             orchestrator_config.start_agent,
+                            orchestrator_config.is_session_scoped,
                         )
 
-                    # Session Agent Check (Agent Builder) - Priority 1
-                    session_agent = get_session_agent(self.session_id)
-                    if session_agent:
+                    # Session Agent Check (Agent Builder / Customer Research) - Priority 1
+                    # Load ALL session agents (not just one) to support multi-agent scenarios
+                    all_session_agents = get_session_agents(self.session_id)
+                    session_agent = None
+                    if all_session_agents:
                         agents = dict(agents)
-                        agents[session_agent.name] = session_agent
+                        agents.update(all_session_agents)
+                        # For start agent resolution, use the single active agent if only one
+                        session_agent = get_session_agent(self.session_id)
                         logger.info(
-                            "Session agent found (Agent Builder) | name=%s voice=%s session_id=%s",
-                            session_agent.name,
-                            session_agent.voice.name if session_agent.voice else "default",
+                            "Session agents found | count=%d names=%s session_id=%s",
+                            len(all_session_agents),
+                            list(all_session_agents.keys()),
                             self.session_id,
                         )
 
                     # Determine effective start agent
                     effective_start_agent = DEFAULT_START_AGENT
-                    if session_agent:
+                    if orchestrator_config and orchestrator_config.start_agent:
+                        effective_start_agent = orchestrator_config.start_agent
+                    elif session_agent:
                         effective_start_agent = session_agent.name
                     elif orchestrator_config and orchestrator_config.start_agent:
                         effective_start_agent = orchestrator_config.start_agent
@@ -1088,6 +1101,24 @@ class VoiceLiveSDKHandler:
                 if memo_manager:
                     logger.debug("[VoiceLiveSDK] Using MemoManager from websocket state")
 
+                # For session-scoped scenarios, refresh MemoManager from Redis
+                # to pick up the start_agent written by the builder.
+                if (
+                    orchestrator_config
+                    and orchestrator_config.is_session_scoped
+                    and memo_manager
+                ):
+                    try:
+                        redis_mgr = getattr(self.websocket.app.state, "redis", None)
+                        if redis_mgr:
+                            await memo_manager.refresh_from_redis_async(redis_mgr)
+                            logger.info(
+                                "Refreshed MemoManager from Redis for session scenario | session=%s",
+                                self.session_id,
+                            )
+                    except Exception as e:
+                        logger.warning("Failed to refresh MemoManager from Redis: %s", e)
+
                 self._orchestrator = LiveOrchestrator(
                     conn=self._connection,
                     agents=agents,
@@ -1100,6 +1131,7 @@ class VoiceLiveSDKHandler:
                     model_name=self._settings.azure_voicelive_model,
                     memo_manager=memo_manager,
                 )
+
                 span.set_attribute("voicelive.start_agent", effective_start_agent)
 
                 # Register orchestrator for scenario updates

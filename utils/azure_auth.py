@@ -3,7 +3,7 @@ import logging
 import os
 from functools import lru_cache
 
-from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+from azure.identity import AzureCliCredential, DefaultAzureCredential, ManagedIdentityCredential
 
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 
@@ -53,16 +53,9 @@ def _create_credential_internal():
 
     # For local development, allow CLI credential (from `az login`)
     if _is_local_dev():
-        return DefaultAzureCredential(
-            exclude_environment_credential=False,
-            exclude_managed_identity_credential=True,  # Not available locally
-            exclude_workload_identity_credential=True,
-            exclude_shared_token_cache_credential=True,
-            exclude_visual_studio_code_credential=True,
-            exclude_cli_credential=False,  # Allow CLI for local dev
-            exclude_powershell_credential=True,
-            exclude_interactive_browser_credential=True,
-        )
+        # Pin to AZURE_TENANT_ID so multi-tenant az-login picks the right tenant
+        tenant_id = os.getenv("AZURE_TENANT_ID", "")
+        return AzureCliCredential(tenant_id=tenant_id)
 
     # "prod-safe" DAC (only env + MI)
     return DefaultAzureCredential(

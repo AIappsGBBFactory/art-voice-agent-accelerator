@@ -462,7 +462,7 @@ def _load_scenario_file(scenario_dir: Path) -> ScenarioConfig | None:
         return None
 
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
         scenario = ScenarioConfig.from_dict(scenario_dir.name, data)

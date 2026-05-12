@@ -29,6 +29,7 @@ import AgentTopologyPanel from './AgentTopologyPanel.jsx';
 import SessionPerformancePanel from './SessionPerformancePanel.jsx';
 import AgentBuilder from './AgentBuilder.jsx';
 import AgentScenarioBuilder from './AgentScenarioBuilder.jsx';
+import CustomerResearchPanel from './CustomerResearchPanel.jsx';
 import useBargeIn from '../hooks/useBargeIn.js';
 import { API_BASE_URL, WS_URL } from '../config/constants.js';
 import { ensureVoiceAppKeyframes, styles } from '../styles/voiceAppStyles.js';
@@ -1117,6 +1118,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const closeDemoForm = useCallback(() => setShowDemoForm(false), [setShowDemoForm]);
   const [showAgentBuilder, setShowAgentBuilder] = useState(false);
   const [showAgentScenarioBuilder, setShowAgentScenarioBuilder] = useState(false);
+  const [showCustomerResearch, setShowCustomerResearch] = useState(false);
   const [builderInitialMode, setBuilderInitialMode] = useState('agents');
   // When true, the scenario builder opens in "create new" mode (blank form, POST endpoint).
   // When false, it opens in "edit existing" mode with the active custom scenario pre-filled.
@@ -4564,6 +4566,39 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             )}
           </div>
 
+          {/* Customer Research Button */}
+          <button
+            onClick={() => setShowCustomerResearch(true)}
+            title="Customer Research"
+            style={{
+              width: '44px',
+              height: '44px',
+              borderRadius: '12px',
+              border: '1px solid rgba(226,232,240,0.6)',
+              background: 'linear-gradient(145deg, #ffffff, #fafbfc)',
+              color: '#6366f1',
+              fontSize: '18px',
+              cursor: 'pointer',
+              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+              boxShadow: '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 4px 16px rgba(99,102,241,0.2), inset 0 1px 0 rgba(255,255,255,0.8)';
+              e.currentTarget.style.background = 'linear-gradient(135deg, #e0e7ff, #c7d2fe)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 2px 8px rgba(15,23,42,0.08), inset 0 1px 0 rgba(255,255,255,0.8)';
+              e.currentTarget.style.background = 'linear-gradient(145deg, #ffffff, #fafbfc)';
+            }}
+          >
+            🔍
+          </button>
+
           {/* Agent Builder Button */}
           <button
             onClick={() => {
@@ -5194,6 +5229,23 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         // Pass the full scenarioConfig so applyScenarioOptimistically can
         // upsert or update the entry in custom_scenarios.
         applyScenarioOptimistically(scenarioConfig, scenarioConfig.start_agent);
+      }}
+    />
+
+    {/* Customer Research Panel */}
+    <CustomerResearchPanel
+      open={showCustomerResearch}
+      onClose={() => setShowCustomerResearch(false)}
+      sessionId={sessionId}
+      onBuilt={(result) => {
+        appendLog(`🔍 Customer research scenario built: ${result.scenario_name}`);
+        appendSystemMessage(`🎯 Scenario "${result.scenario_name}" built from research`, {
+          tone: "success",
+          statusCaption: `Agents: ${result.agents_created?.length || 0} · Tools: ${result.tools_created?.length || 0}`,
+          statusLabel: "Research Scenario Active",
+        });
+        fetchSessionAgentConfig();
+        pollUntilScenarioPropagated();
       }}
     />
 

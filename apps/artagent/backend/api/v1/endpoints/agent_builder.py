@@ -665,7 +665,7 @@ async def list_agent_templates() -> dict[str, Any]:
             continue
 
         try:
-            with open(agent_file) as f:
+            with open(agent_file, encoding="utf-8") as f:
                 raw = yaml.safe_load(f) or {}
 
             # Extract name and description
@@ -790,7 +790,7 @@ async def get_agent_template(template_id: str) -> dict[str, Any]:
     defaults = load_defaults(AGENTS_DIR)
 
     try:
-        with open(agent_file) as f:
+        with open(agent_file, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
         # Extract all fields
