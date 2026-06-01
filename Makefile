@@ -757,3 +757,75 @@ docs-deploy:
 	$(UV_BIN) run mkdocs gh-deploy -f docs/mkdocs.yml
 
 .PHONY: docs-serve docs-build docs-deploy
+
+############################################################
+# Cross-repo sync workflow
+# See docs/operations/release.md for the canonical workflow.
+############################################################
+
+# Fast-forward AIappsGBBFactory:main from Azure-Samples/main.
+# Fails intentionally if local main has diverged.
+sync-upstream:
+	@command -v gh >/dev/null 2>&1 || { echo "ERROR: gh CLI required"; exit 1; }
+	@git remote get-url Azure-Samples >/dev/null 2>&1 || { \
+		echo "ERROR: 'Azure-Samples' remote not configured."; \
+		echo "  Run: git remote add Azure-Samples git@github.com:Azure-Samples/art-voice-agent-accelerator.git"; \
+		exit 1; \
+	}
+	@echo "Fetching Azure-Samples/main..."
+	@git fetch Azure-Samples main --quiet
+	@CUR=$$(git rev-parse --abbrev-ref HEAD); \
+	echo "Switching to main..."; \
+	git checkout main --quiet; \
+	if ! git merge --ff-only Azure-Samples/main; then \
+		echo ""; \
+		echo "ERROR: local 'main' has diverged from Azure-Samples/main."; \
+		echo "       Someone pushed directly to AIappsGBBFactory:main"; \
+		echo "       (which branch protection now prevents)."; \
+		echo ""; \
+		echo "  Diverging commits on local main:"; \
+		git --no-pager log --oneline Azure-Samples/main..HEAD; \
+		echo ""; \
+		echo "  Resolve with: git reset --hard Azure-Samples/main"; \
+		echo "    (if those commits don't belong on main)"; \
+		git checkout "$$CUR" --quiet; \
+		exit 1; \
+	fi; \
+	echo "Pushing main to origin..."; \
+	git push origin main; \
+	git checkout "$$CUR" --quiet; \
+	echo "Done. main is in sync with Azure-Samples/main."
+
+# Open the cross-repo PR promoting AIappsGBBFactory:staging into Azure-Samples:main.
+# Override TITLE and BODY via env vars; otherwise gh opens an interactive editor.
+promote-staging:
+	@command -v gh >/dev/null 2>&1 || { echo "ERROR: gh CLI required"; exit 1; }
+	@git remote get-url Azure-Samples >/dev/null 2>&1 || { \
+		echo "ERROR: 'Azure-Samples' remote not configured."; \
+		exit 1; \
+	}
+	@git fetch Azure-Samples main --quiet
+	@git fetch origin staging --quiet
+	@AHEAD=$$(git rev-list --count Azure-Samples/main..origin/staging); \
+	BEHIND=$$(git rev-list --count origin/staging..Azure-Samples/main); \
+	echo "AIappsGBBFactory:staging is $$AHEAD ahead, $$BEHIND behind Azure-Samples/main"; \
+	if [ "$$AHEAD" = "0" ]; then \
+		echo "Nothing to promote."; \
+		exit 0; \
+	fi; \
+	if [ "$$BEHIND" != "0" ]; then \
+		echo ""; \
+		echo "ERROR: staging is behind upstream. Run 'make sync-upstream' first,"; \
+		echo "       then rebase staging onto the refreshed main."; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "Opening cross-repo PR (Azure-Samples must use 'Squash and merge')..."; \
+	gh pr create \
+		--repo Azure-Samples/art-voice-agent-accelerator \
+		--base main \
+		--head AIappsGBBFactory:staging \
+		$${TITLE:+--title "$$TITLE"} \
+		$${BODY:+--body "$$BODY"}
+
+.PHONY: sync-upstream promote-staging
