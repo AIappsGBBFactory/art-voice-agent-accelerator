@@ -254,10 +254,10 @@ pip install -e ".[docs]"
 **Build the docs:**
 
 ```bash
-mkdocs build -f docs/mkdocs.yml
+mkdocs build -f docs/legacy/mkdocs.yml
 
 # Or serve locally with live reload
-mkdocs serve -f docs/mkdocs.yml
+mkdocs serve -f docs/legacy/mkdocs.yml
 ```
 
 ---
