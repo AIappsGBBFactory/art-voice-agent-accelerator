@@ -21,7 +21,7 @@
     "microsoft-cognitiveservices-speech-sdk": "^1.43.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "serve": "^14.2.4"
+    "serve": "^14.2.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
@@ -38,7 +38,7 @@
     "lucide-react": "^0.501.0",
     "prop-types": "^15.8.1",
     "reagraph": "^4.30.7",
-    "styled-components": "^6.1.19",
-    "vite": "^6.4.1"
+    "styled-components": "^6.4.2",
+    "vite": "^6.4.3"
   }
 }
