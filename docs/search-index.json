@@ -25,7 +25,7 @@
     {
       "url": "guides.html",
       "title": "Guides",
-      "sections": 19
+      "sections": 20
     },
     {
       "url": "index.html",
@@ -521,6 +521,14 @@
       "page": "Guides",
       "title": "Testing",
       "text": "Run tests # Unit tests make test # With coverage make test_coverage # Load testing make load_test Test structure Type Location What it covers Unit tests/unit/ Individual functions, agents, tools Integration tests/integration/ API endpoints, WebSocket flows Evaluation tests/evaluation/ LLM response quality, scenario correctness Load tests/load/ Concurrent calls, latency under stress"
+    },
+    {
+      "url": "guides.html#ai-troubleshooting",
+      "anchor": "ai-troubleshooting",
+      "level": 2,
+      "page": "Guides",
+      "title": "AI-Assisted Debugging",
+      "text": "The repo ships two agent skills that let an AI coding assistant (GitHub Copilot, or any agent that reads .github/skills/ ) diagnose a deployment for you. They are read-only by design — the agent gathers evidence and recommends a fix, then you apply it. Skill Use it when What it does troubleshoot Something is broken and you want the layer isolated Walks deploy → telephony → STT → LLM → TTS → state, runs read-only health/log commands, and reports a diagnosis + recommended fix. observability-insights You need traces, latency percentiles, or a call timeline Pulls context from your local azd env + Azure Monitor and renders KQL, latency waterfalls, and mermaid call-flow diagrams. How to invoke a skill Skills are triggered by intent — you don't call them by a special command. Just describe the problem and name the skill in your prompt. Give the agent one concrete failing example (a call connection id, a timestamp, or the exact error) for the sharpest result. Example prompts (paste into your AI agent) # Let it probe you for the details it needs Use the troubleshoot skill. Calls connect but there's a long pause before the agent replies. Deployed env \"contoso\". Ask me whatever you need. # Latency breakdown from telemetry Use observability-insights for env \"contoso\": pull latency percentiles per span for the last hour and show which stage breaks the budget, then a call timeline. # Azure MCP fast path (if an Azure SRE-agent MCP is connected) Use the troubleshoot skill with the Azure MCP: run check_deployment_health for staging and analyze_deployment_logs for rtaudio-server at severity=error over the last hour. Read-only — don't let any scan create issues. What the agent will and won't do. It diagnoses with read-only commands ( show , list , logs , query , curl ) and asks you for the missing detail instead of guessing. It will not edit code/config, run azd up/provision/deploy/down , terraform apply , az … create/update/delete , restart/redeploy, or commit — without your explicit approval. It recommends the fix and shows the exact command; you run it. Prefer the command line? The same guardrails, prompts, and per-layer commands live in TROUBLESHOOTING.md . The static reference below is what the agent draws on — verify and apply any change yourself."
     },
     {
       "url": "guides.html#troubleshooting",

@@ -53,6 +53,7 @@
       <a href="#production">Production Deployment</a>
       <a href="#monitoring">Monitoring</a>
       <a href="#testing">Testing</a>
+      <a href="#ai-troubleshooting">AI-Assisted Debugging</a>
       <a href="#troubleshooting">Troubleshooting</a>
     </div>
   </aside>
@@ -490,6 +491,50 @@ make load_test</code></pre>
           <tr><td>Load</td><td><code>tests/load/</code></td><td>Concurrent calls, latency under stress</td></tr>
         </tbody>
       </table>
+
+      <hr>
+
+      <h2 id="ai-troubleshooting">AI-Assisted Debugging</h2>
+      <p>The repo ships two <strong>agent skills</strong> that let an AI coding assistant (GitHub Copilot, or any agent that reads <code>.github/skills/</code>) diagnose a deployment for you. They are <strong>read-only by design</strong> &mdash; the agent gathers evidence and recommends a fix, then <em>you</em> apply it.</p>
+
+      <table>
+        <thead><tr><th>Skill</th><th>Use it when</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>troubleshoot</code></td>
+            <td>Something is broken and you want the layer isolated</td>
+            <td>Walks deploy &rarr; telephony &rarr; STT &rarr; LLM &rarr; TTS &rarr; state, runs read-only health/log commands, and reports a diagnosis + recommended fix.</td>
+          </tr>
+          <tr>
+            <td><code>observability-insights</code></td>
+            <td>You need traces, latency percentiles, or a call timeline</td>
+            <td>Pulls context from your local <code>azd</code> env + Azure Monitor and renders KQL, latency waterfalls, and mermaid call-flow diagrams.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>How to invoke a skill</h3>
+      <p>Skills are triggered by intent &mdash; you don't call them by a special command. Just describe the problem and name the skill in your prompt. Give the agent <strong>one concrete failing example</strong> (a call connection id, a timestamp, or the exact error) for the sharpest result.</p>
+
+      <div class="code-label">Example prompts (paste into your AI agent)</div>
+<pre><code><span class="tok-cmt"># Let it probe you for the details it needs</span>
+Use the troubleshoot skill. Calls connect but there's a long pause before the
+agent replies. Deployed env "contoso". Ask me whatever you need.
+
+<span class="tok-cmt"># Latency breakdown from telemetry</span>
+Use observability-insights for env "contoso": pull latency percentiles per span
+for the last hour and show which stage breaks the budget, then a call timeline.
+
+<span class="tok-cmt"># Azure MCP fast path (if an Azure SRE-agent MCP is connected)</span>
+Use the troubleshoot skill with the Azure MCP: run check_deployment_health for
+staging and analyze_deployment_logs for rtaudio-server at severity=error over
+the last hour. Read-only &mdash; don't let any scan create issues.</code></pre>
+
+      <div class="callout">
+        <p><strong>What the agent will and won't do.</strong> It <em>diagnoses</em> with read-only commands (<code>show</code>, <code>list</code>, <code>logs</code>, <code>query</code>, <code>curl</code>) and <em>asks you</em> for the missing detail instead of guessing. It will <strong>not</strong> edit code/config, run <code>azd up/provision/deploy/down</code>, <code>terraform apply</code>, <code>az &hellip; create/update/delete</code>, restart/redeploy, or commit &mdash; without your explicit approval. It recommends the fix and shows the exact command; you run it.</p>
+      </div>
+
+      <p>Prefer the command line? The same guardrails, prompts, and per-layer commands live in <a href="https://github.com/Azure-Samples/art-voice-agent-accelerator/blob/main/TROUBLESHOOTING.md"><code>TROUBLESHOOTING.md</code></a>. The static reference below is what the agent draws on &mdash; verify and apply any change yourself.</p>
 
       <hr>
 
