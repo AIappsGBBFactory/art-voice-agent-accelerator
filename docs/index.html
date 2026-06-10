@@ -193,6 +193,14 @@ cd art-voice-agent-accelerator</code></pre>
         </div>
       </div>
 
+      <div class="callout warn">
+        <p><strong>⚠️ Two extra steps before phones ring.</strong> <code>azd up</code> stands up the platform, but it does <strong>not</strong> deploy your app code or buy a phone number for you. To get a working voice agent on the phone, follow these two guides next:</p>
+        <ol style="margin:10px 0 0; padding-left:20px;">
+          <li><a href="guides.html#deploy"><strong>Deploy to Azure</strong></a> — push the backend + frontend to your provisioned Container Apps.</li>
+          <li><a href="guides.html#enable-phone-calling"><strong>Enable Phone Calling (ACS)</strong></a> — buy a phone number and wire the Event Grid subscription that routes inbound calls to your backend.</li>
+        </ol>
+      </div>
+
       <div class="callout tip">
         <p><strong>Prerequisites:</strong> Azure CLI, Azure Developer CLI, Docker (or Podman), Azure subscription with Contributor access. See <a href="guides.html#prerequisites">full prerequisites</a>.</p>
       </div>
@@ -321,9 +329,11 @@ azd up</code></pre>
         </tbody>
       </table>
 
-<pre><code><span class="tok-cmt"># Switch modes with one env var</span>
+<pre><code><span class="tok-cmt"># Sets the DEFAULT orchestration mode for ACS telephony calls</span>
 <span class="tok-kw">export</span> ACS_STREAMING_MODE=MEDIA       <span class="tok-cmt"># SpeechCascade (default)</span>
 <span class="tok-kw">export</span> ACS_STREAMING_MODE=VOICE_LIVE  <span class="tok-cmt"># VoiceLive</span></code></pre>
+
+      <p><code>ACS_STREAMING_MODE</code> only sets the <strong>default</strong> pipeline that inbound ACS phone calls use — it doesn't change the agent framework. Both modes run the same agents.</p>
 
       <p><a href="architecture.html#orchestration">Full orchestration architecture →</a></p>
 

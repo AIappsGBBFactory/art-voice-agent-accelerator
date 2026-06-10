@@ -148,16 +148,17 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="diagram-modal-backdrop"></div>
     <div class="diagram-modal-container">
       <div class="diagram-modal-header">
-        <button class="diagram-modal-close" aria-label="Close" title="Close (Esc)">✕</button>
+        <span class="diagram-modal-title"></span>
         <div class="diagram-modal-controls">
           <button class="diagram-zoom-btn" data-action="reset" title="Reset zoom (R)">Reset</button>
           <button class="diagram-zoom-btn" data-action="zoomout" title="Zoom out (−)">−</button>
           <span class="diagram-zoom-level">100%</span>
           <button class="diagram-zoom-btn" data-action="zoomin" title="Zoom in (+)">+</button>
         </div>
+        <button class="diagram-modal-close" aria-label="Close" title="Close (Esc)">✕</button>
       </div>
       <div class="diagram-modal-canvas">
-        <img class="diagram-modal-img" src="" alt="">
+        <div class="diagram-modal-content"></div>
       </div>
     </div>
   `;
@@ -171,15 +172,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const maxZoom = 4;
   const zoomStep = 0.2;
 
-  const container = modal.querySelector('.diagram-modal-container');
   const canvas = modal.querySelector('.diagram-modal-canvas');
-  const img = modal.querySelector('.diagram-modal-img');
+  const content = modal.querySelector('.diagram-modal-content');
+  const title = modal.querySelector('.diagram-modal-title');
   const zoomLevel = modal.querySelector('.diagram-zoom-level');
   const backdrop = modal.querySelector('.diagram-modal-backdrop');
   const closeBtn = modal.querySelector('.diagram-modal-close');
 
   const updateTransform = () => {
-    img.style.transform = `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`;
+    content.style.transform = `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`;
+    content.style.cursor = zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default';
     zoomLevel.textContent = Math.round(zoom * 100) + '%';
   };
 
@@ -191,12 +193,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const closeModal = () => {
     modal.classList.remove('open');
+    content.innerHTML = '';
     resetZoom();
+  };
+
+  const openDiagram = (fig) => {
+    const svg = fig.querySelector('svg');
+    const pic = fig.querySelector('img');
+    const caption = fig.querySelector('figcaption, .az-diagram-caption');
+    content.innerHTML = '';
+    if (svg) {
+      // Wrap in an .az-diagram host so the scoped tile/text fills resolve
+      const host = document.createElement('div');
+      host.className = 'az-diagram modal-diagram-host';
+      const clone = svg.cloneNode(true);
+      clone.removeAttribute('width');
+      clone.removeAttribute('height');
+      clone.style.width = '100%';
+      clone.style.height = '100%';
+      host.appendChild(clone);
+      content.appendChild(host);
+    } else if (pic) {
+      const im = document.createElement('img');
+      im.src = pic.src;
+      im.alt = pic.alt;
+      content.appendChild(im);
+    } else {
+      return;
+    }
+    title.textContent = caption ? caption.textContent.trim().split('.')[0] : '';
+    resetZoom();
+    modal.classList.add('open');
   };
 
   // Zoom controls
   modal.querySelectorAll('.diagram-zoom-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
+      e.stopPropagation();
       const action = btn.dataset.action;
       if (action === 'reset') {
         resetZoom();
@@ -219,10 +252,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }, { passive: false });
 
   // Drag to pan
-  img.addEventListener('mousedown', (e) => {
+  content.addEventListener('mousedown', (e) => {
     isDragging = true;
     dragStart = { x: e.clientX - offset.x, y: e.clientY - offset.y };
-    img.style.cursor = 'grabbing';
+    updateTransform();
+    e.preventDefault();
   });
 
   document.addEventListener('mousemove', (e) => {
@@ -234,8 +268,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.addEventListener('mouseup', () => {
-    isDragging = false;
-    img.style.cursor = zoom > 1 ? 'grab' : 'default';
+    if (isDragging) {
+      isDragging = false;
+      updateTransform();
+    }
   });
 
   // Touch zoom (pinch)
@@ -265,25 +301,18 @@ document.addEventListener('DOMContentLoaded', () => {
   closeBtn.addEventListener('click', closeModal);
   backdrop.addEventListener('click', closeModal);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modal.classList.contains('open')) {
-      closeModal();
-    } else if (e.key === 'r' && modal.classList.contains('open')) {
-      resetZoom();
-    }
+    if (!modal.classList.contains('open')) return;
+    if (e.key === 'Escape') closeModal();
+    else if (e.key === 'r' || e.key === 'R') resetZoom();
+    else if (e.key === '+' || e.key === '=') { zoom = Math.min(zoom + zoomStep, maxZoom); updateTransform(); }
+    else if (e.key === '-') { zoom = Math.max(zoom - zoomStep, minZoom); updateTransform(); }
   });
 
-  // Open diagram on click
-  document.querySelectorAll('.arch-diagram[data-expandable], .az-diagram[data-diagram]').forEach(fig => {
-    fig.style.cursor = 'pointer';
-    fig.addEventListener('click', () => {
-      const diagramImg = fig.querySelector('img');
-      if (diagramImg) {
-        img.src = diagramImg.src;
-        img.alt = diagramImg.alt;
-        resetZoom();
-        modal.classList.add('open');
-      }
-    });
+  // Open diagram on click — event delegation so it survives diagram re-renders
+  document.addEventListener('click', (e) => {
+    if (modal.contains(e.target)) return;
+    const fig = e.target.closest('.arch-diagram[data-expandable], .az-diagram[data-diagram]');
+    if (fig) openDiagram(fig);
   });
 
   // --- Render mermaid diagrams ---

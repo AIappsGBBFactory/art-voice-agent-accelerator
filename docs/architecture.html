@@ -113,7 +113,13 @@ sequenceDiagram
 
       <!-- Orchestration -->
       <h2 id="orchestration">Orchestration Modes</h2>
-      <p>Both modes use the same agents, tools, and handoff logic. The difference is how audio gets processed.</p>
+      <p>Both modes use the same agents, tools, and handoff logic. The difference is how audio gets processed — and how much of the turn loop you control versus hand to Azure.</p>
+
+      <div class="az-diagram" data-diagram="modes-wiring">
+        <figcaption class="az-diagram-caption">Both modes branch off the same <code>ACS_STREAMING_MODE</code> dispatch and converge on the same shared core — agents, tools, handoffs, and MemoManager state. Only the audio surface in the middle differs. Click to expand.</figcaption>
+      </div>
+
+      <p>Pick the mode per deployment with one env var. Everything below the audio surface — agent definitions, the tool registry, <code>HandoffService</code>, and session-state sync into <code>MemoManager</code> — is byte-for-byte identical across modes, so an agent built for Cascade runs unchanged on VoiceLive.</p>
 
       <div class="tab-group">
         <div class="tab-buttons">
@@ -160,9 +166,34 @@ sequenceDiagram
         </div>
       </div>
 
-<pre><code><span class="tok-cmt"># Mode selection (one env var)</span>
+<pre><code><span class="tok-cmt"># Sets the DEFAULT orchestration mode for ACS telephony calls</span>
 <span class="tok-kw">export</span> ACS_STREAMING_MODE=MEDIA       <span class="tok-cmt"># SpeechCascade</span>
 <span class="tok-kw">export</span> ACS_STREAMING_MODE=VOICE_LIVE  <span class="tok-cmt"># VoiceLive</span></code></pre>
+      <p><code>ACS_STREAMING_MODE</code> only sets the <strong>default</strong> pipeline that inbound ACS phone calls use; the agent framework is identical across both modes.</p>
+
+      <h3>Control &amp; tradeoffs at a glance</h3>
+      <p>The two modes are not feature-equivalent. Cascade hands you every component to tune; VoiceLive hands the whole audio loop to Azure for the lowest latency. Pick per workload.</p>
+      <table>
+        <thead><tr><th>Dimension</th><th>SpeechCascade <span class="pill planned">you control</span></th><th>VoiceLive <span class="pill">Azure-managed</span></th></tr></thead>
+        <tbody>
+          <tr><td><strong>Latency</strong></td><td>~400&nbsp;ms end-to-end (3 hops)</td><td>~200&ndash;250&nbsp;ms (single hop)</td></tr>
+          <tr><td><strong>Components</strong></td><td>Swap STT, LLM, TTS independently</td><td>One managed pipeline — no swapping</td></tr>
+          <tr><td><strong>LLM surface</strong></td><td>Chat Completions <em>or</em> Responses API (<code>_process_llm</code>)</td><td>Realtime API only (<code>gpt-realtime</code>)</td></tr>
+          <tr><td><strong>VAD / barge-in</strong></td><td>Client-side thresholds + <code>ThreadBridge</code> cancellation</td><td>Server-side automatic — not tunable</td></tr>
+          <tr><td><strong>STT models</strong></td><td>Custom Speech + phrase lists</td><td>Built-in only</td></tr>
+          <tr><td><strong>Voices</strong></td><td>400+ neural voices, per-agent styles</td><td>HD voices only (e.g. <code>DragonHDLatest</code>)</td></tr>
+          <tr><td><strong>Deployment</strong></td><td>On-prem / hybrid endpoints supported</td><td>Azure cloud only</td></tr>
+          <tr><td><strong>Turn model</strong></td><td>Synchronous per-turn (<code>process_user_input</code>)</td><td>Event-driven (<code>ServerEventType.*</code>)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>How each mode manages turn context &amp; state</h3>
+      <p>Both modes read and write the same <code>MemoManager</code> via <code>sync_state_from_memo()</code> / <code>sync_state_to_memo()</code> — so active agent, visited agents, profile, and handoff context survive across turns and container restarts. They differ in how the model <em>sees</em> that context on each turn:</p>
+      <ul>
+        <li><strong>SpeechCascade</strong> assembles the prompt itself — current agent's per-agent thread plus de-duplicated cross-agent context (<code>_get_conversation_history</code>), then ships it to Azure OpenAI. You decide exactly what the model sees, so this is where the planned compaction levers (rolling window, summarizer) plug in.</li>
+        <li><strong>VoiceLive</strong> keeps conversation state inside the realtime connection. The orchestrator re-injects a throttled <strong>session recap</strong> (recent user messages, slots, last assistant turn) via <code>session.update(instructions=…)</code> before responses, and history is per-connection only — <code>visited_agents</code> is intentionally <em>not</em> replayed to avoid stale context on a fresh call.</li>
+        <li><strong>Shared truth.</strong> Slots, tool outputs, and the user profile always land in <code>MemoManager</code> regardless of mode, so a handoff or a Cosmos archive looks identical either way.</li>
+      </ul>
 
       <hr>
 
@@ -384,7 +415,7 @@ flowchart LR
       <p>Same logical turn, two different surfaces. Speech Cascade reacts to local <code>on_partial</code> / <code>on_final</code> callbacks coming off the Speech SDK thread; Voice Live reacts to <code>ServerEventType.*</code> messages coming off the realtime model websocket. Both converge on the same session-state contract.</p>
 
       <div class="az-diagram" data-diagram="turn-hooks-compare">
-        <figcaption class="az-diagram-caption">Side-by-side hook timelines across six turn phases — cascade callbacks above the line, Voice Live <code>ServerEventType.*</code> events below. Markers fade in left-to-right to walk through a single turn.</figcaption>
+        <figcaption class="az-diagram-caption">Each column is one phase of the same turn. The top row is your Speech Cascade callback, the bottom row is the Azure VoiceLive event you react to, and the middle band says what's actually happening. Click to expand.</figcaption>
       </div>
 
       <table>
@@ -610,7 +641,20 @@ flowchart LR
       </aside>
 
       <div class="az-diagram" data-diagram="framework-positioning">
-        <figcaption class="az-diagram-caption">Top: one opaque call wraps the whole turn. Bottom: five explicit stages we can stream, observe, and cancel independently.</figcaption>
+        <figcaption class="az-diagram-caption">Where the managed pieces plug in: the orchestrator runs either audio path — custom Speech cascade or the Foundry Voice Live tool. Voice Live can manage the whole audio channel (audio in + out). Today the reason + tool stage runs ART's own custom agent framework; Microsoft Agent Framework is a potential drop-in there, not wired in today. The bottom cards weigh the latency tradeoff of each Foundry agent deployment style. Click to expand.</figcaption>
+      </div>
+
+      <h3 style="margin-top:28px">Plugging in Agent Framework, Foundry agents, and Voice Live</h3>
+      <p>You don't have to choose "all custom" or "all managed." The realtime loop above has clean seams where Microsoft's managed building blocks <em>could</em> slot in — each with its own latency profile to weigh against the ~1-second turn budget. Today the reason + tool stage runs ART's own custom agent framework; the items below are the supported plug-in points, some shipped and some potential.</p>
+      <ul>
+        <li><strong>Agent Framework at the reason stage <span class="pill planned">potential · not current state</span>.</strong> MAF is two things — <em>agents</em> (LLM + tools/MCP) and graph <em>workflows</em> (type-safe routing, checkpointing, human-in-the-loop) — built on model clients, an agent session for state, middleware, and MCP clients. It maps cleanly onto our reasoning + tool-dispatch stage, so it's a natural future drop-in: keep the audio transport here, and let MAF own the agent graph, calling the <a href="https://learn.microsoft.com/en-us/azure/ai-services/agents/quickstarts/responses-api">Responses API</a> on your Foundry project endpoint. <strong>This accelerator does not use MAF today</strong> — it ships its own custom, latency-tuned agent framework around the realtime loop; MAF is shown here as where it would plug in.</li>
+        <li><strong>Voice Live as a managed audio channel.</strong> The <a href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live">Voice Live API</a> is exposed as a Foundry Agent Service tool that collapses speech-in and speech-out into one managed WebSocket hop (Realtime-API compatible), with 600+ Azure neural voices, custom voice, and models like <code>gpt-realtime</code>. Because the orchestrator supports both pipelines, Voice Live can take over the <em>entire</em> audio channel — VAD, STT, and TTS — while MAF still sits in the middle to customize the agentic layer. Use it when you want Azure to own the whole audio surface; use the custom Speech cascade when you need per-component control.</li>
+      </ul>
+
+      <h3 style="margin-top:28px">Hosted agents vs. prompt agents — where every millisecond counts</h3>
+      <p>Foundry Agent Service offers two agent types, and the difference matters for voice. A <strong>prompt agent</strong> is configuration only (instructions + model + tools) — fully managed, nothing to scale, but you call it over the Responses API, so every turn pays a network hop and you can't reshape the orchestration. A <strong>hosted agent</strong> is <em>your</em> container (MAF, LangGraph, or custom) run by Foundry with a managed endpoint, autoscale, and a dedicated identity — great performance and full control once it's running.</p>
+      <div class="callout warn">
+        <p><strong>The warmup catch.</strong> Per the <a href="https://learn.microsoft.com/en-us/azure/ai-services/agents/concepts/hosted-agents">hosted-agents docs</a>, each session runs in its own VM-isolated sandbox that <em>scales to zero with stateful resume and predictable cold starts</em>. After 15 minutes idle the compute is deprovisioned; the next request to that session has to provision fresh compute and restore state — and there's <em>no warm pool to size</em>. For a phone call where end-to-end has to stay under ~1 second, a cold start on the critical path is a non-starter. That's exactly why this accelerator keeps the audio loop in an always-on service: you plug MAF in at the reason stage and let Voice Live or your own pooled STT/TTS handle audio, but the hot path never waits on a container warmup.</p>
       </div>
 
       <h3 style="margin-top:28px">2 · The 1-second turn budget</h3>

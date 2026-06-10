@@ -896,95 +896,117 @@ const OMNICHANNEL_HERO = () => {
    DIAGRAM — Framework positioning (MAF vs our turn-by-turn loop)
    ============================================================ */
 const FRAMEWORK_POSITIONING = () => {
-  const VBW = 1240, VBH = 440;
+  const VBW = 1300, VBH = 642;
+  const MAF = '#5C2D91', GRN = '#107C10', BLU = 'var(--d-channel)', ORG = 'var(--d-telephony)';
 
-  const lbl = (x, y, text, color) => `
-    <rect x="${x - text.length * 3.2 - 5}" y="${y - 9}" width="${text.length * 6.4 + 10}" height="14" rx="7"
-          fill="var(--c-bg)" stroke="${color || 'var(--d-arrow)'}" stroke-width="0.8"/>
-    <text class="flow-label" x="${x}" y="${y + 1}" text-anchor="middle" style="fill:${color || 'var(--d-arrow)'}">${text}</text>`;
-
-  // Track headers
-  const trackBg = (y, h, fill, stroke, label, sub, color) => `
-    <rect x="20" y="${y}" width="${VBW - 40}" height="${h}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="1.2" stroke-dasharray="6 4"/>
-    <g transform="translate(36, ${y - 10})">
-      <rect width="${label.length * 7.2 + 16}" height="18" rx="9" fill="${color}"/>
-      <text x="${(label.length * 7.2 + 16)/2}" y="12" text-anchor="middle" style="font:700 10px Inter,sans-serif;letter-spacing:.12em;fill:#fff">${label}</text>
-    </g>
-    <text x="${VBW - 36}" y="${y + 14}" text-anchor="end" style="font:400 11px Inter,sans-serif;fill:var(--d-text-3);font-style:italic">${sub}</text>`;
-
-  // Simple labelled "step" pill for MAF top track
-  const mafStep = (x, y, w, h, name, desc, color) => `
-    <g transform="translate(${x}, ${y})" filter="url(#tile-shadow)">
-      <rect width="${w}" height="${h}" rx="8" fill="var(--d-tile-bg)" stroke="${color}" stroke-width="1.5"/>
-      <rect width="3" height="${h}" rx="1.5" fill="${color}"/>
-      <text x="${w/2}" y="24" text-anchor="middle" style="font:600 11px Inter,sans-serif;fill:var(--d-text)">${name}</text>
-      <text x="${w/2}" y="40" text-anchor="middle" style="font:400 9px Inter,sans-serif;fill:var(--d-text-3)">${desc}</text>
+  // ---- Band 1: the ART realtime loop ----
+  const lp = (x, title, sub, color, hl) => `
+    <g>
+      ${hl ? `<rect x="${x - 5}" y="92" width="188" height="78" rx="10" fill="${color}" fill-opacity="0.06" stroke="${color}" stroke-opacity="0.4" stroke-width="1"/>` : ''}
+      <rect x="${x}" y="100" width="178" height="62" rx="8" fill="var(--d-tile-bg)" stroke="${color}" stroke-width="${hl ? 2.4 : 1.2}"/>
+      <rect x="${x}" y="100" width="3" height="62" rx="1.5" fill="${color}"/>
+      <text x="${x + 90}" y="126" text-anchor="middle" style="font:700 12.5px Inter,sans-serif;fill:var(--d-text)">${title}</text>
+      <text x="${x + 90}" y="144" text-anchor="middle" style="font:500 9px JetBrains Mono,monospace;fill:var(--d-text-3)">${sub}</text>
     </g>`;
 
-  const ourStep = (x, y, w, h, num, name, desc, color, animDelay) => `
-    <g transform="translate(${x}, ${y})">
-      <rect width="${w}" height="${h}" rx="6" fill="var(--d-tile-bg)" stroke="${color}" stroke-width="1.4"/>
-      <rect width="3" height="${h}" rx="1.5" fill="${color}"/>
-      <circle cx="${w - 14}" cy="14" r="9" fill="${color}" class="art-pulse-dot" style="animation-delay:${animDelay}s"/>
-      <text x="${w - 14}" y="17" text-anchor="middle" style="font:700 10px Inter,sans-serif;fill:#fff">${num}</text>
-      <text x="10" y="22" style="font:600 11px Inter,sans-serif;fill:var(--d-text)">${name}</text>
-      <text x="10" y="36" style="font:400 9px Inter,sans-serif;fill:var(--d-text-3)">${desc}</text>
-    </g>`;
+  const arrow = (x) => `<path class="flow-arrow" d="M${x} 131 L${x + 22} 131" marker-end="url(#arrow)"/>`;
+
+  // ---- Band 2: plug-in callouts ----
+  const plug = (cx, w, color, title, lines, targetX) => {
+    const x = cx - w / 2, y = 214, h = 90;
+    return `
+      <path class="flow-arrow flow-arrow-dashed" d="M${cx} ${y} L${targetX} 164" marker-end="url(#arrow)"/>
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="var(--d-tile-bg)" stroke="${color}" stroke-width="1.3"/>
+      <rect x="${x}" y="${y}" width="3" height="${h}" rx="1.5" fill="${color}"/>
+      <text x="${x + 14}" y="${y + 21}" style="font:700 11px Inter,sans-serif;fill:${color}">${title}</text>
+      <line x1="${x + 14}" y1="${y + 29}" x2="${x + w - 14}" y2="${y + 29}" stroke="var(--d-tile-border)"/>
+      ${lines.map((l, i) => `<text x="${x + 14}" y="${y + 46 + i * 16}" style="font:500 9.5px JetBrains Mono,monospace;fill:var(--d-text-2)">${l}</text>`).join('')}`;
+  };
+
+  // ---- Band 3: deployment / latency cards ----
+  const card = (x, color, tag, title, what, bullets, verdict, vColor) => {
+    const y = 392, w = 400, h = 206;
+    return `
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="var(--d-tile-bg)" stroke="${color}" stroke-width="1.3"/>
+      <path d="M${x} ${y + 10} Q${x} ${y} ${x + 10} ${y} L${x + w - 10} ${y} Q${x + w} ${y} ${x + w} ${y + 10} L${x + w} ${y + 34} L${x} ${y + 34} Z" fill="${color}" fill-opacity="0.10"/>
+      <rect x="${x}" y="${y}" width="4" height="${h}" rx="2" fill="${color}"/>
+      <text x="${x + 16}" y="${y + 22}" style="font:700 13px Inter,sans-serif;fill:${color}">${title}</text>
+      <text x="${x + w - 14}" y="${y + 22}" text-anchor="end" style="font:600 8.5px Inter,sans-serif;letter-spacing:.05em;text-transform:uppercase;fill:var(--d-text-3)">${tag}</text>
+      <text x="${x + 16}" y="${y + 52}" style="font:500 10px Inter,sans-serif;fill:var(--d-text-2)">${what}</text>
+      ${bullets.map((b, i) => `
+        <circle cx="${x + 20}" cy="${y + 73 + i * 21}" r="2.2" fill="${color}"/>
+        <text x="${x + 30}" y="${y + 76 + i * 21}" style="font:400 10.5px Inter,sans-serif;fill:var(--d-text)">${b}</text>`).join('')}
+      <rect x="${x + 14}" y="${y + h - 38}" width="${w - 28}" height="26" rx="13" fill="${vColor}" fill-opacity="0.10" stroke="${vColor}" stroke-width="1"/>
+      <text x="${x + w / 2}" y="${y + h - 21}" text-anchor="middle" style="font:600 10px Inter,sans-serif;fill:${vColor}">${verdict}</text>`;
+  };
 
   return `
-<svg viewBox="0 0 ${VBW} ${VBH}" xmlns="http://www.w3.org/2000/svg" class="az-svg" role="img" aria-label="Framework positioning: Agent Framework vs our orchestrator">
+<svg viewBox="0 0 ${VBW} ${VBH}" xmlns="http://www.w3.org/2000/svg" class="az-svg" role="img" aria-label="Where Microsoft Agent Framework and Voice Live plug into the ART loop, and the latency tradeoffs of Foundry agent types">
   ${DEFS}
 
-  <text x="${VBW/2}" y="28" text-anchor="middle" style="font:600 17px Inter,sans-serif;fill:var(--d-text)">Microsoft Agent Framework vs. ART Voice Agent Framework</text>
-  <text x="${VBW/2}" y="50" text-anchor="middle" style="font:400 12px Inter,sans-serif;fill:var(--d-text-3)">MAF is strong for agents and workflows; this accelerator keeps the realtime audio loop explicit</text>
+  <text x="${VBW/2}" y="28" text-anchor="middle" style="font:600 17px Inter,sans-serif;fill:var(--d-text)">Where Agent Framework &amp; Voice Live plug into the ART loop</text>
+  <text x="${VBW/2}" y="48" text-anchor="middle" style="font:400 12px Inter,sans-serif;fill:var(--d-text-3)">Today the reason + tool stage runs ART's own custom agent framework. Voice Live can manage the whole audio channel; Microsoft Agent Framework is a potential drop-in at the reason stage — not wired in today.</text>
 
-  <!-- ===== TOP TRACK — Microsoft Agent Framework approach ===== -->
-  ${trackBg(70, 128, 'rgba(92,45,145,0.05)', '#5C2D91', 'MICROSOFT AGENT FRAMEWORK', 'agents · tools · workflows · handoffs', '#5C2D91')}
+  <!-- MAF is a POTENTIAL drop-in at the Reason stage (dashed = not current state) -->
+  <rect x="666" y="76" width="170" height="17" rx="8.5" fill="var(--c-bg)" stroke="${MAF}" stroke-width="1.1" stroke-dasharray="3 2"/>
+  <text x="751" y="88" text-anchor="middle" style="font:700 8.5px Inter,sans-serif;letter-spacing:.03em;fill:${MAF}">MAF — POTENTIAL DROP-IN</text>
 
-  ${mafStep(44,  128, 132, 58, 'App / host', 'starts', '#5C2D91')}
-  <path class="flow-arrow" d="M176 157 L214 157" marker-end="url(#arrow)"/>
-  ${mafStep(214, 118, 286, 76, 'Agent + workflow graph', 'sequential · concurrent · handoff', '#5C2D91')}
-  <path class="flow-arrow" d="M500 157 L538 157" marker-end="url(#arrow)"/>
-  ${mafStep(538, 118, 270, 76, 'Tools · middleware · memory', 'checkpointing · observability', '#5C2D91')}
-  <path class="flow-arrow" d="M808 157 L846 157" marker-end="url(#arrow)"/>
-  ${mafStep(846, 128, 130, 58, 'Result', 'reply', '#5C2D91')}
+  <!-- Voice Live spanning brackets: audio-in (Caller→STT) and audio-out (TTS→Pump) -->
+  <path d="M63 100 L63 94 L639 94 L639 100" fill="none" stroke="${GRN}" stroke-width="1.3" stroke-opacity="0.55"/>
+  <path d="M861 100 L861 94 L1237 94 L1237 100" fill="none" stroke="${GRN}" stroke-width="1.3" stroke-opacity="0.55"/>
+  <rect x="287" y="86" width="128" height="15" rx="7.5" fill="var(--c-bg)" stroke="${GRN}" stroke-width="0.9"/>
+  <text x="351" y="97" text-anchor="middle" style="font:600 8.5px Inter,sans-serif;fill:${GRN}">Voice Live · audio in</text>
+  <rect x="985" y="86" width="130" height="15" rx="7.5" fill="var(--c-bg)" stroke="${GRN}" stroke-width="0.9"/>
+  <text x="1050" y="97" text-anchor="middle" style="font:600 8.5px Inter,sans-serif;fill:${GRN}">Voice Live · audio out</text>
 
-  <text x="610" y="212" text-anchor="middle" style="font:italic 10px Inter,sans-serif;fill:var(--d-text-3)">good for agent logic and workflow orchestration · not where we want to hide the realtime audio seams</text>
+  <!-- The realtime loop -->
+  ${lp(61,   'Caller',          'PSTN audio in',        BLU,  false)}
+  ${arrow(239)}
+  ${lp(261,  'VAD',             'turn boundary',        GRN,  false)}
+  ${arrow(439)}
+  ${lp(461,  'STT',             'partial → final',      GRN,  false)}
+  ${arrow(639)}
+  ${lp(661,  'Reason + Tools',  'custom framework today', MAF,  true)}
+  ${arrow(839)}
+  ${lp(861,  'TTS',             'first audio chunk',    GRN,  false)}
+  ${arrow(1039)}
+  ${lp(1061, 'Pump → Caller',   'cancellable · barge-in', ORG, false)}
 
-  <text x="610" y="232" text-anchor="middle" style="font:600 10px Inter,sans-serif;fill:#5C2D91">Current support: Python + .NET · tools · middleware · workflows · handoffs · streaming · observability</text>
-  <text x="610" y="246" text-anchor="middle" style="font:600 10px Inter,sans-serif;fill:#5C2D91">Best fit: agent graphs, policy, tool execution, and stateful orchestration above the audio layer</text>
+  <!-- Band 2: what each layer contributes -->
+  ${plug(640, 300, MAF, 'Microsoft Agent Framework (potential)', [
+    'NOT the current state — ART ships its own',
+    'agent.run() / graph workflow · tools + MCP',
+    'could drop in at the reason + tool stage',
+  ], 751)}
+  ${plug(1000, 300, GRN, 'Voice Live tool (Foundry)', [
+    'manages the whole audio loop: STT + TTS',
+    '600+ voices · custom voice · gpt-realtime',
+    'orchestrator runs cascade OR Voice Live',
+  ], 951)}
 
-  <!-- ===== BOTTOM TRACK — Our orchestrator ===== -->
-  ${trackBg(284, 124, 'rgba(16,124,16,0.05)', '#107C10', 'ART VOICE AGENT FRAMEWORK', 'explicit per-stage pipeline', '#107C10')}
+  <!-- Divider + band-3 header -->
+  <line x1="30" y1="356" x2="${VBW - 30}" y2="356" stroke="var(--d-tile-border)" stroke-width="1"/>
+  <text x="30" y="378" style="font:700 11px Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;fill:var(--d-text-2)">Deploying the agent layer — and what it costs you in latency</text>
 
-  <!-- Caller audio in -->
-  ${mafStep(34, 308, 84, 50, 'Caller', 'audio', 'var(--d-channel)')}
-  <path class="flow-arrow" d="M118 333 L144 333" marker-end="url(#arrow)"/>
+  ${card(30, BLU, 'Foundry-managed',
+    'Prompt agent',
+    'Config only — instructions + model + tools',
+    ['No compute to run, scale, or patch', 'Called via Responses API (network hop)', 'No cold start — but no custom orchestration'],
+    'Predictable latency · no audio-loop control', BLU)}
 
-  <!-- 5 explicit numbered stages -->
-  ${ourStep(144, 308, 122, 50, 1, 'VAD', 'turn boundary',  'var(--d-app)',       0.0)}
-  <path class="flow-arrow" d="M266 333 L286 333" marker-end="url(#arrow)"/>
-  ${ourStep(286, 308, 122, 50, 2, 'STT', 'partial → final',        '#107C10',            0.4)}
-  <path class="flow-arrow" d="M408 333 L428 333" marker-end="url(#arrow)"/>
-  ${ourStep(428, 308, 122, 50, 3, 'LLM', 'first token + tools',    '#107C10',            0.8)}
-  <path class="flow-arrow" d="M550 333 L570 333" marker-end="url(#arrow)"/>
-  ${ourStep(570, 308, 122, 50, 4, 'TTS', 'first audio chunk',      '#107C10',            1.2)}
-  <path class="flow-arrow" d="M692 333 L712 333" marker-end="url(#arrow)"/>
-  ${ourStep(712, 308, 122, 50, 5, 'Pump', 'cancellable', 'var(--d-telephony)', 1.6)}
-  <path class="flow-arrow" d="M834 333 L860 333" marker-end="url(#arrow)"/>
-  ${mafStep(860, 308, 146, 50, 'Reply', 'streaming', 'var(--d-channel)')}
+  ${card(450, MAF, 'Your container · preview',
+    'Hosted agent',
+    'Your MAF / LangGraph code, run by Foundry',
+    ['Great perf + full control once warm', 'Per-session sandbox · scales to zero', '15-min idle → deprovision → cold-start resume', 'No warm pool to size'],
+    '⚠ Warmup cost — keep sessions warm where ms matter', ORG)}
 
-  <text x="610" y="396" text-anchor="middle" style="font:italic 10px Inter,sans-serif;fill:var(--d-text-3)">
-    we own each transition · cancel TTS mid-utterance on barge-in · stream first LLM token straight into TTS · OpenTelemetry span per stage
-  </text>
+  ${card(870, GRN, 'This accelerator',
+    'ART in-process loop',
+    'Always-on service that owns the audio loop',
+    ['No cold start on the hot path', 'You own every millisecond', 'VAD · STT · TTS · barge-in in-process', 'Custom agent framework today · MAF can drop in'],
+    'Best for the realtime audio path', GRN)}
 
-  <text x="76" y="418" style="font:700 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:#107C10">Integration path</text>
-  <text x="190" y="418" style="font:400 10px Inter,sans-serif;fill:var(--d-text-2)">keep audio transport here; hand off agent graph + tools to MAF</text>
-
-  <!-- Bottom rationale line -->
-  <line x1="20" y1="412" x2="${VBW - 20}" y2="412" stroke="var(--d-tile-border)" stroke-width="1"/>
-  <text x="30" y="430" style="font:600 11px Inter,sans-serif;fill:var(--d-text)">Rationale:</text>
-  <text x="98" y="430" style="font:400 11px Inter,sans-serif;fill:var(--d-text-2)">MAF is a good fit for the orchestration layer today · the custom loop remains useful where realtime audio control matters most</text>
+  <text x="${VBW/2}" y="626" text-anchor="middle" style="font:italic 10.5px Inter,sans-serif;fill:var(--d-text-3)">ART runs its own custom agent framework today. Managed agents (prompt / hosted) and Voice Live remove infra, but every managed hop adds latency and hosted-agent sessions can cold-start — so the realtime audio loop stays always-on here.</text>
 </svg>`;
 };
 
@@ -1155,12 +1177,12 @@ const BARGE_IN_FLOW = () => {
    queues, per-session MemoManager keys, animated audio flow per call
    ============================================================ */
 const SESSION_ISOLATION = () => {
-  const VBW = 1240, VBH = 420;
+  const VBW = 1240, VBH = 450;
 
   const sessions = [
-    { id: 'sess_001', call: 'cc_aaaa', agent: 'Concierge',  y: 100, hue: '#0078D4' },
-    { id: 'sess_002', call: 'cc_bbbb', agent: 'FraudAgent', y: 210, hue: '#CA5010' },
-    { id: 'sess_003', call: 'cc_cccc', agent: 'Concierge',  y: 320, hue: '#107C10' },
+    { id: 'sess_001', call: 'cc_aaaa', agent: 'Concierge',  y: 140, hue: '#0078D4' },
+    { id: 'sess_002', call: 'cc_bbbb', agent: 'FraudAgent', y: 250, hue: '#CA5010' },
+    { id: 'sess_003', call: 'cc_cccc', agent: 'Concierge',  y: 360, hue: '#107C10' },
   ];
 
   const colX = { client: 60, ingress: 250, handler: 470, queue: 700, state: 940, redis: 1130 };
@@ -1191,12 +1213,12 @@ const SESSION_ISOLATION = () => {
   <text x="${VBW/2}" y="32" text-anchor="middle" style="font:600 17px Inter,sans-serif;fill:var(--d-text)">Concurrent session isolation</text>
   <text x="${VBW/2}" y="54" text-anchor="middle" style="font:400 12px Inter,sans-serif;fill:var(--d-text-3)">Three calls on the same container — each gets its own handler, queue, MemoManager keys, and Redis namespace</text>
 
-  <text x="${colX.client + 55}"  y="78" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Caller</text>
-  <text x="${colX.ingress + 90}" y="78" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Ingress (ACS / WS)</text>
-  <text x="${colX.handler + 100}" y="78" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Per-session handler</text>
-  <text x="${colX.queue + 100}"   y="78" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Speech queue / span</text>
-  <text x="${colX.state + 80}"    y="78" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">MemoManager</text>
-  <text x="${colX.redis + 50}"    y="78" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Redis key</text>
+  <text x="${colX.client + 55}"  y="96" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Caller</text>
+  <text x="${colX.ingress + 90}" y="96" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Ingress (ACS / WS)</text>
+  <text x="${colX.handler + 100}" y="96" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Per-session handler</text>
+  <text x="${colX.queue + 100}"   y="96" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Speech queue / span</text>
+  <text x="${colX.state + 80}"    y="96" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">MemoManager</text>
+  <text x="${colX.redis + 50}"    y="96" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--d-text-3)">Redis key</text>
   `;
 
   sessions.forEach((s, i) => {
@@ -1225,7 +1247,7 @@ const SESSION_ISOLATION = () => {
   });
 
   svg += `
-    <g transform="translate(${VBW/2 - 240}, 388)">
+    <g transform="translate(${VBW/2 - 240}, 420)">
       <rect width="480" height="22" rx="11" fill="var(--d-ai)" fill-opacity="0.10" stroke="var(--d-ai)" stroke-width="1"/>
       <text x="240" y="15" text-anchor="middle" style="font:600 11px Inter,sans-serif;fill:var(--d-ai)">No shared state across lanes — keys, queues, and turn IDs are session-scoped</text>
     </g>
@@ -1320,92 +1342,250 @@ const MEMORY_LIFECYCLE = () => {
 };
 
 /* ============================================================
+   DIAGRAM — Two modes, one core (wiring + control boundary)
+   Grounded in: media.py _resolve_stream_mode (ACS_STREAMING_MODE),
+   SpeechCascadeHandler/CascadeOrchestratorAdapter vs
+   VoiceLiveSDKHandler/LiveOrchestrator, and the shared layer
+   (agent/tool registries, HandoffService, session_state sync,
+   MemoManager → Redis → Cosmos).
+   ============================================================ */
+const MODES_WIRING = () => {
+  const VBW = 1280, VBH = 668;
+  const C_APP = 'var(--d-app)', C_AI = 'var(--d-ai)', C_DATA = 'var(--d-data)', C_CH = 'var(--d-channel)';
+
+  // Component tile with optional "swap" badge (cascade) — left-aligned text
+  const comp = (x, y, w, title, sub, color, swap) => `
+    <g>
+      <rect x="${x}" y="${y}" width="${w}" height="50" rx="7"
+            fill="var(--d-tile-bg)" stroke="${color}" stroke-width="1.1"/>
+      <rect x="${x}" y="${y}" width="3" height="50" rx="1.5" fill="${color}"/>
+      <text x="${x + 14}" y="${y + 21}" style="font:700 12px Inter,sans-serif;fill:var(--d-text)">${title}</text>
+      <text x="${x + 14}" y="${y + 38}" style="font:500 10px JetBrains Mono,monospace;fill:var(--d-text-3)">${sub}</text>
+      ${swap ? `
+        <rect x="${x + w - 64}" y="${y + 15}" width="50" height="20" rx="10"
+              fill="${color}" fill-opacity="0.12" stroke="${color}" stroke-width="0.8"/>
+        <text x="${x + w - 39}" y="${y + 29}" text-anchor="middle" style="font:600 9.5px Inter,sans-serif;fill:${color}">swap</text>` : ''}
+    </g>`;
+
+  // Bullet line inside the managed VoiceLive box
+  const bullet = (x, y, text, color) => `
+    <circle cx="${x}" cy="${y - 3}" r="2.2" fill="${color}"/>
+    <text x="${x + 10}" y="${y}" style="font:500 10.5px Inter,sans-serif;fill:var(--d-text-2)">${text}</text>`;
+
+  // Shared-core tile (bottom band)
+  const core = (x, y, w, title, sub) => `
+    <g>
+      <rect x="${x}" y="${y}" width="${w}" height="96" rx="7"
+            fill="var(--d-tile-bg)" stroke="${C_DATA}" stroke-width="1.1"/>
+      <rect x="${x}" y="${y}" width="3" height="96" rx="1.5" fill="${C_DATA}"/>
+      <text x="${x + 13}" y="${y + 26}" style="font:700 11.5px Inter,sans-serif;fill:var(--d-text)">${title}</text>
+      <line x1="${x + 13}" y1="${y + 36}" x2="${x + w - 13}" y2="${y + 36}" stroke="var(--d-tile-border)"/>
+      ${sub.map((s, i) => `<text x="${x + 13}" y="${y + 56 + i * 17}" style="font:500 9.8px JetBrains Mono,monospace;fill:var(--d-text-3)">${s}</text>`).join('')}
+    </g>`;
+
+  return `
+<svg viewBox="0 0 ${VBW} ${VBH}" xmlns="http://www.w3.org/2000/svg" class="az-svg" role="img" aria-label="How SpeechCascade and VoiceLive are wired and where they converge">
+  ${DEFS}
+
+  <text x="${VBW/2}" y="32" text-anchor="middle" style="font:600 17px Inter,sans-serif;fill:var(--d-text)">Two modes, one core — wiring &amp; control boundary</text>
+  <text x="${VBW/2}" y="54" text-anchor="middle" style="font:400 12px Inter,sans-serif;fill:var(--d-text-3)">Same agents, tools, handoffs, and session state. Only the audio surface differs — and so does how much you control.</text>
+
+  <!-- ===== Zone 1: shared entry + mode selection ===== -->
+  <g>
+    <rect x="350" y="76" width="580" height="58" rx="8" fill="${C_CH}" fill-opacity="0.07" stroke="${C_CH}" stroke-width="1.1"/>
+    <rect x="350" y="76" width="3" height="58" rx="1.5" fill="${C_CH}"/>
+    <text x="368" y="101" style="font:700 12.5px Inter,sans-serif;fill:var(--d-text)">Inbound call → ACS WebSocket → media.py dispatch</text>
+    <text x="368" y="121" style="font:500 10px JetBrains Mono,monospace;fill:var(--d-text-3)">_resolve_stream_mode() reads ACS_STREAMING_MODE · per-call override via Redis</text>
+  </g>
+
+  <!-- branch arrows to the two lanes -->
+  <path class="flow-arrow" d="M560 134 C560 158, 320 150, 320 176" marker-end="url(#arrow)"/>
+  <path class="flow-arrow" d="M720 134 C720 158, 960 150, 960 176" marker-end="url(#arrow)"/>
+  <rect x="392" y="146" width="74" height="18" rx="9" fill="var(--c-bg)" stroke="${C_APP}" stroke-width="0.9"/>
+  <text x="429" y="159" text-anchor="middle" style="font:600 10px JetBrains Mono,monospace;fill:${C_APP}">MEDIA</text>
+  <rect x="812" y="146" width="104" height="18" rx="9" fill="var(--c-bg)" stroke="${C_AI}" stroke-width="0.9"/>
+  <text x="864" y="159" text-anchor="middle" style="font:600 10px JetBrains Mono,monospace;fill:${C_AI}">VOICE_LIVE</text>
+
+  <!-- ===== Zone 2: divergent audio pipeline ===== -->
+  <!-- LEFT lane: SpeechCascade -->
+  <rect x="40" y="178" width="560" height="256" rx="10" fill="${C_APP}" fill-opacity="0.04" stroke="${C_APP}" stroke-opacity="0.4" stroke-width="1"/>
+  <text x="60" y="204" style="font:700 13px Inter,sans-serif;fill:${C_APP}">SpeechCascade</text>
+  <text x="186" y="204" style="font:500 10.5px JetBrains Mono,monospace;fill:var(--d-text-3)">StreamMode.MEDIA</text>
+  <text x="60" y="222" style="font:400 10px Inter,sans-serif;fill:var(--d-text-3)">SpeechCascadeHandler → CascadeOrchestratorAdapter</text>
+  <rect x="436" y="190" width="148" height="20" rx="10" fill="${C_APP}" fill-opacity="0.12" stroke="${C_APP}" stroke-width="0.8"/>
+  <text x="510" y="204" text-anchor="middle" style="font:700 9.5px Inter,sans-serif;letter-spacing:.04em;fill:${C_APP}">YOU ORCHESTRATE EACH HOP</text>
+
+  ${comp(60, 238, 520, 'Azure AI Speech — STT', 'streaming · client-side VAD · barge-in', C_APP, true)}
+  ${comp(60, 302, 520, 'Azure OpenAI — LLM', '_process_llm · Chat Completions / Responses', C_APP, true)}
+  ${comp(60, 366, 520, 'Azure AI Speech — TTS', 'sentence-level stream · 400+ neural voices', C_APP, true)}
+
+  <!-- RIGHT lane: VoiceLive -->
+  <rect x="680" y="178" width="560" height="256" rx="10" fill="${C_AI}" fill-opacity="0.04" stroke="${C_AI}" stroke-opacity="0.4" stroke-width="1"/>
+  <text x="700" y="204" style="font:700 13px Inter,sans-serif;fill:${C_AI}">VoiceLive</text>
+  <text x="792" y="204" style="font:500 10.5px JetBrains Mono,monospace;fill:var(--d-text-3)">StreamMode.VOICE_LIVE</text>
+  <text x="700" y="222" style="font:400 10px Inter,sans-serif;fill:var(--d-text-3)">VoiceLiveSDKHandler → LiveOrchestrator</text>
+  <rect x="1086" y="190" width="134" height="20" rx="10" fill="${C_AI}" fill-opacity="0.12" stroke="${C_AI}" stroke-width="0.8"/>
+  <text x="1153" y="204" text-anchor="middle" style="font:700 9.5px Inter,sans-serif;letter-spacing:.04em;fill:${C_AI}">AZURE MANAGES THE LOOP</text>
+
+  <g>
+    <rect x="700" y="238" width="520" height="178" rx="8" fill="var(--d-tile-bg)" stroke="${C_AI}" stroke-width="1.8"/>
+    <rect x="700" y="238" width="4" height="178" rx="2" fill="${C_AI}"/>
+    <text x="716" y="264" style="font:700 12.5px Inter,sans-serif;fill:var(--d-text)">VoiceLive Realtime endpoint</text>
+    <text x="716" y="282" style="font:500 10px JetBrains Mono,monospace;fill:var(--d-text-3)">azure.ai.voicelive.aio · STT + LLM + TTS in one hop</text>
+    <line x1="716" y1="296" x2="1204" y2="296" stroke="var(--d-tile-border)"/>
+    ${bullet(720, 320, 'Server-side VAD + noise reduction (not tunable)', C_AI)}
+    ${bullet(720, 344, 'Native function calling via Realtime API', C_AI)}
+    ${bullet(720, 368, 'HD voices only — en-US-Ava:DragonHDLatest', C_AI)}
+    ${bullet(720, 392, 'You react to ServerEventType.* events', C_AI)}
+  </g>
+
+  <!-- center control-boundary divider -->
+  <line x1="640" y1="184" x2="640" y2="428" stroke="var(--d-tile-border)" stroke-width="1" stroke-dasharray="3 5"/>
+
+  <!-- converging arrows into shared core -->
+  <path class="flow-arrow flow-arrow-dashed" d="M320 434 C320 456, 470 458, 470 480" marker-end="url(#arrow)"/>
+  <path class="flow-arrow flow-arrow-dashed" d="M960 434 C960 456, 810 458, 810 480" marker-end="url(#arrow)"/>
+  <rect x="498" y="452" width="284" height="20" rx="10" fill="var(--c-bg)" stroke="${C_DATA}" stroke-width="0.9"/>
+  <text x="640" y="466" text-anchor="middle" style="font:600 10px JetBrains Mono,monospace;fill:${C_DATA}">execute_tool() · sync_state_to_memo()</text>
+
+  <!-- ===== Zone 3: shared core ===== -->
+  <rect x="40" y="480" width="1200" height="150" rx="10" fill="${C_DATA}" fill-opacity="0.05" stroke="${C_DATA}" stroke-opacity="0.45" stroke-width="1"/>
+  <text x="60" y="504" style="font:700 12.5px Inter,sans-serif;fill:${C_DATA}">Shared core — both modes converge here</text>
+  <text x="372" y="504" style="font:400 10.5px Inter,sans-serif;fill:var(--d-text-3)">identical agents, tools, handoffs &amp; session state regardless of audio surface</text>
+
+  ${core(60,  518, 222, 'Agents + Scenarios', ['UnifiedAgent · YAML', 'render_prompt()'])}
+  ${core(296, 518, 210, 'Tool Registry', ['execute_tool(', '  name, args )'])}
+  ${core(520, 518, 210, 'HandoffService', ['is_handoff · resolve', '_switch_to(agent)'])}
+  ${core(744, 518, 224, 'Session-state sync', ['sync_state_from_memo', 'sync_state_to_memo'])}
+  ${core(982, 518, 218, 'MemoManager tiers', ['history · slots · profile', 'Redis → Cosmos'])}
+
+  <text x="${VBW/2}" y="652" text-anchor="middle" style="font:italic 11px Inter,sans-serif;fill:var(--d-text-3)">Cascade lets you swap STT/LLM/TTS, tune VAD, and pick any voice. VoiceLive trades that control for ~200 ms latency — both share the same agents, tools, and MemoManager state.</text>
+</svg>`;
+};
+
+/* ============================================================
    DIAGRAM — Turn hooks: Speech Cascade vs Voice Live
    Grounded in: on_partial / on_final callbacks (cascade) and
    ServerEventType.* events (voicelive). Both timelines run in sync.
    ============================================================ */
 const TURN_HOOKS_COMPARE = () => {
-  const VBW = 1280, VBH = 500;
+  const VBW = 1430, VBH = 470;
 
-  const trackY = { cascade: 150, voicelive: 350 };
-  const trackX0 = 200, trackX1 = VBW - 30;
+  const trackY = { cascade: 185, voicelive: 335 };
+  const trackX0 = 196, trackX1 = VBW - 14;
+
+  // Six evenly-spaced phase columns
+  const phaseX = { start: 290, partial: 495, final: 700, tool: 905, audio: 1110, done: 1315 };
 
   const trackHeader = (y, name, sub, color) => `
     <g>
-      <rect x="20" y="${y - 36}" width="170" height="72" rx="10"
+      <rect x="16" y="${y - 30}" width="168" height="60" rx="10"
             fill="${color}" fill-opacity="0.10" stroke="${color}" stroke-width="1"/>
-      <text x="105" y="${y - 8}" text-anchor="middle" style="font:700 13px Inter,sans-serif;fill:${color}">${name}</text>
-      <text x="105" y="${y + 10}" text-anchor="middle" style="font:400 10px Inter,sans-serif;fill:var(--d-text-3)">${sub}</text>
+      <rect x="16" y="${y - 30}" width="3" height="60" rx="1.5" fill="${color}"/>
+      <text x="104" y="${y - 6}" text-anchor="middle" style="font:700 13px Inter,sans-serif;fill:${color}">${name}</text>
+      <text x="104" y="${y + 12}" text-anchor="middle" style="font:400 9.5px Inter,sans-serif;fill:var(--d-text-3)">${sub}</text>
     </g>`;
 
   const track = (y) => `
     <line x1="${trackX0}" y1="${y}" x2="${trackX1}" y2="${y}" stroke="var(--d-tile-border)" stroke-width="1.4"/>`;
 
-  const hook = (x, y, name, code, color, delay, side) => {
-    const dy = side === 'up' ? -1 : 1;
-    const lineEnd = y + dy * 22;
-    const boxY    = y + dy * 30;
-    const boxW    = Math.max(name.length, code.length) * 6.4 + 18;
-    const boxH    = 34;
-    const boxTop  = side === 'up' ? boxY - boxH : boxY;
-    const nameY   = side === 'up' ? boxY - boxH + 14 : boxY + 13;
-    const codeY   = side === 'up' ? boxY - boxH + 28 : boxY + 27;
+  // Faint vertical connector tying the two surfaces of the same phase
+  const phaseLink = (x) => `
+    <line x1="${x}" y1="${trackY.cascade + 7}" x2="${x}" y2="${trackY.voicelive - 7}"
+          stroke="var(--d-tile-border)" stroke-width="1" stroke-dasharray="2 5" opacity="0.55"/>`;
+
+  // Phase header: number badge + label
+  const phaseHead = (x, label) => `
+    <text x="${x}" y="84" text-anchor="middle" style="font:600 10.5px Inter,sans-serif;letter-spacing:.05em;text-transform:uppercase;fill:var(--d-text-2)">${label}</text>`;
+
+  // Plain-language descriptor sitting between the two tracks
+  const centerNote = (x, text) => {
+    const words = text.split(' ');
+    const lines = ['', ''];
+    let li = 0;
+    for (const w of words) {
+      if (li === 0 && (lines[0] + ' ' + w).trim().length > 24) li = 1;
+      lines[li] = (lines[li] + ' ' + w).trim();
+    }
+    const cy = 250;
     return `
-      <g class="art-barge-event" style="animation-delay:${delay}s">
-        <circle cx="${x}" cy="${y}" r="6" fill="${color}"/>
-        <line x1="${x}" y1="${y + dy * 6}" x2="${x}" y2="${lineEnd}" stroke="${color}" stroke-width="1.2"/>
-        <rect x="${x - boxW / 2}" y="${boxTop}" width="${boxW}" height="${boxH}" rx="6"
-              fill="var(--c-bg)" stroke="${color}" stroke-width="0.9"/>
-        <text x="${x}" y="${nameY}" text-anchor="middle" style="font:600 11px Inter,sans-serif;fill:${color}">${name}</text>
-        <text x="${x}" y="${codeY}" text-anchor="middle" style="font:500 10px JetBrains Mono,monospace;fill:var(--d-text-3)">${code}</text>
+      <g>
+        <rect x="${x - 100}" y="${cy - 16}" width="200" height="${lines[1] ? 36 : 22}" rx="6" fill="var(--c-bg)" opacity="0.9"/>
+        <text x="${x}" y="${cy}" text-anchor="middle" style="font:500 10px Inter,sans-serif;fill:var(--d-text-2)">${lines[0]}</text>
+        ${lines[1] ? `<text x="${x}" y="${cy + 14}" text-anchor="middle" style="font:500 10px Inter,sans-serif;fill:var(--d-text-2)">${lines[1]}</text>` : ''}
       </g>`;
   };
 
-  const divider = (x, label) => `
-    <line x1="${x}" y1="80" x2="${x}" y2="${VBH - 60}" stroke="var(--d-tile-border)" stroke-width="1" stroke-dasharray="2 4"/>
-    <text x="${x}" y="74" text-anchor="middle" style="font:600 10px Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;fill:var(--d-text-3)">${label}</text>`;
+  // Card: bold event (the trigger) over a mono action (what it does)
+  const card = (x, y, event, action, color, side, delay) => {
+    const w = 192, h = 48, stem = 16;
+    const top = side === 'up' ? y - stem - h : y + stem;
+    const lineY1 = side === 'up' ? y - 6 : y + 6;
+    const lineY2 = side === 'up' ? y - stem : y + stem;
+    const evY = top + 19;
+    const acY = top + 36;
+    return `
+      <g class="art-barge-event" style="animation-delay:${delay}s">
+        <circle cx="${x}" cy="${y}" r="5.5" fill="${color}"/>
+        <line x1="${x}" y1="${lineY1}" x2="${x}" y2="${lineY2}" stroke="${color}" stroke-width="1.2"/>
+        <rect x="${x - w / 2}" y="${top}" width="${w}" height="${h}" rx="7"
+              fill="var(--d-tile-bg)" stroke="${color}" stroke-width="1.1"/>
+        <rect x="${x - w / 2}" y="${top}" width="3" height="${h}" rx="1.5" fill="${color}"/>
+        <text x="${x - w / 2 + 13}" y="${evY}" style="font:700 11px Inter,sans-serif;fill:${color}">${event}</text>
+        <text x="${x - w / 2 + 13}" y="${acY}" style="font:500 9.5px JetBrains Mono,monospace;fill:var(--d-text-3)">${action}</text>
+      </g>`;
+  };
 
-  const phaseX = { start: 320, partial: 490, final: 670, tool: 850, audio: 1030, done: 1200 };
-
-  return `
+  let svg = `
 <svg viewBox="0 0 ${VBW} ${VBH}" xmlns="http://www.w3.org/2000/svg" class="az-svg" role="img" aria-label="Turn-by-turn hooks: Speech Cascade vs Voice Live">
   ${DEFS}
 
-  <text x="${VBW/2}" y="32" text-anchor="middle" style="font:600 17px Inter,sans-serif;fill:var(--d-text)">Turn hooks — Speech Cascade vs Voice Live</text>
-  <text x="${VBW/2}" y="54" text-anchor="middle" style="font:400 12px Inter,sans-serif;fill:var(--d-text-3)">Same logical turn, different surfaces — local callbacks vs realtime server events</text>
+  <text x="${VBW/2}" y="32" text-anchor="middle" style="font:600 17px Inter,sans-serif;fill:var(--d-text)">Same turn, two surfaces — what fires at each phase</text>
+  <text x="${VBW/2}" y="54" text-anchor="middle" style="font:400 12px Inter,sans-serif;fill:var(--d-text-3)">Read top-down per column: your Cascade callback (top) and the Azure event you react to (bottom). The middle band is what's actually happening.</text>
 
-  ${divider(phaseX.start,   '1 · Speech start')}
-  ${divider(phaseX.partial, '2 · Partial')}
-  ${divider(phaseX.final,   '3 · Final transcript')}
-  ${divider(phaseX.tool,    '4 · Tool / handoff')}
-  ${divider(phaseX.audio,   '5 · TTS output')}
-  ${divider(phaseX.done,    '6 · Turn done')}
+  ${phaseHead(phaseX.start,   '1 · Speech start')}
+  ${phaseHead(phaseX.partial, '2 · Partial')}
+  ${phaseHead(phaseX.final,   '3 · Final')}
+  ${phaseHead(phaseX.tool,    '4 · Tool / handoff')}
+  ${phaseHead(phaseX.audio,   '5 · TTS output')}
+  ${phaseHead(phaseX.done,    '6 · Turn done')}
 
-  ${trackHeader(trackY.cascade, 'Speech Cascade', 'on_* callbacks · per-handler queue', 'var(--d-app)')}
+  ${Object.values(phaseX).map(phaseLink).join('')}
+
+  ${trackHeader(trackY.cascade, 'Speech Cascade', 'your on_* callbacks · you drive', 'var(--d-app)')}
   ${track(trackY.cascade)}
 
-  ${trackHeader(trackY.voicelive, 'Voice Live', 'ServerEventType.* · realtime model', 'var(--d-ai)')}
+  ${trackHeader(trackY.voicelive, 'Voice Live', 'ServerEventType.* · Azure drives', 'var(--d-ai)')}
   ${track(trackY.voicelive)}
 
-  ${hook(phaseX.start,   trackY.cascade, 'speech_started', 'thread_bridge.schedule_barge_in', 'var(--d-app)', 0.10, 'up')}
-  ${hook(phaseX.partial, trackY.cascade, 'on_partial(text)', 'on_partial_transcript()', 'var(--d-app)', 0.45, 'up')}
-  ${hook(phaseX.final,   trackY.cascade, 'on_final(text)', 'SpeechEventType.FINAL → queue', 'var(--d-app)', 0.80, 'up')}
-  ${hook(phaseX.tool,    trackY.cascade, 'tool / handoff', 'advance_turn_for_tool()', 'var(--d-app)', 1.20, 'up')}
-  ${hook(phaseX.audio,   trackY.cascade, 'queue_tts_response', 'route_turn_thread', 'var(--d-app)', 1.55, 'up')}
-  ${hook(phaseX.done,    trackY.cascade, 'turn done', 'sync_state_to_memo()', 'var(--d-app)', 1.95, 'up')}
+  ${card(phaseX.start,   trackY.cascade, 'speech_started', 'schedule_barge_in()', 'var(--d-app)', 'up', 0.10)}
+  ${card(phaseX.partial, trackY.cascade, 'on_partial(text)', '→ live UI transcript', 'var(--d-app)', 'up', 0.40)}
+  ${card(phaseX.final,   trackY.cascade, 'on_final(text)', 'FINAL → speech queue', 'var(--d-app)', 'up', 0.70)}
+  ${card(phaseX.tool,    trackY.cascade, 'tool / handoff', 'advance_turn_for_tool()', 'var(--d-app)', 'up', 1.00)}
+  ${card(phaseX.audio,   trackY.cascade, 'queue_tts_response', 'route_turn_thread → TTS', 'var(--d-app)', 'up', 1.30)}
+  ${card(phaseX.done,    trackY.cascade, 'turn complete', 'sync_state_to_memo()', 'var(--d-app)', 'up', 1.60)}
 
-  ${hook(phaseX.start,   trackY.voicelive, 'SPEECH_STARTED', 'begin_user_turn · stop audio', 'var(--d-ai)', 0.15, 'down')}
-  ${hook(phaseX.partial, trackY.voicelive, 'TRANSCRIPTION_DELTA', 'streaming user envelope', 'var(--d-ai)', 0.50, 'down')}
-  ${hook(phaseX.final,   trackY.voicelive, 'TRANSCRIPTION_COMPLETED', 'send_user_message(turn_id)', 'var(--d-ai)', 0.85, 'down')}
-  ${hook(phaseX.tool,    trackY.voicelive, 'FUNCTION_CALL_ARGUMENTS_DONE', 'execute_tool · response.create', 'var(--d-ai)', 1.25, 'down')}
-  ${hook(phaseX.audio,   trackY.voicelive, 'RESPONSE_AUDIO_DELTA', 'record_tts_first_audio()', 'var(--d-ai)', 1.60, 'down')}
-  ${hook(phaseX.done,    trackY.voicelive, 'RESPONSE_DONE', '_finalize_turn_metrics()', 'var(--d-ai)', 2.00, 'down')}
+  ${card(phaseX.start,   trackY.voicelive, 'SPEECH_STARTED', 'begin_user_turn · stop', 'var(--d-ai)', 'down', 0.15)}
+  ${card(phaseX.partial, trackY.voicelive, 'TRANSCRIPTION_DELTA', 'stream user envelope', 'var(--d-ai)', 'down', 0.45)}
+  ${card(phaseX.final,   trackY.voicelive, 'TRANSCRIPTION_DONE', 'send_user_message()', 'var(--d-ai)', 'down', 0.75)}
+  ${card(phaseX.tool,    trackY.voicelive, 'FUNCTION_CALL_DONE', 'execute_tool → response', 'var(--d-ai)', 'down', 1.05)}
+  ${card(phaseX.audio,   trackY.voicelive, 'RESPONSE_AUDIO_DELTA', 'record first_audio()', 'var(--d-ai)', 'down', 1.35)}
+  ${card(phaseX.done,    trackY.voicelive, 'RESPONSE_DONE', 'finalize_turn_metrics()', 'var(--d-ai)', 'down', 1.65)}
 
-  <g transform="translate(${VBW/2 - 270}, ${VBH - 40})">
+  ${centerNote(phaseX.start,   'caller starts talking → barge-in cancels current audio')}
+  ${centerNote(phaseX.partial, 'live partial transcript streams to the UI')}
+  ${centerNote(phaseX.final,   'utterance finalized → handed to the agent')}
+  ${centerNote(phaseX.tool,    'LLM calls a tool or hands off to another agent')}
+  ${centerNote(phaseX.audio,   'assistant audio streams back to the caller')}
+  ${centerNote(phaseX.done,    'turn persisted to MemoManager → Redis')}
+
+  <g transform="translate(${VBW/2 - 270}, ${VBH - 36})">
     <rect width="540" height="26" rx="13" fill="var(--d-data)" fill-opacity="0.10" stroke="var(--d-data)" stroke-width="1"/>
     <text x="270" y="17" text-anchor="middle" style="font:600 11px Inter,sans-serif;fill:var(--d-data)">Both modes converge on the same session-state contract — MemoManager + Redis</text>
   </g>
 </svg>`;
+
+  return svg;
 };
 
 /* ============================================================
@@ -1582,6 +1762,7 @@ const DIAGRAMS = {
   'barge-in-flow':         BARGE_IN_FLOW,
   'session-isolation':     SESSION_ISOLATION,
   'memory-lifecycle':      MEMORY_LIFECYCLE,
+  'modes-wiring':          MODES_WIRING,
   'turn-hooks-compare':    TURN_HOOKS_COMPARE,
   'memory-per-turn':       MEMORY_PER_TURN,
 };

@@ -39,6 +39,7 @@
       <h4>Getting started</h4>
       <a href="#prerequisites" class="active">Prerequisites</a>
       <a href="#deploy">Deploy to Azure</a>
+      <a href="#enable-phone-calling">Enable Phone Calling</a>
       <a href="#local-development">Local Development</a>
     </div>
     <div class="sidebar-section">
@@ -121,13 +122,116 @@ azd up</code></pre>
 
       <p>After deployment, <code>azd</code> prints the frontend URL. Open it to start a conversation.</p>
 
-      <h3>Phone number setup</h3>
-      <p>To receive phone calls, purchase and assign a number in ACS:</p>
-<pre><code><span class="tok-cmt"># Via Azure Portal → Communication Services → Phone Numbers</span>
-<span class="tok-cmt"># Or via the ACS SDK in your deployment scripts</span>
+      <hr>
 
-<span class="tok-cmt"># Configure the callback URL to point to your backend:</span>
-<span class="tok-cmt"># https://&lt;your-backend&gt;.azurecontainerapps.io/api/v1/calls/answer</span></code></pre>
+      <!-- ==================== Enable Phone Calling (ACS) ==================== -->
+
+      <h2 id="enable-phone-calling">Enable Phone Calling (ACS)</h2>
+      <p><code>azd up</code> provisions the Azure Communication Services (ACS) resource, but it does <strong>not</strong> buy a phone number or wire up call routing for you — those are deliberate, billable, one-time steps. To receive inbound PSTN calls you need to do three things: <strong>(1)</strong> purchase a phone number, <strong>(2)</strong> point an Event Grid subscription at your backend so ACS knows where to deliver the call, and <strong>(3)</strong> let the backend answer it.</p>
+
+      <h3 id="acs-call-flow">How an inbound call reaches your agent</h3>
+      <p>When someone dials your ACS number, ACS doesn't talk to your backend directly. It raises an <code>IncomingCall</code> event to <strong>Azure Event Grid</strong>, which fans that event out to whatever webhook you've subscribed. That webhook is a single backend endpoint:</p>
+      <div class="code-label">Event Grid webhook (the one URL ACS needs to know)</div>
+<pre><code>POST https://&lt;your-backend-host&gt;/api/v1/calls/answer</code></pre>
+      <p>That same endpoint does double duty: it answers Event Grid's one-time <code>SubscriptionValidationEvent</code> handshake <em>and</em> handles the runtime <code>Microsoft.Communication.IncomingCall</code> events. The flow:</p>
+      <ol>
+        <li><strong>Caller dials</strong> your purchased ACS number.</li>
+        <li><strong>ACS emits</strong> a <code>Microsoft.Communication.IncomingCall</code> event to Event Grid.</li>
+        <li><strong>Event Grid delivers</strong> that event to your subscribed webhook (<code>/api/v1/calls/answer</code>).</li>
+        <li><strong>The backend answers</strong> the call, opens the media WebSocket, and the orchestrator starts the conversation.</li>
+      </ol>
+
+      <div class="callout">
+        <p><strong>The one URL that matters:</strong> <code>/api/v1/calls/answer</code>. In production this is your Container App's public FQDN; in local dev it's your dev tunnel URL (see <a href="#dev-tunnel">Dev tunnel</a> below). Everything in this section is about getting ACS to deliver <code>IncomingCall</code> events to that path.</p>
+      </div>
+
+      <h3 id="acs-buy-number">Step 1 — Purchase a phone number in ACS</h3>
+      <p>Buy a number directly on the ACS resource that <code>azd up</code> created.</p>
+
+      <p><strong>Via the Azure Portal:</strong></p>
+      <ol>
+        <li>Open the <a href="https://portal.azure.com" target="_blank" rel="noopener">Azure Portal</a> → your <strong>Communication Services</strong> resource.</li>
+        <li>In the left menu under <em>Telephony and SMS</em>, select <strong>Phone numbers</strong> → <strong>+ Get</strong>.</li>
+        <li>Choose <strong>Country/Region</strong> (e.g. United States), number type <strong>Toll-free</strong> or <strong>Local</strong>, and enable the <strong>Calling — Make &amp; receive calls</strong> capability (inbound is what you need to receive calls).</li>
+        <li>Search, select an available number, review the monthly + per-minute pricing, and <strong>Place order</strong>.</li>
+      </ol>
+
+      <div class="callout warn">
+        <p><strong>Heads up:</strong> phone numbers are billed (a monthly lease plus usage), and toll-free numbers may require a one-time <strong>regulatory / verification</strong> review before they can carry traffic. Buy the number early so the verification clears before you demo.</p>
+      </div>
+
+      <p><strong>Via the Azure CLI</strong> (the <code>communication</code> extension installs on first use):</p>
+<pre><code><span class="tok-cmt"># Search for an available toll-free US number with inbound calling</span>
+az communication phonenumber search-available \
+  --resource-group &lt;your-rg&gt; \
+  --communication-service &lt;your-acs-name&gt; \
+  --country-code US \
+  --phone-number-type tollFree \
+  --assignment-type application \
+  --calling-capabilities inbound
+
+<span class="tok-cmt"># Purchase using the search-id returned above</span>
+az communication phonenumber purchase \
+  --resource-group &lt;your-rg&gt; \
+  --communication-service &lt;your-acs-name&gt; \
+  --search-id &lt;search-id&gt;
+
+<span class="tok-cmt"># Confirm the number is on the resource</span>
+az communication phonenumber list-purchased \
+  --resource-group &lt;your-rg&gt; \
+  --communication-service &lt;your-acs-name&gt;</code></pre>
+
+      <h3 id="acs-event-subscription">Step 2 — Route the call: create an Event Grid subscription</h3>
+      <p>This is the step that connects ACS to your backend. You're subscribing to the ACS resource's <code>IncomingCall</code> events and telling Event Grid to deliver them to your <code>/api/v1/calls/answer</code> webhook.</p>
+
+      <p><strong>Via the Azure Portal:</strong></p>
+      <ol>
+        <li>Open your <strong>Communication Services</strong> resource → <strong>Events</strong> (left menu) → <strong>+ Event Subscription</strong>.</li>
+        <li><strong>Name</strong> it (e.g. <code>incoming-call-to-backend</code>).</li>
+        <li>Under <strong>Filter to Event Types</strong>, select <strong>only</strong> <code>Incoming Call</code> (<code>Microsoft.Communication.IncomingCall</code>). Deselecting the rest keeps noise off your webhook.</li>
+        <li>Set <strong>Endpoint Type</strong> = <strong>Web Hook</strong>.</li>
+        <li>For <strong>Endpoint</strong>, paste your backend's answer URL:
+          <div class="code-label">Production (Container App FQDN)</div>
+<pre><code>https://&lt;your-backend&gt;.&lt;region&gt;.azurecontainerapps.io/api/v1/calls/answer</code></pre>
+        </li>
+        <li>Click <strong>Create</strong>. Event Grid immediately fires a <code>SubscriptionValidationEvent</code> to that URL; the backend's <code>/answer</code> endpoint auto-completes the handshake, so the subscription goes <em>green</em> within a few seconds. If it stays in a failed/validating state, your endpoint wasn't reachable — see the troubleshooting note below.</li>
+      </ol>
+
+      <p><strong>Via the Azure CLI:</strong></p>
+<pre><code><span class="tok-cmt"># Resolve the ACS resource ID (the Event Grid "source")</span>
+ACS_ID=$(az communication show \
+  --name &lt;your-acs-name&gt; \
+  --resource-group &lt;your-rg&gt; \
+  --query id -o tsv)
+
+<span class="tok-cmt"># Subscribe IncomingCall events → backend /api/v1/calls/answer</span>
+az eventgrid event-subscription create \
+  --name incoming-call-to-backend \
+  --source-resource-id "$ACS_ID" \
+  --endpoint "https://&lt;your-backend&gt;.&lt;region&gt;.azurecontainerapps.io/api/v1/calls/answer" \
+  --endpoint-type webhook \
+  --included-event-types Microsoft.Communication.IncomingCall</code></pre>
+
+      <div class="callout tip">
+        <p><strong>Validation must succeed or no calls flow.</strong> Event Grid only delivers <code>IncomingCall</code> events <em>after</em> the one-time validation handshake completes. The backend must be running and publicly reachable at the moment you create the subscription. If the endpoint is down, the subscription will fail and you'll need to re-create it once the backend is up.</p>
+      </div>
+
+      <h3 id="acs-verify">Step 3 — Verify</h3>
+      <ol>
+        <li>Confirm the Event Subscription shows <strong>Provisioning state: Succeeded</strong> under <em>Events</em> on the ACS resource.</li>
+        <li>Call your purchased number from any phone.</li>
+        <li>Watch the backend logs — you should see the <code>SubscriptionValidationEvent</code> (once, at creation) and then a <code>Microsoft.Communication.IncomingCall</code> event followed by the call being answered.</li>
+      </ol>
+
+      <h3 id="acs-local">Local development — making ACS reach your laptop</h3>
+      <p>In production the webhook is a public Container App URL, so ACS can reach it. On your laptop, <code>http://localhost:8010/api/v1/calls/answer</code> is invisible to Azure. The fix is exactly the same three steps above, with one change: the <strong>Endpoint</strong> you give the Event Grid subscription is your <strong>dev tunnel</strong> URL instead of the Container App FQDN:</p>
+      <div class="code-label">Event Grid endpoint for local dev</div>
+<pre><code>https://abc123-8010.usw3.devtunnels.ms/api/v1/calls/answer</code></pre>
+      <p>The dev tunnel gives <code>localhost:8010</code> a public, internet-routable HTTPS address that ACS can deliver events to. See <a href="#dev-tunnel">Dev tunnel — enabling telephony on your laptop</a> for setup, and remember to update both the Event Grid subscription endpoint and the backend <code>BASE_URL</code> whenever you create a fresh tunnel.</p>
+
+      <div class="callout warn">
+        <p><strong>Re-create the subscription when the tunnel ID changes.</strong> Each new <code>devtunnel create</code> mints a new random URL. An Event Grid subscription pinned to a dead tunnel silently drops every <code>IncomingCall</code> event. Either keep a stable tunnel for the day or update/re-create the subscription endpoint after each rotation.</p>
+      </div>
 
       <hr>
 
