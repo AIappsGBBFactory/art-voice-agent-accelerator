@@ -1767,6 +1767,43 @@ class LiveOrchestrator:
                         tool_outputs[name] = output_summary
                         self._memo_manager.set_context("tool_outputs", tool_outputs)
                         self._system_vars["tool_outputs"] = tool_outputs
+
+                    # Persist authenticated identity to corememory so handoff targets
+                    # can inject _client_id and render session_profile in their prompts
+                    if result.get("authenticated") and result.get("client_id"):
+                        cid = result["client_id"]
+                        self._memo_manager.set_corememory("client_id", cid)
+                        self._system_vars["client_id"] = cid
+                        if result.get("caller_name"):
+                            self._memo_manager.set_corememory("caller_name", result["caller_name"])
+                            self._system_vars["caller_name"] = result["caller_name"]
+                        logger.info(
+                            "🔐 Persisted authenticated identity to corememory | client_id=%s",
+                            cid[:8] + "..." if len(cid) > 8 else cid,
+                        )
+
+                    # Persist loaded profile to corememory for cross-agent availability
+                    if result.get("success") and result.get("profile") and isinstance(result["profile"], dict):
+                        profile = result["profile"]
+                        self._memo_manager.set_corememory("session_profile", profile)
+                        self._system_vars["session_profile"] = profile
+                        if profile.get("client_id"):
+                            self._memo_manager.set_corememory("client_id", profile["client_id"])
+                            self._system_vars["client_id"] = profile["client_id"]
+                        if profile.get("full_name"):
+                            self._memo_manager.set_corememory("caller_name", profile["full_name"])
+                            self._system_vars["caller_name"] = profile["full_name"]
+                        if profile.get("customer_intelligence"):
+                            self._memo_manager.set_corememory("customer_intelligence", profile["customer_intelligence"])
+                            self._system_vars["customer_intelligence"] = profile["customer_intelligence"]
+                        if profile.get("institution_name"):
+                            self._memo_manager.set_corememory("institution_name", profile["institution_name"])
+                            self._system_vars["institution_name"] = profile["institution_name"]
+                        logger.info(
+                            "📋 Persisted user profile to corememory | client=%s name=%s",
+                            profile.get("client_id", "?")[:8],
+                            profile.get("full_name", "?"),
+                        )
                 except Exception:
                     logger.debug("Failed to persist tool results to MemoManager", exc_info=True)
 

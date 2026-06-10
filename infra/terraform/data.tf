@@ -149,7 +149,7 @@ resource "azurerm_key_vault_secret" "cosmos_entra_connection_string" {
   key_vault_id    = azurerm_key_vault.main.id
   content_type    = "text/plain"
   expiration_date = timeadd(timestamp(), "720h") # 30 days
-  depends_on = [azurerm_role_assignment.keyvault_admin, azapi_resource.mongoCluster]
+  depends_on      = [azurerm_role_assignment.keyvault_admin, azapi_resource.mongoCluster]
 }
 
 # Generate random password for Cosmos DB admin
@@ -172,9 +172,11 @@ resource "azurerm_key_vault_secret" "cosmos_admin_password" {
 }
 # RBAC assignments for Cosmos DB vCore cluster
 resource "azapi_resource" "cosmos_backend_db_user" {
-  type      = "Microsoft.DocumentDB/mongoClusters/users@2025-04-01-preview"
-  name      = azurerm_user_assigned_identity.backend.principal_id
-  parent_id = azapi_resource.mongoCluster.id
+  type                      = "Microsoft.DocumentDB/mongoClusters/users@2025-08-01-preview"
+  name                      = azurerm_user_assigned_identity.backend.principal_id
+  parent_id                 = azapi_resource.mongoCluster.id
+  schema_validation_enabled = false
+  ignore_missing_property   = true
   body = {
     properties = {
       identityProvider = {
@@ -187,7 +189,7 @@ resource "azapi_resource" "cosmos_backend_db_user" {
       roles = [
         {
           db   = "admin"
-          role = "dbOwner"
+          role = "root"
         }
       ]
     }
@@ -205,9 +207,11 @@ resource "azapi_resource" "cosmos_backend_db_user" {
 
 # RBAC assignments for Cosmos DB vCore cluster
 resource "azapi_resource" "cosmos_principal_user" {
-  type      = "Microsoft.DocumentDB/mongoClusters/users@2025-04-01-preview"
-  name      = data.azuread_client_config.current.object_id
-  parent_id = azapi_resource.mongoCluster.id
+  type                      = "Microsoft.DocumentDB/mongoClusters/users@2025-08-01-preview"
+  name                      = data.azuread_client_config.current.object_id
+  parent_id                 = azapi_resource.mongoCluster.id
+  schema_validation_enabled = false
+  ignore_missing_property   = true
   body = {
     properties = {
       identityProvider = {
@@ -220,7 +224,7 @@ resource "azapi_resource" "cosmos_principal_user" {
       roles = [
         {
           db   = "admin"
-          role = "dbOwner"
+          role = "root"
         }
       ]
     }

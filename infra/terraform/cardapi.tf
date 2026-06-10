@@ -7,6 +7,7 @@
 # ============================================================================
 
 resource "azurerm_user_assigned_identity" "cardapi_mcp" {
+  count               = local.is_aca ? 1 : 0
   name                = "${var.name}-cardapi-mcp-${local.resource_token}"
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
@@ -18,9 +19,10 @@ resource "azurerm_user_assigned_identity" "cardapi_mcp" {
 # ============================================================================
 
 resource "azurerm_role_assignment" "acr_cardapi_mcp_pull" {
+  count                = local.is_aca ? 1 : 0
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPull"
-  principal_id         = azurerm_user_assigned_identity.cardapi_mcp.principal_id
+  principal_id         = azurerm_user_assigned_identity.cardapi_mcp[0].principal_id
 }
 
 # ============================================================================
@@ -28,9 +30,10 @@ resource "azurerm_role_assignment" "acr_cardapi_mcp_pull" {
 # ============================================================================
 
 resource "azurerm_role_assignment" "appconfig_cardapi_mcp_reader" {
+  count                = local.is_aca ? 1 : 0
   scope                = module.appconfig.id
   role_definition_name = "App Configuration Data Reader"
-  principal_id         = azurerm_user_assigned_identity.cardapi_mcp.principal_id
+  principal_id         = azurerm_user_assigned_identity.cardapi_mcp[0].principal_id
 }
 
 # ============================================================================
@@ -38,9 +41,10 @@ resource "azurerm_role_assignment" "appconfig_cardapi_mcp_reader" {
 # ============================================================================
 
 resource "azurerm_role_assignment" "keyvault_cardapi_mcp_secrets" {
+  count                = local.is_aca ? 1 : 0
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_user_assigned_identity.cardapi_mcp.principal_id
+  principal_id         = azurerm_user_assigned_identity.cardapi_mcp[0].principal_id
 }
 
 # ============================================================================
@@ -48,7 +52,7 @@ resource "azurerm_role_assignment" "keyvault_cardapi_mcp_secrets" {
 # ============================================================================
 
 # Create a MongoDB user for cardapi_mcp with access to the shared Cosmos DB.
-# NOTE: Cosmos DB MongoDB vCore currently only supports assigning the 'dbOwner'
+# NOTE: Cosmos DB MongoDB vCore currently only supports assigning the 'root'
 # role on the 'admin' database for Microsoft Entra ID principals. This grants
 # broader privileges than required for the CardAPI MCP server, which is intended
 # to perform read-only operations only.
@@ -61,12 +65,15 @@ resource "azurerm_role_assignment" "keyvault_cardapi_mcp_secrets" {
 #   (e.g., diagnostic logs or activity logs) to detect and investigate any write
 #   operations performed by this identity.
 # - Where Cosmos DB introduces more granular roles or read-only connection
-#   mechanisms, this configuration SHOULD be updated to remove the 'dbOwner'
+#   mechanisms, this configuration SHOULD be updated to remove the 'root'
 #   assignment or switch to a read-only connection string.
 resource "azapi_resource" "cardapi_mcp_db_user" {
-  type      = "Microsoft.DocumentDB/mongoClusters/users@2025-04-01-preview"
-  name      = azurerm_user_assigned_identity.cardapi_mcp.principal_id
-  parent_id = azapi_resource.mongoCluster.id
+  count                     = local.is_aca ? 1 : 0
+  type                      = "Microsoft.DocumentDB/mongoClusters/users@2025-08-01-preview"
+  name                      = azurerm_user_assigned_identity.cardapi_mcp[0].principal_id
+  parent_id                 = azapi_resource.mongoCluster.id
+  schema_validation_enabled = false
+  ignore_missing_property   = true
   body = {
     properties = {
       identityProvider = {
@@ -78,7 +85,7 @@ resource "azapi_resource" "cardapi_mcp_db_user" {
       roles = [
         {
           db   = "admin"
-          role = "dbOwner"
+          role = "root"
         }
       ]
     }
@@ -105,23 +112,24 @@ resource "azapi_resource" "cardapi_mcp_db_user" {
 # ============================================================================
 
 resource "azurerm_container_app" "cardapi_mcp" {
+  count                        = local.is_aca ? 1 : 0
   name                         = "cardapi-mcp-${local.resource_token}"
-  container_app_environment_id = azurerm_container_app_environment.main.id
+  container_app_environment_id = azurerm_container_app_environment.main[0].id
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
 
   identity {
     type         = "SystemAssigned, UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.cardapi_mcp.id]
+    identity_ids = [azurerm_user_assigned_identity.cardapi_mcp[0].id]
   }
 
   registry {
     server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.cardapi_mcp.id
+    identity = azurerm_user_assigned_identity.cardapi_mcp[0].id
   }
 
   ingress {
-    external_enabled = true  # MCP server exposed for external tool calls
+    external_enabled = true # MCP server exposed for external tool calls
     target_port      = 8080
     traffic_weight {
       percentage      = 100
@@ -170,7 +178,7 @@ resource "azurerm_container_app" "cardapi_mcp" {
 
       env {
         name  = "AZURE_CLIENT_ID"
-        value = azurerm_user_assigned_identity.cardapi_mcp.client_id
+        value = azurerm_user_assigned_identity.cardapi_mcp[0].client_id
       }
 
       # Cosmos DB connection (via OIDC - uses AZURE_CLIENT_ID for managed identity)
@@ -217,9 +225,10 @@ resource "azurerm_container_app" "cardapi_mcp" {
 # ============================================================================
 
 resource "azurerm_role_assignment" "cardapi_mcp_metrics_publisher" {
+  count                = local.is_aca ? 1 : 0
   scope                = azurerm_application_insights.main.id
   role_definition_name = "Monitoring Metrics Publisher"
-  principal_id         = azurerm_container_app.cardapi_mcp.identity[0].principal_id
+  principal_id         = azurerm_container_app.cardapi_mcp[0].identity[0].principal_id
 }
 
 # ============================================================================
@@ -228,20 +237,20 @@ resource "azurerm_role_assignment" "cardapi_mcp_metrics_publisher" {
 
 output "CARDAPI_MCP_CONTAINER_APP_NAME" {
   description = "Card API MCP Container App name"
-  value       = azurerm_container_app.cardapi_mcp.name
+  value       = local.is_aca ? azurerm_container_app.cardapi_mcp[0].name : ""
 }
 
 output "CARDAPI_MCP_FQDN" {
   description = "Card API MCP FQDN"
-  value       = azurerm_container_app.cardapi_mcp.ingress[0].fqdn
+  value       = local.is_aca ? azurerm_container_app.cardapi_mcp[0].ingress[0].fqdn : ""
 }
 
 output "CARDAPI_CONTAINER_APP_URL" {
   description = "Card API MCP Container App public URL (for agent integration)"
-  value       = "https://${azurerm_container_app.cardapi_mcp.ingress[0].fqdn}"
+  value       = local.is_aca ? "https://${azurerm_container_app.cardapi_mcp[0].ingress[0].fqdn}" : ""
 }
 
 output "CARDAPI_MCP_UAI_CLIENT_ID" {
   description = "Card API MCP User-Assigned Identity Client ID (for EasyAuth)"
-  value       = azurerm_user_assigned_identity.cardapi_mcp.client_id
+  value       = local.is_aca ? azurerm_user_assigned_identity.cardapi_mcp[0].client_id : ""
 }
