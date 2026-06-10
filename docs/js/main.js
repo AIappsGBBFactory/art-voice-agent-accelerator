@@ -141,26 +141,149 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --- Expandable architecture diagrams (lightbox) ---
-  const overlay = document.createElement('div');
-  overlay.className = 'lightbox-overlay';
-  overlay.innerHTML = '<img src="" alt="">';
-  document.body.appendChild(overlay);
-  const overlayImg = overlay.querySelector('img');
+  // --- Expandable architecture diagrams (modal with drag & zoom) ---
+  const modal = document.createElement('div');
+  modal.className = 'diagram-modal';
+  modal.innerHTML = `
+    <div class="diagram-modal-backdrop"></div>
+    <div class="diagram-modal-container">
+      <div class="diagram-modal-header">
+        <button class="diagram-modal-close" aria-label="Close" title="Close (Esc)">✕</button>
+        <div class="diagram-modal-controls">
+          <button class="diagram-zoom-btn" data-action="reset" title="Reset zoom (R)">Reset</button>
+          <button class="diagram-zoom-btn" data-action="zoomout" title="Zoom out (−)">−</button>
+          <span class="diagram-zoom-level">100%</span>
+          <button class="diagram-zoom-btn" data-action="zoomin" title="Zoom in (+)">+</button>
+        </div>
+      </div>
+      <div class="diagram-modal-canvas">
+        <img class="diagram-modal-img" src="" alt="">
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
 
-  document.querySelectorAll('.arch-diagram[data-expandable]').forEach(fig => {
-    fig.addEventListener('click', () => {
-      const img = fig.querySelector('img');
-      if (img) {
-        overlayImg.src = img.src;
-        overlayImg.alt = img.alt;
-        overlay.classList.add('open');
+  let isDragging = false;
+  let dragStart = { x: 0, y: 0 };
+  let offset = { x: 0, y: 0 };
+  let zoom = 1;
+  const minZoom = 0.5;
+  const maxZoom = 4;
+  const zoomStep = 0.2;
+
+  const container = modal.querySelector('.diagram-modal-container');
+  const canvas = modal.querySelector('.diagram-modal-canvas');
+  const img = modal.querySelector('.diagram-modal-img');
+  const zoomLevel = modal.querySelector('.diagram-zoom-level');
+  const backdrop = modal.querySelector('.diagram-modal-backdrop');
+  const closeBtn = modal.querySelector('.diagram-modal-close');
+
+  const updateTransform = () => {
+    img.style.transform = `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`;
+    zoomLevel.textContent = Math.round(zoom * 100) + '%';
+  };
+
+  const resetZoom = () => {
+    zoom = 1;
+    offset = { x: 0, y: 0 };
+    updateTransform();
+  };
+
+  const closeModal = () => {
+    modal.classList.remove('open');
+    resetZoom();
+  };
+
+  // Zoom controls
+  modal.querySelectorAll('.diagram-zoom-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const action = btn.dataset.action;
+      if (action === 'reset') {
+        resetZoom();
+      } else if (action === 'zoomin') {
+        zoom = Math.min(zoom + zoomStep, maxZoom);
+        updateTransform();
+      } else if (action === 'zoomout') {
+        zoom = Math.max(zoom - zoomStep, minZoom);
+        updateTransform();
       }
     });
   });
-  overlay.addEventListener('click', () => overlay.classList.remove('open'));
+
+  // Mouse wheel zoom
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -zoomStep : zoomStep;
+    zoom = Math.max(minZoom, Math.min(zoom + delta, maxZoom));
+    updateTransform();
+  }, { passive: false });
+
+  // Drag to pan
+  img.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    dragStart = { x: e.clientX - offset.x, y: e.clientY - offset.y };
+    img.style.cursor = 'grabbing';
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (isDragging && modal.classList.contains('open')) {
+      offset.x = e.clientX - dragStart.x;
+      offset.y = e.clientY - dragStart.y;
+      updateTransform();
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    isDragging = false;
+    img.style.cursor = zoom > 1 ? 'grab' : 'default';
+  });
+
+  // Touch zoom (pinch)
+  let touchDistance = 0;
+  canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchDistance = Math.sqrt(dx * dx + dy * dy);
+    }
+  });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const newDistance = Math.sqrt(dx * dx + dy * dy);
+      const delta = (newDistance - touchDistance) * 0.01;
+      zoom = Math.max(minZoom, Math.min(zoom + delta, maxZoom));
+      touchDistance = newDistance;
+      updateTransform();
+    }
+  }, { passive: false });
+
+  // Close handlers
+  closeBtn.addEventListener('click', closeModal);
+  backdrop.addEventListener('click', closeModal);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') overlay.classList.remove('open');
+    if (e.key === 'Escape' && modal.classList.contains('open')) {
+      closeModal();
+    } else if (e.key === 'r' && modal.classList.contains('open')) {
+      resetZoom();
+    }
+  });
+
+  // Open diagram on click
+  document.querySelectorAll('.arch-diagram[data-expandable], .az-diagram[data-diagram]').forEach(fig => {
+    fig.style.cursor = 'pointer';
+    fig.addEventListener('click', () => {
+      const diagramImg = fig.querySelector('img');
+      if (diagramImg) {
+        img.src = diagramImg.src;
+        img.alt = diagramImg.alt;
+        resetZoom();
+        modal.classList.add('open');
+      }
+    });
   });
 
   // --- Render mermaid diagrams ---

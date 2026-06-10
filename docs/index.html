@@ -66,8 +66,8 @@
 
       <!-- Hero -->
       <div class="hero" id="top">
-        <div style="display:flex;align-items:flex-start;gap:24px;">
-          <div style="flex:1;">
+        <div class="hero-layout">
+          <div class="hero-copy">
             <h1>Build real-time voice agents on Azure</h1>
             <p class="subtitle">
               Code-first framework for production voice AI. Handles telephony, audio streaming,
@@ -78,17 +78,17 @@
               <a href="architecture.html" class="btn btn-secondary">Architecture</a>
             </div>
           </div>
-          <img src="images/ARTAGENT.png" alt="ART Agent Logo" style="width:140px;height:140px;flex-shrink:0;border-radius:12px;">
+          <img class="hero-logo" src="images/ARTAGENT.png" alt="ART Agent Logo">
         </div>
       </div>
 
-      <div class="az-diagram" data-diagram="omnichannel-hero" style="margin-top:8px;">
+      <div class="az-diagram hero-diagram" data-diagram="omnichannel-hero">
         <figcaption class="az-diagram-caption">Every channel converges on the same ART Agent core — dual orchestration modes, live multi-agent handoffs, shared tools and memory.</figcaption>
       </div>
 
-      <details style="margin: -8px 0 24px;">
-        <summary style="cursor:pointer;color:var(--c-text-2);font-size:13px;">Show original conceptual PNG (legacy reference) →</summary>
-        <figure class="arch-diagram contain" data-expandable style="margin-top:8px;">
+      <details class="hero-legacy">
+        <summary>Show original conceptual PNG (legacy reference) →</summary>
+        <figure class="arch-diagram contain hero-legacy-diagram" data-expandable>
           <img src="images/omnichannel_rt_voice.png" alt="Omnichannel voice experience — web, phone, and CCaaS all routing to RTAgent with human escalation">
           <figcaption>Original PowerPoint sketch — kept for reference</figcaption>
         </figure>
@@ -216,8 +216,8 @@ make start_frontend   <span class="tok-cmt"># Vite on :5173</span></code></pre>
         and Container Apps are broadly available — the realtime audio surface is what narrows your choices.
       </p>
 
-      <div class="callout info" style="margin:8px 0 16px;">
-        <p style="margin:0;font-size:13px;">
+      <div class="callout info regions-note">
+        <p class="regions-note-text">
           <strong>Model naming as of mid-2026:</strong>
           The current realtime audio model is <code>gpt-realtime</code> (GA 2025-08-28), with
           <code>gpt-realtime-mini</code>, <code>gpt-realtime-1.5</code> (2026-02-23), and
@@ -271,7 +271,7 @@ make start_frontend   <span class="tok-cmt"># Vite on :5173</span></code></pre>
         </tbody>
       </table>
 
-      <p style="font-size:13px;color:var(--c-text-2);margin-top:4px;">
+      <p class="regions-footnote">
         Voice Live has expanded well beyond its original four-region preview footprint —
         Global Standard deployment is now live across most major Americas / Europe / APAC regions.
         The five regions above additionally support <strong>Regional</strong> deployment
@@ -294,7 +294,7 @@ azd env set AZURE_LOCATION             westeurope      <span class="tok-cmt"># a
 azd env set TF_VAR_voice_live_location swedencentral   <span class="tok-cmt"># gpt-realtime + Voice Live here</span>
 azd up</code></pre>
 
-      <p style="font-size:13px;color:var(--c-text-2);margin-top:8px;">
+      <p class="regions-links">
         Always-current source of truth (region tables shift as Foundry expands availability):
         <a href="https://learn.microsoft.com/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability" target="_blank" rel="noopener"><code>gpt-realtime</code> regional availability ↗</a>
         ·
