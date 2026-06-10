@@ -23,6 +23,8 @@ Task-oriented skills for AI assistants working with this codebase.
 | `add-voice-handler` | Add voice module feature |
 | `create-agent` | Create complete agent with tools |
 | `deployment-guide` | Guide azd deployment flow, hooks, and troubleshooting |
+| `observability-insights` | Read-only: assemble Azure Monitor context via Azure MCP/CLI + render call timelines/diagrams |
+| `troubleshoot` | Agent-first, read-only diagnosis of the voice pipeline (Azure MCP fast path + azd/CLI) |
 
 ## Skill Conventions
 
