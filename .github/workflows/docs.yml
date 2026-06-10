@@ -74,8 +74,8 @@ jobs:
       - name: Build documentation
         run: |
           # Build without --strict to allow warnings (broken anchors are documentation debt, not blockers)
-          mkdocs build --clean -f docs/mkdocs.yml
-          touch ./site/.nojekyll
+          mkdocs build --clean -f docs/legacy/mkdocs.yml
+          touch ./docs/legacy-site/.nojekyll
         env:
           AZURE_SPEECH_KEY: "dummy-key-for-docs"
           AZURE_SPEECH_REGION: "eastus"
@@ -83,7 +83,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./site
+          path: ./docs/legacy-site
 
   deploy:
     environment:

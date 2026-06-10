@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guides — ART Agent Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/syntax.css">
+</head>
+<body>
+
+<header class="site-header">
+  <a href="index.html" class="logo">◆ <span>ART</span> Agent Docs</a>
+  <nav class="header-nav">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="guides.html">Guides</a>
+    <a href="agents.html">Agents</a>
+    <a href="api.html">API</a>
+    <a href="certification.html">Certify</a>
+  </nav>
+  <div class="header-actions">
+    <button class="search-trigger" type="button" aria-label="Search docs (Cmd+K)">
+      <span class="search-trigger-icon" aria-hidden="true">⌕</span>
+      <span class="search-trigger-label">Search docs…</span>
+      <span class="search-trigger-kbd">⌘K</span>
+    </button>
+    <a id="legacy-docs-link" class="legacy-link" href="legacy-site/index.html" title="Original mkdocs documentation site">Legacy ↗</a>
+    <a href="https://github.com/Azure-Samples/art-voice-agent-accelerator" class="gh-link" target="_blank">GitHub ↗</a>
+    <button class="theme-toggle" aria-label="Toggle theme">🌙</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <h4>Getting started</h4>
+      <a href="#prerequisites" class="active">Prerequisites</a>
+      <a href="#deploy">Deploy to Azure</a>
+      <a href="#local-development">Local Development</a>
+    </div>
+    <div class="sidebar-section">
+      <h4>Extend</h4>
+      <a href="#create-agent">Create an Agent</a>
+      <a href="#add-tool">Add a Tool</a>
+      <a href="#create-scenario">Create a Scenario</a>
+    </div>
+    <div class="sidebar-section">
+      <h4>Operations</h4>
+      <a href="#production">Production Deployment</a>
+      <a href="#monitoring">Monitoring</a>
+      <a href="#testing">Testing</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="content-inner">
+
+      <h1>Guides</h1>
+      <p class="subtitle">Step-by-step instructions for setup, extension, and operations.</p>
+
+      <!-- ==================== Getting Started ==================== -->
+
+      <h2 id="prerequisites">Prerequisites</h2>
+
+      <table>
+        <thead><tr><th>Requirement</th><th>Install</th><th>Verify</th></tr></thead>
+        <tbody>
+          <tr><td>Azure CLI</td><td><code>brew install azure-cli</code></td><td><code>az --version</code></td></tr>
+          <tr><td>Azure Developer CLI</td><td><code>brew install azd</code></td><td><code>azd version</code></td></tr>
+          <tr><td>Docker or Podman</td><td><code>brew install --cask docker</code></td><td><code>docker --version</code></td></tr>
+          <tr><td>Python 3.11+</td><td><code>brew install python@3.11</code></td><td><code>python3 --version</code></td></tr>
+          <tr><td>Node.js 18+</td><td><code>brew install node</code></td><td><code>node --version</code></td></tr>
+          <tr><td>Azure Subscription</td><td>With Contributor access</td><td><code>az account show</code></td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <p><strong>Azure OpenAI access:</strong> You need GPT-4o or GPT-4o-mini deployed in a supported region. The <code>azd up</code> command handles this provisioning.</p>
+      </div>
+
+      <hr>
+
+      <h2 id="deploy">Deploy to Azure</h2>
+      <p>One command deploys everything: infrastructure, backend, frontend.</p>
+
+      <figure class="arch-diagram contain" data-expandable>
+        <img src="images/MVPDeploy_infratf.png" alt="Infrastructure deployment — Terraform and Bicep provisioning Azure resources">
+        <figcaption>Infrastructure provisioned by <code>azd up</code> — Terraform/Bicep IaC</figcaption>
+      </figure>
+
+<pre><code><span class="tok-cmt"># 1. Clone and enter the repo</span>
+git clone https://github.com/Azure-Samples/art-voice-agent-accelerator.git
+cd art-voice-agent-accelerator
+
+<span class="tok-cmt"># 2. Login</span>
+az login
+azd auth login
+
+<span class="tok-cmt"># 3. Deploy (~25 min total)</span>
+azd up</code></pre>
+
+      <p>What <code>azd up</code> creates:</p>
+      <table>
+        <thead><tr><th>Resource</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>Azure OpenAI</td><td>GPT-4o for conversations</td></tr>
+          <tr><td>Azure Speech Services</td><td>STT and TTS processing</td></tr>
+          <tr><td>Azure Communication Services</td><td>Telephony and media streaming</td></tr>
+          <tr><td>Cosmos DB</td><td>Conversation persistence</td></tr>
+          <tr><td>Azure Redis</td><td>Session state</td></tr>
+          <tr><td>Container Apps (×2)</td><td>Backend + Frontend hosting</td></tr>
+          <tr><td>Storage Account</td><td>Blob storage for app files</td></tr>
+          <tr><td>App Configuration</td><td>Dynamic configuration</td></tr>
+          <tr><td>Application Insights</td><td>Monitoring and tracing</td></tr>
+        </tbody>
+      </table>
+
+      <p>After deployment, <code>azd</code> prints the frontend URL. Open it to start a conversation.</p>
+
+      <h3>Phone number setup</h3>
+      <p>To receive phone calls, purchase and assign a number in ACS:</p>
+<pre><code><span class="tok-cmt"># Via Azure Portal → Communication Services → Phone Numbers</span>
+<span class="tok-cmt"># Or via the ACS SDK in your deployment scripts</span>
+
+<span class="tok-cmt"># Configure the callback URL to point to your backend:</span>
+<span class="tok-cmt"># https://&lt;your-backend&gt;.azurecontainerapps.io/api/v1/calls/answer</span></code></pre>
+
+      <hr>
+
+      <h2 id="local-development">Local Development</h2>
+
+      <h3>Install dependencies</h3>
+<pre><code>make install  <span class="tok-cmt"># Installs Python (pip) + Node (npm) dependencies</span></code></pre>
+
+      <h3>Environment setup</h3>
+      <p>After <code>azd up</code>, a <code>.env.local</code> file is generated at the repo root with all connection strings. For local development, copy it to <code>.env</code> (which the backend loads by default):</p>
+<pre><code>cp .env.local .env</code></pre>
+
+      <h3 id="dev-tunnel">Dev tunnel — enabling telephony on your laptop</h3>
+
+      <div class="callout warn">
+        <p><strong>Why a dev tunnel is required.</strong> The voice agent is driven by <strong>Azure Communication Services (ACS)</strong>, a cloud service that places phone calls and streams audio <em>into</em> your backend via webhooks (<code>/api/v1/calls/answer</code>, media WebSocket, etc.). <code>localhost:8010</code> is invisible to Azure — ACS literally cannot reach it. A dev tunnel gives your laptop a public, internet-routable HTTPS URL that ACS can call into, which is what turns local development into a working PSTN endpoint.</p>
+        <p style="margin-top:8px;">Skip the tunnel and you'll still get a working browser UI, but <strong>no phone calls will connect</strong> and ACS event subscriptions will fail validation.</p>
+      </div>
+
+      <p>Use <a href="https://learn.microsoft.com/azure/developer/dev-tunnels/overview" target="_blank" rel="noopener">Azure Dev Tunnels</a>:</p>
+<pre><code><span class="tok-cmt"># Install</span>
+brew install --cask devtunnel
+
+<span class="tok-cmt"># Login and create a tunnel with anonymous access (required for ACS — see below)</span>
+devtunnel user login
+devtunnel create --allow-anonymous
+
+<span class="tok-cmt"># Expose backend port 8010 and start hosting</span>
+devtunnel port create -p 8010 --protocol https
+devtunnel host</code></pre>
+
+      <p>Copy the HTTPS URL it prints (e.g. <code>https://abc123-8010.usw3.devtunnels.ms</code>) — you'll wire it into <code>BASE_URL</code> below.</p>
+
+      <h3 id="dev-tunnel-security">Securing the tunnel (RBAC + compensating controls)</h3>
+
+      <div class="callout">
+        <p><strong>The constraint:</strong> ACS webhooks are unauthenticated HTTPS <code>POST</code>s from Azure infrastructure — ACS cannot present a user's Entra ID token to your tunnel. That means the tunnel path ACS hits <strong>must allow anonymous traffic</strong>, so you can't simply put Entra RBAC in front of the callback URL and call it a day. Instead, layer defenses around it.</p>
+      </div>
+
+      <h4>1. Restrict who can create tunnels in your tenant</h4>
+      <p>Tenant admins can lock down the Dev Tunnels service itself so only approved users (and only inside the corporate tenant) can host tunnels. From the <a href="https://learn.microsoft.com/azure/developer/dev-tunnels/security" target="_blank" rel="noopener">Dev Tunnels security docs</a>:</p>
+<pre><code><span class="tok-cmt"># Tenant admin: require Entra ID auth + restrict tunnel creation to a group</span>
+<span class="tok-cmt"># (configured in the Entra admin center under Enterprise applications →</span>
+<span class="tok-cmt">#  "Visual Studio Tunnel Service" → Users and groups + Conditional Access)</span></code></pre>
+      <p>This doesn't protect the data plane that ACS hits, but it stops random tenants/users from spinning up tunnels that look like yours.</p>
+
+      <h4>2. Treat the tunnel URL as a secret</h4>
+      <p>Each tunnel ID is a high-entropy random string (e.g. <code>abc123</code> in <code>abc123-8010.usw3.devtunnels.ms</code>). That ID is effectively a bearer secret for the callback path. Don't paste it in Teams, don't commit it, and rotate it often:</p>
+<pre><code><span class="tok-cmt"># Tear down at end of day</span>
+devtunnel delete &lt;tunnel-id&gt;
+
+<span class="tok-cmt"># Or recycle with a fresh ID</span>
+devtunnel create --allow-anonymous</code></pre>
+
+      <h4>3. Use Entra-restricted tunnels for non-ACS surfaces</h4>
+      <p>If you also expose the frontend or an admin UI through a tunnel (i.e. anything a <em>human in a browser</em> consumes — not ACS), you can drop <code>--allow-anonymous</code> and add tenant- or user-scoped RBAC. Callers will be challenged for an Entra ID token before reaching your service:</p>
+<pre><code><span class="tok-cmt"># Create a tunnel with no anonymous access (default = owner only)</span>
+devtunnel create
+
+<span class="tok-cmt"># Grant your whole tenant access (members must sign in with Entra ID)</span>
+devtunnel access create &lt;tunnel-id&gt; --tenant &lt;your-tenant-id&gt;
+
+<span class="tok-cmt"># Or grant a specific user</span>
+devtunnel access create &lt;tunnel-id&gt; --user alice@contoso.com
+
+<span class="tok-cmt"># Inspect / revoke</span>
+devtunnel access list   &lt;tunnel-id&gt;
+devtunnel access delete &lt;tunnel-id&gt; --access-id &lt;id&gt;</code></pre>
+      <p>A common split-brain pattern: <strong>two tunnels per laptop</strong> — one anonymous tunnel exposing only the backend port for ACS callbacks, and one Entra-restricted tunnel exposing the frontend so only your tenant can load the UI.</p>
+
+      <h4>4. Validate ACS callbacks at the application layer</h4>
+      <p>Even with an anonymous tunnel, the backend should still verify incoming ACS events. The ACS Event Grid integration performs a one-time <code>SubscriptionValidation</code> handshake, and runtime events ship as CloudEvents 1.0 with a known schema — reject anything that doesn't match.</p>
+
+      <div class="callout tip">
+        <p><strong>Bottom line:</strong> for the ACS callback path, anonymous + a random tunnel ID + short-lived tunnels is the realistic posture. Use Entra RBAC where it actually helps (tunnel <em>creation</em>, frontend/admin UIs), and never use a dev tunnel for anything beyond local development.</p>
+      </div>
+
+      <h3>Wire <code>BASE_URL</code> into the backend <code>.env</code></h3>
+      <p>The backend reads <code>BASE_URL</code> as the public callback endpoint it gives to ACS for media streaming and call events. Edit the root <code>.env</code>:</p>
+      <div class="code-label">.env (repo root)</div>
+<pre><code><span class="tok-cmt"># Public URL ACS uses to reach your backend (from `devtunnel host`)</span>
+BASE_URL=https://abc123-8010.usw3.devtunnels.ms</code></pre>
+      <p>Every time you create a new tunnel, update this value — a stale <code>BASE_URL</code> is the #1 cause of dropped calls and 404 callbacks.</p>
+
+      <h3>Wire the frontend <code>.env</code></h3>
+      <p>The frontend is a Vite/React app, so its environment variables are <strong>baked into the bundle at build time</strong> (Vite inlines anything prefixed <code>VITE_</code> when <code>npm run dev</code> or <code>npm run build</code> starts). Changing this file requires restarting the Vite dev server.</p>
+      <p>Create <code>apps/artagent/frontend/.env</code> from the sample:</p>
+<pre><code>cp apps/artagent/frontend/.env.sample apps/artagent/frontend/.env</code></pre>
+      <div class="code-label">apps/artagent/frontend/.env</div>
+<pre><code><span class="tok-cmt"># Local backend (default)</span>
+VITE_BACKEND_BASE_URL=http://localhost:8010
+
+<span class="tok-cmt"># Or, when testing the browser client against your dev tunnel:</span>
+<span class="tok-cmt"># VITE_BACKEND_BASE_URL=https://abc123-8010.usw3.devtunnels.ms</span></code></pre>
+      <p>Use <code>localhost</code> for normal browser-only development. Point it at the tunnel URL only when you need an external device (phone, another machine) to hit your backend through the browser UI.</p>
+
+      <h3>Start the services</h3>
+<pre><code>make start_backend    <span class="tok-cmt"># FastAPI on http://localhost:8010</span>
+make start_frontend   <span class="tok-cmt"># Vite dev server on http://localhost:5173</span></code></pre>
+
+      <hr>
+
+      <!-- ==================== Extend ==================== -->
+
+      <h2 id="create-agent">Create an Agent</h2>
+      <p>Agents are YAML files — no Python required.</p>
+
+      <h3>1. Create the agent directory</h3>
+<pre><code>mkdir -p apps/artagent/backend/registries/agentstore/my_agent</code></pre>
+
+      <h3>2. Define the agent</h3>
+      <div class="code-label">my_agent/agent.yaml</div>
+<pre><code><span class="tok-attr">name</span>: MyAgent
+<span class="tok-attr">description</span>: Handles widget inquiries
+<span class="tok-attr">handoff</span>:
+  <span class="tok-attr">trigger</span>: handoff_my_agent
+<span class="tok-attr">greeting</span>: <span class="tok-str">"Hi! I can help with widget questions."</span>
+<span class="tok-attr">tools</span>:
+  - lookup_widget
+  - handoff_concierge  <span class="tok-cmt"># Always include a way back</span>
+<span class="tok-attr">prompts</span>:
+  <span class="tok-attr">path</span>: prompt.jinja</code></pre>
+
+      <h3>3. Write the system prompt</h3>
+      <div class="code-label">my_agent/prompt.jinja</div>
+<pre><code>You are a widget specialist for {{ company_name }}.
+Help the caller find the right widget. Be concise and friendly.
+If you can't help, use the handoff_concierge tool to transfer back.</code></pre>
+
+      <h3>4. Add to a scenario</h3>
+      <div class="code-label">scenariostore/my_scenario/orchestration.yaml</div>
+<pre><code><span class="tok-attr">start_agent</span>: Concierge
+<span class="tok-attr">handoffs</span>:
+  - <span class="tok-attr">from</span>: Concierge
+    <span class="tok-attr">to</span>: MyAgent
+    <span class="tok-attr">tool</span>: handoff_my_agent
+    <span class="tok-attr">type</span>: announced
+  - <span class="tok-attr">from</span>: MyAgent
+    <span class="tok-attr">to</span>: Concierge
+    <span class="tok-attr">tool</span>: handoff_concierge
+    <span class="tok-attr">type</span>: discrete</code></pre>
+
+      <p>The agent is auto-discovered on next restart. No registration code needed.</p>
+
+      <hr>
+
+      <h2 id="add-tool">Add a Tool</h2>
+      <p>Tools are Python functions registered in the centralized tool store.</p>
+
+      <div class="code-label">toolstore/lookup_widget.py</div>
+<pre><code><span class="tok-kw">from</span> registries.toolstore.registry <span class="tok-kw">import</span> register_tool
+
+<span class="tok-meta">@register_tool</span>(
+    <span class="tok-attr">name</span>=<span class="tok-str">"lookup_widget"</span>,
+    <span class="tok-attr">description</span>=<span class="tok-str">"Look up widget details by SKU or name"</span>,
+)
+<span class="tok-kw">async def</span> <span class="tok-fn">lookup_widget</span>(query: <span class="tok-type">str</span>) -> <span class="tok-type">dict</span>:
+    <span class="tok-cmt"># Your business logic here</span>
+    <span class="tok-kw">return</span> {<span class="tok-str">"sku"</span>: <span class="tok-str">"W-123"</span>, <span class="tok-str">"name"</span>: <span class="tok-str">"Premium Widget"</span>}</code></pre>
+
+      <div class="callout tip">
+        <p><strong>Rules:</strong> Always use <code>@register_tool</code>. Make tools <code>async</code>. Never define tools inline in agents. The tool is immediately available to any agent that lists it.</p>
+      </div>
+
+      <hr>
+
+      <h2 id="create-scenario">Create a Scenario</h2>
+      <p>Scenarios define how agents connect. Same agents, different wiring.</p>
+
+      <div class="code-label">scenariostore/my_scenario/orchestration.yaml</div>
+<pre><code><span class="tok-attr">name</span>: my_scenario
+<span class="tok-attr">description</span>: Widget support flow
+<span class="tok-attr">start_agent</span>: Concierge
+<span class="tok-attr">agents</span>:
+  - Concierge
+  - MyAgent
+  - AuthAgent
+<span class="tok-attr">handoffs</span>:
+  - <span class="tok-attr">from</span>: Concierge
+    <span class="tok-attr">to</span>: AuthAgent
+    <span class="tok-attr">tool</span>: handoff_auth_agent
+    <span class="tok-attr">type</span>: announced
+  - <span class="tok-attr">from</span>: AuthAgent
+    <span class="tok-attr">to</span>: MyAgent
+    <span class="tok-attr">tool</span>: handoff_my_agent
+    <span class="tok-attr">type</span>: discrete
+<span class="tok-attr">agent_defaults</span>:
+  <span class="tok-attr">company_name</span>: <span class="tok-str">"Contoso Widgets"</span></code></pre>
+
+      <p>Handoff types:</p>
+      <table>
+        <thead><tr><th>Type</th><th>Behavior</th></tr></thead>
+        <tbody>
+          <tr><td><code>announced</code></td><td>Agent tells the caller they're being transferred</td></tr>
+          <tr><td><code>discrete</code></td><td>Silent handoff — caller doesn't know</td></tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <!-- ==================== Operations ==================== -->
+
+      <h2 id="production">Production Deployment</h2>
+
+      <h3>Checklist</h3>
+      <table>
+        <thead><tr><th>Category</th><th>Item</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Identity</strong></td><td>Use managed identity (not connection strings) for all Azure services</td></tr>
+          <tr><td><strong>Networking</strong></td><td>VNet integration, private endpoints for Redis/Cosmos/Speech</td></tr>
+          <tr><td><strong>Scaling</strong></td><td>Container Apps min replicas ≥ 2, scale on concurrent connections</td></tr>
+          <tr><td><strong>Monitoring</strong></td><td>Application Insights connected, alerts on latency &amp; error rate</td></tr>
+          <tr><td><strong>Secrets</strong></td><td>Key Vault for any non-managed-identity credentials</td></tr>
+          <tr><td><strong>Availability</strong></td><td>Multi-region ACS, geo-redundant Cosmos, Redis HA</td></tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <h2 id="monitoring">Monitoring</h2>
+      <p>The system emits OpenTelemetry traces through Application Insights.</p>
+
+      <h3>Key metrics to watch</h3>
+      <table>
+        <thead><tr><th>Metric</th><th>What it means</th><th>Alert threshold</th></tr></thead>
+        <tbody>
+          <tr><td>End-to-end turn latency</td><td>User speech end → response start</td><td>&gt; 2 seconds</td></tr>
+          <tr><td>STT recognition time</td><td>Audio → transcript</td><td>&gt; 500ms p95</td></tr>
+          <tr><td>TTS first byte</td><td>Text → first audio chunk</td><td>&gt; 300ms p95</td></tr>
+          <tr><td>Active connections</td><td>Concurrent WebSocket sessions</td><td>&gt; 80% of limit</td></tr>
+          <tr><td>Tool execution time</td><td>Function call duration</td><td>&gt; 5 seconds</td></tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <h2 id="testing">Testing</h2>
+
+      <h3>Run tests</h3>
+<pre><code><span class="tok-cmt"># Unit tests</span>
+make test
+
+<span class="tok-cmt"># With coverage</span>
+make test_coverage
+
+<span class="tok-cmt"># Load testing</span>
+make load_test</code></pre>
+
+      <h3>Test structure</h3>
+      <table>
+        <thead><tr><th>Type</th><th>Location</th><th>What it covers</th></tr></thead>
+        <tbody>
+          <tr><td>Unit</td><td><code>tests/unit/</code></td><td>Individual functions, agents, tools</td></tr>
+          <tr><td>Integration</td><td><code>tests/integration/</code></td><td>API endpoints, WebSocket flows</td></tr>
+          <tr><td>Evaluation</td><td><code>tests/evaluation/</code></td><td>LLM response quality, scenario correctness</td></tr>
+          <tr><td>Load</td><td><code>tests/load/</code></td><td>Concurrent calls, latency under stress</td></tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <h2 id="troubleshooting">Troubleshooting</h2>
+
+      <table>
+        <thead><tr><th>Problem</th><th>Likely cause</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>No audio response</td>
+            <td>TTS client pool exhausted</td>
+            <td>Check <code>/api/v1/pools</code> for available clients. Increase pool size.</td>
+          </tr>
+          <tr>
+            <td>Agent not responding</td>
+            <td>Azure OpenAI rate limit</td>
+            <td>Check Application Insights for 429 errors. Increase TPM quota.</td>
+          </tr>
+          <tr>
+            <td>Call drops immediately</td>
+            <td>ACS callback URL unreachable</td>
+            <td>Verify <code>BASE_URL</code> in <code>.env</code> matches your current <code>devtunnel host</code> URL and the tunnel is still running.</td>
+          </tr>
+          <tr>
+            <td>Handoff loops</td>
+            <td>Circular handoff routes in scenario</td>
+            <td>Check <code>orchestration.yaml</code> for cycles. Each agent should have a clear return path.</td>
+          </tr>
+          <tr>
+            <td>High latency (&gt; 2s)</td>
+            <td>Cold client connections</td>
+            <td>Ensure pools are warm. Check <code>/api/v1/ready</code> for warmup status.</td>
+          </tr>
+          <tr>
+            <td>Session state lost</td>
+            <td>Redis connectivity</td>
+            <td>Check Redis connection. Verify <code>REDIS_*</code> environment variables.</td>
+          </tr>
+        </tbody>
+      </table>
+
+    </div>
+  </main>
+</div>
+
+<script src="js/main.js?v=2"></script>
+<script src="js/search.js?v=2"></script>
+</body>
+</html>
