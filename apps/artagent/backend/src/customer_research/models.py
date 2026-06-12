@@ -71,6 +71,18 @@ class AgentSpec(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+class ConversationExample(BaseModel):
+    """A single example conversation flow with its demo script."""
+
+    title: str = Field(description="Short title for this conversation flow")
+    flow: str = Field(
+        description="Example conversation transcript (Customer: ... / Agent: ...)",
+    )
+    demo_script: str = Field(
+        description="Step-by-step demo walkthrough for this specific flow",
+    )
+
+
 class HandoffSpec(BaseModel):
     """A directed edge in the agent handoff graph."""
 
@@ -103,6 +115,38 @@ class UseCaseSpec(BaseModel):
     template_vars: dict[str, str] = Field(
         default_factory=dict,
         description="Global template variables (e.g. company_name, industry)",
+    )
+    value_proposition: str = Field(
+        default="",
+        description="Summary of the business value this use case delivers",
+    )
+    pain_points: list[str] = Field(
+        default_factory=list,
+        description="Customer pain points this use case addresses",
+    )
+    seller_pitch: str = Field(
+        default="",
+        description="Elevator pitch a seller could use to propose this scenario",
+    )
+    estimated_monthly_callers: int = Field(
+        default=0,
+        description="Estimated number of callers per month based on business size",
+    )
+    avg_cost_per_contact: float = Field(
+        default=0.0,
+        description="Average cost per contact in USD for this industry",
+    )
+    estimated_annual_savings: str = Field(
+        default="",
+        description="Estimated annual cost savings from automation",
+    )
+    roi_summary: str = Field(
+        default="",
+        description="Brief ROI narrative tying volume, cost, and savings together",
+    )
+    conversation_examples: list[ConversationExample] = Field(
+        default_factory=list,
+        description="Example conversation flows with demo scripts",
     )
 
 

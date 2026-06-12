@@ -182,6 +182,25 @@ def _build_agents_from_session_scenario(
             )
 
             session_agents = get_session_agents(session_id)
+
+            # If no agents in memory but we have a session scenario,
+            # try rehydrating from Redis (cross-replica support)
+            if not session_agents and scenario.agents:
+                try:
+                    from apps.artagent.backend.src.customer_research.builder import (
+                        rehydrate_session_tools_and_agents,
+                    )
+
+                    if rehydrate_session_tools_and_agents(session_id):
+                        session_agents = get_session_agents(session_id)
+                        logger.info(
+                            "Rehydrated session agents from Redis | session=%s agents=%s",
+                            session_id,
+                            list(session_agents.keys()),
+                        )
+                except ImportError:
+                    logger.debug("customer_research.builder not available for rehydration")
+
             if session_agents:
                 for name, agent in session_agents.items():
                     key = agent_key(name)
@@ -282,6 +301,26 @@ def resolve_orchestrator_config(
                 
             else:
                 logger.info("No stored scenarios for session | session_id=%s", session_id)
+                # Attempt cross-replica rehydration from dedicated Redis key
+                try:
+                    from apps.artagent.backend.src.customer_research.builder import (
+                        rehydrate_session_tools_and_agents,
+                    )
+
+                    if rehydrate_session_tools_and_agents(session_id):
+                        # Rehydration rebuilt tools, agents, AND scenario — retry lookup
+                        stored_scenarios = list_session_scenarios_by_session(session_id)
+                        if stored_scenarios:
+                            logger.info(
+                                "Post-rehydration scenarios found | session_id=%s scenarios=%s",
+                                session_id,
+                                list(stored_scenarios.keys()),
+                            )
+                            session_scenario = get_session_scenario(session_id, None)
+                            if not session_scenario and scenario_name:
+                                session_scenario = get_session_scenario(session_id, scenario_name)
+                except ImportError:
+                    logger.debug("customer_research.builder not available for rehydration")
             
             if session_scenario:
                 logger.info(

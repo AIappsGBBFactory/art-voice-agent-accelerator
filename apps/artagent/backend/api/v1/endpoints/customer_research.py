@@ -34,6 +34,12 @@ class ResearchRequest(BaseModel):
     company_name: str = Field(
         ..., min_length=1, max_length=200, description="Company or brand name to research"
     )
+    industry: str = Field(
+        default="", max_length=100, description="Optional industry hint to guide research"
+    )
+    use_case_hint: str = Field(
+        default="", max_length=500, description="Optional specific use case to generate"
+    )
 
 
 class ResearchResponse(BaseModel):
@@ -65,6 +71,13 @@ class BuildResponse(BaseModel):
     response_time_ms: float
 
 
+class ImportRequest(BaseModel):
+    """Request to import a scenario from YAML content."""
+
+    session_id: str = Field(..., min_length=1, description="Target session ID")
+    yaml_content: str = Field(..., min_length=1, description="Raw YAML content to import")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -89,7 +102,11 @@ async def research_company(request: ResearchRequest) -> ResearchResponse:
     try:
         from apps.artagent.backend.src.customer_research.service import research_customer
 
-        result = await research_customer(request.company_name)
+        result = await research_customer(
+            request.company_name,
+            industry=request.industry,
+            use_case_hint=request.use_case_hint,
+        )
 
         return ResearchResponse(
             status="success",
@@ -146,3 +163,51 @@ async def build_use_case_endpoint(request: BuildRequest) -> BuildResponse:
     except Exception as exc:
         logger.error("Build failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Build failed: {exc}") from exc
+
+
+@router.post(
+    "/import",
+    response_model=BuildResponse,
+    summary="Import Scenario from YAML",
+    description="Parse a YAML scenario definition and build it into a session.",
+    tags=["Customer Research"],
+)
+async def import_scenario_endpoint(request: ImportRequest) -> BuildResponse:
+    """
+    Import a scenario from YAML content.
+
+    Parses the YAML into a UseCaseSpec and builds it exactly like the build endpoint.
+    """
+    start = time.time()
+
+    try:
+        import yaml as pyyaml
+
+        from apps.artagent.backend.src.customer_research.builder import build_use_case
+        from apps.artagent.backend.src.customer_research.models import UseCaseSpec
+
+        raw = pyyaml.safe_load(request.yaml_content)
+        if not isinstance(raw, dict):
+            raise ValueError("YAML must parse to a mapping/object")
+
+        use_case = UseCaseSpec.model_validate(raw)
+        result = await build_use_case(request.session_id, use_case)
+
+        return BuildResponse(
+            status=result.status,
+            session_id=result.session_id,
+            scenario_name=result.scenario_name,
+            agents_created=result.agents_created,
+            tools_created=result.tools_created,
+            response_time_ms=round((time.time() - start) * 1000, 2),
+        )
+
+    except pyyaml.YAMLError as exc:
+        logger.error("YAML parse error: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}") from exc
+    except ValueError as exc:
+        logger.error("Invalid scenario spec: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Invalid scenario: {exc}") from exc
+    except Exception as exc:
+        logger.error("Import failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Import failed: {exc}") from exc

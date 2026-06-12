@@ -5244,8 +5244,14 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           statusCaption: `Agents: ${result.agents_created?.length || 0} · Tools: ${result.tools_created?.length || 0}`,
           statusLabel: "Research Scenario Active",
         });
+        // Set the built scenario as active (same pattern as ScenarioBuilder)
+        const startAgent = result.agents_created?.[0] || 'Concierge';
+        applyScenarioOptimistically(
+          { name: result.scenario_name, start_agent: startAgent, is_active: true },
+          startAgent,
+        );
         fetchSessionAgentConfig();
-        pollUntilScenarioPropagated();
+        pollUntilScenarioPropagated(result.scenario_name);
       }}
     />
 

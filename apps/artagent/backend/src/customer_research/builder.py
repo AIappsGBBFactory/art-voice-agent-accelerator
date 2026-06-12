@@ -8,6 +8,9 @@ live ART session by creating mock tools, session agents, and a session scenario.
 All artefacts are session-scoped — they live in memory and do not touch the
 on-disk agent/scenario/tool registries.  Tool names are prefixed with the
 session ID (first 8 chars) to avoid cross-session collisions.
+
+For multi-replica deployments, the scoped use-case spec is persisted to Redis
+so that any replica can rehydrate tools and agents on demand.
 """
 
 from __future__ import annotations
@@ -424,6 +427,149 @@ async def _create_session_scenario(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# REDIS PERSISTENCE FOR MULTI-REPLICA SUPPORT
+#
+# We use DEDICATED Redis keys (not MemoManager) to avoid race conditions.
+# MemoManager snapshots the full session state; concurrent persists from
+# different code paths can clobber each other.  A dedicated key is atomic.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_REDIS_KEY_PREFIX = "cr:usecase:"  # + session_id → stores scoped UseCaseSpec JSON
+
+
+def _persist_use_case_to_redis(session_id: str, use_case: UseCaseSpec) -> None:
+    """Persist the scoped use-case spec to a dedicated Redis key."""
+    try:
+        from apps.artagent.backend.src.orchestration.session_scenarios import (
+            _redis_manager,
+        )
+
+        if not _redis_manager:
+            logger.debug("No Redis manager, skipping use-case persistence")
+            return
+
+        key = f"{_REDIS_KEY_PREFIX}{session_id}"
+        payload = json.dumps(use_case.model_dump(), default=str)
+        ttl = 86400  # 24 hours
+        _redis_manager.set_value(key, payload, ttl_seconds=ttl)
+        logger.info(
+            "Use-case spec persisted to dedicated Redis key | session=%s key=%s",
+            session_id,
+            key,
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist use-case spec: %s", exc)
+
+
+def rehydrate_session_tools_and_agents(session_id: str) -> bool:
+    """Re-register tools, agents, AND scenario from Redis on this replica.
+
+    Called by the config resolver when it detects no stored scenarios for a
+    session.  Reads the scoped UseCaseSpec from a dedicated Redis key and
+    rebuilds everything locally (tools, agents, scenario).
+
+    Returns True if rehydration happened, False if nothing to rehydrate.
+    """
+    try:
+        from apps.artagent.backend.src.orchestration.session_agents import (
+            get_session_agents,
+        )
+        from apps.artagent.backend.src.orchestration.session_scenarios import (
+            _redis_manager,
+        )
+
+        # Already have agents locally? Skip.
+        if get_session_agents(session_id):
+            logger.debug("Session agents already in memory | session=%s", session_id)
+            return False
+
+        if not _redis_manager:
+            logger.debug("No Redis manager, cannot rehydrate | session=%s", session_id)
+            return False
+
+        key = f"{_REDIS_KEY_PREFIX}{session_id}"
+        raw = _redis_manager.get_value(key)
+        if not raw:
+            logger.debug("No use-case spec in Redis | session=%s key=%s", session_id, key)
+            return False
+
+        use_case_data = json.loads(raw)
+        use_case = UseCaseSpec.model_validate(use_case_data)
+
+        logger.info(
+            "Rehydrating session from Redis | session=%s use_case=%s agents=%d tools=%d",
+            session_id,
+            use_case.name,
+            len(use_case.agents),
+            len(use_case.tools),
+        )
+
+        # Re-register tools (already scoped, prompts already injected)
+        _register_mock_tools(use_case)
+        _register_handoff_tools(use_case)
+
+        # Re-create session agents
+        _create_session_agents(session_id, use_case)
+
+        # Re-create session scenario in LOCAL memory (sync, no Redis persist needed
+        # since the dedicated key already holds the source of truth)
+        _rehydrate_scenario_locally(session_id, use_case)
+
+        logger.info("Rehydration complete | session=%s", session_id)
+        return True
+
+    except Exception as exc:
+        logger.error("Failed to rehydrate session: %s", exc)
+        return False
+
+
+def _rehydrate_scenario_locally(session_id: str, use_case: UseCaseSpec) -> None:
+    """Create the ScenarioConfig in local memory only (no Redis round-trip)."""
+    from apps.artagent.backend.src.orchestration.session_scenarios import (
+        _active_scenario,
+        _session_scenarios,
+    )
+    from apps.artagent.backend.src.orchestration.naming import scenario_key as sk
+
+    scenario = ScenarioConfig(
+        name=use_case.name,
+        description=use_case.description,
+        icon=use_case.icon,
+        agents=[a.name for a in use_case.agents],
+        start_agent=use_case.start_agent,
+        handoff_type="discrete",
+        handoffs=[
+            ScenarioHandoffConfig(
+                from_agent=h.from_agent,
+                to_agent=h.to_agent,
+                tool=h.tool or "handoff_to_agent",
+                type="discrete",
+                share_context=True,
+                handoff_condition=h.handoff_condition or "",
+            )
+            for h in use_case.handoffs
+        ],
+        global_template_vars=use_case.template_vars,
+        generic_handoff=GenericHandoffConfig(
+            enabled=True,
+            share_context=True,
+            default_type="discrete",
+        ),
+    )
+
+    normalized = sk(scenario.name)
+    _session_scenarios.setdefault(session_id, {})[normalized] = scenario
+    _active_scenario[session_id] = normalized
+
+    logger.info(
+        "Rehydrated scenario in local memory | session=%s scenario=%s agents=%s",
+        session_id,
+        scenario.name,
+        scenario.agents,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # PUBLIC API
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -477,6 +623,9 @@ async def build_use_case(session_id: str, use_case: UseCaseSpec) -> BuildResult:
 
     # 5. Scenario — wires agents together with handoff graph
     scenario_name = await _create_session_scenario(session_id, scoped)
+
+    # 6. Persist scoped use-case to Redis for cross-replica rehydration
+    _persist_use_case_to_redis(session_id, scoped)
 
     logger.info(
         "Build complete | session=%s scenario=%s agents=%s tools=%s",
