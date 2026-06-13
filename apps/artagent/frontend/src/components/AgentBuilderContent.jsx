@@ -209,6 +209,23 @@ const VOICELIVE_MODEL_PRESETS = [
   { id: 'phi4-mini', label: 'phi4-mini' },
 ];
 
+// Next-gen native-audio (realtime) models that are only offered in the dropdown
+// when the connected Azure region actually has them deployed (cross-checked
+// against the /models deployment list). Advertising a model the region can't
+// serve would make connect() fail, so these stay hidden until confirmed.
+const REGION_GATED_VOICELIVE_PRESETS = [
+  { id: 'gpt-realtime-2', label: 'gpt-realtime-2' },
+  { id: 'gpt-realtime-1.5', label: 'gpt-realtime-1.5' },
+];
+
+// Every id recognized as a built-in preset (availability aside). Used to decide
+// whether a SAVED deployment is a known preset vs a custom override — a saved
+// gpt-realtime-2 should still register as a preset even if the region probe
+// hasn't returned yet, so we don't wrongly flip the form into custom mode.
+const ALL_VOICELIVE_PRESET_IDS = new Set(
+  [...VOICELIVE_MODEL_PRESETS, ...REGION_GATED_VOICELIVE_PRESETS].map((p) => p.id),
+);
+
 // Classify a VoiceLive model by its audio architecture. This is the #1 confusion
 // point: within VoiceLive, the chosen model — not a separate toggle — decides whether
 // audio goes straight into the model or runs through a transcription cascade.
@@ -1072,6 +1089,10 @@ export default function AgentBuilderContent({
   const [availableTools, setAvailableTools] = useState([]);
   const [availableVoices, setAvailableVoices] = useState([]);
   const [availableTemplates, setAvailableTemplates] = useState([]);
+  // Set of lowercased deployment_ids actually deployed in the connected Azure
+  // region (from /models). null = not yet loaded. Used to region-gate the
+  // next-gen realtime VoiceLive presets.
+  const [deployedModelIds, setDeployedModelIds] = useState(null);
   const [detailAgent, setDetailAgent] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedTool, setSelectedTool] = useState(null);
@@ -1194,12 +1215,38 @@ export default function AgentBuilderContent({
   const voiceliveModelPreset = useMemo(() => {
     if (isVoiceliveCustomMode) return 'custom';
     const deploymentId = (config.voicelive_model?.deployment_id || '').trim();
-    return VOICELIVE_MODEL_PRESETS.some((preset) => preset.id === deploymentId)
+    return ALL_VOICELIVE_PRESET_IDS.has(deploymentId)
       ? deploymentId
       : 'custom';
   }, [config.voicelive_model?.deployment_id, isVoiceliveCustomMode]);
   const isCascadeCustom = isCascadeCustomMode || cascadeModelPreset === 'custom';
   const isVoiceliveCustom = isVoiceliveCustomMode || voiceliveModelPreset === 'custom';
+
+  // Dropdown options for the VoiceLive model preset selector. The next-gen
+  // realtime models are appended only when the region has them deployed, grouped
+  // right after the built-in realtime presets. If a saved value is a region-gated
+  // preset that isn't in the deployed set (or /models hasn't resolved), it's still
+  // surfaced so the user doesn't silently lose their selection.
+  const voiceLiveModelPresets = useMemo(() => {
+    const savedId = (config.voicelive_model?.deployment_id || '').trim();
+    const gated = REGION_GATED_VOICELIVE_PRESETS.filter(
+      (p) =>
+        (deployedModelIds && deployedModelIds.has(p.id.toLowerCase())) ||
+        p.id === savedId,
+    );
+    if (gated.length === 0) return VOICELIVE_MODEL_PRESETS;
+    const out = [];
+    let inserted = false;
+    for (const preset of VOICELIVE_MODEL_PRESETS) {
+      out.push(preset);
+      if (!inserted && preset.id === 'gpt-realtime-mini') {
+        out.push(...gated);
+        inserted = true;
+      }
+    }
+    if (!inserted) out.push(...gated);
+    return out;
+  }, [deployedModelIds, config.voicelive_model?.deployment_id]);
 
   // Initialize custom mode flags based on loaded config (only once)
   useEffect(() => {
@@ -1207,7 +1254,7 @@ export default function AgentBuilderContent({
     const cascadeId = (config.cascade_model?.deployment_id || '').trim();
     const voiceliveId = (config.voicelive_model?.deployment_id || '').trim();
     const cascadeIsCustom = cascadeId && !CASCADE_MODEL_PRESETS.some(p => p.id === cascadeId);
-    const voiceliveIsCustom = voiceliveId && !VOICELIVE_MODEL_PRESETS.some(p => p.id === voiceliveId);
+    const voiceliveIsCustom = voiceliveId && !ALL_VOICELIVE_PRESET_IDS.has(voiceliveId);
     if (cascadeIsCustom) setIsCascadeCustomMode(true);
     if (voiceliveIsCustom) setIsVoiceliveCustomMode(true);
     customModeInitialized.current = true;
@@ -1254,6 +1301,23 @@ export default function AgentBuilderContent({
       }
     } catch (err) {
       logger.error('Failed to fetch voices:', err);
+    }
+  }, []);
+
+  const fetchAvailableModels = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models`);
+      if (response.ok) {
+        const data = await response.json();
+        const ids = new Set(
+          (data.models || [])
+            .map((m) => (m.deployment_id || '').toLowerCase())
+            .filter(Boolean),
+        );
+        setDeployedModelIds(ids);
+      }
+    } catch (err) {
+      logger.error('Failed to fetch models:', err);
     }
   }, []);
 
@@ -1537,6 +1601,7 @@ export default function AgentBuilderContent({
     // the form, so the dialog can paint immediately instead of waiting on all 5.
     fetchAvailableTools();
     fetchAvailableVoices();
+    fetchAvailableModels();
     fetchAvailableTemplates();
     fetchMcpServers();
     // Only block with the spinner while loading an existing agent's config in
@@ -1546,7 +1611,7 @@ export default function AgentBuilderContent({
       setLoading(true);
       fetchExistingConfig().finally(() => setLoading(false));
     }
-  }, [editMode, fetchAvailableTools, fetchAvailableVoices, fetchAvailableTemplates, fetchExistingConfig, fetchMcpServers]);
+  }, [editMode, fetchAvailableTools, fetchAvailableVoices, fetchAvailableModels, fetchAvailableTemplates, fetchExistingConfig, fetchMcpServers]);
 
   // Apply existing config
   useEffect(() => {
@@ -3325,7 +3390,7 @@ export default function AgentBuilderContent({
                           if (selected === 'custom') {
                             setIsVoiceliveCustomMode(true);
                             // Keep existing value if any, otherwise empty
-                            if (!config.voicelive_model?.deployment_id || VOICELIVE_MODEL_PRESETS.some(p => p.id === config.voicelive_model?.deployment_id)) {
+                            if (!config.voicelive_model?.deployment_id || ALL_VOICELIVE_PRESET_IDS.has(config.voicelive_model?.deployment_id)) {
                               handleNestedConfigChange('voicelive_model', 'deployment_id', '');
                             }
                           } else {
@@ -3338,7 +3403,7 @@ export default function AgentBuilderContent({
                         helperText="Select a base model (override below if needed)"
                         SelectProps={{ native: true }}
                       >
-                        {VOICELIVE_MODEL_PRESETS.map((preset) => (
+                        {voiceLiveModelPresets.map((preset) => (
                           <option key={preset.id} value={preset.id}>
                             {preset.label}
                           </option>
