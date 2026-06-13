@@ -10,7 +10,7 @@
     {
       "url": "api.html",
       "title": "API Reference",
-      "sections": 12
+      "sections": 13
     },
     {
       "url": "architecture.html",
@@ -25,7 +25,7 @@
     {
       "url": "guides.html",
       "title": "Guides",
-      "sections": 20
+      "sections": 27
     },
     {
       "url": "index.html",
@@ -145,6 +145,14 @@
       "page": "API Reference",
       "title": "Media Streaming",
       "text": "Endpoint Type Description /media/status GET Media streaming configuration and active stream count. /media/stream WebSocket ACS bidirectional audio stream. See WebSocket protocol ."
+    },
+    {
+      "url": "api.html#genesys-api",
+      "anchor": "genesys-api",
+      "level": 2,
+      "page": "API Reference",
+      "title": "Genesys AudioConnector",
+      "text": "AudioHook v2 bridge for Genesys Cloud telephony. See the Genesys Cloud Integration guide for setup, the simulator, and troubleshooting. Endpoint Type Description /genesys/health GET Liveness check — returns {\"status\":\"ok\",\"service\":\"genesys-audiohook\"} . /genesys/stream WebSocket AudioHook v2 audio + control stream (subprotocol audiohook-v2 , µ-law 8 kHz). Bridges Genesys Cloud AudioConnector to Azure VoiceLive."
     },
     {
       "url": "api.html#browser",
@@ -451,6 +459,70 @@
       "text": "In production the webhook is a public Container App URL, so ACS can reach it. On your laptop, http://localhost:8010/api/v1/calls/answer is invisible to Azure. The fix is exactly the same three steps above, with one change: the Endpoint you give the Event Grid subscription is your dev tunnel URL instead of the Container App FQDN: Event Grid endpoint for local dev https://abc123-8010.usw3.devtunnels.ms/api/v1/calls/answer The dev tunnel gives localhost:8010 a public, internet-routable HTTPS address that ACS can deliver events to. See Dev tunnel — enabling telephony on your laptop for setup, and remember to update both the Event Grid subscription endpoint and the backend BASE_URL whenever you create a fresh tunnel. Re-create the subscription when the tunnel ID changes. Each new devtunnel create mints a new random URL. An Event Grid subscription pinned to a dead tunnel silently drops every IncomingCall event. Either keep a stable tunnel for the day or update/re-create the subscription endpoint after each rotation."
     },
     {
+      "url": "guides.html#genesys",
+      "anchor": "genesys",
+      "level": 2,
+      "page": "Guides",
+      "title": "Genesys Cloud Integration",
+      "text": "The accelerator ships with a built-in Genesys Cloud AudioConnector bridge , so you can put the same multi-agent voice orchestrator behind a Genesys contact-center flow without Azure Communication Services or a PSTN number. Genesys streams the live call audio to the backend over a WebSocket, the backend runs the conversation through Azure VoiceLive and the agent/tool/handoff stack, and synthesized speech streams back to the caller — all in real time. This is an alternative telephony front-end that sits alongside the ACS path above. ACS and Genesys share the exact same agents, tools, scenarios, and handoff logic; only the audio transport differs. When to use this: you already run Genesys Cloud as your contact-center platform and want to route a queue, IVR branch, or a single flow action to an Azure AI voice agent. Genesys owns the PSTN leg and caller experience; the accelerator provides the AI brain."
+    },
+    {
+      "url": "guides.html#genesys-how-it-works",
+      "anchor": "genesys-how-it-works",
+      "level": 3,
+      "page": "Guides",
+      "title": "How it works",
+      "text": "Genesys Cloud's AudioConnector integration speaks the AudioHook v2 WebSocket protocol. The accelerator implements the full server side of that protocol and bridges it to Azure VoiceLive: flowchart LR caller([📞 Caller]) --- gc subgraph GENESYS[\"☁️ Genesys Cloud\"] gc[\"AudioConnector Architect flow \"] end subgraph ART[\"⚙️ ART Backend — /api/v1/genesys/stream\"] direction TB proto[\"AudioHook v2 protocol handshake · seq · ping · DTMF · barge-in \"] codec[\"Audio codec µ-law 8kHz ⇄ PCM16 24kHz \"] handler[\"GenesysVoiceLiveHandler\"] proto --- handler codec --- handler end subgraph CORE[\"🧠 Shared multi-agent core (same as ACS)\"] direction TB orch[\"LiveOrchestrator\"] agents[\"Agents · Tools · Handoffs\"] memo[\"MemoManager Redis session + caller context \"] orch --- agents orch --- memo end vl[\"Azure VoiceLive API STT · LLM · TTS (managed) \"] gc < == \"WebSocket · µ-law 8kHz + JSON\" ==> proto handler < == \"PCM16 24kHz · base64\" ==> vl handler --> orch classDef callerNode fill:#FFFFFF,stroke:#605E5C,color:#1A1A1A classDef gNode fill:#FFF8E1,stroke:#C8960A,color:#3D2F00 classDef aNode fill:#E3F0FF,stroke:#0078D4,color:#0A2540 classDef cNode fill:#E6FAEA,stroke:#107C10,color:#0B3D0B classDef vNode fill:#F1E6FF,stroke:#8764B8,color:#2E1A47 class caller callerNode class gc gNode class proto,codec,handler aNode class orch,agents,memo cNode class vl vNode style GENESYS fill:#FFFBF0,stroke:#FFB900,color:#3D2F00 style ART fill:#F0F7FF,stroke:#0078D4,color:#0A2540 style CORE fill:#F0FBF2,stroke:#107C10,color:#0B3D0B The bridge does three jobs on every call: Protocol — Implements the AudioHook v2 server handshake ( open / opened ), keep-alive ( ping / pong ), sequence-number tracking, DTMF, barge-in, and graceful close / disconnect . Audio codec — Genesys sends µ-law (PCMU) 8 kHz mono; VoiceLive expects PCM16 24 kHz . The handler decodes + upsamples 3× inbound, and downsamples + µ-law encodes outbound, with paced 250 ms chunking back to Genesys. Orchestration — On session open it connects to VoiceLive, resolves the same agent set / scenario / handoff map used by the ACS path, and starts the LiveOrchestrator . Caller context from the Genesys flow is injected into the agent's working memory. Genesys is VoiceLive-only today. Unlike the ACS path (which honors ACS_STREAMING_MODE and can run the SpeechCascade orchestrator), the Genesys bridge is wired exclusively to Azure VoiceLive via GenesysVoiceLiveHandler → LiveOrchestrator — there is no SpeechCascade code path for Genesys. This keeps end-to-end latency lowest for contact-center traffic. Your VoiceLive settings must be configured (see Step 1) regardless of what ACS_STREAMING_MODE is set to. The agents, tools, and handoff logic are identical to the cascade path, so the same scenarios work either way."
+    },
+    {
+      "url": "guides.html#genesys-builtin",
+      "anchor": "genesys-builtin",
+      "level": 3,
+      "page": "Guides",
+      "title": "What the accelerator gives you out of the box",
+      "text": "The integration is already wired into the backend — there is nothing to build. Once the backend is running it exposes: Endpoint Type Purpose /api/v1/genesys/stream WebSocket AudioHook v2 audio + control stream (subprotocol audiohook-v2 ) /api/v1/genesys/health GET Liveness check — returns {\"status\":\"ok\",\"service\":\"genesys-audiohook\"} Caller context configured as input variables on the Genesys AudioConnector action is delivered in the open message and made available to your agents. A few well-known keys are promoted to system variables; all input variables are also stored in the session's working memory ( MemoManager ) so tools and prompts can read them: Genesys input variable Exposed to agents as Notes phoneNumber caller_phone Caller's number from the Genesys flow emailAddress caller_email Caller email, if collected promptName genesys_prompt Scenario / prompt hint from the flow any other key working memory Stored verbatim in MemoManager for the session"
+    },
+    {
+      "url": "guides.html#genesys-step1",
+      "anchor": "genesys-step1",
+      "level": 3,
+      "page": "Guides",
+      "title": "Step 1 — Configure Azure VoiceLive",
+      "text": "The bridge connects to Azure VoiceLive on session open, so these must be set in the backend environment (they are populated by azd up when VoiceLive is provisioned): .env (repo root) # Azure VoiceLive — required for the Genesys bridge AZURE_VOICELIVE_ENDPOINT=https://<your-voicelive-resource>.cognitiveservices.azure.com AZURE_VOICELIVE_MODEL=gpt-4o-realtime-preview # Auth: managed identity (recommended) OR an API key USE_DEFAULT_CREDENTIAL=true # AZURE_VOICELIVE_API_KEY=<key> # only if not using managed identity # Recommended: Redis-backed session memory so caller context + handoffs persist REDIS_HOST=<your-redis-host> REDIS_PORT=6380"
+    },
+    {
+      "url": "guides.html#genesys-step2",
+      "anchor": "genesys-step2",
+      "level": 3,
+      "page": "Guides",
+      "title": "Step 2 — Point Genesys at your endpoint",
+      "text": "In Genesys Cloud Admin , create an AudioConnector integration and set its connection URI to your backend's Genesys WebSocket endpoint (always wss:// — Genesys requires TLS): AudioConnector connection URI wss://<your-backend>.<region>.azurecontainerapps.io/api/v1/genesys/stream Then reference that integration from an Audio Connector action inside an Architect inbound call flow, and map any caller context you want the agent to receive into the action's input variables (e.g. phoneNumber , promptName ). When a call hits that flow action, Genesys opens the WebSocket and the AI agent takes over the conversation. Public, TLS, and reachable. Genesys Cloud connects from its own cloud infrastructure, so the endpoint must be a public wss:// URL. For local development, expose the backend through a dev tunnel and use the tunnel's wss:// address — exactly as you would for ACS, but pointing at /api/v1/genesys/stream ."
+    },
+    {
+      "url": "guides.html#genesys-step3",
+      "anchor": "genesys-step3",
+      "level": 3,
+      "page": "Guides",
+      "title": "Step 3 — Test without Genesys (simulator)",
+      "text": "The repo ships a local AudioConnector simulator at tools/genesys_simulator/ that emulates a Genesys client end-to-end — it negotiates AudioHook v2, captures your microphone, streams µ-law audio, and plays the agent's response — so you can validate the full pipeline before touching real Genesys infrastructure. # 1) Start the backend (if not already running) python -m uvicorn apps.artagent.backend.main:app --host 0.0.0.0 --port 8081 # 2) Run the simulator against it cd tools/genesys_simulator python -m venv .venv && source .venv/bin/activate pip install -r requirements.txt python genesys_client_simulator.py ws://localhost:8081/api/v1/genesys/stream Speak into your mic and you should hear the agent respond. See tools/genesys_simulator/README.md for configuration (prompt/scenario name, org/conversation IDs, and the input variables it sends)."
+    },
+    {
+      "url": "guides.html#genesys-expect",
+      "anchor": "genesys-expect",
+      "level": 3,
+      "page": "Guides",
+      "title": "What you should expect to see",
+      "text": "A healthy call produces this log sequence in the backend (loggers api.v1.endpoints.genesys , genesys.protocol , and genesys.handler ). Every line is tagged with the AudioHook session= so you can follow a single call: Backend logs — successful Genesys session [Genesys] WebSocket connect | session=<sid> [Genesys] Handler started | session=<sid> [GenesysProtocol] Session opened | conversation=<conv> org=<org> media={\"format\":\"PCMU\",\"rate\":8000,...} [Genesys] VoiceLive connected | connect_ms=312.4 session=<sid> [Genesys] Agents resolved | count=8 start=Concierge session=<sid> [Genesys] Orchestrator started | session=<sid> [Genesys] User transcript: 'I want to check my balance' | session=<sid> [Genesys] First audio chunk for response=<rid> | session=<sid> [Genesys] Speech started → barge-in | session=<sid> # caller interrupted; playback stops Handshake: WebSocket connect → Session opened within a second. If you never see Session opened , Genesys and the backend failed to agree on a media format. Audio both ways: VoiceLive connected then First audio chunk means the agent is talking back; User transcript lines confirm inbound speech is being recognized. Barge-in: Speech started → barge-in appears when the caller interrupts the agent — the bridge tells Genesys to stop the current playback."
+    },
+    {
+      "url": "guides.html#genesys-debug",
+      "anchor": "genesys-debug",
+      "level": 3,
+      "page": "Guides",
+      "title": "Debugging & troubleshooting via monitor logs",
+      "text": "All Genesys activity flows through the standard OpenTelemetry → Application Insights pipeline (see Monitoring ). Filter on the [Genesys] / [GenesysProtocol] tags or a specific session= to isolate one call. Application Insights (Logs / KQL): All Genesys activity in the last hour traces | where timestamp > ago(1h) | where message has \"[Genesys]\" or message has \"[GenesysProtocol]\" | project timestamp, message, severityLevel, operation_Id | order by timestamp asc Trace a single call end-to-end traces | where message has \"session=<your-session-id>\" | order by timestamp asc Container App live logs (Azure CLI): # Tail the backend and filter to Genesys lines az containerapp logs show \\ --name <your-backend-app> \\ --resource-group <your-rg> \\ --follow --tail 100 | grep -i genesys # Quick liveness check of the Genesys endpoint curl https://<your-backend>.<region>.azurecontainerapps.io/api/v1/genesys/health Common issues — the log line in the right column tells you which stage failed: Symptom Likely cause What to check / log signal WebSocket connects, then drops right after open VoiceLive not configured or credential failure Look for [Genesys] Failed to connect to VoiceLive . Verify AZURE_VOICELIVE_ENDPOINT / AZURE_VOICELIVE_MODEL and that the managed identity (or API key) can reach VoiceLive. No opened response / session never starts Media format mismatch [GenesysProtocol] No supported media format found . The AudioConnector must offer PCMU @ 8000 Hz on the external channel. Session rejected with a disconnect Out-of-order or duplicate frames (proxy/network) [GenesysProtocol] Invalid client seq or Session ID mismatch . Check for a proxy reordering WebSocket frames between Genesys and the backend. Garbled, robotic, or sped-up audio Codec conversion problem Inspect the [Genesys] Audio delta: input_type=… → µ-law_size=… debug line. Confirm Genesys is sending 8 kHz µ-law mono. Agent greets with the wrong persona / scenario Scenario or start-agent resolution [Genesys] Agents resolved | count=… start=… shows which agent set and start agent were selected. Adjust the promptName input variable or scenario config. Caller context (phone/email) missing in the agent Input variables not mapped, or Redis unavailable Confirm the AudioConnector action sets inputVariables ; without Redis ( REDIS_* ) the MemoManager is skipped and context isn't persisted across handoffs. Calls connect locally with the simulator but not from Genesys Endpoint not publicly reachable over TLS Genesys requires a public wss:// URL. Use the Container App FQDN in production or a dev tunnel locally — pointed at /api/v1/genesys/stream ."
+    },
+    {
       "url": "guides.html#local-development",
       "anchor": "local-development",
       "level": 2,
@@ -521,14 +593,6 @@
       "page": "Guides",
       "title": "Testing",
       "text": "Run tests # Unit tests make test # With coverage make test_coverage # Load testing make load_test Test structure Type Location What it covers Unit tests/unit/ Individual functions, agents, tools Integration tests/integration/ API endpoints, WebSocket flows Evaluation tests/evaluation/ LLM response quality, scenario correctness Load tests/load/ Concurrent calls, latency under stress"
-    },
-    {
-      "url": "guides.html#ai-troubleshooting",
-      "anchor": "ai-troubleshooting",
-      "level": 2,
-      "page": "Guides",
-      "title": "AI-Assisted Debugging",
-      "text": "The repo ships two agent skills that let an AI coding assistant (GitHub Copilot, or any agent that reads .github/skills/ ) diagnose a deployment for you. They are read-only by design — the agent gathers evidence and recommends a fix, then you apply it. Skill Use it when What it does troubleshoot Something is broken and you want the layer isolated Walks deploy → telephony → STT → LLM → TTS → state, runs read-only health/log commands, and reports a diagnosis + recommended fix. observability-insights You need traces, latency percentiles, or a call timeline Pulls context from your local azd env + Azure Monitor and renders KQL, latency waterfalls, and mermaid call-flow diagrams. How to invoke a skill Skills are triggered by intent — you don't call them by a special command. Just describe the problem and name the skill in your prompt. Give the agent one concrete failing example (a call connection id, a timestamp, or the exact error) for the sharpest result. Example prompts (paste into your AI agent) # Let it probe you for the details it needs Use the troubleshoot skill. Calls connect but there's a long pause before the agent replies. Deployed env \"contoso\". Ask me whatever you need. # Latency breakdown from telemetry Use observability-insights for env \"contoso\": pull latency percentiles per span for the last hour and show which stage breaks the budget, then a call timeline. # Azure MCP fast path (if an Azure SRE-agent MCP is connected) Use the troubleshoot skill with the Azure MCP: run check_deployment_health for staging and analyze_deployment_logs for rtaudio-server at severity=error over the last hour. Read-only — don't let any scan create issues. What the agent will and won't do. It diagnoses with read-only commands ( show , list , logs , query , curl ) and asks you for the missing detail instead of guessing. It will not edit code/config, run azd up/provision/deploy/down , terraform apply , az … create/update/delete , restart/redeploy, or commit — without your explicit approval. It recommends the fix and shows the exact command; you run it. Prefer the command line? The same guardrails, prompts, and per-layer commands live in TROUBLESHOOTING.md . The static reference below is what the agent draws on — verify and apply any change yourself."
     },
     {
       "url": "guides.html#troubleshooting",
