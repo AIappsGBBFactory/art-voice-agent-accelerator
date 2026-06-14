@@ -40,6 +40,7 @@
       <a href="#health" class="active">Health & Monitoring</a>
       <a href="#calls">Call Management</a>
       <a href="#media">Media Streaming</a>
+      <a href="#genesys-api">Genesys AudioConnector</a>
       <a href="#browser">Browser Conversations</a>
       <a href="#agents-api">Agents</a>
       <a href="#sessions">Sessions</a>
@@ -124,6 +125,20 @@ curl https://your-backend.azurecontainerapps.io/api/v1/ready
         <tbody>
           <tr><td><code>/media/status</code></td><td>GET</td><td>Media streaming configuration and active stream count.</td></tr>
           <tr><td><code>/media/stream</code></td><td>WebSocket</td><td>ACS bidirectional audio stream. See <a href="#ws-media">WebSocket protocol</a>.</td></tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <!-- ==================== Genesys ==================== -->
+
+      <h2 id="genesys-api">Genesys AudioConnector</h2>
+      <p>AudioHook v2 bridge for Genesys Cloud telephony. See the <a href="guides.html#genesys">Genesys Cloud Integration guide</a> for setup, the simulator, and troubleshooting.</p>
+      <table>
+        <thead><tr><th>Endpoint</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>/genesys/health</code></td><td>GET</td><td>Liveness check — returns <code>{"status":"ok","service":"genesys-audiohook"}</code>.</td></tr>
+          <tr><td><code>/genesys/stream</code></td><td>WebSocket</td><td>AudioHook v2 audio + control stream (subprotocol <code>audiohook-v2</code>, µ-law 8&nbsp;kHz). Bridges Genesys Cloud AudioConnector to Azure VoiceLive.</td></tr>
         </tbody>
       </table>
 

@@ -6,7 +6,7 @@
 
 /* ---- shared SVG snippets ---- */
 const ICONS = {
-  phone:   '<path class="icon-glyph" d="M22 22c0-2 1.5-3 3-3h3c2 0 3 1 3 3l-1 4-3 1c2 3 5 6 9 8l1-2 4-1c2 0 3 1 3 3v3c0 2-1 3-3 3-13 0-22-9-22-22 0-2 1-3 3-3z"/>',
+  phone:   '<g class="icon-glyph" transform="translate(16.4,17.8) scale(1.18)"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></g>',
   browser: '<rect x="18" y="20" width="24" height="18" rx="2" fill="none" stroke="#fff" stroke-width="1.5"/><line x1="18" y1="25" x2="42" y2="25" stroke="#fff" stroke-width="1.5"/><circle cx="21" cy="22.5" r="0.7" fill="#fff"/><circle cx="23.5" cy="22.5" r="0.7" fill="#fff"/>',
   acs:     '<path class="icon-glyph" d="M20 20h18c1.5 0 2.5 1 2.5 2.5v10c0 1.5-1 2.5-2.5 2.5H29l-5 4v-4h-4c-1.5 0-2.5-1-2.5-2.5v-10c0-1.5 1-2.5 2.5-2.5z"/><circle cx="25" cy="27" r="1.3" fill="var(--d-telephony)"/><circle cx="29" cy="27" r="1.3" fill="var(--d-telephony)"/><circle cx="33" cy="27" r="1.3" fill="var(--d-telephony)"/>',
   apim:    '<path class="icon-glyph" d="M30 18l10 6v12l-10 6-10-6v-12z" fill="none" stroke="#fff" stroke-width="1.6"/><circle cx="30" cy="30" r="3.5" fill="#fff"/>',
@@ -726,7 +726,7 @@ const OMNICHANNEL_HERO = () => {
         <text x="${concW/2}" y="24" text-anchor="middle"
               style="font:700 13.5px Inter,sans-serif;fill:#fff">Concierge</text>
         <text x="${concW/2}" y="40" text-anchor="middle"
-              style="font:500 10.5px Inter,sans-serif;fill:#fff;opacity:0.88">Greets · routes intent · hands off</text>
+              style="font:500 10.5px Inter,sans-serif;fill:#fff;opacity:0.88">Greets · routes · hands off via tools</text>
         <g opacity="0.65" transform="translate(${concW/2 - 18}, 48)">
           <circle cx="0" cy="6" r="2.4" fill="#fff"/>
           <circle cx="9" cy="6" r="2.4" fill="#fff"/>
@@ -764,6 +764,8 @@ const OMNICHANNEL_HERO = () => {
     return `
       <text x="${HUB_X + 24}" y="${HUB_SWARM_Y - 14}"
             style="font:600 10.5px Inter,sans-serif;fill:var(--d-text-3);text-transform:uppercase;letter-spacing:0.1em">Multi-Agent Orchestration</text>
+      <text x="${HUB_X + HUB_W - 24}" y="${HUB_SWARM_Y - 14}" text-anchor="end"
+            style="font:italic 9.5px Inter,sans-serif;fill:var(--d-text-3)">handoffs are tool calls</text>
       ${arrows}
       ${specTiles}
       ${concierge}`;
@@ -864,9 +866,10 @@ const OMNICHANNEL_HERO = () => {
     ${tile(CH_X, CH_YS[3], 'channel',   'Microsoft Teams',  'Direct routing · native ACS',   'globe')}
 
     <!-- ==== ART Agent Hub ==== -->
+    <clipPath id="hub-top-clip"><rect x="${HUB_X}" y="${HUB_Y}" width="${HUB_W}" height="${HUB_H}" rx="12"/></clipPath>
     <rect x="${HUB_X}" y="${HUB_Y}" width="${HUB_W}" height="${HUB_H}" rx="12"
           fill="var(--d-zone-bg)" stroke="var(--d-app)" stroke-width="1.5"/>
-    <rect x="${HUB_X}" y="${HUB_Y}" width="${HUB_W}" height="4" rx="2" fill="var(--d-app)"/>
+    <rect x="${HUB_X}" y="${HUB_Y}" width="${HUB_W}" height="4" fill="var(--d-app)" clip-path="url(#hub-top-clip)"/>
 
     <text x="${HUB_CX}" y="${HUB_TITLE_Y}" text-anchor="middle"
           style="font:700 17px Inter,sans-serif;fill:var(--d-text);letter-spacing:-0.01em">◆ ART Agent Core</text>
@@ -877,8 +880,8 @@ const OMNICHANNEL_HERO = () => {
     ${swarm}
     ${capStrip}
 
-    <!-- ==== Outputs column ==== -->
-    <text class="zone-title" x="${OUT_X + 100}" y="154" text-anchor="middle">Outcomes</text>
+    <!-- ==== Integrations column ==== -->
+    <text class="zone-title" x="${OUT_X + 100}" y="154" text-anchor="middle">Integrations Out</text>
     ${tile(OUT_X, OUT_YS[0], 'telephony', 'Live Agent',    'Warm handoff · context passed', 'phone')}
     ${tile(OUT_X, OUT_YS[1], 'data',      'CRM / Cosmos',  'Transcripts · audit · profiles', 'cosmos')}
     ${tile(OUT_X, OUT_YS[2], 'observ',    'Observability', 'OpenTelemetry · App Insights',   'insights')}
