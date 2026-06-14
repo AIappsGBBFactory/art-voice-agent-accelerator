@@ -288,7 +288,9 @@ class CascadeOrchestratorAdapter:
             call_connection_id=self.config.call_connection_id,
             session_id=self.config.session_id,
         )
-        
+        # Per-turn LLM time-to-first-token (ms), populated during streaming.
+        self._last_turn_ttft_ms: float | None = None
+
         if not self.agents:
             self._load_agents()
 
@@ -971,6 +973,8 @@ class CascadeOrchestratorAdapter:
         """
         self._cancel_event.clear()
         self._metrics.start_turn()  # Increments turn count and resets TTFT tracking
+        # Reset per-turn LLM time-to-first-token (captured during streaming).
+        self._last_turn_ttft_ms = None
 
         # Support both calling patterns: context OR direct parameters
         if context is None:
@@ -1319,6 +1323,7 @@ class CascadeOrchestratorAdapter:
                         interrupted=self._cancel_event.is_set(),
                         input_tokens=self._metrics.input_tokens,
                         output_tokens=self._metrics.output_tokens,
+                        ttft_ms=self._last_turn_ttft_ms,
                     )
 
                 except asyncio.CancelledError:
@@ -1574,6 +1579,10 @@ class CascadeOrchestratorAdapter:
                 collected_text: list[str] = []
                 stream_error: list[Exception] = []
                 stream_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+                # TTFT capture: request_start set before the API call, first_token
+                # set when the first content/tool delta arrives. Read on the async
+                # side after the stream completes to derive llm.ttft_ms.
+                ttft_tracker: dict[str, float] = {}
                 loop = asyncio.get_running_loop()
                 tool_call_detected = False  # Track if tool calls are streaming
                 handoff_tool_detected = False  # Track if specifically a handoff tool
@@ -1648,6 +1657,7 @@ class CascadeOrchestratorAdapter:
                             },
                         ) as openai_span:
                             # Always use chat completions API for streaming
+                            ttft_tracker["request_start"] = time.perf_counter()
                             stream = client.chat.completions.create(**api_params)
 
                             for chunk in stream:
@@ -1673,6 +1683,23 @@ class CascadeOrchestratorAdapter:
                                 delta = getattr(choice, "delta", None)
                                 if not delta:
                                     continue
+
+                                # Stamp time-to-first-token on the first content/tool delta
+                                if "first_token" not in ttft_tracker and (
+                                    getattr(delta, "content", None)
+                                    or getattr(delta, "tool_calls", None)
+                                ):
+                                    ttft_tracker["first_token"] = time.perf_counter()
+                                    if "request_start" in ttft_tracker:
+                                        _ttft_ms = (
+                                            ttft_tracker["first_token"]
+                                            - ttft_tracker["request_start"]
+                                        ) * 1000
+                                        openai_span.set_attribute("llm.ttft_ms", round(_ttft_ms, 1))
+                                        openai_span.add_event(
+                                            "llm.first_token",
+                                            attributes={"llm.ttft_ms": round(_ttft_ms, 1)},
+                                        )
 
                                 # Tool calls - aggregate streamed chunks by index
                                 # Check tool calls FIRST to detect before dispatching text
@@ -1874,6 +1901,14 @@ class CascadeOrchestratorAdapter:
                 span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
                 span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
                 span.set_attribute("gen_ai.response.length", len(response_text))
+
+                # Surface LLM time-to-first-token (request -> first streamed token).
+                # Keep the first iteration's value for the turn-level KPI summary.
+                if "request_start" in ttft_tracker and "first_token" in ttft_tracker:
+                    ttft_ms = (ttft_tracker["first_token"] - ttft_tracker["request_start"]) * 1000
+                    span.set_attribute("llm.ttft_ms", round(ttft_ms, 1))
+                    if self._last_turn_ttft_ms is None:
+                        self._last_turn_ttft_ms = ttft_ms
 
                 if tool_calls:
                     span.set_attribute("tool_call_detected", True)
