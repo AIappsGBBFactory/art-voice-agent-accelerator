@@ -886,6 +886,119 @@ class VoiceLiveSDKHandler:
         if reset_audio_state:
             self._mark_audio_playback(False, reset_cancel=False)
 
+    def _log_connection_banner(
+        self,
+        *,
+        connection_model: str,
+        settings_default_model: str,
+        start_agent_name: str,
+        start_agent_obj: Any | None,
+        agent_count: int,
+        scenario_name: str | None,
+        agent_source: str,
+        connection_options: dict[str, Any],
+    ) -> None:
+        """Log a clean, human-readable banner summarizing the VoiceLive connection.
+
+        Emits a single multi-line INFO log that captures the most useful facts about
+        a freshly established session: which model is bound, the start agent, voice,
+        VAD/turn-detection, and the underlying WebSocket connection options. This is
+        intended to replace having to piece these details together from many scattered
+        ``[VoiceLive Startup]`` lines.
+
+        Args:
+            connection_model: Generative model actually bound to the connection.
+            settings_default_model: Global default model from settings.
+            start_agent_name: Name of the effective start agent.
+            start_agent_obj: The resolved start agent (UnifiedAgent) or None.
+
+        Keyword Args:
+            agent_count: Total number of agents available in this session.
+            scenario_name: Active scenario name, if any.
+            agent_source: Where the agents came from ("unified"/"discovered").
+            connection_options: WebSocket connection options (heartbeat/timeout/etc.).
+        """
+        model_is_override = connection_model != settings_default_model
+        model_note = (
+            f"{connection_model}  (per-agent override; default={settings_default_model})"
+            if model_is_override
+            else connection_model
+        )
+
+        # Voice + VAD details (defensive — agent or fields may be absent).
+        voice_line = "n/a"
+        temperature_str = "n/a"
+        vad_line = "n/a"
+        tools_count = 0
+        mcp_servers: list[str] = []
+        if start_agent_obj is not None:
+            voice = getattr(start_agent_obj, "voice", None)
+            if voice is not None:
+                voice_line = (
+                    f"{getattr(voice, 'name', '?')} "
+                    f"(type={getattr(voice, 'type', '?')}, "
+                    f"rate={getattr(voice, 'rate', '?')}, "
+                    f"style={getattr(voice, 'style', '?')})"
+                )
+            try:
+                vl_model = start_agent_obj.get_model_for_mode("voicelive")
+                temp = getattr(vl_model, "temperature", None)
+                if temp is not None:
+                    temperature_str = str(temp)
+            except Exception:
+                pass
+
+            session_cfg = getattr(start_agent_obj, "session", None) or {}
+            td = session_cfg.get("turn_detection") if isinstance(session_cfg, dict) else None
+            if isinstance(td, dict):
+                vad_line = (
+                    f"type={td.get('type', '?')}, "
+                    f"threshold={td.get('threshold', '?')}, "
+                    f"silence_ms={td.get('silence_duration_ms', '?')}, "
+                    f"prefix_ms={td.get('prefix_padding_ms', '?')}"
+                )
+
+            tools_count = len(getattr(start_agent_obj, "tool_names", []) or [])
+            mcp_servers = list(getattr(start_agent_obj, "mcp_servers", []) or [])
+
+        # Redact endpoint to host only (avoid leaking full path/keys in logs).
+        endpoint = getattr(self._settings, "azure_voicelive_endpoint", "") or ""
+        try:
+            from urllib.parse import urlparse
+
+            endpoint_host = urlparse(endpoint).netloc or endpoint
+        except Exception:
+            endpoint_host = endpoint
+
+        transport = (
+            self._transport.value
+            if hasattr(self._transport, "value")
+            else str(self._transport)
+        )
+        mcp_line = ", ".join(mcp_servers) if mcp_servers else "none"
+
+        banner = (
+            "\n╭─ VoiceLive Connection ─────────────────────────────────────────\n"
+            f"│ session      : {self.session_id}\n"
+            f"│ call         : {self.call_connection_id or '(browser)'}\n"
+            f"│ transport    : {transport}\n"
+            f"│ endpoint     : {endpoint_host}\n"
+            f"│ model        : {model_note}\n"
+            f"│ temperature  : {temperature_str}\n"
+            f"│ start agent  : {start_agent_name}  (source={agent_source})\n"
+            f"│ scenario     : {scenario_name or '(none)'}\n"
+            f"│ agents       : {agent_count}\n"
+            f"│ tools        : {tools_count}\n"
+            f"│ mcp servers  : {mcp_line}\n"
+            f"│ voice        : {voice_line}\n"
+            f"│ turn detect  : {vad_line}\n"
+            f"│ ws options   : heartbeat={connection_options.get('heartbeat')}, "
+            f"timeout={connection_options.get('timeout')}, "
+            f"max_msg={connection_options.get('max_msg_size')}\n"
+            "╰────────────────────────────────────────────────────────────────"
+        )
+        logger.info(banner)
+
     async def start(self) -> None:
         """Establish VoiceLive connection and start event processing."""
         if self._running:
@@ -1104,6 +1217,20 @@ class VoiceLiveSDKHandler:
 
                 # Establish the WebSocket connection with the resolved model.
                 await _connect_voicelive(connection_model)
+
+                # Emit a single clean, human-readable summary of the connection,
+                # model, and per-agent settings (replaces piecing together the
+                # scattered [VoiceLive Startup] lines).
+                self._log_connection_banner(
+                    connection_model=connection_model,
+                    settings_default_model=self._settings.azure_voicelive_model,
+                    start_agent_name=effective_start_agent,
+                    start_agent_obj=start_agent_obj,
+                    agent_count=len(agents) if agents else 0,
+                    scenario_name=getattr(orchestrator_config, "scenario_name", None),
+                    agent_source=agent_source,
+                    connection_options=connection_options,
+                )
 
 
                 # Set span attributes from resolved values

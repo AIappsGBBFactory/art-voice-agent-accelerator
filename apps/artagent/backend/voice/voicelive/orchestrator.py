@@ -100,6 +100,18 @@ _BENIGN_ERROR_CODES = {
     "response_cancel_no_active_response",
 }
 
+# Safety-net delay before the greeting fallback fires. The primary greeting path
+# is the SESSION_UPDATED event (the reliable signal that session.update has been
+# applied). This fallback only exists for the rare case where that trigger fails.
+#
+# It MUST be longer than the time it takes the bound model to apply a
+# session.update; otherwise the fallback fires before the session is ready and
+# (a) produces garbled audio (greeting generated against an un-applied session)
+# and (b) gets chopped off by the SESSION_UPDATED handler's response.cancel().
+# Heavier per-agent model overrides (e.g. gpt-5 vs gpt-realtime) apply sessions
+# noticeably slower, which is why the old 0.35s value raced and broke greetings.
+_GREETING_FALLBACK_DELAY_SECONDS = 1.5
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SESSION ORCHESTRATOR REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -258,6 +270,11 @@ class LiveOrchestrator:
         self.visited_agents: set = set()
         self._pending_greeting: str | None = None
         self._pending_greeting_agent: str | None = None
+        # Set once the active agent's greeting has actually been triggered (by
+        # either the SESSION_UPDATED handler or the fallback timer). Prevents the
+        # two greeting paths from racing — i.e. the fallback delivering the
+        # greeting and SESSION_UPDATED then cancelling it mid-stream.
+        self._greeting_delivered: bool = False
         # Bounded deque to preserve last N user utterances for better handoff context
         self._user_message_history: deque[str] = deque(maxlen=5)
         self._last_user_message: str | None = None  # Keep for backward compatibility
@@ -517,6 +534,7 @@ class LiveOrchestrator:
         # Clear pending greeting state
         self._pending_greeting = None
         self._pending_greeting_agent = None
+        self._greeting_delivered = False
 
         # Reset tracking variables
         self._active_response_id = None
@@ -1226,6 +1244,20 @@ class LiveOrchestrator:
                 await self.audio.start_capture()
             return
 
+        # If the greeting was already delivered by the fallback timer (which can
+        # happen when the bound model applies session.update slower than expected,
+        # e.g. a per-agent model override), DON'T cancel the in-flight response.
+        # response.cancel() here would chop the start of the greeting (garbled
+        # audio) and leave the turn with no greeting at all.
+        if self._greeting_delivered:
+            logger.debug(
+                "[Session Updated] Greeting already delivered by fallback - skipping cancel"
+            )
+            self._cancel_pending_greeting_tasks()
+            if self.audio:
+                await self.audio.start_capture()
+            return
+
         if self.audio:
             await self.audio.stop_playback()
         try:
@@ -1250,6 +1282,7 @@ class LiveOrchestrator:
                 )
                 self._schedule_greeting_fallback(self.active)
             else:
+                self._greeting_delivered = True
                 self._pending_greeting = None
                 self._pending_greeting_agent = None
 
@@ -1513,6 +1546,8 @@ class LiveOrchestrator:
             if greeting:
                 self._pending_greeting = greeting
                 self._pending_greeting_agent = agent_name
+                # New greeting queued for this switch — arm both delivery paths.
+                self._greeting_delivered = False
             else:
                 self._pending_greeting = None
                 self._pending_greeting_agent = None
@@ -2263,11 +2298,21 @@ class LiveOrchestrator:
 
         async def _fallback() -> None:
             try:
-                await asyncio.sleep(0.35)
-                if self._pending_greeting and self._pending_greeting_agent == agent_name:
+                await asyncio.sleep(_GREETING_FALLBACK_DELAY_SECONDS)
+                # Only deliver if SESSION_UPDATED hasn't already handled the
+                # greeting. _greeting_delivered guards against the two paths
+                # racing (and the session_updated handler chopping this off).
+                if (
+                    self._pending_greeting
+                    and self._pending_greeting_agent == agent_name
+                    and not self._greeting_delivered
+                ):
                     logger.debug(
                         "[GreetingFallback] Triggering fallback introduction for %s", agent_name
                     )
+                    # Mark delivered BEFORE awaiting so a late SESSION_UPDATED
+                    # sees the flag and won't cancel the response we're creating.
+                    self._greeting_delivered = True
                     try:
                         await self.agents[agent_name].trigger_voicelive_response(
                             self.conn,
