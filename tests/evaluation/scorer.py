@@ -231,9 +231,10 @@ class MetricsScorer:
             turns: List of TurnEvents
 
         Returns:
-            Dict with p50/p95/p99 for e2e, ttft, and tts_first_chunk
+            Dict with p50/p95/p99 for e2e, stt, ttft (LLM), and tts_first_chunk
         """
         e2e_times = [t.e2e_ms for t in turns if t.e2e_ms is not None]
+        stt_times = [t.stt_ms for t in turns if t.stt_ms is not None]
         ttft_times = [t.ttft_ms for t in turns if t.ttft_ms is not None]
         tts_first_chunk_times = [
             t.tts_first_chunk_ms for t in turns if t.tts_first_chunk_ms is not None
@@ -246,6 +247,12 @@ class MetricsScorer:
             metrics["e2e_p95_ms"] = float(np.percentile(e2e_times, 95))
             metrics["e2e_p99_ms"] = float(np.percentile(e2e_times, 99))
             metrics["e2e_mean_ms"] = float(np.mean(e2e_times))
+
+        if stt_times:
+            metrics["stt_p50_ms"] = float(np.percentile(stt_times, 50))
+            metrics["stt_p95_ms"] = float(np.percentile(stt_times, 95))
+            metrics["stt_p99_ms"] = float(np.percentile(stt_times, 99))
+            metrics["stt_mean_ms"] = float(np.mean(stt_times))
 
         if ttft_times:
             metrics["ttft_p50_ms"] = float(np.percentile(ttft_times, 50))
@@ -267,6 +274,46 @@ class MetricsScorer:
             )
 
         return metrics
+
+    def compute_per_layer_latency(
+        self, turns: List[TurnEvent]
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Roll up latency percentiles grouped by pipeline layer.
+
+        Produces a clean per-layer view (STT -> LLM -> TTS -> E2E) for
+        reporting, instead of the flat key namespace returned by
+        ``compute_latency_metrics``. Layers with no recorded samples are
+        omitted (e.g. STT is absent for text-injected turns).
+
+        Args:
+            turns: List of TurnEvents
+
+        Returns:
+            Mapping of layer name -> {p50, p95, p99, mean, count} in ms.
+        """
+        layer_samples: Dict[str, List[float]] = {
+            "stt": [t.stt_ms for t in turns if t.stt_ms is not None],
+            "llm_ttft": [t.ttft_ms for t in turns if t.ttft_ms is not None],
+            "tts_first_chunk": [
+                t.tts_first_chunk_ms for t in turns if t.tts_first_chunk_ms is not None
+            ],
+            "e2e": [t.e2e_ms for t in turns if t.e2e_ms is not None],
+        }
+
+        per_layer: Dict[str, Dict[str, float]] = {}
+        for layer, samples in layer_samples.items():
+            if not samples:
+                continue
+            per_layer[layer] = {
+                "p50": float(np.percentile(samples, 50)),
+                "p95": float(np.percentile(samples, 95)),
+                "p99": float(np.percentile(samples, 99)),
+                "mean": float(np.mean(samples)),
+                "count": len(samples),
+            }
+
+        return per_layer
 
     # =========================================================================
     # VERBOSITY METRICS (API-Aware)

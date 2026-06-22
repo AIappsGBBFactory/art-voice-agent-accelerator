@@ -92,20 +92,31 @@ class TurnEvent(BaseModel):
     turn_id: str = Field(..., description="Unique turn identifier")
     scenario_name: Optional[str] = Field(None, description="Scenario name (if from test suite)")
 
-    # Timing
+    # Timing (per-layer latency breakdown: STT -> LLM -> TTS -> E2E)
     user_end_ts: float = Field(..., description="User input end timestamp")
     agent_first_output_ts: Optional[float] = Field(
         None, description="First token from agent (TTFT)"
     )
     agent_last_output_ts: float = Field(..., description="Last output timestamp")
     e2e_ms: float = Field(..., description="End-to-end turn time (milliseconds)")
-    ttft_ms: Optional[float] = Field(None, description="Time to first token (milliseconds)")
+    stt_ms: Optional[float] = Field(
+        None,
+        description=(
+            "STT recognition latency (first meaningful partial -> final "
+            "transcript) in milliseconds. Populated only when the eval drives "
+            "real audio through the speech layer; None for text-injected turns."
+        ),
+    )
+    ttft_ms: Optional[float] = Field(
+        None,
+        description="LLM time-to-first-token latency (milliseconds). LLM layer.",
+    )
     tts_first_chunk_ms: Optional[float] = Field(
         None,
         description=(
             "Time from process_turn start until the first TTS chunk is "
             "dispatched (milliseconds). Proxy for user-perceived "
-            "time-to-first-audio in the cascade pipeline."
+            "time-to-first-audio (TTS layer) in the cascade pipeline."
         ),
     )
     tts_chunk_count: Optional[int] = Field(

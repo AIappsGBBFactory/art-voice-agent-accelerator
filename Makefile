@@ -127,61 +127,64 @@ eval:
 	@$(PYTHON_INTERPRETER) tests/evaluation/eval_cli.py
 
 # Run a single evaluation scenario with streaming output
-# Usage: make eval-run SCENARIO=tests/evaluation/scenarios/session_based/banking_declined_card_verbosity.yaml
-# eval-run:
-# 	@if [ -z "$(SCENARIO)" ]; then \
-# 		echo "❌ Usage: make eval-run SCENARIO=<path-to-scenario.yaml>"; \
-# 		exit 1; \
-# 	fi
-# 	@$(PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input $(SCENARIO)
+# Usage: make eval-run SCENARIO=tests/evaluation/scenarios/session_based/banking_multi_agent.yaml
+eval-run:
+	@if [ -z "$(SCENARIO)" ]; then \
+		echo "❌ Usage: make eval-run SCENARIO=<path-to-scenario.yaml>"; \
+		echo "   Example: make eval-run SCENARIO=tests/evaluation/scenarios/smoke/basic_identity_verification.yaml"; \
+		exit 1; \
+	fi
+	@$(PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input $(SCENARIO)
 
-# # Run all declined card evaluation scenarios
-# eval-declined-card:
-# 	@echo "📺 Running all declined card scenarios"
-# 	@echo "═══════════════════════════════════════════════════"
-# 	@for scenario in tests/evaluation/scenarios/session_based/banking_declined_card_*.yaml; do \
-# 		echo ""; \
-# 		echo "📋 Running: $$scenario"; \
-# 		$(PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input "$$scenario" || true; \
-# 	done
-# 	@echo ""
-# 	@echo "✅ All declined card evaluations complete"
+# Internal helper: run every *.yaml scenario under a directory ($(DIR))
+define _eval_run_dir
+	@echo "═══════════════════════════════════════════════════"
+	@found=0; \
+	for scenario in $(1)/*.yaml; do \
+		[ -e "$$scenario" ] || continue; \
+		case "$$scenario" in *schema*) continue ;; esac; \
+		found=1; \
+		echo ""; \
+		echo "📋 Running: $$scenario"; \
+		$(PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input "$$scenario" || true; \
+	done; \
+	if [ "$$found" = "0" ]; then echo "⚠️  No scenarios found in $(1)"; fi
+	@echo ""
+endef
 
-# # Run all session-based evaluation scenarios
-# eval-session:
-# 	@echo "📺 Running all session-based scenarios"
-# 	@echo "═══════════════════════════════════════════════════"
-# 	@for scenario in tests/evaluation/scenarios/session_based/*.yaml; do \
-# 		echo ""; \
-# 		echo "📋 Running: $$scenario"; \
-# 		$(PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input "$$scenario" || true; \
-# 	done
-# 	@echo ""
-# 	@echo "✅ All session-based evaluations complete"
+# Run all declined card evaluation scenarios
+eval-declined-card:
+	@echo "📺 Running all declined card scenarios"
+	@echo "═══════════════════════════════════════════════════"
+	@found=0; \
+	for scenario in tests/evaluation/scenarios/session_based/banking_declined_card_*.yaml; do \
+		[ -e "$$scenario" ] || continue; \
+		found=1; \
+		echo ""; \
+		echo "📋 Running: $$scenario"; \
+		$(PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input "$$scenario" || true; \
+	done; \
+	if [ "$$found" = "0" ]; then echo "⚠️  No declined card scenarios found"; fi
+	@echo ""
+	@echo "✅ All declined card evaluations complete"
 
-# # Run smoke tests (quick validation)
-# eval-smoke:
-# 	@echo "💨 Running smoke test scenarios"
-# 	@echo "═══════════════════════════════════════════════════"
-# 	@for scenario in tests/evaluation/scenarios/smoke/*.yaml; do \
-# 		echo ""; \
-# 		echo "📋 Running: $$scenario"; \
-# 		$(PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input "$$scenario" || true; \
-# 	done
-# 	@echo ""
-# 	@echo "✅ Smoke tests complete"
+# Run all session-based evaluation scenarios
+eval-session:
+	@echo "📺 Running all session-based scenarios"
+	$(call _eval_run_dir,tests/evaluation/scenarios/session_based)
+	@echo "✅ All session-based evaluations complete"
 
-# # Run A/B comparison tests
-# eval-ab:
-# 	@echo "⚖️  Running A/B comparison scenarios"
-# 	@echo "═══════════════════════════════════════════════════"
-# 	@for scenario in tests/evaluation/scenarios/ab_tests/*.yaml; do \
-# 		echo ""; \
-# 		echo "📋 Running: $$scenario"; \
-# 		$(PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input "$$scenario" || true; \
-# 	done
-# 	@echo ""
-# 	@echo "✅ A/B comparisons complete"
+# Run smoke tests (quick validation)
+eval-smoke:
+	@echo "💨 Running smoke test scenarios"
+	$(call _eval_run_dir,tests/evaluation/scenarios/smoke)
+	@echo "✅ Smoke tests complete"
+
+# Run A/B comparison tests
+eval-ab:
+	@echo "⚖️  Running A/B comparison scenarios"
+	$(call _eval_run_dir,tests/evaluation/scenarios/ab_tests)
+	@echo "✅ A/B comparisons complete"
 
 .PHONY: eval eval-run eval-declined-card eval-session eval-smoke eval-ab
 

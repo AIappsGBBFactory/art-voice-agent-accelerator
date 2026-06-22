@@ -189,6 +189,22 @@ def print_turn_event(event: dict[str, Any], turn_number: int, expectations: dict
     if metrics:
         print()
         print(f"   {C.DIM}{' │ '.join(metrics)}{C.RESET}")
+
+    # Per-layer latency breakdown (STT → LLM → TTS → E2E). Layers with no
+    # sample (e.g. STT for text-injected turns) are omitted.
+    stt_ms = event.get("stt_ms")
+    tts_first_chunk_ms = event.get("tts_first_chunk_ms")
+    layer_parts = []
+    if stt_ms:
+        layer_parts.append(f"STT {format_duration(stt_ms)}")
+    if ttft_ms:
+        layer_parts.append(f"LLM {format_duration(ttft_ms)}")
+    if tts_first_chunk_ms:
+        layer_parts.append(f"TTS {format_duration(tts_first_chunk_ms)}")
+    if e2e_ms:
+        layer_parts.append(f"E2E {format_duration(e2e_ms)}")
+    if layer_parts:
+        print(f"   {C.DIM}⏱  Layers: {' → '.join(layer_parts)}{C.RESET}")
     
     # Error (if any)
     if error:

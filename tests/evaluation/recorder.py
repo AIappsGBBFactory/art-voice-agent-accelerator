@@ -258,6 +258,7 @@ class EventRecorder:
         reasoning_tokens: Optional[int] = None,
         error: Optional[str] = None,
         ttft_ms: Optional[float] = None,
+        stt_ms: Optional[float] = None,
     ):
         """
         Finalize turn and write to JSONL.
@@ -273,7 +274,8 @@ class EventRecorder:
             input_tokens: Input token count
             reasoning_tokens: Reasoning token count (o1/o3/o4)
             error: Error message (if turn failed)
-            ttft_ms: Time to first token (milliseconds)
+            ttft_ms: LLM time to first token (milliseconds)
+            stt_ms: STT recognition latency (milliseconds); None for text turns
         """
         # Extract context evidence
         context = self._current_turn.get("context", {})
@@ -319,6 +321,7 @@ class EventRecorder:
             agent_first_output_ts=timestamp - (ttft_ms / 1000 if ttft_ms else 0),
             agent_last_output_ts=timestamp,
             e2e_ms=e2e_ms,
+            stt_ms=stt_ms,
             ttft_ms=ttft_ms,
             tts_first_chunk_ms=tts_first_chunk_ms,
             tts_chunk_count=tts_chunk_count,

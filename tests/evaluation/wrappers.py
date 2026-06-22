@@ -166,6 +166,10 @@ class EvaluationOrchestratorWrapper:
                 response_tokens=response_tokens,
                 input_tokens=getattr(result, "input_tokens", None),
                 error=result.error if hasattr(result, "error") else None,
+                # Per-layer latency: LLM TTFT comes from the orchestrator result;
+                # STT only when a real audio turn was injected via metadata.
+                ttft_ms=getattr(result, "ttft_ms", None),
+                stt_ms=context.metadata.get("stt_ms"),
             )
 
             return result
