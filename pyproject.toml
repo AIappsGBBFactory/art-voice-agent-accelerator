@@ -36,8 +36,8 @@ dependencies = [
     "starlette>=0.27.0",
     "redis>=5.0.0",
     "redis-entraid>=1.0.0",
-    "aiohttp>=3.13.3",
-    "python-multipart>=0.0.27",
+    "aiohttp>=3.14.1",
+    "python-multipart>=0.0.31",
     "pyjwt>=2.12.0",
     # Azure services
     "azure-cosmos>=4.5.0",
@@ -98,7 +98,7 @@ Tracker = "https://github.com/aiappsgbbfactory/art-voice-agent-accelerator/issue
 [project.optional-dependencies]
 dev = [
     # Testing
-    "pytest>=7.4.0",
+    "pytest>=9.1.1",
     "pytest-asyncio",
     "pytest-cov",
     "anyio",
@@ -142,7 +142,7 @@ audio = [
 # Duplicates dev deps to avoid self-reference issues with some tools
 dev-all = [
     # Testing
-    "pytest>=7.4.0",
+    "pytest>=9.1.1",
     "pytest-asyncio",
     "pytest-cov",
     "anyio",
@@ -180,7 +180,7 @@ docs = [
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.4.0",
     "mkdocstrings[python]>=0.20.0",
-    "pymdown-extensions>=10.0.0",
+    "pymdown-extensions>=10.21.3",
     "mkdocs-mermaid2-plugin>=1.2.2",
     "neoteroi-mkdocs==1.1.3",
     "mkdocs-mermaid-zoom>=0.1.0",
