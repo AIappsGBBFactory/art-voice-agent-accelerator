@@ -708,21 +708,32 @@ async def tools_get_decline_codes_metadata(request: Request) -> Response:
 
 
 async def _list_registered_tools() -> dict[str, Any]:
-    """Return the registered tools using the public FastMCP API.
+    """Return the registered tools keyed by name, across FastMCP versions.
 
-    FastMCP exposes the supported public async ``get_tools()`` accessor. Older
-    releases stored tools on the private ``_tool_manager._tools`` mapping, which
-    was removed in newer versions (causing AttributeError at runtime). Prefer the
-    public API and fall back to the private attribute only when necessary.
+    FastMCP 3.x exposes the public async ``list_tools()`` returning a
+    ``Sequence[Tool]``; FastMCP 2.x exposed ``get_tools()`` returning a
+    ``{name: Tool}`` mapping. Older releases stored tools on the private
+    ``_tool_manager._tools`` mapping. Prefer the newest public API and degrade
+    gracefully so ``/health``, ``/ready`` and ``/tools/list`` keep reporting the
+    real tool set.
     """
-    try:
-        return dict(await mcp.get_tools())
-    except AttributeError:
-        # Fallback for older FastMCP releases without a public get_tools().
-        tool_manager = getattr(mcp, "_tool_manager", None)
-        if tool_manager is not None:
-            return dict(getattr(tool_manager, "_tools", {}))
-        return {}
+    # FastMCP 3.x: list_tools() -> Sequence[Tool]
+    list_tools = getattr(mcp, "list_tools", None)
+    if list_tools is not None:
+        try:
+            tools = await list_tools(run_middleware=False)
+        except TypeError:
+            tools = await list_tools()
+        return {tool.name: tool for tool in tools}
+    # FastMCP 2.x: get_tools() -> {name: Tool}
+    get_tools = getattr(mcp, "get_tools", None)
+    if get_tools is not None:
+        return dict(await get_tools())
+    # Legacy private fallback for very old releases.
+    tool_manager = getattr(mcp, "_tool_manager", None)
+    if tool_manager is not None:
+        return dict(getattr(tool_manager, "_tools", {}))
+    return {}
 
 
 @mcp.custom_route("/health", methods=["GET"])
