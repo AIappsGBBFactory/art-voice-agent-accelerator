@@ -27,6 +27,7 @@ Environment Variables (when using azd):
     - ACS_CONNECTION_STRING: Azure Communication Services connection string
 """
 import argparse
+import hashlib
 import subprocess
 
 from azure.communication.phonenumbers import (
@@ -37,6 +38,18 @@ from azure.communication.phonenumbers import (
     PhoneNumberType,
 )
 from azure.identity import DefaultAzureCredential
+
+
+def _mask_phone(phone_number: str) -> str:
+    """Return a stable, non-reversible token for a phone number.
+
+    Keeps console output correlatable across a run without printing the raw
+    number to logs/terminals. Same number -> same token within a run.
+    """
+    if not phone_number:
+        return "phone:none"
+    digest = hashlib.sha256(str(phone_number).encode("utf-8", "replace")).hexdigest()[:10]
+    return f"phone:{digest}"
 
 
 # You can find your endpoint from your resource in the Azure portal
@@ -79,7 +92,7 @@ def purchase_phone_number(phone_numbers_client, args):
     phone_number_list = search_result.phone_numbers
     print("Reserved phone numbers:")
     for phone_number in phone_number_list:
-        print(phone_number)
+        print(_mask_phone(phone_number))
 
     purchase_poller = phone_numbers_client.begin_purchase_phone_numbers(
         search_result.search_id, polling=True
@@ -90,7 +103,7 @@ def purchase_phone_number(phone_numbers_client, args):
 
 def release_phone_number(phone_numbers_client, phone_number):
     """Release an existing phone number."""
-    print(f"Azure Communication Services - Releasing Phone Number: {phone_number}")
+    print(f"Azure Communication Services - Releasing Phone Number: {_mask_phone(phone_number)}")
     release_poller = phone_numbers_client.begin_release_phone_number(phone_number)
     release_poller.result()
     print("Status of the operation: " + release_poller.status())

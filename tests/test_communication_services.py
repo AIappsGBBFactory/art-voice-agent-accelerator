@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from src.acs.email_service import EmailService
 from src.acs.sms_service import SmsService
 from utils.ml_logging import get_logger
+from utils.pii_filter import mask_pii
 
 logger = get_logger("test_communication_services")
 
@@ -85,7 +86,7 @@ async def test_sms_service():
         return False
 
     print("✅ SMS service configuration valid")
-    print(f"   From phone number: {sms_service.from_phone_number}")
+    print(f"   From phone number: {mask_pii(sms_service.from_phone_number, prefix='phone')}")
 
     # Test sending SMS (you can replace with your phone number for testing)
     test_phone = "+1234567890"  # Replace with your phone number for actual testing
