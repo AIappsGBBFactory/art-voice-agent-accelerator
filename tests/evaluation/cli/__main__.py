@@ -144,6 +144,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                 output_dir=args.output,
             )
             summary = asyncio.run(runner.run())
+            # pass_fail is set only when the scenario defines latency
+            # expectations (max_ttft_ms / max_latency_ms / max_tts_first_chunk_ms).
+            # A False verdict must fail the run so CI catches the regression.
+            if summary.pass_fail is False:
+                logger.error(
+                    f"❌ Scenario FAILED latency gate: {summary.scenario_name}"
+                )
+                return 1
             logger.info(f"✅ Scenario complete: {summary.scenario_name}")
 
         return 0

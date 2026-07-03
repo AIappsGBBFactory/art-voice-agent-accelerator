@@ -128,6 +128,7 @@ class ExpectationValidator:
           - expect.contains -> response_constraints.must_include
           - expect.excludes -> response_constraints.must_not_include
           - expect.max_latency -> max_latency_ms
+          - expect.max_ttft -> max_ttft_ms
           - expect.no_tools -> (expects tools_called to be empty)
           - expect.no_handoff -> no_handoff: true
 
@@ -147,7 +148,8 @@ class ExpectationValidator:
         # Copy existing full-format fields (backward compat)
         for key in ["tools_called", "tools_optional", "tools_forbidden", "handoff",
                     "no_handoff", "response_constraints", "grounding_required",
-                    "min_grounded_ratio", "max_latency_ms", "max_tts_first_chunk_ms"]:
+                    "min_grounded_ratio", "max_latency_ms", "max_tts_first_chunk_ms",
+                    "max_ttft_ms"]:
             if key in expectations:
                 normalized[key] = expectations[key]
 
@@ -205,6 +207,10 @@ class ExpectationValidator:
             # max_tts_first_chunk -> max_tts_first_chunk_ms
             if "max_tts_first_chunk" in expect:
                 normalized["max_tts_first_chunk_ms"] = expect["max_tts_first_chunk"]
+
+            # max_ttft -> max_ttft_ms
+            if "max_ttft" in expect:
+                normalized["max_ttft_ms"] = expect["max_ttft"]
 
             # min_grounded -> min_grounded_ratio
             if "min_grounded" in expect:
@@ -411,6 +417,26 @@ class ExpectationValidator:
                     ),
                     expected=exp.max_tts_first_chunk_ms,
                     actual=turn.tts_first_chunk_ms,
+                )
+            )
+
+        # 9. TTFT check (LLM request -> first streamed token). The core voice
+        # responsiveness KPI — unlike e2e it excludes tool-call/iteration time,
+        # and unlike tts_first_chunk it actually populates in headless runs.
+        if exp.max_ttft_ms and turn.ttft_ms is not None:
+            within_ttft = turn.ttft_ms <= exp.max_ttft_ms
+            checks.append(
+                ValidationResult(
+                    turn_id=turn_id,
+                    check_name="max_ttft_ms",
+                    passed=within_ttft,
+                    message=(
+                        f"TTFT {turn.ttft_ms:.0f}ms exceeds threshold {exp.max_ttft_ms}ms"
+                        if not within_ttft
+                        else f"TTFT {turn.ttft_ms:.0f}ms within threshold"
+                    ),
+                    expected=exp.max_ttft_ms,
+                    actual=turn.ttft_ms,
                 )
             )
 

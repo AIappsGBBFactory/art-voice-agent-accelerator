@@ -86,6 +86,7 @@ from tests.evaluation.schemas import (
 )
 from tests.evaluation.scorer import MetricsScorer
 from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
+from tests.evaluation.validator import ExpectationValidator
 from apps.artagent.backend.registries.agentstore.base import ModelConfig
 from apps.artagent.backend.registries.agentstore.loader import (
     build_handoff_map,
@@ -1149,6 +1150,32 @@ class ScenarioRunner:
             scenario_name=scenario_name,
             expectations=self.scenario,
         )
+
+        # Latency gate: enforce the responsiveness expectations (max_ttft_ms,
+        # max_latency_ms, max_tts_first_chunk_ms) so latency regressions fail the
+        # run. Only scenarios that DEFINE a latency cap are gated — others keep
+        # pass_fail=None (unchanged behavior). Non-latency expectations (tools,
+        # handoffs, grounding) are NOT enforced here.
+        _LATENCY_CHECKS = {"max_ttft_ms", "max_latency_ms", "max_tts_first_chunk_ms"}
+        latency_checks = [
+            c
+            for r in ExpectationValidator().validate_run(events, self.scenario)
+            for c in r.checks
+            if c.check_name in _LATENCY_CHECKS
+        ]
+        if latency_checks:
+            summary.pass_fail = all(c.passed for c in latency_checks)
+            failed = [
+                f"{c.turn_id}:{c.check_name} {float(c.actual):.0f}ms>{c.expected}ms"
+                for c in latency_checks
+                if not c.passed
+            ]
+            if failed:
+                logger.warning("⏱️  Latency gate FAILED | %s", "; ".join(failed))
+            else:
+                logger.info(
+                    "⏱️  Latency gate passed | %d check(s)", len(latency_checks)
+                )
 
         # Save summary
         summary_path = self.output_dir / run_id / "summary.json"
