@@ -47,7 +47,7 @@ turns:
       # only care about the chunk dispatch timing here.
       tools_called: []
       max_tts_first_chunk_ms: 1500
-      max_ttft_ms: 5000
+      max_ttft_ms: 2500
       max_latency_ms: 8000
 
   - turn_id: ttfa_explain_wire_vs_ach
@@ -55,7 +55,7 @@ turns:
     expectations:
       tools_called: []
       max_tts_first_chunk_ms: 1500
-      max_ttft_ms: 5000
+      max_ttft_ms: 2500
       max_latency_ms: 8000
 
   - turn_id: ttfa_explain_apr_vs_apy
@@ -63,7 +63,7 @@ turns:
     expectations:
       tools_called: []
       max_tts_first_chunk_ms: 1500
-      max_ttft_ms: 5000
+      max_ttft_ms: 2500
       max_latency_ms: 8000
 
 # Aggregate thresholds — looser than per-turn because the scorer reports

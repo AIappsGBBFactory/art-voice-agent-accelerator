@@ -1101,6 +1101,24 @@ class ScenarioRunner:
             recorder=recorder,
         )
 
+        # Warm the Azure OpenAI connection before the first turn so TTFT reflects
+        # production (warm) latency instead of first-call cold-start. Production
+        # warms at app startup (lifecycle/steps.py::warm_openai_connection); the
+        # headless eval bypasses the app lifecycle, so without this the first
+        # turn's TTFT is inflated by ~2-3s of TLS/HTTP2/token cold-start (e.g.
+        # greeting ~4s vs ~1.2s once warm). Best-effort, non-blocking.
+        if not use_mock:
+            try:
+                from src.aoai.client import warm_openai_connection
+
+                warmed = await warm_openai_connection(timeout_sec=10.0)
+                logger.info(
+                    "🔥 AOAI connection warmup: %s",
+                    "ok" if warmed else "skipped/failed",
+                )
+            except Exception as exc:  # noqa: BLE001 - warmup is best-effort
+                logger.debug("AOAI warmup skipped: %s", exc)
+
         # Run turns
         for turn_data in self.scenario["turns"]:
             turn_id = turn_data["turn_id"]
