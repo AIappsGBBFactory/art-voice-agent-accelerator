@@ -575,16 +575,21 @@ def run_evaluation_with_streaming(input_path: Path, output_dir: Path | None = No
     
     # Run evaluation in subprocess
     start_time = time.time()
-    
+
+    # Capture the subprocess exit code so the latency gate (cli `run` exits 1
+    # when pass_fail is False) propagates through `make eval-run` to CI.
+    proc_result = {"returncode": 0}
+
     def run_subprocess():
         try:
-            subprocess.run(
+            completed = subprocess.run(
                 shell_cmd,
                 shell=True,
                 cwd=project_root,
                 env=env,
                 stdin=subprocess.DEVNULL,
             )
+            proc_result["returncode"] = completed.returncode
         finally:
             tailer.stop()
     
@@ -600,13 +605,19 @@ def run_evaluation_with_streaming(input_path: Path, output_dir: Path | None = No
         print(f"\n{Colors.YELLOW}Interrupted!{Colors.RESET}")
         return 130
     
-    # Wait for subprocess to finish
-    proc_thread.join(timeout=5)
+    # Wait for subprocess to finish scoring + latency gate (runs after the last
+    # turn event is written). Generous timeout so the returncode is reliable.
+    proc_thread.join(timeout=60)
     
     elapsed = time.time() - start_time
     print_scenario_summary(events, elapsed, runs_dir, tailer.all_validation_results)
-    
-    return 0
+
+    if proc_result["returncode"] != 0:
+        print(
+            f"{Colors.RED}❌ Evaluation FAILED "
+            f"(exit {proc_result['returncode']} — latency gate or error){Colors.RESET}"
+        )
+    return proc_result["returncode"]
 
 
 def main():
