@@ -425,8 +425,15 @@ class EventsFileTailer:
         self._stop = True
     
     def find_latest_events_file(self) -> Path | None:
-        """Find the most recently created *_events.jsonl file after start_time."""
-        events_files = list(self.runs_dir.glob("*_events.jsonl"))
+        """Find the most recently created *_events.jsonl file after start_time.
+
+        Uses rglob (recursive) so A/B comparisons are supported: ComparisonRunner
+        writes each variant's events to runs/<comparison>/<variant>/*_events.jsonl,
+        which a non-recursive glob would miss (leaving the UI stuck on
+        "Waiting for evaluation to start..." while the run proceeds in the
+        background).
+        """
+        events_files = list(self.runs_dir.rglob("*_events.jsonl"))
         if not events_files:
             return None
         
