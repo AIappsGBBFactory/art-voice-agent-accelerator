@@ -82,12 +82,12 @@ turns:
       no_handoff: true
       response_constraints:
         max_tokens: 100
-      # Custom assertion: email should go to jinle@microsoft.com
+      # Custom assertion: email should go to the demo user's email on file
       custom_assertions:
         - type: tool_result_contains
           tool: send_decline_summary_email
           field: recipient
-          expected: "jinle@microsoft.com"
+          expected: "${demo_user.email}"
 
   # Turn 4: Confirm email was sent correctly
   - turn_id: turn_4_confirm_email
@@ -97,9 +97,9 @@ turns:
       no_handoff: true
       response_constraints:
         max_tokens: 80
-        # Agent should confirm the email address
+        # Agent should confirm the email address on file
         should_mention:
-          - "jinle@microsoft.com"
+          - "${demo_user.email}"
 
 thresholds:
   min_tool_precision: 0.60
@@ -110,7 +110,7 @@ thresholds:
 metadata:
   test_focus: "email_functionality"
   target_tool: "send_decline_summary_email"
-  expected_email: "jinle@microsoft.com"
+  expected_email: "${demo_user.email}"
 
 foundry_export:
   enabled: true

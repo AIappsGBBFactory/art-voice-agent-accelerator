@@ -558,13 +558,34 @@ def run_evaluation_with_streaming(input_path: Path, output_dir: Path | None = No
         scenario = yaml.safe_load(f)
     scenario_name = scenario.get("scenario_name", scenario.get("name", input_path.stem))
     demo_user = scenario.get("demo_user")
-    
+
+    # Resolve the demo user's email the same way the runner does (env override
+    # wins over the scenario value) so expectations can reference it dynamically
+    # via the ${demo_user.email} / ${email} placeholders instead of hardcoding.
+    demo_email = None
+    if demo_user:
+        demo_email = os.environ.get("EVAL_EMAIL_OVERRIDE") or demo_user.get("email")
+
+    def _substitute_placeholders(obj):
+        """Recursively replace ${demo_user.email} / ${email} in expectations."""
+        if isinstance(obj, str):
+            if demo_email:
+                return obj.replace("${demo_user.email}", demo_email).replace(
+                    "${email}", demo_email
+                )
+            return obj
+        if isinstance(obj, dict):
+            return {k: _substitute_placeholders(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_substitute_placeholders(v) for v in obj]
+        return obj
+
     # Build turn expectations mapping from scenario turns
     turn_expectations = {}
     for turn in scenario.get("turns", []):
         turn_id = turn.get("turn_id")
         if turn_id and turn.get("expectations"):
-            turn_expectations[turn_id] = turn["expectations"]
+            turn_expectations[turn_id] = _substitute_placeholders(turn["expectations"])
     
     print_scenario_header(scenario_name, str(input_path), demo_user)
     
