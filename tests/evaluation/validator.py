@@ -242,8 +242,13 @@ class ExpectationValidator:
         Returns:
             TurnValidationResult with all check results
         """
-        # Normalize compact syntax to full format (Phase 1 refactor)
+        # Normalize compact syntax to full format (Phase 1 refactor).
+        # Keep the raw dict around so we can validate keys that
+        # ScenarioExpectations does not model (e.g. custom_assertions), which
+        # pydantic silently drops during model_validate.
+        raw_expectations: Dict[str, Any] = {}
         if isinstance(expectations, dict):
+            raw_expectations = expectations
             expectations = self._normalize_expectations(expectations)
             exp = ScenarioExpectations.model_validate(expectations)
         else:
@@ -358,6 +363,24 @@ class ExpectationValidator:
                 )
             )
 
+        # 5c. should_mention (response must reference the phrase). Used by the
+        # live email/context scenarios to assert the agent echoes the address on
+        # file. Placeholders like ${demo_user.email} are resolved upstream in the
+        # runner before validation, so we compare against the concrete value.
+        should_mention = constraints.get("should_mention", [])
+        for phrase in should_mention:
+            found = str(phrase).lower() in turn.response_text.lower()
+            checks.append(
+                ValidationResult(
+                    turn_id=turn_id,
+                    check_name=f"should_mention:{phrase}",
+                    passed=found,
+                    message=f"Response missing expected mention: '{phrase}'" if not found else f"Mentions '{phrase}'",
+                    expected=phrase,
+                    actual="Found" if found else "Not found",
+                )
+            )
+
         # 5c. max_tokens
         max_tokens = constraints.get("max_tokens")
         if max_tokens:
@@ -437,6 +460,46 @@ class ExpectationValidator:
                     ),
                     expected=exp.max_ttft_ms,
                     actual=turn.ttft_ms,
+                )
+            )
+
+        # 10. Custom assertions. These reference raw scenario keys that are not
+        # part of ScenarioExpectations (pydantic drops them), so read from the
+        # raw dict. Currently supports `tool_result_contains`, which asserts a
+        # named tool was called and its result contains an expected value
+        # (e.g. the decline-email scenario verifying the recipient address).
+        for assertion in raw_expectations.get("custom_assertions", []):
+            if not isinstance(assertion, dict):
+                continue
+            if assertion.get("type") != "tool_result_contains":
+                continue
+            tool_name = assertion.get("tool")
+            field = assertion.get("field")
+            expected_value = assertion.get("expected")
+
+            matched_tool = next(
+                (tc for tc in turn.tool_calls if tc.name == tool_name), None
+            )
+            if matched_tool is None:
+                passed = False
+                actual = "tool not called"
+            else:
+                result_text = matched_tool.result_summary or ""
+                passed = bool(expected_value) and str(expected_value) in result_text
+                actual = result_text[:120] if result_text else "empty result"
+
+            checks.append(
+                ValidationResult(
+                    turn_id=turn_id,
+                    check_name=f"custom_assertion:{tool_name}.{field}",
+                    passed=passed,
+                    message=(
+                        f"{tool_name}.{field} should contain '{expected_value}'"
+                        if not passed
+                        else f"{tool_name}.{field} contains '{expected_value}'"
+                    ),
+                    expected=expected_value,
+                    actual=actual,
                 )
             )
 

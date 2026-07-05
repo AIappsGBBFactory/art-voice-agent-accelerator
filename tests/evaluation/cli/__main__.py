@@ -68,6 +68,48 @@ from utils.ml_logging import get_logger
 logger = get_logger(__name__)
 
 
+def _maybe_setup_telemetry_export() -> bool:
+    """Optionally export eval spans/logs to Application Insights.
+
+    Off by default so routine eval runs stay quiet and cheap. Enable with
+    ``EVAL_EXPORT_TELEMETRY=true`` (requires APPLICATIONINSIGHTS_CONNECTION_STRING
+    and DISABLE_CLOUD_TELEMETRY unset). Content capture on the spans is governed
+    separately by ``EVAL_SPAN_CONTENT_ENABLED`` /
+    ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT``.
+    """
+    if os.getenv("EVAL_EXPORT_TELEMETRY", "false").lower() not in ("1", "true", "yes"):
+        return False
+    if os.getenv("DISABLE_CLOUD_TELEMETRY", "false").lower() in ("1", "true", "yes"):
+        logger.warning(
+            "EVAL_EXPORT_TELEMETRY set but DISABLE_CLOUD_TELEMETRY is true; skipping export"
+        )
+        return False
+    try:
+        from utils.telemetry_config import setup_azure_monitor
+
+        ok = bool(setup_azure_monitor(logger_name=""))
+        logger.info(
+            "Eval telemetry export %s",
+            "configured" if ok else "skipped (no connection string?)",
+        )
+        return ok
+    except Exception as exc:  # noqa: BLE001 - telemetry export is best-effort
+        logger.warning("Eval telemetry export setup failed: %s", exc)
+        return False
+
+
+def _flush_telemetry() -> None:
+    """Force-flush exported spans so they reach App Insights before exit."""
+    try:
+        from opentelemetry import trace
+
+        provider = trace.get_tracer_provider()
+        if hasattr(provider, "force_flush"):
+            provider.force_flush()
+    except Exception:  # noqa: BLE001 - best-effort flush
+        pass
+
+
 def _bootstrap_runtime(verbose: bool = False) -> dict[str, str | bool | None]:
     """Mirror runtime config loading for evaluations."""
 
@@ -103,6 +145,9 @@ def _bootstrap_runtime(verbose: bool = False) -> dict[str, str | bool | None]:
             logger.info("App Config not configured; using environment variables")
     except Exception as exc:  # noqa: BLE001 - leave status as-is
         logger.warning("App Config load failed: %s", exc)
+
+    # Opt-in: export eval telemetry to App Insights (off by default).
+    status["telemetry_export"] = _maybe_setup_telemetry_export()
 
     return status
 
@@ -335,7 +380,12 @@ def main():
     _bootstrap_runtime(verbose=args.verbose)
 
     # Execute subcommand
-    return args.func(args)
+    exit_code = args.func(args)
+
+    # Flush any exported telemetry so App Insights receives spans before exit.
+    _flush_telemetry()
+
+    return exit_code
 
 
 if __name__ == "__main__":

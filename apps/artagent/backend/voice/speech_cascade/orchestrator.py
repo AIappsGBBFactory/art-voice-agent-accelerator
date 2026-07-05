@@ -73,6 +73,7 @@ from apps.artagent.backend.voice.speech_cascade.tts_processor import TTSTextProc
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from src.enums.monitoring import GenAIOperation, GenAIProvider, SpanAttr
+from utils.eval_span import annotate_eval_content
 
 
 @dataclass
@@ -1547,6 +1548,7 @@ class CascadeOrchestratorAdapter:
         span_attributes = {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": self._active_agent,
+            "gen_ai.agent.id": f"{self._active_agent}:v1",
             "gen_ai.agent.description": f"Voice agent: {self._active_agent}",
             "gen_ai.provider.name": "azure.ai.openai",
             "gen_ai.request.model": model_name,
@@ -1926,6 +1928,15 @@ class CascadeOrchestratorAdapter:
                 span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
                 span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
                 span.set_attribute("gen_ai.response.length", len(response_text))
+
+                # Attach eval-ready content so Foundry trace evaluation can grade
+                # this turn directly from the invoke_agent span. No-op unless
+                # EVAL_SPAN_CONTENT_ENABLED=true; PII-scrubbed by default.
+                annotate_eval_content(
+                    span,
+                    input_messages=messages,
+                    output_text=response_text,
+                )
 
                 # Surface LLM time-to-first-token (request -> first streamed token).
                 # Keep the first iteration's value for the turn-level KPI summary.

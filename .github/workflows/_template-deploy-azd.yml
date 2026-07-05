@@ -709,7 +709,38 @@ jobs:
             echo "resource_group=unknown" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🚪 Logout
+      - name: � Persist App Insights connection (env variable)
+        # Persist the deployed App Insights connection string as an ENV VARIABLE
+        # so the post-deploy Live Evals workflow can (a) export eval telemetry and
+        # (b) derive the ApplicationId to verify it — no manual configuration.
+        # Done here (not in finalize) because this job holds the azd env values;
+        # the value is read from the sourced env file and never echoed.
+        # NOTE: the connection string's InstrumentationKey is ingestion-only
+        # (write telemetry, cannot read). Switch to `gh secret set` if your policy
+        # requires stricter handling.
+        if: inputs.action == 'up' || inputs.action == 'provision'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "ℹ️ GH_PAT not provided; skipping App Insights variable persistence."
+            exit 0
+          fi
+          # shellcheck disable=SC1091
+          source /tmp/azd-values.env 2>/dev/null || true
+          CS="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
+          if [ -n "$CS" ]; then
+            gh variable set APPLICATIONINSIGHTS_CONNECTION_STRING \
+              --body "$CS" \
+              --env "${{ inputs.environment }}" \
+              --repo "${{ github.repository }}" \
+              && echo "✅ APPLICATIONINSIGHTS_CONNECTION_STRING persisted (env variable)" \
+              || echo "⚠️ Could not persist APPLICATIONINSIGHTS_CONNECTION_STRING"
+          else
+            echo "ℹ️ APPLICATIONINSIGHTS_CONNECTION_STRING not present in azd env; skipping."
+          fi
+
+      - name: �🚪 Logout
         if: always()
         run: az logout || true
 
