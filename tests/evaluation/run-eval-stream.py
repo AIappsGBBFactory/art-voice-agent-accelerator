@@ -358,6 +358,31 @@ def print_scenario_summary(events: list[dict], elapsed_s: float, runs_dir: Path 
     if errors:
         print(f"  {C.RED}Errors:    {errors}{C.RESET}")
     print(f"  Avg E2E:   {format_duration(avg_e2e)}")
+    # Responsiveness KPIs alongside e2e. TTFT (LLM request -> first token) is the
+    # perceived-latency metric; e2e includes tool calls / multi-iteration time.
+    # TTFB (first audio byte) only exists when TTS runs — the headless eval does
+    # not synthesize audio, so it is reported n/a there.
+    ttft_vals = [e.get("ttft_ms") for e in events if e.get("ttft_ms") is not None]
+    if ttft_vals:
+        avg_ttft = sum(ttft_vals) / len(ttft_vals)
+        print(
+            f"  Avg TTFT:  {format_duration(avg_ttft)}"
+            f"{C.DIM} (max {format_duration(max(ttft_vals))}){C.RESET}"
+        )
+    else:
+        print(f"  Avg TTFT:  {C.DIM}n/a{C.RESET}")
+    ttfb_vals = [
+        e.get("tts_first_chunk_ms") for e in events
+        if e.get("tts_first_chunk_ms") is not None
+    ]
+    if ttfb_vals:
+        avg_ttfb = sum(ttfb_vals) / len(ttfb_vals)
+        print(
+            f"  Avg TTFB:  {format_duration(avg_ttfb)}"
+            f"{C.DIM} (max {format_duration(max(ttfb_vals))}){C.RESET}"
+        )
+    else:
+        print(f"  Avg TTFB:  {C.DIM}n/a (no TTS in headless eval){C.RESET}")
     print(f"  Elapsed:   {elapsed_s:.1f}s")
     
     # Expectations validation summary
