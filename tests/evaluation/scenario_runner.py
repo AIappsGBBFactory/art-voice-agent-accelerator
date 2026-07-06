@@ -86,6 +86,7 @@ from tests.evaluation.schemas import (
 )
 from tests.evaluation.scorer import MetricsScorer
 from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
+from tests.evaluation.validator import ExpectationValidator
 from apps.artagent.backend.registries.agentstore.base import ModelConfig
 from apps.artagent.backend.registries.agentstore.loader import (
     build_handoff_map,
@@ -946,6 +947,32 @@ class ScenarioRunner:
 
         return adapter, start_agent
 
+    def _resolve_expectation_placeholders(self, demo_email: str | None) -> None:
+        """Substitute ${demo_user.email}/${email} in turn expectations in place.
+
+        Downstream validation (custom_assertions, should_mention) compares
+        against concrete values, so the placeholders must be resolved to the
+        effective demo email (env override wins) before the gate runs. Mirrors
+        the substitution run-eval-stream.py performs for the streaming view.
+        """
+        if not demo_email:
+            return
+
+        def _sub(obj: Any) -> Any:
+            if isinstance(obj, str):
+                return obj.replace("${demo_user.email}", demo_email).replace(
+                    "${email}", demo_email
+                )
+            if isinstance(obj, dict):
+                return {k: _sub(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_sub(v) for v in obj]
+            return obj
+
+        for turn in self.scenario.get("turns", []):
+            if isinstance(turn, dict) and turn.get("expectations"):
+                turn["expectations"] = _sub(turn["expectations"])
+
     async def run(self) -> RunSummary:
         """
         Run the scenario and return summary.
@@ -987,10 +1014,15 @@ class ScenarioRunner:
             # Check for email override from environment (set by CLI)
             email_override = os.environ.get("EVAL_EMAIL_OVERRIDE")
             demo_email = email_override or demo_user_config.get("email", "sarah.johnson@example.com")
-            
+
             if email_override:
                 logger.info(f"📧 Email override active: {email_override}")
-            
+
+            # Resolve ${demo_user.email}/${email} placeholders in turn
+            # expectations so custom_assertions / should_mention validate against
+            # the real recipient rather than the literal placeholder string.
+            self._resolve_expectation_placeholders(demo_email)
+
             logger.info(f"Creating demo user: {demo_user_config.get('full_name', 'unknown')} (email={demo_email})")
             demo_user_data = await create_demo_user(
                 full_name=demo_user_config.get("full_name", "Sarah Johnson"),
@@ -1100,6 +1132,24 @@ class ScenarioRunner:
             recorder=recorder,
         )
 
+        # Warm the Azure OpenAI connection before the first turn so TTFT reflects
+        # production (warm) latency instead of first-call cold-start. Production
+        # warms at app startup (lifecycle/steps.py::warm_openai_connection); the
+        # headless eval bypasses the app lifecycle, so without this the first
+        # turn's TTFT is inflated by ~2-3s of TLS/HTTP2/token cold-start (e.g.
+        # greeting ~4s vs ~1.2s once warm). Best-effort, non-blocking.
+        if not use_mock:
+            try:
+                from src.aoai.client import warm_openai_connection
+
+                warmed = await warm_openai_connection(timeout_sec=10.0)
+                logger.info(
+                    "🔥 AOAI connection warmup: %s",
+                    "ok" if warmed else "skipped/failed",
+                )
+            except Exception as exc:  # noqa: BLE001 - warmup is best-effort
+                logger.debug("AOAI warmup skipped: %s", exc)
+
         # Run turns
         for turn_data in self.scenario["turns"]:
             turn_id = turn_data["turn_id"]
@@ -1149,6 +1199,55 @@ class ScenarioRunner:
             scenario_name=scenario_name,
             expectations=self.scenario,
         )
+
+        # Latency gate: enforce the responsiveness expectations (max_ttft_ms,
+        # max_latency_ms, max_tts_first_chunk_ms) so latency regressions fail the
+        # run. Only scenarios that DEFINE a latency cap are gated — others keep
+        # pass_fail=None (unchanged behavior).
+        #
+        # Strict gate (EVAL_STRICT_GATE=1, set by the live-eval CI job): widen
+        # the gate to ALL validation checks — required/forbidden tools, handoffs,
+        # response constraints, should_mention and custom_assertions — so
+        # functional regressions (e.g. the decline-email recipient) also fail CI.
+        _LATENCY_CHECKS = {"max_ttft_ms", "max_latency_ms", "max_tts_first_chunk_ms"}
+        all_checks = [
+            c
+            for r in ExpectationValidator().validate_run(events, self.scenario)
+            for c in r.checks
+        ]
+        latency_checks = [c for c in all_checks if c.check_name in _LATENCY_CHECKS]
+
+        strict_gate = os.environ.get("EVAL_STRICT_GATE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+
+        if strict_gate and all_checks:
+            summary.pass_fail = all(c.passed for c in all_checks)
+            failed = [
+                f"{c.turn_id}:{c.check_name}" for c in all_checks if not c.passed
+            ]
+            if failed:
+                logger.warning("🔒 Strict gate FAILED | %s", "; ".join(failed))
+            else:
+                logger.info(
+                    "🔒 Strict gate passed | %d check(s)", len(all_checks)
+                )
+        elif latency_checks:
+            summary.pass_fail = all(c.passed for c in latency_checks)
+            failed = [
+                f"{c.turn_id}:{c.check_name} {float(c.actual):.0f}ms>{c.expected}ms"
+                for c in latency_checks
+                if not c.passed
+            ]
+            if failed:
+                logger.warning("⏱️  Latency gate FAILED | %s", "; ".join(failed))
+            else:
+                logger.info(
+                    "⏱️  Latency gate passed | %d check(s)", len(latency_checks)
+                )
 
         # Save summary
         summary_path = self.output_dir / run_id / "summary.json"

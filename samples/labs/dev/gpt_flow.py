@@ -39,6 +39,7 @@ from apps.artagent.backend.src.ws_helpers.shared_ws import (
 )
 from apps.artagent.backend.config import AZURE_OPENAI_ENDPOINT
 from utils.ml_logging import get_logger
+from utils.pii_filter import mask_pii
 from utils.trace_context import create_trace_context
 from apps.artagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
@@ -285,8 +286,8 @@ async def _broadcast_dashboard(
     try:
         sender = _get_agent_sender_name(cm, include_autoauth=include_autoauth)
         logger.info(
-            "🎯 _broadcast_dashboard: sender='%s', include_autoauth=%s, msg_len=%d",
-            sender,
+            "🎯 _broadcast_dashboard: sender=%s, include_autoauth=%s, msg_len=%d",
+            mask_pii(sender, prefix="sender"),
             include_autoauth,
             len(message or ""),
         )

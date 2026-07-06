@@ -41,6 +41,10 @@ turns:
     expectations:
       # No tools required for greeting - just verify response
       tools_called: []
+      # TTFT gate (LLM request -> first token). The runner warms the AOAI
+      # connection first (like production), so this reflects warm latency
+      # (~0.8-1s locally). 3000ms leaves headroom for CI variance.
+      max_ttft_ms: 3000
       response_constraints:
         must_include_any:
           - "help"
@@ -53,6 +57,9 @@ turns:
       # This MUST trigger identity verification
       tools_called:
         - verify_client_identity
+      # TTFT is measured before tool execution, so tool/Cosmos latency does
+      # not inflate it — a clean responsiveness gate even on tool turns.
+      max_ttft_ms: 3000
       # Response should acknowledge verification attempt
       response_constraints:
         must_include_any:

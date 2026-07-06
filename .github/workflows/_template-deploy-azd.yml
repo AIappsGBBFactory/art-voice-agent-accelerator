@@ -346,6 +346,7 @@ jobs:
       resource_group: ${{ steps.outputs.outputs.resource_group }}
       frontend_url: ${{ steps.outputs.outputs.frontend_url }}
       backend_url: ${{ steps.outputs.outputs.backend_url }}
+      backend_container_app_name: ${{ steps.outputs.outputs.backend_container_app_name }}
       container_registry_endpoint: ${{ steps.outputs.outputs.container_registry_endpoint }}
       appconfig_endpoint: ${{ steps.outputs.outputs.appconfig_endpoint }}
       appconfig_label: ${{ steps.outputs.outputs.appconfig_label }}
@@ -695,6 +696,7 @@ jobs:
             echo "openai_deployment=${AZURE_OPENAI_CHAT_DEPLOYMENT_ID:-gpt-4o}" >> $GITHUB_OUTPUT
             echo "speech_region=${AZURE_SPEECH_REGION:-}" >> $GITHUB_OUTPUT
             echo "ai_foundry_project_endpoint=${ai_foundry_account_endpoint:-}" >> $GITHUB_OUTPUT
+            echo "backend_container_app_name=${BACKEND_CONTAINER_APP_NAME:-}" >> $GITHUB_OUTPUT
             
             echo "📊 Outputs extracted:"
             echo "  Resource Group: ${AZURE_RESOURCE_GROUP:-unknown}"
@@ -709,7 +711,38 @@ jobs:
             echo "resource_group=unknown" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🚪 Logout
+      - name: � Persist App Insights connection (env variable)
+        # Persist the deployed App Insights connection string as an ENV VARIABLE
+        # so the post-deploy Live Evals workflow can (a) export eval telemetry and
+        # (b) derive the ApplicationId to verify it — no manual configuration.
+        # Done here (not in finalize) because this job holds the azd env values;
+        # the value is read from the sourced env file and never echoed.
+        # NOTE: the connection string's InstrumentationKey is ingestion-only
+        # (write telemetry, cannot read). Switch to `gh secret set` if your policy
+        # requires stricter handling.
+        if: inputs.action == 'up' || inputs.action == 'provision'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "ℹ️ GH_PAT not provided; skipping App Insights variable persistence."
+            exit 0
+          fi
+          # shellcheck disable=SC1091
+          source /tmp/azd-values.env 2>/dev/null || true
+          CS="${APPLICATIONINSIGHTS_CONNECTION_STRING:-}"
+          if [ -n "$CS" ]; then
+            gh variable set APPLICATIONINSIGHTS_CONNECTION_STRING \
+              --body "$CS" \
+              --env "${{ inputs.environment }}" \
+              --repo "${{ github.repository }}" \
+              && echo "✅ APPLICATIONINSIGHTS_CONNECTION_STRING persisted (env variable)" \
+              || echo "⚠️ Could not persist APPLICATIONINSIGHTS_CONNECTION_STRING"
+          else
+            echo "ℹ️ APPLICATIONINSIGHTS_CONNECTION_STRING not present in azd env; skipping."
+          fi
+
+      - name: �🚪 Logout
         if: always()
         run: az logout || true
 
@@ -737,6 +770,8 @@ jobs:
           OPENAI_DEPLOYMENT: ${{ needs.execute.outputs.openai_deployment }}
           SPEECH_REGION: ${{ needs.execute.outputs.speech_region }}
           AI_FOUNDRY_PROJECT_ENDPOINT: ${{ needs.execute.outputs.ai_foundry_project_endpoint }}
+          BACKEND_URL: ${{ needs.execute.outputs.backend_url }}
+          BACKEND_CONTAINER_APP_NAME: ${{ needs.execute.outputs.backend_container_app_name }}
         run: |
           echo "📝 Updating GitHub environment variables for '${{ inputs.environment }}'..."
 
@@ -808,6 +843,23 @@ jobs:
               --env "${{ inputs.environment }}" \
               --repo "${{ github.repository }}" || echo "⚠️ Could not set AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"
             echo "✅ AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=$AI_FOUNDRY_PROJECT_ENDPOINT"
+          fi
+
+          # Backend readiness vars (used by live-evals post-deploy)
+          if [ -n "$BACKEND_URL" ] && [ "$BACKEND_URL" != "unknown" ]; then
+            gh variable set BACKEND_CONTAINER_APP_URL \
+              --body "$BACKEND_URL" \
+              --env "${{ inputs.environment }}" \
+              --repo "${{ github.repository }}" || echo "⚠️ Could not set BACKEND_CONTAINER_APP_URL"
+            echo "✅ BACKEND_CONTAINER_APP_URL=$BACKEND_URL"
+          fi
+
+          if [ -n "$BACKEND_CONTAINER_APP_NAME" ] && [ "$BACKEND_CONTAINER_APP_NAME" != "unknown" ]; then
+            gh variable set BACKEND_CONTAINER_APP_NAME \
+              --body "$BACKEND_CONTAINER_APP_NAME" \
+              --env "${{ inputs.environment }}" \
+              --repo "${{ github.repository }}" || echo "⚠️ Could not set BACKEND_CONTAINER_APP_NAME"
+            echo "✅ BACKEND_CONTAINER_APP_NAME=$BACKEND_CONTAINER_APP_NAME"
           fi
 
       - name: 📋 Generate Summary

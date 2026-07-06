@@ -350,11 +350,10 @@ jobs:
               total += 1
               start_time = time.time()
               
-              # Build command
-              if stype == "comparison":
-                  cmd = f"python -m tests.evaluation.cli compare --input {path} --output runs/results/{name}"
-              else:
-                  cmd = f"python -m tests.evaluation.cli scenario --input {path} --output runs/results/{name}"
+              # Build command. The CLI exposes a single `run` subcommand that
+              # auto-detects scenario vs A/B comparison from the YAML (presence
+              # of a `variants:` block), so both types use the same invocation.
+              cmd = f"python -m tests.evaluation.cli run --input {path} --output runs/results/{name}"
               
               # Execute
               result = subprocess.run(cmd, shell=True, capture_output=True, text=True)

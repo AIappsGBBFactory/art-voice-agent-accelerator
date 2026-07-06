@@ -2432,6 +2432,7 @@ class LiveOrchestrator:
                 SpanAttr.GENAI_PROVIDER_NAME.value: GenAIProvider.AZURE_OPENAI,
                 SpanAttr.GENAI_REQUEST_MODEL.value: self._model_name,
                 "gen_ai.agent.name": agent_name,
+                "gen_ai.agent.id": f"{agent_name}:v1",
                 "gen_ai.agent.description": getattr(
                     agent, "description", f"VoiceLive agent: {agent_name}"
                 ),

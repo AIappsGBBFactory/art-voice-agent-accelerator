@@ -166,6 +166,11 @@ class EvaluationOrchestratorWrapper:
                 response_tokens=response_tokens,
                 input_tokens=getattr(result, "input_tokens", None),
                 error=result.error if hasattr(result, "error") else None,
+                # TTFT (request -> first streamed token, first LLM iteration) is
+                # computed by the orchestrator and is the meaningful voice
+                # responsiveness KPI. e2e_ms includes tool calls / multi-turn
+                # iterations, so it is NOT a proxy for perceived latency.
+                ttft_ms=getattr(result, "ttft_ms", None),
             )
 
             return result

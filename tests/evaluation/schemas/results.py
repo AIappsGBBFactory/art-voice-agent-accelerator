@@ -47,6 +47,9 @@ class PerTurnSummary(BaseModel):
     agent_name: str
     model_used: str = Field(..., description="Model deployment actually used")
     e2e_ms: float
+    ttft_ms: Optional[float] = Field(
+        None, description="Time to first token (ms) — voice responsiveness KPI"
+    )
     tools_expected: List[str] = Field(
         default_factory=list, description="Expected tools from YAML"
     )

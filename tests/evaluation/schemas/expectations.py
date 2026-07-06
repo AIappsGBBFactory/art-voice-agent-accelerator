@@ -137,6 +137,15 @@ class ScenarioExpectations(BaseModel):
             "perceived response)."
         ),
     )
+    max_ttft_ms: Optional[int] = Field(
+        None,
+        description=(
+            "Maximum allowed LLM time-to-first-token in milliseconds. TTFT "
+            "(request -> first streamed token) is the core voice-responsiveness "
+            "KPI; unlike e2e it excludes tool-call and multi-iteration time. "
+            "This is the latency gate that actually populates in headless runs."
+        ),
+    )
 
 
 __all__ = [

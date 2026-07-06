@@ -529,9 +529,12 @@ async def add_mcp_server(
         server.url, timeout=server.timeout, headers=merged_headers
     )
     if not is_healthy:
+        logger.error(
+            "MCP server health check failed | url=%s error=%s", server.url, error
+        )
         raise HTTPException(
             status_code=503,
-            detail=f"Cannot connect to MCP server at {server.url}: {error}",
+            detail=f"Cannot connect to MCP server at {server.url}.",
         )
 
     # Discover and register tools (with auth headers)
@@ -545,13 +548,13 @@ async def add_mcp_server(
 
     if register_error:
         logger.error(
-            "Connected to MCP server '%s' but failed to register tools: %s",
+            "MCP tool registration failed | server=%s error=%s",
             server.name,
             register_error,
         )
         raise HTTPException(
             status_code=500,
-            detail="Connected to server but failed to register tools",
+            detail="Connected to server but failed to register tools.",
         )
 
     # Store in runtime registry (including headers for tool execution)
@@ -931,7 +934,7 @@ async def oauth_callback(
         logger.error(f"OAuth token exchange request failed: {e}")
         raise HTTPException(
             status_code=502,
-            detail=f"Failed to contact token endpoint: {e}",
+            detail="Failed to contact token endpoint.",
         )
 
     # Store the token with the MCP server config
