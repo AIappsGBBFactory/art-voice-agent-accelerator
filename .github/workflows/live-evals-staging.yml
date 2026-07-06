@@ -76,6 +76,10 @@ jobs:
       EVAL_EXPORT_TELEMETRY: '1'
       EVAL_SPAN_CONTENT_ENABLED: '1'
       APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ vars.APPLICATIONINSIGHTS_CONNECTION_STRING || secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
+      # Backend location — persisted by the deploy pipeline so we can poll readiness.
+      BACKEND_CONTAINER_APP_NAME: ${{ vars.BACKEND_CONTAINER_APP_NAME }}
+      BACKEND_CONTAINER_APP_URL: ${{ vars.BACKEND_CONTAINER_APP_URL || vars.BACKEND_API_URL }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
 
     steps:
       - name: 🛒 Checkout
@@ -121,6 +125,60 @@ jobs:
             echo "❌ Authentication failed"
             exit 1
           fi
+
+      - name: ⏳ Wait for Backend Revision to be Live
+        # Waits until the active container app revision is in Running state AND
+        # the health endpoint is responding before running any LLM scenarios.
+        # Skipped gracefully if BACKEND_CONTAINER_APP_NAME/AZURE_RESOURCE_GROUP
+        # are not yet set (e.g. first ever deploy before vars are persisted).
+        run: |
+          set -uo pipefail
+          APP="${BACKEND_CONTAINER_APP_NAME:-}"
+          RG="${AZURE_RESOURCE_GROUP:-}"
+          URL="${BACKEND_CONTAINER_APP_URL:-}"
+
+          if [ -z "$APP" ] || [ -z "$RG" ]; then
+            echo "⚠️ BACKEND_CONTAINER_APP_NAME or AZURE_RESOURCE_GROUP not set; skipping revision wait."
+            echo "   (Will be available after the first deploy populates GitHub vars.)"
+            exit 0
+          fi
+
+          echo "Waiting for active revision of $APP ($RG) to reach Running state..."
+          for attempt in $(seq 1 20); do
+            STATE=$(az containerapp revision list -n "$APP" -g "$RG" \
+              --query "[?properties.active==\`true\`].properties.runningState" \
+              -o tsv 2>/dev/null | head -1)
+            PROV=$(az containerapp revision list -n "$APP" -g "$RG" \
+              --query "[?properties.active==\`true\`].properties.provisioningState" \
+              -o tsv 2>/dev/null | head -1)
+            echo "  attempt $attempt/20: runningState=$STATE provisioningState=$PROV"
+            if [ "$STATE" = "Running" ] && [ "$PROV" = "Provisioned" ]; then
+              echo "✅ Revision is Running and Provisioned"
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "❌ Timed out waiting for revision to reach Running state"
+              exit 1
+            fi
+            sleep 15
+          done
+
+          # Second gate: health endpoint responding.
+          if [ -n "$URL" ]; then
+            echo "Polling health endpoint: $URL/health ..."
+            for attempt in $(seq 1 10); do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL/health" 2>/dev/null || echo "000")
+              echo "  attempt $attempt/10: HTTP $STATUS"
+              if [[ "$STATUS" =~ ^2 ]]; then
+                echo "✅ Backend health endpoint returned $STATUS"
+                exit 0
+              fi
+              sleep 10
+            done
+            echo "❌ Backend health endpoint did not return 2xx after 10 attempts"
+            exit 1
+          fi
+          echo "✅ Revision live (no BACKEND_CONTAINER_APP_URL to health-check)"
 
       - name: 🐍 Setup Python 3.11
         uses: actions/setup-python@v5
