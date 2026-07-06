@@ -167,6 +167,21 @@ class FilteringSpanProcessor(SpanProcessor):
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         return self._next.force_flush(timeout_millis)
 
+    def add_span_processor(self, span_processor: SpanProcessor) -> None:
+        """Forward processor registration to the wrapped processor.
+
+        ``TracerProvider.add_span_processor`` delegates to
+        ``_active_span_processor``, which this wrapper replaces. Without this
+        passthrough, registering further processors (e.g.
+        SessionContextSpanProcessor) after the filtering wrapper is installed
+        raises ``AttributeError``.
+        """
+        inner = getattr(self._next, "add_span_processor", None)
+        if callable(inner):
+            inner(span_processor)
+        else:
+            logger.warning("Wrapped span processor does not support add_span_processor")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UTILITY FUNCTIONS
@@ -388,11 +403,11 @@ def setup_azure_monitor(logger_name: str = None) -> bool:
             instrumentation_options=instrumentation_options,
         )
 
-        # Install filtering span processor for noise reduction
-        _install_filtering_processor()
-
-        # Install session context span processor for automatic correlation
+        # Install session context span processor first (registers into the
+        # provider's processor list), then wrap everything with the filtering
+        # processor for noise reduction / PII scrubbing.
         _install_session_context_processor()
+        _install_filtering_processor()
 
         status_msg = "✅ Azure Monitor configured successfully"
         if not enable_live_metrics:
@@ -463,11 +478,9 @@ def _retry_without_live_metrics(
             },
         )
 
-        # Install filtering span processor
-        _install_filtering_processor()
-
-        # Install session context span processor
+        # Install session context processor first, then wrap with filtering.
         _install_session_context_processor()
+        _install_filtering_processor()
 
         logger.info(
             "✅ Azure Monitor configured successfully (live metrics disabled due to permissions)"
