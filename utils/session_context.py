@@ -76,6 +76,10 @@ class SessionCorrelation:
             Maps to App Insights ``ai.user.authenticatedId`` so a single user
             can be correlated across many sessions.
         user_email: Authenticated user email / UPN for readable attribution.
+        device_id: Persistent anonymous per-browser/device identifier (e.g. the
+            App Insights ``ai_user`` id forwarded by the SPA). Used as the
+            ``ai.user.id`` bucket when there is no authenticated user, so
+            anonymous sessions from the same browser still group across time.
         extra: Additional custom attributes
     """
 
@@ -85,6 +89,7 @@ class SessionCorrelation:
     agent_name: str | None = None
     user_id: str | None = None
     user_email: str | None = None
+    device_id: str | None = None
     extra: dict = field(default_factory=dict)
 
     @property
@@ -122,11 +127,13 @@ class SessionCorrelation:
             attrs["enduser.id"] = self.user_id  # OpenTelemetry semantic convention
             attrs["ai.user.authenticatedId"] = self.user_id  # App Insights standard
         else:
-            # No authenticated user; bucket anonymously by session so the
-            # Users blade still renders without collapsing every session
-            # into one synthetic user.
-            if session_key:
-                attrs["ai.user.id"] = session_key
+            # No authenticated user; bucket by the persistent device id (so the
+            # same browser groups across sessions, matching the browser's own
+            # ai_user), falling back to the session id when no device id is
+            # available so the Users blade still renders.
+            anon_id = self.device_id or session_key
+            if anon_id:
+                attrs["ai.user.id"] = anon_id
         if self.user_email:
             attrs["enduser.email"] = self.user_email
         if self.transport_type:
@@ -148,6 +155,7 @@ class SessionCorrelation:
             "agent_name": self.agent_name or "-",
             "user_id": self.user_id or "-",
             "user_email": self.user_email or "-",
+            "device_id": self.device_id or "-",
             **{k: v for k, v in self.extra.items() if isinstance(v, (str, int, float, bool))},
         }
 
@@ -172,6 +180,7 @@ async def session_context(
     user_id: str | None = None,
     user_email: str | None = None,
     trace_parent: str | None = None,
+    device_id: str | None = None,
     **extra: Any,
 ):
     """
@@ -205,6 +214,7 @@ async def session_context(
         agent_name=agent_name,
         user_id=user_id,
         user_email=user_email,
+        device_id=device_id,
         extra=extra,
     )
 
@@ -236,6 +246,7 @@ def session_context_sync(
     agent_name: str | None = None,
     user_id: str | None = None,
     user_email: str | None = None,
+    device_id: str | None = None,
     **extra: Any,
 ):
     """
@@ -250,6 +261,7 @@ def session_context_sync(
         agent_name=agent_name,
         user_id=user_id,
         user_email=user_email,
+        device_id=device_id,
         extra=extra,
     )
 
@@ -276,6 +288,7 @@ def set_session_context(
     agent_name: str | None = None,
     user_id: str | None = None,
     user_email: str | None = None,
+    device_id: str | None = None,
     **extra: Any,
 ) -> contextvars.Token:
     """
@@ -297,6 +310,7 @@ def set_session_context(
         agent_name=agent_name,
         user_id=user_id,
         user_email=user_email,
+        device_id=device_id,
         extra=extra,
     )
     return _session_context.set(correlation)

@@ -51,7 +51,7 @@ import {
 } from '../utils/session.js';
 import logger from '../utils/logger.js';
 import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
-import { setVoiceSession, getSessionTraceparent, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
+import { setVoiceSession, getSessionTraceparent, getDeviceId, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
 import { buildAuthQueryParams, getAuthenticatedUser } from '../utils/auth.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
@@ -2669,7 +2669,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
       const baseConversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${currentSessionId}&streaming_mode=${encodeURIComponent(
         realtimeMode,
-      )}${emailParam}${buildAuthQueryParams()}&client_traceparent=${encodeURIComponent(getSessionTraceparent(currentSessionId))}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
+      )}${emailParam}${buildAuthQueryParams()}&client_user_id=${encodeURIComponent(getDeviceId() || '')}&client_traceparent=${encodeURIComponent(getSessionTraceparent(currentSessionId))}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
       resetMetrics(currentSessionId);
       assistantStreamGenerationRef.current = 0;
       assistantStreamBufferRef.current = { turnId: null, text: "" };

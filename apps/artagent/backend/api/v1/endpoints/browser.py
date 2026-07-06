@@ -204,6 +204,9 @@ async def browser_conversation_endpoint(
     client_traceparent: str | None = Query(
         None, description="W3C traceparent from the browser App Insights operation, for end-to-end trace correlation."
     ),
+    client_user_id: str | None = Query(
+        None, description="Persistent anonymous browser/device id (App Insights ai_user). Groups anonymous sessions when EasyAuth is off."
+    ),
     scenario: str | None = Query(None, description="Scenario name (e.g., 'banking', 'default')"),
 ) -> None:
     """
@@ -253,6 +256,7 @@ async def browser_conversation_endpoint(
         transport_type="BROWSER",
         user_id=telemetry_user_id,
         user_email=telemetry_user_email,
+        device_id=client_user_id,
         trace_parent=client_traceparent,
         component="browser.conversation",
     ):

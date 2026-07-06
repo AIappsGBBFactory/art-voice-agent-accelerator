@@ -173,6 +173,34 @@ export const setVoiceSession = (sessionId) => {
  */
 export const getSessionTraceparent = (sessionId) => beginOperation(sessionId);
 
+const DEVICE_ID_KEY = 'voice_agent_device_id';
+
+/**
+ * Stable, persistent anonymous browser/device id. Prefers the App Insights
+ * ai_user id (already persisted in the ai_user cookie ~1yr) so the backend
+ * groups anonymous sessions the SAME way the browser does; falls back to a
+ * localStorage-persisted id when telemetry is disabled. Enables cross-session
+ * tracking even when EasyAuth is off (device-level rather than identity-level).
+ */
+export const getDeviceId = () => {
+  try {
+    const aiId = appInsights?.context?.user?.id;
+    if (aiId) return String(aiId);
+  } catch {
+    /* noop */
+  }
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id = `device_${randomHex(8)}`;
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+};
+
 const withSession = (properties = {}) => ({
   ...properties,
   ...(currentSessionId ? { session_id: currentSessionId } : {}),
