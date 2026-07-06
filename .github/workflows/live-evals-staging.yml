@@ -1,30 +1,26 @@
 name: 🎙️ Live Evals (Staging)
-run-name: 🎙️ Live Evals (Staging) — ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+run-name: 🎙️ Live Evals (Staging) — ${{ github.ref_name }}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Post-deploy functional gate for the staging environment.
 #
-# Runs a curated set of evaluation scenarios in-process against the staging
-# Azure resources (AOAI / Speech / App Config) to ensure core functionality is
-# still intact after a deploy:
-#   • decline_specialist_email  — send a decline summary email to the address
-#                                  supplied via the EVAL_EMAIL_RECIPIENT secret
-#   • all_agents_discovery      — dynamic agent discovery + routing
-#   • banking_context_sharing   — handoff context sharing (shared vs not shared)
-#   • latency_first_audio       — live TTFT / time-to-first-audio latency gate
+# IMPORTANT — why workflow_run is NOT used here
+# GitHub only evaluates workflow_run triggers from the default branch (main),
+# but this workflow must run from the staging branch so the "staging"
+# environment protection rule (staging branch only) is satisfied.
 #
-# The scenarios run with EVAL_STRICT_GATE=1 so tool, handoff, custom_assertion,
-# should_mention AND latency checks all hard-fail the job (not just latency).
+# Instead, the deploy pipeline dispatches this workflow on the staging ref at
+# the end of a successful staging deploy via `gh workflow run --ref staging`.
+# That means the workflow always runs FROM staging → environment gate passes.
+#
+# Triggered two ways:
+#   1. Automatically — dispatched by the deploy pipeline after azd up (staging)
+#   2. Manually     — workflow_dispatch from the staging branch
 # ═══════════════════════════════════════════════════════════════════════════════
 
 on:
-  # Chain off a successful deploy to staging.
-  workflow_run:
-    workflows: ["🚀 Deploy to Azure"]
-    types: [completed]
-    branches: [staging]
-
-  # Manual on-demand run (optionally override the recipient email).
+  # Dispatched by the deploy pipeline at the end of a successful staging deploy.
+  # Also supports manual on-demand runs (optionally override the recipient email).
   workflow_dispatch:
     inputs:
       email_recipient:
@@ -50,9 +46,7 @@ jobs:
     name: 🎯 Run Live Scenarios
     runs-on: ubuntu-latest
     # Only run when the triggering deploy succeeded (or on manual dispatch).
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch'
     environment: staging
 
     env:
