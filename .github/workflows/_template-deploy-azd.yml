@@ -881,6 +881,8 @@ jobs:
             --ref staging \
             && echo "✅ Live evals dispatched on staging" \
             || echo "⚠️ Could not dispatch live-evals (workflow may not exist on staging yet)"
+
+      - name: 📋 Generate Summary
         run: |
           ACTION="${{ inputs.action }}"
           ENV="${{ inputs.environment }}"
