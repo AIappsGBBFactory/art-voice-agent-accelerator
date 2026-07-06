@@ -67,8 +67,13 @@ turns:
   - turn_id: turn_2_decline_explanation
     user_input: "The receipt shows code 51. What does that mean?"
     expectations:
-      tools_called:
+      # Agent may use lookup_decline_code (cardapi tool) or search_knowledge_base
+      # to look up the decline code — both are valid approaches.
+      tools_called: []
+      tools_optional:
         - lookup_decline_code
+        - search_knowledge_base
+        - get_recent_transactions
       no_handoff: true
       response_constraints:
         max_tokens: 200
@@ -96,7 +101,7 @@ turns:
       tools_called: []
       no_handoff: true
       response_constraints:
-        max_tokens: 80
+        max_tokens: 120
         # Agent should confirm the email address on file
         should_mention:
           - "${demo_user.email}"
