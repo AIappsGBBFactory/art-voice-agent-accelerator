@@ -16,6 +16,7 @@
     "@azure/communication-common": "^2.3.1",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@microsoft/applicationinsights-web": "^3.3.6",
     "@mui/icons-material": "^7.3.4",
     "@mui/material": "^7.3.4",
     "react": "^19.0.0",

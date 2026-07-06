@@ -51,6 +51,8 @@ import {
 } from '../utils/session.js';
 import logger from '../utils/logger.js';
 import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
+import { setVoiceSession, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
+import { buildAuthQueryParams } from '../utils/auth.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
 const STREAM_MODE_STORAGE_KEY = 'artagent.streamingMode';
@@ -2381,6 +2383,24 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         logger.debug(`[Metrics] ${label}`, metricsRef.current);
       }
 
+      // Forward to App Insights: numeric fields become measurements so they
+      // are aggregatable; the rest are custom properties.
+      if (detail && typeof detail === 'object') {
+        const properties = {};
+        const measurements = {};
+        for (const [key, value] of Object.entries(detail)) {
+          if (value === undefined || value === null || value === '') continue;
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            measurements[key] = value;
+          } else {
+            properties[key] = String(value);
+          }
+        }
+        trackEvent(`voice.metrics.${label}`, properties, measurements);
+      } else {
+        trackEvent(`voice.metrics.${label}`, typeof detail === 'string' ? { detail } : {});
+      }
+
       appendLog(formatted ? `📈 ${label} — ${formatted}` : `📈 ${label}`);
     },
     [appendLog],
@@ -2407,6 +2427,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       metrics.sessionStart = performance.now();
       metrics.sessionStartIso = new Date().toISOString();
       metrics.sessionId = sessionId;
+      // Bind the voice session id so all browser telemetry shares
+      // ai.session.id with the backend for this call.
+      setVoiceSession(sessionId);
+      trackEvent('voice.session.start', { at: metrics.sessionStartIso });
       publishMetricsSummary("Session metrics reset", {
         sessionId,
         at: metrics.sessionStartIso,
@@ -2466,6 +2490,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           publishMetricsSummary("TTFT captured", {
             ttftMs: toMs(metrics.ttftMs),
           });
+          // First-class aggregatable metric for App Insights dashboards.
+          trackMetric('voice.ttft_ms', Math.round(metrics.ttftMs), { speaker: String(speaker || '') });
         }
         publishMetricsSummary(`Turn ${turn.id} first token`, {
           latencyMs: toMs(turn.firstTokenLatencyMs),
@@ -2635,7 +2661,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
       const baseConversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${currentSessionId}&streaming_mode=${encodeURIComponent(
         realtimeMode,
-      )}${emailParam}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
+      )}${emailParam}${buildAuthQueryParams()}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
       resetMetrics(currentSessionId);
       assistantStreamGenerationRef.current = 0;
       assistantStreamBufferRef.current = { turnId: null, text: "" };
@@ -2665,6 +2691,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       const connectSocket = (isReconnect = false) => {
         const ws = new WebSocket(baseConversationUrl);
         ws.binaryType = "arraybuffer";
+        const wsOpenStart = performance.now();
 
         ws.onopen = () => {
           appendLog(isReconnect ? "🔌 WS reconnected - Connected to backend!" : "🔌 WS open - Connected to backend!");
@@ -2673,12 +2700,23 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             isReconnect ? "RECONNECTED" : "OPENED",
             baseConversationUrl,
           );
+          trackEvent(
+            'voice.ws.open',
+            { reconnect: isReconnect, mode: String(realtimeMode) },
+            { connect_latency_ms: Math.round(performance.now() - wsOpenStart) },
+          );
           reconnectAttemptsRef.current = 0;
         };
 
         ws.onclose = (event) => {
           appendLog(`🔌 WS closed - Code: ${event.code}, Reason: ${event.reason}`);
           logger.info("WebSocket connection CLOSED. Code:", event.code, "Reason:", event.reason);
+          trackEvent('voice.ws.close', {
+            code: event.code,
+            reason: event.reason || '',
+            clean: event.wasClean,
+            termination_reason: terminationReasonRef.current || '',
+          });
 
           if (socketRef.current === ws) {
             socketRef.current = null;
@@ -2713,6 +2751,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         ws.onerror = (err) => {
           appendLog("❌ WS error - Check if backend is running");
           logger.error("WebSocket error - backend might not be running:", err);
+          trackEvent('voice.ws.error', { reconnect: isReconnect });
         };
 
         ws.onmessage = (event) => {
@@ -2728,7 +2767,14 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       connectSocket(false);
 
       // 2) setup Web Audio for raw PCM @16 kHz
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (micErr) {
+        trackException(micErr, { stage: 'getUserMedia' });
+        trackEvent('voice.mic.error', { message: micErr?.message || String(micErr) });
+        throw micErr;
+      }
       micMutedRef.current = false;
       setMicMuted(false);
       micStreamRef.current = stream;

@@ -33,6 +33,7 @@ from apps.artagent.backend.src.services.acs.session_terminator import (
     TerminationReason,
     terminate_session,
 )
+from apps.artagent.backend.src.utils.auth import extract_client_identity
 from apps.artagent.backend.src.utils.tracing import log_with_context
 from apps.artagent.backend.src.ws_helpers.barge_in import BargeInController
 from apps.artagent.backend.src.ws_helpers.envelopes import (
@@ -194,6 +195,12 @@ async def browser_conversation_endpoint(
     session_id: str | None = Query(None),
     streaming_mode: str | None = Query(None),
     user_email: str | None = Query(None),
+    auth_user_id: str | None = Query(
+        None, description="Authenticated operator id (from /.auth/me) when the backend is not behind EasyAuth."
+    ),
+    auth_user_email: str | None = Query(
+        None, description="Authenticated operator email (from /.auth/me) when the backend is not behind EasyAuth."
+    ),
     scenario: str | None = Query(None, description="Scenario name (e.g., 'banking', 'default')"),
 ) -> None:
     """
@@ -205,6 +212,11 @@ async def browser_conversation_endpoint(
     
     Query Parameters:
     - scenario: Industry scenario (banking, default, etc.)
+    - user_email: Demo customer profile email (preloads customer data; not the
+      signed-in operator).
+    - auth_user_id / auth_user_email: Signed-in operator identity forwarded by
+      the SPA from ``/.auth/me``. Used only for telemetry attribution and is
+      superseded by EasyAuth headers when the backend is fronted by EasyAuth.
     """
     handler: Any = None  # VoiceHandler or VoiceLiveSDKHandler
     memory_manager: MemoManager | None = None
@@ -217,12 +229,24 @@ async def browser_conversation_endpoint(
     # Resolve session ID early for context
     session_id = _resolve_session_id(websocket, session_id)
 
+    # Resolve the authenticated operator identity for telemetry. Prefers
+    # EasyAuth headers (x-ms-client-principal) and falls back to the identity
+    # the SPA forwards from /.auth/me. This is intentionally separate from
+    # ``user_email`` (the demo customer being impersonated).
+    telemetry_user_id, telemetry_user_email = extract_client_identity(
+        websocket.headers,
+        fallback_id=auth_user_id,
+        fallback_email=auth_user_email,
+    )
+
     # Wrap entire session in session_context for automatic correlation
     # All logs and spans within this block inherit session_id and call_connection_id
     async with session_context(
         call_connection_id=session_id,  # For browser, session_id is the correlation key
         session_id=session_id,
         transport_type="BROWSER",
+        user_id=telemetry_user_id,
+        user_email=telemetry_user_email,
         component="browser.conversation",
     ):
         try:

@@ -51,6 +51,10 @@ class SessionCorrelation:
         session_id: User/conversation session identifier
         transport_type: "ACS" or "BROWSER"
         agent_name: Current agent handling the session
+        user_id: Stable authenticated user identifier (e.g. Entra ID oid).
+            Maps to App Insights ``ai.user.authenticatedId`` so a single user
+            can be correlated across many sessions.
+        user_email: Authenticated user email / UPN for readable attribution.
         extra: Additional custom attributes
     """
 
@@ -58,6 +62,8 @@ class SessionCorrelation:
     session_id: str | None = None
     transport_type: str | None = None
     agent_name: str | None = None
+    user_id: str | None = None
+    user_email: str | None = None
     extra: dict = field(default_factory=dict)
 
     @property
@@ -70,14 +76,38 @@ class SessionCorrelation:
         return "unknown"
 
     def to_span_attributes(self) -> dict[str, Any]:
-        """Convert to OpenTelemetry span attributes."""
+        """Convert to OpenTelemetry span attributes.
+
+        App Insights correlation mapping:
+            - ``ai.session.id`` groups telemetry into a single visit/call.
+            - ``ai.user.authenticatedId`` groups sessions under one signed-in
+              user (drives the Users / User Flows / Retention blades).
+            - ``ai.user.id`` is the anonymous device/user bucket; only used as
+              a fallback when there is no authenticated identity.
+        """
         attrs = {}
+        # Prefer the conversation session_id as the App Insights session key so
+        # browser and ACS telemetry share the same session bucket. Fall back to
+        # the call connection id when no session_id is present.
+        session_key = self.session_id or self.call_connection_id
+        if session_key:
+            attrs["ai.session.id"] = session_key  # App Insights standard
         if self.call_connection_id:
             attrs["call.connection.id"] = self.call_connection_id
-            attrs["ai.session.id"] = self.call_connection_id  # App Insights standard
         if self.session_id:
             attrs["session.id"] = self.session_id
-            attrs["ai.user.id"] = self.session_id  # App Insights standard
+        if self.user_id:
+            # Stable identity → cross-session user tracking.
+            attrs["enduser.id"] = self.user_id  # OpenTelemetry semantic convention
+            attrs["ai.user.authenticatedId"] = self.user_id  # App Insights standard
+        else:
+            # No authenticated user; bucket anonymously by session so the
+            # Users blade still renders without collapsing every session
+            # into one synthetic user.
+            if session_key:
+                attrs["ai.user.id"] = session_key
+        if self.user_email:
+            attrs["enduser.email"] = self.user_email
         if self.transport_type:
             attrs["transport.type"] = self.transport_type
         if self.agent_name:
@@ -95,6 +125,8 @@ class SessionCorrelation:
             "session_id": self.session_id or "-",
             "transport_type": self.transport_type or "-",
             "agent_name": self.agent_name or "-",
+            "user_id": self.user_id or "-",
+            "user_email": self.user_email or "-",
             **{k: v for k, v in self.extra.items() if isinstance(v, (str, int, float, bool))},
         }
 
@@ -116,6 +148,8 @@ async def session_context(
     session_id: str | None = None,
     transport_type: str | None = None,
     agent_name: str | None = None,
+    user_id: str | None = None,
+    user_email: str | None = None,
     **extra: Any,
 ):
     """
@@ -144,6 +178,8 @@ async def session_context(
         session_id=session_id,
         transport_type=transport_type,
         agent_name=agent_name,
+        user_id=user_id,
+        user_email=user_email,
         extra=extra,
     )
 
@@ -170,6 +206,8 @@ def session_context_sync(
     session_id: str | None = None,
     transport_type: str | None = None,
     agent_name: str | None = None,
+    user_id: str | None = None,
+    user_email: str | None = None,
     **extra: Any,
 ):
     """
@@ -182,6 +220,8 @@ def session_context_sync(
         session_id=session_id,
         transport_type=transport_type,
         agent_name=agent_name,
+        user_id=user_id,
+        user_email=user_email,
         extra=extra,
     )
 
@@ -206,6 +246,8 @@ def set_session_context(
     session_id: str | None = None,
     transport_type: str | None = None,
     agent_name: str | None = None,
+    user_id: str | None = None,
+    user_email: str | None = None,
     **extra: Any,
 ) -> contextvars.Token:
     """
@@ -225,6 +267,8 @@ def set_session_context(
         session_id=session_id,
         transport_type=transport_type,
         agent_name=agent_name,
+        user_id=user_id,
+        user_email=user_email,
         extra=extra,
     )
     return _session_context.set(correlation)
