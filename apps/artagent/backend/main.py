@@ -118,16 +118,20 @@ async def lifespan(app: FastAPI):
     register_mcp_servers_step(manager, app)  # deferred=True
     register_event_handlers_step(manager, app)
 
-    # Run startup (blocking steps only)
-    with tracer.start_as_current_span("startup.lifespan"):
+    # Run startup (blocking steps only) under a single root span so all startup
+    # logs/spans carry a valid operation id (not the null 0000... trace), and
+    # capture that context so the deferred phase joins the same operation.
+    with tracer.start_as_current_span("startup.lifespan") as startup_span:
         startup_results = await manager.run_startup()
 
-    # Log the dashboard (single info log)
-    deferred_names = manager.get_deferred_step_names()
-    logger.info(build_startup_dashboard(app, startup_results, deferred_names))
+        # Log the dashboard (single info log) inside the startup span
+        deferred_names = manager.get_deferred_step_names()
+        logger.info(build_startup_dashboard(app, startup_results, deferred_names))
 
-    # Start deferred tasks (warmup, MCP validation) in background
-    manager.start_deferred_startup(app)
+        # Start deferred tasks (warmup, MCP validation) in background, parented
+        # to the startup operation so their logs share the same trace.
+        startup_ctx = trace.set_span_in_context(startup_span)
+        manager.start_deferred_startup(app, parent_context=startup_ctx)
 
     # ---- Application runs ----
     yield
