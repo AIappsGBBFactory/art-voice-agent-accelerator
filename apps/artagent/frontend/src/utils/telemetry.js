@@ -20,6 +20,12 @@ import logger from './logger.js';
 
 const CONNECTION_STRING_PLACEHOLDER = '__APPINSIGHTS_CONNECTION_STRING__';
 
+// Dependency (fetch) targets that represent passive polling and add no
+// diagnostic value; dropped from browser telemetry to reduce noise. Covers
+// health/probe endpoints and the periodic status/metrics polls the UI issues.
+const NOISY_DEPENDENCY_RE =
+  /\/(health|healthz|readiness|liveness|ping)\b|\/api\/v1\/mcp\/servers|\/api\/v1\/metrics\/session\//i;
+
 const resolveConnectionString = () => {
   if (!CONNECTION_STRING_PLACEHOLDER.startsWith('__')) {
     return CONNECTION_STRING_PLACEHOLDER;
@@ -63,12 +69,21 @@ export const initTelemetry = () => {
     appInsights.loadAppInsights();
 
     // Stamp the active voice session id onto every telemetry item so browser
-    // and backend share ai.session.id.
+    // and backend share ai.session.id, and drop dependency noise from passive
+    // polling (health probes + periodic status/metrics fetches) so App Insights
+    // isn't flooded with low-value entries.
     appInsights.addTelemetryInitializer((item) => {
+      if (
+        item?.baseType === 'RemoteDependencyData' &&
+        NOISY_DEPENDENCY_RE.test(String(item?.baseData?.target || item?.baseData?.name || ''))
+      ) {
+        return false; // drop
+      }
       if (currentSessionId) {
         item.tags = item.tags || {};
         item.tags['ai.session.id'] = currentSessionId;
       }
+      return true;
     });
 
     appInsights.trackPageView();

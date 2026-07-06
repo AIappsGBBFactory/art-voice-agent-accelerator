@@ -106,6 +106,10 @@ NOISY_SPAN_PATTERNS: list[Pattern[str]] = [
     re.compile(r".*(process|stream|emit)[._](frame|chunk).*", re.IGNORECASE),
     re.compile(r".*redis[._](ping|pool|connection).*", re.IGNORECASE),
     re.compile(r".*(poll|heartbeat)[._]session.*", re.IGNORECASE),
+    # Health probes / high-frequency status polling. URL exclusion (see
+    # _configure_excluded_urls) stops most of these before a span is created;
+    # this is a fallback for probe spans on non-standard paths.
+    re.compile(r"^(GET|POST|HEAD)\s+.*/(health|healthz|readiness|liveness|ping)\b.*", re.IGNORECASE),
     # VoiceLive high-frequency streaming events
     re.compile(r"voicelive\.event\.response\.audio\.delta", re.IGNORECASE),
     re.compile(r"voicelive\.event\.response\.audio_transcript\.delta", re.IGNORECASE),
@@ -232,6 +236,27 @@ def _is_local_dev() -> bool:
     return _auth_is_local_dev()
 
 
+# Health probes and high-frequency, low-diagnostic-value endpoints excluded from
+# tracing by default. Container Apps hits liveness/readiness every few seconds
+# per replica; tracing them floods App Insights `requests` with no value.
+DEFAULT_EXCLUDED_URLS = "health,healthz,readiness,liveness,/ping,favicon.ico"
+
+
+def _configure_excluded_urls() -> None:
+    """Exclude health/probe URLs from OpenTelemetry HTTP instrumentation.
+
+    Sets ``OTEL_PYTHON_EXCLUDED_URLS`` (honored by the FastAPI/requests/urllib3
+    instrumentors) so no server span is created for these paths. Respects a
+    value the operator already provided; the env var is a comma-separated list
+    of URL substrings/regexes. Must run before ``configure_azure_monitor``,
+    which applies the instrumentation.
+    """
+    if os.getenv("OTEL_PYTHON_EXCLUDED_URLS"):
+        return
+    os.environ["OTEL_PYTHON_EXCLUDED_URLS"] = DEFAULT_EXCLUDED_URLS
+    logger.info("Excluding health/probe URLs from tracing: %s", DEFAULT_EXCLUDED_URLS)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODULE STATE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -333,6 +358,9 @@ def setup_azure_monitor(logger_name: str = None) -> bool:
 
         resource = Resource(attributes=resource_attrs)
         tracer_provider = TracerProvider(resource=resource)
+
+        # Exclude health/probe URLs before instrumentation is applied below.
+        _configure_excluded_urls()
 
         # Build instrumentation options
         instrumentation_options = {
