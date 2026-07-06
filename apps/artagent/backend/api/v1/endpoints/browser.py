@@ -201,6 +201,9 @@ async def browser_conversation_endpoint(
     auth_user_email: str | None = Query(
         None, description="Authenticated operator email (from /.auth/me) when the backend is not behind EasyAuth."
     ),
+    client_traceparent: str | None = Query(
+        None, description="W3C traceparent from the browser App Insights operation, for end-to-end trace correlation."
+    ),
     scenario: str | None = Query(None, description="Scenario name (e.g., 'banking', 'default')"),
 ) -> None:
     """
@@ -240,13 +243,17 @@ async def browser_conversation_endpoint(
     )
 
     # Wrap entire session in session_context for automatic correlation
-    # All logs and spans within this block inherit session_id and call_connection_id
+    # All logs and spans within this block inherit session_id and call_connection_id.
+    # client_traceparent (from the browser App Insights operation) roots the
+    # backend trace under the same operation so App Insights shows one
+    # end-to-end transaction: browser -> WS session -> LLM/tool spans.
     async with session_context(
         call_connection_id=session_id,  # For browser, session_id is the correlation key
         session_id=session_id,
         transport_type="BROWSER",
         user_id=telemetry_user_id,
         user_email=telemetry_user_email,
+        trace_parent=client_traceparent,
         component="browser.conversation",
     ):
         try:
@@ -491,6 +498,12 @@ async def _process_voice_live_messages(
     with tracer.start_as_current_span(
         "api.v1.browser.process_voice_live",
         attributes={"session_id": session_id},
+        # A client-initiated WebSocket close is a normal lifecycle event, not an
+        # error. Disable OTel's automatic exception recording/error status so a
+        # WebSocketDisconnect propagating out of this block is not surfaced as an
+        # Exception in telemetry; we set span status explicitly below.
+        record_exception=False,
+        set_status_on_exception=False,
     ) as span:
         try:
             await handler.start()
@@ -568,7 +581,12 @@ async def _process_voice_live_messages(
 
             span.set_status(Status(StatusCode.OK))
 
-        except WebSocketDisconnect:
+        except WebSocketDisconnect as disc:
+            # Normal client-initiated close (code 1000) or any WS teardown. Mark
+            # the span OK, annotate the close code, and re-raise so the outer
+            # handler records the disconnect via _log_disconnect (info/warning).
+            span.set_attribute("websocket.close_code", disc.code)
+            span.set_status(Status(StatusCode.OK))
             raise
         except Exception as exc:
             logger.error("[%s] Voice Live error: %s", session_id, exc, exc_info=True)

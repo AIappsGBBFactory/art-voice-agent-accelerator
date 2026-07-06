@@ -41,6 +41,27 @@ from opentelemetry import trace
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _extract_trace_context(trace_parent: str | None):
+    """Extract an OpenTelemetry context from a W3C ``traceparent`` string.
+
+    Used to root a session's root span under a caller-supplied trace (e.g. the
+    browser operation forwarded over the WebSocket) so App Insights shows one
+    end-to-end transaction. Returns None on missing/invalid input, in which case
+    a new trace is started as before.
+    """
+    if not trace_parent:
+        return None
+    try:
+        from opentelemetry.trace.propagation.tracecontext import (
+            TraceContextTextMapPropagator,
+        )
+
+        return TraceContextTextMapPropagator().extract({"traceparent": trace_parent})
+    except Exception:
+        return None
+
+
+
 @dataclass
 class SessionCorrelation:
     """
@@ -150,6 +171,7 @@ async def session_context(
     agent_name: str | None = None,
     user_id: str | None = None,
     user_email: str | None = None,
+    trace_parent: str | None = None,
     **extra: Any,
 ):
     """
@@ -163,6 +185,9 @@ async def session_context(
         session_id: User/conversation session identifier
         transport_type: "ACS" or "BROWSER"
         agent_name: Name of the agent handling this session
+        trace_parent: Optional W3C ``traceparent`` from the caller (e.g. the
+            browser). When provided, the session root span is parented to that
+            trace so App Insights shows one end-to-end transaction.
         **extra: Additional custom attributes to include in all spans/logs
 
     Example:
@@ -185,12 +210,15 @@ async def session_context(
 
     token = _session_context.set(correlation)
 
-    # Create a root span for this session with all correlation attributes
+    # Create a root span for this session with all correlation attributes.
+    # If a caller trace context is supplied, parent under it for e2e tracing.
     tracer = trace.get_tracer(__name__)
     span_name = f"session[{transport_type or 'unknown'}]"
+    parent_ctx = _extract_trace_context(trace_parent)
 
     with tracer.start_as_current_span(
         span_name,
+        context=parent_ctx,
         kind=trace.SpanKind.SERVER,
         attributes=correlation.to_span_attributes(),
     ):

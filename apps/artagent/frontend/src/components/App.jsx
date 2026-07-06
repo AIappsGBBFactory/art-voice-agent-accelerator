@@ -51,8 +51,8 @@ import {
 } from '../utils/session.js';
 import logger from '../utils/logger.js';
 import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
-import { setVoiceSession, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
-import { buildAuthQueryParams } from '../utils/auth.js';
+import { setVoiceSession, getSessionTraceparent, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
+import { buildAuthQueryParams, getAuthenticatedUser } from '../utils/auth.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
 const STREAM_MODE_STORAGE_KEY = 'artagent.streamingMode';
@@ -2430,7 +2430,15 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       // Bind the voice session id so all browser telemetry shares
       // ai.session.id with the backend for this call.
       setVoiceSession(sessionId);
-      trackEvent('voice.session.start', { at: metrics.sessionStartIso });
+      // Capture who started the session (signed-in operator, when EasyAuth is
+      // enabled) directly on the start event for quick attribution.
+      const operator = getAuthenticatedUser();
+      trackEvent('voice.session.start', {
+        at: metrics.sessionStartIso,
+        operator_id: operator?.userId || '',
+        operator_email: operator?.email || '',
+        operator_name: operator?.name || '',
+      });
       publishMetricsSummary("Session metrics reset", {
         sessionId,
         at: metrics.sessionStartIso,
@@ -2661,7 +2669,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
       const baseConversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${currentSessionId}&streaming_mode=${encodeURIComponent(
         realtimeMode,
-      )}${emailParam}${buildAuthQueryParams()}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
+      )}${emailParam}${buildAuthQueryParams()}&client_traceparent=${encodeURIComponent(getSessionTraceparent(currentSessionId))}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
       resetMetrics(currentSessionId);
       assistantStreamGenerationRef.current = 0;
       assistantStreamBufferRef.current = { turnId: null, text: "" };

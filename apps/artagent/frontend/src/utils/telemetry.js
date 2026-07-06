@@ -41,6 +41,41 @@ const sanitizeId = (value) =>
 let appInsights = null;
 let initialized = false;
 let currentSessionId = null;
+let currentTraceparent = null;
+
+// 16 random bytes -> 32 hex (trace id); 8 bytes -> 16 hex (span id).
+const randomHex = (bytes) => {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+// Start (or reuse) the distributed-trace operation for a voice session. Sets
+// the App Insights operation trace so all browser telemetry for the session
+// shares operation_Id = traceId, and returns the matching W3C traceparent to
+// hand to the backend over the WebSocket (which the SDK cannot auto-propagate).
+// Generates a traceparent even when telemetry is disabled, so the backend can
+// still stitch its own spans into one end-to-end trace.
+const beginOperation = (sessionId) => {
+  const sid = sessionId || currentSessionId;
+  if (sid && sid === currentSessionId && currentTraceparent) {
+    return currentTraceparent;
+  }
+  currentSessionId = sid || currentSessionId;
+  const traceId = randomHex(16);
+  const spanId = randomHex(8);
+  currentTraceparent = `00-${traceId}-${spanId}-01`;
+  if (appInsights) {
+    try {
+      appInsights.context.telemetryTrace.traceID = traceId;
+      appInsights.context.telemetryTrace.parentID = spanId;
+      if (sid) appInsights.context.telemetryTrace.name = sid;
+    } catch (err) {
+      logger.warn('[telemetry] failed to set operation trace:', err?.message || err);
+    }
+  }
+  return currentTraceparent;
+};
 
 export const initTelemetry = () => {
   if (initialized) return appInsights;
@@ -129,8 +164,14 @@ export const clearAuthenticatedUser = () => {
 
 /** Set the active voice session id used as ai.session.id on all telemetry. */
 export const setVoiceSession = (sessionId) => {
-  currentSessionId = sessionId || null;
+  beginOperation(sessionId);
 };
+
+/**
+ * Ensure a distributed-trace operation exists for the session and return the
+ * W3C traceparent to forward to the backend over the WebSocket URL.
+ */
+export const getSessionTraceparent = (sessionId) => beginOperation(sessionId);
 
 const withSession = (properties = {}) => ({
   ...properties,
