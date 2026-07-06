@@ -248,10 +248,13 @@ def _load_config_from_appconfig() -> dict[str, Any] | None:
         from azure.appconfiguration.provider import SettingSelector, load
         from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
-        # Choose credential based on AZURE_CLIENT_ID
-        azure_client_id = os.getenv("AZURE_CLIENT_ID")
-        if azure_client_id:
-            credential = ManagedIdentityCredential(client_id=azure_client_id)
+        # Choose credential based on context.
+        # AZURE_UAI_CLIENT_ID: explicit user-assigned managed identity (container apps).
+        # AZURE_CLIENT_ID alone: used by GitHub Actions OIDC/SP — do NOT use for
+        # ManagedIdentityCredential on runners that have no IMDS endpoint.
+        uai_client_id = os.getenv("AZURE_UAI_CLIENT_ID") or os.getenv("BACKEND_UAI_CLIENT_ID")
+        if uai_client_id:
+            credential = ManagedIdentityCredential(client_id=uai_client_id)
         else:
             credential = DefaultAzureCredential()
 
