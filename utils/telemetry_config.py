@@ -254,11 +254,20 @@ def _is_local_dev() -> bool:
 # Health probes and high-frequency, low-diagnostic-value endpoints excluded from
 # tracing by default. Container Apps hits liveness/readiness every few seconds
 # per replica; tracing them floods App Insights `requests` with no value.
-DEFAULT_EXCLUDED_URLS = "health,healthz,readiness,liveness,/ping,favicon.ico"
+#
+# The WebSocket streaming routes are also excluded: their auto-generated ASGI
+# request span lasts the entire (multi-minute) voice session, which would be
+# recorded in the `requests` table and destroy Apdex. The session itself is
+# tracked as an INTERNAL dependency span (see utils.session_context), and the
+# short-lived HTTP/connect spans remain the real requests.
+DEFAULT_EXCLUDED_URLS = (
+    "health,healthz,readiness,liveness,/ping,favicon.ico,"
+    "browser/conversation,browser/dashboard,media/stream,genesys/stream"
+)
 
 
 def _configure_excluded_urls() -> None:
-    """Exclude health/probe URLs from OpenTelemetry HTTP instrumentation.
+    """Exclude health/probe and long-lived WebSocket URLs from HTTP instrumentation.
 
     Sets ``OTEL_PYTHON_EXCLUDED_URLS`` (honored by the FastAPI/requests/urllib3
     instrumentors) so no server span is created for these paths. Respects a
@@ -269,7 +278,7 @@ def _configure_excluded_urls() -> None:
     if os.getenv("OTEL_PYTHON_EXCLUDED_URLS"):
         return
     os.environ["OTEL_PYTHON_EXCLUDED_URLS"] = DEFAULT_EXCLUDED_URLS
-    logger.info("Excluding health/probe URLs from tracing: %s", DEFAULT_EXCLUDED_URLS)
+    logger.info("Excluding health/probe + WebSocket URLs from tracing: %s", DEFAULT_EXCLUDED_URLS)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

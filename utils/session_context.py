@@ -222,6 +222,13 @@ async def session_context(
 
     # Create a root span for this session with all correlation attributes.
     # If a caller trace context is supplied, parent under it for e2e tracing.
+    #
+    # SpanKind.INTERNAL (not SERVER) on purpose: this span lasts the entire
+    # voice session (often minutes). Azure Monitor maps SERVER spans to the
+    # `requests` table, so a SERVER session span makes every call a multi-minute
+    # "request" and destroys Apdex. As INTERNAL it is recorded as a dependency
+    # (not Apdex-scored); the short-lived connect/HTTP spans remain the real
+    # requests.
     tracer = trace.get_tracer(__name__)
     span_name = f"session[{transport_type or 'unknown'}]"
     parent_ctx = _extract_trace_context(trace_parent)
@@ -229,7 +236,7 @@ async def session_context(
     with tracer.start_as_current_span(
         span_name,
         context=parent_ctx,
-        kind=trace.SpanKind.SERVER,
+        kind=trace.SpanKind.INTERNAL,
         attributes=correlation.to_span_attributes(),
     ):
         try:
