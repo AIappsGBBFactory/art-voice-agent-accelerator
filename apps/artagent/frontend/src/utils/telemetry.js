@@ -6,9 +6,11 @@
 //   - ai.session.id  = the voice session id (shared with the backend, which
 //     stamps the same key on its spans). This is what ties browser telemetry
 //     to the server-side call in App Insights (union by session_Id).
-//   - authenticatedId = the signed-in operator (EasyAuth /.auth/me). This is
-//     what enables "user activities across sessions" in the Users / User Flows
-//     / Retention blades.
+//   - authenticatedId = an obfuscated, non-reversible pseudonym of the signed-in
+//     operator (EasyAuth /.auth/me). The raw Entra oid/email never leaves the
+//     client; the pseudonym matches the backend so the same operator correlates
+//     end-to-end, enabling "user activities across sessions" in the Users /
+//     User Flows / Retention blades without exposing PII.
 //
 // The connection string is injected at container start by entrypoint.sh
 // (replacing the __APPINSIGHTS_CONNECTION_STRING__ placeholder), with a Vite
@@ -37,6 +39,30 @@ const resolveConnectionString = () => {
 // user/account id fields; normalize so identity is preserved but valid.
 const sanitizeId = (value) =>
   value == null ? undefined : String(value).replace(/[,;=| ]+/g, '_');
+
+// Stable, non-reversible pseudonym salt. Mirrors the backend
+// TELEMETRY_PII_HASH_SALT default so the SAME signed-in user hashes to the SAME
+// token in browser and server telemetry (deployments that override the backend
+// salt should set VITE_TELEMETRY_PII_HASH_SALT to match).
+const HASH_SALT =
+  import.meta.env?.VITE_TELEMETRY_PII_HASH_SALT || 'artvoice-log-pseudonym-v1';
+
+// Obfuscate a sensitive identifier into a stable, non-reversible pseudonym of
+// the form `<prefix>:<10 hex>`. Byte-for-byte compatible with the backend
+// utils.pii_filter.mask_pii (SHA-256 of `"<salt>:<value>"`, first 10 hex).
+const maskId = async (value, prefix = 'user') => {
+  if (value == null || value === '') return `${prefix}:none`;
+  try {
+    const bytes = new TextEncoder().encode(`${HASH_SALT}:${value}`);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const hex = Array.from(new Uint8Array(digest), (b) =>
+      b.toString(16).padStart(2, '0'),
+    ).join('');
+    return `${prefix}:${hex.slice(0, 10)}`;
+  } catch {
+    return `${prefix}:unknown`;
+  }
+};
 
 let appInsights = null;
 let initialized = false;
@@ -135,15 +161,19 @@ export const getAppInsights = () => appInsights;
 
 /**
  * Bind the signed-in operator identity so App Insights groups every session
- * under one user across time.
+ * under one user across time. The raw identity is never sent: only a stable,
+ * non-reversible pseudonym (matching the backend) populates the App Insights
+ * authenticated-user field, and the email is omitted entirely.
  * @param {{userId?: string, email?: string}|null} user
  */
-export const setAuthenticatedUser = (user) => {
+export const setAuthenticatedUser = async (user) => {
   if (!appInsights || !user?.userId) return;
   try {
+    const authId = sanitizeId(await maskId(user.userId, 'user'));
     appInsights.setAuthenticatedUserContext(
-      sanitizeId(user.userId),
-      sanitizeId(user.email),
+      authId,
+      // No accountId: the raw email is PII and must not reach telemetry.
+      undefined,
       // storeInCookie=true so the association persists across sessions/tabs.
       true,
     );

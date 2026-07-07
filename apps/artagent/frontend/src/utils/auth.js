@@ -88,9 +88,8 @@ export const getAuthenticatedUser = () => cachedUser;
 export const buildAuthQueryParams = () => {
   const user = cachedUser;
   if (!user) return '';
-  let params = `&auth_user_id=${encodeURIComponent(user.userId)}`;
-  if (user.email) {
-    params += `&auth_user_email=${encodeURIComponent(user.email)}`;
-  }
-  return params;
+  // Forward only the operator id (an opaque Entra oid). The backend
+  // pseudonymizes it for telemetry. The raw email is intentionally NOT sent —
+  // it is PII and is never emitted to telemetry.
+  return `&auth_user_id=${encodeURIComponent(user.userId)}`;
 };

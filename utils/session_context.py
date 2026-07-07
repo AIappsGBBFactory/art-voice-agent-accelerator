@@ -36,6 +36,8 @@ from typing import Any
 
 from opentelemetry import trace
 
+from utils.pii_filter import mask_pii
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT VARIABLE - Thread-safe, async-safe session state
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -72,13 +74,16 @@ class SessionCorrelation:
         session_id: User/conversation session identifier
         transport_type: "ACS" or "BROWSER"
         agent_name: Current agent handling the session
-        user_id: Stable authenticated user identifier (e.g. Entra ID oid).
-            Maps to App Insights ``ai.user.authenticatedId`` so a single user
-            can be correlated across many sessions.
-        user_email: Authenticated user email / UPN for readable attribution.
+        user_id: Stable authenticated user identifier (e.g. Entra ID oid) from
+            EasyAuth. Held in-memory only; it is never exported raw. On the
+            telemetry boundary it is emitted as a stable, non-reversible
+            pseudonym via the ``enduser.id`` semantic attribute so the operator
+            shows up as the App Insights authenticated user without exposing PII.
+        user_email: Authenticated user email / UPN. In-memory only; pseudonymized
+            (never emitted raw) in logs and dropped from span attributes.
         device_id: Persistent anonymous per-browser/device identifier (e.g. the
             App Insights ``ai_user`` id forwarded by the SPA). Used as the
-            ``ai.user.id`` bucket when there is no authenticated user, so
+            ``enduser.pseudo.id`` bucket when there is no authenticated user, so
             anonymous sessions from the same browser still group across time.
         extra: Additional custom attributes
     """
@@ -104,12 +109,16 @@ class SessionCorrelation:
     def to_span_attributes(self) -> dict[str, Any]:
         """Convert to OpenTelemetry span attributes.
 
-        App Insights correlation mapping:
+        App Insights correlation mapping (via the Azure Monitor OTel exporter):
             - ``ai.session.id`` groups telemetry into a single visit/call.
-            - ``ai.user.authenticatedId`` groups sessions under one signed-in
-              user (drives the Users / User Flows / Retention blades).
-            - ``ai.user.id`` is the anonymous device/user bucket; only used as
-              a fallback when there is no authenticated identity.
+            - ``enduser.id`` is the OpenTelemetry semantic attribute the exporter
+              maps to the App Insights user column so the signed-in operator
+              shows up as the authenticated user. We emit a stable,
+              non-reversible pseudonym of the EasyAuth identity — never the raw
+              Entra oid/UPN — so users correlate across sessions without
+              exposing PII.
+            - ``enduser.pseudo.id`` is the anonymous device/user bucket, used
+              only when there is no authenticated identity.
         """
         attrs = {}
         # Prefer the conversation session_id as the App Insights session key so
@@ -123,19 +132,19 @@ class SessionCorrelation:
         if self.session_id:
             attrs["session.id"] = self.session_id
         if self.user_id:
-            # Stable identity → cross-session user tracking.
-            attrs["enduser.id"] = self.user_id  # OpenTelemetry semantic convention
-            attrs["ai.user.authenticatedId"] = self.user_id  # App Insights standard
+            # Obfuscated, stable pseudonym of the signed-in identity (never the
+            # raw oid/UPN). enduser.id → App Insights authenticated user.
+            attrs["enduser.id"] = mask_pii(self.user_id, prefix="user")
+            attrs["enduser.authenticated"] = True
         else:
             # No authenticated user; bucket by the persistent device id (so the
             # same browser groups across sessions, matching the browser's own
             # ai_user), falling back to the session id when no device id is
-            # available so the Users blade still renders.
+            # available so the Users blade still renders. Not PII, so emitted
+            # as-is under the OTel pseudonymous-id convention.
             anon_id = self.device_id or session_key
             if anon_id:
-                attrs["ai.user.id"] = anon_id
-        if self.user_email:
-            attrs["enduser.email"] = self.user_email
+                attrs["enduser.pseudo.id"] = anon_id
         if self.transport_type:
             attrs["transport.type"] = self.transport_type
         if self.agent_name:
@@ -147,14 +156,18 @@ class SessionCorrelation:
         return attrs
 
     def to_log_record(self) -> dict[str, Any]:
-        """Convert to log record extras for structured logging."""
+        """Convert to log record extras for structured logging.
+
+        The signed-in identity is pseudonymized here (never raw) because these
+        extras can be shipped to Application Insights traces.
+        """
         return {
             "call_connection_id": self.call_connection_id or "-",
             "session_id": self.session_id or "-",
             "transport_type": self.transport_type or "-",
             "agent_name": self.agent_name or "-",
-            "user_id": self.user_id or "-",
-            "user_email": self.user_email or "-",
+            "user_id": mask_pii(self.user_id, prefix="user") if self.user_id else "-",
+            "user_email": mask_pii(self.user_email, prefix="email") if self.user_email else "-",
             "device_id": self.device_id or "-",
             **{k: v for k, v in self.extra.items() if isinstance(v, (str, int, float, bool))},
         }
