@@ -99,6 +99,19 @@ variable "log_analytics_workspace_id" {
   default     = null
 }
 
+variable "application_insights_id" {
+  description = "Optional Application Insights resource ID to connect to the AI Foundry project for GenAI tracing/observability (Foundry portal Traces + Monitoring blades)."
+  type        = string
+  default     = null
+}
+
+variable "application_insights_connection_string" {
+  description = "Optional Application Insights connection string used as the credential for the project's AppInsights connection."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
 variable "account_principal_ids" {
   description = "Principal IDs to assign Cognitive Services access to the AI Foundry account."
   type        = list(string)

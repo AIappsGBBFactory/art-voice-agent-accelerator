@@ -17,6 +17,11 @@ module "ai_foundry_voice_live" {
   model_deployments = local.voice_live_model_deployments
 
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  # Connect the Voice Live project to Application Insights for GenAI tracing /
+  # Monitoring (Foundry portal Traces + Application analytics).
+  application_insights_id                = azurerm_application_insights.main.id
+  application_insights_connection_string = azurerm_application_insights.main.connection_string
 }
 
 resource "azurerm_role_assignment" "ai_foundry_voice_live_account_role_for_backend_container" {
@@ -48,6 +53,41 @@ resource "azurerm_monitor_diagnostic_setting" "ai_foundry_voice_live_account" {
 
   enabled_log {
     category = "RequestResponse"
+  }
+
+  # Per-request model-inference usage: emits ModelDeploymentName / ModelName /
+  # ModelVersion so the VoiceLive model bound at connect can be validated
+  # against the agent's selected model in Log Analytics.
+  enabled_log {
+    category = "AzureOpenAIRequestUsage"
+  }
+
+  # Detailed inference trace logs for debugging model routing end-to-end.
+  enabled_log {
+    category = "Trace"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+# Project-level diagnostic settings for the Voice Live project. The project
+# sub-resource only supports Audit + Trace (per-request usage is at the account
+# level above).
+resource "azurerm_monitor_diagnostic_setting" "ai_foundry_voice_live_project" {
+  count = local.should_create_voice_live_account ? 1 : 0
+
+  name                       = module.ai_foundry_voice_live[count.index].project_name
+  target_resource_id         = module.ai_foundry_voice_live[count.index].project_id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  enabled_log {
+    category = "Audit"
+  }
+
+  enabled_log {
+    category = "Trace"
   }
 
   enabled_metric {
