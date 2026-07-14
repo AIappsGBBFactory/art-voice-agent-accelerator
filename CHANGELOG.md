@@ -6,6 +6,42 @@ All notable changes to the **Azure Real-Time (ART) Agent Accelerator** are docum
 
 ---
 
+### Turn-Scoped Transcript Streaming
+
+- Speech Cascade and VoiceLive now stream user transcription updates into a single turn-scoped user bubble, then finalize that same bubble when recognition completes. Any orphaned streaming partial bubble is pruned when the final lands, so the turn always settles on one recognized transcript.
+- User and assistant bubbles render partial (streaming) text in italics and flip to normal text once the turn is finalized, giving a clear streaming-vs-final cue per turn.
+- Streaming bubbles now render text and the live cursor inline and normalize whitespace, so a partial transcript looks identical to its final (no phantom blank line appearing only while streaming).
+- Each user turn keeps one streamed assistant response bubble across tool calls and agent handoffs.
+- All tool calls within a turn now collapse into a single grouped "Tool Activity" card that lists each call with its status and result; the card stays hidden until at least one call returns a response, so transient "started"/progress states no longer flash as separate bubbles.
+- Frontend envelope handling now uses one deterministic turn reducer with fixed user → assistant → tools slots. Barge-in closes the prior response and in-flight tools, while late partial/final/tool envelopes from that interrupted turn are ignored instead of reopening, duplicating, or overwriting bubbles in the new turn.
+- Added backend-envelope contract, barge-in race, ordering/indexing, and real `ChatBubble` rendering regression tests for both Speech Cascade and VoiceLive flows.
+- Added an envelope-classifier contract test that locks every backend conversation event type (user partial/final, assistant streaming/final/greeting, barge-in cancel, tool start/progress/end) to its bubble event and asserts control/lifecycle frames are ignored, so a renamed or unrouted backend type fails loudly instead of silently dropping a bubble; plus a full end-to-end cascade session test asserting one user, one response, and one grouped tool blob per turn across a barge-in, and a cancelled-bubble render test.
+- VoiceLive browser sessions now deliver tool lifecycle frames directly on the active WebSocket instead of incorrectly routing them through the ACS dashboard broadcast path.
+- A VoiceLive post-tool response segment can now continue the same canonical assistant bubble after the pre-tool segment finalized; duplicate or late events from the already-closed segment remain rejected.
+- The bubble reducer no longer drops user/assistant/tool events when an envelope omits `turn_id`: id-less partials coalesce into the open streaming bubble, finalize in place, and start a fresh synthetic turn per utterance, restoring resilient rendering for Speech Cascade and text-input transcripts.
+- Agent response bubbles now render even when the backend stamps the response with a `turn_id` that differs from the user turn's id: the "late turn" guard only suppresses events belonging to an earlier user turn superseded by barge-in, not a fresh response whose id merely differs.
+- The assistant final now settles the in-flight streaming response bubble even when the final envelope carries a different id than the streamed chunks (e.g. Speech Cascade post-tool responses), so the response no longer clones into a separate streaming + final bubble.
+- Speech Cascade now emits an `assistant_cancelled` event on barge-in (parity with VoiceLive) as a best-effort UI signal sent only after the response, TTS, and orchestration are cancelled, so it can never delay the audio stop; the reducer marks the interrupted streaming bubble as cancelled even when the cancel id differs from the streamed response id.
+
+### Telemetry and Evaluation Hardening
+
+- Frontend session telemetry no longer emits raw operator identity fields.
+- Voice metric events use a fixed low-cardinality event name with the metric label as a property.
+- WebSocket URLs and audio/message payloads are no longer written to browser logs.
+- The live WebSocket evaluation driver accepts an explicit `--streaming-mode` and records it in results.
+- Live voice evaluations now target the active browser WebSocket, use deterministic PCM VAD padding, preserve W3C trace correlation, and produce per-mode latency summaries.
+- Added local Make targets for cached input-audio generation and repeatable `realtime`/`voice_live` performance runs.
+
+### Terraform Remote State Networking
+
+- The public-networking helper now uses the typed Storage Account update for `publicNetworkAccess` and `defaultAction`, then verifies that public access remained enabled.
+- Storage update failures now include a compact Azure CLI error instead of silently reporting only `failed/unsupported`.
+- Remote Terraform state accounts discovered from the selected azd environment are handled by the same verified Storage Account path.
+- If policy leaves a Storage Account, Key Vault, or Container Registry's `publicNetworkAccess` disabled after an update, the helper now merges `SecurityControl=Ignore`, retries once, and verifies the final state.
+- Added `enable_public_resources` as a backwards-compatible alias for `enable_public_networking`.
+- `make enable_public_resources` now asks whether to merge `SecurityControl=Ignore` onto resources opened by the helper; `--yes` leaves the tag opt-in disabled.
+- Foundry accounts and projects now inherit the shared deployment tags, and existing accounts reconcile tag changes such as `SecurityControl=Ignore`.
+
 ## [2.1.0] - 2026-02-01
 
 ### 🔌 MCP Protocol & Lifecycle Management
