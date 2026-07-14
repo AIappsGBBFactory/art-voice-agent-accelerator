@@ -4,7 +4,7 @@ Deployed voice-WebSocket eval driver
 ====================================
 
 Drives a session-based eval scenario against a *deployed* backend's real voice
-WebSocket (``/api/v1/realtime/conversation``) so latency numbers reflect the
+WebSocket (``/api/v1/browser/conversation``) so latency numbers reflect the
 deployed environment (real STT -> LLM -> TTS -> first audio), rather than the
 in-process orchestrator run on the CI runner.
 
@@ -13,13 +13,13 @@ What it does per scenario:
 1. Load a session-based scenario YAML and read ``turns[].user_input``.
 2. Synthesize each user turn to base64 PCM16 16 kHz frames via the production
    ``SpeechSynthesizer`` (cached on disk keyed by text hash).
-3. Connect to ``wss://<host>/api/v1/realtime/conversation`` with
-   ``?session_id=<prefix><scenario>_<uuid>&scenario=<industry>``. The
-   ``session_id`` is stamped onto the backend's OpenTelemetry spans, so an
-   ``eval_`` prefix makes every span for this run separable in App Insights.
+3. Connect to ``wss://<host>/api/v1/browser/conversation`` with
+    ``?session_id=<prefix><scenario>_<uuid>&streaming_mode=<mode>``. The
+    ``session_id`` is stamped onto the backend's OpenTelemetry spans, so an
+    ``eval_live_`` prefix makes every span for this run separable in App Insights.
 4. Stream the turn's audio (binary PCM frames) + a short trailing silence to
    trigger STT finalization, then capture per turn:
-       * ``first_response_ms`` = EOS -> first inbound frame
+    * ``first_response_ms`` = EOS -> first assistant/audio frame
        * ``first_audio_ms``    = EOS -> first inbound *audio* frame
        * ``response_text``      = best-effort assistant text from inbound frames
        * ``turn_wall_ms``       = EOS -> response considered complete
@@ -29,9 +29,9 @@ What it does per scenario:
 This driver only *observes* the voice channel. Tool-call / handoff / content
 assertions are graded from the ``eval_``-tagged traces in App Insights.
 
-Wire protocol matches ``tests/load/locustfile.browser_conversation.py`` (the
-proven ``/realtime/conversation`` driver): one ``AudioMetadata`` JSON frame on
-connect, then raw binary PCM16 16 kHz mono frames.
+Wire protocol matches ``tests/load/locustfile.browser_conversation.py``: one
+``AudioMetadata`` JSON frame on connect, then raw binary PCM16 16 kHz mono
+frames.
 
 Example
 -------
@@ -49,15 +49,13 @@ import base64
 import hashlib
 import json
 import os
-import random
-import struct
 import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import websockets
 import yaml
@@ -73,11 +71,11 @@ CHANNELS = 1
 FRAME_MS = 20
 FRAME_BYTES = int(SAMPLE_RATE * BYTES_PER_SAMPLE * CHANNELS * FRAME_MS / 1000)  # 640
 
-DEFAULT_WS_PATH = "/api/v1/realtime/conversation"
+DEFAULT_WS_PATH = "/api/v1/browser/conversation"
 DEFAULT_SESSION_PREFIX = "eval_"
 # Committable cache so CI can drive the deployed WS with zero Azure data-plane
 # creds (audio is generated once by a run that can reach Azure Speech).
-DEFAULT_CACHE_DIR = Path(__file__).parent / "audio_cache"
+DEFAULT_CACHE_DIR = Path("runs/live-evals/audio-cache")
 
 # Inbound text frames carrying assistant content use varied key names across
 # pipelines; probe these in order.
@@ -106,20 +104,37 @@ class ScenarioResult:
     scenario_name: str
     session_id: str
     ws_url: str
+    streaming_mode: str
+    traceparent: str | None = None
+    connect_latency_ms: float | None = None
     ok: bool = False
     error: str | None = None
     turns: list[TurnResult] = field(default_factory=list)
+    checks: list[dict[str, Any]] = field(default_factory=list)
+    unmeasured_expectations: list[str] = field(default_factory=list)
+    pass_fail: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         # summary latency rollups (helps the CI gate / trace join)
-        firsts = [t.first_audio_ms or t.first_response_ms for t in self.turns]
-        firsts = [f for f in firsts if f is not None]
+        first_audio = [t.first_audio_ms for t in self.turns if t.first_audio_ms is not None]
+        first_responses = [
+            t.first_response_ms for t in self.turns if t.first_response_ms is not None
+        ]
+        turn_walls = [t.turn_wall_ms for t in self.turns if t.turn_wall_ms is not None]
         d["summary"] = {
             "turns": len(self.turns),
             "turns_with_response": sum(1 for t in self.turns if t.first_response_ms is not None),
-            "first_audio_ms_avg": round(sum(firsts) / len(firsts), 1) if firsts else None,
-            "first_audio_ms_max": round(max(firsts), 1) if firsts else None,
+            "turns_with_audio": sum(1 for t in self.turns if t.first_audio_ms is not None),
+            "first_audio_ms_avg": round(sum(first_audio) / len(first_audio), 1)
+            if first_audio
+            else None,
+            "first_audio_ms_max": round(max(first_audio), 1) if first_audio else None,
+        }
+        d["latency_metrics"] = {
+            **_latency_stats("e2e", turn_walls),
+            **_latency_stats("first_audio", first_audio),
+            **_latency_stats("first_response", first_responses),
         }
         return d
 
@@ -171,8 +186,130 @@ class TurnAudioSynth:
 
 
 def _silence_frame() -> bytes:
-    """20 ms of low-level noise (keeps STT VAD engaged for finalization)."""
-    return b"".join(struct.pack("<h", random.randint(-18, 18)) for _ in range(FRAME_BYTES // 2))
+    """Return deterministic low-level PCM noise that keeps STT VAD engaged."""
+    pattern = b"\x0c\x00\xf4\xff"  # alternating +12/-12 PCM16 samples
+    return (pattern * (FRAME_BYTES // len(pattern) + 1))[:FRAME_BYTES]
+
+
+def _percentile(values: list[float], percentage: float) -> float | None:
+    """Return a linearly interpolated percentile without external dependencies."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return round(ordered[0], 1)
+    position = (len(ordered) - 1) * percentage / 100.0
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    value = ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+    return round(value, 1)
+
+
+def _latency_stats(prefix: str, values: list[float]) -> dict[str, float | None]:
+    """Build stable mean/P50/P95/P99 fields for CI and local reports."""
+    return {
+        f"{prefix}_mean_ms": round(sum(values) / len(values), 1) if values else None,
+        f"{prefix}_p50_ms": _percentile(values, 50),
+        f"{prefix}_p95_ms": _percentile(values, 95),
+        f"{prefix}_p99_ms": _percentile(values, 99),
+    }
+
+
+def _new_traceparent() -> str:
+    """Create a valid W3C traceparent for the driver-to-backend trace root."""
+    return f"00-{uuid.uuid4().hex}-{uuid.uuid4().hex[:16]}-01"
+
+
+def _evaluate_live_result(
+    result: ScenarioResult,
+    scenario: dict[str, Any],
+    *,
+    require_audio: bool,
+) -> None:
+    """Apply client-observable E2E gates without pretending to measure server KPIs."""
+    expectations_by_turn = {
+        str(turn.get("turn_id")): turn.get("expectations") or {}
+        for turn in scenario.get("turns") or []
+        if isinstance(turn, dict)
+    }
+    checks: list[dict[str, Any]] = []
+    unmeasured: set[str] = set()
+
+    for turn in result.turns:
+        expectations = expectations_by_turn.get(turn.turn_id, {})
+        if expectations.get("max_ttft_ms") is not None:
+            unmeasured.add("max_ttft_ms (server trace)")
+        if expectations.get("max_tts_first_chunk_ms") is not None:
+            unmeasured.add("max_tts_first_chunk_ms (server trace)")
+
+        if turn.error:
+            checks.append(
+                {
+                    "turn_id": turn.turn_id,
+                    "check": "turn_completed",
+                    "passed": False,
+                    "actual": turn.error,
+                    "expected": "response",
+                }
+            )
+            continue
+
+        if require_audio:
+            checks.append(
+                {
+                    "turn_id": turn.turn_id,
+                    "check": "first_audio_ms",
+                    "passed": turn.first_audio_ms is not None,
+                    "actual": turn.first_audio_ms,
+                    "expected": "not null",
+                }
+            )
+
+        max_latency_ms = expectations.get("max_latency_ms")
+        if max_latency_ms is not None:
+            passed = turn.turn_wall_ms is not None and turn.turn_wall_ms <= float(max_latency_ms)
+            checks.append(
+                {
+                    "turn_id": turn.turn_id,
+                    "check": "max_latency_ms",
+                    "passed": passed,
+                    "actual": turn.turn_wall_ms,
+                    "expected": max_latency_ms,
+                }
+            )
+
+    max_latency_p95_ms = (scenario.get("thresholds") or {}).get("max_latency_p95_ms")
+    if max_latency_p95_ms is not None:
+        turn_walls = [
+            turn.turn_wall_ms for turn in result.turns if turn.turn_wall_ms is not None
+        ]
+        observed_p95 = _percentile(turn_walls, 95)
+        checks.append(
+            {
+                "turn_id": None,
+                "check": "max_latency_p95_ms",
+                "passed": observed_p95 is not None and observed_p95 <= float(max_latency_p95_ms),
+                "actual": observed_p95,
+                "expected": max_latency_p95_ms,
+            }
+        )
+
+    if not result.turns or result.error:
+        checks.append(
+            {
+                "turn_id": None,
+                "check": "scenario_completed",
+                "passed": False,
+                "actual": result.error or "no turns",
+                "expected": "all turns completed",
+            }
+        )
+
+    result.checks = checks
+    result.unmeasured_expectations = sorted(unmeasured)
+    result.pass_fail = all(check["passed"] for check in checks) if checks else result.ok
+    result.ok = result.ok and result.pass_fail is not False
 
 
 def _load_turns(scenario_path: Path) -> list[tuple[str, str]]:
@@ -263,6 +400,32 @@ def _frame_kind(frame: dict[str, Any]) -> str:
     return str(frame.get("kind") or frame.get("type") or "unknown")
 
 
+def _normalized_kind(kind: str) -> str:
+    return kind.lower().replace("-", "_")
+
+
+def _is_audio_kind(kind: str) -> bool:
+    return _normalized_kind(kind) in {"audiodata", "audio_data"}
+
+
+def _is_response_kind(kind: str) -> bool:
+    return _is_audio_kind(kind) or _normalized_kind(kind) in {
+        "assistant",
+        "assistant_streaming",
+    }
+
+
+async def _drain_startup_messages(ws: Any) -> None:
+    """Discard readiness/greeting frames queued before the first measured turn."""
+    while True:
+        try:
+            await asyncio.wait_for(ws.recv(), timeout=0.05)
+        except asyncio.TimeoutError:
+            return
+        except websockets.ConnectionClosed:
+            return
+
+
 async def _run_turn(
     ws: Any,
     turn_id: str,
@@ -316,12 +479,12 @@ async def _run_turn(
 
         now = time.monotonic()
         last_inbound = now
-        if result.first_response_ms is None:
-            result.first_response_ms = round((now - eos) * 1000.0, 1)
 
         if isinstance(msg, (bytes, bytearray)):
             # Inbound binary = agent audio.
             result.inbound_kinds["binary_audio"] = result.inbound_kinds.get("binary_audio", 0) + 1
+            if result.first_response_ms is None:
+                result.first_response_ms = round((now - eos) * 1000.0, 1)
             if result.first_audio_ms is None:
                 result.first_audio_ms = round((now - eos) * 1000.0, 1)
             continue
@@ -334,9 +497,11 @@ async def _run_turn(
 
         kind = _frame_kind(frame)
         result.inbound_kinds[kind] = result.inbound_kinds.get(kind, 0) + 1
-        if kind == "AudioData" and result.first_audio_ms is None:
-            result.first_audio_ms = round((now - eos) * 1000.0, 1)
         text = _extract_text(frame)
+        if result.first_response_ms is None and _is_response_kind(kind):
+            result.first_response_ms = round((now - eos) * 1000.0, 1)
+        if _is_audio_kind(kind) and result.first_audio_ms is None:
+            result.first_audio_ms = round((now - eos) * 1000.0, 1)
         if text:
             texts.append(text)
 
@@ -351,6 +516,7 @@ async def run_scenario(
     base_url: str,
     *,
     ws_path: str = DEFAULT_WS_PATH,
+    streaming_mode: str = "realtime",
     session_prefix: str = DEFAULT_SESSION_PREFIX,
     industry: str | None = None,
     cache_dir: Path | None = None,
@@ -359,6 +525,8 @@ async def run_scenario(
     first_byte_timeout: float = 12.0,
     inter_turn_pause: float = 1.0,
     bootstrap_appconfig: bool = True,
+    require_audio_cache: bool = False,
+    require_audio: bool = True,
 ) -> ScenarioResult:
     """Drive one scenario against the deployed voice WS and return measurements."""
     if bootstrap_appconfig:
@@ -369,24 +537,50 @@ async def run_scenario(
     industry = industry or (doc.get("session_config", {}).get("agent_defaults", {}) or {}).get(
         "industry"
     ) or (doc.get("demo_user", {}) or {}).get("scenario")
+    configured_email = (doc.get("demo_user", {}) or {}).get("email")
+    scenario_text = scenario_path.read_text(encoding="utf-8")
+    uses_email_placeholder = "${demo_user.email}" in scenario_text or "${email}" in scenario_text
+    demo_email = (
+        os.getenv("EVAL_EMAIL_OVERRIDE") if uses_email_placeholder else configured_email
+    ) or configured_email
 
     session_id = f"{session_prefix}{scenario_name}_{uuid.uuid4().hex[:8]}"
     ws_url = _to_ws_url(base_url, ws_path)
-    query = f"?session_id={session_id}"
-    if industry:
-        query += f"&scenario={industry}"
+    traceparent = _new_traceparent()
+    query = "?" + urlencode(
+        {
+            "session_id": session_id,
+            "streaming_mode": streaming_mode,
+            "client_traceparent": traceparent,
+            "client_user_id": "eval_driver",
+            **({"user_email": demo_email} if demo_email else {}),
+            **({"scenario": industry} if industry else {}),
+        }
+    )
 
-    result = ScenarioResult(scenario_name=scenario_name, session_id=session_id, ws_url=ws_url)
+    result = ScenarioResult(
+        scenario_name=scenario_name,
+        session_id=session_id,
+        ws_url=ws_url,
+        streaming_mode=streaming_mode,
+        traceparent=traceparent,
+    )
 
     synth = TurnAudioSynth(cache_dir or DEFAULT_CACHE_DIR)
     # Pre-synthesize (fail fast + not counted against turn latency).
     pcm_by_turn: list[tuple[str, str, bytes]] = []
     try:
         for turn_id, user_input in _load_turns(scenario_path):
+            cache_path = synth._cache_path(user_input)
+            if require_audio_cache and (not cache_path.exists() or cache_path.stat().st_size <= 0):
+                raise FileNotFoundError(
+                    f"Missing cached input audio for {turn_id}; run with --synth-only first"
+                )
             pcm_by_turn.append((turn_id, user_input, synth.pcm_for(user_input)))
     except Exception as exc:  # noqa: BLE001 - surface synthesis failures to the caller
         result.error = f"tts_failed: {exc}"
         logger.error("TTS synthesis failed for %s: %s", scenario_name, exc, exc_info=True)
+        _evaluate_live_result(result, doc, require_audio=require_audio)
         return result
 
     logger.info(
@@ -409,14 +603,17 @@ async def run_scenario(
     }
 
     try:
+        connect_started = time.monotonic()
         async with websockets.connect(
             ws_url + query,
             additional_headers=headers,
             max_size=None,
             open_timeout=30,
         ) as ws:
+            result.connect_latency_ms = round((time.monotonic() - connect_started) * 1000.0, 1)
             await ws.send(json.dumps(metadata))
             await asyncio.sleep(1.0)  # let the session initialize / greeting settle
+            await _drain_startup_messages(ws)
 
             for turn_id, user_input, pcm in pcm_by_turn:
                 logger.info("[%s] turn %s: %r", session_id, turn_id, user_input[:80])
@@ -444,6 +641,7 @@ async def run_scenario(
         result.error = f"ws_error: {exc}"
         logger.error("WebSocket drive failed for %s: %s", scenario_name, exc, exc_info=True)
 
+    _evaluate_live_result(result, doc, require_audio=require_audio)
     return result
 
 
@@ -459,6 +657,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Deployed backend base URL (http[s]/ws[s]). Defaults to EVAL_BACKEND_URL.",
     )
     p.add_argument("--ws-path", default=DEFAULT_WS_PATH)
+    p.add_argument(
+        "--streaming-mode",
+        choices=("realtime", "voice_live"),
+        default=os.getenv("EVAL_STREAMING_MODE", "realtime"),
+        help="Backend orchestration mode to exercise explicitly.",
+    )
     p.add_argument("--session-prefix", default=DEFAULT_SESSION_PREFIX)
     p.add_argument("--industry", default=None, help="Scenario industry query (e.g. banking).")
     p.add_argument("--cache-dir", type=Path, default=None)
@@ -470,6 +674,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--turn-timeout", type=float, default=20.0)
     p.add_argument("--quiet-gap", type=float, default=2.0)
     p.add_argument("--first-byte-timeout", type=float, default=12.0)
+    p.add_argument(
+        "--require-audio-cache",
+        action="store_true",
+        help="Fail instead of synthesizing missing input audio (recommended for perf runs).",
+    )
+    p.add_argument(
+        "--allow-missing-audio",
+        action="store_true",
+        help="Do not fail the E2E gate when the backend returns no audio frame.",
+    )
     p.add_argument(
         "--no-appconfig",
         action="store_true",
@@ -504,6 +718,7 @@ def main(argv: list[str] | None = None) -> int:
             args.scenario,
             args.url,
             ws_path=args.ws_path,
+            streaming_mode=args.streaming_mode,
             session_prefix=args.session_prefix,
             industry=args.industry,
             cache_dir=args.cache_dir,
@@ -511,6 +726,8 @@ def main(argv: list[str] | None = None) -> int:
             quiet_gap=args.quiet_gap,
             first_byte_timeout=args.first_byte_timeout,
             bootstrap_appconfig=not args.no_appconfig,
+            require_audio_cache=args.require_audio_cache,
+            require_audio=not args.allow_missing_audio,
         )
     )
 

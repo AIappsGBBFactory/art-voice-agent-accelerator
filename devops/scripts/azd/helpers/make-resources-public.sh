@@ -24,7 +24,11 @@
 #                                 account recorded in the selected azd env.
 #   --dry-run                     Print what would change without applying.
 #   -j, --max-jobs <n>            Max parallel az updates (default: 10).
-#   -y, --yes                     Skip the confirmation prompt.
+#   -y, --yes                     Skip all confirmation prompts (does not opt
+#                                 into SecurityControl=Ignore).
+#   --prompt-security-control-ignore
+#                                 Ask whether to merge SecurityControl=Ignore
+#                                 onto resources opened by this run.
 #   -h, --help                    Show this help.
 #
 # Resolution order for the resource group:
@@ -70,6 +74,8 @@ RESOURCE_GROUP=""
 SUBSCRIPTION=""
 DRY_RUN=false
 ASSUME_YES=false
+PROMPT_SECURITY_CONTROL_IGNORE=false
+ADD_SECURITY_CONTROL_IGNORE=false
 MAX_JOBS=10
 INCLUDE_REMOTE_STATE=true
 
@@ -81,6 +87,7 @@ while [[ $# -gt 0 ]]; do
         --dry-run)           DRY_RUN=true; shift ;;
         -j|--max-jobs)       MAX_JOBS="${2:-10}"; shift 2 ;;
         -y|--yes)            ASSUME_YES=true; shift ;;
+        --prompt-security-control-ignore) PROMPT_SECURITY_CONTROL_IGNORE=true; shift ;;
         -h|--help)           sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) fail "Unknown argument: $1"; exit 1 ;;
     esac
@@ -207,6 +214,21 @@ if ! $DRY_RUN && ! $ASSUME_YES; then
     [[ "$reply" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
 fi
 
+if $PROMPT_SECURITY_CONTROL_IGNORE; then
+    if $ASSUME_YES; then
+        dim "SecurityControl=Ignore tag: skipped (--yes does not opt in to the tag)."
+    else
+        echo ""
+        warn "SecurityControl=Ignore is an organization policy-exemption tag."
+        read -r -p "Add SecurityControl=Ignore to resources opened by this run? [y/N] " tag_reply
+        if [[ "$tag_reply" =~ ^[Yy]$ ]]; then
+            ADD_SECURITY_CONTROL_IGNORE=true
+        else
+            dim "SecurityControl=Ignore tag: not requested."
+        fi
+    fi
+fi
+
 # ----------------------------------------------------------------------------
 # Parallel execution scaffolding
 # ----------------------------------------------------------------------------
@@ -246,18 +268,60 @@ wait_for_slot() {
 
 emit() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >> "$RESULTS"; }
 
+merge_security_control_ignore_tag() {
+    az tag update "${AZ_SUB_ARGS[@]}" \
+        --resource-id "$1" \
+        --operation merge \
+        --tags SecurityControl=Ignore \
+        --output none 2>/dev/null
+}
+
+add_security_control_ignore_tag() {
+    $ADD_SECURITY_CONTROL_IGNORE || return 0
+    merge_security_control_ignore_tag "$1"
+}
+
+tag_detail() {
+    $ADD_SECURITY_CONTROL_IGNORE || return 0
+    $DRY_RUN && return 0
+    add_security_control_ignore_tag "$1"
+}
+
+security_tag_label() {
+    $ADD_SECURITY_CONTROL_IGNORE || return 0
+    printf '%s' "SecurityControl=Ignore"
+}
+
+get_public_network_access() {
+    az resource show "${AZ_SUB_ARGS[@]}" --ids "$1" \
+        --query properties.publicNetworkAccess -o tsv 2>/dev/null || true
+}
+
 # Open a single resource's data plane. Runs inside a background job; emits one
 # result line. Type-specific where needed, generic publicNetworkAccess otherwise.
 flip_one() {
-    local type="$1" id="$2" name="${id##*/}"
+    local type="$1"
+    local id="$2"
+    local name="${id##*/}"
 
-    if $DRY_RUN; then emit DRY "$name" "$type"; return 0; fi
+    if $DRY_RUN; then
+        local dry_detail="$type"
+        local dry_tag_label
+        dry_tag_label="$(security_tag_label)"
+        [[ -n "$dry_tag_label" ]] && dry_detail="$dry_detail; $dry_tag_label"
+        emit DRY "$name" "$dry_detail"
+        return 0
+    fi
 
     case "$type" in
         Microsoft.DocumentDB/databaseAccounts)
             if az cosmosdb update "${AZ_SUB_ARGS[@]}" --ids "$id" \
                     --public-network-access ENABLED --output none 2>/dev/null; then
-                emit OK "$name"
+                if tag_detail "$id"; then
+                    emit OK "$name" "$(security_tag_label)"
+                else
+                    emit WARN "$name" "public access enabled; SecurityControl=Ignore tag failed"
+                fi
             else
                 emit SKIP "$name" "$type"
             fi
@@ -267,9 +331,139 @@ flip_one() {
                     --public-network-enabled true --output none 2>/dev/null; then
                 az acr update "${AZ_SUB_ARGS[@]}" --ids "$id" \
                     --default-action Allow --output none 2>/dev/null || true
-                emit OK "$name"
+
+                local acr_public_network_access
+                acr_public_network_access="$(get_public_network_access "$id")"
+                if [[ "$acr_public_network_access" == "Enabled" ]]; then
+                    if tag_detail "$id"; then
+                        emit OK "$name" "publicNetworkAccess=Enabled acl=Allow$(security_tag_label | sed 's/^/ /')"
+                    else
+                        emit WARN "$name" "public access enabled; SecurityControl=Ignore tag failed"
+                    fi
+                elif ! merge_security_control_ignore_tag "$id"; then
+                    emit SKIP "$name" \
+                        "publicNetworkAccess=${acr_public_network_access:-unknown} after update; SecurityControl=Ignore tag failed"
+                elif az acr update "${AZ_SUB_ARGS[@]}" --ids "$id" \
+                        --public-network-enabled true --default-action Allow \
+                        --output none 2>/dev/null; then
+                    acr_public_network_access="$(get_public_network_access "$id")"
+                    if [[ "$acr_public_network_access" == "Enabled" ]]; then
+                        emit OK "$name" \
+                            "publicNetworkAccess=Enabled acl=Allow SecurityControl=Ignore (retry)"
+                    else
+                        emit SKIP "$name" \
+                            "tagged SecurityControl=Ignore; publicNetworkAccess=${acr_public_network_access:-unknown} after retry"
+                    fi
+                else
+                    emit SKIP "$name" "tagged SecurityControl=Ignore; retry failed"
+                fi
             else
                 emit SKIP "$name" "$type"
+            fi
+            ;;
+        Microsoft.KeyVault/vaults)
+            if az keyvault update "${AZ_SUB_ARGS[@]}" --ids "$id" \
+                    --public-network-access Enabled --default-action Allow \
+                    --output none 2>/dev/null; then
+                local keyvault_public_network_access
+                keyvault_public_network_access="$(get_public_network_access "$id")"
+                if [[ "$keyvault_public_network_access" == "Enabled" ]]; then
+                    if tag_detail "$id"; then
+                        emit OK "$name" "publicNetworkAccess=Enabled acl=Allow$(security_tag_label | sed 's/^/ /')"
+                    else
+                        emit WARN "$name" "public access enabled; SecurityControl=Ignore tag failed"
+                    fi
+                elif ! merge_security_control_ignore_tag "$id"; then
+                    emit SKIP "$name" \
+                        "publicNetworkAccess=${keyvault_public_network_access:-unknown} after update; SecurityControl=Ignore tag failed"
+                elif az keyvault update "${AZ_SUB_ARGS[@]}" --ids "$id" \
+                        --public-network-access Enabled --default-action Allow \
+                        --output none 2>/dev/null; then
+                    keyvault_public_network_access="$(get_public_network_access "$id")"
+                    if [[ "$keyvault_public_network_access" == "Enabled" ]]; then
+                        emit OK "$name" \
+                            "publicNetworkAccess=Enabled acl=Allow SecurityControl=Ignore (retry)"
+                    else
+                        emit SKIP "$name" \
+                            "tagged SecurityControl=Ignore; publicNetworkAccess=${keyvault_public_network_access:-unknown} after retry"
+                    fi
+                else
+                    emit SKIP "$name" "tagged SecurityControl=Ignore; retry failed"
+                fi
+            else
+                emit SKIP "$name" "$type"
+            fi
+            ;;
+        Microsoft.Storage/storageAccounts)
+            # Storage accounts use a typed update for both controls. A generic
+            # az resource update against properties.networkAcls can return 200
+            # while leaving publicNetworkAccess disabled, which still blocks
+            # Terraform's remote-state blob data plane.
+            local storage_resource_group
+            storage_resource_group="${id#*/resourceGroups/}"
+            storage_resource_group="${storage_resource_group%%/*}"
+            if [[ -z "$storage_resource_group" || "$storage_resource_group" == "$id" ]]; then
+                emit SKIP "$name" "storage update failed: resource group could not be resolved"
+                return 0
+            fi
+
+            local storage_update_error
+            if storage_update_error=$(az storage account update "${AZ_SUB_ARGS[@]}" \
+                    --name "$name" --resource-group "$storage_resource_group" \
+                    --public-network-access Enabled \
+                    --default-action Allow --output none 2>&1); then
+                local public_network_access
+                public_network_access=$(az storage account show "${AZ_SUB_ARGS[@]}" \
+                    --name "$name" --resource-group "$storage_resource_group" \
+                    --query publicNetworkAccess -o tsv 2>/dev/null || true)
+                if [[ "$public_network_access" == "Enabled" ]]; then
+                    if tag_detail "$id"; then
+                        local tag_suffix
+                        tag_suffix="$(security_tag_label)"
+                        [[ -n "$tag_suffix" ]] && tag_suffix=" $tag_suffix"
+                        emit OK "$name" "publicNetworkAccess=Enabled acl=Allow${tag_suffix}"
+                    else
+                        emit WARN "$name" "public access enabled; SecurityControl=Ignore tag failed"
+                    fi
+                else
+                    # Azure Policy can accept the update and then immediately
+                    # restore publicNetworkAccess=Disabled. Add the explicit
+                    # exemption tag only when that behavior is observed, retry
+                    # once, and verify the resulting state again.
+                    if ! merge_security_control_ignore_tag "$id"; then
+                        emit SKIP "$name" \
+                            "publicNetworkAccess=${public_network_access:-unknown} after update; SecurityControl=Ignore tag failed"
+                        return 0
+                    fi
+
+                    local retry_update_error
+                    if ! retry_update_error=$(az storage account update "${AZ_SUB_ARGS[@]}" \
+                            --name "$name" --resource-group "$storage_resource_group" \
+                            --public-network-access Enabled \
+                            --default-action Allow --output none 2>&1); then
+                        retry_update_error=$(printf '%s' "$retry_update_error" \
+                            | tr '\r\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g')
+                        emit SKIP "$name" \
+                            "tagged SecurityControl=Ignore; retry failed: ${retry_update_error:0:200}"
+                        return 0
+                    fi
+
+                    public_network_access=$(az storage account show "${AZ_SUB_ARGS[@]}" \
+                        --name "$name" --resource-group "$storage_resource_group" \
+                        --query publicNetworkAccess -o tsv 2>/dev/null || true)
+                    if [[ "$public_network_access" == "Enabled" ]]; then
+                        emit OK "$name" \
+                            "publicNetworkAccess=Enabled acl=Allow SecurityControl=Ignore (retry)"
+                    else
+                        emit SKIP "$name" \
+                            "tagged SecurityControl=Ignore; publicNetworkAccess=${public_network_access:-unknown} after retry"
+                    fi
+                fi
+            else
+                storage_update_error=$(printf '%s' "$storage_update_error" \
+                    | tr '\r\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g')
+                emit SKIP "$name" \
+                    "storage update failed: ${storage_update_error:0:240}"
             fi
             ;;
         *)
@@ -279,7 +473,7 @@ flip_one() {
                 local detail=""
                 # Best-effort: relax network-ACL default action where it exists.
                 case "$type" in
-                    Microsoft.CognitiveServices/accounts|Microsoft.Storage/storageAccounts|Microsoft.KeyVault/vaults)
+                    Microsoft.CognitiveServices/accounts)
                         if az resource update "${AZ_SUB_ARGS[@]}" --ids "$id" \
                                 --set properties.networkAcls.defaultAction=Allow \
                                 --output none 2>/dev/null; then
@@ -287,7 +481,14 @@ flip_one() {
                         fi
                         ;;
                 esac
-                emit OK "$name" "$detail"
+                if tag_detail "$id"; then
+                    local tag_label
+                    tag_label="$(security_tag_label)"
+                    [[ -n "$tag_label" ]] && detail="${detail:+$detail }$tag_label"
+                    emit OK "$name" "$detail"
+                else
+                    emit WARN "$name" "public access enabled; SecurityControl=Ignore tag failed"
+                fi
             else
                 emit SKIP "$name" "$type"
             fi
@@ -338,13 +539,22 @@ fi
 # ----------------------------------------------------------------------------
 CHANGED=0
 SKIPPED=0
+TAG_FAILED=0
 echo ""
 while IFS=$'\t' read -r st name detail; do
     [[ -z "$st" ]] && continue
     case "$st" in
         OK)   success "$name${detail:+  ($detail)}"; CHANGED=$((CHANGED + 1)) ;;
         DRY)  dim "would enable public access: $name ($detail)" ;;
-        SKIP) warn "$name — failed/unsupported, skipped"; SKIPPED=$((SKIPPED + 1)) ;;
+        SKIP)
+            warn "$name — ${detail:-failed/unsupported, skipped}"
+            SKIPPED=$((SKIPPED + 1))
+            ;;
+        WARN)
+            warn "$name — $detail"
+            CHANGED=$((CHANGED + 1))
+            TAG_FAILED=$((TAG_FAILED + 1))
+            ;;
     esac
 done < <(sort -t$'\t' -k2,2 "$RESULTS")
 
@@ -354,5 +564,10 @@ if $DRY_RUN; then
 else
     success "Updated: $CHANGED resource(s)  (max $MAX_JOBS parallel)"
     [[ "$SKIPPED" -gt 0 ]] && warn "Skipped: $SKIPPED resource(s)"
+    [[ "$TAG_FAILED" -gt 0 ]] && fail "SecurityControl=Ignore tag failed for $TAG_FAILED updated resource(s)."
 fi
 echo ""
+
+if ! $DRY_RUN && [[ "$TAG_FAILED" -gt 0 ]]; then
+    exit 1
+fi

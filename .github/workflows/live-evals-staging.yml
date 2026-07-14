@@ -42,44 +42,27 @@ permissions:
   id-token: write  # Required for OIDC authentication with Azure
 
 jobs:
-  live-evals:
-    name: 🎯 Run Live Scenarios
+  # ───────────────────────────────────────────────────────────────────────────
+  # Gate 1: wait for the freshly deployed backend revision to be live before we
+  # fan out into the per-scenario eval matrix. Runs once (not per scenario) so
+  # we don't pay the revision/health wait N times in parallel.
+  # ───────────────────────────────────────────────────────────────────────────
+  prepare:
+    name: 🚦 Backend Readiness Gate
     runs-on: ubuntu-latest
-    # Only run when the triggering deploy succeeded (or on manual dispatch).
     if: github.event_name == 'workflow_dispatch'
     environment: staging
-
     env:
-      # Staging Azure endpoints (env vars set by deploy; fall back to secrets).
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT || secrets.AZURE_OPENAI_ENDPOINT }}
-      AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION || secrets.AZURE_SPEECH_REGION }}
-      AZURE_APPCONFIG_ENDPOINT: ${{ vars.AZURE_APPCONFIG_ENDPOINT || secrets.AZURE_APPCONFIG_ENDPOINT }}
-      AZURE_APPCONFIG_LABEL: ${{ vars.AZURE_APPCONFIG_LABEL }}
-      AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || secrets.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT }}
-      # Azure credentials (same shape as the deploy template).
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      # Decline-email recipient: dispatch input > secret > sensible default.
-      EVAL_EMAIL_OVERRIDE: ${{ github.event.inputs.email_recipient || secrets.EVAL_EMAIL_RECIPIENT || 'jinle@microsoft.com' }}
-      # Exercise the eval-telemetry path: export spans to App Insights WITH
-      # conversation content, so the verification step below (and Foundry trace
-      # evaluation) can consume them. In CI this content is synthetic demo-user
-      # data, so enabling capture here is safe.
-      EVAL_EXPORT_TELEMETRY: '1'
-      EVAL_SPAN_CONTENT_ENABLED: '1'
-      APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ vars.APPLICATIONINSIGHTS_CONNECTION_STRING || secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
-      # Backend location — persisted by the deploy pipeline so we can poll readiness.
       BACKEND_CONTAINER_APP_NAME: ${{ vars.BACKEND_CONTAINER_APP_NAME }}
       BACKEND_CONTAINER_APP_URL: ${{ vars.BACKEND_CONTAINER_APP_URL || vars.BACKEND_API_URL }}
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-
     steps:
       - name: 🛒 Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: 🔍 Detect Authentication Method
         id: detect-auth
@@ -95,8 +78,6 @@ jobs:
       - name: 🔐 Azure Login (OIDC)
         if: steps.detect-auth.outputs.use_oidc == 'true'
         uses: azure/login@v2
-        id: azure-login-oidc
-        continue-on-error: true
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -105,20 +86,8 @@ jobs:
       - name: 🔐 Azure Login (Service Principal)
         if: steps.detect-auth.outputs.use_oidc == 'false'
         uses: azure/login@v2
-        id: azure-login-sp
         with:
           creds: '{"clientId":"${{ env.AZURE_CLIENT_ID }}","clientSecret":"${{ env.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ env.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ env.AZURE_TENANT_ID }}"}'
-
-      - name: ✅ Verify Authentication
-        run: |
-          OIDC_SUCCESS="${{ steps.azure-login-oidc.outcome }}"
-          SP_SUCCESS="${{ steps.azure-login-sp.outcome }}"
-          if [ "$OIDC_SUCCESS" = "success" ] || [ "$SP_SUCCESS" = "success" ]; then
-            echo "✅ Authentication successful"
-          else
-            echo "❌ Authentication failed"
-            exit 1
-          fi
 
       - name: ⏳ Wait for Backend Revision to be Live
         # Waits until the active container app revision is in Running state AND
@@ -174,6 +143,94 @@ jobs:
           fi
           echo "✅ Revision live (no BACKEND_CONTAINER_APP_URL to health-check)"
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Gate 2: one parallel job PER scenario so the pipeline UI shows exactly which
+  # eval regressed. fail-fast: false ⇒ a single failing scenario does not cancel
+  # the others; every scenario still reports its own pass/fail + latency numbers.
+  # ───────────────────────────────────────────────────────────────────────────
+  eval:
+    name: 🎯 ${{ matrix.name }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: staging
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: all_agents_discovery
+            file: tests/evaluation/scenarios/session_based/all_agents_discovery.yaml
+          - name: banking_context_sharing
+            file: tests/evaluation/scenarios/session_based/banking_context_sharing.yaml
+          - name: decline_specialist_email
+            file: tests/evaluation/scenarios/session_based/decline_specialist_email.yaml
+          - name: latency_first_audio
+            file: tests/evaluation/scenarios/session_based/latency_first_audio.yaml
+    env:
+      # Staging Azure endpoints (env vars set by deploy; fall back to secrets).
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT || secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION || secrets.AZURE_SPEECH_REGION }}
+      AZURE_APPCONFIG_ENDPOINT: ${{ vars.AZURE_APPCONFIG_ENDPOINT || secrets.AZURE_APPCONFIG_ENDPOINT }}
+      AZURE_APPCONFIG_LABEL: ${{ vars.AZURE_APPCONFIG_LABEL }}
+      AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT || secrets.AZURE_AI_FOUNDRY_PROJECT_ENDPOINT }}
+      # Azure credentials (same shape as the deploy template).
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      # Decline-email recipient: dispatch input > secret > sensible default.
+      EVAL_EMAIL_OVERRIDE: ${{ github.event.inputs.email_recipient || secrets.EVAL_EMAIL_RECIPIENT || 'jinle@microsoft.com' }}
+      # Exercise the eval-telemetry path: export spans to App Insights WITH
+      # conversation content, so the verify-telemetry job (and Foundry trace
+      # evaluation) can consume them. In CI this content is synthetic demo-user
+      # data, so enabling capture here is safe.
+      EVAL_EXPORT_TELEMETRY: '1'
+      EVAL_SPAN_CONTENT_ENABLED: '1'
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ vars.APPLICATIONINSIGHTS_CONNECTION_STRING || secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
+    steps:
+      - name: 🛒 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Detect Authentication Method
+        id: detect-auth
+        run: |
+          if [ -z "${{ env.AZURE_CLIENT_SECRET }}" ]; then
+            echo "use_oidc=true" >> $GITHUB_OUTPUT
+            echo "📌 Using OIDC authentication"
+          else
+            echo "use_oidc=false" >> $GITHUB_OUTPUT
+            echo "📌 Using Service Principal authentication"
+          fi
+
+      - name: 🔐 Azure Login (OIDC)
+        if: steps.detect-auth.outputs.use_oidc == 'true'
+        uses: azure/login@v2
+        id: azure-login-oidc
+        continue-on-error: true
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔐 Azure Login (Service Principal)
+        if: steps.detect-auth.outputs.use_oidc == 'false'
+        uses: azure/login@v2
+        id: azure-login-sp
+        with:
+          creds: '{"clientId":"${{ env.AZURE_CLIENT_ID }}","clientSecret":"${{ env.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ env.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ env.AZURE_TENANT_ID }}"}'
+
+      - name: ✅ Verify Authentication
+        run: |
+          OIDC_SUCCESS="${{ steps.azure-login-oidc.outcome }}"
+          SP_SUCCESS="${{ steps.azure-login-sp.outcome }}"
+          if [ "$OIDC_SUCCESS" = "success" ] || [ "$SP_SUCCESS" = "success" ]; then
+            echo "✅ Authentication successful"
+          else
+            echo "❌ Authentication failed"
+            exit 1
+          fi
+
       - name: 🐍 Setup Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -200,56 +257,235 @@ jobs:
           echo "✅ Azure configuration validated"
           echo "📧 Decline-email recipient: $EVAL_EMAIL_OVERRIDE"
 
-      - name: 🎯 Run Curated Live Scenarios
+      - name: 🎯 Run Scenario — ${{ matrix.name }}
         id: run
         run: |
           set -uo pipefail
-          mkdir -p runs/results
+          mkdir -p "runs/results/${{ matrix.name }}"
+          echo "::group::🎯 ${{ matrix.name }}"
+          if python -m tests.evaluation.cli run \
+              --input "${{ matrix.file }}" \
+              --output "runs/results/${{ matrix.name }}"; then
+            echo "scenario_result=passed" >> "$GITHUB_OUTPUT"
+            echo "✅ ${{ matrix.name }} passed"
+          else
+            echo "scenario_result=failed" >> "$GITHUB_OUTPUT"
+            echo "❌ ${{ matrix.name }} FAILED (strict gate)"
+          fi
+          echo "::endgroup::"
 
-          SCENARIOS=(
-            "tests/evaluation/scenarios/session_based/all_agents_discovery.yaml"
-            "tests/evaluation/scenarios/session_based/banking_context_sharing.yaml"
-            "tests/evaluation/scenarios/session_based/decline_specialist_email.yaml"
-            "tests/evaluation/scenarios/session_based/latency_first_audio.yaml"
-          )
-
-          FAILED=()
-          for scenario in "${SCENARIOS[@]}"; do
-            name=$(basename "$scenario" .yaml)
-            echo "::group::🎯 $name"
-            if python -m tests.evaluation.cli run --input "$scenario" --output "runs/results/$name"; then
-              echo "✅ $name passed"
-            else
-              echo "❌ $name FAILED (strict gate)"
-              FAILED+=("$name")
-            fi
-            echo "::endgroup::"
-          done
-
+      - name: ⏱️ Latency / Perf Guardrail Report
+        # Current-state latency averages (mean / p50 / p95) rendered next to the
+        # scenario's configured perf guardrails. Observability only — never gates.
+        if: always()
+        run: |
+          set -uo pipefail
           {
-            echo "## 🎙️ Live Evals (Staging)"
+            echo "## 🎙️ ${{ matrix.name }}"
             echo ""
-            echo "| Scenario | Result |"
-            echo "|----------|--------|"
-            for scenario in "${SCENARIOS[@]}"; do
-              name=$(basename "$scenario" .yaml)
-              if printf '%s\n' "${FAILED[@]:-}" | grep -qx "$name"; then
-                echo "| $name | ❌ Failed |"
-              else
-                echo "| $name | ✅ Passed |"
-              fi
-            done
+            if [ "${{ steps.run.outputs.scenario_result }}" = "passed" ]; then
+              echo "**Result:** ✅ Passed"
+            else
+              echo "**Result:** ❌ Failed (strict gate)"
+            fi
             echo ""
-            echo "Recipient (decline email): \`$EVAL_EMAIL_OVERRIDE\`"
+            python -m tests.evaluation.ci_latency_report \
+              --scenario "${{ matrix.file }}" \
+              --results-dir "runs/results/${{ matrix.name }}" \
+              --name "${{ matrix.name }}" || echo "> ⚠️ latency report unavailable"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ ${#FAILED[@]} -ne 0 ]; then
-            echo "❌ Failed scenarios: ${FAILED[*]}"
+      - name: 📤 Upload Eval Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-${{ matrix.name }}
+          path: runs/results/**
+          retention-days: 14
+
+      - name: 🚦 Enforce Scenario Gate
+        # Fail this matrix leg (and only this leg) if the scenario did not pass,
+        # so the pipeline UI attributes the failure to the exact scenario.
+        if: always()
+        run: |
+          if [ "${{ steps.run.outputs.scenario_result }}" != "passed" ]; then
+            echo "❌ Scenario ${{ matrix.name }} failed the strict gate"
             exit 1
           fi
-          echo "✅ All live scenarios passed"
+          echo "✅ Scenario ${{ matrix.name }} passed"
 
-      - name: � Verify Eval Telemetry in App Insights
+  # ───────────────────────────────────────────────────────────────────────────
+  # Gate 3: run the real browser WebSocket E2E/performance matrix. The separate
+  # telemetry gate below verifies that the same eval sessions emitted server KPIs.
+  # ───────────────────────────────────────────────────────────────────────────
+  voice-e2e:
+    name: 🎙️ Voice E2E — ${{ matrix.name }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: staging
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: latency_first_audio_cascade
+            mode: realtime
+            file: tests/evaluation/scenarios/session_based/latency_first_audio.yaml
+          - name: latency_first_audio_voice_live
+            mode: voice_live
+            file: tests/evaluation/scenarios/session_based/latency_first_audio.yaml
+          - name: banking_context_cascade
+            mode: realtime
+            file: tests/evaluation/scenarios/session_based/banking_context_sharing.yaml
+          - name: banking_context_voice_live
+            mode: voice_live
+            file: tests/evaluation/scenarios/session_based/banking_context_sharing.yaml
+    env:
+      EVAL_LIVE_URL: ${{ vars.BACKEND_CONTAINER_APP_URL || vars.BACKEND_API_URL }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT || secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION || secrets.AZURE_SPEECH_REGION }}
+      AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+      AZURE_SPEECH_ENDPOINT: ${{ vars.AZURE_SPEECH_ENDPOINT || secrets.AZURE_SPEECH_ENDPOINT }}
+      AZURE_APPCONFIG_ENDPOINT: ${{ vars.AZURE_APPCONFIG_ENDPOINT || secrets.AZURE_APPCONFIG_ENDPOINT }}
+      AZURE_APPCONFIG_LABEL: ${{ vars.AZURE_APPCONFIG_LABEL }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      EVAL_EMAIL_OVERRIDE: ${{ github.event.inputs.email_recipient || secrets.EVAL_EMAIL_RECIPIENT || 'jinle@microsoft.com' }}
+    steps:
+      - name: 🛒 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔍 Detect Authentication Method
+        id: detect-auth
+        run: |
+          if [ -z "${{ env.AZURE_CLIENT_SECRET }}" ]; then
+            echo "use_oidc=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "use_oidc=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 🔐 Azure Login (OIDC)
+        if: steps.detect-auth.outputs.use_oidc == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔐 Azure Login (Service Principal)
+        if: steps.detect-auth.outputs.use_oidc == 'false'
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ env.AZURE_CLIENT_ID }}","clientSecret":"${{ env.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ env.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ env.AZURE_TENANT_ID }}"}'
+
+      - name: 🐍 Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: 🔧 Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: 🎧 Prepare deterministic input audio cache
+        run: |
+          set -euo pipefail
+          mkdir -p runs/live-evals/audio-cache
+          python -m tests.evaluation.live.ws_voice_driver \
+            --scenario "${{ matrix.file }}" \
+            --url "$EVAL_LIVE_URL" \
+            --streaming-mode "${{ matrix.mode }}" \
+            --cache-dir runs/live-evals/audio-cache \
+            --synth-only
+
+      - name: 🎙️ Run real voice WebSocket E2E
+        id: live-run
+        run: |
+          set -euo pipefail
+          mkdir -p "runs/live-evals/${{ matrix.name }}"
+          python -m tests.evaluation.live.ws_voice_driver \
+            --scenario "${{ matrix.file }}" \
+            --url "$EVAL_LIVE_URL" \
+            --streaming-mode "${{ matrix.mode }}" \
+            --session-prefix "eval_live_${{ matrix.mode }}_" \
+            --cache-dir runs/live-evals/audio-cache \
+            --require-audio-cache \
+            --no-appconfig \
+            --out "runs/live-evals/${{ matrix.name }}/result.json"
+
+      - name: 📊 Publish voice latency summary
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          path = Path("runs/live-evals/${{ matrix.name }}/result.json")
+          print("## 🎙️ ${{ matrix.name }}")
+          print()
+          if not path.exists():
+              print("> No live result artifact was produced.")
+          else:
+              data = json.loads(path.read_text())
+              metrics = data.get("latency_metrics", {})
+              print(f"- Result: **{'passed' if data.get('pass_fail') else 'failed'}**")
+              print(f"- Session: `{data.get('session_id')}`")
+              print(f"- First audio P95: **{metrics.get('first_audio_p95_ms')} ms**")
+              print(f"- E2E turn P95: **{metrics.get('e2e_p95_ms')} ms**")
+              if data.get("unmeasured_expectations"):
+                  print("- Server-only checks: " + ", ".join(data["unmeasured_expectations"]))
+          PY
+
+      - name: 📤 Upload voice E2E artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voice-e2e-${{ matrix.name }}
+          path: runs/live-evals/${{ matrix.name }}/
+          retention-days: 14
+
+  telemetry-verify:
+    name: 🔭 Verify Eval Telemetry
+    needs: [eval, voice-e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ vars.APPLICATIONINSIGHTS_CONNECTION_STRING || secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
+    steps:
+      - name: 🔍 Detect Authentication Method
+        id: detect-auth
+        run: |
+          if [ -z "${{ env.AZURE_CLIENT_SECRET }}" ]; then
+            echo "use_oidc=true" >> $GITHUB_OUTPUT
+          else
+            echo "use_oidc=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🔐 Azure Login (OIDC)
+        if: steps.detect-auth.outputs.use_oidc == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔐 Azure Login (Service Principal)
+        if: steps.detect-auth.outputs.use_oidc == 'false'
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ env.AZURE_CLIENT_ID }}","clientSecret":"${{ env.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ env.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ env.AZURE_TENANT_ID }}"}'
+
+      - name: 🔭 Verify Eval Telemetry in App Insights
         # Self-contained: the App Insights connection string is persisted by the
         # deploy pipeline (gh variable set APPLICATIONINSIGHTS_CONNECTION_STRING),
         # so no manual workspace/app config is needed. We derive the ApplicationId
@@ -267,46 +503,138 @@ jobs:
           echo "App Insights ApplicationId: $APPID"
           az extension add --name application-insights --only-show-errors 2>/dev/null || true
 
-          # Eval spans are marked session.id = eval_<scenario> (see utils/eval_span
-          # + scenario_runner), so this asserts OUR run's content landed — not
-          # unrelated traffic.
-          Q='dependencies
-             | where timestamp > ago(20m)
-             | where name startswith "invoke_agent"
-             | extend p = parse_json(tostring(customDimensions))
-             | where tostring(p["session.id"]) startswith "eval_"
-             | summarize spans=count(),
-                 with_content=countif(isnotempty(tostring(p["gen_ai.input.messages"]))),
-                 with_agentid=countif(isnotempty(tostring(p["gen_ai.agent.id"])))'
+            # Verify both the in-process functional eval spans and the real
+            # browser-WebSocket eval sessions. The voice.turn fields are emitted
+            # by both Speech Cascade and Voice Live through the shared KPI contract.
+            Q='union isfuzzy=true dependencies, requests, traces
+               | where timestamp > ago(30m)
+               | extend p = parse_json(tostring(customDimensions))
+               | extend sid=tostring(p["session.id"]),
+                  stream_mode=tostring(p["stream.mode"])
+               | summarize
+                spans=countif(name startswith "invoke_agent" and sid startswith "eval_"),
+                with_content=countif(name startswith "invoke_agent" and sid startswith "eval_" and isnotempty(tostring(p["gen_ai.input.messages"]))),
+                with_agentid=countif(name startswith "invoke_agent" and sid startswith "eval_" and isnotempty(tostring(p["gen_ai.agent.id"]))),
+                live_sessions=dcountif(sid, sid startswith "eval_live_"),
+                live_modes=dcountif(stream_mode, sid startswith "eval_live_" and isnotempty(stream_mode)),
+                live_turns=countif(name startswith "voice.turn." and sid startswith "eval_live_"),
+                live_wall=countif(name startswith "voice.turn." and sid startswith "eval_live_" and isnotempty(tostring(p["turn.wall_ms"]))),
+                live_ttft=countif(name startswith "voice.turn." and sid startswith "eval_live_" and isnotempty(tostring(p["turn.ttft_ms"]))),
+                live_ttfb=countif(name startswith "voice.turn." and sid startswith "eval_live_" and isnotempty(tostring(p["turn.ttfb_ms"]))),
+                live_model=countif(name startswith "voice.turn." and sid startswith "eval_live_" and isnotempty(tostring(p["turn.model"])))'
 
           echo "Polling App Insights for eval telemetry (ingestion delay ~1-5m)..."
           for attempt in 1 2 3 4 5 6 7 8; do
             sleep 30
             RESULT=$(az monitor app-insights query --app "$APPID" --analytics-query "$Q" -o json 2>/dev/null || echo '{}')
-            SPANS=$(echo "$RESULT" | python -c "import sys,json; d=json.load(sys.stdin); r=d.get('tables',[{}])[0].get('rows',[]); print(int(r[0][0]) if r else 0)" 2>/dev/null || echo 0)
-            CONTENT=$(echo "$RESULT" | python -c "import sys,json; d=json.load(sys.stdin); r=d.get('tables',[{}])[0].get('rows',[]); print(int(r[0][1]) if r else 0)" 2>/dev/null || echo 0)
-            AGENTID=$(echo "$RESULT" | python -c "import sys,json; d=json.load(sys.stdin); r=d.get('tables',[{}])[0].get('rows',[]); print(int(r[0][2]) if r else 0)" 2>/dev/null || echo 0)
-            echo "  attempt $attempt: invoke_agent=$SPANS with_content=$CONTENT with_agentid=$AGENTID"
-            if [ "${SPANS:-0}" -gt 0 ] && [ "${CONTENT:-0}" -gt 0 ] && [ "${AGENTID:-0}" -gt 0 ]; then
+            VALUES=$(echo "$RESULT" | python -c "import sys,json; d=json.load(sys.stdin); r=d.get('tables',[{}])[0].get('rows',[]); print(' '.join(str(int(v or 0)) for v in (r[0] if r else [0]*10)))" 2>/dev/null || echo "0 0 0 0 0 0 0 0 0 0")
+            read -r SPANS CONTENT AGENTID LIVE_SESSIONS LIVE_MODES LIVE_TURNS LIVE_WALL LIVE_TTFT LIVE_TTFB LIVE_MODEL <<< "$VALUES"
+            echo "  attempt $attempt: invoke_agent=$SPANS with_content=$CONTENT with_agentid=$AGENTID live_sessions=$LIVE_SESSIONS live_modes=$LIVE_MODES live_turns=$LIVE_TURNS wall=$LIVE_WALL ttft=$LIVE_TTFT ttfb=$LIVE_TTFB model=$LIVE_MODEL"
+            if [ "${SPANS:-0}" -gt 0 ] && [ "${CONTENT:-0}" -gt 0 ] && [ "${AGENTID:-0}" -gt 0 ] \
+              && [ "${LIVE_SESSIONS:-0}" -ge 2 ] && [ "${LIVE_MODES:-0}" -ge 2 ] \
+              && [ "${LIVE_TURNS:-0}" -gt 0 ] && [ "${LIVE_WALL:-0}" -gt 0 ] \
+              && [ "${LIVE_TTFT:-0}" -gt 0 ] && [ "${LIVE_TTFB:-0}" -gt 0 ] \
+              && [ "${LIVE_MODEL:-0}" -gt 0 ]; then
               {
                 echo "## 🔭 Eval Telemetry Verified (App Insights)"
                 echo ""
-                echo "| invoke_agent spans | with content | with agent.id |"
-                echo "|--------------------|--------------|---------------|"
-                echo "| $SPANS | $CONTENT | $AGENTID |"
+                echo "| invoke_agent | content | agent.id | live sessions | live modes | voice turns | wall KPI | TTFT KPI | TTFB KPI | model |"
+                echo "|--------------|---------|----------|---------------|------------|-------------|----------|----------|----------|-------|"
+                echo "| $SPANS | $CONTENT | $AGENTID | $LIVE_SESSIONS | $LIVE_MODES | $LIVE_TURNS | $LIVE_WALL | $LIVE_TTFT | $LIVE_TTFB | $LIVE_MODEL |"
               } >> "$GITHUB_STEP_SUMMARY"
-              echo "✅ Eval spans with content + agent.id present in App Insights"
+              echo "✅ Functional and live voice KPI telemetry present in App Insights"
               exit 0
             fi
           done
-          echo "❌ No eval invoke_agent spans with content found in App Insights."
-          echo "   Check: EVAL_EXPORT_TELEMETRY/EVAL_SPAN_CONTENT_ENABLED set, connection string valid, and CI identity has a Monitoring Reader role."
+          echo "❌ Required functional/live voice telemetry was not found in App Insights."
+          echo "   Check eval export settings, backend ingestion delay, session.id prefixes, and Monitoring Reader access."
           exit 1
 
-      - name: �📤 Upload Eval Artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
+  # ───────────────────────────────────────────────────────────────────────────
+  # Always-on aggregate: consolidate every scenario's pass/fail + current-state
+  # latency averages vs guardrails into a single run-level summary, regardless
+  # of which legs failed.
+  # ───────────────────────────────────────────────────────────────────────────
+  report:
+    name: 🧾 Aggregate Latency & Results
+    needs: [eval, voice-e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🛒 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python 3.11
+        uses: actions/setup-python@v5
         with:
-          name: live-eval-results
-          path: runs/results/**
-          retention-days: 14
+          python-version: '3.11'
+
+      - name: 📥 Download Eval Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: eval-*
+
+      - name: 📥 Download Voice E2E Artifacts
+        uses: actions/download-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          path: voice-artifacts
+          pattern: voice-e2e-*
+
+      - name: 📦 Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: 🧾 Build Aggregate Summary
+        run: |
+          set -uo pipefail
+          declare -A SCEN_FILES=(
+            [all_agents_discovery]="tests/evaluation/scenarios/session_based/all_agents_discovery.yaml"
+            [banking_context_sharing]="tests/evaluation/scenarios/session_based/banking_context_sharing.yaml"
+            [decline_specialist_email]="tests/evaluation/scenarios/session_based/decline_specialist_email.yaml"
+            [latency_first_audio]="tests/evaluation/scenarios/session_based/latency_first_audio.yaml"
+          )
+          {
+            echo "# 🎙️ Live Evals (Staging) — Aggregate"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for name in "${!SCEN_FILES[@]}"; do
+            results_dir="artifacts/eval-$name/runs/results/$name"
+            if [ ! -d "$results_dir" ]; then
+              results_dir="artifacts/eval-$name"
+            fi
+            python -m tests.evaluation.ci_latency_report \
+              --scenario "${SCEN_FILES[$name]}" \
+              --results-dir "$results_dir" \
+              --name "$name" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+              || echo "> ⚠️ latency report unavailable for $name" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: 🎙️ Build Voice E2E Summary
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          print("## 🎙️ Real Voice WebSocket E2E")
+          print()
+          print("| Run | Mode | Result | First audio P95 | E2E P95 | Session |")
+          print("|-----|------|--------|-----------------|---------|---------|")
+          found = False
+          for path in sorted(Path("voice-artifacts").glob("**/result.json")):
+              found = True
+              data = json.loads(path.read_text())
+              metrics = data.get("latency_metrics", {})
+              print(
+                  f"| {path.parent.name} | {data.get('streaming_mode')} | "
+                  f"{'passed' if data.get('pass_fail') else 'failed'} | "
+                  f"{metrics.get('first_audio_p95_ms')} ms | "
+                  f"{metrics.get('e2e_p95_ms')} ms | `{data.get('session_id')}` |"
+              )
+          if not found:
+              print("> No voice E2E artifacts were available.")
+          PY
