@@ -7,6 +7,114 @@ import HourglassTopRoundedIcon from '@mui/icons-material/HourglassTopRounded';
 import { formatEventTypeLabel, formatStatusTimestamp, describeEventData, inferStatusTone, STATUS_TONE_META } from '../utils/formatters.js';
 import { styles } from '../styles/voiceAppStyles.js';
 import logger from '../utils/logger.js';
+import { normalizeTranscriptText } from '../utils/turnMessages.js';
+
+// Renders a single tool call inside the per-turn grouped tool card.
+const ToolCallRow = ({ call }) => {
+  const status = call?.status || "started";
+  const toolLabel = (call?.toolName || "tool").replace(/_/g, " ");
+  const isSuccess = status === "success";
+  const isFailure = status === "error";
+  const isProgress = status === "in_progress";
+  const pct = Number(call?.pct);
+  const statusLabel = isSuccess
+    ? "Completed"
+    : isFailure
+    ? "Failed"
+    : isProgress
+    ? "In Progress"
+    : "Started";
+  const chipColor = isSuccess ? "success" : isFailure ? "error" : "info";
+  const chipIcon = isSuccess
+    ? <CheckCircleRoundedIcon fontSize="small" />
+    : isFailure
+    ? <ErrorOutlineRoundedIcon fontSize="small" />
+    : <HourglassTopRoundedIcon fontSize="small" />;
+
+  let detailText = null;
+  if (isFailure && call?.error != null) {
+    detailText =
+      typeof call.error === "string" ? call.error : JSON.stringify(call.error, null, 2);
+  } else if (call?.result !== undefined && call?.result !== null) {
+    detailText =
+      typeof call.result === "string" ? call.result : JSON.stringify(call.result, null, 2);
+  }
+
+  let parsedJson = null;
+  if (detailText) {
+    try {
+      parsedJson = JSON.parse(detailText);
+    } catch (err) {
+      logger.debug?.("Failed to parse tool payload", { err, detailText });
+    }
+  }
+
+  return (
+    <Box sx={{ borderRadius: 2, backgroundColor: "rgba(15,23,42,0.18)", p: 1.25 }}>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
+          <BuildCircleRoundedIcon sx={{ color: "#e0e7ff", fontSize: 18 }} />
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {toolLabel}
+          </Typography>
+        </Box>
+        <Chip
+          label={statusLabel}
+          color={chipColor}
+          variant="outlined"
+          size="small"
+          icon={chipIcon}
+          sx={{
+            color: chipColor === "success" ? "#064e3b" : chipColor === "error" ? "#7f1d1d" : "#0f172a",
+            borderColor: "rgba(248,250,252,0.4)",
+            backgroundColor: "rgba(248,250,252,0.15)",
+            '& .MuiChip-icon': {
+              color: chipColor === "success" ? "#047857" : chipColor === "error" ? "#dc2626" : "#1e293b",
+            },
+          }}
+        />
+      </Box>
+      {isProgress && Number.isFinite(pct) && (
+        <Box sx={{ mt: 1 }}>
+          <LinearProgress
+            variant="determinate"
+            value={Math.max(0, Math.min(100, pct))}
+            sx={{
+              height: 6,
+              borderRadius: 999,
+              backgroundColor: "rgba(15,23,42,0.25)",
+              '& .MuiLinearProgress-bar': { backgroundColor: "#f8fafc" },
+            }}
+          />
+        </Box>
+      )}
+      {detailText && (
+        <Box
+          component="pre"
+          sx={{
+            m: 0,
+            mt: 1,
+            backgroundColor: "rgba(15,23,42,0.35)",
+            borderRadius: 2,
+            p: 1.5,
+            fontFamily:
+              'Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            fontSize: "0.72rem",
+            maxHeight: 220,
+            overflow: "auto",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {parsedJson ? JSON.stringify(parsedJson, null, 2) : detailText}
+        </Box>
+      )}
+    </Box>
+  );
+};
 
 const ChatBubble = ({ message }) => {
   if (message?.type === "divider") {
@@ -181,6 +289,81 @@ const ChatBubble = ({ message }) => {
                 {details}
               </Typography>
             )}
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  }
+
+  if (message?.isToolGroup || Array.isArray(message?.toolCalls)) {
+    const toolCalls = Array.isArray(message.toolCalls) ? message.toolCalls : [];
+    const responded = toolCalls.filter(
+      (call) => call?.status === "success" || call?.status === "error",
+    );
+
+    // Only surface the tool blob once at least one call has returned a response.
+    // Until then the group stays invisible so "started"/progress cards don't flash.
+    if (responded.length === 0) {
+      return null;
+    }
+
+    const anyFailure = toolCalls.some((call) => call?.status === "error");
+    const allSuccess = toolCalls.every((call) => call?.status === "success");
+    const cardGradient = anyFailure
+      ? "linear-gradient(135deg, #f87171, #ef4444)"
+      : allSuccess
+      ? "linear-gradient(135deg, #34d399, #10b981)"
+      : "linear-gradient(135deg, #8b5cf6, #6366f1)";
+    const subheaderText =
+      toolCalls.length > 1 ? `${toolCalls.length} tool calls` : "Tool call";
+
+    return (
+      <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
+        <Card
+          elevation={6}
+          sx={{
+            width: "100%",
+            maxWidth: 600,
+            borderRadius: 3,
+            background: cardGradient,
+            color: "#f8fafc",
+            border: "1px solid rgba(255,255,255,0.16)",
+            boxShadow: "0 18px 40px rgba(99,102,241,0.28)",
+          }}
+        >
+          <CardHeader
+            avatar={<BuildCircleRoundedIcon sx={{ color: "#e0e7ff" }} />}
+            title={
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, letterSpacing: 0.4 }}>
+                Tool Activity
+              </Typography>
+            }
+            subheader={subheaderText}
+            subheaderTypographyProps={{
+              sx: {
+                color: "rgba(248,250,252,0.78)",
+                textTransform: "uppercase",
+                fontSize: "0.7rem",
+                letterSpacing: "0.08em",
+                fontWeight: 600,
+              },
+            }}
+            sx={{ pb: 0 }}
+          />
+          <Divider sx={{ borderColor: "rgba(248,250,252,0.2)" }} />
+          <CardContent
+            sx={{
+              pt: 1.5,
+              pb: 1.5,
+              color: "rgba(248,250,252,0.92)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 1.5,
+            }}
+          >
+            {toolCalls.map((call) => (
+              <ToolCallRow key={call.callKey || call.callId || call.toolName} call={call} />
+            ))}
           </CardContent>
         </Card>
       </Box>
@@ -374,6 +557,18 @@ const ChatBubble = ({ message }) => {
   }
   
   const bubbleStyle = isUser ? styles.userBubble : styles.assistantBubble;
+  // While a turn is still streaming (partial transcript / partial response),
+  // render the text in italics with a subtle dim; on finalization it flips to
+  // normal weight so the bubble visibly "settles" on the recognized final.
+  const streamingTextStyle = streaming
+    ? { fontStyle: "italic", opacity: 0.85 }
+    : cancelled
+    ? { fontStyle: "normal", opacity: 0.7 }
+    : { fontStyle: "normal" };
+  // Normalize whitespace so a partial transcript renders identically to the
+  // final: collapse CRLF, drop blank runs, and trim edges. This keeps the
+  // bubble stable (no phantom blank line) as partials stream into the final.
+  const displayText = normalizeTranscriptText(effectiveText);
 
   return (
     <div style={isUser ? styles.userMessage : styles.assistantMessage}>
@@ -383,11 +578,26 @@ const ChatBubble = ({ message }) => {
           {speaker}
         </div>
       )}
-      <div style={bubbleStyle}>
-        {text.split("\n").map((line, i) => (
-          <div key={i}>{line}</div>
-        ))}
-        {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
+      <div style={{ ...bubbleStyle, ...streamingTextStyle }}>
+        {/* Inline text + cursor: keeping the cursor inline (not after block
+            <div> lines) prevents a phantom newline while streaming. */}
+        <span style={{ whiteSpace: "pre-wrap" }}>{displayText}</span>
+        {streaming && (
+          <span style={{ opacity: 0.7, fontStyle: "normal", marginLeft: "1px" }}>▌</span>
+        )}
+        {cancelled && (
+          <span
+            style={{
+              display: "block",
+              marginTop: "4px",
+              fontSize: "0.72rem",
+              fontStyle: "normal",
+              opacity: 0.72,
+            }}
+          >
+            {cancellationLabel}
+          </span>
+        )}
       </div>
     </div>
   );

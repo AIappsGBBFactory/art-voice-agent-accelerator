@@ -53,6 +53,9 @@ import logger from '../utils/logger.js';
 import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
 import { setVoiceSession, getSessionTraceparent, getDeviceId, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
 import { buildAuthQueryParams, getAuthenticatedUser } from '../utils/auth.js';
+import { reduceConversationPayload } from '../utils/conversationBubbles.js';
+import { flattenSessionEnvelope, isSessionEnvelope } from '../utils/sessionEnvelope.js';
+import { resolveTurnId } from '../utils/turnMessages.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
 const STREAM_MODE_STORAGE_KEY = 'artagent.streamingMode';
@@ -1540,44 +1543,6 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     return match?.config ?? null;
   }, [realtimeStreamingModeOptions, selectedRealtimeStreamingMode]);
 
-  const updateToolMessage = useCallback(
-    (toolName, transformer, fallbackMessage) => {
-      setMessages((prev) => {
-        const next = [...prev];
-        let targetIndex = -1;
-
-        for (let idx = next.length - 1; idx >= 0; idx -= 1) {
-          const candidate = next[idx];
-          if (candidate?.isTool && candidate.text?.includes(`tool ${toolName}`)) {
-            targetIndex = idx;
-            break;
-          }
-        }
-
-        if (targetIndex === -1) {
-          if (!fallbackMessage) {
-            return prev;
-          }
-          const fallback =
-            typeof fallbackMessage === "function"
-              ? fallbackMessage()
-              : fallbackMessage;
-          return [...prev, fallback];
-        }
-
-        const current = next[targetIndex];
-        const updated = transformer(current);
-        if (!updated || updated === current) {
-          return prev;
-        }
-
-        next[targetIndex] = updated;
-        return next;
-      });
-    },
-    [setMessages],
-  );
-
   // Health monitoring (disabled)
   /*
   const { 
@@ -1695,12 +1660,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     [appendLog, cancelOutputLevelDecay],
   );
   const metricsRef = useRef(createMetricsState());
-  // Throttle hot-path UI updates for streaming text
-  const lastSttPartialUpdateRef = useRef(0);
-  const lastAssistantStreamUpdateRef = useRef(0);
-  // Buffer to accumulate streaming text between throttled UI updates
-  // This prevents dropped deltas when VoiceLive sends rapid character-level updates
-  const assistantStreamBufferRef = useRef({ turnId: null, text: "" });
+  // Tracks which streaming/final transcript has already started client-side
+  // turn metrics. This must be a component-level ref: creating it inside a
+  // callback violates the Hooks rules and causes a runtime render failure.
+  const registeredUserTurnIdsRef = useRef(new Set());
 
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
@@ -2396,9 +2359,14 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             properties[key] = String(value);
           }
         }
-        trackEvent(`voice.metrics.${label}`, properties, measurements);
+        // Keep the event name low-cardinality. The human-readable label is a
+        // property so App Insights can aggregate all turn phases together.
+        trackEvent('voice.metrics', { ...properties, metric: label }, measurements);
       } else {
-        trackEvent(`voice.metrics.${label}`, typeof detail === 'string' ? { detail } : {});
+        trackEvent('voice.metrics', {
+          ...(typeof detail === 'string' ? { detail } : {}),
+          metric: label,
+        });
       }
 
       appendLog(formatted ? `📈 ${label} — ${formatted}` : `📈 ${label}`);
@@ -2423,6 +2391,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const resetMetrics = useCallback(
     (sessionId) => {
       metricsRef.current = createMetricsState();
+      registeredUserTurnIdsRef.current.clear();
       const metrics = metricsRef.current;
       metrics.sessionStart = performance.now();
       metrics.sessionStartIso = new Date().toISOString();
@@ -2435,9 +2404,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       const operator = getAuthenticatedUser();
       trackEvent('voice.session.start', {
         at: metrics.sessionStartIso,
-        operator_id: operator?.userId || '',
-        operator_email: operator?.email || '',
-        operator_name: operator?.name || '',
+        operator_authenticated: Boolean(operator?.userId),
       });
       publishMetricsSummary("Session metrics reset", {
         sessionId,
@@ -2672,7 +2639,6 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       )}${emailParam}${buildAuthQueryParams()}&client_user_id=${encodeURIComponent(getDeviceId() || '')}&client_traceparent=${encodeURIComponent(getSessionTraceparent(currentSessionId))}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
       resetMetrics(currentSessionId);
       assistantStreamGenerationRef.current = 0;
-      assistantStreamBufferRef.current = { turnId: null, text: "" };
       terminationReasonRef.current = null;
       resampleWarningRef.current = false;
       audioInitFailedRef.current = false;
@@ -2704,9 +2670,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         ws.onopen = () => {
           appendLog(isReconnect ? "🔌 WS reconnected - Connected to backend!" : "🔌 WS open - Connected to backend!");
           logger.info(
-            "WebSocket connection %s to backend at:",
+            "WebSocket connection %s",
             isReconnect ? "RECONNECTED" : "OPENED",
-            baseConversationUrl,
           );
           trackEvent(
             'voice.ws.open',
@@ -2924,94 +2889,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       return [...arr, normalizedMsg];
     };
 
-    const updateTurnMessage = (turnId, updater, options = {}) => {
-      const { createIfMissing = true, initial, speaker } = options;
-
-      setMessages((prev) => {
-        if (!turnId) {
-          if (!createIfMissing) {
-            return prev;
-          }
-          const base = typeof initial === "function" ? initial() : initial;
-          if (!base) {
-            return prev;
-          }
-          return [...prev, base];
-        }
-
-        // After handoff, a message may have been created with a speaker-qualified turnId
-        // (e.g., "abc123_DeclineSpecialist"). Check for that variant first if speaker is known.
-        const speakerQualifiedTurnId = speaker ? `${turnId}_${speaker}` : null;
-        let index = speakerQualifiedTurnId
-          ? prev.findIndex((m) => m.turnId === speakerQualifiedTurnId)
-          : -1;
-        
-        // Fall back to looking for exact turnId match with SAME speaker
-        // This prevents finding a different agent's message with the same base turnId
-        if (index === -1 && speaker) {
-          index = prev.findIndex((m) => m.turnId === turnId && m.speaker === speaker);
-        }
-        
-        // Final fallback: exact turnId match (for cases without speaker info)
-        if (index === -1) {
-          index = prev.findIndex((m) => m.turnId === turnId);
-        }
-
-        if (index === -1) {
-          if (!createIfMissing) {
-            return prev;
-          }
-          const base = typeof initial === "function" ? initial() : initial;
-          if (!base) {
-            return prev;
-          }
-          // DEDUPLICATION: Don't create a new message if the last message has same speaker+text
-          // This prevents duplicate bubbles when turnId changes but content is the same
-          const lastMsg = prev.at(-1);
-          if (lastMsg && lastMsg.speaker === base.speaker && lastMsg.text === base.text) {
-            // Update the existing message's turnId instead of creating duplicate
-            return prev.map((m, i) => 
-              i === prev.length - 1 
-                ? { ...m, turnId: speaker ? `${turnId}_${speaker}` : turnId, streaming: false }
-                : m
-            );
-          }
-          // For new messages with a speaker, use qualified turnId to isolate from other agents
-          const effectiveTurnId = speaker ? `${turnId}_${speaker}` : turnId;
-          return [...prev, { ...base, turnId: effectiveTurnId }];
-        }
-
-        const current = prev[index];
-        const patch = typeof updater === "function" ? updater(current) : null;
-        if (patch == null) {
-          return prev;
-        }
-
-        // If the speaker changed (e.g., after handoff), create a new message
-        // instead of overwriting the previous agent's bubble
-        if (patch.speaker && current.speaker && patch.speaker !== current.speaker) {
-          const base = typeof initial === "function" ? initial() : initial;
-          // MUST use qualified turnId so subsequent lookups can find this message
-          const qualifiedTurnId = `${turnId}_${patch.speaker}`;
-          const newMsg = base 
-            ? { ...base, ...patch, turnId: qualifiedTurnId } 
-            : { ...patch, turnId: qualifiedTurnId };
-          // DEDUPLICATION: Don't add if last message already has same speaker+text
-          const lastMsg = prev.at(-1);
-          if (lastMsg && lastMsg.speaker === newMsg.speaker && lastMsg.text === newMsg.text) {
-            return prev.map((m, i) => 
-              i === prev.length - 1 
-                ? { ...m, turnId: qualifiedTurnId, streaming: false }
-                : m
-            );
-          }
-          return [...prev, newMsg];
-        }
-
-        const next = [...prev];
-        next[index] = { ...current, ...patch, turnId: current.turnId };
-        return next;
-      });
+    const applyConversationPayload = (nextPayload) => {
+      setMessages((prev) => reduceConversationPayload(prev, nextPayload));
     };
 
     const handleSocketMessage = async (event) => {
@@ -3062,9 +2941,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         return;
       }
 
-      // --- NEW: Handle envelope format from backend ---
-      // If message is in envelope format, extract the actual payload
-      if (payload.type && payload.sender && payload.payload && payload.ts) {
+      // Normalize the backend envelope once; bubble state transitions are
+      // handled separately by the pure turn-scoped reducer below.
+      if (isSessionEnvelope(payload)) {
         const envelope = payload;
         logger.debug("📨 Received envelope message:", {
           type: envelope.type,
@@ -3072,95 +2951,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           topic: envelope.topic,
           session_id: envelope.session_id,
         });
-
-        const envelopeType = envelope.type;
-        const envelopeSender = envelope.sender;
-        const envelopeTimestamp = envelope.ts;
-        const envelopeSessionId = envelope.session_id;
-        const envelopeTopic = envelope.topic;
-        const actualPayload = envelope.payload ?? {};
-
-        let flattenedPayload;
-
-        // Transform envelope back to legacy format for compatibility
-        if (envelopeType === "event" && (actualPayload.event_type || actualPayload.eventType)) {
-          const evtType = actualPayload.event_type || actualPayload.eventType;
-          const eventData = {
-            ...(typeof actualPayload.data === "object" && actualPayload.data ? actualPayload.data : {}),
-            ...actualPayload,
-          };
-          delete eventData.event_type;
-          delete eventData.eventType;
-          flattenedPayload = {
-            ...eventData,
-            type: "event",
-            event_type: evtType,
-            event_data: eventData,
-            data: eventData,
-            message: actualPayload.message || eventData.message,
-            content: actualPayload.content || eventData.content || actualPayload.message,
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        } else if (
-          envelopeType === "event" &&
-          actualPayload.message &&
-          !actualPayload.event_type &&
-          !actualPayload.eventType
-        ) {
-          const merged = { ...actualPayload };
-          merged.message = merged.message ?? actualPayload.message;
-          merged.content = merged.content ?? actualPayload.message;
-          merged.streaming = merged.streaming ?? false;
-          flattenedPayload = {
-            ...merged,
-            type: merged.type || "assistant",
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        } else if (envelopeType === "assistant_streaming") {
-          const merged = { ...actualPayload };
-          merged.content = merged.content ?? merged.message ?? "";
-          merged.streaming = true;
-          flattenedPayload = {
-            ...merged,
-            type: "assistant_streaming",
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        } else if (envelopeType === "status" && actualPayload.message) {
-          const merged = { ...actualPayload };
-          merged.message = merged.message ?? actualPayload.message;
-          merged.content = merged.content ?? actualPayload.message;
-          merged.statusLabel =
-            merged.statusLabel ?? merged.label ?? merged.status_label;
-          flattenedPayload = {
-            ...merged,
-            type: "status",
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        } else {
-          // For other envelope types, use the payload directly and retain the type
-          flattenedPayload = {
-            ...actualPayload,
-            type: actualPayload.type || envelopeType,
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        }
-
-        if (envelopeTimestamp && !flattenedPayload.ts) {
-          flattenedPayload.ts = envelopeTimestamp;
-        }
-        if (envelopeSessionId && !flattenedPayload.session_id) {
-          flattenedPayload.session_id = envelopeSessionId;
-        }
-        if (envelopeTopic && !flattenedPayload.topic) {
-          flattenedPayload.topic = envelopeTopic;
-        }
-
-        payload = flattenedPayload;
+        payload = flattenSessionEnvelope(envelope);
         logger.debug("📨 Transformed envelope to legacy format:", payload);
       }
 
@@ -3264,9 +3055,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
               text: reasonText,
               ts: payload.ts || payload.timestamp,
             });
-            // Reset streaming state on agent handoff to force new bubble for new agent
+            // Preserve this turn's stream buffer: a handoff may change the
+            // completing agent, but its streamed text belongs in the same
+            // response bubble. The next canonical turn ID resets it naturally.
             assistantStreamGenerationRef.current += 1;
-            assistantStreamBufferRef.current = { turnId: null, text: "" };
           }
           if (label !== "System" && label !== "User") {
             currentAgentRef.current = label;
@@ -3430,63 +3222,12 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           }
         }
 
-        const now = (typeof performance !== "undefined" && performance.now)
-          ? performance.now()
-          : Date.now();
-        const throttleMs = 90;
-
         if (partialText) {
-          const shouldUpdateUi = now - lastSttPartialUpdateRef.current >= throttleMs;
-          if (shouldUpdateUi) {
-            lastSttPartialUpdateRef.current = now;
-            const turnId =
-              partialData.turn_id ||
-              partialData.turnId ||
-              partialData.response_id ||
-              partialData.responseId ||
-              null;
-            let registeredTurn = false;
-
-            setMessages((prev) => {
-              const last = prev.at(-1);
-              if (
-                last?.speaker === "User" &&
-                last?.streaming &&
-                (!turnId || last.turnId === turnId)
-              ) {
-                if (last.text === partialText) {
-                  return prev;
-                }
-                const updated = prev.slice();
-                updated[updated.length - 1] = {
-                  ...last,
-                  text: partialText,
-                  streamingType: "stt_partial",
-                  sequence: partialData.sequence,
-                  language: partialData.language || last.language,
-                  turnId: turnId ?? last.turnId,
-                };
-                return updated;
-              }
-
-              registeredTurn = true;
-              return [
-                ...prev,
-                {
-                  speaker: "User",
-                  text: partialText,
-                  streaming: true,
-                  streamingType: "stt_partial",
-                  sequence: partialData.sequence,
-                  language: partialData.language,
-                  turnId: turnId ?? undefined,
-                },
-              ];
-            });
-
-            if (registeredTurn) {
-              registerUserTurn(partialText);
-            }
+          applyConversationPayload(payload);
+          const turnId = resolveTurnId(partialData);
+          if (turnId && !registeredUserTurnIdsRef.current.has(turnId)) {
+            registeredUserTurnIdsRef.current.add(turnId);
+            registerUserTurn(partialText);
           }
         }
 
@@ -3794,45 +3535,16 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       if (msgType === "user" || speaker === "User") {
         setActiveSpeaker("User");
         const turnId =
-          payload.turn_id ||
-          payload.turnId ||
+          resolveTurnId(payload) ||
           payload.response_id ||
           payload.responseId ||
           null;
         const isStreamingUser = payload.streaming === true;
+        applyConversationPayload(payload);
 
-        if (turnId) {
-          updateTurnMessage(
-            turnId,
-            (current = {}) => ({
-              speaker: "User",
-              text: txt ?? current.text ?? "",
-              streaming: isStreamingUser,
-              streamingType: isStreamingUser ? "stt_final" : undefined,
-              cancelled: false,
-            }),
-            {
-              initial: () => ({
-                speaker: "User",
-                text: txt,
-                streaming: isStreamingUser,
-                streamingType: isStreamingUser ? "stt_final" : undefined,
-                turnId,
-              }),
-            },
-          );
-        } else {
-          setMessages((prev) => {
-            const last = prev.at(-1);
-            if (last?.speaker === "User" && last?.streaming) {
-              return prev.map((m, i) =>
-                i === prev.length - 1
-                  ? { ...m, text: txt, streaming: isStreamingUser }
-                  : m,
-              );
-            }
-            return [...prev, { speaker: "User", text: txt, streaming: isStreamingUser }];
-          });
+        if (txt && turnId && !registeredUserTurnIdsRef.current.has(turnId)) {
+          registeredUserTurnIdsRef.current.add(turnId);
+          registerUserTurn(txt);
         }
         appendLog(`User: ${txt}`);
         setLastUserMessage(txt);
@@ -3855,34 +3567,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
 
       if (type === "assistant_cancelled") {
-        // Clear streaming buffer when response is cancelled
-        assistantStreamBufferRef.current = { turnId: null, text: "" };
-        
-        const turnId =
-          payload.turn_id ||
-          payload.turnId ||
-          payload.response_id ||
-          payload.responseId ||
-          null;
-        const cancelledSpeaker = speaker || payload.active_agent || payload.sender || null;
-        if (turnId) {
-          updateTurnMessage(
-            turnId,
-            (current) =>
-              current
-                ? {
-                    streaming: false,
-                    cancelled: true,
-                    cancelReason:
-                      payload.cancel_reason ||
-                      payload.cancelReason ||
-                      payload.reason ||
-                      current.cancelReason,
-                  }
-                : null,
-            { createIfMissing: false, speaker: cancelledSpeaker },
-          );
-        }
+        applyConversationPayload(payload);
         setActiveSpeaker(null);
         appendLog("🤖 Assistant response interrupted");
         return;
@@ -3890,79 +3575,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
       if (type === "assistant_streaming") {
         const streamingSpeaker = speaker || "Concierge";
-        const streamGeneration = assistantStreamGenerationRef.current;
         registerAssistantStreaming(streamingSpeaker);
         setActiveSpeaker(streamingSpeaker);
-        const now = (typeof performance !== "undefined" && performance.now)
-          ? performance.now()
-          : Date.now();
-        const throttleMs = 90;
-        const shouldUpdateUi = now - lastAssistantStreamUpdateRef.current >= throttleMs;
-        const turnId =
-          payload.turn_id ||
-          payload.turnId ||
-          payload.response_id ||
-          payload.responseId ||
-          null;
-
-        // Always accumulate streaming text into buffer (prevents dropped deltas)
-        // Track by turnId+speaker to prevent cross-agent contamination during handoffs
-        const buffer = assistantStreamBufferRef.current;
-        const bufferKey = turnId ? `${turnId}_${streamingSpeaker}` : null;
-        if (buffer.turnId !== bufferKey) {
-          buffer.turnId = bufferKey;
-          buffer.text = txt; // Start fresh for new turn or new speaker
-        } else {
-          buffer.text += txt; // Accumulate for same turn+speaker
-        }
-
-        if (shouldUpdateUi) {
-          lastAssistantStreamUpdateRef.current = now;
-          // Use accumulated buffer text instead of just current delta
-          const accumulatedText = buffer.text;
-          
-          // Use speaker+streamGeneration as primary key for finding/updating streaming messages
-          // This is more robust than turnId alone, especially during handoffs where
-          // the same turnId may be used by multiple agents
-          setMessages((prev) => {
-            // Find the most recent streaming message for this speaker with matching generation
-            // Search backwards since we want the latest one
-            for (let idx = prev.length - 1; idx >= 0; idx -= 1) {
-              const candidate = prev[idx];
-              if (
-                candidate?.streaming &&
-                candidate?.speaker === streamingSpeaker &&
-                candidate?.streamGeneration === streamGeneration
-              ) {
-                // Found it - update in place
-                return prev.map((m, i) =>
-                  i === idx
-                    ? {
-                        ...m,
-                        text: accumulatedText,
-                        turnId: turnId || m.turnId,
-                        cancelled: false,
-                        cancelReason: undefined,
-                      }
-                    : m,
-                );
-              }
-            }
-            
-            // No existing streaming message for this speaker+generation - create new one
-            return [
-              ...prev,
-              {
-                speaker: streamingSpeaker,
-                text: accumulatedText,
-                streaming: true,
-                streamGeneration,
-                turnId,
-                cancelled: false,
-              },
-            ];
-          });
-        }
+        applyConversationPayload(payload);
         const pending = metricsRef.current?.pendingBargeIn;
         if (pending) {
           finalizeBargeInClear(pending);
@@ -3971,9 +3586,6 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
 
       if (msgType === "assistant" || msgType === "status" || speaker === "Concierge") {
-        // Clear streaming buffer when final message arrives
-        assistantStreamBufferRef.current = { turnId: null, text: "" };
-        
         if (msgType === "status") {
           const normalizedStatus = (txt || "").toLowerCase();
           if (
@@ -4002,54 +3614,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         if (payload.ts || payload.timestamp) {
           messageOptions.timestamp = payload.ts || payload.timestamp;
         }
-        const turnId =
-          payload.turn_id ||
-          payload.turnId ||
-          payload.response_id ||
-          payload.responseId ||
-          null;
-
-        if (turnId) {
-          updateTurnMessage(
-            turnId,
-            (current) => ({
-              ...messageOptions,
-              text: txt ?? current?.text ?? "",
-              streaming: false,
-              cancelled: false,
-              cancelReason: undefined,
-            }),
-            {
-              // Pass speaker so we can find messages with speaker-qualified turnIds after handoff
-              speaker: assistantSpeaker,
-              initial: () => ({
-                ...messageOptions,
-                streaming: false,
-                cancelled: false,
-                turnId,
-              }),
-            },
-          );
+        if (msgType === "assistant") {
+          applyConversationPayload({ ...payload, speaker: assistantSpeaker });
         } else {
           setMessages((prev) => {
-            // Only finalize a streaming message if it belongs to the same speaker
-            // This prevents handoff responses from overwriting previous agent's bubbles
-            for (let idx = prev.length - 1; idx >= 0; idx -= 1) {
-              const candidate = prev[idx];
-              if (candidate?.streaming && candidate?.speaker === assistantSpeaker) {
-                return prev.map((m, i) =>
-                  i === idx
-                    ? {
-                        ...m,
-                        ...messageOptions,
-                        streaming: false,
-                        cancelled: false,
-                        cancelReason: undefined,
-                      }
-                    : m,
-                );
-              }
-            }
             return pushIfChanged(prev, {
               ...messageOptions,
               cancelled: false,
@@ -4102,14 +3670,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
 
       if (type === "tool_start") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            speaker: "Assistant",
-            isTool: true,
-            text: `🛠️ tool ${payload.tool} started 🔄`,
-          },
-        ]);
+        applyConversationPayload(payload);
         appendGraphEvent({
           kind: "tool",
           from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
@@ -4130,18 +3691,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           : payload.pct
           ? `${payload.pct}`
           : "progress";
-        updateToolMessage(
-          payload.tool,
-          (message) => ({
-            ...message,
-            text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
-          }),
-          () => ({
-            speaker: "Assistant",
-            isTool: true,
-            text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
-          }),
-        );
+        applyConversationPayload(payload);
         appendGraphEvent({
           kind: "tool",
           from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
@@ -4155,31 +3705,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
     
       if (type === "tool_end") {
-
         const resultPayload =
           payload.result ?? payload.output ?? payload.data ?? payload.response;
-        const serializedResult =
-          resultPayload !== undefined
-            ? JSON.stringify(resultPayload, null, 2)
-            : null;
-        const finalText =
-          payload.status === "success"
-            ? `🛠️ tool ${payload.tool} completed ✔️${
-                serializedResult ? `\n${serializedResult}` : ""
-              }`
-            : `🛠️ tool ${payload.tool} failed ❌\n${payload.error}`;
-        updateToolMessage(
-          payload.tool,
-          (message) => ({
-            ...message,
-            text: finalText,
-          }),
-          {
-            speaker: "Assistant",
-            isTool: true,
-            text: finalText,
-          },
-        );
+        applyConversationPayload(payload);
 
         const handoffTarget =
           (resultPayload &&
@@ -4217,7 +3745,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           to: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
           tool: payload.tool,
           text: payload.status || "completed",
-          detail: serializedResult || payload.error,
+          detail:
+            resultPayload !== undefined
+              ? JSON.stringify(resultPayload, null, 2)
+              : payload.error,
           ts: payload.ts || payload.timestamp,
         });
         appendLog(`⚙️ ${payload.tool} ${payload.status} (${payload.elapsedMs} ms)`);
