@@ -89,6 +89,8 @@ async def push_tool_start(
     *,
     is_acs: bool = False,
     session_id: str | None = None,
+    turn_id: str | None = None,
+    segment_id: str | None = None,
 ) -> None:
     """
     Emit tool_start event when a tool begins execution.
@@ -100,6 +102,8 @@ async def push_tool_start(
         arguments: Tool arguments
         is_acs: Whether this is an ACS call (broadcast) or browser (direct)
         session_id: Session ID for session-aware broadcasting
+        turn_id: Canonical user-turn ID that invoked the tool
+        segment_id: Assistant response segment active when the tool was invoked
     """
     payload = {
         "type": "tool_start",
@@ -108,6 +112,8 @@ async def push_tool_start(
         "arguments": arguments,
         "timestamp": time.time(),
         "session_id": session_id,
+        "turn_id": turn_id,
+        "segment_id": segment_id,
     }
     await _emit(ws, payload, is_acs=is_acs, session_id=session_id)
 
@@ -138,6 +144,8 @@ async def push_tool_end(
     is_acs: bool = False,
     session_id: str | None = None,
     duration_ms: float | None = None,
+    turn_id: str | None = None,
+    segment_id: str | None = None,
 ) -> None:
     """
     Emit tool_end event when a tool completes execution.
@@ -150,6 +158,8 @@ async def push_tool_end(
         is_acs: Whether this is an ACS call (broadcast) or browser (direct)
         session_id: Session ID for session-aware broadcasting
         duration_ms: Optional execution duration in milliseconds
+        turn_id: Canonical user-turn ID that invoked the tool
+        segment_id: Assistant response segment active when the tool was invoked
     """
     status = _derive_tool_status(result)
     serialized_result = _safe_serialize(result)
@@ -167,6 +177,8 @@ async def push_tool_end(
         "result": serialized_result,
         "timestamp": time.time(),
         "session_id": session_id,
+        "turn_id": turn_id,
+        "segment_id": segment_id,
     }
     if error_msg:
         payload["error"] = error_msg
@@ -184,6 +196,8 @@ async def push_tool_progress(
     *,
     is_acs: bool = False,
     session_id: str | None = None,
+    turn_id: str | None = None,
+    segment_id: str | None = None,
 ) -> None:
     """
     Emit tool_progress event for long-running tools.
@@ -195,6 +209,8 @@ async def push_tool_progress(
         message: Progress message
         is_acs: Whether this is an ACS call (broadcast) or browser (direct)
         session_id: Session ID for session-aware broadcasting
+        turn_id: Canonical user-turn ID that invoked the tool
+        segment_id: Assistant response segment active when the tool was invoked
     """
     payload = {
         "type": "tool_progress",
@@ -203,6 +219,8 @@ async def push_tool_progress(
         "message": message,
         "timestamp": time.time(),
         "session_id": session_id,
+        "turn_id": turn_id,
+        "segment_id": segment_id,
     }
     await _emit(ws, payload, is_acs=is_acs, session_id=session_id)
 

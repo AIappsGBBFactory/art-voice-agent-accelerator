@@ -40,6 +40,7 @@ import asyncio
 import os
 import threading
 import time
+import uuid
 import weakref
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -87,6 +88,10 @@ class SpeechEvent:
     speaker_id: str | None = None
     confidence: float | None = None
     timestamp: float | None = field(default_factory=time.time)
+    # Canonical ID shared by this utterance's partial/final transcript, assistant
+    # response, and any tool calls. It is allocated on the first STT partial.
+    turn_id: str | None = None
+    sequence: int | None = None
     # Wall-clock time (time.time) of the first partial for this utterance, i.e.
     # when the user started speaking. Used to draw a real STT recognition span.
     recognition_start_ts: float | None = None
@@ -372,7 +377,9 @@ class SpeechSDKThread:
         barge_in_handler: Callable,
         speech_queue: asyncio.Queue,
         *,
-        on_partial_transcript: Callable[[str, str, str | None], None] | None = None,
+        on_partial_transcript: (
+            Callable[[str, str, str | None, str, int], None] | None
+        ) = None,
     ):
         """
         Initialize Speech SDK Thread.
@@ -401,6 +408,8 @@ class SpeechSDKThread:
         # Wall-clock time of the first partial of the current utterance (user
         # started speaking). Reset after each final. Drives the STT span.
         self._utterance_start_ts: float | None = None
+        self._utterance_turn_id: str | None = None
+        self._utterance_sequence = 0
 
         self._setup_callbacks()
         self._pre_initialize_recognizer()
@@ -432,19 +441,20 @@ class SpeechSDKThread:
             logger.info(
                 f"[{self._conn_short}] Partial speech: '{text}' ({lang}) len={len(text.strip())}"
             )
+            # Ignore all trailing hypotheses while the just-finalized turn is
+            # waiting for first audio. Do this before allocating the next turn ID
+            # so late SDK callbacks cannot contaminate the following utterance.
+            if self.thread_bridge.turn_guard_active:
+                logger.debug(f"[{self._conn_short}] Partial ignored (pre-speech turn guard)")
+                return
+
             # Stamp the start of this utterance (user started speaking) on the
             # first partial so we can draw an accurate STT recognition span.
             if self._utterance_start_ts is None:
                 self._utterance_start_ts = time.time()
+            if self._utterance_turn_id is None:
+                self._utterance_turn_id = uuid.uuid4().hex
             if len(text.strip()) > 3:
-                # While a turn is mid-flight and the agent has not started
-                # speaking yet, this partial is the trailing tail of the utterance
-                # that produced the turn. Acting on it would cancel that very turn
-                # and signal the UI to drop the response audio, so skip it (no
-                # barge-in, no partial envelope) until the agent speaks.
-                if self.thread_bridge.turn_guard_active:
-                    logger.debug(f"[{self._conn_short}] Partial ignored (pre-speech turn guard)")
-                    return
                 try:
                     self.thread_bridge.schedule_barge_in(self.barge_in_handler)
                 except Exception as e:
@@ -452,7 +462,14 @@ class SpeechSDKThread:
 
                 if self.on_partial_transcript:
                     try:
-                        self.on_partial_transcript(text.strip(), lang, speaker_id)
+                        self._utterance_sequence += 1
+                        self.on_partial_transcript(
+                            text.strip(),
+                            lang,
+                            speaker_id,
+                            self._utterance_turn_id,
+                            self._utterance_sequence,
+                        )
                     except Exception as e:
                         logger.debug(f"[{self._conn_short}] Partial transcript callback error: {e}")
 
@@ -463,6 +480,7 @@ class SpeechSDKThread:
 
             if len(text.strip()) > 1:
                 logger.info(f"[{self._conn_short}] Speech: '{text}' ({lang})")
+                turn_id = self._utterance_turn_id or uuid.uuid4().hex
                 # Arm the pre-speech guard at finalization so trailing partials of
                 # this utterance cannot cancel the turn it is about to spawn.
                 self.thread_bridge.arm_turn_guard()
@@ -471,12 +489,16 @@ class SpeechSDKThread:
                     text=text,
                     language=lang,
                     speaker_id=speaker_id,
+                    turn_id=turn_id,
+                    sequence=self._utterance_sequence + 1,
                     recognition_start_ts=self._utterance_start_ts,
                     recognition_end_perf=time.perf_counter(),
                 )
                 self.thread_bridge.queue_speech_result(self.speech_queue, event)
             # Reset utterance start for the next utterance.
             self._utterance_start_ts = None
+            self._utterance_turn_id = None
+            self._utterance_sequence = 0
 
         def on_error(error: str):
             logger.error(f"[{self._conn_short}] Speech error: {error}")
@@ -619,7 +641,7 @@ class RouteTurnThread:
         transcript_emitter: TranscriptEmitter | None = None,
         on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
         on_announcement: Callable[[SpeechEvent], Awaitable[None]] | None = None,
-        on_user_transcript: Callable[[str], Awaitable[None]] | None = None,
+        on_user_transcript: Callable[[str, str | None, int | None], Awaitable[None]] | None = None,
         on_tts_request: Callable[[str, SpeechEventType], Awaitable[None]] | None = None,
         thread_bridge: "ThreadBridge | None" = None,
     ):
@@ -824,10 +846,19 @@ class RouteTurnThread:
                         logger.error(f"[{self._conn_short}] No memory manager available")
                         return
 
+                    # Make the STT-allocated ID available to route_turn without
+                    # changing the long-standing orchestrator callable signature.
+                    # The queue serializes turns, so this value is session-safe.
+                    self.memory_manager.set_corememory("current_turn_id", event.turn_id)
+
                     # Emit user transcript via callback (for transport coordination)
                     if self.on_user_transcript:
                         try:
-                            await self.on_user_transcript(event.text)
+                            await self.on_user_transcript(
+                                event.text,
+                                event.turn_id,
+                                event.sequence,
+                            )
                         except Exception as e:
                             logger.warning(
                                 f"[{self._conn_short}] Failed to invoke on_user_transcript: {e}"
@@ -836,7 +867,10 @@ class RouteTurnThread:
                     # Legacy: emit via transcript emitter (deprecated)
                     if self.transcript_emitter:
                         try:
-                            await self.transcript_emitter.emit_user_transcript(event.text)
+                            await self.transcript_emitter.emit_user_transcript(
+                                event.text,
+                                turn_id=event.turn_id,
+                            )
                         except Exception as e:
                             logger.warning(
                                 f"[{self._conn_short}] Failed to emit user transcript: {e}"
@@ -934,6 +968,7 @@ class RouteTurnThread:
         turn_wall_ms: float | None = None,
         agent_name: str | None = None,
         latency_anchor: str | None = None,
+        model: str | None = None,
     ) -> None:
         """Stamp the structured per-turn latency profile on the active turn span."""
         if self._active_turn_span:
@@ -948,6 +983,7 @@ class RouteTurnThread:
                 turn_wall_ms=turn_wall_ms,
                 agent_name=agent_name,
                 latency_anchor=latency_anchor,
+                model=model,
             )
 
     @property
@@ -1122,8 +1158,10 @@ class SpeechCascadeHandler:
         on_barge_in: Callable[[], Awaitable[None]] | None = None,
         on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
         on_announcement: Callable[[SpeechEvent], Awaitable[None]] | None = None,
-        on_partial_transcript: Callable[[str, str, str | None], None] | None = None,
-        on_user_transcript: Callable[[str], Awaitable[None]] | None = None,
+        on_partial_transcript: (
+            Callable[[str, str, str | None, str, int], None] | None
+        ) = None,
+        on_user_transcript: Callable[[str, str | None, int | None], Awaitable[None]] | None = None,
         on_tts_request: Callable[[str, SpeechEventType], Awaitable[None]] | None = None,
         transcript_emitter: TranscriptEmitter | None = None,
         response_sender: ResponseSender | None = None,

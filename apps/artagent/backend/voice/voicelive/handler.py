@@ -185,46 +185,56 @@ class _SessionMessenger:
     """Bridge VoiceLive events to the session-aware WebSocket manager."""
 
     def __init__(
-        self, websocket: WebSocket, *, background_task_fn: BackgroundTaskFn
+        self,
+        websocket: WebSocket,
+        *,
+        background_task_fn: BackgroundTaskFn,
+        is_acs: bool = True,
     ) -> None:
         self._ws = websocket
         self._background_task_fn = background_task_fn
+        self._is_acs = is_acs
         self._default_sender: str | None = None
         self._missing_session_warned = False
         self._active_turn_id: str | None = None
+        self._active_segment_id: str | None = None
         self._pending_user_turn_id: str | None = None
         self._active_agent_name: str | None = None
         self._active_agent_label: str | None = None
         self._turn_sequence: int = 0  # Track tool call boundaries within a turn
         self._base_turn_id: str | None = None  # Original turn_id before tool calls
-        self._turn_id_advanced: bool = False  # Flag to prevent overwriting advanced turn_id
         # Deduplication: track (turn_id, text_hash) of sent final messages
         self._sent_messages: set[tuple[str, int]] = set()
+        self._user_transcript_text = ""
+        self._user_transcript_sequence = 0
+        self._assistant_segments: dict[str, str] = {}
+        self._assistant_segment_order: list[str] = []
+        self._assistant_sequence = 0
 
     def _ensure_turn_id(self, candidate: str | None, *, allow_generate: bool = True) -> str | None:
-        # If turn_id was advanced (post-tool-call), preserve it and don't overwrite
-        # with the new response_id. This ensures post-tool responses appear as new
-        # messages in the frontend rather than overwriting pre-tool content.
-        if self._turn_id_advanced and self._active_turn_id:
+        # A VoiceLive response_id is not a user-turn ID. Once speech_started has
+        # established the canonical item_id, preserve it across every response
+        # and tool phase belonging to that utterance.
+        if self._active_turn_id:
             return self._active_turn_id
         if candidate:
             self._active_turn_id = candidate
+            self._active_segment_id = candidate
             return candidate
-        if self._active_turn_id:
-            return self._active_turn_id
         if not allow_generate:
             return None
         generated = uuid.uuid4().hex
         self._active_turn_id = generated
+        self._active_segment_id = generated
         return generated
 
     def _release_turn(self, turn_id: str | None) -> None:
         if turn_id and self._active_turn_id == turn_id:
             self._active_turn_id = None
-            self._turn_id_advanced = False
+            self._active_segment_id = None
         elif turn_id is None:
             self._active_turn_id = None
-            self._turn_id_advanced = False
+            self._active_segment_id = None
 
     def advance_turn_for_tool(self) -> str | None:
         """
@@ -239,17 +249,15 @@ class _SessionMessenger:
         if not self._active_turn_id:
             return None
 
-        # Store original turn_id as base if not already set
+        # Store the canonical turn ID as base if not already set.
         if not self._base_turn_id:
             self._base_turn_id = self._active_turn_id
 
-        # Increment sequence and generate new turn_id
+        # Advance only the response segment. The canonical turn ID never changes,
+        # so the UI keeps one assistant response bubble for the whole turn.
         self._turn_sequence += 1
         new_turn_id = f"{self._base_turn_id}_s{self._turn_sequence}"
-        self._active_turn_id = new_turn_id
-        
-        # Mark that turn_id was advanced so _ensure_turn_id won't overwrite it
-        self._turn_id_advanced = True
+        self._active_segment_id = new_turn_id
 
         logger.debug(
             "[TurnAdvance] Advanced turn_id: base=%s, seq=%d, new=%s",
@@ -262,10 +270,15 @@ class _SessionMessenger:
     def reset_turn_sequence(self) -> None:
         """Reset turn sequence tracking for a new user turn."""
         self._turn_sequence = 0
-        self._base_turn_id = None
-        self._turn_id_advanced = False
+        self._base_turn_id = self._active_turn_id
+        self._active_segment_id = self._active_turn_id
         # Clear sent message deduplication cache for new turn
         self._sent_messages.clear()
+        self._user_transcript_text = ""
+        self._user_transcript_sequence = 0
+        self._assistant_segments.clear()
+        self._assistant_segment_order.clear()
+        self._assistant_sequence = 0
 
     def begin_user_turn(self, turn_id: str | None) -> str | None:
         """Initialise a user turn and emit a placeholder streaming message."""
@@ -275,6 +288,7 @@ class _SessionMessenger:
         if self._pending_user_turn_id == turn_id:
             return turn_id
         self._pending_user_turn_id = turn_id
+        self._active_turn_id = turn_id
         # Reset turn sequence for new user turn - post-tool segments start fresh
         self.reset_turn_sequence()
         if not self._can_emit():
@@ -285,6 +299,10 @@ class _SessionMessenger:
             "message": "",
             "content": "",
             "streaming": True,
+            "streaming_type": "stt_partial",
+            "content_mode": "snapshot",
+            "sequence": 0,
+            "is_final": False,
             "turn_id": turn_id,
             "response_id": turn_id,
             "status": "streaming",
@@ -313,10 +331,15 @@ class _SessionMessenger:
 
     def resolve_user_turn_id(self, candidate: str | None) -> str | None:
         """Ensure user turn IDs remain consistent across delta and final events."""
+        if self._pending_user_turn_id:
+            return self._pending_user_turn_id
         if candidate:
             self._pending_user_turn_id = candidate
+            if not self._active_turn_id:
+                self._active_turn_id = candidate
+                self._active_segment_id = candidate
             return candidate
-        return self._pending_user_turn_id
+        return self._active_turn_id
 
     def finish_user_turn(self, turn_id: str | None) -> None:
         resolved = turn_id or self._pending_user_turn_id
@@ -396,10 +419,70 @@ class _SessionMessenger:
             self._missing_session_warned = True
         return False
 
+    async def send_user_partial(
+        self,
+        text_delta: str,
+        *,
+        turn_id: str | None = None,
+        language: str | None = None,
+    ) -> None:
+        """Emit a cumulative VoiceLive input-transcription snapshot."""
+        if not text_delta or not self._can_emit():
+            return
+
+        resolved_turn = self.resolve_user_turn_id(turn_id) or self._ensure_turn_id(None)
+        if not resolved_turn:
+            return
+
+        self._user_transcript_text += text_delta
+        self._user_transcript_sequence += 1
+        payload: dict[str, Any] = {
+            "type": "user",
+            "message": self._user_transcript_text,
+            "content": self._user_transcript_text,
+            "streaming": True,
+            "streaming_type": "stt_partial",
+            "content_mode": "snapshot",
+            "sequence": self._user_transcript_sequence,
+            "is_final": False,
+            "turn_id": resolved_turn,
+            "response_id": resolved_turn,
+            "status": "streaming",
+            "source": "voicelive",
+        }
+        if language:
+            payload["language"] = language
+
+        envelope = make_envelope(
+            etype="event",
+            sender="User",
+            payload=payload,
+            topic="session",
+            session_id=self._session_id,
+            call_id=self._call_id,
+        )
+        self._background_task_fn(
+            send_session_envelope(
+                self._ws,
+                envelope,
+                session_id=self._session_id,
+                conn_id=None,
+                event_label="voicelive_user_transcript_partial",
+                broadcast_only=True,
+            ),
+            label="user_transcript_partial",
+        )
+
     async def send_user_message(self, text: str, *, turn_id: str | None = None) -> None:
         """Forward a user transcript to all session listeners."""
         if not text or not self._can_emit():
             return
+
+        resolved_turn = self.resolve_user_turn_id(turn_id) or self._ensure_turn_id(None)
+        if not resolved_turn:
+            return
+        self._user_transcript_text = text
+        self._user_transcript_sequence += 1
 
         self._background_task_fn(
             send_user_transcript(
@@ -408,11 +491,29 @@ class _SessionMessenger:
                 session_id=self._session_id,
                 conn_id=None,
                 broadcast_only=True,
-                turn_id=turn_id,
+                turn_id=resolved_turn,
                 active_agent=self._active_agent_name,
                 active_agent_label=self._active_agent_label,
+                sequence=self._user_transcript_sequence,
             ),
             label="send_user_transcript",
+        )
+
+    def _current_segment_id(self) -> str:
+        return self._active_segment_id or self._active_turn_id or "response"
+
+    def _set_assistant_segment(self, segment_id: str, text: str, *, append: bool) -> str:
+        if segment_id not in self._assistant_segments:
+            self._assistant_segment_order.append(segment_id)
+            self._assistant_segments[segment_id] = ""
+        if append:
+            self._assistant_segments[segment_id] += text
+        else:
+            self._assistant_segments[segment_id] = text
+        return "\n\n".join(
+            self._assistant_segments[key]
+            for key in self._assistant_segment_order
+            if self._assistant_segments[key]
         )
 
     def _resolve_sender(self, sender: str | None) -> str:
@@ -434,7 +535,8 @@ class _SessionMessenger:
         if not turn_id:
             return
 
-        message_text = text or ""
+        segment_id = self._current_segment_id()
+        message_text = self._set_assistant_segment(segment_id, text or "", append=False)
         
         # Deduplication: prevent sending the same message twice for the same turn_id
         # This can happen when TRANSCRIPT_DONE fires multiple times or events race
@@ -455,7 +557,11 @@ class _SessionMessenger:
             "content": message_text,
             "streaming": False,
             "turn_id": turn_id,
+            "segment_id": segment_id,
             "response_id": response_id or turn_id,
+            "content_mode": "final_turn",
+            "sequence": self._assistant_sequence + 1,
+            "is_final": True,
             "status": status or "completed",
             "active_agent": self._active_agent_name,
             "active_agent_label": self._active_agent_label,
@@ -483,6 +589,7 @@ class _SessionMessenger:
             ),
             label="assistant_transcript_envelope",
         )
+        self._assistant_sequence += 1
         # NOTE: Do NOT call _release_turn() here. The turn_id must remain active
         # until advance_turn_for_tool() can use it. The turn will be naturally
         # reset when begin_user_turn() is called for the next user turn.
@@ -502,9 +609,13 @@ class _SessionMessenger:
         if not turn_id:
             return
 
+        segment_id = self._current_segment_id()
+        message_text = self._set_assistant_segment(segment_id, text, append=True)
+        self._assistant_sequence += 1
+
         sender_name = self._resolve_sender(sender)
         envelope = make_assistant_streaming_envelope(
-            text,
+            message_text,
             sender=sender_name,
             session_id=self._session_id,
             call_id=self._call_id,
@@ -513,9 +624,13 @@ class _SessionMessenger:
             envelope["sender"] = self._active_agent_name
 
         payload = envelope.setdefault("payload", {})
-        payload.setdefault("message", text)
+        payload.setdefault("message", message_text)
         payload["turn_id"] = turn_id
+        payload["segment_id"] = segment_id
         payload["response_id"] = response_id or turn_id
+        payload["content_mode"] = "snapshot"
+        payload["sequence"] = self._assistant_sequence
+        payload["is_final"] = False
         payload["status"] = "streaming"
         payload["active_agent"] = self._active_agent_name
         payload["active_agent_label"] = self._active_agent_label
@@ -554,6 +669,7 @@ class _SessionMessenger:
             "content": "",
             "streaming": False,
             "turn_id": turn_id,
+            "segment_id": self._current_segment_id(),
             "response_id": response_id or turn_id,
             "status": "cancelled",
             "sender": self._active_agent_name,
@@ -712,8 +828,10 @@ class _SessionMessenger:
                     name,  # tool_name
                     call_id,  # call_id
                     args,  # arguments
-                    is_acs=True,
+                    is_acs=self._is_acs,
                     session_id=self._session_id,
+                    turn_id=self._active_turn_id,
+                    segment_id=self._current_segment_id(),
                 ),
                 label=f"tool_start_{name}",
             )
@@ -745,9 +863,11 @@ class _SessionMessenger:
                     name,  # tool_name
                     call_id,  # call_id
                     tool_result,  # result (status is derived from this)
-                    is_acs=True,
+                    is_acs=self._is_acs,
                     session_id=self._session_id,
                     duration_ms=elapsed_ms,
+                    turn_id=self._active_turn_id,
+                    segment_id=self._current_segment_id(),
                 ),
                 label=f"tool_end_{name}",
             )
@@ -789,7 +909,9 @@ class VoiceLiveSDKHandler:
 
         # Pass background task function to messenger for tracked task creation
         self._messenger = _SessionMessenger(
-            websocket, background_task_fn=self._background_task
+            websocket,
+            background_task_fn=self._background_task,
+            is_acs=transport == "acs",
         )
         self._transport: VoiceLiveTransport = transport
         self._manual_commit_enabled = transport == "acs"
@@ -804,6 +926,8 @@ class VoiceLiveSDKHandler:
         # Generative model actually bound to the VoiceLive connection (resolved from the
         # start agent's voicelive_model at connect time; falls back to the global setting).
         self._active_model_name: str | None = None
+        # Where the bound model came from: "agent_override" or "settings_default".
+        self._active_model_source: str | None = None
         self._event_task: asyncio.Task | None = None
         self._running = False
         self._shutdown = asyncio.Event()
@@ -1138,15 +1262,25 @@ class VoiceLiveSDKHandler:
                             model_err,
                         )
                 self._active_model_name = connection_model
-                if connection_model != self._settings.azure_voicelive_model:
-                    logger.info(
-                        "[VoiceLive Startup] Using per-agent model override | agent=%s model=%s "
-                        "(settings default=%s) session=%s",
-                        effective_start_agent,
-                        connection_model,
-                        self._settings.azure_voicelive_model,
-                        self.session_id,
-                    )
+                model_source = (
+                    "agent_override"
+                    if connection_model != self._settings.azure_voicelive_model
+                    else "settings_default"
+                )
+                self._active_model_source = model_source
+                # Unconditional model-resolution KPI. VoiceLive binds the generative
+                # model at connect() (it cannot change mid-call), so this single line
+                # confirms exactly which model will process the session and where it
+                # came from — enabling selected-vs-processed model validation.
+                logger.info(
+                    "[VoiceLive Startup] model_resolved | mode=voicelive agent=%s model=%s "
+                    "source=%s settings_default=%s session=%s",
+                    effective_start_agent,
+                    connection_model,
+                    model_source,
+                    self._settings.azure_voicelive_model,
+                    self.session_id,
+                )
 
                 # Resolve per-agent BYOM (Bring Your Own Model) config from the start
                 # agent. Like the model, BYOM is bound at connect() time (it's a
@@ -1206,6 +1340,16 @@ class VoiceLiveSDKHandler:
                 # Set span attributes from resolved values
                 span.set_attribute("voicelive.agent_source", agent_source)
                 span.set_attribute("voicelive.agents_count", len(agents))
+                # Model bound to this session (queryable at the session/handler level,
+                # not just the nested voicelive.connect span) so selected-vs-processed
+                # model can be validated per session.
+                span.set_attribute("voicelive.model", connection_model)
+                span.set_attribute("gen_ai.request.model", connection_model)
+                span.set_attribute("voicelive.model_source", model_source)
+                if byom_query:
+                    span.set_attribute(
+                        "voicelive.byom_profile", byom_query.get("profile", "")
+                    )
                 if orchestrator_config and orchestrator_config.has_scenario:
                     span.set_attribute("voicelive.scenario", orchestrator_config.scenario_name or "")
                 if session_agent:
@@ -1753,39 +1897,11 @@ class VoiceLiveSDKHandler:
             transcript_text = getattr(event, "transcript", "") or getattr(event, "delta", "")
             if not transcript_text:
                 return
-            session_id = self._messenger._session_id
-            if not session_id:
-                return
             turn_id = self._messenger.resolve_user_turn_id(self._extract_item_id(event))
-            payload = {
-                "type": "user",
-                "message": "...",
-                "content": transcript_text,
-                "streaming": True,
-                "active_agent": self._messenger._active_agent_name,
-                "active_agent_label": self._messenger._active_agent_label,
-            }
-            if turn_id:
-                payload["turn_id"] = turn_id
-                payload["response_id"] = turn_id
-            envelope = make_envelope(
-                etype="event",
-                sender="User",
-                payload=payload,
-                topic="session",
-                session_id=session_id,
-                call_id=self.call_connection_id,
-            )
-            self._background_task(
-                send_session_envelope(
-                    self.websocket,
-                    envelope,
-                    session_id=session_id,
-                    conn_id=None,
-                    event_label="voicelive_user_transcript_delta",
-                    broadcast_only=True,
-                ),
-                label="voicelive_user_transcript_delta",
+            await self._messenger.send_user_partial(
+                transcript_text,
+                turn_id=turn_id,
+                language=getattr(event, "language", None),
             )
 
         elif etype == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA:
@@ -2054,7 +2170,10 @@ class VoiceLiveSDKHandler:
 
             # Echo user message back to frontend so it appears in the chat UI
             if self._messenger:
-                await self._messenger.send_user_message(text)
+                turn_id = uuid.uuid4().hex
+                self._messenger.begin_user_turn(turn_id)
+                await self._messenger.send_user_message(text, turn_id=turn_id)
+                self._messenger.finish_user_turn(turn_id)
 
             logger.info(
                 "Forwarded user text message (%s chars) | session=%s",
@@ -2465,13 +2584,15 @@ class VoiceLiveSDKHandler:
                 turn_wall_ms=total_turn_duration_ms,
                 agent_name=self._messenger._active_agent_name or "unknown",
                 latency_anchor="vad_end" if self._vad_end_time else "turn_start",
+                model=self._active_model_name,
             )
 
         logger.info(
-            "[VoiceLive] Turn %d complete | agent=%s | ttft=%s ttfb=%s synth=%s "
+            "[VoiceLive] Turn %d complete | agent=%s model=%s | ttft=%s ttfb=%s synth=%s "
             "| turn_wall=%.0fms | session=%s",
             self._turn_number,
             self._messenger._active_agent_name or "unknown",
+            self._active_model_name or "unknown",
             f"{llm_ttft_ms:.0f}ms" if llm_ttft_ms is not None else "N/A",
             f"{tts_ttfb_ms:.0f}ms" if tts_ttfb_ms is not None else "N/A",
             f"{synth_ms:.0f}ms" if synth_ms is not None else "N/A",

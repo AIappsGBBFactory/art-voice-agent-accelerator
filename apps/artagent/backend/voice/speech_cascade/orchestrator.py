@@ -162,8 +162,12 @@ class CascadeSessionScope:
         return self.turn_id
 
     def get_effective_turn_id(self) -> str:
-        """Get the current effective turn_id (which may have been advanced)."""
+        """Get the current response segment ID (which may have been advanced)."""
         return self.turn_id
+
+    def get_root_turn_id(self) -> str:
+        """Get the canonical user-turn ID shared by transcripts, tools, and responses."""
+        return self._base_turn_id or self.turn_id
 
     @classmethod
     @contextmanager
@@ -291,6 +295,10 @@ class CascadeOrchestratorAdapter:
         )
         # Per-turn LLM time-to-first-token (ms), populated during streaming.
         self._last_turn_ttft_ms: float | None = None
+        # Deployment/model name resolved for the most recent turn (via
+        # get_model_for_mode("cascade")). Surfaced on turn KPIs so the model that
+        # actually processed the turn can be validated against the selected model.
+        self._last_model_name: str | None = None
         # perf_counter at turn entry (== finalized user input / recognition
         # complete) and the recognition->first-token latency derived from it.
         # ttft_ms is anchored at the LLM request; this is anchored at end of
@@ -423,6 +431,16 @@ class CascadeOrchestratorAdapter:
     def current_agent(self) -> str | None:
         """Get the currently active agent name."""
         return self._active_agent
+
+    @property
+    def last_model_name(self) -> str | None:
+        """Deployment/model resolved for the most recent turn.
+
+        Populated by ``_streaming_completion`` from the active agent's
+        ``get_model_for_mode(\"cascade\")``; used by turn-KPI reporting to validate
+        that the model actually processing the turn matches the selected model.
+        """
+        return self._last_model_name
 
     @property
     def current_agent_config(self) -> UnifiedAgent | None:
@@ -1497,6 +1515,9 @@ class CascadeOrchestratorAdapter:
             model_config = agent.get_model_for_mode("cascade")
             model_name = model_config.deployment_id or model_name
 
+        # Record the resolved deployment so turn KPIs can report the model that
+        # actually processed this turn (selected-vs-processed validation).
+        self._last_model_name = model_name
         # Safety: prevent infinite tool loops
         if _iteration >= _max_iterations:
             logger.warning(

@@ -120,6 +120,7 @@ async def send_user_transcript(
     turn_id: str | None = None,
     active_agent: str | None = None,
     active_agent_label: str | None = None,
+    sequence: int | None = None,
 ) -> None:
     """Emit a user transcript using the standard session envelope.
 
@@ -135,10 +136,15 @@ async def send_user_transcript(
         "message": text,
         "content": text,
         "streaming": False,
+        "streaming_type": "stt_final",
+        "content_mode": "final_turn",
+        "is_final": True,
         "status": "completed",
         "turn_id": turn_id,
         "response_id": turn_id,
     }
+    if sequence is not None:
+        payload_data["sequence"] = sequence
     if active_agent:
         payload_data["active_agent"] = active_agent
         payload_data["active_agent_label"] = active_agent_label
@@ -168,8 +174,11 @@ async def send_user_partial_transcript(
     language: str | None = None,
     speaker_id: str | None = None,
     session_id: str | None = None,
+    turn_id: str | None = None,
+    sequence: int | None = None,
+    source: str = "cascade",
 ) -> None:
-    """Emit partial user speech updates for ACS parity with realtime."""
+    """Emit a cumulative partial user transcript for one canonical turn."""
     payload_session_id = session_id or getattr(ws.state, "session_id", None)
 
     partial_payload = {
@@ -179,8 +188,14 @@ async def send_user_partial_transcript(
         "language": language,
         "speaker_id": speaker_id,
         "session_id": payload_session_id,
+        "turn_id": turn_id,
+        "response_id": turn_id,
+        "content_mode": "snapshot",
+        "source": source,
         "is_final": False,
     }
+    if sequence is not None:
+        partial_payload["sequence"] = sequence
 
     envelope = make_event_envelope(
         event_type="stt_partial",
