@@ -269,6 +269,30 @@ flip_one() {
                     --default-action Allow --output none 2>/dev/null || true
                 emit OK "$name"
             else
+                # Basic/Standard SKU ACRs do not support network access rules and
+                # are always publicly accessible; treat the update failure as OK.
+                local sku
+                sku=$(az acr show "${AZ_SUB_ARGS[@]}" --ids "$id" \
+                    --query sku.name -o tsv 2>/dev/null) || {
+                    warn "$name: could not determine ACR SKU (permissions issue?); skipping."
+                    emit SKIP "$name" "$type"
+                    return 0
+                }
+                if [[ "$sku" == "Basic" || "$sku" == "Standard" ]]; then
+                    emit OK "$name" "always-public ($sku SKU)"
+                else
+                    emit SKIP "$name" "$type"
+                fi
+            fi
+            ;;
+        Microsoft.KeyVault/vaults)
+            # Use the Key Vault-specific CLI command; the generic `az resource update`
+            # is unreliable for Key Vault's publicNetworkAccess property.
+            if az keyvault update "${AZ_SUB_ARGS[@]}" --ids "$id" \
+                    --public-network-access Enabled --default-action Allow \
+                    --output none 2>/dev/null; then
+                emit OK "$name" "public-access=Enabled,acl=Allow"
+            else
                 emit SKIP "$name" "$type"
             fi
             ;;
@@ -279,7 +303,7 @@ flip_one() {
                 local detail=""
                 # Best-effort: relax network-ACL default action where it exists.
                 case "$type" in
-                    Microsoft.CognitiveServices/accounts|Microsoft.Storage/storageAccounts|Microsoft.KeyVault/vaults)
+                    Microsoft.CognitiveServices/accounts|Microsoft.Storage/storageAccounts)
                         if az resource update "${AZ_SUB_ARGS[@]}" --ids "$id" \
                                 --set properties.networkAcls.defaultAction=Allow \
                                 --output none 2>/dev/null; then
