@@ -87,6 +87,7 @@ def _serialize_agent(agent: UnifiedAgent) -> dict[str, Any]:
         "model": agent.model.to_dict() if agent.model else None,
         "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else None,
         "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else None,
+        "byom": agent.byom.to_dict() if agent.byom else None,
         "voice": agent.voice.to_dict() if agent.voice else None,
         "speech": agent.speech.to_dict() if agent.speech else None,
         "session": agent.session or {},
@@ -106,6 +107,7 @@ def _deserialize_agent(data: dict[str, Any]) -> UnifiedAgent:
         SpeechConfig,
         UnifiedAgent,
         VoiceConfig,
+        VoiceLiveBYOMConfig,
     )
 
     model = ModelConfig.from_dict(data["model"]) if data.get("model") else ModelConfig()
@@ -113,6 +115,10 @@ def _deserialize_agent(data: dict[str, Any]) -> UnifiedAgent:
     voicelive_model = (
         ModelConfig.from_dict(data["voicelive_model"]) if data.get("voicelive_model") else None
     )
+    # Voice Live BYOM (Bring Your Own Model) — must survive the Redis round-trip,
+    # otherwise a session agent configured for a Foundry deployment reloads with
+    # byom=None and connects as managed Voice Live (which can't serve the model).
+    byom = VoiceLiveBYOMConfig.from_dict(data["byom"]) if data.get("byom") else None
     voice = VoiceConfig.from_dict(data["voice"]) if data.get("voice") else VoiceConfig()
     speech = SpeechConfig.from_dict(data["speech"]) if data.get("speech") else SpeechConfig()
     handoff = HandoffConfig.from_dict(data.get("handoff") or {})
@@ -126,6 +132,7 @@ def _deserialize_agent(data: dict[str, Any]) -> UnifiedAgent:
         model=model,
         cascade_model=cascade_model,
         voicelive_model=voicelive_model,
+        byom=byom,
         voice=voice,
         speech=speech,
         session=data.get("session") or {},

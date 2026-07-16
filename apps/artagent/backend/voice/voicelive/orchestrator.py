@@ -268,6 +268,13 @@ class LiveOrchestrator:
         self._transport = transport
         self._greeting_tasks: set[asyncio.Task] = set()
         self._active_response_id: str | None = None
+        # De-dupe assistant transcript deltas by their unique server event_id.
+        # Some Voice Live model configs (observed with cascaded / BYOM chat models)
+        # re-deliver the same response.audio_transcript.delta event, which the
+        # append-based accumulator would otherwise render as doubled words
+        # ("Let'sLet's take take"). Bounded to the active response; cleared on
+        # response.done and each new user turn.
+        self._seen_transcript_delta_ids: set[str] = set()
         self._system_vars: dict[str, Any] = {}
         # Flag to prevent SESSION_UPDATED from cancelling handoff-triggered responses
         self._handoff_response_pending: bool = False
@@ -1283,6 +1290,9 @@ class LiveOrchestrator:
             except Exception:
                 logger.debug("Failed to notify assistant cancellation on barge-in", exc_info=True)
         self._active_response_id = None
+        # Barge-in ends the current response stream — reset the dedup guard so the
+        # next response accumulates cleanly.
+        self._seen_transcript_delta_ids.clear()
 
     async def _handle_speech_stopped(self) -> None:
         """Handle user speech stopped."""
@@ -1328,6 +1338,23 @@ class LiveOrchestrator:
 
     async def _handle_transcript_delta(self, event) -> None:
         """Handle assistant transcript delta (streaming)."""
+        # Drop re-delivered transcript deltas. The accumulator appends each delta,
+        # so a duplicated event doubles every word in the streaming bubble. The
+        # server event_id is unique per event, so this only drops true duplicates
+        # (a legitimately repeated word arrives as a distinct event_id).
+        event_id = getattr(event, "event_id", None)
+        if event_id:
+            if event_id in self._seen_transcript_delta_ids:
+                logger.warning(
+                    "[Orchestrator] Dropped duplicate assistant transcript delta | "
+                    "event_id=%s response=%s agent=%s (Voice Live re-delivery)",
+                    event_id,
+                    getattr(event, "response_id", None),
+                    self.active,
+                )
+                return
+            self._seen_transcript_delta_ids.add(event_id)
+
         transcript_delta = getattr(event, "delta", "") or getattr(event, "transcript", "")
 
         # Track LLM TTFT for agent-level token/timing accounting. The canonical
@@ -1401,6 +1428,8 @@ class LiveOrchestrator:
         response_id = self._response_id_from_event(event)
         if response_id and response_id == self._active_response_id:
             self._active_response_id = None
+        # New response starts a fresh transcript stream — reset the dedup guard.
+        self._seen_transcript_delta_ids.clear()
 
         self._emit_model_metrics(event)
 

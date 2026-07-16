@@ -34,20 +34,38 @@ export const classifyModelArch = (deploymentId) => {
  * Managed Voice Live models — the VoiceLive-hosted models used when BYOM is OFF.
  * These are NOT your resource deployments; they're billed by Voice Live pricing
  * tier. (BYOM is what lets you use your own deployments instead.)
- * https://learn.microsoft.com/azure/ai-services/speech-service/voice-live
+ *
+ * IMPORTANT: this list MUST match the models managed Voice Live actually serves.
+ * Offering an unsupported model here lets the connection succeed but the model
+ * never produces a response — the agent "stops responding" and the session ends
+ * in a 900s idle timeout. In particular the plain `gpt-5-chat`, `o1`, `o3` and
+ * `o3-mini` deployments are NOT valid managed Voice Live models (only the
+ * versioned `gpt-5.x-chat` chat models are) — keep them out of this list.
+ * Source (keep in sync):
+ * https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions
  */
 export const MANAGED_VOICELIVE_MODELS = [
+  // Native speech-to-speech (realtime) — lowest latency.
+  { id: 'gpt-realtime-1.5', tier: 'pro' },
   { id: 'gpt-realtime', tier: 'pro' },
-  { id: 'gpt-4o', tier: 'pro' },
-  { id: 'gpt-4.1', tier: 'pro' },
-  { id: 'gpt-5', tier: 'pro' },
-  { id: 'gpt-5-chat', tier: 'pro' },
   { id: 'gpt-realtime-mini', tier: 'basic' },
-  { id: 'gpt-4o-mini', tier: 'basic' },
-  { id: 'gpt-4.1-mini', tier: 'basic' },
+  { id: 'phi4-mm-realtime', tier: 'lite' },
+  { id: 'azure-realtime', tier: 'lite' },
+  // Cascaded (Azure STT → text LLM → Azure TTS).
+  { id: 'gpt-5.4', tier: 'pro' },
+  { id: 'gpt-5.3-chat', tier: 'pro' },
+  { id: 'gpt-5.2', tier: 'pro' },
+  { id: 'gpt-5.2-chat', tier: 'pro' },
+  { id: 'gpt-5.1', tier: 'pro' },
+  { id: 'gpt-5.1-chat', tier: 'pro' },
+  { id: 'gpt-5', tier: 'pro' },
   { id: 'gpt-5-mini', tier: 'basic' },
   { id: 'gpt-5-nano', tier: 'lite' },
-  { id: 'phi4-mm-realtime', tier: 'lite' },
+  { id: 'gpt-4.1', tier: 'pro' },
+  { id: 'gpt-4.1-mini', tier: 'basic' },
+  { id: 'gpt-4.1-nano', tier: 'lite' },
+  { id: 'gpt-4o', tier: 'pro' },
+  { id: 'gpt-4o-mini', tier: 'basic' },
   { id: 'phi4-mini', tier: 'lite' },
 ];
 

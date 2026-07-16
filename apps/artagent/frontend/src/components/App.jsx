@@ -1097,8 +1097,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       .replace(/Neural$/i, '');
   }, []);
 
-  const notifyAgentUpdate = useCallback((agentConfig, action = 'updated') => {
+  const notifyAgentUpdate = useCallback((agentConfig, action = 'updated', opts = {}) => {
     if (!agentConfig?.name) return;
+    const { mode = null, changes: explicitChanges = null, confirmed = null } = opts;
     const name = agentConfig.name;
     const scenarioName =
       activeScenarioData?.label
@@ -1106,33 +1107,42 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       || activeScenarioKey
       || 'No scenario';
 
-    const newModel =
-      agentConfig.cascade_model?.deployment_id || agentConfig.model?.deployment_id || null;
+    // Mode-aware model resolution: a VoiceLive tune changes voicelive_model, a
+    // cascade tune changes cascade_model. Reading the wrong one is what made the
+    // popup always show the cascade model even for VoiceLive edits.
+    const isVoiceLive = mode === 'voicelive';
+    const newModel = isVoiceLive
+      ? (agentConfig.voicelive_model?.deployment_id || null)
+      : (agentConfig.cascade_model?.deployment_id || agentConfig.model?.deployment_id || null);
     const newVoice = agentConfig.voice?.name || null;
     const hasTools = Array.isArray(agentConfig.tools);
     const newTools = hasTools ? agentConfig.tools.length : null;
 
-    // Diff against the inventory snapshot captured at the start of this handler
-    // (state updates are async, so this still holds the pre-update values).
-    const prior = agentInventory?.agents?.find((a) => a.name === name) || null;
-    const changes = [];
-    if (prior) {
-      if (prior.model && newModel && prior.model !== newModel) {
-        changes.push(`Model ${prior.model} → ${newModel}`);
-      } else if (!prior.model && newModel) {
-        changes.push(`Model → ${newModel}`);
-      }
-      if ((prior.voice || null) !== (newVoice || null)) {
-        changes.push(`Voice ${formatVoiceShort(prior.voice)} → ${formatVoiceShort(newVoice)}`);
-      }
-      if (hasTools) {
-        const priorTools = prior.toolCount ?? (prior.tools?.length ?? 0);
-        if (priorTools !== newTools) {
-          changes.push(`Tools ${priorTools} → ${newTools}`);
+    // Prefer caller-supplied deltas (Quick Tune computes exact base→applied diffs
+    // and a verification line). Otherwise diff against the inventory snapshot.
+    let changes = Array.isArray(explicitChanges) ? explicitChanges.filter(Boolean) : [];
+    if (changes.length === 0) {
+      // Diff against the inventory snapshot captured at the start of this handler
+      // (state updates are async, so this still holds the pre-update values).
+      const prior = agentInventory?.agents?.find((a) => a.name === name) || null;
+      if (prior) {
+        if (prior.model && newModel && prior.model !== newModel) {
+          changes.push(`Model ${prior.model} → ${newModel}`);
+        } else if (!prior.model && newModel) {
+          changes.push(`Model → ${newModel}`);
         }
-      }
-      if ((prior.description || '') !== (agentConfig.description || '')) {
-        changes.push('Description updated');
+        if ((prior.voice || null) !== (newVoice || null)) {
+          changes.push(`Voice ${formatVoiceShort(prior.voice)} → ${formatVoiceShort(newVoice)}`);
+        }
+        if (hasTools) {
+          const priorTools = prior.toolCount ?? (prior.tools?.length ?? 0);
+          if (priorTools !== newTools) {
+            changes.push(`Tools ${priorTools} → ${newTools}`);
+          }
+        }
+        if ((prior.description || '') !== (agentConfig.description || '')) {
+          changes.push('Description updated');
+        }
       }
     }
     if (changes.length === 0) {
@@ -1142,9 +1152,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       if (hasTools) changes.push(`${newTools} tool${newTools === 1 ? '' : 's'}`);
     }
 
-    setAgentUpdateToast({ name, scenarioName, changes, action, ts: Date.now() });
+    setAgentUpdateToast({ name, scenarioName, changes, action, mode, confirmed, ts: Date.now() });
     if (agentUpdateToastTimer.current) clearTimeout(agentUpdateToastTimer.current);
-    agentUpdateToastTimer.current = setTimeout(() => setAgentUpdateToast(null), 8000);
+    // Give a bit longer to read when we're showing a read-back confirmation.
+    agentUpdateToastTimer.current = setTimeout(() => setAgentUpdateToast(null), confirmed ? 12000 : 8000);
   }, [activeScenarioData, sessionScenarioConfig, activeScenarioKey, agentInventory, formatVoiceShort]);
 
   const dismissAgentUpdateToast = useCallback(() => {
@@ -2184,6 +2195,121 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     const baseByomMode = base.byom?.mode || '';
     const byomChanged = isVoiceLive && (ls.byom_mode || '') !== baseByomMode;
 
+    // Build the exact base→applied deltas for the surface being tuned so the
+    // popup reflects what actually changed on THIS mode (VoiceLive vs Cascade),
+    // not a generic snapshot. ``fast`` limits the list to fields the instant
+    // VoiceLive push actually persists (VAD + voice name/rate).
+    const fmtPct = (v) => `${Number(v) >= 0 ? '+' : ''}${Math.round(Number(v) || 0)}%`;
+    const buildChanges = (fast) => {
+      const out = [];
+      const td = base.session?.turn_detection || {};
+      if (isVoiceLive) {
+        if (modelChanged) {
+          const archNote =
+            classifyVoiceLiveArch(ls.voicelive_model) === 'native' ? ' · native' : ' · cascaded';
+          out.push(`Model ${baseVoiceliveModel || '—'} → ${ls.voicelive_model}${archNote}`);
+        }
+        if (!fast && byomChanged) {
+          out.push(`BYOM ${baseByomMode || 'off'} → ${ls.byom_mode || 'off'}`);
+        }
+        if (!fast) {
+          const baseTx = base.session?.input_audio_transcription_settings?.model || '';
+          if ((ls.transcription_model || '') !== baseTx) {
+            out.push(`Transcription ${baseTx || 'default'} → ${ls.transcription_model || 'default'}`);
+          }
+        }
+        if (Number(td.threshold ?? NaN) !== Number(ls.turn_detection_threshold)) {
+          out.push(`VAD threshold → ${Number(ls.turn_detection_threshold).toFixed(2)}`);
+        }
+        if (Math.round(td.silence_duration_ms ?? -1) !== Math.round(ls.silence_duration_ms)) {
+          out.push(`End-of-turn silence → ${Math.round(ls.silence_duration_ms)} ms`);
+        }
+        if (Math.round(td.prefix_padding_ms ?? -1) !== Math.round(ls.prefix_padding_ms)) {
+          out.push(`Prefix padding → ${Math.round(ls.prefix_padding_ms)} ms`);
+        }
+      } else {
+        if (modelChanged) {
+          out.push(`Model ${baseCascadeModel || '—'} → ${ls.cascade_model}`);
+        }
+        if (Math.round(base.speech?.vad_silence_timeout_ms ?? -1) !== Math.round(ls.vad_silence_timeout_ms)) {
+          out.push(`STT silence → ${Math.round(ls.vad_silence_timeout_ms)} ms`);
+        }
+        if (Boolean(base.speech?.use_semantic_segmentation) !== Boolean(ls.use_semantic_segmentation)) {
+          out.push(`Semantic segmentation ${ls.use_semantic_segmentation ? 'on' : 'off'}`);
+        }
+      }
+      // Shared voice (TTS) — applied on both surfaces.
+      const baseVoiceName = base.voice?.name || '';
+      if (ls.voice_name && ls.voice_name !== baseVoiceName) {
+        out.push(`Voice ${formatVoiceShort(baseVoiceName) || '—'} → ${formatVoiceShort(ls.voice_name)}`);
+      }
+      if (!fast && ls.voice_style && ls.voice_style !== (base.voice?.style || '')) {
+        out.push(`Style → ${ls.voice_style}`);
+      }
+      if (Math.round(parsePercent(base.voice?.rate)) !== Math.round(ls.rate)) {
+        out.push(`Rate → ${fmtPct(ls.rate)}`);
+      }
+      if (!fast && Math.round(parsePercent(base.voice?.pitch)) !== Math.round(ls.pitch)) {
+        out.push(`Pitch → ${fmtPct(ls.pitch)}`);
+      }
+      if (out.length === 0) out.push('No changes');
+      return out;
+    };
+
+    // Read back the persisted session agent and confirm the tuned settings
+    // actually landed on the active agent for this mode — this is the "verify
+    // state changed on the current active agent" step. Returns a read-back of
+    // what the agent is ACTUALLY configured with now so the popup can show the
+    // user exactly what was applied (esp. the model ↔ BYOM combination).
+    const verifyPersisted = async () => {
+      try {
+        const r = await fetch(
+          `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}`,
+        );
+        if (!r.ok) return { ok: false, agentName: resolvedAgentName, applied: [] };
+        const d = await r.json();
+        const cfg = d.config || {};
+        const persistedModel = isVoiceLive
+          ? (cfg.voicelive_model?.deployment_id || '')
+          : (cfg.cascade_model?.deployment_id || cfg.model?.deployment_id || '');
+        const wantModel = isVoiceLive
+          ? (ls.voicelive_model || baseVoiceliveModel)
+          : (ls.cascade_model || baseCascadeModel);
+        const modelOk = !wantModel || persistedModel === wantModel;
+        const voiceOk = !ls.voice_name || (cfg.voice?.name || '') === ls.voice_name;
+
+        // Actual persisted config (ground truth from the server) for this mode.
+        const applied = [];
+        const byomMode = cfg.byom?.mode || '';
+        if (persistedModel) {
+          let suffix = '';
+          if (isVoiceLive) {
+            suffix = byomMode
+              ? ` · BYOM ${byomMode.replace(/^byom-/, '')}`
+              : ` · ${classifyVoiceLiveArch(persistedModel) === 'native' ? 'managed native' : 'managed cascaded'}`;
+          }
+          applied.push(`Model: ${persistedModel}${suffix}`);
+        }
+        if (cfg.voice?.name) applied.push(`Voice: ${formatVoiceShort(cfg.voice.name)}`);
+        if (isVoiceLive) {
+          const td = cfg.session?.turn_detection || {};
+          if (td.threshold != null || td.silence_duration_ms != null) {
+            applied.push(
+              `VAD: thr ${Number(td.threshold ?? 0).toFixed(2)} · silence ${Math.round(td.silence_duration_ms ?? 0)} ms`,
+            );
+          }
+          const tx = cfg.session?.input_audio_transcription_settings?.model;
+          if (tx) applied.push(`STT: ${tx}`);
+        } else if (cfg.speech?.vad_silence_timeout_ms != null) {
+          applied.push(`STT silence: ${Math.round(cfg.speech.vad_silence_timeout_ms)} ms`);
+        }
+
+        return { agentName: d.agent_name || resolvedAgentName, ok: modelOk && voiceOk, applied };
+      } catch {
+        return { ok: false, agentName: resolvedAgentName, applied: [] };
+      }
+    };
+
     setLiveSettingsBusy(true);
     try {
       // Fast path: VoiceLive active, only VAD/voice tweaks (no model/BYOM change) → instant push.
@@ -2212,9 +2338,15 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         } else {
           appendLog('💾 Saved; will apply on next connect.');
         }
+        const verified = await verifyPersisted();
         notifyAgentUpdate(
-          { name: resolvedAgentName, voice: { name: ls.voice_name } },
+          {
+            name: resolvedAgentName,
+            voicelive_model: { deployment_id: ls.voicelive_model || baseVoiceliveModel },
+            voice: { name: ls.voice_name },
+          },
           'updated',
+          { mode: 'voicelive', changes: buildChanges(true), confirmed: verified },
         );
         setShowLiveSettings(false);
         return;
@@ -2292,7 +2424,12 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
       appendLog('💾 Settings saved to live agent.');
-      notifyAgentUpdate(payload, 'updated');
+      const verified = await verifyPersisted();
+      notifyAgentUpdate(payload, 'updated', {
+        mode: liveSettingsMode,
+        changes: buildChanges(false),
+        confirmed: verified,
+      });
 
       if (callActive) {
         appendLog('🔄 Restarting call to apply changes…');
@@ -2324,6 +2461,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     handleMicToggle,
     appendLog,
     notifyAgentUpdate,
+    formatVoiceShort,
   ]);
 
   const publishMetricsSummary = useCallback(
@@ -4692,6 +4830,13 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                   const modelLabelFor = (id) =>
                     usingManaged && managedTierById[id] ? `${id} · ${managedTierById[id]}` : id;
                   const arch = isVoiceLive ? classifyVoiceLiveArch(chosenModel) : null;
+                  // A VoiceLive model that isn't in the managed catalog can only be
+                  // reached via BYOM (it's your own Foundry deployment). Selecting it
+                  // with BYOM OFF connects to managed Voice Live with a model it can't
+                  // serve — the session connects but the agent never responds and dies
+                  // on the ~900s idle timeout. Flag it so the user enables BYOM.
+                  const chosenModelIsManaged = MANAGED_VOICELIVE_MODELS.some((m) => m.id === chosenModel);
+                  const needsByomForModel = Boolean(isVoiceLive && chosenModel && !byomOn && !chosenModelIsManaged);
                   const rowStyle = { marginBottom: '14px' };
                   const labelStyle = {
                     display: 'flex',
@@ -4968,6 +5113,42 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                             {arch === 'native'
                               ? '🎙️ Native speech-to-speech (lowest latency)'
                               : '🔤 Cascaded STT→LLM→TTS inside VoiceLive'}
+                          </div>
+                        )}
+                        {needsByomForModel && (
+                          <div
+                            style={{
+                              marginTop: '8px',
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                              border: '1px solid #fca5a5',
+                              boxShadow: '0 2px 8px rgba(220,38,38,0.12)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#b91c1c',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px' }}>⚠️</span>
+                              Enable BYOM for this model
+                            </div>
+                            <div style={{ fontSize: '11px', lineHeight: 1.5, color: '#7f1d1d' }}>
+                              <strong>{chosenModel}</strong> isn&apos;t a managed Voice Live model — it&apos;s
+                              your own Foundry deployment. Turn on a <strong>BYOM</strong> profile below
+                              (e.g. <em>Azure OpenAI / Foundry Chat Completion</em>) to route to it.
+                              Applying with BYOM off connects to managed Voice Live, which can&apos;t serve
+                              this model, so the agent will go silent.
+                            </div>
                           </div>
                         )}
                         {isVoiceLive && chosenModel && arch === 'native' && (
@@ -5725,7 +5906,42 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           >
             {agentUpdateToast.scenarioName}
           </Typography>
+          {agentUpdateToast.mode && (
+            <Typography
+              component="span"
+              sx={{
+                fontSize: 11,
+                fontWeight: 700,
+                px: 0.75,
+                py: 0.25,
+                borderRadius: '999px',
+                backgroundColor:
+                  agentUpdateToast.mode === 'voicelive'
+                    ? 'rgba(16,185,129,0.18)'
+                    : 'rgba(59,130,246,0.18)',
+                border:
+                  agentUpdateToast.mode === 'voicelive'
+                    ? '1px solid rgba(16,185,129,0.45)'
+                    : '1px solid rgba(59,130,246,0.45)',
+                color: agentUpdateToast.mode === 'voicelive' ? '#6ee7b7' : '#93c5fd',
+              }}
+            >
+              {agentUpdateToast.mode === 'voicelive' ? 'VoiceLive' : 'Custom Cascade'}
+            </Typography>
+          )}
         </Box>
+        <Typography
+          sx={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            letterSpacing: 0.6,
+            textTransform: 'uppercase',
+            color: 'rgba(165,180,252,0.75)',
+            mb: 0.25,
+          }}
+        >
+          Updated
+        </Typography>
         <Box component="ul" sx={{ m: 0, pl: 2, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
           {agentUpdateToast.changes.map((c, i) => (
             <Typography
@@ -5737,6 +5953,45 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             </Typography>
           ))}
         </Box>
+        {agentUpdateToast.confirmed && (
+          <Box sx={{ mt: 1, pt: 0.75, borderTop: '1px solid rgba(148,163,184,0.2)' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.4 }}>
+              <Typography component="span" sx={{ fontSize: 12, lineHeight: 1 }}>
+                {agentUpdateToast.confirmed.ok ? '✅' : '⚠️'}
+              </Typography>
+              <Typography
+                component="span"
+                sx={{
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  letterSpacing: 0.3,
+                  color: agentUpdateToast.confirmed.ok ? '#6ee7b7' : '#fcd34d',
+                }}
+              >
+                {agentUpdateToast.confirmed.ok
+                  ? `Confirmed live on “${agentUpdateToast.confirmed.agentName}”`
+                  : 'Could not confirm on active agent'}
+              </Typography>
+            </Box>
+            {agentUpdateToast.confirmed.applied?.length > 0 && (
+              <Box component="ul" sx={{ m: 0, pl: 2, display: 'flex', flexDirection: 'column', gap: 0.15 }}>
+                {agentUpdateToast.confirmed.applied.map((a, i) => (
+                  <Typography
+                    key={i}
+                    component="li"
+                    sx={{
+                      fontSize: 11,
+                      color: 'rgba(230,237,243,0.7)',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    }}
+                  >
+                    {a}
+                  </Typography>
+                ))}
+              </Box>
+            )}
+          </Box>
+        )}
       </Box>,
       document.body
     )}
