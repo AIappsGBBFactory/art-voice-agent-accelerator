@@ -5425,22 +5425,25 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                         </button>
                         <button
                           onClick={applyLiveSettings}
-                          disabled={liveSettingsBusy || liveSettingsLoading}
+                          disabled={liveSettingsBusy || liveSettingsLoading || needsByomForModel}
+                          title={needsByomForModel
+                            ? `${chosenModel} needs a BYOM profile — turn on BYOM above before applying.`
+                            : undefined}
                           style={{
                             flex: 1,
                             padding: '8px',
                             borderRadius: '8px',
                             border: 'none',
-                            background: (liveSettingsBusy || liveSettingsLoading)
+                            background: (liveSettingsBusy || liveSettingsLoading || needsByomForModel)
                               ? '#cbd5e1'
                               : 'linear-gradient(135deg, #7c3aed, #6d28d9)',
                             color: '#fff',
                             fontSize: '12px',
                             fontWeight: 700,
-                            cursor: (liveSettingsBusy || liveSettingsLoading) ? 'default' : 'pointer',
+                            cursor: (liveSettingsBusy || liveSettingsLoading || needsByomForModel) ? 'default' : 'pointer',
                           }}
                         >
-                          {liveSettingsBusy ? 'Applying…' : 'Apply'}
+                          {liveSettingsBusy ? 'Applying…' : needsByomForModel ? 'Enable BYOM first' : 'Apply'}
                         </button>
                       </div>
                     </>

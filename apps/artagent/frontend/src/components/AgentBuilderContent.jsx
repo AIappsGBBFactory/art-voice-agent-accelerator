@@ -85,7 +85,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 
 import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
-import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_OPTIONS } from '../utils/foundryModels.js';
+import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_OPTIONS, isManagedVoiceLiveModel } from '../utils/foundryModels.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1973,9 +1973,26 @@ export default function AgentBuilderContent({
     setSaving(true);
     setError(null);
 
+    // Guardrail: a non-managed Voice Live model (o3-mini, o1, custom/fine-tuned,
+    // etc.) can ONLY run via a BYOM profile. Saving it with BYOM off persists an
+    // agent that connects to managed Voice Live, which can't serve the model —
+    // the agent then goes silent and the client reconnect-loops. Block it here
+    // with a clear fix instead of shipping a broken override.
+    const vlModelId = (config.voicelive_model?.deployment_id || '').trim();
+    const byomEnabled = Boolean(config.byom?.mode);
+    if (vlModelId && !byomEnabled && !isManagedVoiceLiveModel(vlModelId)) {
+      setError(
+        `"${vlModelId}" isn't a managed Voice Live model, so it needs a BYOM profile. ` +
+          'Turn on "Bring Your Own Model (BYOM)" below (e.g. Azure OpenAI / Foundry ' +
+          'chat-completion) and re-save, or pick a managed Voice Live model. Saving it ' +
+          'with BYOM off makes the agent go silent.',
+      );
+      setSaving(false);
+      return;
+    }
+
     try {
-      const cascadeApiVersion = config.cascade_model?.api_version || 'v1';
-      const payload = {
+      const cascadeApiVersion = config.cascade_model?.api_version || 'v1';      const payload = {
         name: config.name,
         description: config.description,
         greeting: draftGreeting,

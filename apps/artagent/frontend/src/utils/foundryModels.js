@@ -77,6 +77,20 @@ export const MANAGED_VOICELIVE_OPTIONS = MANAGED_VOICELIVE_MODELS.map((m) => ({
 }));
 
 /**
+ * True when `deploymentId` is a model that managed Voice Live can actually host
+ * (i.e. valid to run with BYOM OFF). Non-managed models — e.g. `o3-mini`, `o1`,
+ * `o3`, plain `gpt-5-chat`, or any custom/fine-tuned deployment — REQUIRE a BYOM
+ * profile: connecting them as managed lets the socket open but the model never
+ * responds, so the agent goes silent. Empty id → true (nothing to validate; the
+ * backend applies the managed default).
+ */
+export const isManagedVoiceLiveModel = (deploymentId) => {
+  const id = (deploymentId || '').trim().toLowerCase();
+  if (!id) return true;
+  return MANAGED_VOICELIVE_MODELS.some((m) => m.id.toLowerCase() === id);
+};
+
+/**
  * Fetch the live model deployments from the connected Foundry/Azure OpenAI
  * resource. Returns { models, source, byCategory } or null on failure/empty.
  */
