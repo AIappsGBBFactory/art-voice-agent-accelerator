@@ -91,12 +91,24 @@ export const isManagedVoiceLiveModel = (deploymentId) => {
 };
 
 /**
- * Fetch the live model deployments from the connected Foundry/Azure OpenAI
- * resource. Returns { models, source, byCategory } or null on failure/empty.
+ * Fetch the live model deployments for an orchestration mode.
+ *
+ * `mode` picks WHICH Azure resource is listed — they are usually different
+ * accounts (Voice Live is often provisioned in its own region):
+ *   • undefined / 'cascade'  → primary AI Foundry / Azure OpenAI (AZURE_OPENAI_ENDPOINT)
+ *   • 'voicelive'            → the Voice Live account (AZURE_VOICELIVE_ENDPOINT)
+ *
+ * Listing the primary resource for the VoiceLive dropdown lets a user pick a
+ * deployment Voice Live can't reach: the session connects but the agent never
+ * responds. Always pass 'voicelive' for the VoiceLive model list.
+ *
+ * Returns { models, source, byCategory, resourceName, resourceFallback } or
+ * null on failure/empty.
  */
-export async function fetchFoundryModels() {
+export async function fetchFoundryModels(mode) {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models`);
+    const qs = mode ? `?mode=${encodeURIComponent(mode)}` : '';
+    const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models${qs}`);
     if (!res.ok) return null;
     const data = await res.json();
     const models = Array.isArray(data.models) ? data.models : [];
@@ -105,10 +117,29 @@ export async function fetchFoundryModels() {
       models,
       source: data.source || 'azure_openai',
       byCategory: data.by_category || {},
+      resourceName: data.resource_name || '',
+      resourceFallback: Boolean(data.resource_fallback),
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Fetch the deployments on the Voice Live (AVL) resource and return them as
+ * ready-to-render VoiceLive dropdown options, or null when unavailable.
+ * Returns { options, resourceName, resourceFallback }.
+ */
+export async function fetchVoiceLiveModels() {
+  const live = await fetchFoundryModels('voicelive');
+  if (!live) return null;
+  const { voicelive } = deriveModelOptions(live.models);
+  if (!voicelive.length) return null;
+  return {
+    options: voicelive,
+    resourceName: live.resourceName,
+    resourceFallback: live.resourceFallback,
+  };
 }
 
 /**

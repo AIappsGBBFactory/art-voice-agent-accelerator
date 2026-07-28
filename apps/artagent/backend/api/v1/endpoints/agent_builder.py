@@ -15,6 +15,21 @@ Endpoints:
     GET  /api/v1/agent-builder/session/{session_id} - Get session agent config
     PUT  /api/v1/agent-builder/session/{session_id} - Update session agent config
     DELETE /api/v1/agent-builder/session/{session_id} - Reset to default agent
+
+Model deployment sources
+------------------------
+`GET /models` accepts an optional `mode` query parameter that selects which
+Azure AI Foundry account the deployment list is read from:
+
+    mode=cascade (default)  -> AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_KEY   (the "-aif" account)
+    mode=voicelive          -> AZURE_VOICELIVE_ENDPOINT / AZURE_VOICELIVE_API_KEY ("-avl" account)
+
+This split matters because Voice Live binds the model at WebSocket connect
+time against its own Foundry resource. Listing "-aif" deployments in the Voice
+Live picker lets a user select a model that does not exist on the Voice Live
+account, which produces a connection that never responds. For that reason the
+voicelive mode never falls back to the primary catalog: if the Voice Live
+endpoint is unset it returns an empty list with `source="unavailable"`.
 """
 
 from __future__ import annotations
@@ -440,7 +455,9 @@ _AVAILABLE_VOICES_TTL_S = 600.0  # 10 minutes
 # Model deployments change rarely (they're provisioned out-of-band in Azure), so
 # the live client.models.list() result is cached process-wide to avoid an Azure
 # round-trip on every builder open. Callers can force a refresh with ?refresh=true.
-_AVAILABLE_MODELS_CACHE: dict[str, Any] = {"payload": None, "expires": 0.0}
+# Keyed by resolved mode ("cascade" | "voicelive") because each mode reads a
+# DIFFERENT Azure resource (see _resolve_deployment_source).
+_AVAILABLE_MODELS_CACHE: dict[str, dict[str, Any]] = {}
 _AVAILABLE_MODELS_TTL_S = 600.0  # 10 minutes
 
 
@@ -718,10 +735,21 @@ def _categorize_deployment(deployment_id: str) -> tuple[str, str, list[str]]:
 
 
 def _build_model_entry(
-    deployment_id: str, model_name: str | None = None, created_at: Any = None
+    deployment_id: str,
+    model_name: str | None = None,
+    created_at: Any = None,
+    restrict_modes: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Build the API model entry (deployment_id + categorization flags)."""
+    """Build the API model entry (deployment_id + categorization flags).
+
+    ``restrict_modes`` narrows the advertised ``modes`` to the intersection with
+    the caller's mode. Used when the listing came from a resource that only backs
+    one orchestrator (e.g. the Voice Live account), so the builder can't offer a
+    deployment for a mode whose resource doesn't actually host it.
+    """
     category, arch, modes = _categorize_deployment(deployment_id)
+    if restrict_modes is not None:
+        modes = [m for m in modes if m in restrict_modes]
     return {
         "deployment_id": deployment_id,
         "model_name": model_name or deployment_id,
@@ -735,8 +763,91 @@ def _build_model_entry(
     }
 
 
-def _fetch_real_deployments() -> list[dict[str, Any]] | None:
-    """List the ACTUAL model deployments on the connected Foundry/Azure OpenAI
+def _normalize_control_plane_endpoint(endpoint: str) -> str:
+    """Normalize a configured endpoint to an https data-plane base URL.
+
+    ``AZURE_VOICELIVE_ENDPOINT`` is consumed by the Voice Live SDK, so it may be
+    supplied as ``wss://...`` and/or carry the realtime path. Strip both so the
+    deployments REST call targets ``https://<host>/openai/deployments``.
+    """
+    ep = (endpoint or "").strip()
+    if not ep:
+        return ""
+    if ep.startswith("wss://"):
+        ep = "https://" + ep[len("wss://") :]
+    elif ep.startswith("ws://"):
+        ep = "https://" + ep[len("ws://") :]
+    elif not ep.startswith("http"):
+        ep = f"https://{ep}"
+    # Drop any path/query (e.g. /voice-live/realtime?api-version=...): the
+    # deployments listing lives at the account root.
+    scheme, _, rest = ep.partition("://")
+    host = rest.split("/", 1)[0].split("?", 1)[0]
+    return f"{scheme}://{host}" if host else ""
+
+
+def _resolve_deployment_source(mode: str) -> dict[str, Any]:
+    """Resolve which Azure resource backs the model list for ``mode``.
+
+    VoiceLive connects to the Voice Live (AVL) Foundry/AI Services account, which
+    is frequently a SEPARATE account in a different region from the primary AI
+    Foundry (AIF) account used by SpeechCascade — it hosts its own, much smaller,
+    set of deployments. Listing AIF deployments for the VoiceLive dropdown lets a
+    user pick a model that AVL cannot serve: the socket connects but the model
+    never responds and the session dies on the ~900s idle timeout.
+
+    Returns ``{endpoint, api_key, resource_name, restrict_modes, fell_back}``.
+    """
+    aoai_endpoint = _normalize_control_plane_endpoint(os.getenv("AZURE_OPENAI_ENDPOINT") or "")
+    aoai_key = os.getenv("AZURE_OPENAI_KEY") or None
+
+    if mode != "voicelive":
+        return {
+            "endpoint": aoai_endpoint,
+            "api_key": aoai_key,
+            "resource_name": _endpoint_resource_name(aoai_endpoint),
+            "restrict_modes": None,
+            "fell_back": False,
+        }
+
+    vl_endpoint = _normalize_control_plane_endpoint(
+        os.getenv("AZURE_VOICELIVE_ENDPOINT") or os.getenv("AZURE_VOICE_LIVE_ENDPOINT") or ""
+    )
+    if not vl_endpoint:
+        # Voice Live not separately provisioned → it runs on the primary account.
+        return {
+            "endpoint": aoai_endpoint,
+            "api_key": aoai_key,
+            "resource_name": _endpoint_resource_name(aoai_endpoint),
+            "restrict_modes": ["voicelive"],
+            "fell_back": True,
+        }
+
+    vl_key = (
+        os.getenv("AZURE_VOICELIVE_API_KEY")
+        or os.getenv("AZURE_VOICE_API_KEY")
+        # Only reuse the AOAI key when both modes point at the same account.
+        or (aoai_key if vl_endpoint == aoai_endpoint else None)
+    )
+    return {
+        "endpoint": vl_endpoint,
+        "api_key": vl_key,
+        "resource_name": _endpoint_resource_name(vl_endpoint),
+        "restrict_modes": ["voicelive"],
+        "fell_back": False,
+    }
+
+
+def _endpoint_resource_name(endpoint: str) -> str:
+    """Extract the account name from an endpoint host (for UI attribution)."""
+    host = (endpoint or "").split("://")[-1].split("/")[0]
+    return host.split(".")[0] if host else ""
+
+
+def _fetch_real_deployments(
+    endpoint: str | None = None, api_key: str | None = None
+) -> list[dict[str, Any]] | None:
+    """List the ACTUAL model deployments on the given Foundry/Azure OpenAI
     resource via the data-plane REST API.
 
     ``client.models.list()`` returns the region base-model CATALOG (hundreds of
@@ -745,16 +856,21 @@ def _fetch_real_deployments() -> list[dict[str, Any]] | None:
     the same endpoint + key/Entra credential as the OpenAI client (no resource
     group / management plane needed). Returns a list of
     ``{deployment_id, model_name, created_at}`` or None when unavailable.
+
+    ``endpoint``/``api_key`` default to the primary Azure OpenAI resource; pass
+    the Voice Live account's values to list what VoiceLive can actually serve.
     """
     import httpx
 
-    endpoint = (os.getenv("AZURE_OPENAI_ENDPOINT") or "").rstrip("/")
+    if endpoint is None:
+        endpoint = _normalize_control_plane_endpoint(os.getenv("AZURE_OPENAI_ENDPOINT") or "")
+        api_key = api_key or os.getenv("AZURE_OPENAI_KEY")
+    endpoint = (endpoint or "").rstrip("/")
     if not endpoint:
         return None
 
-    key = os.getenv("AZURE_OPENAI_KEY")
-    if key:
-        headers = {"api-key": key}
+    if api_key:
+        headers = {"api-key": api_key}
     else:
         try:
             from utils.azure_auth import get_credential
@@ -811,44 +927,69 @@ def _fetch_real_deployments() -> list[dict[str, Any]] | None:
     "/models",
     response_model=dict[str, Any],
     summary="List Available Models",
-    description="Get list of all available OpenAI model deployments from Azure AI Foundry.",
+    description=(
+        "Get list of available OpenAI model deployments. Pass mode=voicelive to "
+        "list the deployments on the Voice Live (AVL) resource instead of the "
+        "primary AI Foundry resource."
+    ),
     tags=["Agent Builder"],
 )
-async def list_available_models(refresh: bool = False) -> dict[str, Any]:
+async def list_available_models(refresh: bool = False, mode: str | None = None) -> dict[str, Any]:
     """
-    List all available OpenAI model deployments from Azure AI Foundry.
+    List all available OpenAI model deployments for an orchestration mode.
 
-    Deployments change rarely, so the live Azure result is cached in-process for
-    ~10 minutes. Pass ``refresh=true`` to bypass the cache and re-query Azure.
+    ``mode=voicelive`` (aliases: ``realtime``, ``voice_live``) reads the Voice
+    Live account (``AZURE_VOICELIVE_ENDPOINT``) — the resource VoiceLive actually
+    connects to. Anything else reads the primary Azure OpenAI / AI Foundry
+    account used by SpeechCascade.
+
+    Deployments change rarely, so the live Azure result is cached in-process per
+    mode for ~10 minutes. Pass ``refresh=true`` to bypass the cache.
     """
     start = time.time()
+    resolved_mode = (
+        "voicelive" if (mode or "").strip().lower() in ("voicelive", "voice_live", "realtime")
+        else "cascade"
+    )
+    source = _resolve_deployment_source(resolved_mode)
 
     # Serve from the TTL cache unless a refresh was explicitly requested.
-    now = time.time()
-    if (
-        not refresh
-        and _AVAILABLE_MODELS_CACHE["payload"] is not None
-        and now < _AVAILABLE_MODELS_CACHE["expires"]
-    ):
-        cached = dict(_AVAILABLE_MODELS_CACHE["payload"])
+    entry = _AVAILABLE_MODELS_CACHE.get(resolved_mode)
+    if not refresh and entry and time.time() < entry["expires"]:
+        cached = dict(entry["payload"])
         cached["cached"] = True
         cached["response_time_ms"] = round((time.time() - start) * 1000, 2)
         return cached
 
     def _cache_and_return(payload: dict[str, Any]) -> dict[str, Any]:
-        """Store a successful payload in the TTL cache and return it."""
-        _AVAILABLE_MODELS_CACHE["payload"] = payload
-        _AVAILABLE_MODELS_CACHE["expires"] = time.time() + _AVAILABLE_MODELS_TTL_S
+        """Store a successful payload in the per-mode TTL cache and return it."""
+        payload = {
+            **payload,
+            "mode": resolved_mode,
+            "resource_name": source["resource_name"],
+            # True when VoiceLive was asked for but no dedicated AVL resource is
+            # configured, so the primary account was used instead.
+            "resource_fallback": source["fell_back"],
+        }
+        _AVAILABLE_MODELS_CACHE[resolved_mode] = {
+            "payload": payload,
+            "expires": time.time() + _AVAILABLE_MODELS_TTL_S,
+        }
         return {**payload, "cached": False}
 
     try:
-        # PREFERRED: list the ACTUAL deployments on the connected resource. This
-        # is what the user can really use (vs client.models.list()'s 300+ region
-        # base-model catalog). Falls back to the catalog below when unavailable.
-        real = _fetch_real_deployments()
+        # PREFERRED: list the ACTUAL deployments on the resource that serves this
+        # mode. This is what the user can really use (vs client.models.list()'s
+        # 300+ region base-model catalog). Falls back to the catalog below.
+        real = _fetch_real_deployments(source["endpoint"], source["api_key"])
         if real:
             models = [
-                _build_model_entry(d["deployment_id"], d.get("model_name"), d.get("created_at"))
+                _build_model_entry(
+                    d["deployment_id"],
+                    d.get("model_name"),
+                    d.get("created_at"),
+                    restrict_modes=source["restrict_modes"],
+                )
                 for d in real
             ]
             by_category: dict[str, list[dict[str, Any]]] = {}
@@ -865,6 +1006,26 @@ async def list_available_models(refresh: bool = False) -> dict[str, Any]:
                 "by_category": by_category,
                 "default_model": default_model,
                 "source": "deployments",
+                "response_time_ms": round((time.time() - start) * 1000, 2),
+            })
+
+        if resolved_mode == "voicelive":
+            # Never fall back to the primary AOAI catalog for VoiceLive: offering
+            # models the Voice Live resource doesn't host is exactly the failure
+            # this split avoids (connects, then never responds). Return empty so
+            # the UI falls back to the managed Voice Live catalog.
+            logger.warning(
+                "No Voice Live deployments listed from %s — returning empty list "
+                "so the builder falls back to the managed Voice Live catalog.",
+                source["endpoint"] or "<unset>",
+            )
+            return _cache_and_return({
+                "status": "success",
+                "total": 0,
+                "models": [],
+                "by_category": {},
+                "default_model": os.getenv("AZURE_VOICELIVE_MODEL") or "gpt-realtime",
+                "source": "unavailable",
                 "response_time_ms": round((time.time() - start) * 1000, 2),
             })
 

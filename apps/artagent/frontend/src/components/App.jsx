@@ -50,7 +50,7 @@ import {
   toMs,
 } from '../utils/session.js';
 import logger from '../utils/logger.js';
-import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
+import { fetchFoundryModels, fetchVoiceLiveModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
 import { setVoiceSession, getSessionTraceparent, getDeviceId, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
 import { buildAuthQueryParams, getAuthenticatedUser } from '../utils/auth.js';
 import { reduceConversationPayload } from '../utils/conversationBubbles.js';
@@ -1289,6 +1289,11 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   // used to populate the Quick Tune model dropdown (esp. for BYOM). null = not
   // loaded / query failed → fall back to the static presets.
   const [liveModelOptions, setLiveModelOptions] = useState(null);
+  // Deployments on the Voice Live (AVL) resource — a SEPARATE Azure account from
+  // the primary Foundry one above. VoiceLive/BYOM can only serve what's deployed
+  // here, so the VoiceLive dropdown must never use the primary resource's list.
+  // { options, resourceName, resourceFallback } | null when unavailable.
+  const [voiceLiveModelInfo, setVoiceLiveModelInfo] = useState(null);
   const [builderInitialMode, setBuilderInitialMode] = useState('agents');
   // When true, the scenario builder opens in "create new" mode (blank form, POST endpoint).
   // When false, it opens in "edit existing" mode with the active custom scenario pre-filled.
@@ -2105,12 +2110,14 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         fetch(`${API_BASE_URL}/api/v1/agent-builder/templates?session_id=${encodeURIComponent(sessionId)}`).catch(() => null),
       ]);
 
-      // Live model deployments from the connected Foundry resource (for the model
-      // dropdown — important for BYOM, where the deployment is your own). Never
-      // throws; null on failure → static presets remain the fallback.
+      // Live model deployments for the model dropdown. Cascade reads the primary
+      // Foundry resource; VoiceLive reads the Voice Live (AVL) resource, which is
+      // usually a different account with its own (much smaller) deployment set.
+      // Neither throws; null on failure → static presets remain the fallback.
       fetchFoundryModels().then((live) => {
         setLiveModelOptions(live ? deriveModelOptions(live.models) : null);
       });
+      fetchVoiceLiveModels().then(setVoiceLiveModelInfo);
 
       if (voicesRes && voicesRes.ok) {
         const vd = await voicesRes.json();
@@ -4801,11 +4808,17 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                   // Instant only when VoiceLive is the active stream and no model/BYOM change.
                   const willReconnect = !(isVoiceLive && modeMatchesActive) || modelChanged || byomChangedHint;
                   // Model dropdown source:
-                  //   • Cascade → your live deployments (fallback static presets).
-                  //   • VoiceLive + BYOM ON → your live deployments (your own model).
-                  //   • VoiceLive + BYOM OFF → managed Voice Live models (pricing tiers).
+                  //   • Cascade → primary Foundry deployments (fallback static presets).
+                  //   • VoiceLive + BYOM ON → deployments on the VOICE LIVE (AVL)
+                  //     resource — the account VoiceLive actually connects to. Using
+                  //     the primary Foundry list here offers models AVL doesn't host,
+                  //     which connects fine but never responds.
+                  //   • VoiceLive + BYOM OFF → managed Voice Live models (pricing tiers),
+                  //     annotated with which ones are also deployed on the AVL resource.
                   const byomOn = isVoiceLive && Boolean(liveSettings.byom_mode);
-                  const liveModeList = isVoiceLive ? liveModelOptions?.voicelive : liveModelOptions?.cascade;
+                  const voiceLiveDeployed = voiceLiveModelInfo?.options || [];
+                  const voiceLiveDeployedIds = new Set(voiceLiveDeployed.map((o) => o.id));
+                  const liveModeList = isVoiceLive ? voiceLiveDeployed : liveModelOptions?.cascade;
                   let modelPresets;
                   let modelSourceLabel = '';
                   let usingManaged = false;
@@ -4815,7 +4828,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     usingManaged = true;
                   } else if (liveModeList && liveModeList.length) {
                     modelPresets = liveModeList.map((o) => o.id);
-                    modelSourceLabel = ' · connected Foundry resource';
+                    modelSourceLabel = isVoiceLive
+                      ? ` · ${voiceLiveModelInfo?.resourceName || 'Voice Live'} deployments`
+                      : ' · connected Foundry resource';
                   } else {
                     modelPresets = isVoiceLive
                       ? MANAGED_VOICELIVE_MODELS.map((m) => m.id)
@@ -4823,12 +4838,16 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     usingManaged = isVoiceLive;
                   }
                   // For the managed Voice Live list, suffix each option with its
-                  // pricing tier (pro/basic/lite) — matches the full Agent Builder.
+                  // pricing tier (pro/basic/lite) — matches the full Agent Builder —
+                  // plus a "deployed" marker when the AVL resource also hosts it.
                   const managedTierById = Object.fromEntries(
                     MANAGED_VOICELIVE_MODELS.map((m) => [m.id, m.tier]),
                   );
-                  const modelLabelFor = (id) =>
-                    usingManaged && managedTierById[id] ? `${id} · ${managedTierById[id]}` : id;
+                  const modelLabelFor = (id) => {
+                    if (!usingManaged || !managedTierById[id]) return id;
+                    const deployedNote = voiceLiveDeployedIds.has(id) ? ' · deployed' : '';
+                    return `${id} · ${managedTierById[id]}${deployedNote}`;
+                  };
                   const arch = isVoiceLive ? classifyVoiceLiveArch(chosenModel) : null;
                   // A VoiceLive model that isn't in the managed catalog can only be
                   // reached via BYOM (it's your own Foundry deployment). Selecting it
@@ -4837,6 +4856,16 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                   // on the ~900s idle timeout. Flag it so the user enables BYOM.
                   const chosenModelIsManaged = MANAGED_VOICELIVE_MODELS.some((m) => m.id === chosenModel);
                   const needsByomForModel = Boolean(isVoiceLive && chosenModel && !byomOn && !chosenModelIsManaged);
+                  // With BYOM ON, Voice Live routes to a deployment on the AVL
+                  // resource. A model that isn't deployed there fails the same silent
+                  // way. Only flag when the deployment list was actually retrieved.
+                  const byomModelNotDeployed = Boolean(
+                    isVoiceLive
+                    && byomOn
+                    && chosenModel
+                    && voiceLiveDeployed.length
+                    && !voiceLiveDeployedIds.has(chosenModel),
+                  );
                   const rowStyle = { marginBottom: '14px' };
                   const labelStyle = {
                     display: 'flex',
@@ -5148,6 +5177,41 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                               (e.g. <em>Azure OpenAI / Foundry Chat Completion</em>) to route to it.
                               Applying with BYOM off connects to managed Voice Live, which can&apos;t serve
                               this model, so the agent will go silent.
+                            </div>
+                          </div>
+                        )}
+                        {byomModelNotDeployed && (
+                          <div
+                            style={{
+                              marginTop: '8px',
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                              border: '1px solid #fca5a5',
+                              boxShadow: '0 2px 8px rgba(220,38,38,0.12)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#b91c1c',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px' }}>⚠️</span>
+                              Not deployed on the Voice Live resource
+                            </div>
+                            <div style={{ fontSize: '11px', lineHeight: 1.5, color: '#7f1d1d' }}>
+                              <strong>{chosenModel}</strong> isn&apos;t deployed on
+                              {' '}<strong>{voiceLiveModelInfo?.resourceName || 'the Voice Live resource'}</strong>,
+                              which is what BYOM routes to. Pick one of its deployments above, or deploy
+                              this model there — otherwise the session connects but the agent never responds.
                             </div>
                           </div>
                         )}
